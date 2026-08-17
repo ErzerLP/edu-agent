@@ -1,0 +1,315 @@
+openapi: 3.1.0
+info:
+  title: Edu Agent Platform Foundation API
+  version: 0.1.0
+  description: HTTP contract for health, local pairing exchange, device administration, and model capability inspection.
+servers:
+  - url: http://127.0.0.1:8080
+paths:
+  /livez:
+    get:
+      operationId: getLiveness
+      summary: Check process liveness
+      responses:
+        "200":
+          description: The process event loop is responding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Liveness"
+  /readyz:
+    get:
+      operationId: getReadiness
+      summary: Check required and optional dependencies
+      responses:
+        "200":
+          description: Required dependencies are ready; optional dependencies may be degraded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: A required dependency is not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+  /v1/pairings/exchange:
+    post:
+      operationId: exchangePairingCode
+      summary: Exchange a short-lived one-time pairing code for a device token
+      description: Pairing codes can only be created by the local `edu-agentd pairing-code create` command.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingExchangeRequest"
+      responses:
+        "201":
+          description: Device credential issued. The plaintext token appears in this response only.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IssuedCredential"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/PairingFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/devices:
+    get:
+      operationId: listDevices
+      summary: List paired devices
+      security:
+        - deviceBearer: []
+      responses:
+        "200":
+          description: Paired devices without credential hashes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Device"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/devices/{deviceID}:
+    delete:
+      operationId: revokeDevice
+      summary: Revoke a device and all of its tokens
+      security:
+        - deviceBearer: []
+      parameters:
+        - name: deviceID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Device credentials were revoked immediately.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/model/capabilities:
+    get:
+      operationId: probeModelCapabilities
+      summary: Probe the configured OpenAI-compatible Chat Completions profile
+      security:
+        - deviceBearer: []
+      responses:
+        "200":
+          description: Capability result, including explicit incompatibility reasons.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelCapabilities"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+components:
+  securitySchemes:
+    deviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-device-token
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    PairingFailed:
+      description: Pairing failed without revealing whether a lookup ID exists.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Unauthorized:
+      description: Device authentication failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: The device lacks the required scope.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: The client or IP exceeded a failure/attempt limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Liveness:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          const: alive
+    Readiness:
+      type: object
+      additionalProperties: false
+      required: [status, components]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, not_ready]
+        components:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/HealthComponent"
+        warnings:
+          type: array
+          items:
+            type: string
+            enum: [insecure_non_loopback_http]
+    HealthComponent:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, not_ready]
+        reason:
+          type: string
+          description: Stable diagnostic category with no credentials or internal stack details.
+    PairingExchangeRequest:
+      type: object
+      additionalProperties: false
+      required: [code, display_name]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          writeOnly: true
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    IssuedCredential:
+      type: object
+      additionalProperties: false
+      required: [device, token]
+      properties:
+        device:
+          $ref: "#/components/schemas/Device"
+        token:
+          type: string
+          writeOnly: true
+          description: At least 256 bits of random entropy; returned once and never queryable later.
+    Device:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    ModelCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - profile
+        - compatible
+        - context_window
+        - minimum_context_window
+        - system_user_assistant_messages
+        - non_streaming
+        - structured_json
+        - native_json_schema
+        - streaming
+        - tool_calls
+        - incompatibility_reasons
+      properties:
+        profile:
+          const: openai-chat-completions-v1
+        compatible:
+          type: boolean
+        context_window:
+          type: integer
+          minimum: 0
+        minimum_context_window:
+          type: integer
+          minimum: 0
+        system_user_assistant_messages:
+          type: boolean
+        non_streaming:
+          type: boolean
+        structured_json:
+          type: boolean
+        native_json_schema:
+          type: boolean
+        streaming:
+          type: boolean
+        tool_calls:
+          type: boolean
+          description: Optional negotiated capability; never required by the core profile.
+        incompatibility_reasons:
+          type: array
+          items:
+            type: string
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string

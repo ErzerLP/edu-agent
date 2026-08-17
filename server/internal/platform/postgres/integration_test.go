@@ -2,8 +2,11 @@ package postgres_test
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -77,6 +80,33 @@ func TestPostgreSQLMigrationPairingAndOutboxClaims(t *testing.T) {
 		t.Fatalf("pairing code had %d successful consumers", successes.Load())
 	}
 
+	failureCode, _, err := identityService.CreatePairingCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(failureCode, ".")
+	wrongSecret, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongSecret[0] ^= 1
+	wrongCode := parts[0] + "." + base64.RawURLEncoding.EncodeToString(wrongSecret)
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, _ = identityService.ExchangePairingCode(ctx, wrongCode, "wrong-secret")
+		}()
+	}
+	wait.Wait()
+	var recordedAttempts int
+	if err := pool.QueryRow(ctx, `SELECT attempts FROM pairing_codes WHERE lookup_id=$1`, parts[0]).Scan(&recordedAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if recordedAttempts != 5 {
+		t.Fatalf("concurrent pairing failures recorded %d attempts, want 5", recordedAttempts)
+	}
+
 	store := outboxpostgres.New(pool)
 	now := time.Now().UTC()
 	for i := 0; i < 2; i++ {
@@ -99,7 +129,7 @@ func TestPostgreSQLMigrationPairingAndOutboxClaims(t *testing.T) {
 			}
 		}
 	}
-	claimedIDs := make(chan string, 2)
+	claimedMessages := make(chan outbox.Message, 2)
 	for range 2 {
 		wait.Add(1)
 		go func() {
@@ -110,20 +140,38 @@ func TestPostgreSQLMigrationPairingAndOutboxClaims(t *testing.T) {
 				return
 			}
 			for _, message := range messages {
-				claimedIDs <- message.ID
+				claimedMessages <- message
 			}
 		}()
 	}
 	wait.Wait()
-	close(claimedIDs)
-	seen := map[string]bool{}
-	for id := range claimedIDs {
-		if seen[id] {
-			t.Fatalf("message %s was claimed concurrently", id)
+	close(claimedMessages)
+	seen := map[string]outbox.Message{}
+	for message := range claimedMessages {
+		if _, exists := seen[message.ID]; exists {
+			t.Fatalf("message %s was claimed concurrently", message.ID)
 		}
-		seen[id] = true
+		if message.LeaseToken == "" {
+			t.Fatalf("message %s was claimed without a lease token", message.ID)
+		}
+		seen[message.ID] = message
 	}
 	if len(seen) != 2 {
 		t.Fatalf("expected two separately claimed messages, got %d", len(seen))
+	}
+
+	reclaimed, err := store.Claim(ctx, now.Add(2*time.Minute), time.Minute, 1)
+	if err != nil || len(reclaimed) != 1 {
+		t.Fatalf("reclaim expired lease: messages=%d err=%v", len(reclaimed), err)
+	}
+	previous := seen[reclaimed[0].ID]
+	if previous.LeaseToken == reclaimed[0].LeaseToken {
+		t.Fatal("reclaimed message reused its previous lease token")
+	}
+	if err := store.MarkApplied(ctx, previous.ID, previous.LeaseToken, now.Add(2*time.Minute)); !errors.Is(err, outbox.ErrLeaseLost) {
+		t.Fatalf("stale worker retained lease ownership: %v", err)
+	}
+	if err := store.MarkApplied(ctx, reclaimed[0].ID, reclaimed[0].LeaseToken, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("current lease owner could not complete message: %v", err)
 	}
 }

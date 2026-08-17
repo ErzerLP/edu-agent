@@ -50,24 +50,45 @@ func TestFakeServerContractFailures(t *testing.T) {
 }
 
 func TestProbeCachesSuccessfulCapabilityCheck(t *testing.T) {
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
+	var capabilityRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		capabilityRequests++
 		writeEnvelope(w, `{"capability_probe":true}`)
 	}))
 	defer server.Close()
 	client := newTestClient(t, server.URL, time.Second)
 	first := client.Probe(context.Background())
 	second := client.Probe(context.Background())
-	if !first.Compatible || !second.Compatible || requests != 1 {
-		t.Fatalf("expected one cached capability request, requests=%d first=%+v second=%+v", requests, first, second)
+	if !first.Compatible || !second.Compatible || capabilityRequests != 1 {
+		t.Fatalf("expected one cached capability request, requests=%d first=%+v second=%+v", capabilityRequests, first, second)
+	}
+}
+
+func TestCachedProbeDetectsEndpointOutage(t *testing.T) {
+	server := fakeServer(t, "success", "test-key")
+	client := newTestClient(t, server.URL, 100*time.Millisecond)
+	if result := client.Probe(context.Background()); !result.Compatible {
+		t.Fatalf("initial probe failed: %+v", result)
+	}
+	server.Close()
+	result := client.Probe(context.Background())
+	if result.Compatible || len(result.IncompatibilityReasons) != 1 || result.IncompatibilityReasons[0] != string(ErrorUnavailable) {
+		t.Fatalf("cached probe masked endpoint outage: %+v", result)
 	}
 }
 
 func TestCanceledProbeIsNotCached(t *testing.T) {
-	var requests int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
+	var capabilityRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		capabilityRequests++
 		writeEnvelope(w, `{"capability_probe":true}`)
 	}))
 	defer server.Close()
@@ -77,8 +98,8 @@ func TestCanceledProbeIsNotCached(t *testing.T) {
 	if result := client.Probe(ctx); result.Compatible {
 		t.Fatalf("canceled probe unexpectedly succeeded: %+v", result)
 	}
-	if result := client.Probe(context.Background()); !result.Compatible || requests != 1 {
-		t.Fatalf("canceled result poisoned cache: requests=%d result=%+v", requests, result)
+	if result := client.Probe(context.Background()); !result.Compatible || capabilityRequests != 1 {
+		t.Fatalf("canceled result poisoned cache: requests=%d result=%+v", capabilityRequests, result)
 	}
 }
 
@@ -154,6 +175,14 @@ func fakeServer(t *testing.T, mode, expectedKey string) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		if mode != "unauthorized" && r.Header.Get("Authorization") != "Bearer "+expectedKey {

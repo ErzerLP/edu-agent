@@ -71,7 +71,7 @@ OpenAPI 描述健康、配对、设备查询/吊销和模型能力探测的基�
 
 ## 部署
 
-`server/Dockerfile` 采用多阶段构建并使用非 root 运行用户。`deploy/compose.yaml` 启动 PostgreSQL 和 Go 服务，使用健康检查、持久卷和环境变量，不在仓库写入真实密钥。`.env.example` 只包含占位符和安全说明。
+`server/Dockerfile` 采用多阶段构建并使用非 root 运行用户。`deploy/compose.yaml` 启动 PostgreSQL 和 Go 服务，使用健康检查、持久卷和环境变量，不在仓库写入真实密钥。`deploy/env.example` 只包含占位符和安全说明，用户将其复制到被忽略的私有 `.env` 后通过 Compose 的 `--env-file` 使用。
 
 ## 验证
 

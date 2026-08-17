@@ -49,12 +49,12 @@ func (*memoryWorkerStore) Enqueue(context.Context, Message) (bool, error) { retu
 func (s *memoryWorkerStore) Claim(context.Context, time.Time, time.Duration, int) ([]Message, error) {
 	return append([]Message(nil), s.claimed...), nil
 }
-func (s *memoryWorkerStore) MarkApplied(_ context.Context, id string, _ time.Time) error {
-	s.applied = append(s.applied, id)
+func (s *memoryWorkerStore) MarkApplied(_ context.Context, id, leaseToken string, _ time.Time) error {
+	s.applied = append(s.applied, id+":"+leaseToken)
 	return nil
 }
-func (s *memoryWorkerStore) MarkFailed(_ context.Context, id, category string, _ time.Time, next time.Time, dead bool) error {
-	s.failed = append(s.failed, failure{id: id, category: category, next: next, dead: dead})
+func (s *memoryWorkerStore) MarkFailed(_ context.Context, id, leaseToken, category string, _ time.Time, next time.Time, dead bool) error {
+	s.failed = append(s.failed, failure{id: id + ":" + leaseToken, category: category, next: next, dead: dead})
 	return nil
 }
 
@@ -79,10 +79,10 @@ func (permanentError) Permanent() bool  { return true }
 func TestWorkerHonorsFenceAndRetriesWithBoundedBackoff(t *testing.T) {
 	now := time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)
 	store := &memoryWorkerStore{claimed: []Message{
-		{ID: "stale", BusinessType: "stale", Attempts: 1, MaxAttempts: 3},
-		{ID: "retry", BusinessType: "retry", Attempts: 2, MaxAttempts: 3},
-		{ID: "dead", BusinessType: "dead", Attempts: 1, MaxAttempts: 3},
-		{ID: "unsupported", BusinessType: "missing", Attempts: 1, MaxAttempts: 3},
+		{ID: "stale", LeaseToken: "lease-stale", BusinessType: "stale", Attempts: 1, MaxAttempts: 3},
+		{ID: "retry", LeaseToken: "lease-retry", BusinessType: "retry", Attempts: 2, MaxAttempts: 3},
+		{ID: "dead", LeaseToken: "lease-dead", BusinessType: "dead", Attempts: 1, MaxAttempts: 3},
+		{ID: "unsupported", LeaseToken: "lease-unsupported", BusinessType: "missing", Attempts: 1, MaxAttempts: 3},
 	}}
 	stale := &testConsumer{allow: false}
 	retry := &testConsumer{allow: true, err: errors.New("temporary")}
@@ -98,7 +98,7 @@ func TestWorkerHonorsFenceAndRetriesWithBoundedBackoff(t *testing.T) {
 	if err != nil || count != 4 {
 		t.Fatalf("run worker: count=%d err=%v", count, err)
 	}
-	if stale.calls != 0 || len(store.applied) != 1 || store.applied[0] != "stale" {
+	if stale.calls != 0 || len(store.applied) != 1 || store.applied[0] != "stale:lease-stale" {
 		t.Fatalf("fenced message should be a successful no-op: %+v", store)
 	}
 	if len(store.failed) != 3 {

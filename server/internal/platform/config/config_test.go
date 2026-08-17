@@ -92,6 +92,7 @@ func TestRejectsMalformedValues(t *testing.T) {
 		"MIGRATE_ON_START":               "perhaps",
 		"PAIRING_CODE_TTL":               "0s",
 		"PAIRING_CODE_MAX_ATTEMPTS":      "zero",
+		"DEVICE_RATE_LIMIT_PER_MINUTE":   "0",
 		"TOKEN_LAST_USED_TOUCH_INTERVAL": "-1s",
 		"MODEL_PROBE_CACHE_TTL":          "0s",
 	} {

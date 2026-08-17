@@ -26,6 +26,7 @@ type Config struct {
 	TokenLastUsedTouchInterval time.Duration
 	PairingRateLimitPerMinute  int
 	AuthFailureLimitPerMinute  int
+	DeviceRateLimitPerMinute   int
 	Model                      ModelConfig
 }
 
@@ -57,6 +58,7 @@ func load(lookup envReader) (Config, error) {
 		TokenLastUsedTouchInterval: 5 * time.Minute,
 		PairingRateLimitPerMinute:  10,
 		AuthFailureLimitPerMinute:  20,
+		DeviceRateLimitPerMinute:   600,
 		Model: ModelConfig{
 			MinimumContext: DefaultMinimumContextWindow,
 			Timeout:        30 * time.Second,
@@ -96,6 +98,9 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.AuthFailureLimitPerMinute, err = intValue(lookup, "AUTH_FAILURE_LIMIT_PER_MINUTE", cfg.AuthFailureLimitPerMinute); err != nil {
+		return Config{}, err
+	}
+	if cfg.DeviceRateLimitPerMinute, err = intValue(lookup, "DEVICE_RATE_LIMIT_PER_MINUTE", cfg.DeviceRateLimitPerMinute); err != nil {
 		return Config{}, err
 	}
 
@@ -158,7 +163,7 @@ func load(lookup envReader) (Config, error) {
 	if cfg.ShutdownTimeout <= 0 || cfg.PairingCodeTTL <= 0 || cfg.TokenLastUsedTouchInterval <= 0 || cfg.Model.Timeout <= 0 || cfg.Model.ProbeCacheTTL <= 0 {
 		return Config{}, errors.New("duration settings must be positive")
 	}
-	if cfg.PairingCodeMaxAttempts <= 0 || cfg.PairingRateLimitPerMinute <= 0 || cfg.AuthFailureLimitPerMinute <= 0 || cfg.Model.MinimumContext <= 0 {
+	if cfg.PairingCodeMaxAttempts <= 0 || cfg.PairingRateLimitPerMinute <= 0 || cfg.AuthFailureLimitPerMinute <= 0 || cfg.DeviceRateLimitPerMinute <= 0 || cfg.Model.MinimumContext <= 0 {
 		return Config{}, errors.New("numeric limits must be positive")
 	}
 	return cfg, nil

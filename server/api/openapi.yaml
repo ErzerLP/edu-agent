@@ -58,6 +58,8 @@ paths:
           $ref: "#/components/responses/PairingFailed"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/devices:
     get:
       operationId: listDevices
@@ -83,6 +85,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/devices/{deviceID}:
     delete:
       operationId: revokeDevice
@@ -109,6 +113,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/model/capabilities:
     get:
       operationId: probeModelCapabilities
@@ -128,6 +134,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     deviceBearer:
@@ -161,6 +169,12 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
     NotFound:
       description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InternalError:
+      description: The request failed because of an internal service or dependency error.
       content:
         application/json:
           schema:

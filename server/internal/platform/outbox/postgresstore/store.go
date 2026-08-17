@@ -2,12 +2,10 @@ package postgresstore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -48,11 +46,12 @@ func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, l
 			LIMIT $2
 		)
 		UPDATE outbox_messages o
-		SET status='processing',attempts=o.attempts+1,lease_expires_at=$1 + ($3 * interval '1 microsecond'),updated_at=$1
+		SET status='processing',attempts=o.attempts+1,
+		    lease_expires_at=$1 + ($3 * interval '1 microsecond'),lease_token=gen_random_uuid(),updated_at=$1
 		FROM candidates c WHERE o.id=c.id
 		RETURNING o.id,o.business_type,o.aggregate_id,o.idempotency_key,o.revision,o.generation,
 		          o.payload,o.audit_metadata,o.status,o.available_at,o.attempts,o.max_attempts,
-		          o.last_error_category,o.last_error_at,o.lease_expires_at,o.created_at,o.updated_at`,
+		          o.last_error_category,o.last_error_at,o.lease_expires_at,o.lease_token::text,o.created_at,o.updated_at`,
 		now, limit, lease.Microseconds())
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox messages: %w", err)
@@ -65,7 +64,7 @@ func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, l
 			&message.ID, &message.BusinessType, &message.AggregateID, &message.IdempotencyKey,
 			&message.Revision, &message.Generation, &message.Payload, &message.AuditMetadata,
 			&message.Status, &message.AvailableAt, &message.Attempts, &message.MaxAttempts,
-			&message.LastErrorCategory, &message.LastErrorAt, &message.LeaseExpiresAt,
+			&message.LastErrorCategory, &message.LastErrorAt, &message.LeaseExpiresAt, &message.LeaseToken,
 			&message.CreatedAt, &message.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan outbox message: %w", err)
@@ -78,39 +77,34 @@ func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, l
 	return messages, nil
 }
 
-func (s *Store) MarkApplied(ctx context.Context, id string, now time.Time) error {
+func (s *Store) MarkApplied(ctx context.Context, id, leaseToken string, now time.Time) error {
 	command, err := s.pool.Exec(ctx, `
-		UPDATE outbox_messages SET status='applied',lease_expires_at=NULL,updated_at=$2
-		WHERE id=$1 AND status='processing'`, id, now)
+		UPDATE outbox_messages SET status='applied',lease_expires_at=NULL,lease_token=NULL,updated_at=$3
+		WHERE id=$1 AND status='processing' AND lease_token=$2`, id, leaseToken, now)
 	if err != nil {
 		return fmt.Errorf("mark outbox applied: %w", err)
 	}
 	if command.RowsAffected() != 1 {
-		return outbox.ErrInvalidTransition
+		return outbox.ErrLeaseLost
 	}
 	return nil
 }
 
-func (s *Store) MarkFailed(ctx context.Context, id, category string, failedAt, nextAt time.Time, dead bool) error {
+func (s *Store) MarkFailed(ctx context.Context, id, leaseToken, category string, failedAt, nextAt time.Time, dead bool) error {
 	status := outbox.StatusPending
 	if dead {
 		status = outbox.StatusDead
 	}
 	command, err := s.pool.Exec(ctx, `
 		UPDATE outbox_messages
-		SET status=$2,available_at=$3,last_error_category=$4,last_error_at=$5,
-		    lease_expires_at=NULL,updated_at=$5
-		WHERE id=$1 AND status='processing'`, id, status, nextAt, category, failedAt)
+		SET status=$3,available_at=$4,last_error_category=$5,last_error_at=$6,
+		    lease_expires_at=NULL,lease_token=NULL,updated_at=$6
+		WHERE id=$1 AND status='processing' AND lease_token=$2`, id, leaseToken, status, nextAt, category, failedAt)
 	if err != nil {
 		return fmt.Errorf("mark outbox failed: %w", err)
 	}
 	if command.RowsAffected() != 1 {
-		return outbox.ErrInvalidTransition
+		return outbox.ErrLeaseLost
 	}
 	return nil
-}
-
-func IsSerializationFailure(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "40001"
 }

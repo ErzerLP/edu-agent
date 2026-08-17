@@ -41,6 +41,7 @@ type Options struct {
 	Logger         *slog.Logger
 	PairLimiter    *FixedWindowLimiter
 	AuthLimiter    *FixedWindowLimiter
+	DeviceLimiter  *FixedWindowLimiter
 	MaxRequestBody int64
 }
 
@@ -51,13 +52,14 @@ type API struct {
 	logger         *slog.Logger
 	pairLimiter    *FixedWindowLimiter
 	authLimiter    *FixedWindowLimiter
+	deviceLimiter  *FixedWindowLimiter
 	maxRequestBody int64
 }
 
 type credentialContextKey struct{}
 
 func New(options Options) (http.Handler, error) {
-	if options.Identity == nil || options.Readiness == nil || options.Logger == nil || options.PairLimiter == nil || options.AuthLimiter == nil {
+	if options.Identity == nil || options.Readiness == nil || options.Logger == nil || options.PairLimiter == nil || options.AuthLimiter == nil || options.DeviceLimiter == nil {
 		return nil, errors.New("HTTP API dependencies are required")
 	}
 	if options.MaxRequestBody <= 0 {
@@ -65,7 +67,8 @@ func New(options Options) (http.Handler, error) {
 	}
 	api := &API{
 		identity: options.Identity, model: options.Model, readiness: options.Readiness, logger: options.Logger,
-		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter, maxRequestBody: options.MaxRequestBody,
+		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter,
+		deviceLimiter: options.DeviceLimiter, maxRequestBody: options.MaxRequestBody,
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -127,19 +130,28 @@ func (a *API) exchangePairingCode(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		failureKey := "auth:" + clientIP(r)
+		if a.authLimiter.Limited(failureKey) {
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Too many authentication failures")
+			return
+		}
 		token, ok := bearerToken(r.Header.Get("Authorization"))
 		if !ok {
-			a.authenticationFailed(w, r)
+			a.authenticationFailed(w, r, failureKey)
 			return
 		}
 		credential, err := a.identity.Authenticate(r.Context(), token, "")
 		if err != nil {
 			if errors.Is(err, identity.ErrUnauthenticated) {
-				a.authenticationFailed(w, r)
+				a.authenticationFailed(w, r, failureKey)
 				return
 			}
 			a.logger.ErrorContext(r.Context(), "device authentication failed", "request_id", middleware.GetReqID(r.Context()), "error", err)
 			writeError(w, r, http.StatusInternalServerError, "internal_error", "Request could not be completed")
+			return
+		}
+		if !a.deviceLimiter.Allow("device:" + credential.Device.ID) {
+			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Device request rate exceeded")
 			return
 		}
 		ctx := context.WithValue(r.Context(), credentialContextKey{}, credential)
@@ -147,8 +159,8 @@ func (a *API) authenticate(next http.Handler) http.Handler {
 	})
 }
 
-func (a *API) authenticationFailed(w http.ResponseWriter, r *http.Request) {
-	if !a.authLimiter.Allow("auth:" + clientIP(r)) {
+func (a *API) authenticationFailed(w http.ResponseWriter, r *http.Request, failureKey string) {
+	if !a.authLimiter.Allow(failureKey) {
 		writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Too many authentication failures")
 		return
 	}

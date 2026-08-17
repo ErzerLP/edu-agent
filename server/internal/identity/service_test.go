@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -166,6 +167,25 @@ func TestWrongSecretsConsumeAttemptBudget(t *testing.T) {
 	}
 	if _, err := service.ExchangePairingCode(context.Background(), code, "Laptop"); !errors.Is(err, ErrInvalidPairingCode) {
 		t.Fatalf("attempt budget should block valid code: %v", err)
+	}
+}
+
+func TestDisplayNameLimitCountsUnicodeCharacters(t *testing.T) {
+	now := time.Now().UTC()
+	service := testService(t, newMemoryStore(), &now)
+	code, _, err := service.CreatePairingCode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ExchangePairingCode(context.Background(), code, strings.Repeat("学", 100)); err != nil {
+		t.Fatalf("100 Unicode characters should be accepted: %v", err)
+	}
+	code, _, err = service.CreatePairingCode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ExchangePairingCode(context.Background(), code, strings.Repeat("学", 101)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("101 Unicode characters should be rejected: %v", err)
 	}
 }
 

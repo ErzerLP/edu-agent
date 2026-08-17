@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var defaultScopes = []string{"devices:read", "devices:manage", "model:probe"}
@@ -80,7 +81,7 @@ func (s *Service) CreatePairingCode(ctx context.Context) (string, time.Time, err
 
 func (s *Service) ExchangePairingCode(ctx context.Context, code, displayName string) (IssuedCredential, error) {
 	displayName = strings.TrimSpace(displayName)
-	if displayName == "" || len(displayName) > 100 {
+	if displayName == "" || !utf8.ValidString(displayName) || utf8.RuneCountInString(displayName) > 100 {
 		return IssuedCredential{}, ErrInvalidInput
 	}
 	lookup, codeHash, err := parsePairingCode(code)

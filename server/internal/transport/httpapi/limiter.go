@@ -42,6 +42,21 @@ func (l *FixedWindowLimiter) Allow(key string) bool {
 	return l.limit > 0 && entry.count <= l.limit
 }
 
+func (l *FixedWindowLimiter) Limited(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	entry, exists := l.entries[key]
+	if !exists {
+		return false
+	}
+	if now.Sub(entry.windowStart) >= l.window {
+		delete(l.entries, key)
+		return false
+	}
+	return l.limit <= 0 || entry.count >= l.limit
+}
+
 func (l *FixedWindowLimiter) removeExpired(now time.Time) {
 	for candidate, value := range l.entries {
 		if now.Sub(value.windowStart) >= l.window {

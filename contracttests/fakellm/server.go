@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,12 +16,29 @@ func main() {
 	mode := env("FAKE_LLM_MODE", "success")
 	apiKey := env("FAKE_LLM_API_KEY", "fake-development-key")
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+		if r.URL.Path != "/v1/chat/completions" {
 			http.NotFound(w, r)
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+apiKey || mode == "unauthorized" {
 			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		request, err := decodeChatRequest(r)
+		if err != nil {
+			http.Error(w, "invalid chat completions profile", http.StatusBadRequest)
+			return
+		}
+		if mode == "no-native-schema" && request.ResponseFormat.Type == "json_schema" {
+			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 		switch mode {
@@ -35,16 +53,51 @@ func main() {
 		case "schema-mismatch":
 			writeResponse(w, `{"capability_probe":"yes"}`)
 		default:
-			var request map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
 			writeResponse(w, `{"capability_probe":true}`)
 		}
 	})
 	log.Printf("fake LLM listening on %s in %s mode", address, mode)
 	log.Fatal(http.ListenAndServe(address, handler))
+}
+
+type chatRequest struct {
+	Model    string `json:"model"`
+	Messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	} `json:"messages"`
+	Stream         *bool `json:"stream"`
+	ResponseFormat struct {
+		Type string `json:"type"`
+	} `json:"response_format"`
+}
+
+func decodeChatRequest(r *http.Request) (chatRequest, error) {
+	var request chatRequest
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
+		return request, fmt.Errorf("content type must be application/json")
+	}
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&request); err != nil {
+		return request, err
+	}
+	if strings.TrimSpace(request.Model) == "" || request.Stream == nil || *request.Stream {
+		return request, fmt.Errorf("model and stream=false are required")
+	}
+	if request.ResponseFormat.Type != "json_object" && request.ResponseFormat.Type != "json_schema" {
+		return request, fmt.Errorf("structured response format is required")
+	}
+	roles := map[string]bool{}
+	for _, message := range request.Messages {
+		if strings.TrimSpace(message.Content) == "" {
+			return request, fmt.Errorf("message content is required")
+		}
+		roles[message.Role] = true
+	}
+	if !roles["system"] || !roles["user"] || !roles["assistant"] {
+		return request, fmt.Errorf("system, user, and assistant messages are required")
+	}
+	return request, nil
 }
 
 func writeResponse(w http.ResponseWriter, content string) {

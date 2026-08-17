@@ -55,8 +55,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	})
 	handler, err := httpapi.New(httpapi.Options{
 		Identity: identityService, Model: modelProber, Readiness: readiness, Logger: logger,
-		PairLimiter: httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
-		AuthLimiter: httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
+		PairLimiter:   httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
+		AuthLimiter:   httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
+		DeviceLimiter: httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute),
 	})
 	if err != nil {
 		return fmt.Errorf("initialize HTTP API: %w", err)

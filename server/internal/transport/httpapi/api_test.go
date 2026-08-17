@@ -22,6 +22,7 @@ type fakeIdentity struct {
 	exchangeErr error
 	auth        identity.Credential
 	authErr     error
+	authCalls   int
 	devices     []identity.Device
 	revoked     string
 	revokeErr   error
@@ -31,6 +32,7 @@ func (f *fakeIdentity) ExchangePairingCode(context.Context, string, string) (ide
 	return f.exchange, f.exchangeErr
 }
 func (f *fakeIdentity) Authenticate(context.Context, string, string) (identity.Credential, error) {
+	f.authCalls++
 	return f.auth, f.authErr
 }
 func (f *fakeIdentity) ListDevices(context.Context) ([]identity.Device, error) { return f.devices, nil }
@@ -53,7 +55,8 @@ func newTestAPI(t *testing.T, id *fakeIdentity, pairLimit, authLimit int, logs *
 	handler, err := New(Options{
 		Identity: id, Model: fakeModel{result: llm.Capabilities{Compatible: true}},
 		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
-		Logger:    logger, PairLimiter: NewFixedWindowLimiter(pairLimit, time.Minute), AuthLimiter: NewFixedWindowLimiter(authLimit, time.Minute),
+		Logger:    logger, PairLimiter: NewFixedWindowLimiter(pairLimit, time.Minute),
+		AuthLimiter: NewFixedWindowLimiter(authLimit, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +105,9 @@ func TestAuthenticationAuthorizationAndRateLimits(t *testing.T) {
 			t.Fatalf("missing request id: %s", response.Body.String())
 		}
 	}
+	if id.authCalls != 1 {
+		t.Fatalf("rate-limited authentication reached the identity service: calls=%d", id.authCalls)
+	}
 	if strings.Contains(logs.String(), "invalid-secret") {
 		t.Fatalf("token leaked to logs: %s", logs.String())
 	}
@@ -114,6 +120,29 @@ func TestAuthenticationAuthorizationAndRateLimits(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("expected scope failure, got %d", response.Code)
+	}
+}
+
+func TestDeviceRequestRateLimit(t *testing.T) {
+	var logs bytes.Buffer
+	id := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: "device-1"}, Scopes: []string{"devices:read"}}}
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	handler, err := New(Options{
+		Identity: id, Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger: logger, PairLimiter: NewFixedWindowLimiter(2, time.Minute), AuthLimiter: NewFixedWindowLimiter(2, time.Minute),
+		DeviceLimiter: NewFixedWindowLimiter(1, time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []int{http.StatusOK, http.StatusTooManyRequests} {
+		request := httptest.NewRequest(http.MethodGet, "/v1/devices", nil)
+		request.Header.Set("Authorization", "Bearer valid")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != expected {
+			t.Fatalf("expected %d, got %d: %s", expected, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -186,7 +215,11 @@ func TestReadinessNotReadyUses503WithoutDetails(t *testing.T) {
 	var logs bytes.Buffer
 	id := &fakeIdentity{}
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	handler, err := New(Options{Identity: id, Readiness: fakeReadiness{report: health.Report{Status: health.StatusNotReady, Components: map[string]health.Component{"postgresql": {Status: health.StatusNotReady, Reason: "unavailable"}}}}, Logger: logger, PairLimiter: NewFixedWindowLimiter(1, time.Minute), AuthLimiter: NewFixedWindowLimiter(1, time.Minute)})
+	handler, err := New(Options{
+		Identity: id, Readiness: fakeReadiness{report: health.Report{Status: health.StatusNotReady, Components: map[string]health.Component{"postgresql": {Status: health.StatusNotReady, Reason: "unavailable"}}}},
+		Logger: logger, PairLimiter: NewFixedWindowLimiter(1, time.Minute), AuthLimiter: NewFixedWindowLimiter(1, time.Minute),
+		DeviceLimiter: NewFixedWindowLimiter(1, time.Minute),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

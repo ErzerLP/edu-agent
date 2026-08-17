@@ -45,6 +45,7 @@ CREATE TABLE outbox_messages (
     last_error_category TEXT,
     last_error_at TIMESTAMPTZ,
     lease_expires_at TIMESTAMPTZ,
+    lease_token UUID,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT outbox_aggregate_revision_generation UNIQUE

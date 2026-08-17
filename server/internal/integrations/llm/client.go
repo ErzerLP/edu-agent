@@ -228,8 +228,19 @@ func (c *Client) Probe(ctx context.Context) Capabilities {
 	defer c.probeMu.Unlock()
 	now := time.Now()
 	age := now.Sub(c.probeAt)
-	if !c.probeAt.IsZero() && age >= 0 && age < c.probeCacheTTL {
-		return cloneCapabilities(c.probeResult)
+	cacheTTL := c.probeCacheTTL
+	if !c.probeResult.Compatible && cacheTTL > 30*time.Second {
+		cacheTTL = 30 * time.Second
+	}
+	if !c.probeAt.IsZero() && age >= 0 && age < cacheTTL {
+		result := cloneCapabilities(c.probeResult)
+		if result.Compatible {
+			if err := c.checkAvailability(ctx); err != nil {
+				result.Compatible = false
+				result.IncompatibilityReasons = []string{string(Category(err))}
+			}
+		}
+		return result
 	}
 	result := c.probe(ctx)
 	if ctx.Err() == nil {
@@ -237,6 +248,30 @@ func (c *Client) Probe(ctx context.Context) Capabilities {
 		c.probeResult = cloneCapabilities(result)
 	}
 	return result
+}
+
+func (c *Client) checkAvailability(ctx context.Context) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, c.endpoint, nil)
+	if err != nil {
+		return &Error{Category: ErrorInvalidRequest, Cause: err}
+	}
+	request.Header.Set("Authorization", "Bearer "+c.apiKey)
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return classifyTransportError(ctx, err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4<<10))
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return &Error{Category: ErrorUnauthorized}
+	case http.StatusTooManyRequests:
+		return &Error{Category: ErrorRateLimited}
+	}
+	if response.StatusCode >= 500 {
+		return &Error{Category: ErrorUpstream}
+	}
+	return nil
 }
 
 func (c *Client) probe(ctx context.Context) Capabilities {

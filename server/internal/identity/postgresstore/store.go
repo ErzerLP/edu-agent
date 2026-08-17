@@ -39,7 +39,7 @@ func (s *Store) ConsumePairingCode(
 	token identity.TokenRecord,
 	now time.Time,
 ) error {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return fmt.Errorf("begin pairing exchange: %w", err)
 	}

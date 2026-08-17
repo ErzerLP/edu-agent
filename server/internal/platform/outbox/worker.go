@@ -62,14 +62,14 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	for _, message := range messages {
 		consumer, ok := w.consumers[message.BusinessType]
 		if !ok {
-			if err := w.store.MarkFailed(ctx, message.ID, "unsupported_business_type", now, now, true); err != nil {
+			if err := w.store.MarkFailed(ctx, message.ID, message.LeaseToken, "unsupported_business_type", now, now, true); err != nil {
 				return 0, err
 			}
 			continue
 		}
 		allowed, err := consumer.CanApply(ctx, message)
 		if err == nil && !allowed {
-			if err := w.store.MarkApplied(ctx, message.ID, now); err != nil {
+			if err := w.store.MarkApplied(ctx, message.ID, message.LeaseToken, now); err != nil {
 				return 0, err
 			}
 			continue
@@ -78,7 +78,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 			err = consumer.Apply(ctx, message)
 		}
 		if err == nil {
-			if err := w.store.MarkApplied(ctx, message.ID, now); err != nil {
+			if err := w.store.MarkApplied(ctx, message.ID, message.LeaseToken, now); err != nil {
 				return 0, err
 			}
 			continue
@@ -89,7 +89,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		if !dead {
 			next = now.Add(w.backoff(message.Attempts))
 		}
-		if err := w.store.MarkFailed(ctx, message.ID, category, now, next, dead); err != nil {
+		if err := w.store.MarkFailed(ctx, message.ID, message.LeaseToken, category, now, next, dead); err != nil {
 			return 0, err
 		}
 	}

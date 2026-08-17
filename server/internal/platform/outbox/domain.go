@@ -20,7 +20,10 @@ const (
 	StatusDead       Status = "dead"
 )
 
-var ErrInvalidTransition = errors.New("invalid outbox state transition")
+var (
+	ErrInvalidTransition = errors.New("invalid outbox state transition")
+	ErrLeaseLost         = errors.New("outbox lease ownership was lost")
+)
 
 type Message struct {
 	ID                string          `json:"id"`
@@ -38,6 +41,7 @@ type Message struct {
 	LastErrorCategory string          `json:"last_error_category,omitempty"`
 	LastErrorAt       *time.Time      `json:"last_error_at,omitempty"`
 	LeaseExpiresAt    *time.Time      `json:"-"`
+	LeaseToken        string          `json:"-"`
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
@@ -104,8 +108,8 @@ func CanTransition(from, to Status) bool {
 type Store interface {
 	Enqueue(context.Context, Message) (bool, error)
 	Claim(context.Context, time.Time, time.Duration, int) ([]Message, error)
-	MarkApplied(context.Context, string, time.Time) error
-	MarkFailed(context.Context, string, string, time.Time, time.Time, bool) error
+	MarkApplied(context.Context, string, string, time.Time) error
+	MarkFailed(context.Context, string, string, string, time.Time, time.Time, bool) error
 }
 
 // Consumer owns target idempotency and the revision/generation fence.

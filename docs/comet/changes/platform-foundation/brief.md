@@ -12,7 +12,7 @@
 
 # Acceptance examples
 
-- Parent A1：部署配置能启动 Go 服务与 PostgreSQL，默认 loopback 监听，非 loopback 明文监听需要显式不安全授权，健康接口区分存活、就绪和依赖降级。
+- Parent A1：本 child 交付可启动 Go 服务与 PostgreSQL 的部署实现、默认 loopback 与非 loopback 安全策略、分层健康接口和静态契约；本机缺少 Docker 时明确记录未运行，真实 Compose 联合启动证据保留为 Supervisor 最终 A1 验收门槛。
 - Parent A2：本地管理命令可生成高熵、短时、一次性配对码；设备换取独立令牌后可认证，配对码不能重放，令牌只存哈希并可按设备吊销和限流。
 - Parent A3：fake server 可验证明确的 OpenAI-compatible profile，不兼容端点返回可诊断错误，模型密钥不进入日志、导出或客户端响应。
 - Parent A25：本 child 不引入 Rust CLI、Web UI、PDF/网页解析、多用户或高级个性化调度。

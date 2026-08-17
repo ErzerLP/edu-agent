@@ -1,9 +1,9 @@
 schema: comet.native.v4
 name: platform-foundation
 language: zh-CN
-phase: shape
+phase: build
 status: active
-state_version: 3
+state_version: 4
 brief: brief.md
 spec_changes:
   - capability: platform-foundation
@@ -15,17 +15,195 @@ workspace:
   target_branch: comet/teaching-interview-agent
   finish: null
 loop:
-  stage: shape
+  stage: building
   goal_cycle: 2
-  iteration: 0
+  iteration: 1
   attempt: 0
   retry_epoch: 0
   failed_iteration_count: 0
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: confirm-shape
-acceptance: []
+  next_action: submit-builder-candidate
+acceptance:
+  - id: A1
+    source: brief.md
+    text: Parent A1：部署配置能启动 Go 服务与 PostgreSQL，默认 loopback 监听，非 loopback
+      明文监听需要显式不安全授权，健康接口区分存活、就绪和依赖降级。
+    result: pending
+    reason: null
+  - id: A2
+    source: brief.md
+    text: Parent A2：本地管理命令可生成高熵、短时、一次性配对码；设备换取独立令牌后可认证，配对码不能重放，令牌只存哈希并可按设备吊销和限流。
+    result: pending
+    reason: null
+  - id: A3
+    source: brief.md
+    text: Parent A3：fake server 可验证明确的 OpenAI-compatible
+      profile，不兼容端点返回可诊断错误，模型密钥不进入日志、导出或客户端响应。
+    result: pending
+    reason: null
+  - id: A4
+    source: brief.md
+    text: Parent A25：本 child 不引入 Rust CLI、Web UI、PDF/网页解析、多用户或高级个性化调度。
+    result: pending
+    reason: null
+  - id: A5
+    source: brief.md
+    text: Parent A26：代码按业务能力与 Ports/Adapters 组织，transport 只负责协议转换、认证、校验和错误映射。
+    result: pending
+    reason: null
+  - id: A6
+    source: brief.md
+    text: Parent A27：`identity` 与平台基础设施拥有明确数据边界，服务保持单 Go 进程且不引入 RPC、服务发现、分布式事务或消息中间件。
+    result: pending
+    reason: null
+  - id: A7
+    source: brief.md
+    text: Parent A31：PostgreSQL Outbox 提供至少一次投递所需的幂等键、单调
+      revision、generation、重试与死信状态基础。
+    result: pending
+    reason: null
+  - id: A8
+    source: brief.md
+    text: Parent A60：OpenAPI 是 HTTP 契约，模型 profile 明确消息、结构化
+      JSON、错误、超时和上下文要求，工具调用不是必需能力。
+    result: pending
+    reason: null
+  - id: A9
+    source: brief.md
+    text: Parent A71：服务默认监听 loopback，非 loopback 部署需要 HTTPS public URL，显式不安全开关产生持续告警。
+    result: pending
+    reason: null
+  - id: A10
+    source: brief.md
+    text: Parent A72：配对码具有高熵、短 TTL、一次性和尝试限流，设备令牌仅签发一次并在数据库保存哈希、身份、作用域和吊销状态。
+    result: pending
+    reason: null
+  - id: A11
+    source: brief.md
+    text: Parent A73：模型和外部服务凭据只保存在服务端配置中，HTTP 进入应用用例前执行统一认证、授权、速率限制与审计。
+    result: pending
+    reason: null
+  - id: A12
+    source: specs/platform-foundation/spec.md
+    text: "`platform-foundation` 提供单进程 Go 服务、PostgreSQL、HTTP、设备身份、模型网关和 Outbox
+      基础。后续业务包通过端口使用这些能力，不绕过应用层直接依赖 transport 或数据库实现。"
+    result: pending
+    reason: null
+  - id: A13
+    source: specs/platform-foundation/spec.md
+    text: 业务端口由消费方定义。`identity` 拥有配对码、设备和令牌。`platform/postgres` 只提供连接、事务和 migration
+      支持。`platform/outbox` 拥有外部写入意图的通用投递状态，不拥有具体业务 payload 语义。`integrations/llm`
+      实现模型调用契约。`transport/httpapi` 只完成 HTTP 映射。
+    result: pending
+    reason: null
+  - id: A14
+    source: specs/platform-foundation/spec.md
+    text: 服务从环境变量读取监听地址、public base URL、PostgreSQL URL、模型 base
+      URL、模型名、模型密钥、上下文窗口、超时和安全开关。缺失必需配置、URL 无效、上下文窗口低于 profile
+      要求或监听策略不安全时，启动返回可诊断错误。
+    result: pending
+    reason: null
+  - id: A15
+    source: specs/platform-foundation/spec.md
+    text: 默认监听 `127.0.0.1:8080`。配置非 loopback 地址时，public base URL 必须是
+      HTTPS。仅当显式启用开发用途的不安全开关时允许非 loopback HTTP，服务在启动日志和健康状态中持续暴露安全告警。
+    result: pending
+    reason: null
+  - id: A16
+    source: specs/platform-foundation/spec.md
+    text: 服务按顺序加载配置、日志、PostgreSQL、migration、应用服务和 HTTP
+      server。关闭时停止接收请求，等待有界时间内的在途操作并关闭数据库连接。
+    result: pending
+    reason: null
+  - id: A17
+    source: specs/platform-foundation/spec.md
+    text: 第一版只维护 PostgreSQL 方言。migration 是按版本排序、不可重写的 SQL 文件。应用启动可以检查 migration
+      状态，开发 Compose 可以执行 migration；生产不会静默忽略失败 migration。
+    result: pending
+    reason: null
+  - id: A18
+    source: specs/platform-foundation/spec.md
+    text: 基础 schema 包含设备、配对码和 Outbox 所需表。时间使用 UTC。关键幂等约束由数据库唯一索引保证。敏感 payload
+      与最小审计元数据使用不同字段，为后续 redaction 留出边界。
+    result: pending
+    reason: null
+  - id: A19
+    source: specs/platform-foundation/spec.md
+    text: "`/livez` 只证明进程事件循环可响应。`/readyz` 检查必要依赖并返回组件化 JSON。PostgreSQL 不可用时
+      readiness 失败。模型端点未配置或探测失败时按配置返回 degraded 或
+      not-ready，不能伪装为健康。响应不泄露连接串、密钥或内部错误堆栈。"
+    result: pending
+    reason: null
+  - id: A20
+    source: specs/platform-foundation/spec.md
+    text: 配对码只能通过服务器本地管理命令生成。配对码至少包含 128 bit
+      随机熵，默认十分钟过期，只能成功消费一次，并具有失败尝试上限。数据库只保存配对码哈希、过期时间、消费时间和尝试计数。
+    result: pending
+    reason: null
+  - id: A21
+    source: specs/platform-foundation/spec.md
+    text: 设备提交配对码与设备显示名后换取至少 256 bit 的随机 bearer token。令牌只在签发响应中出现一次，数据库保存 SHA-256
+      哈希、设备身份、作用域、创建时间、最后使用时间和吊销时间。认证使用常量时间比较。吊销立即阻止后续请求，且不影响其他设备。
+    result: pending
+    reason: null
+  - id: A22
+    source: specs/platform-foundation/spec.md
+    text: 认证 middleware 解析 bearer token、执行设备和作用域检查、更新受节流的最后使用时间，并把身份放入请求
+      context。配对与认证失败按客户端/IP 限流，错误响应不区分可用于枚举的内部原因。
+    result: pending
+    reason: null
+  - id: A23
+    source: specs/platform-foundation/spec.md
+    text: 模型网关面向 OpenAI-compatible Chat Completions 风格接口。必需能力是 system/user/assistant
+      消息、非流式响应、可解析的结构化 JSON、稳定错误分类、请求超时和配置的最低上下文窗口。原生 JSON
+      Schema、流式响应和工具调用是可协商能力，工具调用不作为核心教学实现的前提。
+    result: pending
+    reason: null
+  - id: A24
+    source: specs/platform-foundation/spec.md
+    text: 探测返回 capability 与明确的不兼容原因。fake model server 覆盖成功、无效 JSON、schema
+      不匹配、401、429、5xx、超时和连接失败。模型密钥只进入 Authorization 请求头，日志和错误必须脱敏。
+    result: pending
+    reason: null
+  - id: A25
+    source: specs/platform-foundation/spec.md
+    text: Outbox 记录业务类型、聚合 ID、幂等键、单调
+      revision、generation、payload、状态、可重试时间、尝试次数、最后错误类别和时间。状态至少支持
+      pending、processing、applied、dead。领取使用 PostgreSQL 锁避免同一消息并发执行。
+    result: pending
+    reason: null
+  - id: A26
+    source: specs/platform-foundation/spec.md
+    text: 具体适配器负责目标幂等，通用 worker 负责有界指数退避、jitter、尝试上限和死信。旧 revision 或旧 generation
+      是否可应用由消费适配器与业务 fence 共同判断。
+    result: pending
+    reason: null
+  - id: A27
+    source: specs/platform-foundation/spec.md
+    text: OpenAPI 描述健康、配对、设备查询/吊销和模型能力探测的基础端点。错误使用稳定机器码、用户可读消息和 request
+      ID。响应不暴露密钥、哈希或内部数据库细节。
+    result: pending
+    reason: null
+  - id: A28
+    source: specs/platform-foundation/spec.md
+    text: "`server/Dockerfile` 采用多阶段构建并使用非 root 运行用户。`deploy/compose.yaml` 启动
+      PostgreSQL 和 Go 服务，使用健康检查、持久卷和环境变量，不在仓库写入真实密钥。`.env.example` 只包含占位符和安全说明。"
+    result: pending
+    reason: null
+  - id: A29
+    source: specs/platform-foundation/spec.md
+    text: 单元测试覆盖配置、监听策略、配对生命周期、令牌哈希/吊销、认证、限流、日志脱敏、模型错误分类和 Outbox 状态转换。HTTP 测试使用
+      `httptest`，模型契约使用 fake server。PostgreSQL 集成测试在可用环境中运行
+      migration、唯一约束、并发配对消费和 Outbox 领取。
+    result: pending
+    reason: null
+  - id: A30
+    source: specs/platform-foundation/spec.md
+    text: 本机缺少 Docker 时，Compose 启动检查必须明确记录为未运行；静态解析与 Go 测试不能替代真实容器验收。
+    result: pending
+    reason: null
 builder_handoff: null
 blockers: []
 verification: null

@@ -3,7 +3,7 @@ name: platform-foundation
 language: zh-CN
 phase: archive
 status: active
-state_version: 18
+state_version: 19
 brief: brief.md
 spec_changes:
   - capability: platform-foundation
@@ -13,7 +13,7 @@ workspace:
   isolation: worktree
   change_branch: comet/platform-foundation
   target_branch: comet/teaching-interview-agent
-  finish: null
+  finish: merge
 loop:
   stage: archive-ready
   goal_cycle: 4

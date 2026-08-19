@@ -2,4 +2,8 @@
 !/.comet/
 /.comet/*
 !/.comet/config.yaml
+
+# Local configuration and build outputs
+.env
+server/edu-agentd
 # <<< Comet managed project state <<<

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,9 +12,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -34,26 +37,38 @@ type Readiness interface {
 	Ready(context.Context) health.Report
 }
 
+type KnowledgeService interface {
+	Head(context.Context) (*knowledge.KnowledgeRevision, error)
+	Import(context.Context, knowledge.ImportCommand) (knowledge.ImportResult, error)
+	Tree(context.Context, string) (knowledge.TreeResult, error)
+	Export(context.Context, string) (knowledge.ExportResult, error)
+	Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
+}
+
 type Options struct {
-	Identity       IdentityService
-	Model          ModelProber
-	Readiness      Readiness
-	Logger         *slog.Logger
-	PairLimiter    *FixedWindowLimiter
-	AuthLimiter    *FixedWindowLimiter
-	DeviceLimiter  *FixedWindowLimiter
-	MaxRequestBody int64
+	Identity                IdentityService
+	Model                   ModelProber
+	Knowledge               KnowledgeService
+	Readiness               Readiness
+	Logger                  *slog.Logger
+	PairLimiter             *FixedWindowLimiter
+	AuthLimiter             *FixedWindowLimiter
+	DeviceLimiter           *FixedWindowLimiter
+	MaxRequestBody          int64
+	MaxKnowledgeRequestBody int64
 }
 
 type API struct {
-	identity       IdentityService
-	model          ModelProber
-	readiness      Readiness
-	logger         *slog.Logger
-	pairLimiter    *FixedWindowLimiter
-	authLimiter    *FixedWindowLimiter
-	deviceLimiter  *FixedWindowLimiter
-	maxRequestBody int64
+	identity                IdentityService
+	model                   ModelProber
+	knowledge               KnowledgeService
+	readiness               Readiness
+	logger                  *slog.Logger
+	pairLimiter             *FixedWindowLimiter
+	authLimiter             *FixedWindowLimiter
+	deviceLimiter           *FixedWindowLimiter
+	maxRequestBody          int64
+	maxKnowledgeRequestBody int64
 }
 
 type credentialContextKey struct{}
@@ -65,10 +80,15 @@ func New(options Options) (http.Handler, error) {
 	if options.MaxRequestBody <= 0 {
 		options.MaxRequestBody = 64 << 10
 	}
+	if options.MaxKnowledgeRequestBody <= 0 {
+		options.MaxKnowledgeRequestBody = knowledge.MaxImportBodyBytes
+	}
 	api := &API{
-		identity: options.Identity, model: options.Model, readiness: options.Readiness, logger: options.Logger,
+		identity: options.Identity, model: options.Model, knowledge: options.Knowledge,
+		readiness: options.Readiness, logger: options.Logger,
 		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter,
 		deviceLimiter: options.DeviceLimiter, maxRequestBody: options.MaxRequestBody,
+		maxKnowledgeRequestBody: options.MaxKnowledgeRequestBody,
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -82,6 +102,13 @@ func New(options Options) (http.Handler, error) {
 		protected.With(api.requireScope("devices:read")).Get("/v1/devices", api.listDevices)
 		protected.With(api.requireScope("devices:manage")).Delete("/v1/devices/{deviceID}", api.revokeDevice)
 		protected.With(api.requireScope("model:probe")).Get("/v1/model/capabilities", api.modelCapabilities)
+		if api.knowledge != nil {
+			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/head", api.knowledgeHead)
+			protected.With(api.requireScope("knowledge:write")).Post("/v1/knowledge/imports", api.knowledgeImport)
+			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/{revisionID}/tree", api.knowledgeTree)
+			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/{revisionID}/export", api.knowledgeExport)
+			protected.With(api.requireScope("knowledge:read")).Post("/v1/knowledge/retrievals", api.knowledgeRetrieval)
+		}
 	})
 	return router, nil
 }
@@ -223,6 +250,132 @@ func (a *API) modelCapabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, a.model.Probe(r.Context()))
 }
 
+func (a *API) knowledgeHead(w http.ResponseWriter, r *http.Request) {
+	revision, err := a.knowledge.Head(r.Context())
+	if err != nil {
+		a.writeKnowledgeFailure(w, r, "read_head", err)
+		return
+	}
+	if revision == nil {
+		writeError(w, r, http.StatusNotFound, knowledge.CodeNotFound, "Knowledge revision was not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revision": revision})
+}
+
+func (a *API) knowledgeImport(w http.ResponseWriter, r *http.Request) {
+	var command knowledge.ImportCommand
+	if err := decodeJSON(w, r, a.maxKnowledgeRequestBody, &command); err != nil {
+		var maxBytes *http.MaxBytesError
+		if errors.As(err, &maxBytes) {
+			writeError(w, r, http.StatusRequestEntityTooLarge, knowledge.CodePayloadTooLarge, "Request body exceeds the knowledge import limit")
+		} else {
+			writeError(w, r, http.StatusBadRequest, knowledge.CodeInvalidRequest, "Request body is invalid")
+		}
+		return
+	}
+	if !command.ExpectedParentProvided {
+		writeError(w, r, http.StatusBadRequest, knowledge.CodeInvalidRequest, "expected_parent_revision_id is required")
+		return
+	}
+	credential, ok := credentialFromContext(r.Context())
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "authentication_failed", "Device credentials are invalid")
+		return
+	}
+	command.ActorDeviceID = credential.Device.ID
+	result, err := a.knowledge.Import(r.Context(), command)
+	if err != nil {
+		a.writeKnowledgeFailure(w, r, "import", err)
+		return
+	}
+	status := http.StatusCreated
+	if result.Unchanged || result.Replayed {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, result)
+}
+
+func (a *API) knowledgeTree(w http.ResponseWriter, r *http.Request) {
+	result, err := a.knowledge.Tree(r.Context(), chi.URLParam(r, "revisionID"))
+	if err != nil {
+		a.writeKnowledgeFailure(w, r, "read_tree", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) knowledgeExport(w http.ResponseWriter, r *http.Request) {
+	result, err := a.knowledge.Export(r.Context(), chi.URLParam(r, "revisionID"))
+	if err != nil {
+		a.writeKnowledgeFailure(w, r, "export", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) knowledgeRetrieval(w http.ResponseWriter, r *http.Request) {
+	var command knowledge.RetrievalCommand
+	if err := decodeJSON(w, r, a.maxKnowledgeRequestBody, &command); err != nil {
+		var maxBytes *http.MaxBytesError
+		if errors.As(err, &maxBytes) {
+			writeError(w, r, http.StatusRequestEntityTooLarge, knowledge.CodePayloadTooLarge, "Request body exceeds the knowledge request limit")
+		} else {
+			writeError(w, r, http.StatusBadRequest, knowledge.CodeInvalidRequest, "Request body is invalid")
+		}
+		return
+	}
+	result, err := a.knowledge.Retrieve(r.Context(), command)
+	if err != nil {
+		a.writeKnowledgeFailure(w, r, "retrieve", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *API) writeKnowledgeFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	code := knowledge.ErrorCode(err)
+	status := http.StatusInternalServerError
+	message := "Request could not be completed"
+	switch code {
+	case knowledge.CodePayloadTooLarge:
+		status, message = http.StatusRequestEntityTooLarge, "Knowledge payload exceeds the configured limit"
+	case knowledge.CodeInvalidRequest, knowledge.CodeInvalidPath:
+		status, message = http.StatusBadRequest, "Knowledge request is invalid"
+	case knowledge.CodeInvalidMarkdown, knowledge.CodeInvalidIdentityMarker:
+		status, message = http.StatusUnprocessableEntity, "Markdown identity or syntax is invalid"
+	case knowledge.CodeDuplicateDocumentIdentity, knowledge.CodePathOccupied,
+		knowledge.CodeIdentityReviewRequired, knowledge.CodeStaleIdentityReview,
+		knowledge.CodeRevisionConflict, knowledge.CodeIdempotencyConflict:
+		status, message = http.StatusConflict, "Knowledge import could not be committed"
+	case knowledge.CodeNotFound:
+		status, message = http.StatusNotFound, "Knowledge revision was not found"
+	case "":
+		a.logger.ErrorContext(r.Context(), "knowledge request failed",
+			"request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")
+	}
+	if code == "" {
+		code = "internal_error"
+	}
+	response := map[string]any{"error": map[string]string{
+		"code": code, "message": message, "request_id": middleware.GetReqID(r.Context()),
+	}}
+	var domainErr *knowledge.Error
+	if errors.As(err, &domainErr) {
+		if domainErr.CurrentRevisionKnown {
+			if domainErr.CurrentRevisionID == nil {
+				response["current_revision_id"] = nil
+			} else {
+				response["current_revision_id"] = *domainErr.CurrentRevisionID
+			}
+		}
+		if domainErr.Review != nil {
+			response["identity_review"] = domainErr.Review
+		}
+	}
+	writeJSON(w, status, response)
+}
+
 func (a *API) audit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
@@ -269,7 +422,14 @@ func clientIP(r *http.Request) string {
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, target any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	decoder := json.NewDecoder(r.Body)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	if !utf8.Valid(data) {
+		return errors.New("request body must be valid UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err

@@ -12,6 +12,9 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	identitypostgres "github.com/edu-agent/edu-agent/server/internal/identity/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge/llmselector"
+	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
@@ -44,6 +47,16 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var selector knowledge.Selector
+	if modelClient != nil {
+		selector = llmselector.New(modelClient)
+	}
+	knowledgeService, err := knowledge.NewService(
+		knowledgepostgres.New(pool), knowledge.NewCanonicalizer(), knowledge.ServiceOptions{Selector: selector},
+	)
+	if err != nil {
+		return fmt.Errorf("initialize knowledge service: %w", err)
+	}
 	var modelProber httpapi.ModelProber
 	if modelClient != nil {
 		modelProber = modelClient
@@ -54,7 +67,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Timeout: minDuration(cfg.Model.Timeout, 5*time.Second),
 	})
 	handler, err := httpapi.New(httpapi.Options{
-		Identity: identityService, Model: modelProber, Readiness: readiness, Logger: logger,
+		Identity: identityService, Model: modelProber, Knowledge: knowledgeService,
+		Readiness: readiness, Logger: logger,
 		PairLimiter:   httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
 		AuthLimiter:   httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
 		DeviceLimiter: httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute),

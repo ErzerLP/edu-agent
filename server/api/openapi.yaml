@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: Edu Agent Platform Foundation API
-  version: 0.1.0
-  description: HTTP contract for health, local pairing exchange, device administration, and model capability inspection.
+  title: Edu Agent Knowledge API
+  version: 0.2.0
+  description: HTTP contract for platform identity, model capability inspection, and immutable canonical knowledge revisions.
 servers:
   - url: http://127.0.0.1:8080
 paths:
@@ -136,7 +136,185 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/knowledge/revisions/head:
+    get:
+      operationId: getKnowledgeHead
+      summary: Read the current frozen knowledge revision
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      responses:
+        "200":
+          description: Current immutable knowledge revision.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revision]
+                properties:
+                  revision:
+                    $ref: "#/components/schemas/KnowledgeRevision"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/knowledge/imports:
+    post:
+      operationId: importKnowledgeDocuments
+      summary: Atomically upsert Markdown documents into a new complete snapshot
+      x-required-scope: knowledge:write
+      security:
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeImportRequest"
+      responses:
+        "200":
+          description: Idempotent replay or unchanged manifest.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeImportResult"
+        "201":
+          description: A new immutable revision was committed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeImportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Revision, idempotency, path, or identity review conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeConflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/knowledge/revisions/{revisionID}/tree:
+    get:
+      operationId: getKnowledgeRevisionTree
+      summary: Read the deterministic document and node tree for a revision
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeRevisionID"
+      responses:
+        "200":
+          description: Complete revision tree.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [revision]
+                properties:
+                  revision:
+                    $ref: "#/components/schemas/KnowledgeRevision"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/knowledge/revisions/{revisionID}/export:
+    get:
+      operationId: exportKnowledgeRevision
+      summary: Export an immutable revision as sorted Obsidian-readable Markdown documents
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      parameters:
+        - $ref: "#/components/parameters/KnowledgeRevisionID"
+      responses:
+        "200":
+          description: Sorted Markdown export with source revision metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeExport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/knowledge/retrievals:
+    post:
+      operationId: retrieveKnowledge
+      summary: Run deterministic hierarchical retrieval against one frozen revision
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeRetrievalRequest"
+      responses:
+        "200":
+          description: Candidate trace and canonical hits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeRetrievalResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
+  parameters:
+    KnowledgeRevisionID:
+      name: revisionID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   securitySchemes:
     deviceBearer:
       type: http
@@ -169,6 +347,18 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
     NotFound:
       description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    PayloadTooLarge:
+      description: Request body or a Markdown document exceeds a frozen limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UnprocessableEntity:
+      description: Markdown envelope, AST, or identity marker validation failed.
       content:
         application/json:
           schema:
@@ -311,6 +501,447 @@ components:
           type: array
           items:
             type: string
+    KnowledgeImportRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_parent_revision_id, source, documents]
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        expected_parent_revision_id:
+          type: [string, "null"]
+          format: uuid
+        source:
+          type: string
+          minLength: 1
+          maxLength: 500
+        documents:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, markdown]
+            properties:
+              path:
+                type: string
+                minLength: 1
+                maxLength: 512
+                description: NFC relative path, limited to 512 Unicode code points and 1024 UTF-8 bytes.
+              markdown:
+                type: string
+                maxLength: 4194304
+        identity_review_basis_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        document_resolutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/DocumentIdentityResolution"
+        node_resolutions:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeIdentityResolution"
+    DocumentIdentityResolution:
+      type: object
+      additionalProperties: false
+      required: [locator, action, reason]
+      properties:
+        locator:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        action:
+          type: string
+          enum: [preserve, new]
+        document_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+    NodeIdentityResolution:
+      type: object
+      additionalProperties: false
+      required: [locator, action, reason]
+      properties:
+        locator:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        action:
+          type: string
+          enum: [preserve, new, rewrite, split, merge]
+        source_node_revision_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        reason:
+          type: string
+          minLength: 1
+    KnowledgeImportResult:
+      type: object
+      additionalProperties: false
+      required: [revision, unchanged]
+      properties:
+        revision:
+          $ref: "#/components/schemas/KnowledgeRevision"
+        unchanged:
+          type: boolean
+        replayed:
+          type: boolean
+    KnowledgeRevision:
+      type: object
+      additionalProperties: false
+      required:
+        - revision_id
+        - revision_no
+        - parent_revision_id
+        - manifest_hash
+        - source
+        - created_by_device_id
+        - created_at
+        - canonicalizer_version
+        - parser_version
+        - indexer_version
+        - identity_policy_version
+      properties:
+        revision_id:
+          type: string
+          format: uuid
+        revision_no:
+          type: integer
+          minimum: 1
+        parent_revision_id:
+          type: [string, "null"]
+          format: uuid
+        manifest_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        source:
+          type: string
+        created_by_device_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        canonicalizer_version:
+          const: edu-markdown-v1
+        parser_version:
+          const: goldmark-v1.8.5-commonmark-0.31.2-gfm
+        indexer_version:
+          const: knowledge-indexer-v1
+        identity_policy_version:
+          const: identity-policy-v1
+        documents:
+          type: array
+          items:
+            $ref: "#/components/schemas/SnapshotDocument"
+        lineages:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeLineage"
+    SnapshotDocument:
+      type: object
+      additionalProperties: false
+      required: [path, document]
+      properties:
+        path:
+          type: string
+        document:
+          $ref: "#/components/schemas/DocumentRevision"
+    DocumentRevision:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          document_revision_id,
+          document_id,
+          root_node_id,
+          canonical_hash,
+          semantic_hash,
+          nodes,
+        ]
+      properties:
+        document_revision_id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        root_node_id:
+          type: string
+          format: uuid
+        canonical_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        semantic_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeRevision"
+    NodeRevision:
+      type: object
+      additionalProperties: false
+      required:
+        - node_revision_id
+        - node_id
+        - document_revision_id
+        - parent_node_revision_id
+        - sibling_index
+        - heading_level
+        - title
+        - ancestor_titles
+        - heading_range
+        - local_body_range
+        - section_range
+        - semantic_local_body_hash
+      properties:
+        node_revision_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        document_revision_id:
+          type: string
+          format: uuid
+        parent_node_revision_id:
+          type: [string, "null"]
+          format: uuid
+        sibling_index:
+          type: integer
+          minimum: 0
+        heading_level:
+          type: integer
+          minimum: 0
+          maximum: 6
+        title:
+          type: string
+        ancestor_titles:
+          type: array
+          items:
+            type: string
+        heading_range:
+          $ref: "#/components/schemas/SourceRange"
+        local_body_range:
+          $ref: "#/components/schemas/SourceRange"
+        section_range:
+          $ref: "#/components/schemas/SourceRange"
+        semantic_local_body_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        children:
+          type: array
+          items:
+            type: string
+            format: uuid
+    NodeLineage:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          lineage_id,
+          knowledge_revision_id,
+          action,
+          actor_device_id,
+          reason,
+          policy_version,
+          created_at,
+          members,
+        ]
+      properties:
+        lineage_id:
+          type: string
+          format: uuid
+        knowledge_revision_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [rewrite, split, merge]
+        actor_device_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        policy_version:
+          const: identity-policy-v1
+        created_at:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [role, node_revision_id]
+            properties:
+              role:
+                type: string
+                enum: [source, target]
+              node_revision_id:
+                type: string
+                format: uuid
+    SourceRange:
+      type: object
+      additionalProperties: false
+      required: [start, end, start_line, end_line]
+      properties:
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+        start_line:
+          type: integer
+          minimum: 1
+        end_line:
+          type: integer
+          minimum: 1
+    KnowledgeConflict:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+        current_revision_id:
+          type: [string, "null"]
+          format: uuid
+        identity_review:
+          $ref: "#/components/schemas/IdentityReview"
+    IdentityReview:
+      type: object
+      additionalProperties: false
+      required: [identity_review_basis_hash, document_reviews, node_reviews]
+      properties:
+        identity_review_basis_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        document_reviews:
+          type: array
+          items:
+            type: object
+        node_reviews:
+          type: array
+          items:
+            type: object
+    KnowledgeExport:
+      type: object
+      additionalProperties: false
+      required: [revision_id, documents]
+      properties:
+        revision_id:
+          type: string
+          format: uuid
+        documents:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, markdown]
+            properties:
+              path:
+                type: string
+              markdown:
+                type: string
+    KnowledgeRetrievalRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query:
+          type: string
+          minLength: 1
+        knowledge_revision_id:
+          type: string
+          format: uuid
+        query_context_schema_version:
+          const: query-context-v1
+        context:
+          type: object
+        limits:
+          type: object
+          additionalProperties: false
+          properties:
+            max_depth:
+              type: integer
+              minimum: 1
+              maximum: 8
+            candidates_per_layer:
+              type: integer
+              minimum: 1
+              maximum: 20
+            max_hits:
+              type: integer
+              minimum: 1
+              maximum: 10
+            total_candidates:
+              type: integer
+              minimum: 1
+              maximum: 200
+    KnowledgeRetrievalResult:
+      type: object
+      additionalProperties: false
+      required:
+        - knowledge_revision_id
+        - retriever_version
+        - selector_version
+        - query_context_schema_version
+        - summary_snapshot
+        - document_shortlist
+        - trace
+        - hits
+        - degraded
+        - truncated
+      properties:
+        knowledge_revision_id:
+          type: string
+          format: uuid
+        retriever_version:
+          const: retriever-v1
+        selector_version:
+          const: selector-v1
+        query_context_schema_version:
+          const: query-context-v1
+        summary_snapshot:
+          type: array
+          items:
+            type: string
+        document_shortlist:
+          type: array
+          maxItems: 8
+          items:
+            type: string
+        trace:
+          type: array
+          items:
+            type: object
+        hits:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+        degraded:
+          type: boolean
+        truncated:
+          type: boolean
     ErrorEnvelope:
       type: object
       additionalProperties: false

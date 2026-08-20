@@ -144,15 +144,17 @@ type NodeResolution struct {
 }
 
 type ImportCommand struct {
-	OperationID              string               `json:"operation_id"`
-	ExpectedParentRevisionID *string              `json:"expected_parent_revision_id"`
-	ExpectedParentProvided   bool                 `json:"-"`
-	Source                   string               `json:"source"`
-	Documents                []ImportDocument     `json:"documents"`
-	IdentityReviewBasisHash  string               `json:"identity_review_basis_hash,omitempty"`
-	DocumentResolutions      []DocumentResolution `json:"document_resolutions,omitempty"`
-	NodeResolutions          []NodeResolution     `json:"node_resolutions,omitempty"`
-	ActorDeviceID            string               `json:"-"`
+	OperationID               string               `json:"operation_id"`
+	ExpectedParentRevisionID  *string              `json:"expected_parent_revision_id"`
+	ExpectedParentProvided    bool                 `json:"-"`
+	Source                    string               `json:"source"`
+	Documents                 []ImportDocument     `json:"documents"`
+	IdentityReviewBasisHash   string               `json:"identity_review_basis_hash,omitempty"`
+	IdentityReviewOperationID string               `json:"identity_review_operation_id,omitempty"`
+	IdentityReviewReceipt     string               `json:"identity_review_receipt,omitempty"`
+	DocumentResolutions       []DocumentResolution `json:"document_resolutions,omitempty"`
+	NodeResolutions           []NodeResolution     `json:"node_resolutions,omitempty"`
+	ActorDeviceID             string               `json:"-"`
 }
 
 func (c *ImportCommand) UnmarshalJSON(data []byte) error {
@@ -202,9 +204,11 @@ type NodeIdentityReview struct {
 }
 
 type IdentityReview struct {
-	BasisHash string                   `json:"identity_review_basis_hash"`
-	Documents []DocumentIdentityReview `json:"document_reviews"`
-	Nodes     []NodeIdentityReview     `json:"node_reviews"`
+	BasisHash   string                   `json:"identity_review_basis_hash"`
+	OperationID string                   `json:"identity_review_operation_id"`
+	Receipt     string                   `json:"identity_review_receipt"`
+	Documents   []DocumentIdentityReview `json:"document_reviews"`
+	Nodes       []NodeIdentityReview     `json:"node_reviews"`
 }
 
 type Lineage struct {

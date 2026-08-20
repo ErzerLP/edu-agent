@@ -282,6 +282,8 @@ func TestPostgreSQLKnowledgeCoreReviewerRegressions(t *testing.T) {
 	}
 	lineageCommand.OperationID = "10000000-0000-4000-8000-000000000223"
 	lineageCommand.IdentityReviewBasisHash = reviewErr.Review.BasisHash
+	lineageCommand.IdentityReviewOperationID = reviewErr.Review.OperationID
+	lineageCommand.IdentityReviewReceipt = reviewErr.Review.Receipt
 	lineageCommand.NodeResolutions = []knowledge.NodeResolution{{
 		Locator: reviewErr.Review.Nodes[0].Locator, Action: "rewrite",
 		SourceNodeRevisionIDs: []string{reviewErr.Review.Nodes[0].Candidates[0].RevisionID}, Reason: "semantic rewrite",

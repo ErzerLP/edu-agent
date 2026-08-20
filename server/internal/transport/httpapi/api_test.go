@@ -297,13 +297,18 @@ func TestKnowledgeRoutesScopesStrictJSONAndRedactedLogs(t *testing.T) {
 		t.Fatalf("head: %d %s", response.Code, response.Body.String())
 	}
 
-	const markdownSecret = "private markdown body"
-	body := `{"operation_id":"20000000-0000-4000-8000-000000000001","expected_parent_revision_id":null,"source":"test","documents":[{"path":"note.md","markdown":"` + markdownSecret + `"}]}`
+	const (
+		markdownSecret  = "private markdown body"
+		reviewBasis     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		reviewReceipt   = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		reviewOperation = "20000000-0000-4000-8000-000000000099"
+	)
+	body := `{"operation_id":"20000000-0000-4000-8000-000000000001","expected_parent_revision_id":null,"source":"test","documents":[{"path":"note.md","markdown":"` + markdownSecret + `"}],"identity_review_basis_hash":"` + reviewBasis + `","identity_review_operation_id":"` + reviewOperation + `","identity_review_receipt":"` + reviewReceipt + `","node_resolutions":[{"locator":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","action":"new","reason":"new section"}]}`
 	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(body))
 	request.Header.Set("Authorization", "Bearer valid")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusCreated || knowledgeService.importCommand.ActorDeviceID != id.auth.Device.ID || !knowledgeService.importCommand.ExpectedParentProvided {
+	if response.Code != http.StatusCreated || knowledgeService.importCommand.ActorDeviceID != id.auth.Device.ID || !knowledgeService.importCommand.ExpectedParentProvided || knowledgeService.importCommand.IdentityReviewBasisHash != reviewBasis || knowledgeService.importCommand.IdentityReviewOperationID != reviewOperation || knowledgeService.importCommand.IdentityReviewReceipt != reviewReceipt {
 		t.Fatalf("import: %d %s command=%+v", response.Code, response.Body.String(), knowledgeService.importCommand)
 	}
 	if strings.Contains(logs.String(), markdownSecret) {
@@ -348,7 +353,10 @@ func TestKnowledgeRoutesScopesStrictJSONAndRedactedLogs(t *testing.T) {
 
 func TestKnowledgeReviewAndBodyLimitHTTPMapping(t *testing.T) {
 	var logs bytes.Buffer
-	review := &knowledge.IdentityReview{BasisHash: strings.Repeat("a", 64), Documents: []knowledge.DocumentIdentityReview{{Path: "note.md", Locator: strings.Repeat("b", 64)}}}
+	review := &knowledge.IdentityReview{
+		BasisHash: strings.Repeat("a", 64), OperationID: "20000000-0000-4000-8000-000000000003", Receipt: strings.Repeat("c", 64),
+		Documents: []knowledge.DocumentIdentityReview{{Path: "note.md", Locator: strings.Repeat("b", 64)}}, Nodes: []knowledge.NodeIdentityReview{},
+	}
 	knowledgeService := &fakeKnowledge{importErr: &knowledge.Error{Code: knowledge.CodeIdentityReviewRequired, Review: review}}
 	id := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"}, Scopes: []string{"knowledge:write"}}}
 	handler, err := New(Options{
@@ -366,7 +374,7 @@ func TestKnowledgeReviewAndBodyLimitHTTPMapping(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer valid")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "identity_review") || strings.Contains(response.Body.String(), "changed") {
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "identity_review") || !strings.Contains(response.Body.String(), review.OperationID) || !strings.Contains(response.Body.String(), review.Receipt) || strings.Contains(response.Body.String(), "changed") {
 		t.Fatalf("identity review mapping: %d %s", response.Code, response.Body.String())
 	}
 

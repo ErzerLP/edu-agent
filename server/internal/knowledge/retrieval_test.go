@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -55,6 +56,38 @@ func TestSelectorValidationFallsBackAtomically(t *testing.T) {
 				t.Fatalf("fallback mismatch: decisions=%+v degraded=%v reason=%s truncated=%v", decisions, degraded, reason, truncated)
 			}
 		})
+	}
+}
+
+func TestRetrievalScoreFieldsAreRuneSafeAt2048Bytes(t *testing.T) {
+	query := retrievalTokens("needle")
+	prefix := strings.Repeat("界", 682)
+	if len(prefix) != 2046 {
+		t.Fatalf("fixture prefix bytes = %d", len(prefix))
+	}
+	if got := fieldScore(query, prefix+"needle"); got != 0 {
+		t.Fatalf("field score included token after 2048-byte boundary: %d", got)
+	}
+	inside := strings.Repeat("界", 680) + " needle"
+	if got := fieldScore(query, inside); got != 1000000 {
+		t.Fatalf("field score lost token inside 2048-byte boundary: %d", got)
+	}
+	longNeedle := prefix + " needle"
+	canonical := longNeedle
+	childID := "10000000-0000-4000-8000-000000000002"
+	nodeID := "10000000-0000-4000-8000-000000000001"
+	document := DocumentRevision{ID: "20000000-0000-4000-8000-000000000001", CanonicalMarkdown: canonical, Nodes: []NodeRevision{
+		{ID: "30000000-0000-4000-8000-000000000001", Children: []string{nodeID}},
+		{ID: nodeID, Title: longNeedle, AncestorTitles: []string{longNeedle}, Children: []string{childID}, LocalBodyRange: SourceRange{Start: 0, End: len(canonical)}},
+		{ID: childID, Title: longNeedle},
+	}}
+	candidates := scoreNodes(document, []NodeRevision{document.Nodes[1]}, query, nil)
+	if len(candidates) != 1 || candidates[0].Score != 0 || candidates[0].LocalBodyScore != 0 {
+		t.Fatalf("node score used unbounded fields: %+v", candidates)
+	}
+	documents := scoreDocuments([]SnapshotDocument{{Path: longNeedle, Revision: document}}, query, NewCanonicalizer())
+	if len(documents) != 1 || documents[0].score != 0 {
+		t.Fatalf("document score used unbounded fields: %+v", documents)
 	}
 }
 

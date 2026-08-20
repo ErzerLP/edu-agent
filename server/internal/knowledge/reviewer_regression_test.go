@@ -167,6 +167,8 @@ func TestMarkerlessEmptyBodyDoesNotInheritByExactHash(t *testing.T) {
 	}
 	command.OperationID = "10000000-0000-4000-8000-000000000123"
 	command.IdentityReviewBasisHash = reviewErr.Review.BasisHash
+	command.IdentityReviewOperationID = reviewErr.Review.OperationID
+	command.IdentityReviewReceipt = reviewErr.Review.Receipt
 	command.NodeResolutions = []NodeResolution{{Locator: reviewErr.Review.Nodes[0].Locator, Action: "new", Reason: "title semantics changed"}}
 	second, err := service.Import(t.Context(), command)
 	if err != nil {
@@ -210,6 +212,8 @@ func TestSplitLineageAggregatesTargetsAndReplays(t *testing.T) {
 	}
 	command.OperationID = "10000000-0000-4000-8000-000000000133"
 	command.IdentityReviewBasisHash = reviewErr.Review.BasisHash
+	command.IdentityReviewOperationID = reviewErr.Review.OperationID
+	command.IdentityReviewReceipt = reviewErr.Review.Receipt
 	for _, review := range reviewErr.Review.Nodes {
 		if len(review.Candidates) != 1 {
 			t.Fatalf("split review candidates = %+v", review.Candidates)

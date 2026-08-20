@@ -90,10 +90,14 @@ func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (Retri
 			allNodes[node.ID] = node
 		}
 	}
-	queue := make([]queueItem, 0, len(documents))
-	for i := range documents {
-		if len(documents[i].revision.Nodes) != 0 {
-			queue = append(queue, queueItem{document: &documents[i], parent: documents[i].revision.Nodes[0], depth: 0, originTraceIndex: -1})
+	// The shortlist is the frozen traversal input. Keep every document in it so
+	// roots from later documents cannot be skipped when an earlier document has
+	// a positive score.
+	traversalDocuments := documents
+	queue := make([]queueItem, 0, len(traversalDocuments))
+	for i := range traversalDocuments {
+		if len(traversalDocuments[i].revision.Nodes) != 0 {
+			queue = append(queue, queueItem{document: &traversalDocuments[i], parent: traversalDocuments[i].revision.Nodes[0], depth: 0, originTraceIndex: -1})
 		}
 	}
 	totalCandidates := 0
@@ -165,9 +169,11 @@ func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (Retri
 			node := allNodes[decision.NodeRevisionID]
 			switch decision.Action {
 			case "select", "select_expand":
-				if _, exists := hitSeen[node.ID]; !exists {
-					hitSeen[node.ID] = struct{}{}
-					result.Hits = append(result.Hits, makeHit(*item.document, node, traceIndex, item.depth))
+				if item.document.score > 0 {
+					if _, exists := hitSeen[node.ID]; !exists {
+						hitSeen[node.ID] = struct{}{}
+						result.Hits = append(result.Hits, makeHit(*item.document, node, traceIndex, item.depth))
+					}
 				}
 			}
 			if decision.Action == "expand" || decision.Action == "select_expand" {
@@ -207,14 +213,7 @@ func markTraceTruncated(result *RetrievalResult, preferredIndex int) {
 }
 
 func enqueueDocumentBFS(queue []queueItem, item queueItem) []queueItem {
-	position := 0
-	for position < len(queue) && queue[position].document == item.document {
-		position++
-	}
-	queue = append(queue, queueItem{})
-	copy(queue[position+1:], queue[position:])
-	queue[position] = item
-	return queue
+	return append(queue, item)
 }
 
 func (s *Service) selectLayer(ctx context.Context, request SelectorRequest, allNodes map[string]NodeRevision) ([]Decision, bool, string, bool) {
@@ -384,7 +383,7 @@ func scoreDocuments(input []SnapshotDocument, queryTokens []string, canonicalize
 			}
 		}
 		excerpt := canonicalUserBody(document.Revision.CanonicalMarkdown, canonicalizer)
-		score := 4*fieldScore(queryTokens, document.Path) + 3*fieldScore(queryTokens, titles.String()) + fieldScore(queryTokens, truncateUTF8(excerpt, 2048))
+		score := 4*scoreField(queryTokens, document.Path) + 3*scoreField(queryTokens, titles.String()) + scoreField(queryTokens, excerpt)
 		result = append(result, retrievalDocument{path: document.Path, revision: document.Revision, score: score})
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -424,8 +423,8 @@ func scoreNodes(document DocumentRevision, nodes []NodeRevision, queryTokens []s
 		if node.LocalBodyRange.Start >= 0 && node.LocalBodyRange.End <= len(document.CanonicalMarkdown) && node.LocalBodyRange.Start <= node.LocalBodyRange.End {
 			local = truncateUTF8(document.CanonicalMarkdown[node.LocalBodyRange.Start:node.LocalBodyRange.End], 2048)
 		}
-		localScore := fieldScore(queryTokens, local)
-		score := 4*fieldScore(queryTokens, node.Title) + 2*fieldScore(queryTokens, strings.Join(node.AncestorTitles, " ")) + fieldScore(queryTokens, childTitles.String()) + localScore
+		localScore := scoreField(queryTokens, local)
+		score := 4*scoreField(queryTokens, node.Title) + 2*scoreField(queryTokens, strings.Join(node.AncestorTitles, " ")) + scoreField(queryTokens, childTitles.String()) + localScore
 		titleHash := sha256.Sum256([]byte(node.Title))
 		candidate := Candidate{
 			NodeRevisionID: node.ID, Score: score, Title: node.Title, TitleSHA256: hex.EncodeToString(titleHash[:]),
@@ -462,7 +461,12 @@ func childrenOf(document DocumentRevision, parent NodeRevision) []NodeRevision {
 	return result
 }
 
+func scoreField(queryTokens []string, field string) int {
+	return fieldScore(queryTokens, truncateUTF8(field, 2048))
+}
+
 func fieldScore(queryTokens []string, field string) int {
+	field = truncateUTF8(field, 2048)
 	fieldSet := map[string]struct{}{}
 	for _, token := range retrievalTokens(field) {
 		fieldSet[token] = struct{}{}

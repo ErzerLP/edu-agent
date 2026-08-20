@@ -536,6 +536,12 @@ components:
         identity_review_basis_hash:
           type: string
           pattern: "^[0-9a-f]{64}$"
+        identity_review_operation_id:
+          type: string
+          format: uuid
+        identity_review_receipt:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
         document_resolutions:
           type: array
           items:
@@ -826,22 +832,84 @@ components:
           format: uuid
         identity_review:
           $ref: "#/components/schemas/IdentityReview"
+    IdentityCandidate:
+      type: object
+      additionalProperties: false
+      required: [stable_id, revision_id, reason_code]
+      properties:
+        stable_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        reason_code:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+        evidence:
+          type: object
+          additionalProperties: true
+    DocumentIdentityReview:
+      type: object
+      additionalProperties: false
+      required: [path, locator, reason_code, candidates]
+      properties:
+        path:
+          type: string
+        locator:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        reason_code:
+          type: string
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityCandidate"
+    NodeIdentityReview:
+      type: object
+      additionalProperties: false
+      required: [path, locator, preorder, reason_code, candidates]
+      properties:
+        path:
+          type: string
+        locator:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        preorder:
+          type: integer
+          minimum: 0
+        reason_code:
+          type: string
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityCandidate"
     IdentityReview:
       type: object
       additionalProperties: false
-      required: [identity_review_basis_hash, document_reviews, node_reviews]
+      required:
+        [identity_review_basis_hash, identity_review_operation_id, identity_review_receipt, document_reviews, node_reviews]
       properties:
         identity_review_basis_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        identity_review_operation_id:
+          type: string
+          format: uuid
+        identity_review_receipt:
           type: string
           pattern: "^[0-9a-f]{64}$"
         document_reviews:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/DocumentIdentityReview"
         node_reviews:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/NodeIdentityReview"
     KnowledgeExport:
       type: object
       additionalProperties: false
@@ -932,16 +1000,126 @@ components:
         trace:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/RetrievalTrace"
         hits:
           type: array
           maxItems: 10
           items:
-            type: object
+            $ref: "#/components/schemas/RetrievalHit"
         degraded:
           type: boolean
         truncated:
           type: boolean
+    Candidate:
+      type: object
+      additionalProperties: false
+      required: [ordinal, node_revision_id, score, title, title_sha256, has_children, local_body_score]
+      properties:
+        ordinal:
+          type: integer
+          minimum: 0
+        node_revision_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 0
+        title:
+          type: string
+        title_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        summary_artifact_id:
+          type: string
+          format: uuid
+        has_children:
+          type: boolean
+        local_body_score:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [node_revision_id, action]
+      properties:
+        node_revision_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [select, expand, select_expand, ""]
+    RetrievalTrace:
+      type: object
+      additionalProperties: false
+      required:
+        [index, depth, parent_node_revision_id, candidates, decisions, candidate_set_hash, degraded, truncated]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        depth:
+          type: integer
+          minimum: 0
+        parent_node_revision_id:
+          type: string
+          format: uuid
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/Candidate"
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Decision"
+        candidate_set_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        reason_code:
+          type: string
+        degraded:
+          type: boolean
+        truncated:
+          type: boolean
+    RetrievalHit:
+      type: object
+      additionalProperties: false
+      required:
+        [document_id, document_revision_id, node_id, node_revision_id, path, heading_range, local_body_range, section_range, canonical_slice, slice_sha256, trace_index, depth, provenance]
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        document_revision_id:
+          type: string
+          format: uuid
+        node_id:
+          type: string
+          format: uuid
+        node_revision_id:
+          type: string
+          format: uuid
+        path:
+          type: string
+        heading_range:
+          $ref: "#/components/schemas/SourceRange"
+        local_body_range:
+          $ref: "#/components/schemas/SourceRange"
+        section_range:
+          $ref: "#/components/schemas/SourceRange"
+        canonical_slice:
+          type: string
+        slice_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        trace_index:
+          type: integer
+          minimum: 0
+        depth:
+          type: integer
+          minimum: 0
+        provenance:
+          const: canonical_markdown
     ErrorEnvelope:
       type: object
       additionalProperties: false

@@ -217,14 +217,7 @@ func ExportMarkdown(canonical, revisionID string) (string, error) {
 func writeIdentityFrontMatter(builder *strings.Builder, documentID, rootNodeID, sourceRevisionID, user string, flow bool) error {
 	builder.WriteString("---\n")
 	if flow {
-		trimmed := strings.TrimSpace(user)
-		inner := ""
-		if trimmed != "" {
-			if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
-				return &Error{Code: CodeInvalidMarkdown, Cause: fmt.Errorf("flow-style user frontmatter is invalid")}
-			}
-			inner = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
-		}
+		inner := user
 		builder.WriteString("{edu-agent-format: 1, edu-agent-document-id: ")
 		builder.WriteString(documentID)
 		builder.WriteString(", edu-agent-root-node-id: ")
@@ -233,8 +226,8 @@ func writeIdentityFrontMatter(builder *strings.Builder, documentID, rootNodeID, 
 			builder.WriteString(", edu-agent-source-revision-id: ")
 			builder.WriteString(sourceRevisionID)
 		}
-		if inner != "" {
-			builder.WriteString(", ")
+		if strings.TrimSpace(inner) != "" {
+			builder.WriteByte(',')
 			builder.WriteString(inner)
 		}
 		builder.WriteString("}\n---\n")
@@ -322,7 +315,14 @@ func parseFrontMatter(markdown []byte) (frontMatter, string, error) {
 			return frontMatter{}, "", &Error{Code: CodeInvalidMarkdown, Cause: fmt.Errorf("frontmatter must be a mapping")}
 		}
 		flow := mapping.Style&yaml.FlowStyle != 0
-		flowUser := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Style: yaml.FlowStyle}
+		var flowPairs []string
+		if flow {
+			var splitErr error
+			flowPairs, splitErr = splitFlowMappingPairs(yamlBytes)
+			if splitErr != nil || len(flowPairs) != len(mapping.Content)/2 {
+				return frontMatter{}, "", &Error{Code: CodeInvalidMarkdown, Cause: fmt.Errorf("preserve flow-style frontmatter pairs: %w", splitErr)}
+			}
+		}
 		seen := map[string]struct{}{}
 		for i := 0; i+1 < len(mapping.Content); i += 2 {
 			key, value := mapping.Content[i], mapping.Content[i+1]
@@ -341,8 +341,6 @@ func parseFrontMatter(markdown []byte) (frontMatter, string, error) {
 				if !flow {
 					removeLines[key.Line] = true
 				}
-			} else if flow {
-				flowUser.Content = append(flowUser.Content, key, value)
 			}
 			switch key.Value {
 			case "edu-agent-format":
@@ -368,14 +366,13 @@ func parseFrontMatter(markdown []byte) (frontMatter, string, error) {
 		}
 		if flow {
 			result.flow = true
-			if len(flowUser.Content) != 0 {
-				document := &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{flowUser}}
-				encoded, err := yaml.Marshal(document)
-				if err != nil {
-					return frontMatter{}, "", &Error{Code: CodeInvalidMarkdown, Cause: fmt.Errorf("preserve flow-style frontmatter: %w", err)}
+			var userPairs []string
+			for i := 0; i+1 < len(mapping.Content); i += 2 {
+				if !isReservedFrontMatterKey(mapping.Content[i].Value) {
+					userPairs = append(userPairs, flowPairs[i/2])
 				}
-				result.user = string(encoded)
 			}
+			result.user = strings.Join(userPairs, ",")
 		}
 	}
 	if !result.flow {
@@ -390,6 +387,87 @@ func parseFrontMatter(markdown []byte) (frontMatter, string, error) {
 		result.user = user.String()
 	}
 	return result, string(markdown[closingEnd:]), nil
+}
+
+func splitFlowMappingPairs(source []byte) ([]string, error) {
+	start := 0
+	for start < len(source) && (source[start] == ' ' || source[start] == '\t' || source[start] == '\n' || source[start] == '\r') {
+		start++
+	}
+	end := len(source)
+	for end > start && (source[end-1] == ' ' || source[end-1] == '\t' || source[end-1] == '\n' || source[end-1] == '\r') {
+		end--
+	}
+	if end-start < 2 || source[start] != '{' || source[end-1] != '}' {
+		return nil, fmt.Errorf("flow mapping is not enclosed")
+	}
+	inner := source[start+1 : end-1]
+	if strings.TrimSpace(string(inner)) == "" {
+		return []string{}, nil
+	}
+	pairs := make([]string, 0, 4)
+	segmentStart := 0
+	depth := 0
+	var quote byte
+	inComment := false
+	for i := 0; i < len(inner); i++ {
+		ch := inner[i]
+		if inComment {
+			if ch == '\n' || ch == '\r' {
+				inComment = false
+			}
+			continue
+		}
+		if quote == '\'' {
+			if ch == '\'' {
+				if i+1 < len(inner) && inner[i+1] == '\'' {
+					i++
+				} else {
+					quote = 0
+				}
+			}
+			continue
+		}
+		if quote == '"' {
+			if ch == '\\' {
+				i++
+			} else if ch == '"' {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '\'', '"':
+			quote = ch
+		case '#':
+			if i == 0 || inner[i-1] == ' ' || inner[i-1] == '\t' {
+				inComment = true
+			}
+		case '[', '{':
+			depth++
+		case ']', '}':
+			if depth == 0 {
+				return nil, fmt.Errorf("unbalanced flow mapping")
+			}
+			depth--
+		case ',':
+			if depth == 0 {
+				if strings.TrimSpace(string(inner[segmentStart:i])) == "" {
+					return nil, fmt.Errorf("empty flow mapping pair")
+				}
+				pairs = append(pairs, string(inner[segmentStart:i]))
+				segmentStart = i + 1
+			}
+		}
+	}
+	if quote != 0 || depth != 0 {
+		return nil, fmt.Errorf("unterminated flow value")
+	}
+	last := string(inner[segmentStart:])
+	if strings.TrimSpace(last) != "" {
+		pairs = append(pairs, last)
+	}
+	return pairs, nil
 }
 
 func isReservedFrontMatterKey(value string) bool {

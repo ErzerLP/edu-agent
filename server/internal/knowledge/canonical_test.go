@@ -88,7 +88,8 @@ func TestCanonicalizerMarkerBoundariesAndExportRoundTrip(t *testing.T) {
 
 func TestCanonicalizerPreservesFlowStyleFrontMatter(t *testing.T) {
 	canonicalizer := NewCanonicalizer()
-	input := "---\n{tags: [go, db], alias: demo}\n---\n# Topic\nbody\n"
+	userPairs := `  tags : ["go, db", { nested: 'yes, still' }], alias : "demo, quoted" , list: [one, two] `
+	input := "---\n{" + userPairs + "}\n---\n# Topic\nbody\n"
 	inspected, err := canonicalizer.Inspect(input)
 	if err != nil {
 		t.Fatal(err)
@@ -100,8 +101,12 @@ func TestCanonicalizerPreservesFlowStyleFrontMatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(document.CanonicalMarkdown, "tags: [go, db]") || !strings.Contains(document.CanonicalMarkdown, "alias: demo") {
-		t.Fatalf("flow-style user keys were not preserved: %q", document.CanonicalMarkdown)
+	front, _, err := parseFrontMatter([]byte(document.CanonicalMarkdown))
+	if err != nil || front.user != userPairs {
+		t.Fatalf("flow-style user pair bytes changed: got=%q want=%q err=%v", front.user, userPairs, err)
+	}
+	if !strings.Contains(document.CanonicalMarkdown, userPairs) {
+		t.Fatalf("flow-style user pair bytes were not materialized verbatim: %q", document.CanonicalMarkdown)
 	}
 	exported, err := ExportMarkdown(document.CanonicalMarkdown, "55555555-5555-4555-8555-555555555555")
 	if err != nil {
@@ -115,8 +120,33 @@ func TestCanonicalizerPreservesFlowStyleFrontMatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rebuilt.CanonicalHash != document.CanonicalHash {
-		t.Fatalf("flow-style export/reimport changed canonical identity\nfirst=%q\nsecond=%q", document.CanonicalMarkdown, rebuilt.CanonicalMarkdown)
+	if rebuilt.CanonicalHash != document.CanonicalHash || !strings.Contains(rebuilt.CanonicalMarkdown, userPairs) {
+		t.Fatalf("flow-style export/reimport changed canonical identity or user bytes\nfirst=%q\nsecond=%q", document.CanonicalMarkdown, rebuilt.CanonicalMarkdown)
+	}
+}
+
+func TestCanonicalizerPreservesFlowStyleComments(t *testing.T) {
+	input := "---\n{note: value # comma, in comment\n}\n---\n# Topic\nbody\n"
+	inspected, err := NewCanonicalizer().Inspect(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inspected.UserFrontMatter, "# comma, in comment") {
+		t.Fatalf("flow comment was not preserved: %q", inspected.UserFrontMatter)
+	}
+	document, err := NewCanonicalizer().Materialize(inspected, testDocumentID, testRootID, []string{testNodeOneID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(document.CanonicalMarkdown, "# comma, in comment") {
+		t.Fatalf("flow comment was not materialized verbatim: %q", document.CanonicalMarkdown)
+	}
+}
+
+func TestCanonicalizerRejectsUnsafeFlowMappingAtomically(t *testing.T) {
+	input := "---\n{tags: [one, {nested: two}\n---\n# Topic\nbody\n"
+	if _, err := NewCanonicalizer().Inspect(input); ErrorCode(err) != CodeInvalidMarkdown {
+		t.Fatalf("unsafe flow mapping was accepted: %v", err)
 	}
 }
 

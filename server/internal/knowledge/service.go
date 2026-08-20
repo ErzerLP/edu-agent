@@ -2,10 +2,15 @@ package knowledge
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -50,12 +55,28 @@ type ServiceOptions struct {
 	Now      func() time.Time
 }
 
+var identityReviewKey = func() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic(fmt.Sprintf("generate identity review key: %v", err))
+	}
+	return key
+}()
+
+type identityReviewRecord struct {
+	basis     string
+	operation string
+	receipt   string
+}
+
 type Service struct {
 	store         CatalogStore
 	canonicalizer *Canonicalizer
 	selector      Selector
 	newUUID       func() string
 	now           func() time.Time
+	reviewMu      sync.RWMutex
+	reviews       map[string]identityReviewRecord
 }
 
 func NewService(store CatalogStore, canonicalizer *Canonicalizer, options ServiceOptions) (*Service, error) {
@@ -68,7 +89,7 @@ func NewService(store CatalogStore, canonicalizer *Canonicalizer, options Servic
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Service{store: store, canonicalizer: canonicalizer, selector: options.Selector, newUUID: options.NewUUID, now: options.Now}, nil
+	return &Service{store: store, canonicalizer: canonicalizer, selector: options.Selector, newUUID: options.NewUUID, now: options.Now, reviews: make(map[string]identityReviewRecord)}, nil
 }
 
 type preparedDocument struct {
@@ -95,6 +116,8 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 	}
 	command.Source = source
 	command.OperationID = strings.ToLower(command.OperationID)
+	command.IdentityReviewOperationID = strings.ToLower(strings.TrimSpace(command.IdentityReviewOperationID))
+	command.IdentityReviewReceipt = strings.ToLower(strings.TrimSpace(command.IdentityReviewReceipt))
 	if command.ExpectedParentRevisionID != nil {
 		value := strings.ToLower(strings.TrimSpace(*command.ExpectedParentRevisionID))
 		if !validUUID(value) {
@@ -136,10 +159,11 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 	}
 	basis := reviewBasisHash(command.ExpectedParentRevisionID, prepared)
 	hasResolutions := len(command.DocumentResolutions) != 0 || len(command.NodeResolutions) != 0
-	if hasResolutions && command.IdentityReviewBasisHash != basis {
-		return ImportResult{}, &Error{Code: CodeStaleIdentityReview}
-	}
-	if !hasResolutions && command.IdentityReviewBasisHash != "" && command.IdentityReviewBasisHash != basis {
+	if hasResolutions {
+		if command.IdentityReviewBasisHash != basis || !validUUID(command.IdentityReviewOperationID) || command.IdentityReviewOperationID == command.OperationID || command.IdentityReviewReceipt != identityReviewReceipt(basis, command.IdentityReviewOperationID) || !s.validIssuedReview(basis, command.IdentityReviewOperationID, command.IdentityReviewReceipt) {
+			return ImportResult{}, &Error{Code: CodeStaleIdentityReview}
+		}
+	} else if command.IdentityReviewBasisHash != "" && command.IdentityReviewBasisHash != basis {
 		return ImportResult{}, &Error{Code: CodeStaleIdentityReview}
 	}
 	documentResolutions, err := indexDocumentResolutions(command.DocumentResolutions)
@@ -153,7 +177,9 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 	if reviews, err := s.resolveDocuments(ctx, prepared, parent, basis, documentResolutions); err != nil {
 		return ImportResult{}, err
 	} else if len(reviews) != 0 {
-		return ImportResult{}, &Error{Code: CodeIdentityReviewRequired, Review: &IdentityReview{BasisHash: basis, Documents: reviews, Nodes: []NodeIdentityReview{}}}
+		review := newIdentityReview(basis, command.OperationID, reviews, nil)
+		s.rememberIssuedReview(review)
+		return ImportResult{}, &Error{Code: CodeIdentityReviewRequired, Review: review}
 	}
 	if len(documentResolutions) != 0 {
 		return ImportResult{}, &Error{Code: CodeInvalidRequest}
@@ -163,7 +189,9 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 		return ImportResult{}, err
 	}
 	if len(nodeReviews) != 0 {
-		return ImportResult{}, &Error{Code: CodeIdentityReviewRequired, Review: &IdentityReview{BasisHash: basis, Documents: []DocumentIdentityReview{}, Nodes: nodeReviews}}
+		review := newIdentityReview(basis, command.OperationID, nil, nodeReviews)
+		s.rememberIssuedReview(review)
+		return ImportResult{}, &Error{Code: CodeIdentityReviewRequired, Review: review}
 	}
 	if len(nodeResolutions) != 0 {
 		return ImportResult{}, &Error{Code: CodeInvalidRequest}
@@ -238,6 +266,41 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 		OperationID: command.OperationID, RequestHash: requestHash,
 		ExpectedParentRevisionID: command.ExpectedParentRevisionID, Revision: revision, Lineages: lineages,
 	})
+}
+
+func (s *Service) rememberIssuedReview(review *IdentityReview) {
+	s.reviewMu.Lock()
+	defer s.reviewMu.Unlock()
+	if s.reviews == nil {
+		s.reviews = make(map[string]identityReviewRecord)
+	}
+	s.reviews[review.Receipt] = identityReviewRecord{basis: review.BasisHash, operation: review.OperationID, receipt: review.Receipt}
+}
+
+func (s *Service) validIssuedReview(basis, operationID, receipt string) bool {
+	s.reviewMu.RLock()
+	defer s.reviewMu.RUnlock()
+	review, ok := s.reviews[receipt]
+	return ok && review.basis == basis && review.operation == operationID && review.receipt == receipt
+}
+
+func identityReviewReceipt(basis, operationID string) string {
+	mac := hmac.New(sha256.New, identityReviewKey)
+	_, _ = mac.Write([]byte("identity-review-receipt-v2\n" + basis + "\n" + operationID + "\n"))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func newIdentityReview(basis, operationID string, documents []DocumentIdentityReview, nodes []NodeIdentityReview) *IdentityReview {
+	if documents == nil {
+		documents = []DocumentIdentityReview{}
+	}
+	if nodes == nil {
+		nodes = []NodeIdentityReview{}
+	}
+	return &IdentityReview{
+		BasisHash: basis, OperationID: operationID, Receipt: identityReviewReceipt(basis, operationID),
+		Documents: documents, Nodes: nodes,
+	}
 }
 
 func (s *Service) materializeLineages(drafts []pendingLineage, built []DocumentRevision, revision KnowledgeRevision) ([]Lineage, error) {
@@ -776,17 +839,21 @@ func hashImportRequest(command ImportCommand, documents []preparedDocument) stri
 		Fingerprint string `json:"fingerprint"`
 	}
 	value := struct {
-		ExpectedParent *string              `json:"expected_parent_revision_id"`
-		Source         string               `json:"source"`
-		Documents      []hashDocument       `json:"documents"`
-		Basis          string               `json:"identity_review_basis_hash,omitempty"`
-		Document       []DocumentResolution `json:"document_resolutions,omitempty"`
-		Node           []NodeResolution     `json:"node_resolutions,omitempty"`
+		ExpectedParent  *string              `json:"expected_parent_revision_id"`
+		Source          string               `json:"source"`
+		Documents       []hashDocument       `json:"documents"`
+		Basis           string               `json:"identity_review_basis_hash,omitempty"`
+		ReviewOperation string               `json:"identity_review_operation_id,omitempty"`
+		ReviewReceipt   string               `json:"identity_review_receipt,omitempty"`
+		Document        []DocumentResolution `json:"document_resolutions,omitempty"`
+		Node            []NodeResolution     `json:"node_resolutions,omitempty"`
 	}{
 		ExpectedParent: command.ExpectedParentRevisionID, Source: strings.TrimSpace(command.Source),
-		Basis:    command.IdentityReviewBasisHash,
-		Document: append([]DocumentResolution(nil), command.DocumentResolutions...),
-		Node:     append([]NodeResolution(nil), command.NodeResolutions...),
+		Basis:           command.IdentityReviewBasisHash,
+		ReviewOperation: command.IdentityReviewOperationID,
+		ReviewReceipt:   command.IdentityReviewReceipt,
+		Document:        append([]DocumentResolution(nil), command.DocumentResolutions...),
+		Node:            append([]NodeResolution(nil), command.NodeResolutions...),
 	}
 	for _, document := range documents {
 		value.Documents = append(value.Documents, hashDocument{Path: document.path, Fingerprint: reviewDocumentFingerprint(document.inspected)})

@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -268,6 +269,8 @@ func TestExplicitIdentityOrdinaryEditAndApprovedRewrite(t *testing.T) {
 	review := reviewErr.Review.Nodes[0]
 	reviewCommand.OperationID = "10000000-0000-4000-8000-000000000034"
 	reviewCommand.IdentityReviewBasisHash = reviewErr.Review.BasisHash
+	reviewCommand.IdentityReviewOperationID = reviewErr.Review.OperationID
+	reviewCommand.IdentityReviewReceipt = reviewErr.Review.Receipt
 	reviewCommand.NodeResolutions = []NodeResolution{{
 		Locator: review.Locator, Action: "rewrite",
 		SourceNodeRevisionIDs: []string{review.Candidates[0].RevisionID}, Reason: "section semantics replaced",
@@ -282,6 +285,278 @@ func TestExplicitIdentityOrdinaryEditAndApprovedRewrite(t *testing.T) {
 	stored, err := store.Revision(ctx, rewritten.Revision.ID)
 	if err != nil || len(stored.Lineages) != 1 {
 		t.Fatalf("lineage is not queryable from revision tree: revision=%+v err=%v", stored, err)
+	}
+}
+
+func TestIdentityReviewReceiptRequiresFreshOperation(t *testing.T) {
+	service, store := testKnowledgeService(t)
+	actor := "90000000-0000-4000-8000-000000000001"
+	first, err := service.Import(t.Context(), ImportCommand{
+		OperationID: "10000000-0000-4000-8000-000000000191", ExpectedParentProvided: true,
+		Source: "receipt baseline", ActorDeviceID: actor,
+		Documents: []ImportDocument{{Path: "receipt.md", Markdown: "# Topic\none two three four five six seven eight nine ten\n"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := service.Export(t.Context(), first.Revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := first.Revision.ID
+	reviewCommand := ImportCommand{
+		OperationID: "10000000-0000-4000-8000-000000000192", ExpectedParentRevisionID: &parent, ExpectedParentProvided: true,
+		Source: "receipt review", ActorDeviceID: actor,
+		Documents: []ImportDocument{{Path: "receipt.md", Markdown: strings.Replace(exported.Documents[0].Markdown, "one two three four five six seven eight nine ten", "quartz nickel tungsten cobalt radon xenon boron neon", 1)}},
+	}
+	_, err = service.Import(t.Context(), reviewCommand)
+	var reviewErr *Error
+	if !asKnowledgeError(err, &reviewErr) || reviewErr.Code != CodeIdentityReviewRequired || reviewErr.Review == nil || len(reviewErr.Review.Nodes) != 1 {
+		t.Fatalf("expected identity review, got %v", err)
+	}
+	review := reviewErr.Review
+	if review.OperationID != reviewCommand.OperationID || review.Receipt != identityReviewReceipt(review.BasisHash, reviewCommand.OperationID) {
+		t.Fatalf("review receipt does not bind its operation: %+v", review)
+	}
+	if _, exists, err := store.LookupImportOperation(t.Context(), reviewCommand.OperationID); err != nil || exists {
+		t.Fatalf("review persisted an operation: exists=%v err=%v", exists, err)
+	}
+	resolved := reviewCommand
+	resolved.OperationID = "10000000-0000-4000-8000-000000000193"
+	resolved.IdentityReviewBasisHash = review.BasisHash
+	resolved.IdentityReviewOperationID = review.OperationID
+	resolved.IdentityReviewReceipt = review.Receipt
+	resolved.NodeResolutions = []NodeResolution{{
+		Locator: review.Nodes[0].Locator, Action: "rewrite", SourceNodeRevisionIDs: []string{review.Nodes[0].Candidates[0].RevisionID}, Reason: "semantic replacement",
+	}}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ImportCommand)
+	}{
+		{name: "missing receipt", mutate: func(command *ImportCommand) { command.IdentityReviewReceipt = "" }},
+		{name: "wrong receipt", mutate: func(command *ImportCommand) { command.IdentityReviewReceipt = strings.Repeat("0", 64) }},
+		{name: "wrong basis", mutate: func(command *ImportCommand) { command.IdentityReviewBasisHash = strings.Repeat("0", 64) }},
+		{name: "reused review operation", mutate: func(command *ImportCommand) { command.OperationID = review.OperationID }},
+		{name: "invented review operation", mutate: func(command *ImportCommand) {
+			command.IdentityReviewOperationID = "20000000-0000-4000-8000-000000000194"
+			command.IdentityReviewReceipt = identityReviewReceipt(command.IdentityReviewBasisHash, command.IdentityReviewOperationID)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := resolved
+			test.mutate(&invalid)
+			if _, err := service.Import(t.Context(), invalid); ErrorCode(err) != CodeStaleIdentityReview {
+				t.Fatalf("invalid review retry error = %v", err)
+			}
+			head, err := service.Head(t.Context())
+			if err != nil || head == nil || head.ID != first.Revision.ID {
+				t.Fatalf("invalid review retry changed head: head=%+v err=%v", head, err)
+			}
+		})
+	}
+	committed, err := service.Import(t.Context(), resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modifiedReceipt := resolved
+	modifiedReceipt.IdentityReviewReceipt = strings.Repeat("f", 64)
+	if _, err := service.Import(t.Context(), modifiedReceipt); ErrorCode(err) != CodeIdempotencyConflict {
+		t.Fatalf("receipt is absent from idempotency request hash: %v", err)
+	}
+	if committed.Revision.ID == first.Revision.ID {
+		t.Fatal("approved review did not create a new revision")
+	}
+}
+
+func TestIdentityReorderDuplicateTemplateAndMerge(t *testing.T) {
+	actor := "90000000-0000-4000-8000-000000000001"
+	t.Run("reorder preserves stable IDs with new revisions", func(t *testing.T) {
+		service, _ := testKnowledgeService(t)
+		first, err := service.Import(t.Context(), ImportCommand{
+			OperationID: "10000000-0000-4000-8000-000000000201", ExpectedParentProvided: true, Source: "reorder base", ActorDeviceID: actor,
+			Documents: []ImportDocument{{Path: "reorder.md", Markdown: "# Alpha\nalpha beta gamma delta epsilon zeta eta theta\n\n# Beta\niota kappa lambda mu nu xi omicron pi\n"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		exported, err := service.Export(t.Context(), first.Revision.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prefix, body := splitExportedMarkdown(t, exported.Documents[0].Markdown)
+		betaMarker := fmt.Sprintf("<!-- edu-agent-node:v1 {\"id\":\"%s\"} -->", first.Revision.Documents[0].Revision.Nodes[2].NodeID)
+		betaStart := strings.Index(body, betaMarker)
+		if betaStart < 0 {
+			t.Fatal("missing Beta marker")
+		}
+		parent := first.Revision.ID
+		second, err := service.Import(t.Context(), ImportCommand{
+			OperationID: "10000000-0000-4000-8000-000000000202", ExpectedParentRevisionID: &parent, ExpectedParentProvided: true, Source: "reorder", ActorDeviceID: actor,
+			Documents: []ImportDocument{{Path: "reorder.md", Markdown: prefix + body[betaStart:] + body[:betaStart]}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, after := first.Revision.Documents[0].Revision, second.Revision.Documents[0].Revision
+		if before.ID == after.ID || before.Nodes[2].NodeID != after.Nodes[1].NodeID || before.Nodes[1].NodeID != after.Nodes[2].NodeID || before.Nodes[2].ID == after.Nodes[1].ID || before.Nodes[1].ID == after.Nodes[2].ID {
+			t.Fatalf("reorder identity/revisions are wrong: before=%+v after=%+v", before.Nodes, after.Nodes)
+		}
+	})
+	t.Run("duplicate template requires review and leaves head", func(t *testing.T) {
+		service, _ := testKnowledgeService(t)
+		first, err := service.Import(t.Context(), ImportCommand{
+			OperationID: "10000000-0000-4000-8000-000000000203", ExpectedParentProvided: true, Source: "template base", ActorDeviceID: actor,
+			Documents: []ImportDocument{{Path: "template.md", Markdown: "# Original\nalpha beta gamma delta epsilon zeta eta theta\n"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		exported, err := service.Export(t.Context(), first.Revision.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prefix, _ := splitExportedMarkdown(t, exported.Documents[0].Markdown)
+		parent := first.Revision.ID
+		_, err = service.Import(t.Context(), ImportCommand{
+			OperationID: "10000000-0000-4000-8000-000000000204", ExpectedParentRevisionID: &parent, ExpectedParentProvided: true, Source: "template duplicate", ActorDeviceID: actor,
+			Documents: []ImportDocument{{Path: "template.md", Markdown: prefix + "# Copy\nalpha beta gamma delta epsilon zeta eta theta\n\n# Copy\nalpha beta gamma delta epsilon zeta eta theta\n"}},
+		})
+		var reviewErr *Error
+		if !asKnowledgeError(err, &reviewErr) || reviewErr.Code != CodeIdentityReviewRequired || reviewErr.Review == nil || len(reviewErr.Review.Nodes) != 2 {
+			t.Fatalf("duplicate template did not request review: %v", err)
+		}
+		head, err := service.Head(t.Context())
+		if err != nil || head == nil || head.ID != first.Revision.ID {
+			t.Fatalf("duplicate template changed head: head=%+v err=%v", head, err)
+		}
+	})
+	t.Run("merge creates one approved lineage group", func(t *testing.T) {
+		service, _ := testKnowledgeService(t)
+		first, err := service.Import(t.Context(), ImportCommand{
+			OperationID: "10000000-0000-4000-8000-000000000205", ExpectedParentProvided: true, Source: "merge base", ActorDeviceID: actor,
+			Documents: []ImportDocument{{Path: "merge.md", Markdown: "# One\nalpha beta gamma delta epsilon zeta eta theta\n\n# Two\niota kappa lambda mu nu xi omicron pi\n"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		exported, err := service.Export(t.Context(), first.Revision.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prefix, _ := splitExportedMarkdown(t, exported.Documents[0].Markdown)
+		parent := first.Revision.ID
+		command := ImportCommand{
+			OperationID: "10000000-0000-4000-8000-000000000206", ExpectedParentRevisionID: &parent, ExpectedParentProvided: true, Source: "merge review", ActorDeviceID: actor,
+			Documents: []ImportDocument{{Path: "merge.md", Markdown: prefix + "# Combined\nalpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi\n"}},
+		}
+		_, err = service.Import(t.Context(), command)
+		var reviewErr *Error
+		if !asKnowledgeError(err, &reviewErr) || reviewErr.Review == nil || len(reviewErr.Review.Nodes) != 1 || len(reviewErr.Review.Nodes[0].Candidates) != 2 {
+			t.Fatalf("merge did not produce one two-source review: %v", err)
+		}
+		head, err := service.Head(t.Context())
+		if err != nil || head == nil || head.ID != first.Revision.ID {
+			t.Fatalf("merge review changed head: head=%+v err=%v", head, err)
+		}
+		command.OperationID = "10000000-0000-4000-8000-000000000207"
+		command.IdentityReviewBasisHash = reviewErr.Review.BasisHash
+		command.IdentityReviewOperationID = reviewErr.Review.OperationID
+		command.IdentityReviewReceipt = reviewErr.Review.Receipt
+		command.NodeResolutions = []NodeResolution{{
+			Locator: reviewErr.Review.Nodes[0].Locator, Action: "merge", Reason: "combined two sections",
+			SourceNodeRevisionIDs: []string{reviewErr.Review.Nodes[0].Candidates[0].RevisionID, reviewErr.Review.Nodes[0].Candidates[1].RevisionID},
+		}}
+		merged, err := service.Import(t.Context(), command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(merged.Revision.Lineages) != 1 || len(merged.Revision.Lineages[0].Members) != 3 || merged.Revision.Lineages[0].Action != "merge" || merged.Revision.Documents[0].Revision.Nodes[1].NodeID == first.Revision.Documents[0].Revision.Nodes[1].NodeID || merged.Revision.Documents[0].Revision.Nodes[1].NodeID == first.Revision.Documents[0].Revision.Nodes[2].NodeID {
+			t.Fatalf("merge lineage/target identity is wrong: %+v", merged.Revision)
+		}
+	})
+}
+
+func splitExportedMarkdown(t *testing.T, markdown string) (string, string) {
+	t.Helper()
+	if !strings.HasPrefix(markdown, "---\n") {
+		t.Fatalf("export is missing frontmatter: %q", markdown)
+	}
+	closing := strings.Index(markdown[len("---\n"):], "---\n")
+	if closing < 0 {
+		t.Fatalf("export is missing closing frontmatter: %q", markdown)
+	}
+	bodyStart := len("---\n") + closing + len("---\n")
+	return markdown[:bodyStart], markdown[bodyStart:]
+}
+
+func TestRetrievalUsesGlobalFIFOAcrossDocumentRoots(t *testing.T) {
+	service, _ := testKnowledgeService(t)
+	result, err := service.Import(t.Context(), ImportCommand{
+		OperationID: "10000000-0000-4000-8000-000000000211", ExpectedParentProvided: true, Source: "global bfs", ActorDeviceID: "90000000-0000-4000-8000-000000000001",
+		Documents: []ImportDocument{
+			{Path: "a.md", Markdown: "# A\n\n## A Child\nneedle\n\n### A Grandchild\nneedle\n"},
+			{Path: "b.md", Markdown: "# B\n\n## B Child\nneedle\n"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retrieved, err := service.Retrieve(t.Context(), RetrievalCommand{Query: "needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retrieved.DocumentShortlist) != 2 || retrieved.DocumentShortlist[0] != "a.md" || retrieved.DocumentShortlist[1] != "b.md" {
+		t.Fatalf("unexpected document shortlist: %+v", retrieved.DocumentShortlist)
+	}
+	var titles []string
+	for _, trace := range retrieved.Trace {
+		for _, document := range result.Revision.Documents {
+			for _, node := range document.Revision.Nodes {
+				if node.ID == trace.ParentNodeRevisionID {
+					titles = append(titles, node.Title)
+				}
+			}
+		}
+	}
+	if len(titles) < 4 || !reflect.DeepEqual(titles[:4], []string{"", "", "A", "B"}) {
+		t.Fatalf("retrieval did not use global FIFO depth order: %v trace=%+v", titles, retrieved.Trace)
+	}
+}
+
+func TestRetrievalTraversesZeroScoreShortlistWithoutIrrelevantHits(t *testing.T) {
+	service, _ := testKnowledgeService(t)
+	imported, err := service.Import(t.Context(), ImportCommand{
+		OperationID: "10000000-0000-4000-8000-000000000212", ExpectedParentProvided: true, Source: "zero shortlist", ActorDeviceID: "90000000-0000-4000-8000-000000000001",
+		Documents: []ImportDocument{
+			{Path: "match.md", Markdown: "# Match\n\n## Needle\nneedle body\n"},
+			{Path: "unrelated.md", Markdown: "# Unrelated\n\n## Other\nother body\n"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Retrieve(t.Context(), RetrievalCommand{Query: "needle"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Trace) < 2 {
+		t.Fatalf("zero-score shortlist document was not traversed: %+v", result.Trace)
+	}
+	unrelatedRoot := imported.Revision.Documents[1].Revision.Nodes[0].ID
+	traversed := false
+	for _, trace := range result.Trace {
+		if trace.ParentNodeRevisionID == unrelatedRoot {
+			traversed = true
+			break
+		}
+	}
+	if !traversed {
+		t.Fatalf("unrelated document root was not present in global BFS trace: %+v", result.Trace)
+	}
+	for _, hit := range result.Hits {
+		if hit.Path == "unrelated.md" {
+			t.Fatalf("zero-score document produced irrelevant hit: %+v", hit)
+		}
 	}
 }
 

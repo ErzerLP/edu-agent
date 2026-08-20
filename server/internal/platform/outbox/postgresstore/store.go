@@ -2,10 +2,13 @@ package postgresstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,24 +18,63 @@ type Store struct {
 
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
+type DBTX interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+var ErrIdempotencyConflict = errors.New("outbox idempotency key conflicts with a different message")
+
 func (s *Store) Enqueue(ctx context.Context, message outbox.Message) (bool, error) {
+	return EnqueueWith(ctx, s.pool, message)
+}
+
+// EnqueueWith writes through the caller-owned transaction.
+func EnqueueWith(ctx context.Context, db DBTX, message outbox.Message) (bool, error) {
 	if err := message.Validate(); err != nil {
 		return false, err
 	}
-	command, err := s.pool.Exec(ctx, `
+	command, err := db.Exec(ctx, `
 		INSERT INTO outbox_messages(
 			id,business_type,aggregate_id,idempotency_key,revision,generation,payload,audit_metadata,
-			status,available_at,attempts,max_attempts,created_at,updated_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			status,available_at,attempts,max_attempts,last_error_category,last_error_at,
+			lease_expires_at,lease_token,created_at,updated_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,''),$14,$15,NULLIF($16,'')::uuid,$17,$18)
 		ON CONFLICT (idempotency_key) DO NOTHING`,
 		message.ID, message.BusinessType, message.AggregateID, message.IdempotencyKey,
 		message.Revision, message.Generation, message.Payload, message.AuditMetadata,
 		message.Status, message.AvailableAt, message.Attempts, message.MaxAttempts,
+		message.LastErrorCategory, message.LastErrorAt, message.LeaseExpiresAt, message.LeaseToken,
 		message.CreatedAt, message.UpdatedAt)
 	if err != nil {
 		return false, fmt.Errorf("enqueue outbox message: %w", err)
 	}
-	return command.RowsAffected() == 1, nil
+	if command.RowsAffected() == 1 {
+		return true, nil
+	}
+	var identical bool
+	err = db.QueryRow(ctx, `
+		SELECT id=$1 AND business_type=$2 AND aggregate_id=$3 AND idempotency_key=$4
+			AND revision=$5 AND generation=$6 AND payload=$7 AND audit_metadata=$8
+			AND status=$9 AND available_at=$10 AND attempts=$11 AND max_attempts=$12
+			AND last_error_category IS NOT DISTINCT FROM NULLIF($13,'')
+			AND last_error_at IS NOT DISTINCT FROM $14
+			AND lease_expires_at IS NOT DISTINCT FROM $15
+			AND lease_token IS NOT DISTINCT FROM NULLIF($16,'')::uuid
+			AND created_at=$17 AND updated_at=$18
+		FROM outbox_messages WHERE idempotency_key=$4`,
+		message.ID, message.BusinessType, message.AggregateID, message.IdempotencyKey,
+		message.Revision, message.Generation, message.Payload, message.AuditMetadata,
+		message.Status, message.AvailableAt, message.Attempts, message.MaxAttempts,
+		message.LastErrorCategory, message.LastErrorAt, message.LeaseExpiresAt, message.LeaseToken,
+		message.CreatedAt, message.UpdatedAt).Scan(&identical)
+	if err != nil {
+		return false, fmt.Errorf("verify existing outbox message: %w", err)
+	}
+	if !identical {
+		return false, ErrIdempotencyConflict
+	}
+	return false, nil
 }
 
 func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]outbox.Message, error) {
@@ -51,7 +93,7 @@ func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, l
 		FROM candidates c WHERE o.id=c.id
 		RETURNING o.id,o.business_type,o.aggregate_id,o.idempotency_key,o.revision,o.generation,
 		          o.payload,o.audit_metadata,o.status,o.available_at,o.attempts,o.max_attempts,
-		          o.last_error_category,o.last_error_at,o.lease_expires_at,o.lease_token::text,o.created_at,o.updated_at`,
+		          COALESCE(o.last_error_category,''),o.last_error_at,o.lease_expires_at,o.lease_token::text,o.created_at,o.updated_at`,
 		now, limit, lease.Microseconds())
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox messages: %w", err)

@@ -306,6 +306,464 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/learning/goals:
+    post:
+      operationId: createLearningGoal
+      summary: Create an immutable learning goal revision
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema: { $ref: "#/components/schemas/LearningGoalRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Idempotent replay.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "201":
+          {
+            description: Goal committed.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/tutoring/sessions:
+    post:
+      operationId: createTutoringSession
+      summary: Create a tutoring session
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/TutoringSessionRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Idempotent replay.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "201":
+          {
+            description: Session committed.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/tutoring/proposals:
+    post:
+      operationId: proposeTutoringArtifact
+      summary: Generate and durably freeze a model proposal without mutating an aggregate
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/TutoringProposalRequest" },
+                },
+            },
+        }
+      responses:
+        "201":
+          {
+            description: Durable frozen proposal.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/TutoringProposal" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/tutoring/sessions/{sessionID}/actions:
+    post:
+      operationId: applyTutoringAction
+      summary: Apply one state-machine action to a tutoring session
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionID" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/TutoringActionRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Idempotent replay.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "201":
+          {
+            description: Action committed.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/assessments/{assessmentID}/decisions:
+    post:
+      operationId: decideLearningAssessment
+      summary: Compensate an assessment disposition and its evidence
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/AssessmentID" }]
+      requestBody:
+        {
+          required: true,
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/AssessmentDecisionRequest" },
+                },
+            },
+        }
+      responses:
+        "200":
+          {
+            description: Idempotent replay.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "201":
+          {
+            description: Decision committed.,
+            content:
+              {
+                application/json:
+                  {
+                    schema:
+                      { $ref: "#/components/schemas/LearningOperationResult" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/tutoring/sessions/current:
+    get:
+      operationId: getCurrentTutoringSession
+      summary: Read the current active tutoring session
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      responses:
+        "200":
+          {
+            description: Current session.,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/SessionView" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/tutoring/sessions/{sessionID}:
+    get:
+      operationId: getTutoringSession
+      summary: Read one tutoring session
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionID" }]
+      responses:
+        "200":
+          {
+            description: Session read model.,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/SessionView" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/timeline:
+    get:
+      operationId: listLearningTimeline
+      summary: Read event-ordered learning timeline items
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/PageLimit" },
+          {
+            name: session_id,
+            in: query,
+            schema: { $ref: "#/components/schemas/LearningUUID" },
+          },
+        ]
+      responses:
+        "200":
+          description: Event-ordered timeline page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TimelinePage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/routes:
+    get:
+      operationId: listLearningRoutes
+      summary: Read immutable route revisions
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/PageLimit" },
+        ]
+      responses:
+        "200":
+          description: Immutable route revision page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutesPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/nodes/{nodeRevisionID}:
+    get:
+      operationId: getLearningNode
+      summary: Read mastery and misconception reduction for a node revision
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/NodeRevisionID" }]
+      responses:
+        "200":
+          {
+            description: Node read model.,
+            content:
+              {
+                application/json:
+                  {
+                    schema: { $ref: "#/components/schemas/NodeView" },
+                  },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence:
+    get:
+      operationId: listLearningEvidence
+      summary: Read accepted immutable evidence
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/PageLimit" },
+          { name: node_revision_id, in: query, schema: { $ref: "#/components/schemas/LearningUUID" } },
+        ]
+      responses:
+        "200":
+          description: Accepted evidence page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidencePage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/reviews:
+    get:
+      operationId: listLearningReviews
+      summary: Read deterministic review schedule
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/Cursor" },
+          { $ref: "#/components/parameters/PageLimit" },
+          { $ref: "#/components/parameters/DueBefore" },
+        ]
+      responses:
+        "200":
+          description: Deterministic review schedule page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewsPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/LearningConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/projections/status:
+    get:
+      operationId: getLearningProjectionStatus
+      summary: Read projection generation and checkpoint status
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      responses:
+        "200":
+          {
+            description: Projection status.,
+            content:
+              {
+                application/json:
+                  { schema: { $ref: "#/components/schemas/ProjectionStatus" } },
+              },
+          }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
     KnowledgeRevisionID:
@@ -315,6 +773,34 @@ components:
       schema:
         type: string
         format: uuid
+    SessionID:
+      name: sessionID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
+    AssessmentID:
+      name: assessmentID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
+    NodeRevisionID:
+      name: nodeRevisionID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+      description: Opaque generation-bound cursor. A stale generation returns 409.
+    PageLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    DueBefore:
+      name: due_before
+      in: query
+      schema: { type: string, format: date-time }
   securitySchemes:
     deviceBearer:
       type: http
@@ -375,7 +861,968 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
+    LearningConflict:
+      description: Idempotency, expected-version, state, disposition, proposal, focus-frame, or cursor conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/LearningErrorEnvelope"
+    DependencyUnavailable:
+      description: Model or projection dependency is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    LearningUUID:
+      type: string
+      format: uuid
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    LearningOperationInput:
+      type: object
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { type: string, enum: [goal, session] }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+    LearningGoalRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, text, source]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: goal }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        goal_id: { $ref: "#/components/schemas/LearningUUID" }
+        text: { type: string, minLength: 1, maxLength: 4000 }
+        source:
+          type: string
+          minLength: 1
+          maxLength: 200
+          x-max-utf8-bytes: 200
+          description: Nonblank valid UTF-8 limited to 200 encoded bytes.
+        previous_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+    TutoringSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, goal_revision_id]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { const: 0 }
+        occurred_at: { type: string, format: date-time }
+        goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+    TutoringProposalRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, proposal_type, aggregate_type, aggregate_id, aggregate_version, knowledge_revision_id, node_revision_ids, input]
+      properties:
+        request_id: { $ref: "#/components/schemas/LearningUUID" }
+        proposal_type: { $ref: "#/components/schemas/ProposalType" }
+        aggregate_type: { type: string, enum: [goal, session] }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        aggregate_version: { type: integer, minimum: 0 }
+        goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        route_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        route_step_id: { $ref: "#/components/schemas/LearningUUID" }
+        focus_node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_id: { $ref: "#/components/schemas/LearningUUID" }
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        free_question_id: { $ref: "#/components/schemas/LearningUUID" }
+        free_answer_id: { $ref: "#/components/schemas/LearningUUID" }
+        focus_frame_id: { $ref: "#/components/schemas/LearningUUID" }
+        tutoring_state: { $ref: "#/components/schemas/TutoringState" }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/LearningUUID" }
+        input:
+          type: object
+          additionalProperties: {}
+    TutoringActionRequest:
+      oneOf:
+        - $ref: "#/components/schemas/ActionNoFieldsRequest"
+        - $ref: "#/components/schemas/ActionProposalRequest"
+        - $ref: "#/components/schemas/ActionAssessmentRequest"
+        - $ref: "#/components/schemas/ActionAttemptRequest"
+        - $ref: "#/components/schemas/ActionQuestionRequest"
+        - $ref: "#/components/schemas/ActionExposureRequest"
+        - $ref: "#/components/schemas/ActionAttachedQuizRequest"
+        - $ref: "#/components/schemas/ActionSwitchGoalRequest"
+      discriminator:
+        propertyName: action
+        mapping:
+          start_diagnostic: "#/components/schemas/ActionNoFieldsRequest"
+          apply_route: "#/components/schemas/ActionProposalRequest"
+          issue_activity: "#/components/schemas/ActionProposalRequest"
+          present_activity: "#/components/schemas/ActionNoFieldsRequest"
+          submit_attempt: "#/components/schemas/ActionAttemptRequest"
+          record_assessment: "#/components/schemas/ActionAssessmentRequest"
+          acknowledge_feedback: "#/components/schemas/ActionNoFieldsRequest"
+          present_review: "#/components/schemas/ActionProposalRequest"
+          record_exposure: "#/components/schemas/ActionExposureRequest"
+          ask_free_question: "#/components/schemas/ActionQuestionRequest"
+          record_free_answer: "#/components/schemas/ActionProposalRequest"
+          convert_free_answer_to_quiz: "#/components/schemas/ActionAttachedQuizRequest"
+          resume_focus: "#/components/schemas/ActionNoFieldsRequest"
+          end_activity: "#/components/schemas/ActionNoFieldsRequest"
+          switch_goal: "#/components/schemas/ActionSwitchGoalRequest"
+          complete_session: "#/components/schemas/ActionNoFieldsRequest"
+    ActionNoFieldsRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action:
+          type: string
+          enum: [start_diagnostic, present_activity, acknowledge_feedback, resume_focus, end_activity, complete_session]
+    ActionProposalRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, proposal_id]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { type: string, enum: [apply_route, issue_activity, present_review, record_free_answer] }
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+    ActionAssessmentRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: record_assessment }
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+    ActionAttemptRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, answer, help]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: submit_attempt }
+        answer:
+          type: string
+          maxLength: 262144
+          x-max-utf8-bytes: 262144
+        help: { $ref: "#/components/schemas/HelpLevel" }
+    ActionQuestionRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, question]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: ask_free_question }
+        question: { type: string, minLength: 1, maxLength: 8000 }
+    ActionExposureRequest:
+      oneOf:
+        - $ref: "#/components/schemas/ActionDirectExposureRequest"
+        - $ref: "#/components/schemas/ActionProposalExposureRequest"
+    ActionDirectExposureRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, exposure_kind, exposure_text]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: record_exposure }
+        exposure_kind:
+          type: string
+          enum: [reading, explanation]
+        exposure_text: { type: string, minLength: 1, maxLength: 32000 }
+        knowledge_references:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/KnowledgeReferenceInput" }
+    ActionProposalExposureRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, proposal_id]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: record_exposure }
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        exposure_kind:
+          type: string
+          enum: [reading, explanation]
+    ActionAttachedQuizRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, proposal_id, question, answer]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: convert_free_answer_to_quiz }
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        question: { $ref: "#/components/schemas/LearningUUID" }
+        answer: { $ref: "#/components/schemas/LearningUUID" }
+    ActionSwitchGoalRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, goal_revision_id]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        action: { const: switch_goal }
+        goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+    AssessmentDecisionRequest:
+      oneOf:
+        - $ref: "#/components/schemas/AssessmentConfirmRequest"
+        - $ref: "#/components/schemas/AssessmentOverrideRequest"
+        - $ref: "#/components/schemas/AssessmentVoidRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          confirm: "#/components/schemas/AssessmentConfirmRequest"
+          override: "#/components/schemas/AssessmentOverrideRequest"
+          void: "#/components/schemas/AssessmentVoidRequest"
+    AssessmentConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, kind, expected_disposition_version]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        kind: { const: confirm }
+        expected_disposition_version: { type: integer, minimum: 1 }
+    AssessmentOverrideRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, kind, expected_disposition_version, reason, items]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        kind: { const: override }
+        expected_disposition_version: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 1 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { $ref: "#/components/schemas/AssessmentItemInput" }
+    AssessmentVoidRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, kind, expected_disposition_version, reason]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        occurred_at: { type: string, format: date-time }
+        kind: { const: void }
+        expected_disposition_version: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 1 }
+    LearningOperationResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          status,
+          replayed,
+          archived,
+          aggregate_type,
+          aggregate_id,
+          aggregate_version,
+          first_event_seq,
+          last_event_seq,
+          projection_as_of_event_seq,
+          result,
+        ]
+      properties:
+        status: { type: string, enum: [succeeded] }
+        replayed: { type: boolean }
+        archived: { type: boolean }
+        aggregate_type: { type: string, enum: [goal, session] }
+        aggregate_id: { type: string, format: uuid }
+        aggregate_version: { type: integer, minimum: 1 }
+        first_event_seq: { type: integer, minimum: 1 }
+        last_event_seq: { type: integer, minimum: 1 }
+        projection_as_of_event_seq: { type: integer, minimum: 1 }
+        tutoring_state: { type: string }
+        evidence_disposition:
+          { type: string, enum: [provisional, accepted, overridden, voided] }
+        result:
+          oneOf:
+            - $ref: "#/components/schemas/GoalRevision"
+            - $ref: "#/components/schemas/TutoringSession"
+            - $ref: "#/components/schemas/AssessmentDecision"
+    TutoringProposal:
+      type: object
+      additionalProperties: false
+      required: [proposal_id, schema_version, input_hash, proposal_type, aggregate_type, aggregate_id, aggregate_version, knowledge_revision_id, frozen_request, model_id, model_parameters, prompt_revision, attempt_categories, created_at]
+      properties:
+        proposal_id: { type: string, format: uuid }
+        schema_version: { type: integer, const: 1 }
+        input_hash: { $ref: "#/components/schemas/SHA256" }
+        proposal_type: { $ref: "#/components/schemas/ProposalType" }
+        aggregate_type: { type: string, enum: [goal, session] }
+        aggregate_id: { type: string, format: uuid }
+        aggregate_version: { type: integer, minimum: 0 }
+        goal_revision_id: { type: string, format: uuid }
+        route_revision_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+        frozen_request: { $ref: "#/components/schemas/TutoringProposalRequest" }
+        route:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/RouteProposalStep" }
+        activity: { $ref: "#/components/schemas/ActivityProposal" }
+        assessment: { $ref: "#/components/schemas/AssessmentArtifact" }
+        text: { $ref: "#/components/schemas/TextProposal" }
+        model_id: { type: string }
+        model_parameters:
+          type: object
+          additionalProperties:
+            oneOf:
+              - { type: string }
+              - { type: number }
+              - { type: boolean }
+              - { type: "null" }
+        prompt_revision: { type: string }
+        attempt_categories:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    ProjectionMetadata:
+      type: object
+      additionalProperties: false
+      required: [as_of_event_seq, projection_version, mastery_reducer_version, assessment_policy_version, review_policy_version, generation, rebuilding, degraded, incomplete, reason_codes]
+      properties:
+        as_of_event_seq: { type: integer, minimum: 0 }
+        projection_version: { type: string }
+        mastery_reducer_version: { type: string }
+        assessment_policy_version: { type: string }
+        review_policy_version: { type: string }
+        knowledge_revision_id: { type: string, format: uuid }
+        generation: { type: string, format: uuid }
+        rebuilding: { type: boolean }
+        degraded: { type: boolean }
+        incomplete: { type: boolean }
+        reason_codes:
+          type: array
+          items: { type: string }
+    SHA256:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    AssessmentReferenceIDInput:
+      type: string
+      pattern: "^(?:|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$"
+    ProposalType:
+      type: string
+      enum: [route, activity, assessment, free_answer, explanation]
+    TutoringState:
+      type: string
+      enum: [Idle, GoalReady, Diagnostic, RouteActive, ActivityIssued, AwaitingResponse, Evaluating, Feedback, AdvanceOrReview, Completed, FocusSuspended, FreeQuestion, FreeAnswer, FocusResumed]
+    HelpLevel:
+      type: string
+      enum: [none, hint, scaffold, answer_revealed]
+    LearningSourceRange:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      properties:
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+    KnowledgeReferenceInput:
+      type: object
+      additionalProperties: false
+      required: [node_revision_id]
+      properties:
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        range: { $ref: "#/components/schemas/LearningSourceRange" }
+        slice: { type: string }
+        slice_sha256: { $ref: "#/components/schemas/SHA256" }
+    KnowledgeReference:
+      type: object
+      additionalProperties: false
+      required: [knowledge_revision_id, node_id, node_revision_id, range, slice_sha256]
+      properties:
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        range: { $ref: "#/components/schemas/LearningSourceRange" }
+        slice: { type: string }
+        slice_sha256: { $ref: "#/components/schemas/SHA256" }
+    GoalRevision:
+      type: object
+      additionalProperties: false
+      required: [goal_revision_id, goal_id, revision, text, source, actor_device_id, created_at]
+      properties:
+        goal_revision_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        text: { type: string }
+        source: { type: string, maxLength: 200 }
+        actor_device_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        previous_revision_id: { type: string, format: uuid }
+    FocusContext:
+      type: object
+      additionalProperties: false
+      properties:
+        goal_revision_id: { type: string, format: uuid }
+        route_revision_id: { type: string, format: uuid }
+        route_step_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+        focus_node_revision_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+    FocusFrame:
+      type: object
+      additionalProperties: false
+      required: [focus_frame_id, session_id, saved_state, context, saved_aggregate_version, created_event_seq, invalidated]
+      properties:
+        focus_frame_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        saved_state: { $ref: "#/components/schemas/TutoringState" }
+        context: { $ref: "#/components/schemas/FocusContext" }
+        saved_aggregate_version: { type: integer, minimum: 0 }
+        created_event_seq: { type: integer, minimum: 0 }
+        invalidated: { type: boolean }
+        invalidation_reason: { type: string }
+    TutoringSession:
+      type: object
+      additionalProperties: false
+      required: [session_id, state, aggregate_version, focus, attached_quiz, completed_route]
+      properties:
+        session_id: { type: string, format: uuid }
+        state: { $ref: "#/components/schemas/TutoringState" }
+        aggregate_version: { type: integer, minimum: 0 }
+        focus: { $ref: "#/components/schemas/FocusContext" }
+        active_focus_frame: { $ref: "#/components/schemas/FocusFrame" }
+        attached_quiz: { type: boolean }
+        completed_route: { type: boolean }
+    ActiveTimeEstimate:
+      type: object
+      additionalProperties: false
+      required: [duration_seconds, estimated, algorithm_version, sample_count]
+      properties:
+        duration_seconds: { type: integer, minimum: 0 }
+        estimated: { type: boolean }
+        algorithm_version: { type: string }
+        sample_count: { type: integer, minimum: 0 }
+        first_received_at: { type: string, format: date-time }
+        last_received_at: { type: string, format: date-time }
+    SessionView:
+      type: object
+      additionalProperties: false
+      required: [metadata, session, estimated_active_time]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        session: { $ref: "#/components/schemas/TutoringSession" }
+        estimated_active_time: { $ref: "#/components/schemas/ActiveTimeEstimate" }
+    TimelineItem:
+      type: object
+      additionalProperties: false
+      required: [event_seq, event_id, event_type, aggregate_id, received_at, occurred_at_trusted]
+      properties:
+        event_seq: { type: integer, minimum: 1 }
+        event_id: { type: string, format: uuid }
+        event_type: { type: string }
+        aggregate_id: { type: string, format: uuid }
+        received_at: { type: string, format: date-time }
+        occurred_at: { type: string, format: date-time }
+        occurred_at_trusted: { type: boolean }
+    TimelinePage:
+      type: object
+      additionalProperties: false
+      required: [metadata, items]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TimelineItem" }
+        next_cursor: { type: string }
+    RouteStep:
+      type: object
+      additionalProperties: false
+      required: [route_step_id, ordinal, node_id, node_revision_id, teaching_intent, completion_condition]
+      properties:
+        route_step_id: { $ref: "#/components/schemas/LearningUUID" }
+        ordinal: { type: integer, minimum: 0 }
+        node_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        teaching_intent: { type: string }
+        completion_condition: { type: string }
+    RouteRevision:
+      type: object
+      additionalProperties: false
+      required: [route_revision_id, route_id, revision, goal_revision_id, knowledge_revision_id, route_policy_version, source_proposal_id, steps, created_at]
+      properties:
+        route_revision_id: { type: string, format: uuid }
+        route_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        goal_revision_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+        route_policy_version: { type: string }
+        source_proposal_id: { type: string, format: uuid }
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/RouteStep" }
+        created_at: { type: string, format: date-time }
+    RouteProjection:
+      type: object
+      additionalProperties: false
+      required: [route, event_seq, current]
+      properties:
+        route: { $ref: "#/components/schemas/RouteRevision" }
+        event_seq: { type: integer, minimum: 1 }
+        current: { type: boolean }
+    RoutesPage:
+      type: object
+      additionalProperties: false
+      required: [metadata, items]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RouteProjection" }
+        next_cursor: { type: string }
+    MisconceptionCandidate:
+      type: object
+      additionalProperties: false
+      required: [rubric_item_id, text]
+      properties:
+        rubric_item_id: { type: string }
+        text: { type: string }
+    RubricOutcome:
+      type: object
+      additionalProperties: false
+      required: [rubric_item_id, conclusion]
+      properties:
+        rubric_item_id: { type: string }
+        conclusion: { type: string, enum: [pass, partial, fail, unassessed] }
+    AcceptedEvidence:
+      type: object
+      additionalProperties: false
+      required: [evidence_id, disposition_decision_id, assessment_id, attempt_id, activity_id, activity_revision, goal_revision_id, route_revision_id, knowledge_revision_id, node_revision_id, rubric_revision, kind, activity_type, outcome, help, received_at, acceptance_policy_version, reducer_policy_version, review_policy_version]
+      properties:
+        evidence_id: { type: string, format: uuid }
+        disposition_decision_id: { type: string, format: uuid }
+        assessment_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        activity_revision: { type: integer, minimum: 1 }
+        goal_revision_id: { type: string, format: uuid }
+        route_revision_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+        node_revision_id: { type: string, format: uuid }
+        rubric_revision: { type: string }
+        kind: { type: string, enum: [practice_recall, review_recall] }
+        activity_type: { type: string, enum: [objective, open, explanation] }
+        outcome: { type: string, enum: [pass, partial, fail] }
+        help: { $ref: "#/components/schemas/HelpLevel" }
+        received_at: { type: string, format: date-time }
+        acceptance_policy_version: { type: string }
+        reducer_policy_version: { type: string }
+        review_policy_version: { type: string }
+        misconceptions:
+          type: array
+          items: { $ref: "#/components/schemas/MisconceptionCandidate" }
+        rubric_outcomes:
+          type: array
+          items: { $ref: "#/components/schemas/RubricOutcome" }
+    EvidencePage:
+      type: object
+      additionalProperties: false
+      required: [metadata, items]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AcceptedEvidence" }
+        next_cursor: { type: string }
+    ReviewSchedule:
+      type: object
+      additionalProperties: false
+      required: [node_revision_id, step, due_at, intervals, policy_version]
+      properties:
+        node_revision_id: { type: string, format: uuid }
+        step: { type: integer, minimum: 0 }
+        due_at: { type: string, format: date-time }
+        intervals:
+          type: array
+          items: { type: integer, minimum: 0 }
+        policy_version: { type: string }
+    ReviewsPage:
+      type: object
+      additionalProperties: false
+      required: [metadata, items]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReviewSchedule" }
+        next_cursor: { type: string }
+    MasteryProjection:
+      type: object
+      additionalProperties: false
+      required: [node_revision_id, state, baseline_state, valid_evidence_count, kinds, outcomes, help, pending_assessments, uncertainty_reasons, reducer_version]
+      properties:
+        node_revision_id: { type: string, format: uuid }
+        state: { type: string, enum: [unseen, learning, provisional, retained] }
+        baseline_state: { type: string, enum: [unseen, learning, provisional, retained] }
+        valid_evidence_count: { type: integer, minimum: 0 }
+        kinds:
+          type: object
+          additionalProperties: false
+          properties:
+            practice_recall: { type: integer, minimum: 0 }
+            review_recall: { type: integer, minimum: 0 }
+        outcomes:
+          type: object
+          additionalProperties: false
+          properties:
+            pass: { type: integer, minimum: 0 }
+            partial: { type: integer, minimum: 0 }
+            fail: { type: integer, minimum: 0 }
+        help:
+          type: object
+          additionalProperties: false
+          properties:
+            none: { type: integer, minimum: 0 }
+            hint: { type: integer, minimum: 0 }
+            scaffold: { type: integer, minimum: 0 }
+            answer_revealed: { type: integer, minimum: 0 }
+        last_evidence_at: { type: string, format: date-time }
+        pending_assessments: { type: integer, minimum: 0 }
+        uncertainty_reasons:
+          type: array
+          items: { type: string }
+        reducer_version: { type: string }
+    MisconceptionHypothesis:
+      type: object
+      additionalProperties: false
+      required: [misconception_id, revision, node_revision_id, rubric_item_id, candidate_hash, candidate, status, source_evidence_ids, counter_evidence_ids, caused_by_evidence_id]
+      properties:
+        misconception_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        node_revision_id: { type: string, format: uuid }
+        rubric_item_id: { type: string }
+        candidate_hash: { $ref: "#/components/schemas/SHA256" }
+        candidate: { type: string }
+        status: { type: string, enum: [proposed, supported, challenged, resolved] }
+        source_evidence_ids:
+          type: array
+          items: { type: string, format: uuid }
+        counter_evidence_ids:
+          type: array
+          items: { type: string, format: uuid }
+        caused_by_evidence_id: { type: string, format: uuid }
+    NodeReduction:
+      type: object
+      additionalProperties: false
+      required: [mastery, misconceptions]
+      properties:
+        mastery: { $ref: "#/components/schemas/MasteryProjection" }
+        review: { $ref: "#/components/schemas/ReviewSchedule" }
+        misconceptions:
+          type: array
+          items: { $ref: "#/components/schemas/MisconceptionHypothesis" }
+    NodeView:
+      type: object
+      additionalProperties: false
+      required: [metadata, node, evidence]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        node: { $ref: "#/components/schemas/NodeReduction" }
+        evidence:
+          type: array
+          items: { $ref: "#/components/schemas/AcceptedEvidence" }
+    AssessmentItemInput:
+      type: object
+      additionalProperties: false
+      required: [rubric_item_id, conclusion, answer_quote, answer_range, answer_quote_sha256, knowledge_reference_id, knowledge_quote, knowledge_range, knowledge_quote_sha256]
+      properties:
+        rubric_item_id: { type: string, minLength: 1 }
+        conclusion: { type: string, enum: [pass, partial, fail, unassessed] }
+        answer_quote: { type: string }
+        answer_range: { $ref: "#/components/schemas/LearningSourceRange" }
+        answer_quote_sha256: { $ref: "#/components/schemas/SHA256" }
+        knowledge_reference_id: { $ref: "#/components/schemas/AssessmentReferenceIDInput" }
+        knowledge_quote: { type: string }
+        knowledge_range: { $ref: "#/components/schemas/LearningSourceRange" }
+        knowledge_quote_sha256: { $ref: "#/components/schemas/SHA256" }
+        misconception_candidate: { type: string }
+    AssessmentItem:
+      $ref: "#/components/schemas/AssessmentItemInput"
+    AssessmentArtifact:
+      type: object
+      additionalProperties: false
+      required: [assessment_id, session_id, attempt_id, activity_id, activity_revision, items, rubric_complete, confidence, risk_flags, model_id, model_parameters, prompt_revision, proposal_input_hash, attempts, attempt_categories, created_at]
+      properties:
+        assessment_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        activity_revision: { type: integer, minimum: 1 }
+        items:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/AssessmentItem" }
+        rubric_complete: { type: boolean }
+        confidence: { type: integer, minimum: 0, maximum: 1000 }
+        risk_flags:
+          type: array
+          items: { type: string, enum: [incomplete_rubric, insufficient_answer_evidence, insufficient_knowledge_support, conflicting_evidence, ambiguous_rubric, unsafe_content, schema_repaired, stale_context, retry_exhausted] }
+        model_id: { type: string }
+        model_parameters:
+          type: object
+          additionalProperties:
+            oneOf:
+              - { type: string }
+              - { type: number }
+              - { type: boolean }
+              - { type: "null" }
+        prompt_revision: { type: string }
+        proposal_input_hash: { $ref: "#/components/schemas/SHA256" }
+        attempts: { type: integer, minimum: 1, maximum: 2 }
+        attempt_categories:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    AssessmentDecision:
+      type: object
+      additionalProperties: false
+      required: [decision_id, assessment_id, version, disposition, items, actor_device_id, created_at]
+      properties:
+        decision_id: { type: string, format: uuid }
+        assessment_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        disposition: { type: string, enum: [provisional, accepted, overridden, voided] }
+        items:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/AssessmentItem" }
+        reason: { type: string }
+        actor_device_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        replaces_decision_id: { type: string, format: uuid }
+        produced_evidence_id: { type: string, format: uuid }
+    RouteProposalStep:
+      type: object
+      additionalProperties: false
+      required: [node_revision_id, teaching_intent, completion_condition]
+      properties:
+        node_revision_id: { type: string, format: uuid }
+        teaching_intent: { type: string, minLength: 1, maxLength: 1000 }
+        completion_condition: { type: string, minLength: 1, maxLength: 1000 }
+    RubricItem:
+      type: object
+      additionalProperties: false
+      required: [rubric_item_id, criterion]
+      properties:
+        rubric_item_id: { type: string }
+        criterion: { type: string }
+        required_reference_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ObjectiveRule:
+      type: object
+      additionalProperties: false
+      required: [accepted_answers, case_sensitive, trim_space]
+      properties:
+        accepted_answers:
+          type: array
+          minItems: 1
+          items: { type: string }
+        case_sensitive: { type: boolean }
+        trim_space: { type: boolean }
+    Rubric:
+      type: object
+      additionalProperties: false
+      required: [rubric_revision, items]
+      properties:
+        rubric_revision: { type: string }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { $ref: "#/components/schemas/RubricItem" }
+        objective_rule: { $ref: "#/components/schemas/ObjectiveRule" }
+    Activity:
+      type: object
+      additionalProperties: false
+      required: [activity_id, revision, session_id, goal_revision_id, route_revision_id, route_step_id, knowledge_revision_id, target_node_id, target_node_revision_id, knowledge_references, prompt, type, rubric, difficulty, allowed_help, activity_policy_version, assessment_policy_version, review_policy_version, review, created_at]
+      properties:
+        activity_id: { $ref: "#/components/schemas/LearningUUID" }
+        revision: { type: integer, minimum: 1 }
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
+        goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        route_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        route_step_id: { $ref: "#/components/schemas/LearningUUID" }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_node_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        knowledge_references:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/KnowledgeReference" }
+        prompt: { type: string, minLength: 1, maxLength: 8000 }
+        type: { type: string, enum: [objective, open, explanation] }
+        rubric: { $ref: "#/components/schemas/Rubric" }
+        difficulty: { type: integer, minimum: 1, maximum: 5 }
+        allowed_help:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/HelpLevel" }
+        activity_policy_version: { type: string }
+        assessment_policy_version: { type: string }
+        review_policy_version: { type: string }
+        source_proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        attached_free_question_id: { $ref: "#/components/schemas/LearningUUID" }
+        attached_free_answer_id: { $ref: "#/components/schemas/LearningUUID" }
+        review: { type: boolean }
+        created_at: { type: string, format: date-time }
+    ActivityProposal:
+      type: object
+      additionalProperties: false
+      required: [prompt, type, rubric, difficulty, allowed_help, knowledge_references]
+      properties:
+        prompt: { type: string }
+        type: { type: string, enum: [objective, open, explanation] }
+        rubric: { $ref: "#/components/schemas/Rubric" }
+        difficulty: { type: integer }
+        allowed_help:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/HelpLevel" }
+        knowledge_references:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/KnowledgeReference" }
+    TextProposal:
+      type: object
+      additionalProperties: false
+      required: [text, knowledge_references]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 32000 }
+        knowledge_references:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: "#/components/schemas/KnowledgeReference" }
+    ProjectionStatus:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          metadata,
+          committed_event_high_water,
+          fingerprint,
+          active_generation_id,
+        ]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        committed_event_high_water: { type: integer, minimum: 0 }
+        fingerprint: { $ref: "#/components/schemas/SHA256" }
+        active_generation_id: { type: string, format: uuid }
+        rebuilding_generation_id: { type: string, format: uuid }
+    LearningErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+        conflict:
+          type: object
+          additionalProperties: false
+          required: [aggregate_type, aggregate_id, expected_version, current_version, as_of_event_seq]
+          properties:
+            aggregate_type: { type: string }
+            aggregate_id: { type: string }
+            expected_version: { type: integer }
+            current_version: { type: integer }
+            as_of_event_seq: { type: integer }
+        current_disposition: { type: string }
     Liveness:
       type: object
       additionalProperties: false
@@ -891,7 +2338,13 @@ components:
       type: object
       additionalProperties: false
       required:
-        [identity_review_basis_hash, identity_review_operation_id, identity_review_receipt, document_reviews, node_reviews]
+        [
+          identity_review_basis_hash,
+          identity_review_operation_id,
+          identity_review_receipt,
+          document_reviews,
+          node_reviews,
+        ]
       properties:
         identity_review_basis_hash:
           type: string
@@ -1013,7 +2466,16 @@ components:
     Candidate:
       type: object
       additionalProperties: false
-      required: [ordinal, node_revision_id, score, title, title_sha256, has_children, local_body_score]
+      required:
+        [
+          ordinal,
+          node_revision_id,
+          score,
+          title,
+          title_sha256,
+          has_children,
+          local_body_score,
+        ]
       properties:
         ordinal:
           type: integer
@@ -1053,7 +2515,16 @@ components:
       type: object
       additionalProperties: false
       required:
-        [index, depth, parent_node_revision_id, candidates, decisions, candidate_set_hash, degraded, truncated]
+        [
+          index,
+          depth,
+          parent_node_revision_id,
+          candidates,
+          decisions,
+          candidate_set_hash,
+          degraded,
+          truncated,
+        ]
       properties:
         index:
           type: integer
@@ -1085,7 +2556,21 @@ components:
       type: object
       additionalProperties: false
       required:
-        [document_id, document_revision_id, node_id, node_revision_id, path, heading_range, local_body_range, section_range, canonical_slice, slice_sha256, trace_index, depth, provenance]
+        [
+          document_id,
+          document_revision_id,
+          node_id,
+          node_revision_id,
+          path,
+          heading_range,
+          local_body_range,
+          section_range,
+          canonical_slice,
+          slice_sha256,
+          trace_index,
+          depth,
+          provenance,
+        ]
       properties:
         document_id:
           type: string

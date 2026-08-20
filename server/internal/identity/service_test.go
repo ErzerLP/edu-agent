@@ -210,6 +210,12 @@ func TestPairingCodeExpiresAndScopeIsEnforced(t *testing.T) {
 	now = now.Add(-2 * time.Minute)
 	code, _, _ = service.CreatePairingCode(context.Background())
 	issued, _ := service.ExchangePairingCode(context.Background(), code, "Scoped")
+	if _, err := service.Authenticate(context.Background(), issued.Token, "learning:read"); err != nil {
+		t.Fatalf("issued token should include learning:read: %v", err)
+	}
+	if _, err := service.Authenticate(context.Background(), issued.Token, "learning:write"); err != nil {
+		t.Fatalf("issued token should include learning:write: %v", err)
+	}
 	if _, err := service.Authenticate(context.Background(), issued.Token, "admin:unknown"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("missing scope should fail: %v", err)
 	}

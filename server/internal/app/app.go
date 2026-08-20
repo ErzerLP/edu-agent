@@ -11,15 +11,21 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	identitypostgres "github.com/edu-agent/edu-agent/server/internal/identity/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/learningknowledge"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/tutormodel"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge/llmselector"
 	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
+	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
+	learningtutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/edu-agent/edu-agent/server/migrations"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
@@ -57,6 +63,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize knowledge service: %w", err)
 	}
+	learningComposition, err := composeLearning(pool, knowledgeService, modelClient, cfg)
+	if err != nil {
+		return err
+	}
+	learningService := learningComposition.service
 	var modelProber httpapi.ModelProber
 	if modelClient != nil {
 		modelProber = modelClient
@@ -67,7 +78,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Timeout: minDuration(cfg.Model.Timeout, 5*time.Second),
 	})
 	handler, err := httpapi.New(httpapi.Options{
-		Identity: identityService, Model: modelProber, Knowledge: knowledgeService,
+		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Learning: learningService,
 		Readiness: readiness, Logger: logger,
 		PairLimiter:   httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
 		AuthLimiter:   httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
@@ -115,6 +126,32 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	logger.Info("service stopped")
 	return nil
+}
+
+type learningComposition struct {
+	learningStore *learningpostgres.Store
+	tutoringStore *learningtutoringpostgres.Store
+	resolver      *learningknowledge.Adapter
+	model         learning.TutorModel
+	service       *learning.Service
+}
+
+func composeLearning(pool *pgxpool.Pool, reader learningknowledge.TreeReader, modelClient *llm.Client, cfg config.Config) (learningComposition, error) {
+	tutoringStore := learningtutoringpostgres.New(pool)
+	learningStore := learningpostgres.New(pool, tutoringStore)
+	composition := learningComposition{learningStore: learningStore, tutoringStore: tutoringStore, resolver: learningknowledge.New(reader)}
+	if modelClient != nil {
+		composition.model = tutormodel.New(modelClient)
+	}
+	service, err := learning.NewService(composition.learningStore, composition.learningStore, composition.resolver, learning.ServiceOptions{
+		Model: composition.model, ModelID: cfg.Model.Name,
+		ModelParameters: map[string]any{"context_window": cfg.Model.ContextWindow},
+	})
+	if err != nil {
+		return learningComposition{}, fmt.Errorf("initialize learning service: %w", err)
+	}
+	composition.service = service
+	return composition, nil
 }
 
 func CreatePairingCode(ctx context.Context, cfg config.Config) (string, time.Time, error) {

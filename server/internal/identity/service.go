@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 )
 
-var defaultScopes = []string{"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write"}
+var defaultScopes = []string{"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write", "learning:read", "learning:write"}
 
 type Options struct {
 	PairingCodeTTL         time.Duration

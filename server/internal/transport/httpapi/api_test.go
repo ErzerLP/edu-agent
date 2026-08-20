@@ -14,6 +14,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 )
 
@@ -48,6 +49,33 @@ func (f fakeReadiness) Ready(context.Context) health.Report { return f.report }
 type fakeModel struct{ result llm.Capabilities }
 
 func (f fakeModel) Probe(context.Context) llm.Capabilities { return f.result }
+
+type fakeKnowledge struct {
+	head          *knowledge.KnowledgeRevision
+	importResult  knowledge.ImportResult
+	importErr     error
+	importCommand knowledge.ImportCommand
+	tree          knowledge.TreeResult
+	export        knowledge.ExportResult
+	retrieval     knowledge.RetrievalResult
+}
+
+func (f *fakeKnowledge) Head(context.Context) (*knowledge.KnowledgeRevision, error) {
+	return f.head, nil
+}
+func (f *fakeKnowledge) Import(_ context.Context, command knowledge.ImportCommand) (knowledge.ImportResult, error) {
+	f.importCommand = command
+	return f.importResult, f.importErr
+}
+func (f *fakeKnowledge) Tree(context.Context, string) (knowledge.TreeResult, error) {
+	return f.tree, nil
+}
+func (f *fakeKnowledge) Export(context.Context, string) (knowledge.ExportResult, error) {
+	return f.export, nil
+}
+func (f *fakeKnowledge) Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error) {
+	return f.retrieval, nil
+}
 
 func newTestAPI(t *testing.T, id *fakeIdentity, pairLimit, authLimit int, logs *bytes.Buffer) http.Handler {
 	t.Helper()
@@ -239,6 +267,138 @@ func TestRejectsUnknownJSONFields(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("expected strict JSON error, got %d", response.Code)
+	}
+}
+
+func TestKnowledgeRoutesScopesStrictJSONAndRedactedLogs(t *testing.T) {
+	var logs bytes.Buffer
+	revision := knowledge.KnowledgeRevision{ID: "10000000-0000-4000-8000-000000000001", RevisionNo: 1}
+	knowledgeService := &fakeKnowledge{head: &revision, importResult: knowledge.ImportResult{Revision: revision}}
+	id := &fakeIdentity{auth: identity.Credential{
+		Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"},
+		Scopes: []string{"knowledge:read", "knowledge:write"},
+	}}
+	handler, err := New(Options{
+		Identity: id, Knowledge: knowledgeService,
+		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger:    slog.New(slog.NewJSONHandler(&logs, nil)), PairLimiter: NewFixedWindowLimiter(10, time.Minute),
+		AuthLimiter: NewFixedWindowLimiter(10, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute),
+		MaxKnowledgeRequestBody: 4096,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/v1/knowledge/revisions/head", nil)
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), revision.ID) {
+		t.Fatalf("head: %d %s", response.Code, response.Body.String())
+	}
+
+	const (
+		markdownSecret  = "private markdown body"
+		reviewBasis     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		reviewReceipt   = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		reviewOperation = "20000000-0000-4000-8000-000000000099"
+	)
+	body := `{"operation_id":"20000000-0000-4000-8000-000000000001","expected_parent_revision_id":null,"source":"test","documents":[{"path":"note.md","markdown":"` + markdownSecret + `"}],"identity_review_basis_hash":"` + reviewBasis + `","identity_review_operation_id":"` + reviewOperation + `","identity_review_receipt":"` + reviewReceipt + `","node_resolutions":[{"locator":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","action":"new","reason":"new section"}]}`
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated || knowledgeService.importCommand.ActorDeviceID != id.auth.Device.ID || !knowledgeService.importCommand.ExpectedParentProvided || knowledgeService.importCommand.IdentityReviewBasisHash != reviewBasis || knowledgeService.importCommand.IdentityReviewOperationID != reviewOperation || knowledgeService.importCommand.IdentityReviewReceipt != reviewReceipt {
+		t.Fatalf("import: %d %s command=%+v", response.Code, response.Body.String(), knowledgeService.importCommand)
+	}
+	if strings.Contains(logs.String(), markdownSecret) {
+		t.Fatalf("knowledge audit log leaked Markdown: %s", logs.String())
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(`{"operation_id":"20000000-0000-4000-8000-000000000002","source":"test","documents":[],"unknown":true}`))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), knowledge.CodeInvalidRequest) {
+		t.Fatalf("strict import JSON: %d %s", response.Code, response.Body.String())
+	}
+
+	tooLongSource, err := json.Marshal(map[string]any{
+		"operation_id": "20000000-0000-4000-8000-000000000005",
+		"source":       strings.Repeat("知", knowledge.MaxSourceRunes+1),
+		"documents":    []map[string]string{{"path": "note.md", "markdown": "body"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	knowledgeService.importErr = &knowledge.Error{Code: knowledge.CodeInvalidRequest}
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", bytes.NewReader(tooLongSource))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("501-rune source mapping: %d %s", response.Code, response.Body.String())
+	}
+	knowledgeService.importErr = nil
+
+	id.auth.Scopes = []string{"knowledge:read"}
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("knowledge write scope was not enforced: %d", response.Code)
+	}
+}
+
+func TestKnowledgeReviewAndBodyLimitHTTPMapping(t *testing.T) {
+	var logs bytes.Buffer
+	review := &knowledge.IdentityReview{
+		BasisHash: strings.Repeat("a", 64), OperationID: "20000000-0000-4000-8000-000000000003", Receipt: strings.Repeat("c", 64),
+		Documents: []knowledge.DocumentIdentityReview{{Path: "note.md", Locator: strings.Repeat("b", 64)}}, Nodes: []knowledge.NodeIdentityReview{},
+	}
+	knowledgeService := &fakeKnowledge{importErr: &knowledge.Error{Code: knowledge.CodeIdentityReviewRequired, Review: review}}
+	id := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"}, Scopes: []string{"knowledge:write"}}}
+	handler, err := New(Options{
+		Identity: id, Knowledge: knowledgeService,
+		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger:    slog.New(slog.NewJSONHandler(&logs, nil)), PairLimiter: NewFixedWindowLimiter(10, time.Minute),
+		AuthLimiter: NewFixedWindowLimiter(10, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute),
+		MaxKnowledgeRequestBody: 256,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"operation_id":"20000000-0000-4000-8000-000000000003","expected_parent_revision_id":null,"source":"test","documents":[{"path":"note.md","markdown":"changed"}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer valid")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "identity_review") || !strings.Contains(response.Body.String(), review.OperationID) || !strings.Contains(response.Body.String(), review.Receipt) || strings.Contains(response.Body.String(), "changed") {
+		t.Fatalf("identity review mapping: %d %s", response.Code, response.Body.String())
+	}
+
+	knowledgeService.importErr = &knowledge.Error{Code: knowledge.CodeRevisionConflict, CurrentRevisionKnown: true}
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var conflict map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &conflict); err != nil {
+		t.Fatal(err)
+	}
+	current, exists := conflict["current_revision_id"]
+	if response.Code != http.StatusConflict || !exists || current != nil {
+		t.Fatalf("empty-head revision conflict did not return explicit null: %d %s", response.Code, response.Body.String())
+	}
+
+	large := `{"operation_id":"20000000-0000-4000-8000-000000000004","expected_parent_revision_id":null,"source":"test","documents":[{"path":"note.md","markdown":"` + strings.Repeat("x", 400) + `"}]}`
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(large))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusRequestEntityTooLarge || !strings.Contains(response.Body.String(), knowledge.CodePayloadTooLarge) {
+		t.Fatalf("body limit mapping: %d %s", response.Code, response.Body.String())
 	}
 }
 

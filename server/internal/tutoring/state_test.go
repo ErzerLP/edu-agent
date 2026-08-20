@@ -1,6 +1,8 @@
 package tutoring
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -165,6 +167,33 @@ func TestFocusFrameInvalidationIsPermanent(t *testing.T) {
 				t.Fatalf("invalidated frame resumed: %v", err)
 			}
 		})
+	}
+}
+
+func TestResumeFocusInvalidatedMarkerPrecedesStateValidation(t *testing.T) {
+	session := matrixSession(StateRouteActive)
+	session.FocusFrameInvalidated = true
+	if _, err := Apply(session, Command{Action: ActionResumeFocus}); !errors.Is(err, ErrFocusFrameInvalid) {
+		t.Fatalf("marker from non-free state: %v", err)
+	}
+
+	if _, err := Apply(matrixSession(StateRouteActive), Command{Action: ActionResumeFocus}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("missing frame from non-free state: %v", err)
+	}
+	missingFreeFrame := matrixSession(StateFreeQuestion)
+	missingFreeFrame.ActiveFrame = nil
+	if _, err := Apply(missingFreeFrame, Command{Action: ActionResumeFocus}); !errors.Is(err, ErrFocusFrameInvalid) {
+		t.Fatalf("missing frame from free-question state: %v", err)
+	}
+}
+
+func TestInvalidatedFocusMarkerIsInternalJSON(t *testing.T) {
+	encoded, err := json.Marshal(Session{ID: "session-1", State: StateRouteActive, FocusFrameInvalidated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("focus_frame_invalidated")) {
+		t.Fatalf("internal invalidation marker leaked into JSON: %s", encoded)
 	}
 }
 

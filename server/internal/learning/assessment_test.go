@@ -15,7 +15,7 @@ func assessmentFixture() (Activity, Attempt, AssessmentArtifact) {
 		ID: "activity-1", Revision: 1, SessionID: "session-1", Type: ActivityOpen,
 		KnowledgeRevisionID: "knowledge-1", TargetNodeID: "node-1", TargetNodeRevisionID: "node-rev-1", AssessmentPolicyVersion: AssessmentPolicyVersion,
 		Rubric:     Rubric{Revision: "rubric-1", Items: []RubricItem{{ID: "item-1", Criterion: "identifies FIFO", RequiredReferenceIDs: []string{"node-rev-1"}}}},
-		References: []KnowledgeReference{{KnowledgeRevisionID: "knowledge-1", NodeID: "node-1", NodeRevisionID: "node-rev-1", Slice: knowledgeText, SliceSHA256: SHA256([]byte(knowledgeText))}},
+		References: []KnowledgeReference{{KnowledgeRevisionID: "knowledge-1", NodeID: "node-1", NodeRevisionID: "node-rev-1", DocumentRevisionID: "document-rev-1", Slice: knowledgeText, SliceSHA256: SHA256([]byte(knowledgeText))}},
 	}
 	attempt := Attempt{ID: "attempt-1", ActivityID: activity.ID, ActivityRevision: 1, Answer: answer, AnswerSHA256: SHA256([]byte(answer)), Help: HelpNone, ReceivedAt: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)}
 	artifact := AssessmentArtifact{

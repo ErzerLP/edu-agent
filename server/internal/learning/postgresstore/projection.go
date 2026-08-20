@@ -98,6 +98,17 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 			return fmt.Errorf("project session: %w", err)
 		}
 	}
+	statSessions := make([]string, 0, len(projection.Stats))
+	for sessionID := range projection.Stats {
+		statSessions = append(statSessions, sessionID)
+	}
+	sort.Strings(statSessions)
+	for _, sessionID := range statSessions {
+		encoded, _ := json.Marshal(projection.Stats[sessionID])
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_stats(generation_id,session_id,item) VALUES($1,$2,$3)`, generationID, sessionID, encoded); err != nil {
+			return fmt.Errorf("project session stats: %w", err)
+		}
+	}
 	nodes := make([]string, 0, len(projection.Nodes))
 	for node := range projection.Nodes {
 		nodes = append(nodes, node)
@@ -141,7 +152,7 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 			reasons = appendUnique(reasons, reason)
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE learning_projection_generations SET target_high_water=$2,checkpoint_event_seq=$2,fingerprint=$3,incomplete=$4,reason_codes=$5,completed_at=$6 WHERE id=$1`, generationID, highWater, fingerprintBytes, incomplete, reasons, now); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE learning_projection_generations SET target_high_water=$2,checkpoint_event_seq=$2,fingerprint=$3,incomplete=$4,reason_codes=$5,completed_at=$6,knowledge_revision_id=$7 WHERE id=$1`, generationID, highWater, fingerprintBytes, incomplete, reasons, now, optionalUUIDFilter(projection.Metadata.KnowledgeRevisionID)); err != nil {
 		return fmt.Errorf("update learning projection generation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_checkpoints(generation_id,event_seq,fingerprint,updated_at) VALUES($1,$2,$3,$4) ON CONFLICT(generation_id) DO UPDATE SET event_seq=EXCLUDED.event_seq,fingerprint=EXCLUDED.fingerprint,updated_at=EXCLUDED.updated_at`, generationID, highWater, fingerprintBytes, now); err != nil {
@@ -442,11 +453,13 @@ func metadataFrom(ctx context.Context, db rowQuerier) (learning.ProjectionMetada
 	var rebuilding *string
 	var incomplete bool
 	var reasons []string
-	err := db.QueryRow(ctx, `SELECT h.active_generation_id,h.rebuilding_generation_id,g.projection_version,g.reducer_version,g.assessment_policy_version,g.review_policy_version,g.checkpoint_event_seq,g.fingerprint,g.incomplete,g.reason_codes,c.current_event_seq FROM learning_projection_head h JOIN learning_projection_generations g ON g.id=h.active_generation_id JOIN learning_event_clock c ON c.singleton_id=1 WHERE h.singleton_id=1`).Scan(&metadata.GenerationID, &rebuilding, &metadata.ProjectionVersion, &metadata.MasteryReducerVersion, &metadata.AssessmentPolicy, &metadata.ReviewPolicy, &checkpoint, &fingerprint, &incomplete, &reasons, &high)
+	var knowledgeRevisionID *string
+	err := db.QueryRow(ctx, `SELECT h.active_generation_id,h.rebuilding_generation_id,g.projection_version,g.reducer_version,g.assessment_policy_version,g.review_policy_version,g.knowledge_revision_id::text,g.checkpoint_event_seq,g.fingerprint,g.incomplete,g.reason_codes,c.current_event_seq FROM learning_projection_head h JOIN learning_projection_generations g ON g.id=h.active_generation_id JOIN learning_event_clock c ON c.singleton_id=1 WHERE h.singleton_id=1`).Scan(&metadata.GenerationID, &rebuilding, &metadata.ProjectionVersion, &metadata.MasteryReducerVersion, &metadata.AssessmentPolicy, &metadata.ReviewPolicy, &knowledgeRevisionID, &checkpoint, &fingerprint, &incomplete, &reasons, &high)
 	if err != nil {
 		return metadata, 0, "", nil, fmt.Errorf("read projection metadata: %w", err)
 	}
 	metadata.AsOfEventSequence = checkpoint
+	metadata.KnowledgeRevisionID = deref(knowledgeRevisionID)
 	metadata.Rebuilding = rebuilding != nil
 	metadata.Incomplete = incomplete || checkpoint < high
 	metadata.Degraded = metadata.Incomplete
@@ -484,9 +497,9 @@ func (s *Store) LoadSessionAuthority(ctx context.Context, id string) (learning.S
 		return learning.SessionAuthority{}, fmt.Errorf("begin session authority read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	session, err := loadSessionFrom(ctx, tx, id)
+	session, err := s.tutoring.LoadSessionWith(ctx, tx, id)
 	if err != nil {
-		return learning.SessionAuthority{}, err
+		return learning.SessionAuthority{}, mapTutoringLoadError(err)
 	}
 	high, err := eventHighWater(ctx, tx, false)
 	if err != nil {
@@ -505,60 +518,44 @@ func (s *Store) LoadSession(ctx context.Context, id string) (tutoring.Session, e
 
 func (s *Store) CurrentSession(ctx context.Context) (learning.SessionView, error) {
 	return withProjectionRead(ctx, s, func(tx pgx.Tx, metadata learning.ProjectionMetadata) (learning.SessionView, error) {
-		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT item FROM learning_projection_sessions WHERE generation_id=$1 AND item->'session'->>'state'<>'Completed' ORDER BY updated_event_seq DESC,session_id DESC LIMIT 1`, metadata.GenerationID).Scan(&raw)
+		var raw, stats []byte
+		err := tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.item->'session'->>'state'<>'Completed' ORDER BY s.updated_event_seq DESC,s.session_id DESC LIMIT 1`, metadata.GenerationID).Scan(&raw, &stats)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return learning.SessionView{}, &learning.Error{Code: learning.CodeNotFound}
 		}
 		if err != nil {
 			return learning.SessionView{}, fmt.Errorf("read current projected session: %w", err)
 		}
-		return sessionViewFromProjection(ctx, tx, metadata, raw)
+		return sessionViewFromProjection(metadata, raw, stats)
 	})
 }
 
 func (s *Store) Session(ctx context.Context, id string) (learning.SessionView, error) {
 	return withProjectionRead(ctx, s, func(tx pgx.Tx, metadata learning.ProjectionMetadata) (learning.SessionView, error) {
-		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT item FROM learning_projection_sessions WHERE generation_id=$1 AND session_id=$2`, metadata.GenerationID, id).Scan(&raw)
+		var raw, stats []byte
+		err := tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.session_id=$2`, metadata.GenerationID, id).Scan(&raw, &stats)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return learning.SessionView{}, &learning.Error{Code: learning.CodeNotFound}
 		}
 		if err != nil {
 			return learning.SessionView{}, fmt.Errorf("read projected session: %w", err)
 		}
-		return sessionViewFromProjection(ctx, tx, metadata, raw)
+		return sessionViewFromProjection(metadata, raw, stats)
 	})
 }
 
-func sessionViewFromProjection(ctx context.Context, tx pgx.Tx, metadata learning.ProjectionMetadata, raw []byte) (learning.SessionView, error) {
+func sessionViewFromProjection(metadata learning.ProjectionMetadata, raw, rawStats []byte) (learning.SessionView, error) {
 	var projected learning.SessionProjection
 	if err := json.Unmarshal(raw, &projected); err != nil {
 		return learning.SessionView{}, fmt.Errorf("decode projected session: %w", err)
 	}
-	rows, err := tx.Query(ctx, `SELECT event_seq,received_at,event_type FROM learning_events WHERE aggregate_type='session' AND aggregate_id=$1 AND event_seq<=$2 ORDER BY event_seq`, projected.Session.ID, metadata.AsOfEventSequence)
-	if err != nil {
-		return learning.SessionView{}, err
-	}
-	defer rows.Close()
-	var samples []learning.InteractionSample
-	for rows.Next() {
-		var sample learning.InteractionSample
-		var eventType learning.EventType
-		if err := rows.Scan(&sample.EventSequence, &sample.ReceivedAt, &eventType); err != nil {
-			return learning.SessionView{}, err
+	estimate := learning.EstimateActiveTime(projected.Session.ID, nil)
+	if len(rawStats) > 0 && string(rawStats) != "null" {
+		if err := json.Unmarshal(rawStats, &estimate); err != nil {
+			return learning.SessionView{}, fmt.Errorf("decode projected session stats: %w", err)
 		}
-		sample.SessionID = projected.Session.ID
-		switch eventType {
-		case learning.EventAttemptSubmitted, learning.EventFreeQuestionAsked, learning.EventReviewPresented:
-			sample.UserInitiated = true
-		}
-		samples = append(samples, sample)
 	}
-	if err := rows.Err(); err != nil {
-		return learning.SessionView{}, err
-	}
-	return learning.SessionView{Metadata: metadata, Session: projected.Session, Estimate: learning.EstimateActiveTime(projected.Session.ID, samples)}, nil
+	return learning.SessionView{Metadata: metadata, Session: projected.Session, Estimate: estimate}, nil
 }
 
 func (s *Store) Timeline(ctx context.Context, query learning.TimelineQuery) (learning.TimelinePage, error) {

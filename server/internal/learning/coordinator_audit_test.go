@@ -51,6 +51,19 @@ func frozenRouteProposal(session tutoring.Session, knowledgeRevision string, nod
 	return artifact
 }
 
+func TestApplyActionMapsPersistedFocusInvalidationWithoutCommit(t *testing.T) {
+	sessionID := "72500000-0000-4000-8000-000000000001"
+	store := &proposalTestStore{session: tutoring.Session{ID: sessionID, State: tutoring.StateRouteActive, AggregateVer: 7, FocusFrameInvalidated: true}}
+	service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
+	command := ActionCommand{Operation: coordinatorOperation("72500000-0000-4000-8000-000000000002", sessionID, 7), Action: tutoring.ActionResumeFocus}
+	if _, err := service.ApplyAction(context.Background(), "72500000-0000-4000-8000-000000000099", sessionID, command); ErrorCode(err) != CodeFocusFrameInvalidated {
+		t.Fatalf("resume error=%v code=%q", err, ErrorCode(err))
+	}
+	if store.commits != 0 || store.archives != 1 {
+		t.Fatalf("persisted invalidation changed commits=%d archives=%d", store.commits, store.archives)
+	}
+}
+
 func TestCoordinatorObjectiveAssessmentWorksWithoutModelAndRevealedAnswerNeverCreatesEvidence(t *testing.T) {
 	sessionID := "72000000-0000-4000-8000-000000000001"
 	activityID := "72000000-0000-4000-8000-000000000002"
@@ -81,6 +94,12 @@ func TestCoordinatorObjectiveAssessmentWorksWithoutModelAndRevealedAnswerNeverCr
 			batch := store.lastCommit.Batch
 			if batch.Assessment == nil || batch.Assessment.ModelID != "deterministic-objective" || batch.Disposition != test.wantDisposition || len(batch.Evidence) != test.wantEvidence {
 				t.Fatalf("objective batch=%+v", batch)
+			}
+			if test.wantEvidence == 1 {
+				owner, ok := batch.Authority.Evidence[batch.Evidence[0].ID]
+				if !ok || owner.SessionID != sessionID || owner.KnowledgeRevisionID != ref.KnowledgeRevisionID || owner.NodeID != ref.NodeID || owner.NodeRevisionID != ref.NodeRevisionID || owner.DocumentRevisionID != ref.DocumentRevisionID {
+					t.Fatalf("evidence authority=%+v frozen_reference=%+v", owner, ref)
+				}
 			}
 			if test.help == HelpAnswerRevealed && len(batch.Events) > 1 && batch.Events[1].Type != EventAssessmentMarkedProvisional {
 				t.Fatalf("revealed answer events=%v", batch.Events)
@@ -118,6 +137,12 @@ func TestCoordinatorRouteLineageAdvanceAndCompletion(t *testing.T) {
 	first := *store.lastCommit.Batch.RouteRevision
 	if first.Revision != 1 || first.RouteID == "" || len(first.Steps) != 2 {
 		t.Fatalf("first route=%+v", first)
+	}
+	for _, step := range first.Steps {
+		owner, ok := store.lastCommit.Batch.Authority.RouteSteps[step.ID]
+		if !ok || owner.KnowledgeRevisionID != "knowledge" || owner.NodeID != step.NodeID || owner.NodeRevisionID != step.NodeRevisionID || owner.DocumentRevisionID != "document" {
+			t.Fatalf("route step authority step=%+v owner=%+v", step, owner)
+		}
 	}
 
 	store.route = first

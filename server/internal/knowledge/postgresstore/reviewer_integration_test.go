@@ -63,6 +63,10 @@ func newReviewerPostgresHarness(t *testing.T) (context.Context, *pgxpool.Pool, *
 	return ctx, pool, store, service
 }
 
+func reviewerIdentityMarkdown(documentID, rootNodeID, headingNodeID, title, body string) string {
+	return fmt.Sprintf("---\nedu-agent-format: 1\nedu-agent-document-id: %s\nedu-agent-root-node-id: %s\n---\n<!-- edu-agent-node:v1 {\"id\":\"%s\"} -->\n# %s\n%s\n", documentID, rootNodeID, headingNodeID, title, body)
+}
+
 func runConcurrentImports(t *testing.T, ctx context.Context, store *postgresstore.Store, commands []knowledge.ImportCommand) []concurrentImportOutcome {
 	t.Helper()
 	if len(commands) != 2 {
@@ -86,10 +90,15 @@ func runConcurrentImports(t *testing.T, ctx context.Context, store *postgresstor
 	}
 	waited := make(chan struct{})
 	go func() { reached.Wait(); close(waited) }()
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
 	select {
 	case <-waited:
 		close(release)
-	case <-time.After(10 * time.Second):
+	case outcome := <-outcomes:
+		close(release)
+		t.Fatalf("concurrent import returned before CommitImport: result=%+v err=%v", outcome.result, outcome.err)
+	case <-timer.C:
 		close(release)
 		t.Fatal("concurrent imports did not both reach CommitImport")
 	}
@@ -169,7 +178,8 @@ func TestPostgreSQLKnowledgeCoreReviewerRegressions(t *testing.T) {
 	sameCommand := knowledge.ImportCommand{
 		OperationID: "10000000-0000-4000-8000-000000000211", ExpectedParentRevisionID: &sameParent,
 		ExpectedParentProvided: true, Source: "same-operation", ActorDeviceID: actor,
-		Documents: []knowledge.ImportDocument{{Path: "same-operation.md", Markdown: "# Same\nsame operation body\n"}},
+		Documents: []knowledge.ImportDocument{{Path: "same-operation.md", Markdown: reviewerIdentityMarkdown(
+			"70000000-0000-4000-8000-000000000301", "70000000-0000-4000-8000-000000000302", "70000000-0000-4000-8000-000000000303", "Same", "same operation body")}},
 	}
 	sameOutcomes := runConcurrentImports(t, ctx, store, []knowledge.ImportCommand{sameCommand, sameCommand})
 	replays := 0
@@ -195,8 +205,10 @@ func TestPostgreSQLKnowledgeCoreReviewerRegressions(t *testing.T) {
 		ExpectedParentProvided: true, Source: "different-hash", ActorDeviceID: actor,
 	}
 	left, right := differentBase, differentBase
-	left.Documents = []knowledge.ImportDocument{{Path: "different-left.md", Markdown: "# Left\nleft body\n"}}
-	right.Documents = []knowledge.ImportDocument{{Path: "different-right.md", Markdown: "# Right\nright body\n"}}
+	left.Documents = []knowledge.ImportDocument{{Path: "different-left.md", Markdown: reviewerIdentityMarkdown(
+		"70000000-0000-4000-8000-000000000311", "70000000-0000-4000-8000-000000000312", "70000000-0000-4000-8000-000000000313", "Left", "left body")}}
+	right.Documents = []knowledge.ImportDocument{{Path: "different-right.md", Markdown: reviewerIdentityMarkdown(
+		"70000000-0000-4000-8000-000000000321", "70000000-0000-4000-8000-000000000322", "70000000-0000-4000-8000-000000000323", "Right", "right body")}}
 	differentOutcomes := runConcurrentImports(t, ctx, store, []knowledge.ImportCommand{left, right})
 	successes, idempotencyConflicts := 0, 0
 	for _, outcome := range differentOutcomes {

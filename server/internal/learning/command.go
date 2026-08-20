@@ -236,12 +236,15 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 			routeID, revision = current.RouteID, current.Revision+1
 		}
 		route := RouteRevision{ID: s.newUUID(), RouteID: routeID, Revision: revision, GoalRevisionID: session.Context.GoalRevisionID, KnowledgeRevisionID: proposal.KnowledgeRevisionID, PolicyVersion: RoutePolicyVersion, SourceProposalID: proposal.ID, CreatedAt: now}
+		batch.Authority.RouteSteps = make(map[string]KnowledgeOwner, len(proposal.Route))
 		for index, item := range proposal.Route {
 			resolved, err := s.knowledge.Resolve(ctx, proposal.KnowledgeRevisionID, item.NodeRevisionID)
-			if err != nil || resolved.KnowledgeRevisionID != proposal.KnowledgeRevisionID || resolved.NodeID == "" || resolved.NodeRevisionID != item.NodeRevisionID {
+			if err != nil || resolved.KnowledgeRevisionID != proposal.KnowledgeRevisionID || resolved.NodeID == "" || resolved.NodeRevisionID != item.NodeRevisionID || resolved.DocumentRevisionID == "" {
 				return OperationResult{}, &Error{Code: CodeKnowledgeReferenceInvalid, Cause: err}
 			}
-			route.Steps = append(route.Steps, RouteStep{ID: s.newUUID(), Ordinal: index, NodeID: resolved.NodeID, NodeRevisionID: resolved.NodeRevisionID, TeachingIntent: item.TeachingIntent, CompletionCondition: item.CompletionCondition})
+			step := RouteStep{ID: s.newUUID(), Ordinal: index, NodeID: resolved.NodeID, NodeRevisionID: resolved.NodeRevisionID, TeachingIntent: item.TeachingIntent, CompletionCondition: item.CompletionCondition}
+			route.Steps = append(route.Steps, step)
+			batch.Authority.RouteSteps[step.ID] = knowledgeOwner(resolved)
 		}
 		if !StableRouteSteps(route.Steps) {
 			return OperationResult{}, &Error{Code: CodeProposalRejected}
@@ -358,8 +361,13 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 		if err != nil {
 			return OperationResult{}, err
 		}
+		assessmentOwners, err := assessmentAuthority(activity, artifact)
+		if err != nil {
+			return OperationResult{}, err
+		}
 		decision := AssessmentDecision{ID: s.newUUID(), AssessmentID: artifact.ID, Version: 1, Disposition: acceptance.Disposition, Items: artifact.Items, ActorDeviceID: deviceID, CreatedAt: now}
 		batch.Assessment = &artifact
+		batch.Authority.AssessmentItems = assessmentOwners
 		batch.Decisions = []AssessmentDecision{decision}
 		batch.Disposition = acceptance.Disposition
 		payloads[EventAssessmentRecorded] = []json.RawMessage{mustJSON(artifact)}
@@ -373,6 +381,11 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 			decision.ProducedEvidenceID = &evidence.ID
 			batch.Decisions[0] = decision
 			batch.Evidence = []AcceptedEvidence{evidence}
+			owner, err := evidenceAuthority(activity, evidence)
+			if err != nil {
+				return OperationResult{}, err
+			}
+			batch.Authority.Evidence = map[string]EvidenceOwner{evidence.ID: owner}
 			payloads[EventAssessmentAccepted] = []json.RawMessage{mustJSON(AssessmentProjectionEvent{AssessmentID: artifact.ID, NodeRevisionID: evidence.NodeRevisionID, Decision: decision})}
 			payloads[EventEvidenceAccepted] = []json.RawMessage{mustJSON(evidence)}
 			batch.Misconceptions, err = s.recomputeMisconceptions(ctx, evidence.NodeRevisionID, "", &evidence)
@@ -569,6 +582,11 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 		decision.ProducedEvidenceID = &evidence.ID
 		batch.Decisions[0] = decision
 		batch.Evidence = []AcceptedEvidence{evidence}
+		owner, err := evidenceAuthority(activity, evidence)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		batch.Authority.Evidence = map[string]EvidenceOwner{evidence.ID: owner}
 		acceptedEvidence = &evidence
 	}
 	if invalidatedEvidenceID != "" || acceptedEvidence != nil {
@@ -670,6 +688,45 @@ func (s *Service) makeEvidence(activity Activity, attempt Attempt, artifact Asse
 		}
 	}
 	return AcceptedEvidence{ID: s.newUUID(), DispositionDecisionID: decision.ID, AssessmentID: artifact.ID, AttemptID: attempt.ID, ActivityID: activity.ID, ActivityRevision: activity.Revision, GoalRevisionID: activity.GoalRevisionID, RouteRevisionID: activity.RouteRevisionID, KnowledgeRevisionID: activity.KnowledgeRevisionID, NodeRevisionID: activity.TargetNodeRevisionID, RubricRevision: activity.Rubric.Revision, Kind: kind, ActivityType: activity.Type, Outcome: outcome, Help: attempt.Help, ReceivedAt: now, AcceptancePolicyVersion: AssessmentPolicyVersion, ReducerPolicyVersion: MasteryReducerVersion, ReviewPolicyVersion: ReviewPolicyVersion, Misconceptions: misconceptions, RubricOutcomes: rubricOutcomes}
+}
+
+func knowledgeOwner(reference KnowledgeReference) KnowledgeOwner {
+	return KnowledgeOwner{
+		KnowledgeRevisionID: reference.KnowledgeRevisionID,
+		NodeID:              reference.NodeID, NodeRevisionID: reference.NodeRevisionID,
+		DocumentRevisionID: reference.DocumentRevisionID,
+	}
+}
+
+func assessmentAuthority(activity Activity, artifact AssessmentArtifact) ([]KnowledgeOwner, error) {
+	owners := make([]KnowledgeOwner, len(artifact.Items))
+	refs := make(map[string]KnowledgeReference, len(activity.References))
+	for _, reference := range activity.References {
+		refs[reference.NodeRevisionID] = reference
+	}
+	for index, item := range artifact.Items {
+		if item.KnowledgeReferenceID == "" {
+			continue
+		}
+		reference, ok := refs[item.KnowledgeReferenceID]
+		if !ok || reference.KnowledgeRevisionID != activity.KnowledgeRevisionID || reference.NodeID == "" || reference.DocumentRevisionID == "" {
+			return nil, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "assessment_reference_owner_missing"}
+		}
+		owners[index] = knowledgeOwner(reference)
+	}
+	return owners, nil
+}
+
+func evidenceAuthority(activity Activity, evidence AcceptedEvidence) (EvidenceOwner, error) {
+	if evidence.ActivityID != activity.ID || evidence.ActivityRevision != activity.Revision || evidence.KnowledgeRevisionID != activity.KnowledgeRevisionID || evidence.NodeRevisionID != activity.TargetNodeRevisionID {
+		return EvidenceOwner{}, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "evidence_activity_owner_mismatch"}
+	}
+	for _, reference := range activity.References {
+		if reference.KnowledgeRevisionID == activity.KnowledgeRevisionID && reference.NodeID == activity.TargetNodeID && reference.NodeRevisionID == activity.TargetNodeRevisionID && reference.DocumentRevisionID != "" {
+			return EvidenceOwner{SessionID: activity.SessionID, KnowledgeOwner: knowledgeOwner(reference)}, nil
+		}
+	}
+	return EvidenceOwner{}, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "evidence_reference_owner_missing"}
 }
 
 func (s *Service) recomputeMisconceptions(ctx context.Context, nodeRevisionID, invalidatedEvidenceID string, replacement *AcceptedEvidence) ([]MisconceptionHypothesis, error) {

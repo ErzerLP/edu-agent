@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
-	"github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
+	outboxpostgres "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/tutoring"
+	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,14 +21,24 @@ import (
 
 var eventNamespace = uuid.MustParse("7d812fdc-fc90-4c6b-8f8f-9badf3281f70")
 
-// Store is the PostgreSQL authority for learning commands and projections.
+type tutoringOwner interface {
+	Persist(context.Context, tutoringpostgres.DBTX, tutoringpostgres.WriteSet) error
+	LoadSession(context.Context, string) (tutoring.Session, error)
+	LoadSessionWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.Session, error)
+	LoadFreeQuestion(context.Context, string) (tutoring.FreeQuestion, error)
+	LoadFreeAnswer(context.Context, string) (tutoring.FreeAnswer, error)
+	LatestFreeQuestion(context.Context, string) (string, error)
+}
+
+// Store is the PostgreSQL transaction authority for learning commands and projections.
 type Store struct {
 	pool     *pgxpool.Pool
 	registry *learning.EventRegistry
+	tutoring tutoringOwner
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool, registry: learning.NewEventRegistry()}
+func New(pool *pgxpool.Pool, tutoringStore tutoringOwner) *Store {
+	return &Store{pool: pool, registry: learning.NewEventRegistry(), tutoring: tutoringStore}
 }
 
 type aggregateKey struct{ kind, id string }
@@ -263,6 +275,10 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 				return learning.OperationResult{}, fmt.Errorf("encode session projection payload: %w", err)
 			}
 		}
+		payloadSource, err = payloadWithAuthority(draft.Type, payloadSource, request.Batch.Authority)
+		if err != nil {
+			return learning.OperationResult{}, err
+		}
 		payload, err := canonicalJSON(payloadSource)
 		if err != nil {
 			return learning.OperationResult{}, &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_event_payload", Cause: err}
@@ -297,7 +313,7 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		return learning.OperationResult{}, err
 	}
 	// Persist immutable records before their canonical event envelopes.
-	if err := insertTypedRecords(ctx, tx, request); err != nil {
+	if err := s.insertTypedRecords(ctx, tx, request); err != nil {
 		return learning.OperationResult{}, err
 	}
 	for _, event := range events {
@@ -318,7 +334,7 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		return learning.OperationResult{}, fmt.Errorf("advance learning event clock: %w", err)
 	}
 	for _, message := range request.Batch.Outbox {
-		if _, err := postgresstore.EnqueueWith(ctx, tx, message); err != nil {
+		if _, err := outboxpostgres.EnqueueWith(ctx, tx, message); err != nil {
 			return learning.OperationResult{}, fmt.Errorf("enqueue learning outbox message: %w", err)
 		}
 	}
@@ -363,6 +379,44 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return learning.OperationResult{}, fmt.Errorf("commit learning command: %w", err)
+	}
+	return result, nil
+}
+
+func payloadWithAuthority(eventType learning.EventType, payload json.RawMessage, provenance learning.AuthorityProvenance) (json.RawMessage, error) {
+	var authority any
+	switch eventType {
+	case learning.EventRouteRevisionCreated:
+		if len(provenance.RouteSteps) > 0 {
+			authority = provenance.RouteSteps
+		}
+	case learning.EventAssessmentRecorded:
+		if len(provenance.AssessmentItems) > 0 {
+			authority = provenance.AssessmentItems
+		}
+	case learning.EventEvidenceAccepted:
+		if len(provenance.Evidence) > 0 {
+			authority = provenance.Evidence
+		}
+	}
+	if authority == nil {
+		return payload, nil
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &object); err != nil || object == nil {
+		return nil, &learning.Error{Code: learning.CodeInvalidRequest, Reason: "authority_event_payload_not_object", Cause: err}
+	}
+	if _, exists := object["_authority"]; exists {
+		return nil, &learning.Error{Code: learning.CodeInvalidRequest, Reason: "authority_event_payload_reserved"}
+	}
+	encoded, err := json.Marshal(authority)
+	if err != nil {
+		return nil, fmt.Errorf("encode event authority provenance: %w", err)
+	}
+	object["_authority"] = encoded
+	result, err := json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("encode authoritative event payload: %w", err)
 	}
 	return result, nil
 }

@@ -63,6 +63,9 @@ func TestReplayMatchesIncrementalProjectionWithCompensation(t *testing.T) {
 	if !incremental.RedactedEvents["event-d"] {
 		t.Fatal("EventRedacted was not preserved as an audit fact")
 	}
+	if incremental.Metadata.KnowledgeRevisionID != route.KnowledgeRevisionID || replayed.Metadata.KnowledgeRevisionID != route.KnowledgeRevisionID {
+		t.Fatalf("knowledge revision was not replayed: incremental=%q replayed=%q", incremental.Metadata.KnowledgeRevisionID, replayed.Metadata.KnowledgeRevisionID)
+	}
 }
 
 func TestRouteRevisionReplayRequiresStableNodeIdentity(t *testing.T) {
@@ -113,7 +116,7 @@ func TestExplicitUpcasterRegistry(t *testing.T) {
 }
 
 func TestProjectionFingerprintExcludesRuntimeGenerationMetadata(t *testing.T) {
-	const migrationEmptyProjectionFingerprint = "714bcedf27d4844f7d1c027582fb935d2b68b826bd0ffb3741ae782d3a5f4f56"
+	const migrationEmptyProjectionFingerprint = "2b2fe0642e3c18f6c9a9adb8fc4e8195acf5d426c906a13db6ff1434086fe831"
 
 	left := EmptyProjection("generation-left")
 	left.Metadata.Rebuilding = true
@@ -134,6 +137,71 @@ func TestProjectionFingerprintExcludesRuntimeGenerationMetadata(t *testing.T) {
 	}
 	if rightHash != migrationEmptyProjectionFingerprint {
 		t.Fatalf("versioned empty projection fingerprint changed: got %s want migration seed %s", rightHash, migrationEmptyProjectionFingerprint)
+	}
+}
+
+func TestProjectionStatsUseOnlyCanonicalUserInteractionEvents(t *testing.T) {
+	start := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	occurred := start.Add(-24 * time.Hour)
+	events := []LearningEvent{
+		eventFixture(1, EventLearningSessionStarted, SessionProjection{Session: tutoring.Session{ID: "session-1", State: tutoring.StateGoalReady}}),
+		eventFixture(2, EventAttemptSubmitted, map[string]any{}),
+		eventFixture(3, EventActivityPresented, map[string]any{}),
+		eventFixture(4, EventFreeQuestionAsked, map[string]any{}),
+		eventFixture(5, EventReviewPresented, map[string]any{}),
+	}
+	events[1].ReceivedAt = start.Add(20 * time.Minute)
+	events[1].OccurredAt = &occurred
+	events[2].ReceivedAt = start.Add(2 * time.Minute)
+	events[3].ReceivedAt = start
+	events[4].ReceivedAt = start.Add(4 * time.Minute)
+	projection, err := Replay(events, NewEventRegistry(), "generation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	estimate := projection.Stats["session-1"]
+	if !estimate.Estimated || estimate.AlgorithmVersion != ActiveTimePolicyVersion || estimate.SampleCount != 3 || estimate.DurationSeconds != int64((4*time.Minute+5*time.Minute)/time.Second) {
+		t.Fatalf("projected estimate=%+v", estimate)
+	}
+	if estimate.FirstReceivedAt == nil || !estimate.FirstReceivedAt.Equal(start) || estimate.LastReceivedAt == nil || !estimate.LastReceivedAt.Equal(start.Add(20*time.Minute)) {
+		t.Fatalf("projection used non-canonical timestamps: %+v", estimate)
+	}
+}
+
+func TestProjectionStatsInitializeEmptyAndFingerprintTheirContent(t *testing.T) {
+	projection := EmptyProjection("generation")
+	event := eventFixture(1, EventLearningSessionStarted, SessionProjection{Session: tutoring.Session{ID: "session-1", State: tutoring.StateGoalReady}})
+	if err := ApplyEvent(&projection, NewEventRegistry(), event); err != nil {
+		t.Fatal(err)
+	}
+	estimate := projection.Stats["session-1"]
+	if !estimate.Estimated || estimate.AlgorithmVersion != ActiveTimePolicyVersion || estimate.SampleCount != 0 {
+		t.Fatalf("empty session estimate=%+v", estimate)
+	}
+	before, err := ProjectionFingerprint(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	estimate.SampleCount = 1
+	projection.Stats["session-1"] = estimate
+	after, err := ProjectionFingerprint(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("projection stats did not affect fingerprint")
+	}
+}
+
+func TestActiveTimeOrderingUsesEventSequenceForReceivedAtTies(t *testing.T) {
+	start := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	result := EstimateActiveTime("s1", []InteractionSample{
+		{EventSequence: 3, SessionID: "s1", ReceivedAt: start.Add(time.Minute), UserInitiated: true},
+		{EventSequence: 2, SessionID: "s1", ReceivedAt: start, UserInitiated: true},
+		{EventSequence: 1, SessionID: "s1", ReceivedAt: start, UserInitiated: true},
+	})
+	if result.SampleCount != 3 || result.DurationSeconds != 60 || result.FirstReceivedAt == nil || !result.FirstReceivedAt.Equal(start) {
+		t.Fatalf("tie-ordered estimate=%+v", result)
 	}
 }
 

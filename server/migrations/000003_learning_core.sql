@@ -507,6 +507,7 @@ CREATE TABLE learning_projection_generations (
     reducer_version TEXT NOT NULL,
     assessment_policy_version TEXT NOT NULL,
     review_policy_version TEXT NOT NULL,
+    knowledge_revision_id UUID REFERENCES knowledge_revisions(id),
     status TEXT NOT NULL CHECK (status IN ('building','active','failed','retired')),
     target_high_water BIGINT NOT NULL CHECK (target_high_water >= 0),
     checkpoint_event_seq BIGINT NOT NULL CHECK (checkpoint_event_seq >= 0),
@@ -611,13 +612,13 @@ WITH initial AS (
     VALUES(
         gen_random_uuid(), 'learning-projection-v1', 'mastery-reducer-v1',
         'assessment-acceptance-v1', 'fixed-interval-v1', 'active', 0, 0,
-        decode('714bcedf27d4844f7d1c027582fb935d2b68b826bd0ffb3741ae782d3a5f4f56', 'hex'), now(), now())
+        decode('2b2fe0642e3c18f6c9a9adb8fc4e8195acf5d426c906a13db6ff1434086fe831', 'hex'), now(), now())
     RETURNING id
 )
 INSERT INTO learning_projection_head(singleton_id, active_generation_id, updated_at)
 SELECT 1, id, now() FROM initial;
 INSERT INTO learning_projection_checkpoints(generation_id, event_seq, fingerprint, updated_at)
-SELECT active_generation_id, 0, decode('714bcedf27d4844f7d1c027582fb935d2b68b826bd0ffb3741ae782d3a5f4f56', 'hex'), now()
+SELECT active_generation_id, 0, decode('2b2fe0642e3c18f6c9a9adb8fc4e8195acf5d426c906a13db6ff1434086fe831', 'hex'), now()
 FROM learning_projection_head WHERE singleton_id = 1;
 
 CREATE FUNCTION reject_learning_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$

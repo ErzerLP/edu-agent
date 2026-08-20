@@ -75,13 +75,14 @@ type FocusFrame struct {
 }
 
 type Session struct {
-	ID             string       `json:"session_id"`
-	State          State        `json:"state"`
-	AggregateVer   int64        `json:"aggregate_version"`
-	Context        FocusContext `json:"focus"`
-	ActiveFrame    *FocusFrame  `json:"active_focus_frame,omitempty"`
-	AttachedQuiz   bool         `json:"attached_quiz"`
-	CompletedRoute bool         `json:"completed_route"`
+	ID                    string       `json:"session_id"`
+	State                 State        `json:"state"`
+	AggregateVer          int64        `json:"aggregate_version"`
+	Context               FocusContext `json:"focus"`
+	ActiveFrame           *FocusFrame  `json:"active_focus_frame,omitempty"`
+	FocusFrameInvalidated bool         `json:"-"`
+	AttachedQuiz          bool         `json:"attached_quiz"`
+	CompletedRoute        bool         `json:"completed_route"`
 }
 
 type Command struct {
@@ -210,11 +211,14 @@ func Apply(input Session, command Command) (Transition, error) {
 		}
 		return set(StateFreeAnswer, "FreeAnswerRecorded", "ExposureRecorded", "TutoringStateChanged")
 	case ActionResumeFocus:
+		if input.FocusFrameInvalidated || (input.ActiveFrame != nil && input.ActiveFrame.Invalidated) {
+			return Transition{}, ErrFocusFrameInvalid
+		}
 		if before != StateFreeQuestion && before != StateFreeAnswer {
 			return invalid()
 		}
 		frame := input.ActiveFrame
-		if frame == nil || frame.Invalidated {
+		if frame == nil {
 			return Transition{}, ErrFocusFrameInvalid
 		}
 		transition.Intermediate = []State{StateFocusResumed}

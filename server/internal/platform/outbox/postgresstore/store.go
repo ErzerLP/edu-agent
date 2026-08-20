@@ -93,7 +93,7 @@ func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, l
 		FROM candidates c WHERE o.id=c.id
 		RETURNING o.id,o.business_type,o.aggregate_id,o.idempotency_key,o.revision,o.generation,
 		          o.payload,o.audit_metadata,o.status,o.available_at,o.attempts,o.max_attempts,
-		          o.last_error_category,o.last_error_at,o.lease_expires_at,o.lease_token::text,o.created_at,o.updated_at`,
+		          COALESCE(o.last_error_category,''),o.last_error_at,o.lease_expires_at,o.lease_token::text,o.created_at,o.updated_at`,
 		now, limit, lease.Microseconds())
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox messages: %w", err)

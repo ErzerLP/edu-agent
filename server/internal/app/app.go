@@ -23,6 +23,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
+	learningtutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/edu-agent/edu-agent/server/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -128,18 +129,21 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 }
 
 type learningComposition struct {
-	store    *learningpostgres.Store
-	resolver *learningknowledge.Adapter
-	model    learning.TutorModel
-	service  *learning.Service
+	learningStore *learningpostgres.Store
+	tutoringStore *learningtutoringpostgres.Store
+	resolver      *learningknowledge.Adapter
+	model         learning.TutorModel
+	service       *learning.Service
 }
 
 func composeLearning(pool *pgxpool.Pool, reader learningknowledge.TreeReader, modelClient *llm.Client, cfg config.Config) (learningComposition, error) {
-	composition := learningComposition{store: learningpostgres.New(pool), resolver: learningknowledge.New(reader)}
+	tutoringStore := learningtutoringpostgres.New(pool)
+	learningStore := learningpostgres.New(pool, tutoringStore)
+	composition := learningComposition{learningStore: learningStore, tutoringStore: tutoringStore, resolver: learningknowledge.New(reader)}
 	if modelClient != nil {
 		composition.model = tutormodel.New(modelClient)
 	}
-	service, err := learning.NewService(composition.store, composition.store, composition.resolver, learning.ServiceOptions{
+	service, err := learning.NewService(composition.learningStore, composition.learningStore, composition.resolver, learning.ServiceOptions{
 		Model: composition.model, ModelID: cfg.Model.Name,
 		ModelParameters: map[string]any{"context_window": cfg.Model.ContextWindow},
 	})

@@ -103,6 +103,24 @@ func TestFocusEventsCarryReplayableSessionAndFrame(t *testing.T) {
 	}
 }
 
+func TestAssessmentAuthorityComesFromFrozenActivityReference(t *testing.T) {
+	frozen := KnowledgeReference{
+		KnowledgeRevisionID: "knowledge", NodeID: "node", NodeRevisionID: "node-revision",
+		DocumentRevisionID: "document-revision", Range: SourceRange{Start: 2, End: 8},
+		Slice: "source", SliceSHA256: SHA256([]byte("source")),
+	}
+	activity := Activity{KnowledgeRevisionID: frozen.KnowledgeRevisionID, References: []KnowledgeReference{frozen}}
+	artifact := AssessmentArtifact{Items: []AssessmentItem{{RubricItemID: "rubric", KnowledgeReferenceID: frozen.NodeRevisionID}}}
+	owners, err := assessmentAuthority(activity, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := knowledgeOwner(frozen)
+	if len(owners) != 1 || owners[0] != want {
+		t.Fatalf("assessment owners=%+v want=%+v", owners, want)
+	}
+}
+
 func TestCoordinatorPreservesProjectionMetadataOnQueries(t *testing.T) {
 	metadata := ProjectionMetadata{GenerationID: "10000000-0000-4000-8000-000000000040", AsOfEventSequence: 42, ProjectionVersion: ProjectionVersion, MasteryReducerVersion: MasteryReducerVersion}
 	store := &proposalTestStore{timeline: TimelinePage{Metadata: metadata, Items: []TimelineItem{}}}

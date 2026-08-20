@@ -31,6 +31,24 @@ type EvidenceInvalidation struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type KnowledgeOwner struct {
+	KnowledgeRevisionID string `json:"knowledge_revision_id"`
+	NodeID              string `json:"node_id"`
+	NodeRevisionID      string `json:"node_revision_id"`
+	DocumentRevisionID  string `json:"document_revision_id"`
+}
+
+type EvidenceOwner struct {
+	SessionID string `json:"session_id"`
+	KnowledgeOwner
+}
+
+type AuthorityProvenance struct {
+	RouteSteps      map[string]KnowledgeOwner `json:"route_steps,omitempty"`
+	AssessmentItems []KnowledgeOwner          `json:"assessment_items,omitempty"`
+	Evidence        map[string]EvidenceOwner  `json:"evidence,omitempty"`
+}
+
 type CommandBatch struct {
 	GoalRevision    *GoalRevision
 	RouteRevision   *RouteRevision
@@ -54,6 +72,7 @@ type CommandBatch struct {
 	ResultSession   bool
 	TutoringState   string
 	Disposition     Disposition
+	Authority       AuthorityProvenance
 }
 
 type CommitRequest struct {

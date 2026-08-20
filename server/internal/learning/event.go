@@ -135,20 +135,21 @@ type PendingAssessment struct {
 }
 
 type Projection struct {
-	Metadata       ProjectionMetadata           `json:"metadata"`
-	Timeline       []TimelineItem               `json:"timeline"`
-	Routes         []RouteProjection            `json:"routes"`
-	Sessions       map[string]SessionProjection `json:"sessions"`
-	Evidence       map[string]AcceptedEvidence  `json:"evidence"`
-	Invalidated    map[string]bool              `json:"invalidated_evidence"`
-	Pending        map[string]PendingAssessment `json:"pending_assessments"`
-	Nodes          map[string]NodeReduction     `json:"nodes"`
-	RedactedEvents map[string]bool              `json:"redacted_events"`
-	Exposures      []Exposure                   `json:"exposures"`
+	Metadata       ProjectionMetadata            `json:"metadata"`
+	Timeline       []TimelineItem                `json:"timeline"`
+	Routes         []RouteProjection             `json:"routes"`
+	Sessions       map[string]SessionProjection  `json:"sessions"`
+	Stats          map[string]ActiveTimeEstimate `json:"stats"`
+	Evidence       map[string]AcceptedEvidence   `json:"evidence"`
+	Invalidated    map[string]bool               `json:"invalidated_evidence"`
+	Pending        map[string]PendingAssessment  `json:"pending_assessments"`
+	Nodes          map[string]NodeReduction      `json:"nodes"`
+	RedactedEvents map[string]bool               `json:"redacted_events"`
+	Exposures      []Exposure                    `json:"exposures"`
 }
 
 func EmptyProjection(generationID string) Projection {
-	return Projection{Metadata: ProjectionMetadata{ProjectionVersion: ProjectionVersion, MasteryReducerVersion: MasteryReducerVersion, AssessmentPolicy: AssessmentPolicyVersion, ReviewPolicy: ReviewPolicyVersion, GenerationID: generationID}, Sessions: map[string]SessionProjection{}, Evidence: map[string]AcceptedEvidence{}, Invalidated: map[string]bool{}, Pending: map[string]PendingAssessment{}, Nodes: map[string]NodeReduction{}, RedactedEvents: map[string]bool{}}
+	return Projection{Metadata: ProjectionMetadata{ProjectionVersion: ProjectionVersion, MasteryReducerVersion: MasteryReducerVersion, AssessmentPolicy: AssessmentPolicyVersion, ReviewPolicy: ReviewPolicyVersion, GenerationID: generationID}, Sessions: map[string]SessionProjection{}, Stats: map[string]ActiveTimeEstimate{}, Evidence: map[string]AcceptedEvidence{}, Invalidated: map[string]bool{}, Pending: map[string]PendingAssessment{}, Nodes: map[string]NodeReduction{}, RedactedEvents: map[string]bool{}}
 }
 
 func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningEvent) error {
@@ -189,6 +190,9 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		}
 		session.UpdatedEventSequence = decoded.EventSequence
 		projection.Sessions[session.Session.ID] = session
+		if _, ok := projection.Stats[session.Session.ID]; !ok {
+			projection.Stats[session.Session.ID] = EstimateActiveTime(session.Session.ID, nil)
+		}
 	case EventEvidenceAccepted:
 		var evidence AcceptedEvidence
 		if err := json.Unmarshal(decoded.Payload, &evidence); err != nil {
@@ -254,6 +258,9 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 				recomputeNode(projection, evidence.NodeRevisionID)
 			}
 		}
+	}
+	if isActiveTimeEvent(decoded.Type) && decoded.AggregateType == "session" {
+		projection.Stats[decoded.AggregateID] = estimateActiveTimeFromTimeline(decoded.AggregateID, projection.Timeline)
 	}
 	if decoded.AggregateType == "session" {
 		if session, ok := projection.Sessions[decoded.AggregateID]; ok {

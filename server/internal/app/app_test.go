@@ -23,7 +23,7 @@ func TestComposeLearningInjectsPostgresKnowledgeAndOptionalModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withoutModel.store == nil || withoutModel.resolver == nil || withoutModel.service == nil || withoutModel.model != nil {
+	if withoutModel.learningStore == nil || withoutModel.tutoringStore == nil || withoutModel.resolver == nil || withoutModel.service == nil || withoutModel.model != nil {
 		t.Fatalf("nil-model composition=%+v", withoutModel)
 	}
 
@@ -36,7 +36,7 @@ func TestComposeLearningInjectsPostgresKnowledgeAndOptionalModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withModel.store == nil || withModel.resolver == nil || withModel.service == nil || withModel.model == nil {
+	if withModel.learningStore == nil || withModel.tutoringStore == nil || withModel.resolver == nil || withModel.service == nil || withModel.model == nil {
 		t.Fatalf("model-enabled composition=%+v", withModel)
 	}
 }

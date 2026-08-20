@@ -298,6 +298,7 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 	if err != nil {
 		return knowledge.KnowledgeRevision{}, fmt.Errorf("read knowledge revision: %w", err)
 	}
+	revision.CreatedAt = revision.CreatedAt.UTC()
 	revision.ManifestHash = hex.EncodeToString(manifestHash)
 	rows, err := db.Query(ctx, `
 		SELECT sd.canonical_path,dr.id,dr.document_id,dr.root_node_id,dr.canonical_hash,dr.semantic_hash,p.canonical_markdown
@@ -426,6 +427,7 @@ func loadLineages(ctx context.Context, db queryer, knowledgeRevisionID string) (
 			rows.Close()
 			return nil, fmt.Errorf("scan node lineage: %w", err)
 		}
+		lineage.CreatedAt = lineage.CreatedAt.UTC()
 		lineages = append(lineages, lineage)
 	}
 	if err := rows.Err(); err != nil {

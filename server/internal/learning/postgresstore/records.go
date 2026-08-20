@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
-	"github.com/edu-agent/edu-agent/server/internal/tutoring"
+	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
-func insertTypedRecords(ctx context.Context, tx pgx.Tx, request learning.CommitRequest) error {
+func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learning.CommitRequest) error {
 	batch := request.Batch
 	if value := batch.GoalRevision; value != nil {
 		var previousGoalID any
@@ -34,53 +33,21 @@ func insertTypedRecords(ctx context.Context, tx pgx.Tx, request learning.CommitR
 			return fmt.Errorf("insert route revision: %w", err)
 		}
 		for _, step := range value.Steps {
-			var nodeID, documentRevisionID string
-			if err := tx.QueryRow(ctx, `SELECT node_id,document_revision_id FROM knowledge_node_revisions nr JOIN knowledge_snapshot_documents sd USING(document_revision_id) WHERE nr.id=$1 AND sd.knowledge_revision_id=$2`, step.NodeRevisionID, value.KnowledgeRevisionID).Scan(&nodeID, &documentRevisionID); err != nil {
-				return fmt.Errorf("resolve route step knowledge owner: %w", err)
+			owner, ok := batch.Authority.RouteSteps[step.ID]
+			if !ok || owner.KnowledgeRevisionID != value.KnowledgeRevisionID || owner.NodeID != step.NodeID || owner.NodeRevisionID != step.NodeRevisionID || owner.DocumentRevisionID == "" {
+				return &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid, Reason: "route_step_owner_missing"}
 			}
-			if step.NodeID == "" || step.NodeID != nodeID {
-				return &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid, Reason: "route_step_node_identity"}
-			}
-			if _, err := tx.Exec(ctx, `INSERT INTO learning_route_steps(id,route_revision_id,ordinal,knowledge_revision_id,node_id,node_revision_id,document_revision_id,teaching_intent,completion_condition) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, step.ID, value.ID, step.Ordinal, value.KnowledgeRevisionID, step.NodeID, step.NodeRevisionID, documentRevisionID, step.TeachingIntent, step.CompletionCondition); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO learning_route_steps(id,route_revision_id,ordinal,knowledge_revision_id,node_id,node_revision_id,document_revision_id,teaching_intent,completion_condition) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, step.ID, value.ID, step.Ordinal, owner.KnowledgeRevisionID, owner.NodeID, owner.NodeRevisionID, owner.DocumentRevisionID, step.TeachingIntent, step.CompletionCondition); err != nil {
 				return fmt.Errorf("insert route step: %w", err)
 			}
 		}
 	}
-	if value := batch.Session; value != nil {
-		completedAt := any(nil)
-		if value.State == tutoring.StateCompleted {
-			completedAt = request.ReceivedAt
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO tutoring_sessions(id,aggregate_version,state,goal_revision_id,route_revision_id,route_step_id,knowledge_revision_id,focus_node_revision_id,activity_id,attempt_id,attached_quiz,started_at,updated_at,completed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13) ON CONFLICT(id) DO UPDATE SET aggregate_version=EXCLUDED.aggregate_version,state=EXCLUDED.state,goal_revision_id=EXCLUDED.goal_revision_id,route_revision_id=EXCLUDED.route_revision_id,route_step_id=EXCLUDED.route_step_id,knowledge_revision_id=EXCLUDED.knowledge_revision_id,focus_node_revision_id=EXCLUDED.focus_node_revision_id,activity_id=EXCLUDED.activity_id,attempt_id=EXCLUDED.attempt_id,attached_quiz=EXCLUDED.attached_quiz,updated_at=EXCLUDED.updated_at,completed_at=EXCLUDED.completed_at`, value.ID, value.AggregateVer, value.State, nullable(value.Context.GoalRevisionID), nullable(value.Context.RouteRevisionID), nullable(value.Context.RouteStepID), nullable(value.Context.KnowledgeRevisionID), nullable(value.Context.FocusNodeRevisionID), value.Context.ActivityID, value.Context.AttemptID, value.AttachedQuiz, request.ReceivedAt, completedAt); err != nil {
-			return fmt.Errorf("persist tutoring session: %w", err)
-		}
-	}
-	if value := batch.FocusFrame; value != nil {
-		if _, err := tx.Exec(ctx, `INSERT INTO tutoring_focus_frames(id,session_id,saved_state,goal_revision_id,route_revision_id,route_step_id,knowledge_revision_id,focus_node_revision_id,activity_id,attempt_id,saved_aggregate_version,created_event_seq,invalidated_at,invalidation_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(id) DO NOTHING`, value.ID, value.SessionID, value.SavedState, nullable(value.Context.GoalRevisionID), nullable(value.Context.RouteRevisionID), nullable(value.Context.RouteStepID), nullable(value.Context.KnowledgeRevisionID), nullable(value.Context.FocusNodeRevisionID), value.Context.ActivityID, value.Context.AttemptID, value.SavedAggregateVersion, value.CreatedEventSequence, timeIf(value.Invalidated, request.ReceivedAt), nullable(value.InvalidationReason)); err != nil {
-			return fmt.Errorf("insert tutoring focus frame: %w", err)
-		}
-	}
-	if batch.InvalidateFrame && batch.Session != nil {
-		if _, err := tx.Exec(ctx, `UPDATE tutoring_focus_frames SET invalidated_at=$2,invalidation_reason=COALESCE(NULLIF(invalidation_reason,''),'command') WHERE session_id=$1 AND invalidated_at IS NULL AND resumed_at IS NULL`, batch.Session.ID, request.ReceivedAt); err != nil {
-			return fmt.Errorf("invalidate tutoring focus frame: %w", err)
-		}
-	}
-	if batch.ResumeFrame && batch.Session != nil {
-		if _, err := tx.Exec(ctx, `UPDATE tutoring_focus_frames SET resumed_at=$2 WHERE session_id=$1 AND invalidated_at IS NULL AND resumed_at IS NULL`, batch.Session.ID, request.ReceivedAt); err != nil {
-			return fmt.Errorf("resume tutoring focus frame: %w", err)
-		}
-	}
-	if value := batch.FreeQuestion; value != nil {
-		references, _ := json.Marshal(value.References)
-		if _, err := tx.Exec(ctx, `INSERT INTO tutoring_free_questions(id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, value.ID, value.SessionID, value.FocusFrameID, value.Text, value.KnowledgeRevisionID, references, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt); err != nil {
-			return fmt.Errorf("insert free question: %w", err)
-		}
-	}
-	if value := batch.FreeAnswer; value != nil {
-		references, _ := json.Marshal(value.References)
-		if _, err := tx.Exec(ctx, `INSERT INTO tutoring_free_answers(id,session_id,focus_frame_id,free_question_id,answer_text,knowledge_revision_id,references_snapshot,source_proposal_id,received_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, value.ID, value.SessionID, value.FocusFrameID, value.FreeQuestionID, value.Text, value.KnowledgeRevisionID, references, nullable(value.SourceProposalID), value.ReceivedAt); err != nil {
-			return fmt.Errorf("insert free answer: %w", err)
-		}
+	if err := s.tutoring.Persist(ctx, tx, tutoringpostgres.WriteSet{
+		Session: batch.Session, FocusFrame: batch.FocusFrame,
+		InvalidateFrame: batch.InvalidateFrame, ResumeFrame: batch.ResumeFrame,
+		FreeQuestion: batch.FreeQuestion, FreeAnswer: batch.FreeAnswer, ReceivedAt: request.ReceivedAt,
+	}); err != nil {
+		return err
 	}
 	if value := batch.Activity; value != nil {
 		rubric, _ := json.Marshal(value.Rubric)
@@ -145,11 +112,14 @@ func insertTypedRecords(ctx context.Context, tx pgx.Tx, request learning.CommitR
 			}
 			var knowledgeRevision, node, nodeID, documentRevision, start, end, quote any
 			if item.KnowledgeReferenceID != "" {
-				var resolvedKnowledgeRevision, resolvedNodeID, resolvedDocumentRevision string
-				if err := tx.QueryRow(ctx, `SELECT a.knowledge_revision_id,nr.node_id,nr.document_revision_id FROM learning_activities a JOIN knowledge_node_revisions nr ON nr.id=$2 JOIN knowledge_snapshot_documents sd ON sd.knowledge_revision_id=a.knowledge_revision_id AND sd.document_revision_id=nr.document_revision_id WHERE a.id=$1 AND a.revision=$3`, value.ActivityID, item.KnowledgeReferenceID, value.ActivityRevision).Scan(&resolvedKnowledgeRevision, &resolvedNodeID, &resolvedDocumentRevision); err != nil {
-					return fmt.Errorf("resolve assessment item knowledge owner: %w", err)
+				if index >= len(batch.Authority.AssessmentItems) {
+					return &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid, Reason: "assessment_item_owner_missing"}
 				}
-				knowledgeRevision, node, nodeID, documentRevision = resolvedKnowledgeRevision, item.KnowledgeReferenceID, resolvedNodeID, resolvedDocumentRevision
+				owner := batch.Authority.AssessmentItems[index]
+				if owner.KnowledgeRevisionID == "" || owner.NodeID == "" || owner.NodeRevisionID != item.KnowledgeReferenceID || owner.DocumentRevisionID == "" {
+					return &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid, Reason: "assessment_item_owner_invalid"}
+				}
+				knowledgeRevision, node, nodeID, documentRevision = owner.KnowledgeRevisionID, owner.NodeRevisionID, owner.NodeID, owner.DocumentRevisionID
 				start, end, quote = item.KnowledgeRange.Start, item.KnowledgeRange.End, item.KnowledgeQuote
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO learning_assessment_items(assessment_id,ordinal,rubric_item_id,conclusion,answer_start,answer_end,answer_quote,answer_quote_hash,knowledge_revision_id,knowledge_node_revision_id,knowledge_node_id,knowledge_document_revision_id,knowledge_start,knowledge_end,knowledge_quote,knowledge_quote_hash,misconception_candidate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, value.ID, index, item.RubricItemID, item.Conclusion, item.AnswerRange.Start, item.AnswerRange.End, item.AnswerQuote, answerHash, knowledgeRevision, node, nodeID, documentRevision, start, end, quote, knowledgeHash, nullable(item.MisconceptionCandidate)); err != nil {
@@ -166,11 +136,11 @@ func insertTypedRecords(ctx context.Context, tx pgx.Tx, request learning.CommitR
 	for _, value := range batch.Evidence {
 		candidates, _ := json.Marshal(value.Misconceptions)
 		outcomes, _ := json.Marshal(value.RubricOutcomes)
-		var sessionID, nodeID, documentRevisionID string
-		if err := tx.QueryRow(ctx, `SELECT a.session_id,nr.node_id,nr.document_revision_id FROM learning_activities a JOIN knowledge_node_revisions nr ON nr.id=$2 JOIN knowledge_snapshot_documents sd ON sd.knowledge_revision_id=$3 AND sd.document_revision_id=nr.document_revision_id WHERE a.id=$1 AND a.revision=$4 AND a.knowledge_revision_id=$3`, value.ActivityID, value.NodeRevisionID, value.KnowledgeRevisionID, value.ActivityRevision).Scan(&sessionID, &nodeID, &documentRevisionID); err != nil {
-			return fmt.Errorf("resolve evidence ownership: %w", err)
+		owner, ok := batch.Authority.Evidence[value.ID]
+		if !ok || owner.SessionID == "" || owner.KnowledgeRevisionID != value.KnowledgeRevisionID || owner.NodeRevisionID != value.NodeRevisionID || owner.NodeID == "" || owner.DocumentRevisionID == "" {
+			return &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid, Reason: "evidence_owner_missing"}
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_evidence(id,decision_id,assessment_id,session_id,attempt_id,activity_id,activity_revision,goal_revision_id,route_revision_id,knowledge_revision_id,node_revision_id,node_id,document_revision_id,rubric_revision,evidence_kind,activity_type,outcome,help_level,received_at,acceptance_policy_version,reducer_policy_version,review_policy_version,misconception_candidates,rubric_outcomes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, value.ID, value.DispositionDecisionID, value.AssessmentID, sessionID, value.AttemptID, value.ActivityID, value.ActivityRevision, value.GoalRevisionID, value.RouteRevisionID, value.KnowledgeRevisionID, value.NodeRevisionID, nodeID, documentRevisionID, value.RubricRevision, value.Kind, value.ActivityType, value.Outcome, value.Help, value.ReceivedAt, value.AcceptancePolicyVersion, value.ReducerPolicyVersion, value.ReviewPolicyVersion, candidates, outcomes); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_evidence(id,decision_id,assessment_id,session_id,attempt_id,activity_id,activity_revision,goal_revision_id,route_revision_id,knowledge_revision_id,node_revision_id,node_id,document_revision_id,rubric_revision,evidence_kind,activity_type,outcome,help_level,received_at,acceptance_policy_version,reducer_policy_version,review_policy_version,misconception_candidates,rubric_outcomes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, value.ID, value.DispositionDecisionID, value.AssessmentID, owner.SessionID, value.AttemptID, value.ActivityID, value.ActivityRevision, value.GoalRevisionID, value.RouteRevisionID, owner.KnowledgeRevisionID, owner.NodeRevisionID, owner.NodeID, owner.DocumentRevisionID, value.RubricRevision, value.Kind, value.ActivityType, value.Outcome, value.Help, value.ReceivedAt, value.AcceptancePolicyVersion, value.ReducerPolicyVersion, value.ReviewPolicyVersion, candidates, outcomes); err != nil {
 			return fmt.Errorf("insert accepted evidence: %w", err)
 		}
 	}
@@ -200,12 +170,6 @@ func insertTypedRecords(ctx context.Context, tx pgx.Tx, request learning.CommitR
 
 func nullable(value string) any {
 	if value == "" {
-		return nil
-	}
-	return value
-}
-func timeIf(condition bool, value time.Time) any {
-	if !condition {
 		return nil
 	}
 	return value

@@ -9,44 +9,20 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
+	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/jackc/pgx/v5"
 )
 
-type authorityDB interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
-func loadSessionFrom(ctx context.Context, db authorityDB, id string) (tutoring.Session, error) {
-	var value tutoring.Session
-	var state string
-	var goal, route, step, knowledgeRevision, node *string
-	var activity, attempt *string
-	err := db.QueryRow(ctx, `SELECT id,aggregate_version,state,goal_revision_id,route_revision_id,route_step_id,knowledge_revision_id,focus_node_revision_id,activity_id,attempt_id,attached_quiz FROM tutoring_sessions WHERE id=$1`, id).Scan(&value.ID, &value.AggregateVer, &state, &goal, &route, &step, &knowledgeRevision, &node, &activity, &attempt, &value.AttachedQuiz)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return tutoring.Session{}, &learning.Error{Code: learning.CodeNotFound}
+func mapTutoringLoadError(err error) error {
+	if errors.Is(err, tutoringpostgres.ErrNotFound) {
+		return &learning.Error{Code: learning.CodeNotFound}
 	}
-	if err != nil {
-		return tutoring.Session{}, fmt.Errorf("load tutoring session: %w", err)
-	}
-	value.State = tutoring.State(state)
-	value.Context = tutoring.FocusContext{GoalRevisionID: deref(goal), RouteRevisionID: deref(route), RouteStepID: deref(step), KnowledgeRevisionID: deref(knowledgeRevision), FocusNodeRevisionID: deref(node), ActivityID: activity, AttemptID: attempt}
-	var frame tutoring.FocusFrame
-	var saved string
-	var fg, fr, fs, fk, fn *string
-	var fa, ft *string
-	err = db.QueryRow(ctx, `SELECT id,session_id,saved_state,goal_revision_id,route_revision_id,route_step_id,knowledge_revision_id,focus_node_revision_id,activity_id,attempt_id,saved_aggregate_version,created_event_seq FROM tutoring_focus_frames WHERE session_id=$1 AND invalidated_at IS NULL AND resumed_at IS NULL`, id).Scan(&frame.ID, &frame.SessionID, &saved, &fg, &fr, &fs, &fk, &fn, &fa, &ft, &frame.SavedAggregateVersion, &frame.CreatedEventSequence)
-	if err == nil {
-		frame.SavedState = tutoring.State(saved)
-		frame.Context = tutoring.FocusContext{GoalRevisionID: deref(fg), RouteRevisionID: deref(fr), RouteStepID: deref(fs), KnowledgeRevisionID: deref(fk), FocusNodeRevisionID: deref(fn), ActivityID: fa, AttemptID: ft}
-		value.ActiveFrame = &frame
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return tutoring.Session{}, fmt.Errorf("load active focus frame: %w", err)
-	}
-	return value, nil
+	return err
 }
 
 func (s *Store) loadSession(ctx context.Context, id string) (tutoring.Session, error) {
-	return loadSessionFrom(ctx, s.pool, id)
+	value, err := s.tutoring.LoadSession(ctx, id)
+	return value, mapTutoringLoadError(err)
 }
 
 func (s *Store) LoadAggregateVersion(ctx context.Context, aggregateType, aggregateID string) (int64, error) {
@@ -151,6 +127,42 @@ func (s *Store) LoadAttempt(ctx context.Context, id string) (learning.Attempt, e
 	value.AnswerSHA256 = hex.EncodeToString(hash)
 	return value, nil
 }
+
+type assessmentItemRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+}
+
+func scanAssessmentItems(rows assessmentItemRows) ([]learning.AssessmentItem, error) {
+	var items []learning.AssessmentItem
+	for rows.Next() {
+		var item learning.AssessmentItem
+		var answerHash []byte
+		var node, quote, misconception *string
+		var start, end *int
+		var knowledgeHash []byte
+		if err := rows.Scan(&item.RubricItemID, &item.Conclusion, &item.AnswerRange.Start, &item.AnswerRange.End, &item.AnswerQuote, &answerHash, &node, &start, &end, &quote, &knowledgeHash, &misconception); err != nil {
+			return nil, err
+		}
+		item.AnswerQuoteSHA256 = hex.EncodeToString(answerHash)
+		item.KnowledgeReferenceID = deref(node)
+		if start != nil {
+			item.KnowledgeRange = learning.SourceRange{Start: *start, End: *end}
+		}
+		item.KnowledgeQuote = deref(quote)
+		if knowledgeHash != nil {
+			item.KnowledgeQuoteSHA256 = hex.EncodeToString(knowledgeHash)
+		}
+		item.MisconceptionCandidate = deref(misconception)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *Store) LoadAssessment(ctx context.Context, id string) (learning.AssessmentArtifact, learning.AssessmentDecision, error) {
 	var value learning.AssessmentArtifact
 	var params []byte
@@ -172,29 +184,12 @@ func (s *Store) LoadAssessment(ctx context.Context, id string) (learning.Assessm
 	if err != nil {
 		return value, learning.AssessmentDecision{}, err
 	}
-	for rows.Next() {
-		var item learning.AssessmentItem
-		var answerHash []byte
-		var node, quote, misconception *string
-		var start, end *int
-		var knowledgeHash []byte
-		if err := rows.Scan(&item.RubricItemID, &item.Conclusion, &item.AnswerRange.Start, &item.AnswerRange.End, &item.AnswerQuote, &answerHash, &node, &start, &end, &quote, &knowledgeHash, &misconception); err != nil {
-			rows.Close()
-			return value, learning.AssessmentDecision{}, err
-		}
-		item.AnswerQuoteSHA256 = hex.EncodeToString(answerHash)
-		item.KnowledgeReferenceID = deref(node)
-		if start != nil {
-			item.KnowledgeRange = learning.SourceRange{Start: *start, End: *end}
-		}
-		item.KnowledgeQuote = deref(quote)
-		if knowledgeHash != nil {
-			item.KnowledgeQuoteSHA256 = hex.EncodeToString(knowledgeHash)
-		}
-		item.MisconceptionCandidate = deref(misconception)
-		value.Items = append(value.Items, item)
-	}
+	items, err := scanAssessmentItems(rows)
 	rows.Close()
+	if err != nil {
+		return value, learning.AssessmentDecision{}, err
+	}
+	value.Items = items
 	var decision learning.AssessmentDecision
 	var conclusions []byte
 	var reason *string
@@ -228,37 +223,13 @@ func (s *Store) LoadProposal(ctx context.Context, id string) (learning.ProposalA
 }
 
 func (s *Store) LoadFreeQuestion(ctx context.Context, id string) (tutoring.FreeQuestion, error) {
-	var value tutoring.FreeQuestion
-	var refs []byte
-	err := s.pool.QueryRow(ctx, `SELECT id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at FROM tutoring_free_questions WHERE id=$1`, id).Scan(&value.ID, &value.SessionID, &value.FocusFrameID, &value.Text, &value.KnowledgeRevisionID, &refs, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return value, &learning.Error{Code: learning.CodeNotFound}
-	}
-	if err != nil {
-		return value, fmt.Errorf("load free question: %w", err)
-	}
-	if err := json.Unmarshal(refs, &value.References); err != nil {
-		return value, err
-	}
-	return value, nil
+	value, err := s.tutoring.LoadFreeQuestion(ctx, id)
+	return value, mapTutoringLoadError(err)
 }
 
 func (s *Store) LoadFreeAnswer(ctx context.Context, id string) (tutoring.FreeAnswer, error) {
-	var value tutoring.FreeAnswer
-	var refs []byte
-	var proposal *string
-	err := s.pool.QueryRow(ctx, `SELECT id,session_id,focus_frame_id,free_question_id,answer_text,knowledge_revision_id,references_snapshot,source_proposal_id,received_at FROM tutoring_free_answers WHERE id=$1`, id).Scan(&value.ID, &value.SessionID, &value.FocusFrameID, &value.FreeQuestionID, &value.Text, &value.KnowledgeRevisionID, &refs, &proposal, &value.ReceivedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return value, &learning.Error{Code: learning.CodeNotFound}
-	}
-	if err != nil {
-		return value, fmt.Errorf("load free answer: %w", err)
-	}
-	value.SourceProposalID = deref(proposal)
-	if err := json.Unmarshal(refs, &value.References); err != nil {
-		return value, err
-	}
-	return value, nil
+	value, err := s.tutoring.LoadFreeAnswer(ctx, id)
+	return value, mapTutoringLoadError(err)
 }
 
 func (s *Store) LoadValidEvidence(ctx context.Context, nodeRevisionID string) ([]learning.AcceptedEvidence, error) {
@@ -305,38 +276,8 @@ func (s *Store) LoadMisconceptions(ctx context.Context, nodeRevisionID string) (
 }
 
 func (s *Store) LatestFreeQuestion(ctx context.Context, sessionID string) (string, error) {
-	var id string
-	err := s.pool.QueryRow(ctx, `SELECT id FROM tutoring_free_questions WHERE session_id=$1 ORDER BY received_at DESC,id DESC LIMIT 1`, sessionID).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", &learning.Error{Code: learning.CodeNotFound}
-	}
-	if err != nil {
-		return "", fmt.Errorf("load latest free question: %w", err)
-	}
-	return id, nil
-}
-
-func (s *Store) loadSessionInteractionEvents(ctx context.Context, sessionID string) ([]learning.InteractionSample, error) {
-	rows, err := s.pool.Query(ctx, `SELECT event_seq,received_at,event_type FROM learning_events WHERE aggregate_type='session' AND aggregate_id=$1 ORDER BY event_seq`, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var result []learning.InteractionSample
-	for rows.Next() {
-		var sample learning.InteractionSample
-		var eventType learning.EventType
-		if err := rows.Scan(&sample.EventSequence, &sample.ReceivedAt, &eventType); err != nil {
-			return nil, err
-		}
-		sample.SessionID = sessionID
-		switch eventType {
-		case learning.EventAttemptSubmitted, learning.EventFreeQuestionAsked, learning.EventReviewPresented:
-			sample.UserInitiated = true
-		}
-		result = append(result, sample)
-	}
-	return result, rows.Err()
+	id, err := s.tutoring.LatestFreeQuestion(ctx, sessionID)
+	return id, mapTutoringLoadError(err)
 }
 
 func deref(value *string) string {

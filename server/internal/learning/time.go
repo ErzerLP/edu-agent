@@ -52,3 +52,27 @@ func EstimateActiveTime(sessionID string, samples []InteractionSample) ActiveTim
 	}
 	return result
 }
+
+func isActiveTimeEvent(eventType EventType) bool {
+	switch eventType {
+	case EventAttemptSubmitted, EventFreeQuestionAsked, EventReviewPresented:
+		return true
+	default:
+		return false
+	}
+}
+
+func estimateActiveTimeFromTimeline(sessionID string, timeline []TimelineItem) ActiveTimeEstimate {
+	samples := make([]InteractionSample, 0)
+	for _, item := range timeline {
+		if item.AggregateID == sessionID && isActiveTimeEvent(item.Type) {
+			samples = append(samples, InteractionSample{
+				EventSequence: item.EventSequence,
+				SessionID:     sessionID,
+				ReceivedAt:    item.ReceivedAt,
+				UserInitiated: true,
+			})
+		}
+	}
+	return EstimateActiveTime(sessionID, samples)
+}

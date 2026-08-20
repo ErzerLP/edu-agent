@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
 	outboxpostgresstore "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
+	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/edu-agent/edu-agent/server/migrations"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -35,7 +37,7 @@ const (
 func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	pool := learningIntegrationPool(t)
 	ctx := context.Background()
-	store := postgresstore.New(pool)
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
 	if err := migrations.Check(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +124,14 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 
 	assertIndependentAggregateClock(t, store, pool)
 	sessionID, sessionVersion := commitLearningAuthorityFixture(t, store)
+	assertProjectionKnowledgeAndStats(t, store, pool, sessionID)
+	assertKnowledgeOwnerCompositeFK(t, store, pool, sessionID, sessionVersion)
+	assertSessionAuthoritySnapshot(t, store, sessionID, sessionVersion)
 	assertAssessmentProvenanceNullFence(t, pool)
 	assertRejectedOperationArchive(t, store, sessionID)
 	assertUncommittedCheckpointInvisible(t, pool, store)
 	assertOutboxConflictRollback(t, store, pool, sessionID, sessionVersion)
-	assertOutboxRollback(t, store, pool, sessionID, sessionVersion)
+	assertSharedTransactionRollsBackTutoringAndOutbox(t, store, pool, sessionID, sessionVersion)
 
 	var clockBefore, eventsBefore, inboxBefore, revisionsBefore int64
 	if err := pool.QueryRow(ctx, `SELECT current_event_seq FROM learning_event_clock WHERE singleton_id=1`).Scan(&clockBefore); err != nil {
@@ -181,6 +186,10 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	rebuilt = assertConcurrentRebuildTail(t, store, pool)
 
 	activeBeforeFailure := rebuilt.ActiveGenerationID
+	sessionBeforeFailure, err := store.Session(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `CREATE FUNCTION reject_projection_rebuild() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected projection failure'; END $$; CREATE TRIGGER reject_projection_rebuild BEFORE INSERT ON learning_projection_timeline FOR EACH ROW EXECUTE FUNCTION reject_projection_rebuild()`); err != nil {
 		t.Fatal(err)
 	}
@@ -198,8 +207,8 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 		t.Fatalf("failed rebuild did not degrade active status: %+v", statusAfterFailure)
 	}
 	activeSession, err := store.Session(ctx, sessionID)
-	if err != nil || activeSession.Metadata.GenerationID != activeBeforeFailure || activeSession.Session.ID != sessionID {
-		t.Fatalf("failed rebuild made active generation unreadable: session=%+v err=%v", activeSession, err)
+	if err != nil || activeSession.Metadata.GenerationID != activeBeforeFailure || activeSession.Session.ID != sessionID || !reflect.DeepEqual(activeSession.Estimate, sessionBeforeFailure.Estimate) {
+		t.Fatalf("failed rebuild made active generation stats unreadable: before=%+v session=%+v err=%v", sessionBeforeFailure.Estimate, activeSession, err)
 	}
 	if _, err := pool.Exec(ctx, `DROP TRIGGER reject_projection_rebuild ON learning_projection_timeline; DROP FUNCTION reject_projection_rebuild()`); err != nil {
 		t.Fatal(err)
@@ -240,6 +249,252 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 		t.Fatalf("proposal idempotency conflict = %v", err)
 	}
 	assertUnknownSchemaFailsGeneration(t, pool, store)
+}
+
+func TestPostgreSQLPersistedFocusInvalidationThroughService(t *testing.T) {
+	pool := learningIntegrationPool(t)
+	ctx := context.Background()
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
+	if _, err := store.Rebuild(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'focus-invalidation',now())`, learningDeviceOne); err != nil {
+		t.Fatal(err)
+	}
+
+	goalID := "60000000-0000-4000-8000-000000000001"
+	goalRevisionID := "60000000-0000-4000-8000-000000000002"
+	if _, err := store.Commit(ctx, goalCommitFor(t, learningDeviceOne, "60000000-0000-4000-8000-000000000003", goalID, goalRevisionID, 0, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	service, err := learning.NewService(store, store, integrationKnowledgeResolver{}, learning.ServiceOptions{Now: func() time.Time {
+		return time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		state  tutoring.State
+		action tutoring.Action
+	}{
+		{name: "end_activity", state: tutoring.StateActivityIssued, action: tutoring.ActionEndActivity},
+		{name: "switch_goal", state: tutoring.StateRouteActive, action: tutoring.ActionSwitchGoal},
+		{name: "complete_session", state: tutoring.StateRouteActive, action: tutoring.ActionCompleteSession},
+	}
+	for index, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			sessionID := fmt.Sprintf("61000000-0000-4000-8000-%012d", index+1)
+			frameID := fmt.Sprintf("62000000-0000-4000-8000-%012d", index+1)
+			seedPersistedFocusSession(t, store, sessionID, frameID, goalRevisionID, test.state, fmt.Sprintf("63000000-0000-4000-8000-%012d", index+1))
+
+			before, err := store.LoadSessionAuthority(ctx, sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if before.Session.ActiveFrame == nil || before.Session.FocusFrameInvalidated {
+				t.Fatalf("seeded authority=%+v", before)
+			}
+			beforeEvents := sessionEventCount(t, pool, sessionID)
+			beforeVersion := sessionHeadVersion(t, pool, sessionID)
+			if beforeVersion != before.Session.AggregateVer {
+				t.Fatalf("seeded head=%d authority=%d", beforeVersion, before.Session.AggregateVer)
+			}
+
+			action := persistedFocusAction(fmt.Sprintf("64000000-0000-4000-8000-%012d", index+1), sessionID, before.Session.AggregateVer, test.action, goalRevisionID)
+			if _, err := service.ApplyAction(ctx, learningDeviceOne, sessionID, action); err != nil {
+				t.Fatalf("%s: %v", test.action, err)
+			}
+			afterInvalidation, err := store.LoadSessionAuthority(ctx, sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterInvalidation.Session.ActiveFrame != nil || !afterInvalidation.Session.FocusFrameInvalidated {
+				t.Fatalf("reloaded invalidation authority=%+v", afterInvalidation)
+			}
+			actionEvents := sessionEventCount(t, pool, sessionID)
+			actionVersion := sessionHeadVersion(t, pool, sessionID)
+			if actionEvents <= beforeEvents || actionVersion <= beforeVersion || actionVersion != afterInvalidation.Session.AggregateVer {
+				t.Fatalf("action did not advance authority: events %d->%d version %d->%d authority=%+v", beforeEvents, actionEvents, beforeVersion, actionVersion, afterInvalidation)
+			}
+
+			resume := persistedFocusAction(fmt.Sprintf("65000000-0000-4000-8000-%012d", index+1), sessionID, afterInvalidation.Session.AggregateVer, tutoring.ActionResumeFocus, "")
+			if _, err := service.ApplyAction(ctx, learningDeviceOne, sessionID, resume); learning.ErrorCode(err) != learning.CodeFocusFrameInvalidated {
+				t.Fatalf("resume error=%v code=%q", err, learning.ErrorCode(err))
+			}
+			if got := sessionEventCount(t, pool, sessionID); got != actionEvents {
+				t.Fatalf("rejected resume changed event count %d->%d", actionEvents, got)
+			}
+			if got := sessionHeadVersion(t, pool, sessionID); got != actionVersion {
+				t.Fatalf("rejected resume changed version %d->%d", actionVersion, got)
+			}
+			if got := inboxOperationCount(t, pool, learningDeviceOne, resume.Operation.OperationID); got != 1 {
+				t.Fatalf("resume rejection inbox count=%d want=1", got)
+			}
+
+			if _, err := service.ApplyAction(ctx, learningDeviceOne, sessionID, resume); learning.ErrorCode(err) != learning.CodeFocusFrameInvalidated {
+				t.Fatalf("replayed resume error=%v code=%q", err, learning.ErrorCode(err))
+			}
+			if got := sessionEventCount(t, pool, sessionID); got != actionEvents {
+				t.Fatalf("replayed resume changed event count %d->%d", actionEvents, got)
+			}
+			if got := sessionHeadVersion(t, pool, sessionID); got != actionVersion {
+				t.Fatalf("replayed resume changed version %d->%d", actionVersion, got)
+			}
+			if got := inboxOperationCount(t, pool, learningDeviceOne, resume.Operation.OperationID); got != 1 {
+				t.Fatalf("replayed resume inbox count=%d want=1", got)
+			}
+		})
+	}
+}
+
+type integrationKnowledgeResolver struct{}
+
+func (integrationKnowledgeResolver) Resolve(_ context.Context, knowledgeRevisionID, nodeRevisionID string) (learning.KnowledgeReference, error) {
+	return learning.KnowledgeReference{KnowledgeRevisionID: knowledgeRevisionID, NodeID: "integration-node", NodeRevisionID: nodeRevisionID, DocumentRevisionID: "integration-document", Range: learning.SourceRange{Start: 0, End: 1}, Slice: "x", SliceSHA256: learning.SHA256([]byte("x"))}, nil
+}
+
+func seedPersistedFocusSession(t *testing.T, store *postgresstore.Store, sessionID, frameID, goalRevisionID string, state tutoring.State, operationID string) {
+	t.Helper()
+	now := time.Date(2026, 8, 20, 12, 20, 0, 0, time.UTC)
+	contextValue := tutoring.FocusContext{GoalRevisionID: goalRevisionID}
+	frame := tutoring.FocusFrame{ID: frameID, SessionID: sessionID, SavedState: tutoring.StateRouteActive, Context: contextValue, SavedAggregateVersion: 1}
+	session := tutoring.Session{ID: sessionID, State: state, Context: contextValue, ActiveFrame: &frame}
+	snapshot := learning.SessionProjection{Session: session}
+	request := learning.CommitRequest{
+		DeviceID:     learningDeviceOne,
+		Operation:    learning.OperationEnvelope{OperationID: operationID, PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: 0, Payload: json.RawMessage(`{"command":"seed_focus"}`)},
+		RequestHash:  learning.SHA256([]byte(operationID)),
+		Expectations: []learning.AggregateExpectation{{Type: "session", ID: sessionID, ExpectedVersion: 0}},
+		Batch: learning.CommandBatch{
+			Session: &session, FocusFrame: &frame, ResultSession: true, TutoringState: string(state),
+			Events: []learning.EventDraft{
+				eventDraft(learning.EventFocusSuspended, sessionID, snapshot),
+				eventDraft(learning.EventTutoringStateChanged, sessionID, snapshot),
+			},
+		},
+		ReceivedAt: now,
+	}
+	if _, err := store.Commit(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func persistedFocusAction(operationID, sessionID string, expectedVersion int64, action tutoring.Action, goalRevisionID string) learning.ActionCommand {
+	return learning.ActionCommand{
+		Operation: learning.OperationEnvelope{OperationID: operationID, PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: expectedVersion, Payload: json.RawMessage(`{"command":"focus_action"}`)},
+		Action:    action, GoalRevisionID: goalRevisionID,
+	}
+}
+
+func sessionEventCount(t *testing.T, pool *pgxpool.Pool, sessionID string) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM learning_events WHERE aggregate_type='session' AND aggregate_id=$1`, sessionID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func sessionHeadVersion(t *testing.T, pool *pgxpool.Pool, sessionID string) int64 {
+	t.Helper()
+	var version int64
+	if err := pool.QueryRow(context.Background(), `SELECT aggregate_version FROM learning_aggregate_heads WHERE aggregate_type='session' AND aggregate_id=$1`, sessionID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
+
+func inboxOperationCount(t *testing.T, pool *pgxpool.Pool, deviceID, operationID string) int64 {
+	t.Helper()
+	var count int64
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM learning_inbox WHERE device_id=$1 AND operation_id=$2`, deviceID, operationID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func assertProjectionKnowledgeAndStats(t *testing.T, store *postgresstore.Store, pool *pgxpool.Pool, sessionID string) {
+	t.Helper()
+	ctx := context.Background()
+	status, err := store.ProjectionStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Metadata.KnowledgeRevisionID != learningKnowledgeRevision {
+		t.Fatalf("projection metadata knowledge revision=%q want=%q", status.Metadata.KnowledgeRevisionID, learningKnowledgeRevision)
+	}
+	var storedKnowledgeRevision string
+	var stat learning.ActiveTimeEstimate
+	if err := pool.QueryRow(ctx, `SELECT g.knowledge_revision_id::text,st.item FROM learning_projection_head h JOIN learning_projection_generations g ON g.id=h.active_generation_id JOIN learning_projection_stats st ON st.generation_id=g.id AND st.session_id=$1 WHERE h.singleton_id=1`, sessionID).Scan(&storedKnowledgeRevision, &stat); err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Session(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.CurrentSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedKnowledgeRevision != learningKnowledgeRevision || view.Metadata.KnowledgeRevisionID != learningKnowledgeRevision || current.Metadata.KnowledgeRevisionID != learningKnowledgeRevision {
+		t.Fatalf("knowledge revision round-trip stored=%q session=%q current=%q", storedKnowledgeRevision, view.Metadata.KnowledgeRevisionID, current.Metadata.KnowledgeRevisionID)
+	}
+	if !stat.Estimated || stat.AlgorithmVersion != learning.ActiveTimePolicyVersion || stat.SampleCount != 1 || !reflect.DeepEqual(view.Estimate, stat) || !reflect.DeepEqual(current.Estimate, stat) {
+		t.Fatalf("generation stats stored=%+v session=%+v current=%+v", stat, view.Estimate, current.Estimate)
+	}
+}
+
+func assertKnowledgeOwnerCompositeFK(t *testing.T, store *postgresstore.Store, pool *pgxpool.Pool, sessionID string, version int64) {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	stepID := "58000000-0000-4000-8000-000000000003"
+	route := learning.RouteRevision{
+		ID: "58000000-0000-4000-8000-000000000001", RouteID: "58000000-0000-4000-8000-000000000002", Revision: 1,
+		GoalRevisionID: "30000000-0000-4000-8000-000000000001", KnowledgeRevisionID: learningKnowledgeRevision,
+		PolicyVersion: learning.RoutePolicyVersion, CreatedAt: now,
+		Steps: []learning.RouteStep{{ID: stepID, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, TeachingIntent: "teach", CompletionCondition: "pass"}},
+	}
+	request := learning.CommitRequest{
+		DeviceID:     learningDeviceOne,
+		Operation:    learning.OperationEnvelope{OperationID: "58000000-0000-4000-8000-000000000004", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: version, Payload: json.RawMessage(`{}`)},
+		RequestHash:  learning.SHA256([]byte("invalid knowledge owner")),
+		Expectations: []learning.AggregateExpectation{{Type: "session", ID: sessionID, ExpectedVersion: version}},
+		Batch: learning.CommandBatch{
+			RouteRevision: &route,
+			Authority: learning.AuthorityProvenance{RouteSteps: map[string]learning.KnowledgeOwner{stepID: {
+				KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID,
+				DocumentRevisionID: "58000000-0000-4000-8000-000000000005",
+			}}},
+			Events: []learning.EventDraft{eventDraft(learning.EventRouteRevisionCreated, sessionID, route)},
+		},
+		ReceivedAt: now,
+	}
+	_, err := store.Commit(context.Background(), request)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || (pgErr.ConstraintName != "learning_route_step_node_owner" && pgErr.ConstraintName != "learning_route_step_snapshot_owner") {
+		t.Fatalf("invalid resolver tuple bypassed composite FK: err=%v constraint=%q", err, pgErrConstraint(pgErr))
+	}
+	var routeCount int64
+	if queryErr := pool.QueryRow(context.Background(), `SELECT count(*) FROM learning_route_revisions WHERE id=$1`, route.ID).Scan(&routeCount); queryErr != nil || routeCount != 0 {
+		t.Fatalf("failed owner tuple left route revision count=%d err=%v", routeCount, queryErr)
+	}
+	authority, loadErr := store.LoadSessionAuthority(context.Background(), sessionID)
+	if loadErr != nil || authority.Session.AggregateVer != version {
+		t.Fatalf("failed owner tuple advanced authority=%+v err=%v", authority, loadErr)
+	}
+}
+
+func assertSessionAuthoritySnapshot(t *testing.T, store *postgresstore.Store, sessionID string, version int64) {
+	t.Helper()
+	authority, err := store.LoadSessionAuthority(context.Background(), sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if authority.Session.AggregateVer != version || authority.Session.ActiveFrame == nil || authority.Session.ActiveFrame.CreatedEventSequence <= 0 || authority.Session.ActiveFrame.CreatedEventSequence > authority.AsOfEventSequence {
+		t.Fatalf("session/frame/high-water not from one authority snapshot: %+v", authority)
+	}
 }
 
 func assertAssessmentProvenanceNullFence(t *testing.T, pool *pgxpool.Pool) {
@@ -518,7 +773,7 @@ func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store) (s
 	route := learning.RouteRevision{ID: routeRevisionID, RouteID: routeID, Revision: 1, GoalRevisionID: goalRevisionID, KnowledgeRevisionID: learningKnowledgeRevision, PolicyVersion: learning.RoutePolicyVersion, Steps: []learning.RouteStep{{ID: stepID, Ordinal: 0, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, TeachingIntent: "teach", CompletionCondition: "pass"}}, CreatedAt: now}
 	session.State = tutoring.StateRouteActive
 	session.Context = tutoring.FocusContext{GoalRevisionID: goalRevisionID, RouteRevisionID: routeRevisionID, RouteStepID: stepID, KnowledgeRevisionID: learningKnowledgeRevision, FocusNodeRevisionID: learningNodeRevisionID}
-	result = commit("51000000-0000-4000-8000-000000000002", result.AggregateVersion, learning.CommandBatch{RouteRevision: &route, Session: &session, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventRouteRevisionCreated, sessionID, route), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}})
+	result = commit("51000000-0000-4000-8000-000000000002", result.AggregateVersion, learning.CommandBatch{RouteRevision: &route, Session: &session, Authority: learning.AuthorityProvenance{RouteSteps: map[string]learning.KnowledgeOwner{stepID: {KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, DocumentRevisionID: learningDocumentRevisionID}}}, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventRouteRevisionCreated, sessionID, route), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}})
 
 	reference := learning.KnowledgeReference{KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, DocumentRevisionID: learningDocumentRevisionID, Range: learning.SourceRange{Start: 0, End: 5}, Slice: "topic", SliceSHA256: learning.SHA256([]byte("topic"))}
 	activity := learning.Activity{ID: activityID, Revision: 1, SessionID: sessionID, GoalRevisionID: goalRevisionID, RouteRevisionID: routeRevisionID, RouteStepID: stepID, KnowledgeRevisionID: learningKnowledgeRevision, TargetNodeID: learningNodeID, TargetNodeRevisionID: learningNodeRevisionID, References: []learning.KnowledgeReference{reference}, Prompt: "topic?", Type: learning.ActivityObjective, Rubric: learning.Rubric{Revision: "r1", Items: []learning.RubricItem{{ID: "item-1", Criterion: "correct"}}, ObjectiveRule: &learning.ObjectiveRule{AcceptedAnswers: []string{"ok"}, TrimSpace: true}}, Difficulty: 1, AllowedHelp: []learning.HelpLevel{learning.HelpNone}, ActivityPolicyVersion: learning.ActivityPolicyVersion, AssessmentPolicyVersion: learning.AssessmentPolicyVersion, ReviewPolicyVersion: learning.ReviewPolicyVersion, CreatedAt: now}
@@ -535,13 +790,13 @@ func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store) (s
 	assessment := learning.AssessmentArtifact{ID: assessmentID, SessionID: sessionID, AttemptID: attemptID, ActivityID: activityID, ActivityRevision: 1, Items: []learning.AssessmentItem{item}, RubricComplete: true, Confidence: 500, RiskFlags: []learning.RiskFlag{learning.RiskInsufficientAnswerEvidence}, ModelID: "fixture", ModelParameters: map[string]any{}, PromptRevision: "p1", ProposalInputHash: learning.SHA256([]byte("proposal")), Attempts: 1, AttemptCategories: []string{"success"}, CreatedAt: now}
 	decisionOne := learning.AssessmentDecision{ID: decisionOneID, AssessmentID: assessmentID, Version: 1, Disposition: learning.DispositionProvisional, Items: assessment.Items, ActorDeviceID: learningDeviceOne, CreatedAt: now}
 	session.State = tutoring.StateFeedback
-	result = commit("51000000-0000-4000-8000-000000000005", result.AggregateVersion, learning.CommandBatch{Assessment: &assessment, Decisions: []learning.AssessmentDecision{decisionOne}, Session: &session, Disposition: learning.DispositionProvisional, TutoringState: string(session.State), Events: []learning.EventDraft{
+	result = commit("51000000-0000-4000-8000-000000000005", result.AggregateVersion, learning.CommandBatch{Assessment: &assessment, Authority: learning.AuthorityProvenance{AssessmentItems: []learning.KnowledgeOwner{{KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, DocumentRevisionID: learningDocumentRevisionID}}}, Decisions: []learning.AssessmentDecision{decisionOne}, Session: &session, Disposition: learning.DispositionProvisional, TutoringState: string(session.State), Events: []learning.EventDraft{
 		eventDraft(learning.EventAssessmentRecorded, sessionID, assessment), eventDraft(learning.EventAssessmentMarkedProvisional, sessionID, learning.AssessmentProjectionEvent{AssessmentID: assessmentID, NodeRevisionID: learningNodeRevisionID, Reasons: []string{"low_confidence"}, Decision: decisionOne}), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session}),
 	}})
 
 	decisionTwo := learning.AssessmentDecision{ID: decisionTwoID, AssessmentID: assessmentID, Version: 2, Disposition: learning.DispositionAccepted, Items: assessment.Items, ActorDeviceID: learningDeviceOne, CreatedAt: now, ReplacesDecisionID: &decisionOneID, ProducedEvidenceID: &evidenceID}
 	evidence := learning.AcceptedEvidence{ID: evidenceID, DispositionDecisionID: decisionTwoID, AssessmentID: assessmentID, AttemptID: attemptID, ActivityID: activityID, ActivityRevision: 1, GoalRevisionID: goalRevisionID, RouteRevisionID: routeRevisionID, KnowledgeRevisionID: learningKnowledgeRevision, NodeRevisionID: learningNodeRevisionID, RubricRevision: "r1", Kind: learning.EvidencePracticeRecall, ActivityType: learning.ActivityObjective, Outcome: learning.OutcomePass, Help: learning.HelpNone, ReceivedAt: now, AcceptancePolicyVersion: learning.AssessmentPolicyVersion, ReducerPolicyVersion: learning.MasteryReducerVersion, ReviewPolicyVersion: learning.ReviewPolicyVersion}
-	result = commit("51000000-0000-4000-8000-000000000006", result.AggregateVersion, learning.CommandBatch{Decisions: []learning.AssessmentDecision{decisionTwo}, Evidence: []learning.AcceptedEvidence{evidence}, Session: &session, Disposition: learning.DispositionAccepted, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventAssessmentAccepted, sessionID, learning.AssessmentProjectionEvent{AssessmentID: assessmentID, NodeRevisionID: learningNodeRevisionID, Decision: decisionTwo}), eventDraft(learning.EventEvidenceAccepted, sessionID, evidence)}})
+	result = commit("51000000-0000-4000-8000-000000000006", result.AggregateVersion, learning.CommandBatch{Decisions: []learning.AssessmentDecision{decisionTwo}, Evidence: []learning.AcceptedEvidence{evidence}, Authority: learning.AuthorityProvenance{Evidence: map[string]learning.EvidenceOwner{evidenceID: {SessionID: sessionID, KnowledgeOwner: learning.KnowledgeOwner{KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, DocumentRevisionID: learningDocumentRevisionID}}}}, Session: &session, Disposition: learning.DispositionAccepted, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventAssessmentAccepted, sessionID, learning.AssessmentProjectionEvent{AssessmentID: assessmentID, NodeRevisionID: learningNodeRevisionID, Decision: decisionTwo}), eventDraft(learning.EventEvidenceAccepted, sessionID, evidence)}})
 	loaded, err := store.LoadSession(ctx, sessionID)
 	if err != nil || loaded.AggregateVer != result.AggregateVersion {
 		t.Fatalf("decision session version loaded=%+v result=%+v err=%v", loaded, result, err)
@@ -693,7 +948,7 @@ func assertOutboxConflictRollback(t *testing.T, store *postgresstore.Store, pool
 	}
 }
 
-func assertOutboxRollback(t *testing.T, store *postgresstore.Store, pool *pgxpool.Pool, sessionID string, version int64) {
+func assertSharedTransactionRollsBackTutoringAndOutbox(t *testing.T, store *postgresstore.Store, pool *pgxpool.Pool, sessionID string, version int64) {
 	t.Helper()
 	ctx := context.Background()
 	var before int64
@@ -714,14 +969,17 @@ func assertOutboxRollback(t *testing.T, store *postgresstore.Store, pool *pgxpoo
 	if err != nil {
 		t.Fatal(err)
 	}
+	originalState, originalAttachedQuiz := session.State, session.AttachedQuiz
+	session.State = tutoring.StateCompleted
+	session.AttachedQuiz = !session.AttachedQuiz
 	request := learning.CommitRequest{DeviceID: learningDeviceOne, Operation: learning.OperationEnvelope{OperationID: "54000000-0000-4000-8000-000000000001", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: version, Payload: json.RawMessage(`{}`)}, RequestHash: learning.SHA256([]byte("outbox rollback")), Expectations: []learning.AggregateExpectation{{Type: "session", ID: sessionID, ExpectedVersion: version}}, Batch: learning.CommandBatch{Session: &session, Outbox: []outbox.Message{message}, Events: []learning.EventDraft{eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}}, ReceivedAt: time.Now().UTC()}
 	if _, err := store.Commit(ctx, request); err == nil {
 		t.Fatal("projection fault unexpectedly committed outbox command")
 	}
 	assertCount(t, pool, `SELECT count(*) FROM outbox_messages`, before)
 	loaded, err := store.LoadSession(ctx, sessionID)
-	if err != nil || loaded.AggregateVer != version {
-		t.Fatalf("outbox rollback changed session: %+v err=%v", loaded, err)
+	if err != nil || loaded.AggregateVer != version || loaded.State != originalState || loaded.AttachedQuiz != originalAttachedQuiz {
+		t.Fatalf("shared transaction rollback changed tutoring session: before_state=%s before_quiz=%v loaded=%+v err=%v", originalState, originalAttachedQuiz, loaded, err)
 	}
 	if _, err := pool.Exec(ctx, `DROP TRIGGER reject_learning_projection_write ON learning_projection_timeline; DROP FUNCTION reject_learning_projection_write()`); err != nil {
 		t.Fatal(err)

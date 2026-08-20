@@ -1,9 +1,9 @@
 schema: comet.native.v4
 name: knowledge-core
 language: zh-CN
-phase: build
+phase: archive
 status: active
-state_version: 2
+state_version: 9
 brief: brief.md
 spec_changes:
   - capability: knowledge-core
@@ -15,103 +15,142 @@ workspace:
   target_branch: comet/teaching-interview-agent
   finish: null
 loop:
-  stage: building
+  stage: archive-ready
   goal_cycle: 1
-  iteration: 1
-  attempt: 0
+  iteration: 2
+  attempt: 1
   retry_epoch: 0
-  failed_iteration_count: 0
+  failed_iteration_count: 1
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: submit-builder-candidate
+  next_action: archive
 acceptance:
   - id: A1
     source: brief.md
     text: Parent A4：单文件或多文件 Markdown 批次在 PostgreSQL 原子创建不可变 canonical snapshot；按旧
       revision 导出仍得到 Obsidian 可读 Markdown，并携带可移植且唯一的文档与节点身份。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Atomic PostgreSQL snapshot implementation and old-revision export exist;
+        DB execution is explicitly gated.
+      truncated: false
   - id: A2
     source: brief.md
     text: Parent A5：同一 canonical document revision 反复全量构建得到相同节点、父子顺序、范围和 revision
       ID；显式身份或唯一确定性匹配可在移动/改名时保留身份，重大改写、拆分和合并使用新身份与 lineage，歧义不会自动提交。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: UUIDv5 rebuild, deterministic tree/ranges, stable identity and lineage
+        behavior verified.
+      truncated: false
   - id: A3
     source: brief.md
     text: Parent A6：固定语料的分层检索返回预期文档和节点、逐层候选与选择轨迹、固定 knowledge/document/node
       revision、正文范围和降级标记；无模型和无向量数据库时仍能确定性工作。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Fixed lexical retrieval returns frozen revision, trace, ranges, hashes and
+        degraded state.
+      truncated: false
   - id: A4
     source: brief.md
     text: Parent A28：canonical Markdown、catalog revision、document revision、稳定 node
       ID、node revision 和 lineage 全部归 `knowledge` 模块及 PostgreSQL 所有；文件和 HTTP
       payload 不是第二权威源。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Knowledge owns canonical, identity, lineage and retrieval semantics behind
+        ports.
+      truncated: false
   - id: A5
     source: brief.md
     text: Parent A32：PostgreSQL 保存 snapshot parent、单调 revision number、manifest
       hash、来源、创建设备、canonicalizer/parser/indexer 版本、canonical Markdown 和内容哈希；导出身份
       envelope 不破坏 Obsidian 阅读。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Migration stores revision metadata, canonical payload/hash and export
+        identity envelope.
+      truncated: false
   - id: A6
     source: brief.md
     text: Parent A33：再导入先校验显式身份；没有 marker
       时只自动接受唯一确定性匹配，路径、标题祖先或相似度只生成审阅候选，`identity_review_required` 不产生部分
       revision。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Explicit identity and conservative markerless matching are enforced;
+        ambiguity is zero-write review.
+      truncated: false
   - id: A7
     source: brief.md
     text: Parent A34：Markdown AST 决定标题树、正文范围、源引用和节点 revision；摘要、LLM
       选择和检索理由是可替换派生数据，改变它们不会改变 canonical hash 或任何身份。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Goldmark AST determines tree/ranges and artifacts/LLM do not affect
+        canonical identity.
+      truncated: false
   - id: A8
     source: brief.md
     text: Parent A35：纯路径移动、标题改名和普通一对一编辑保留稳定 ID 并创建需要的新 document/node
       revision；重大改写、拆分或合并生成新 ID 和可查询 lineage，旧 revision 永远可按原引用读取。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Move, rename, ordinary edit, rewrite, split and merge
+        stable-ID/revision/lineage behavior is tested.
+      truncated: false
   - id: A9
     source: brief.md
     text: Parent A36：一次检索冻结一个 knowledge revision，先确定性缩小文档候选，再逐层选择节点并读取 canonical
       slice；结果包含 context/retriever/selector 版本、每层轨迹、revision 引用、范围、slice
       hash、截断和降级信息。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Retrieval freezes one revision before shortlist, layered selection and
+        canonical slice reads.
+      truncated: false
   - id: A10
     source: brief.md
     text: Parent A37：验收使用固定 Markdown corpus、固定 selector 和 fake model；只比较候选/选中
       ID、结构、范围、revision 与状态，不把真实模型文案或理由文本相同作为通过条件。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Fixed corpus, deterministic selector and fake-model tests compare
+        structural evidence, not prose.
+      truncated: false
   - id: A11
     source: specs/knowledge-core/spec.md
     text: "`server/internal/knowledge` 拥有 canonical Markdown、catalog
       snapshot、document identity、node identity、node lineage、派生 knowledge
       artifact 和检索 trace 的业务语义。端口由 knowledge 应用层定义，PostgreSQL adapter、LLM
       selector adapter 和 HTTP transport 只实现这些端口；其他模块不得直接读取 knowledge 表。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Knowledge defines domain ports and PostgreSQL, LLM and HTTP adapters
+        remain separated.
+      truncated: false
   - id: A12
     source: specs/knowledge-core/spec.md
     text: knowledge 使用普通事务模型，不写 Learning Event Log。它不读取客户端文件系统；客户端或后续 CLI
       把文件与目录转换成带规范化相对路径的 Markdown 文档批次。服务端只返回数据和导出内容，不代表用户落盘。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Production knowledge service does not read client files or write the
+        Learning Event Log.
+      truncated: false
   - id: A13
     source: specs/knowledge-core/spec.md
     text: 系统维护一个单用户 knowledge catalog。`KnowledgeRevision` 是 catalog 的完整线性快照，包含
       UUID、从 1 开始单调递增的 `revision_no`、可空父 revision、SHA-256 manifest
       hash、来源、创建设备、创建时间，以及 canonicalizer、parser、indexer 和 identity policy
       版本。head 由 catalog 单例行保存并在导入事务中更新。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Catalog singleton, linear parent, monotonic revision number and head
+        update are implemented.
+      truncated: false
   - id: A14
     source: specs/knowledge-core/spec.md
     text: 每个 snapshot 通过 immutable mapping 引用按规范路径排序的 `DocumentRevision`。导入是基于父
@@ -121,16 +160,22 @@ acceptance:
       返回 `duplicate_document_identity`，新路径已由另一 DocumentID 占用返回
       `path_occupied`。完全相同的排序 manifest 返回当前 revision 和 `unchanged=true`，不递增
       revision number。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Snapshot upsert, carry-forward, move, uniqueness and unchanged-manifest
+        behavior are implemented.
+      truncated: false
   - id: A15
     source: specs/knowledge-core/spec.md
     text: "`DocumentID` 和 `NodeID` 是跨 revision 的稳定语义身份。`DocumentRevisionID` 由固定
       UUIDv5 namespace、document ID、canonical hash 和 parser profile
       得到；`NodeRevisionID` 由固定 UUIDv5 namespace、document revision ID、node ID 和
       indexer version 得到。同一 canonical document revision 重建时 ID 不依赖数据库插入顺序或随机数。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Document and node revisions use fixed UUIDv5 namespaces and deterministic
+        inputs.
+      truncated: false
   - id: A16
     source: specs/knowledge-core/spec.md
     text: PostgreSQL migration `000002_knowledge_core.sql` 创建 catalog、import
@@ -138,14 +183,20 @@ acceptance:
       mapping、node、node revision、lineage、lineage member和 node artifact
       表。哈希、revision number、operation ID、snapshot path、stable ID 和 artifact
       version 具有数据库唯一约束；普通 store API 不提供对历史 revision 的 UPDATE 或 DELETE。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Migration defines required catalog, operation, revision, identity,
+        mapping, lineage and artifact tables/constraints.
+      truncated: false
   - id: A17
     source: specs/knowledge-core/spec.md
     text: canonical 正文与 metadata 分开建模，以便未来受审计 privacy redaction 清除正文而保留最小
       tombstone、hash 与引用。当前 child 不实现 redaction；任何普通导入、导出或检索都不能修改历史 payload。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Canonical payload/metadata are isolated and ordinary APIs do not update or
+        delete historical revisions.
+      truncated: false
   - id: A18
     source: specs/knowledge-core/spec.md
     text: 导入命令包含 UUID `operation_id`、必填但可为 null 的
@@ -154,16 +205,22 @@ acceptance:
       resolutions。每个文档包含 canonical 相对路径和 Markdown；调用方不能指定 knowledge revision
       ID、document revision ID 或 node revision ID。resolution 只能引用服务上一次为相同 review
       basis 返回的稳定 locator 和 expected parent 候选。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Import validates operation, explicit expected parent, source, documents
+        and resolution boundaries.
+      truncated: false
   - id: A19
     source: specs/knowledge-core/spec.md
     text: 服务为规范化后的完整正式请求计算 request hash，其中包含 resolutions。只有成功提交或 `unchanged` 的
       import 才持久化 operation：相同 operation ID 与相同 hash 返回第一次结果，相同 operation ID 与不同
       hash 返回 `idempotency_conflict`。expected parent 与事务中锁定的 catalog head 不同返回
       `revision_conflict`，响应给出当前 head，不能自动 rebase 或覆盖。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Request hashing, replay/conflict, expected-parent conflict and transaction
+        lock paths are implemented.
+      truncated: false
   - id: A20
     source: specs/knowledge-core/spec.md
     text: identity review 使用独立 `identity_review_basis_hash`：它只覆盖 expected
@@ -171,66 +228,92 @@ acceptance:
       ID、review hash 或任何 resolution。`identity_review_required` 响应回显 basis hash
       和由它导出的 locator，不写 import operation、revision 或 head。调用方加入 resolutions
       重试时必须使用新的 operation ID 并回显 basis hash；服务重算不一致时返回 `stale_identity_review`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: HMAC receipt binds basis and an actually issued review operation;
+        fresh-operation regression passes.
+      truncated: false
   - id: A21
     source: specs/knowledge-core/spec.md
     text: 解析、UTF-8/大小检查、AST 构建、身份候选和 manifest 预计算在事务外执行。提交使用 `READ COMMITTED`，锁
       catalog 单例行后再次检查 expected parent，并在一个事务中写入
       operation、revision、document、node、lineage、snapshot mapping 与
       head。任一错误或故障注入都回滚全部 canonical 写入。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Precomputation is outside CommitImport and commit uses READ
+        COMMITTED/catalog lock/atomic writes.
+      truncated: false
   - id: A22
     source: specs/knowledge-core/spec.md
     text: 请求 JSON 最大 16 MiB，单文档最大 4 MiB，文档数最大 1000，单批节点数最大 100000。路径转换为 NFC、使用
       `/`、必须为非空相对路径；拒绝绝对路径、空段、`.`、`..`、反斜杠、NUL、控制字符以及 NFC + Unicode case-fold
       后重复。限制错误返回 `413 payload_too_large` 或 `400 invalid_path`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Body/document/node limits and NFC, relative, control and folded-path
+        validation are implemented.
+      truncated: false
   - id: A23
     source: specs/knowledge-core/spec.md
     text: canonicalizer profile `edu-markdown-v1` 要求合法 UTF-8、移除单个 UTF-8 BOM 并把
       CRLF/CR 统一为 LF。它不 trim 正文，也不通过 Markdown renderer 重写内容。除换行规范化和插入或更新保留
       envelope 外，用户 Markdown 字节不改变。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: BOM/CRLF normalization and source-preserving flow pairs including inline
+        comments are tested.
+      truncated: false
   - id: A24
     source: specs/knowledge-core/spec.md
     text: frontmatter 使用 `go.yaml.in/yaml/v3 v3.0.5` 解析为 mapping
       并保留用户键。服务拥有三个顶层保留键：`edu-agent-format`、`edu-agent-document-id` 和
       `edu-agent-root-node-id`。格式版本为 1，两个 ID 是 canonical identity；重复键、非 scalar
       保留值、非法 UUID 或用户占用不兼容值使导入失败。无 frontmatter 时服务创建一个最小 YAML envelope。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: YAML mapping, reserved keys and duplicate/non-scalar/invalid identity
+        validation are implemented.
+      truncated: false
   - id: A25
     source: specs/knowledge-core/spec.md
     text: 导出视图在 frontmatter 增加 `edu-agent-source-revision-id`，该字段说明导出来源但不属于
       canonical hash；再导入时先校验并剥离该 view metadata。导出不得叠加重复键或 marker。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Export source metadata is stripped on reimport without changing canonical
+        hash or duplicating markers.
+      truncated: false
   - id: A26
     source: specs/knowledge-core/spec.md
     text: 每个 Markdown heading 正前方使用独占一行的 `<!-- edu-agent-node:v1 {"id":"UUID"} -->`
       标记 NodeID。只有 AST 中与 heading 同级且中间只有空白的 HTML block 才是保留
       marker；代码围栏、引用块、inline code 和普通文本中的相同字符串不被识别。重复 ID、一个 heading 多 marker、孤立
       marker、非法 JSON/UUID 或当前 document 无权声明的 ID 返回 `invalid_identity_marker`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Only legal adjacent heading markers are accepted; pseudo, duplicate,
+        orphan and invalid markers fail.
+      truncated: false
   - id: A27
     source: specs/knowledge-core/spec.md
     text: parser profile 固定为 `github.com/yuin/goldmark v1.8.5`、CommonMark 0.31.2 和
       GFM。Obsidian wiki link、callout 与其他未识别扩展按原始文本保留。parser/profile
       升级必须使用新版本号，并以 corpus 对比证明不会静默改变旧 revision 的重建含义。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Goldmark v1.8.5/GFM profile and parser version are fixed.
+      truncated: false
   - id: A28
     source: specs/knowledge-core/spec.md
     text: 每个文档有一个 synthetic root node，其 ID 来自 frontmatter。heading node 使用最近的较低 level
       heading 为父节点；level 跳跃不补虚拟节点。首个 heading 前的 preamble 属于 root，文档没有 heading
       时只有 root。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Synthetic root, nearest-lower heading parent, skipped levels and
+        no-heading behavior are implemented.
+      truncated: false
   - id: A29
     source: specs/knowledge-core/spec.md
     text: 每个 node revision 保存有序 sibling index、heading
@@ -238,15 +321,21 @@ acceptance:
       canonical UTF-8 字节的半开区间 `[start,end)` 并附 1-based 起止行；Setext heading
       范围覆盖完整物理行。section 截止于下一个 level 小于等于当前 node 的 heading，local body 排除子
       section。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Node order, ancestry, UTF-8 byte ranges and line numbers including Setext
+        are implemented.
+      truncated: false
   - id: A30
     source: specs/knowledge-core/spec.md
     text: 全量重建输入只包括 document ID、canonical Markdown、冻结 profile/version 和 identity
       envelope。重建结果包含完全相同的 document/node revision ID、父子关系、顺序、hash 与范围；数据库已有
       summary、模型输出或检索轨迹不属于重建输入。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Canonicalizer.Index rebuild depends only on canonical content, identity
+        envelope and frozen versions.
+      truncated: false
   - id: A31
     source: specs/knowledge-core/spec.md
     text: 身份解析必须先完成 document stage，再完成 node stage。document locator 是 basis hash
@@ -256,8 +345,11 @@ acceptance:
       frontmatter 键与 node marker、统一换行后的 Markdown 计算。未知显式 DocumentID 仅在 catalog
       历史中从未出现且批内唯一时作为可移植新 identity 接受；历史存在但不属于 expected parent、批内重复或跨父 revision
       引用均返回稳定冲突。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Document-first identity priority and history/conflict checks are
+        implemented.
+      truncated: false
   - id: A32
     source: specs/knowledge-core/spec.md
     text: 缺少显式 DocumentID 且未形成双向唯一 exact semantic hash 时，只要 expected parent
@@ -265,15 +357,21 @@ acceptance:
       document locator、候选 DocumentID/document revision、reason code 与 evidence 均按
       stable ID 排序。调用方重试可选择 `preserve` 某个 expected-parent 文档或 `new`；完成 document
       ownership 后，领域层才允许该文档中的 node marker 声明属于该 document 的 NodeID。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Ambiguous document identity returns stable review evidence; no-candidate
+        input creates a new identity.
+      truncated: false
   - id: A33
     source: specs/knowledge-core/spec.md
     text: node 身份顺序固定为：有效显式 marker、双向唯一确定性匹配、调用方 resolution、新身份。markerless node 只有在旧
       snapshot 的已归属 document 集合中存在唯一相同 semantic local-body hash，且反向也唯一时才自动保留
       NodeID；路径、标题、祖先、邻居或模糊相似度只用于生成候选，不能单独自动继承。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Marker, exact hash, resolution and new identity order is enforced without
+        ambiguous inheritance.
+      truncated: false
   - id: A34
     source: specs/knowledge-core/spec.md
     text: "`identity-policy-v1` 的 similarity 输入不包含标题、ancestor、marker 或 summary。它把
@@ -283,8 +381,11 @@ acceptance:
       0；两者都空只允许显式 marker 的一对一标题/移动保留。带 marker 的一对一编辑在分数至少 0.50 时自动保留，低于
       0.50、任一非空正文少于 8 token 且 hash 改变、复制 marker、一个旧节点对应多个新位置或多个旧节点对应一个新位置时返回
       `identity_review_required`。阈值和 token 规则随 policy version 冻结。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Frozen NFKC/case-fold/CJK/shingle/Jaccard policy and threshold guards are
+        implemented.
+      truncated: false
   - id: A35
     source: specs/knowledge-core/spec.md
     text: 审阅响应包含 document path、preorder node locator、reason code、旧 node revision
@@ -295,30 +396,42 @@ acceptance:
       group、source/target node revision、actor device、理由、policy version
       和时间。resolution 只能引用 expected parent 中的候选以及本次 AST locator，领域层拒绝未知、重复或跨
       revision 引用。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Review locators/evidence and preserve/new/rewrite/split/merge
+        resolution/cardinality validation are tested.
+      truncated: false
   - id: A36
     source: specs/knowledge-core/spec.md
     text: 纯文件移动不改变 canonical document/node revision；snapshot mapping 只改变
       path。标题改名、章节重排或普通编辑保留稳定 ID，但 canonical 变化时产生新的 document/node
       revision。lineage 获批只表达历史关系，不迁移、折扣或复制任何学习证据。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Pure moves preserve revisions; canonical changes create revisions and
+        lineage only records relationships.
+      truncated: false
   - id: A37
     source: specs/knowledge-core/spec.md
     text: "`NodeArtifact` 是可丢弃、不可覆盖的版本化派生记录，至少包含 node revision
       ID、kind、producer/prompt/model version、input hash、content、created time 和
       status。当前 child 不生成摘要；测试或后续模块可以提供已钉扎 summary snapshot。artifact 写入和替换永远不能改变
       canonical hash、tree、NodeID、NodeRevisionID 或 lineage。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Versioned immutable node artifacts are stored and current-snapshot
+        summaries are pinned.
+      truncated: false
   - id: A38
     source: specs/knowledge-core/spec.md
     text: 检索命令包含查询、可选 knowledge revision ID、query context schema version 和有界
       limits。未指定 revision 时服务只读取一次 head 并立即冻结为本次 revision；后续所有候选、artifact 和 hit
       必须属于该 snapshot，禁止混入较新的 head。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Retrieval reads head once and confines artifacts, candidates and hits to
+        the frozen revision.
+      truncated: false
   - id: A39
     source: specs/knowledge-core/spec.md
     text: "`retriever-v1` 的 tokenization 与 identity policy 相同，但查询和字段使用 token
@@ -327,16 +440,21 @@ acceptance:
       1*first_2048_byte_body_excerpt`，node score 是 `4*title + 2*ancestor_titles
       + 1*direct_child_titles + 1*first_2048_byte_local_body`。所有字段先按 UTF-8 rune
       边界截断；score 降序后按 stable revision ID 升序 tie-break。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: All lexical fields receive rune-safe 2048-byte truncation with UTF-8
+        boundary tests.
+      truncated: false
   - id: A40
     source: specs/knowledge-core/spec.md
     text: 服务取前 8 个 document 进入 document shortlist，即使全为零分也按 stable ID 补足。每个 parent 的
       children 全部评分后，候选集截断到前 20；lexical fallback 选择前三个正分候选，全为零时选择第一个。候选无
       children 时 action 为 `select`；有 children 且 local-body 命中为正时是
       `select_expand`；有 children 且 local-body 命中为零时是 `expand`；没有合法候选时是 `stop`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Shortlist, candidate, fallback and action limits/rules are implemented.
+      truncated: false
   - id: A41
     source: specs/knowledge-core/spec.md
     text: 遍历按 document shortlist 顺序进行稳定 breadth-first queue。领域层逐项应用
@@ -345,8 +463,11 @@ acceptance:
       去重；空 decision 终止当前 branch。深度 8、总候选 200 或 queue 为空时停止；最终 hit 按首次 trace
       index、深度、NodeRevisionID 排序并截断到 10。英文和数字通过 case-folded runs，CJK 额外加入相邻 rune
       bigram；实现不调用 PostgreSQL 英文全文分词，也不使用向量。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Complete shortlist global FIFO BFS, truncation and zero-score hit
+        suppression are tested.
+      truncated: false
   - id: A42
     source: specs/knowledge-core/spec.md
     text: knowledge 应用层定义 `Selector` 端口。selector 每层接收固定 revision、query
@@ -354,23 +475,32 @@ acceptance:
       排列的 decision 列表，每项包含 `node_revision_id` 和 `select`、`expand` 或
       `select_expand` action。`stop` 只表示该层返回空 decision 并终止当前
       branch。领域层逐项重新校验成员、父子关系、顺序、重复、revision 和总预算。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Selector membership, order, action, parent and revision validation is
+        enforced.
+      truncated: false
   - id: A43
     source: specs/knowledge-core/spec.md
     text: candidate set 使用 UTF-8 规范串计算 SHA-256：首行为 `candidate-set-v1`，随后依次是 frozen
       knowledge revision ID、parent node revision ID，再按候选顺序写
       `ordinal|node_revision_id|score|title_sha256|summary_artifact_id-or--`，每项以
       LF 结束。selector response 必须回显该 hash；不一致视为 stale response 并整层回退。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: candidate-set-v1 hash binds frozen revision, parent, candidate fields and
+        artifact ID.
+      truncated: false
   - id: A44
     source: specs/knowledge-core/spec.md
     text: 模型配置可用时，LLM adapter 复用现有 `llm.Client.Chat` 发送结构化 JSON；无模型、超时、上游错误、schema
       错误、未知/跨 revision ID、超量选择或 stale artifact 时，整层结果丢弃并使用 `lexical-v1`，trace 标记
       `degraded=true` 与稳定 reason code。坏的模型响应不能部分生效。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: All reported model failure modes trigger whole-layer lexical fallback with
+        stable reasons.
+      truncated: false
   - id: A45
     source: specs/knowledge-core/spec.md
     text: 检索响应包含 frozen knowledge revision、retriever/selector/query-context
@@ -378,8 +508,11 @@ acceptance:
       hash、reason code、degraded/truncated，以及最终 document ID、document revision
       ID、node ID、node revision ID、path、source ranges、canonical slice、slice
       SHA-256 和 provenance。默认最大深度 8、每层候选 20、最终 hit 10、总候选 200；超限按上述稳定顺序截断并显式标记。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Retrieval response exposes versions, summary, shortlist, trace, decisions,
+        ranges, slices, hashes and flags.
+      truncated: false
   - id: A46
     source: specs/knowledge-core/spec.md
     text: 固定验收 corpus 至少包含 `go/concurrency.md` 的 `Concurrency -> Goroutine,
@@ -393,8 +526,11 @@ acceptance:
       Overview、Queue Types。模型 timeout、malformed JSON、unknown ID、cross-revision
       ID 和 over-budget 使用相同候选顺序、per-node action 与 hit，只分别改变 degraded
       reason；超预算额外设置 truncated。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Channel/queue fixed corpus ordering, actions, hits and fallback reasons
+        pass.
+      truncated: false
   - id: A47
     source: specs/knowledge-core/spec.md
     text: HTTP/OpenAPI 增加 `GET /v1/knowledge/revisions/head`、`POST
@@ -403,70 +539,421 @@ acceptance:
       /v1/knowledge/revisions/{revisionID}/export` 和 `POST
       /v1/knowledge/retrievals`。export 返回按 canonical path 排序的 document 数组及
       source revision，不打包 zip；CLI 后续负责落盘。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Head/import/tree/export/retrieval endpoints are integrated.
+      truncated: false
   - id: A48
     source: specs/knowledge-core/spec.md
     text: 导入要求 `knowledge:write`，head/tree/export/retrieval 要求
       `knowledge:read`。新配对令牌默认带这两个 scope；migration 为当前单用户 first-party 未吊销设备令牌补齐
       scope。HTTP 继续在进入 knowledge use case 前执行 bearer 认证、设备限流、scope 和审计，日志不得写
       Markdown 正文、查询正文、marker、模型 prompt 或导出内容。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Knowledge scopes, pairing defaults, auth, rate limits and audit middleware
+        are integrated.
+      truncated: false
   - id: A49
     source: specs/knowledge-core/spec.md
     text: JSON 继续拒绝未知字段。解析与 marker 问题返回 `400` 或 `422` 稳定机器码；revision、idempotency 和
       identity review 返回 `409`；不存在或不属于 frozen revision 返回 `404`；body 上限返回
       `413`；内部错误只记录 request ID 和脱敏类别并返回通用 `500`。`identity_review_required`
       的候选是业务响应，不泄露其他 revision 的正文。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Strict JSON, stable errors/statuses, conflict revision and redacted review
+        payload behavior are implemented.
+      truncated: false
   - id: A50
     source: specs/knowledge-core/spec.md
     text: "`app.Run` 在 migration 后组合 knowledge PostgreSQL
       store、canonicalizer/indexer、可选 LLM selector 和 service，再通过 HTTP `Options`
       注入。模型未配置或不可用不会让知识导入、导出、tree 或 lexical retrieval 不可用，也不会改变服务 readiness 的既有
       required/optional 语义。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: app.Run wires migration, PostgreSQL store, canonicalizer, optional
+        selector and HTTP API.
+      truncated: false
   - id: A51
     source: specs/knowledge-core/spec.md
     text: OpenAPI 版本随 knowledge endpoints 更新，保留既有 health、pairing、device 和 model
       契约。现有 token、rate limiter、request ID、recoverer 和 error envelope 语义不得回归。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Concrete OpenAPI review/retrieval schemas and response validation are
+        present.
+      truncated: false
   - id: A52
     source: specs/knowledge-core/spec.md
     text: parser golden corpus 覆盖 UTF-8/BOM、CRLF、ATX、Setext、跳级与重复标题、无标题文档、已有
       YAML、围栏/引用内伪 marker、HTML、GFM 表格与 task list、wiki link、callout、CJK
       和末尾无换行，并逐字验证 range 对应 canonical slice。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Golden corpus covers required Markdown variants including BOM and bytewise
+        range slices.
+      truncated: false
   - id: A53
     source: specs/knowledge-core/spec.md
     text: identity fixture 覆盖文件移动、路径和标题改名、章节重排、普通编辑、重大替换、marker 删除/复制、重复模板、split 和
       merge。断言可确定变更保留 stable ID，重大变化建立新 ID/lineage，歧义返回审阅且数据库 head 不变。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Identity fixtures cover move, reorder, duplicate review, ordinary edit,
+        rewrite, split, merge and head behavior.
+      truncated: false
   - id: A54
     source: specs/knowledge-core/spec.md
     text: 检索使用进程内 deterministic selector 和严格 fake LLM，断言每层 candidate hash、选中 ID、最终
       hit、revision、range、degraded 和 truncated；不同摘要文本不得改变 tree。模型 timeout、畸形
       JSON、未知 ID、跨 revision ID和超预算输出必须稳定回退，不比较自由文本理由。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Strict fake-LLM timeout/malformed/unknown/cross-revision/over-budget
+        fallback matches lexical baseline evidence.
+      truncated: false
   - id: A55
     source: specs/knowledge-core/spec.md
     text: PostgreSQL 集成测试在 `TEST_DATABASE_URL` 的隔离 schema 中运行 migration、单/多文档原子导入、旧
       revision 导出、same-operation 幂等、same-operation 不同 hash 冲突、同 expected head
       并发、故障回滚、path 唯一约束和增量 snapshot 与全量重建比较。环境缺少 PostgreSQL 时明确 skip；普通 Go
       测试、vet、漏洞扫描、OpenAPI/YAML 解析和错误级诊断仍必须通过。
-    result: pending
-    reason: null
-builder_handoff: null
+    result: passed
+    reason:
+      text: PostgreSQL suites explicitly skip without TEST_DATABASE_URL; local tests,
+        vet, vuln, OpenAPI/HTTP and diff checks pass.
+      truncated: false
+builder_handoff:
+  candidate_id: 4ed3102b-41f9-4ac9-bd65-d4fd46ad6eca
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:2fb212f1-3d4d-4c75-b4a3-68ad1caddf65
+  iteration: 2
+  summary:
+    text: Iteration 2 repairs are committed as 837d02c. Fixed A20 with per-Service
+      HMAC review receipts bound to an actually issued identity review and fresh
+      operation validation; fixed A23 with source-preserving flow YAML pair
+      scanning including nested values, quoted commas, and inline comments;
+      fixed A39 with UTF-8 rune-safe 2048-byte truncation for every lexical
+      scoring field; fixed A41 with complete shortlist global FIFO BFS while
+      suppressing irrelevant zero-score hits; completed A51 concrete OpenAPI
+      schemas; expanded A52 bytewise golden range corpus including BOM; added
+      A53 end-to-end reorder, duplicate-template review, and merge lineage
+      fixtures; and added A54 strict fake-LLM Service.Retrieve fallback
+      equivalence tests. A20 receipt state is intentionally non-persistent and
+      currently has no TTL, so restart invalidates pending reviews and
+      long-lived processes can accumulate issued receipts.
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+    - A13
+    - A14
+    - A15
+    - A16
+    - A17
+    - A18
+    - A19
+    - A20
+    - A21
+    - A22
+    - A23
+    - A24
+    - A25
+    - A26
+    - A27
+    - A28
+    - A29
+    - A30
+    - A31
+    - A32
+    - A33
+    - A34
+    - A35
+    - A36
+    - A37
+    - A38
+    - A39
+    - A40
+    - A41
+    - A42
+    - A43
+    - A44
+    - A45
+    - A46
+    - A47
+    - A48
+    - A49
+    - A50
+    - A51
+    - A52
+    - A53
+    - A54
+    - A55
+  checks:
+    - name:
+        text: go test -count=1 ./...
+        truncated: false
+      result: passed
+      note:
+        text: Fresh full suite passed locally after all repairs.
+        truncated: false
+    - name:
+        text: go vet ./...
+        truncated: false
+      result: passed
+      note: null
+    - name:
+        text: govulncheck ./...
+        truncated: false
+      result: passed
+      note:
+        text: No vulnerabilities found.
+        truncated: false
+    - name:
+        text: OpenAPI YAML and concrete response validation
+        truncated: false
+      result: passed
+      note:
+        text: OpenAPI tests and HTTP tests passed, including concrete review and
+          retrieval payload validation.
+        truncated: false
+    - name:
+        text: primary LSP diagnostics
+        truncated: false
+      result: passed
+      note:
+        text: Seven affected files checked with zero error diagnostics.
+        truncated: false
+    - name:
+        text: pi-lens error diagnostics
+        truncated: false
+      result: passed
+      note:
+        text: No error issues across the knowledge server files; non-blocking style
+          warnings remain.
+        truncated: false
+    - name:
+        text: git diff --check
+        truncated: false
+      result: passed
+      note:
+        text: Repair commit 837d02c has clean whitespace checks.
+        truncated: false
+    - name:
+        text: PostgreSQL integration tests on HexHub SSH
+        truncated: false
+      result: not-run
+      note:
+        text: The permitted SSH asset returned repeated EOF/connection lost while the
+          isolated test snapshot was being uploaded and executed; no result is
+          claimed.
+        truncated: false
+    - name:
+        text: Docker Compose startup on HexHub SSH
+        truncated: false
+      result: not-run
+      note:
+        text: The SSH channel became unavailable before the Compose smoke command could
+          be run; no result is claimed.
+        truncated: false
+    - name:
+        text: go test -race ./... on HexHub SSH
+        truncated: false
+      result: not-run
+      note:
+        text: An initial remote race command exceeded the tool wait window during Go
+          toolchain compilation, and subsequent SSH polling returned EOF; no
+          pass/fail is claimed.
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: A20 issued review receipts are process-local, have no TTL, and are
+        invalidated by service restart.
+      truncated: false
+    - text: PostgreSQL migration, transaction, advisory-lock, deferred-FK, and
+        concurrency suites remain unverified because the SSH test channel was
+        unavailable.
+      truncated: false
+    - text: Docker Compose smoke remains unverified because the SSH test channel was
+        unavailable.
+      truncated: false
+    - text: Race detection remains unverified because the SSH test channel was
+        unavailable.
+      truncated: false
+    - text: The knowledge child does not implement later-wave CLI traversal,
+        deletion/redaction execution, Fast Note Sync, MCP, offline sync, or
+        automatic knowledge maintenance.
+      truncated: false
+  known_limits_truncated: false
+  submitted_at: 2026-08-20T01:57:59.937Z
 blockers: []
-verification: null
-history: []
+verification:
+  candidate_id: 4ed3102b-41f9-4ac9-bd65-d4fd46ad6eca
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:6154b5a9-2d23-464d-b0f2-a335020ca34b
+  iteration: 2
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: go-test
+      name:
+        text: Go test suite
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: server
+      status: passed
+      exit_code: 0
+      duration_ms: 1490
+    - id: go-vet
+      name:
+        text: Go vet
+        truncated: false
+      argv_display:
+        - text: vet
+          truncated: false
+        - text: ./...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: server
+      status: passed
+      exit_code: 0
+      duration_ms: 755
+    - id: govulncheck
+      name:
+        text: Go vulnerability scan
+        truncated: false
+      argv_display:
+        - text: ./...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: server
+      status: passed
+      exit_code: 0
+      duration_ms: 3862
+    - id: openapi
+      name:
+        text: OpenAPI and HTTP contract tests
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./api
+          truncated: false
+        - text: ./internal/transport/httpapi
+          truncated: false
+      argv_truncated: false
+      cwd_ref: server
+      status: passed
+      exit_code: 0
+      duration_ms: 763
+    - id: knowledge-focused
+      name:
+        text: Knowledge repair regression tests
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./internal/knowledge/...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: server
+      status: passed
+      exit_code: 0
+      duration_ms: 979
+    - id: git-diff-check
+      name:
+        text: Git whitespace check
+        truncated: false
+      argv_display:
+        - text: diff
+          truncated: false
+        - text: --check
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 135
+  summary:
+    text: Independent semantic verification passes all A1-A55 for candidate
+      4ed3102b-41f9-4ac9-bd65-d4fd46ad6eca. Iteration 2 repairs close the prior
+      eight acceptance failures; Runtime checks pass. PostgreSQL, Docker/Compose
+      and race remain explicit residual verification risks rather than claimed
+      passes.
+    truncated: false
+  risks:
+    - text: A20 receipts are process-local and have no TTL; restart invalidates
+        pending review and long-running processes may accumulate issued
+        receipts.
+      truncated: false
+    - text: TEST_DATABASE_URL was unavailable, so PostgreSQL migration, rollback,
+        advisory-lock, deferred-FK and concurrency execution remains unverified.
+      truncated: false
+    - text: Docker/Compose smoke was not executed because the HexHub SSH channel
+        returned EOF.
+      truncated: false
+    - text: go test -race ./... was not executed; race behavior remains unverified in
+        this environment.
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-08-20T02:18:04.224Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A20
+      - A23
+      - A39
+      - A41
+      - A51
+      - A52
+      - A53
+      - A54
+    summary:
+      text: Verifier failed the candidate on A20, A23, A39, A41, A51, A52, A53, and
+        A54; the other 47 acceptances have sufficient current implementation and
+        check evidence.
+      truncated: false
+    completed_at: 2026-08-19T09:21:45.498Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Independent semantic verification passes all A1-A55 for candidate
+        4ed3102b-41f9-4ac9-bd65-d4fd46ad6eca. Iteration 2 repairs close the
+        prior eight acceptance failures; Runtime checks pass. PostgreSQL,
+        Docker/Compose and race remain explicit residual verification risks
+        rather than claimed passes.
+      truncated: false
+    completed_at: 2026-08-20T02:18:04.224Z
 history_overflow:
   dropped_entries: 0
   first_dropped_at: null
@@ -477,7 +964,7 @@ history_overflow:
     blocked: 0
     execution-error: 0
     recovery: 0
-verification_result: pending
-verification_report: null
+verification_result: pass
+verification_report: verification.md
 archived: false
 created_at: 2026-08-19T05:04:15.792Z

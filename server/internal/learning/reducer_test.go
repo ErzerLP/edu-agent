@@ -24,6 +24,10 @@ func TestMasteryRetainedBoundariesAndInvalidation(t *testing.T) {
 	start := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 	first := evidence("e1", "a1", start, OutcomePass, HelpNone)
 	second := evidence("e2", "a2", start.Add(24*time.Hour), OutcomePass, HelpHint)
+	reviewFirst := evidence("review-1", "review-a1", start, OutcomePass, HelpNone)
+	reviewFirst.Kind = EvidenceReviewRecall
+	reviewSecond := evidence("review-2", "review-a2", start.Add(24*time.Hour), OutcomePass, HelpHint)
+	reviewSecond.Kind = EvidenceReviewRecall
 	tests := []struct {
 		name        string
 		values      []AcceptedEvidence
@@ -36,7 +40,49 @@ func TestMasteryRetainedBoundariesAndInvalidation(t *testing.T) {
 		{"same activity", []AcceptedEvidence{first, evidence("e2", "a1", start.Add(24*time.Hour), OutcomePass, HelpNone)}, nil, MasteryLearning},
 		{"high help", []AcceptedEvidence{first, evidence("e2", "a2", start.Add(24*time.Hour), OutcomePass, HelpScaffold)}, nil, MasteryLearning},
 		{"exact boundary", []AcceptedEvidence{first, second}, nil, MasteryRetained},
+		{"review recall exact boundary", []AcceptedEvidence{reviewFirst, reviewSecond}, nil, MasteryRetained},
 		{"later failure", []AcceptedEvidence{first, second, evidence("e3", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone)}, nil, MasteryLearning},
+		{"invalidated failure preserves retained", []AcceptedEvidence{
+			first, second,
+			evidence("invalid-fail", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone),
+		}, map[string]bool{"invalid-fail": true}, MasteryRetained},
+		{"single success after failure", []AcceptedEvidence{
+			first, second,
+			evidence("fail", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone),
+			evidence("relearn-1", "a4", start.Add(50*time.Hour), OutcomePass, HelpNone),
+		}, nil, MasteryLearning},
+		{"retained after relearning", []AcceptedEvidence{
+			first, second,
+			evidence("fail", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone),
+			evidence("relearn-1", "a4", start.Add(50*time.Hour), OutcomePass, HelpNone),
+			evidence("relearn-2", "a5", start.Add(74*time.Hour), OutcomePass, HelpHint),
+		}, nil, MasteryRetained},
+		{"relearning requires different activities", []AcceptedEvidence{
+			first, second,
+			evidence("fail", "a3", start.Add(49*time.Hour), OutcomePartial, HelpNone),
+			evidence("relearn-1", "a4", start.Add(50*time.Hour), OutcomePass, HelpNone),
+			evidence("relearn-2", "a4", start.Add(74*time.Hour), OutcomePass, HelpNone),
+		}, nil, MasteryLearning},
+		{"interleaved activities can requalify", []AcceptedEvidence{
+			first, second,
+			evidence("fail", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone),
+			evidence("relearn-a", "a4", start.Add(50*time.Hour), OutcomePass, HelpNone),
+			evidence("relearn-b-early", "a5", start.Add(51*time.Hour), OutcomePass, HelpNone),
+			evidence("relearn-a-late", "a4", start.Add(75*time.Hour), OutcomePass, HelpNone),
+		}, nil, MasteryRetained},
+		{"failure after relearning downgrades again", []AcceptedEvidence{
+			first, second,
+			evidence("fail", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone),
+			evidence("relearn-1", "a4", start.Add(50*time.Hour), OutcomePass, HelpNone),
+			evidence("relearn-2", "a5", start.Add(74*time.Hour), OutcomePass, HelpNone),
+			evidence("fail-again", "a6", start.Add(75*time.Hour), OutcomePartial, HelpNone),
+		}, nil, MasteryLearning},
+		{"invalidated relearning success", []AcceptedEvidence{
+			first, second,
+			evidence("fail", "a3", start.Add(49*time.Hour), OutcomeFail, HelpNone),
+			evidence("relearn-1", "a4", start.Add(50*time.Hour), OutcomePass, HelpNone),
+			evidence("relearn-2", "a5", start.Add(74*time.Hour), OutcomePass, HelpNone),
+		}, map[string]bool{"relearn-2": true}, MasteryLearning},
 		{"invalidated second", []AcceptedEvidence{first, second}, map[string]bool{"e2": true}, MasteryLearning},
 	}
 	for _, test := range tests {

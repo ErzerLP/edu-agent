@@ -105,32 +105,42 @@ func ReduceNode(nodeRevisionID string, all []AcceptedEvidence, invalidated map[s
 }
 
 func retained(values []AcceptedEvidence) bool {
-	var first *AcceptedEvidence
-	var retainedAt time.Time
+	segmentStart := 0
 	for i := range values {
+		if values[i].Outcome == OutcomeFail || values[i].Outcome == OutcomePartial {
+			segmentStart = i + 1
+		}
+	}
+
+	var earliest, alternate *AcceptedEvidence
+	seenActivities := map[string]bool{}
+	for i := segmentStart; i < len(values); i++ {
 		evidence := &values[i]
-		if evidence.Outcome != OutcomePass || !lowHelp(evidence.Help) {
+		if !successfulActiveRecall(*evidence) {
 			continue
 		}
-		if first == nil {
-			copy := *evidence
-			first = &copy
+		candidate := earliest
+		if candidate != nil && candidate.ActivityID == evidence.ActivityID {
+			candidate = alternate
+		}
+		if candidate != nil && evidence.ReceivedAt.Sub(candidate.ReceivedAt) >= 24*time.Hour {
+			return true
+		}
+		if seenActivities[evidence.ActivityID] {
 			continue
 		}
-		if evidence.ActivityID != first.ActivityID && evidence.ReceivedAt.Sub(first.ReceivedAt) >= 24*time.Hour {
-			retainedAt = evidence.ReceivedAt
-			break
+		seenActivities[evidence.ActivityID] = true
+		if earliest == nil {
+			earliest = evidence
+		} else if alternate == nil {
+			alternate = evidence
 		}
 	}
-	if retainedAt.IsZero() {
-		return false
-	}
-	for _, evidence := range values {
-		if evidence.ReceivedAt.After(retainedAt) && (evidence.Outcome == OutcomeFail || evidence.Outcome == OutcomePartial) {
-			return false
-		}
-	}
-	return true
+	return false
+}
+
+func successfulActiveRecall(evidence AcceptedEvidence) bool {
+	return (evidence.Kind == EvidencePracticeRecall || evidence.Kind == EvidenceReviewRecall) && evidence.Outcome == OutcomePass && lowHelp(evidence.Help)
 }
 
 func lowHelp(value HelpLevel) bool { return value == HelpNone || value == HelpHint }

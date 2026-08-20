@@ -17,6 +17,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -45,10 +46,27 @@ type KnowledgeService interface {
 	Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
 }
 
+type LearningService interface {
+	CreateGoal(context.Context, string, learning.GoalCommand) (learning.OperationResult, error)
+	CreateSession(context.Context, string, learning.SessionCommand) (learning.OperationResult, error)
+	Propose(context.Context, string, learning.ProposalRequest) (learning.ProposalArtifact, error)
+	ApplyAction(context.Context, string, string, learning.ActionCommand) (learning.OperationResult, error)
+	Decide(context.Context, string, string, learning.AssessmentDecisionCommand) (learning.OperationResult, error)
+	CurrentSession(context.Context) (learning.SessionView, error)
+	Session(context.Context, string) (learning.SessionView, error)
+	Timeline(context.Context, learning.TimelineQuery) (learning.TimelinePage, error)
+	Routes(context.Context, learning.CursorPageRequest) (learning.RoutesPage, error)
+	Node(context.Context, string) (learning.NodeView, error)
+	Evidence(context.Context, learning.EvidenceQuery) (learning.EvidencePage, error)
+	Reviews(context.Context, learning.ReviewQuery) (learning.ReviewsPage, error)
+	ProjectionStatus(context.Context) (learning.ProjectionStatus, error)
+}
+
 type Options struct {
 	Identity                IdentityService
 	Model                   ModelProber
 	Knowledge               KnowledgeService
+	Learning                LearningService
 	Readiness               Readiness
 	Logger                  *slog.Logger
 	PairLimiter             *FixedWindowLimiter
@@ -56,12 +74,14 @@ type Options struct {
 	DeviceLimiter           *FixedWindowLimiter
 	MaxRequestBody          int64
 	MaxKnowledgeRequestBody int64
+	MaxLearningRequestBody  int64
 }
 
 type API struct {
 	identity                IdentityService
 	model                   ModelProber
 	knowledge               KnowledgeService
+	learning                LearningService
 	readiness               Readiness
 	logger                  *slog.Logger
 	pairLimiter             *FixedWindowLimiter
@@ -69,6 +89,7 @@ type API struct {
 	deviceLimiter           *FixedWindowLimiter
 	maxRequestBody          int64
 	maxKnowledgeRequestBody int64
+	maxLearningRequestBody  int64
 }
 
 type credentialContextKey struct{}
@@ -83,12 +104,16 @@ func New(options Options) (http.Handler, error) {
 	if options.MaxKnowledgeRequestBody <= 0 {
 		options.MaxKnowledgeRequestBody = knowledge.MaxImportBodyBytes
 	}
+	if options.MaxLearningRequestBody <= 0 {
+		options.MaxLearningRequestBody = 1 << 20
+	}
 	api := &API{
-		identity: options.Identity, model: options.Model, knowledge: options.Knowledge,
+		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, learning: options.Learning,
 		readiness: options.Readiness, logger: options.Logger,
 		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter,
 		deviceLimiter: options.DeviceLimiter, maxRequestBody: options.MaxRequestBody,
 		maxKnowledgeRequestBody: options.MaxKnowledgeRequestBody,
+		maxLearningRequestBody:  options.MaxLearningRequestBody,
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -109,8 +134,53 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/{revisionID}/export", api.knowledgeExport)
 			protected.With(api.requireScope("knowledge:read")).Post("/v1/knowledge/retrievals", api.knowledgeRetrieval)
 		}
+		if api.learning != nil {
+			protected.With(api.requireScope("learning:write")).Post("/v1/learning/goals", api.learningCreateGoal)
+			protected.With(api.requireScope("learning:write")).Post("/v1/tutoring/sessions", api.learningCreateSession)
+			protected.With(api.requireScope("learning:write")).Post("/v1/tutoring/proposals", api.learningProposal)
+			protected.With(api.requireScope("learning:write")).Post("/v1/tutoring/sessions/{sessionID}/actions", api.learningAction)
+			protected.With(api.requireScope("learning:write")).Post("/v1/learning/assessments/{assessmentID}/decisions", api.learningDecision)
+			protected.With(api.requireScope("learning:read")).Get("/v1/tutoring/sessions/current", api.learningCurrentSession)
+			protected.With(api.requireScope("learning:read")).Get("/v1/tutoring/sessions/{sessionID}", api.learningSession)
+			protected.With(api.requireScope("learning:read")).Get("/v1/learning/timeline", api.learningTimeline)
+			protected.With(api.requireScope("learning:read")).Get("/v1/learning/routes", api.learningRoutes)
+			protected.With(api.requireScope("learning:read")).Get("/v1/learning/nodes/{nodeRevisionID}", api.learningNode)
+			protected.With(api.requireScope("learning:read")).Get("/v1/learning/evidence", api.learningEvidence)
+			protected.With(api.requireScope("learning:read")).Get("/v1/learning/reviews", api.learningReviews)
+			protected.With(api.requireScope("learning:read")).Get("/v1/learning/projections/status", api.learningProjectionStatus)
+		}
 	})
 	return router, nil
+}
+
+func (a *API) learningCreateGoal(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningCreateGoal(w, r)
+}
+func (a *API) learningCreateSession(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningCreateSession(w, r)
+}
+func (a *API) learningProposal(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningProposal(w, r)
+}
+func (a *API) learningAction(w http.ResponseWriter, r *http.Request) { a.handleLearningAction(w, r) }
+func (a *API) learningDecision(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningDecision(w, r)
+}
+func (a *API) learningCurrentSession(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningCurrentSession(w, r)
+}
+func (a *API) learningSession(w http.ResponseWriter, r *http.Request) { a.handleLearningSession(w, r) }
+func (a *API) learningTimeline(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningTimeline(w, r)
+}
+func (a *API) learningRoutes(w http.ResponseWriter, r *http.Request) { a.handleLearningRoutes(w, r) }
+func (a *API) learningNode(w http.ResponseWriter, r *http.Request)   { a.handleLearningNode(w, r) }
+func (a *API) learningEvidence(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningEvidence(w, r)
+}
+func (a *API) learningReviews(w http.ResponseWriter, r *http.Request) { a.handleLearningReviews(w, r) }
+func (a *API) learningProjectionStatus(w http.ResponseWriter, r *http.Request) {
+	a.handleLearningProjectionStatus(w, r)
 }
 
 func (a *API) livez(w http.ResponseWriter, r *http.Request) {
@@ -421,20 +491,93 @@ func clientIP(r *http.Request) string {
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, target any) error {
-	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	data, err := io.ReadAll(r.Body)
+	data, err := readJSONBody(w, r, limit)
 	if err != nil {
 		return err
 	}
-	if !utf8.Valid(data) {
-		return errors.New("request body must be valid UTF-8")
+	return decodeJSONData(data, target)
+}
+
+func readJSONBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
 	}
+	if !utf8.Valid(data) {
+		return nil, errors.New("request body must be valid UTF-8")
+	}
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func decodeJSONData(data []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		return err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request must contain one JSON value")
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var value func() error
+	value = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok || seen[key] {
+					return errors.New("request contains a duplicate object key")
+				}
+				seen[key] = true
+				if err := value(); err != nil {
+					return err
+				}
+			}
+			closing, err := decoder.Token()
+			if err != nil || closing != json.Delim('}') {
+				return errors.New("request contains an invalid object")
+			}
+		case '[':
+			for decoder.More() {
+				if err := value(); err != nil {
+					return err
+				}
+			}
+			closing, err := decoder.Token()
+			if err != nil || closing != json.Delim(']') {
+				return errors.New("request contains an invalid array")
+			}
+		default:
+			return errors.New("request contains an invalid JSON delimiter")
+		}
+		return nil
+	}
+	if err := value(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return errors.New("request must contain one JSON value")
 	}
 	return nil

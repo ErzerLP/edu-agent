@@ -16,9 +16,9 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/tutormodel"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge/llmselector"
-	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
@@ -42,7 +42,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("check database migrations: %w", err)
 	}
 
-	identityService, err := identity.NewService(identitypostgres.New(pool), identity.Options{
+	stores := newApplicationStores(pool)
+	identityService, err := identity.NewService(stores.identity, identity.Options{
 		PairingCodeTTL: cfg.PairingCodeTTL, PairingCodeMaxAttempts: cfg.PairingCodeMaxAttempts,
 		LastUsedTouchInterval: cfg.TokenLastUsedTouchInterval,
 	})
@@ -58,31 +59,43 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		selector = llmselector.New(modelClient)
 	}
 	knowledgeService, err := knowledge.NewService(
-		knowledgepostgres.New(pool), knowledge.NewCanonicalizer(), knowledge.ServiceOptions{Selector: selector},
+		stores.knowledge, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{Selector: selector},
 	)
 	if err != nil {
 		return fmt.Errorf("initialize knowledge service: %w", err)
 	}
-	learningComposition, err := composeLearning(pool, knowledgeService, modelClient, cfg)
+	learningComposition, err := composeLearningWithStores(stores.learning, stores.tutoring, knowledgeService, modelClient, cfg)
 	if err != nil {
 		return err
 	}
 	learningService := learningComposition.service
+	bridge, err := composeMemoryBridge(pool, stores, cfg, memoryBridgeDependencies{})
+	if err != nil {
+		return err
+	}
+	if err := verifyNocturneStartupPreflight(ctx, bridge.preflight); err != nil {
+		return err
+	}
 	var modelProber httpapi.ModelProber
 	if modelClient != nil {
 		modelProber = modelClient
 	}
 	readiness := health.New(health.Options{
 		Database: pool, ModelEnabled: cfg.Model.Enabled, ModelRequired: cfg.Model.Required,
-		ModelProbe: modelHealthProbe(modelClient), InsecureWarning: cfg.InsecureNonLoopbackWarning,
-		Timeout: minDuration(cfg.Model.Timeout, 5*time.Second),
+		ModelProbe: modelHealthProbe(modelClient), NocturneEnabled: cfg.Nocturne.Enabled,
+		NocturneProbe: optionalNocturneHealthProbe(bridge.remote), InsecureWarning: cfg.InsecureNonLoopbackWarning,
+		Timeout: minDuration(minDuration(cfg.Model.Timeout, cfg.Nocturne.HTTPTimeout), 5*time.Second),
 	})
 	handler, err := httpapi.New(httpapi.Options{
 		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Learning: learningService,
+		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,
+		Privacy: bridge.privacyService, ReadPermits: bridge.readPermits,
 		Readiness: readiness, Logger: logger,
-		PairLimiter:   httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
-		AuthLimiter:   httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
-		DeviceLimiter: httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute),
+		PairLimiter:           httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
+		AuthLimiter:           httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
+		DeviceLimiter:         httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute),
+		PrivacyLimiter:        httpapi.NewFixedWindowLimiter(5, time.Minute),
+		PrivacyBackupDeadline: cfg.Nocturne.BackupRetention,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize HTTP API: %w", err)
@@ -102,30 +115,97 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if cfg.InsecureNonLoopbackWarning {
 		logger.Warn("insecure non-loopback HTTP is enabled", "warning", "insecure_non_loopback_http", "listen_addr", cfg.ListenAddr)
 	}
+	if cfg.Nocturne.Enabled {
+		logger.Warn("Nocturne workers use fixed claim leases; one remote operation must complete within the lease", "warning", "fixed_worker_lease_limit", "worker_lease", cfg.Nocturne.WorkerLeaseDuration)
+	}
+	workers := startWorkerGroup(ctx, logger, bridge.workers)
 	logger.Info("service listening", "listen_addr", cfg.ListenAddr, "public_base_url", cfg.PublicBaseURL.String())
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.Serve(listener) }()
 
+	var serveErr error
+	serveFinished := false
 	select {
-	case err := <-serveResult:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+	case serveErr = <-serveResult:
+		serveFinished = true
+		if !expectedServeClose(serveErr) {
+			logger.Error("HTTP server stopped unexpectedly", "error_category", "http_serve_failed")
 		}
-		return fmt.Errorf("serve HTTP: %w", err)
 	case <-ctx.Done():
 		logger.Info("shutdown requested")
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		_ = server.Close()
-		return fmt.Errorf("graceful HTTP shutdown: %w", err)
+	shutdownErr := shutdownRuntime(listener, server, workers, cfg.ShutdownTimeout, logger)
+	if !serveFinished {
+		serveErr = <-serveResult
 	}
-	if err := <-serveResult; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("serve HTTP during shutdown: %w", err)
+	if !expectedServeClose(serveErr) {
+		serveErr = fmt.Errorf("serve HTTP: %w", serveErr)
+	} else {
+		serveErr = nil
+	}
+	if err := errors.Join(serveErr, shutdownErr); err != nil {
+		return err
 	}
 	logger.Info("service stopped")
 	return nil
+}
+
+var (
+	errWorkerShutdownTimeout = errors.New("worker shutdown timed out")
+	errWorkerShutdownFailed  = errors.New("worker shutdown failed")
+	errHTTPShutdownTimeout   = errors.New("HTTP shutdown timed out")
+	errHTTPShutdownFailed    = errors.New("HTTP shutdown failed")
+)
+
+func shutdownRuntime(listener net.Listener, server *http.Server, workers *workerGroup, timeout time.Duration, logger *slog.Logger) error {
+	var listenerErr error
+	if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		listenerErr = fmt.Errorf("stop HTTP listener: %w", err)
+	}
+
+	workerCtx, cancelWorkers := context.WithTimeout(context.Background(), timeout)
+	defer cancelWorkers()
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), timeout)
+	defer cancelHTTP()
+	workerResult := make(chan error, 1)
+	httpResult := make(chan error, 1)
+	go func() { workerResult <- workers.Stop(workerCtx) }()
+	go func() {
+		err := server.Shutdown(httpCtx)
+		if err != nil {
+			if closeErr := server.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+				err = errors.Join(err, closeErr)
+			}
+		}
+		httpResult <- err
+	}()
+
+	workerErr := <-workerResult
+	httpErr := <-httpResult
+	var classifiedWorkerErr, classifiedHTTPErr error
+	if workerErr != nil {
+		if errors.Is(workerErr, context.DeadlineExceeded) {
+			logger.Error("background workers did not stop within their shutdown budget", "error_category", "worker_shutdown_timeout")
+			classifiedWorkerErr = fmt.Errorf("%w: %v", errWorkerShutdownTimeout, workerErr)
+		} else {
+			logger.Error("background worker shutdown failed", "error_category", "worker_shutdown_failed")
+			classifiedWorkerErr = fmt.Errorf("%w: %v", errWorkerShutdownFailed, workerErr)
+		}
+	}
+	if httpErr != nil {
+		if errors.Is(httpErr, context.DeadlineExceeded) {
+			logger.Error("HTTP requests did not drain within their shutdown budget", "error_category", "http_shutdown_timeout")
+			classifiedHTTPErr = fmt.Errorf("%w: %v", errHTTPShutdownTimeout, httpErr)
+		} else {
+			logger.Error("HTTP shutdown failed", "error_category", "http_shutdown_failed")
+			classifiedHTTPErr = fmt.Errorf("%w: %v", errHTTPShutdownFailed, httpErr)
+		}
+	}
+	return errors.Join(listenerErr, classifiedWorkerErr, classifiedHTTPErr)
+}
+
+func expectedServeClose(err error) bool {
+	return err == nil || errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed)
 }
 
 type learningComposition struct {
@@ -138,7 +218,10 @@ type learningComposition struct {
 
 func composeLearning(pool *pgxpool.Pool, reader learningknowledge.TreeReader, modelClient *llm.Client, cfg config.Config) (learningComposition, error) {
 	tutoringStore := learningtutoringpostgres.New(pool)
-	learningStore := learningpostgres.New(pool, tutoringStore)
+	return composeLearningWithStores(learningpostgres.New(pool, tutoringStore), tutoringStore, reader, modelClient, cfg)
+}
+
+func composeLearningWithStores(learningStore *learningpostgres.Store, tutoringStore *learningtutoringpostgres.Store, reader learningknowledge.TreeReader, modelClient *llm.Client, cfg config.Config) (learningComposition, error) {
 	composition := learningComposition{learningStore: learningStore, tutoringStore: tutoringStore, resolver: learningknowledge.New(reader)}
 	if modelClient != nil {
 		composition.model = tutormodel.New(modelClient)
@@ -205,6 +288,30 @@ func modelHealthProbe(client *llm.Client) health.ModelProbe {
 			return false, "incompatible"
 		}
 		return false, capabilities.IncompatibilityReasons[0]
+	}
+}
+
+type optionalHealthDependency interface {
+	Health(context.Context) error
+	Capabilities(context.Context) (memory.NocturneCapabilities, error)
+}
+
+func optionalNocturneHealthProbe(dependency optionalHealthDependency) health.OptionalProbe {
+	if dependency == nil {
+		return nil
+	}
+	return func(ctx context.Context) error {
+		if err := dependency.Health(ctx); err != nil {
+			return err
+		}
+		capabilities, err := dependency.Capabilities(ctx)
+		if err != nil {
+			return err
+		}
+		if capabilities.UpstreamCommit != memory.NocturneUpstreamCommit || capabilities.CompatRevision != memory.NocturneCompatRevision || capabilities.BootEpoch == "" {
+			return errors.New("Nocturne capability lock mismatch")
+		}
+		return nil
 	}
 }
 

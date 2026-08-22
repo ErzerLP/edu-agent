@@ -2,16 +2,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/app"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/observability"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
+
+const usage = "usage: edu-agentd [serve|pairing-code create|privacy-grant create --device <uuid>]"
 
 func main() {
 	if err := run(); err != nil {
@@ -23,13 +28,17 @@ func main() {
 func run() error {
 	args := os.Args[1:]
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
-		fmt.Fprintln(os.Stdout, "usage: edu-agentd [serve|pairing-code create]")
+		fmt.Fprintln(os.Stdout, usage)
 		return nil
 	}
 	serve := len(args) == 0 || (len(args) == 1 && args[0] == "serve")
 	createPairingCode := len(args) == 2 && args[0] == "pairing-code" && args[1] == "create"
-	if !serve && !createPairingCode {
-		return fmt.Errorf("usage: edu-agentd [serve|pairing-code create]")
+	createPrivacyGrant := len(args) == 4 && args[0] == "privacy-grant" && args[1] == "create" && args[2] == "--device"
+	if !serve && !createPairingCode && !createPrivacyGrant {
+		return errors.New(usage)
+	}
+	if createPrivacyGrant && !privacy.CanonicalUUID(args[3]) {
+		return errors.New("privacy-grant --device must be a canonical UUID")
 	}
 
 	cfg, err := config.Load()
@@ -44,11 +53,20 @@ func run() error {
 	if serve {
 		return app.Run(ctx, cfg, logger)
 	}
-	code, expiresAt, err := app.CreatePairingCode(ctx, cfg)
+	if createPairingCode {
+		code, expiresAt, err := app.CreatePairingCode(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, code)
+		fmt.Fprintf(os.Stderr, "pairing code expires at %s\n", expiresAt.UTC().Format(time.RFC3339))
+		return nil
+	}
+	grant, expiresAt, err := app.CreatePrivacyErasureGrant(ctx, cfg, args[3])
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, code)
-	fmt.Fprintf(os.Stderr, "pairing code expires at %s\n", expiresAt.Format("2006-01-02T15:04:05Z07:00"))
+	fmt.Fprintln(os.Stdout, grant)
+	fmt.Fprintf(os.Stderr, "privacy erasure grant expires at %s\n", expiresAt.UTC().Format(time.RFC3339))
 	return nil
 }

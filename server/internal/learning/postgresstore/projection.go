@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -38,7 +39,7 @@ type rebuildHeartbeat struct {
 }
 
 func loadEvents(ctx context.Context, db eventDB, after, through int64) ([]learning.LearningEvent, error) {
-	rows, err := db.Query(ctx, `SELECT e.event_seq,e.id,e.event_type,e.event_schema_version,e.aggregate_type,e.aggregate_id,e.aggregate_version,e.device_id,e.operation_id,e.operation_ordinal,e.received_at,e.occurred_at,e.payload_id,e.payload_hash,p.payload_hash,p.payload FROM learning_events e JOIN learning_event_payloads p ON p.id=e.payload_id WHERE e.event_seq>$1 AND e.event_seq<=$2 ORDER BY e.event_seq`, after, through)
+	rows, err := db.Query(ctx, `SELECT e.event_seq,e.id,e.event_type,e.event_schema_version,e.aggregate_type,e.aggregate_id,e.aggregate_version,e.device_id,e.operation_id,e.operation_ordinal,e.received_at,e.occurred_at,e.payload_id,e.payload_hash,p.payload_hash,p.payload,p.redacted_at,(SELECT COALESCE(max(redacted_through_event_seq),0) FROM privacy_redaction_barriers) FROM learning_events e JOIN learning_event_payloads p ON p.id=e.payload_id WHERE e.event_seq>$1 AND e.event_seq<=$2 ORDER BY e.event_seq`, after, through)
 	if err != nil {
 		return nil, fmt.Errorf("read learning events: %w", err)
 	}
@@ -47,8 +48,20 @@ func loadEvents(ctx context.Context, db eventDB, after, through int64) ([]learni
 	for rows.Next() {
 		var event learning.LearningEvent
 		var eventHash, payloadHash []byte
-		if err := rows.Scan(&event.EventSequence, &event.ID, &event.Type, &event.SchemaVersion, &event.AggregateType, &event.AggregateID, &event.AggregateVersion, &event.DeviceID, &event.OperationID, &event.OperationOrdinal, &event.ReceivedAt, &event.OccurredAt, &event.PayloadID, &eventHash, &payloadHash, &event.Payload); err != nil {
+		var redactedAt *time.Time
+		var redactedThrough int64
+		if err := rows.Scan(&event.EventSequence, &event.ID, &event.Type, &event.SchemaVersion, &event.AggregateType, &event.AggregateID, &event.AggregateVersion, &event.DeviceID, &event.OperationID, &event.OperationOrdinal, &event.ReceivedAt, &event.OccurredAt, &event.PayloadID, &eventHash, &payloadHash, &event.Payload, &redactedAt, &redactedThrough); err != nil {
 			return nil, fmt.Errorf("scan learning event: %w", err)
+		}
+		if !bytes.Equal(eventHash, payloadHash) {
+			return nil, &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "event_payload_hash_mismatch"}
+		}
+		if redactedAt != nil && event.EventSequence <= redactedThrough {
+			event.Payload = nil
+			event.PayloadHash = hex.EncodeToString(eventHash)
+			event.Redacted = true
+			result = append(result, event)
+			continue
 		}
 		canonical, err := canonicalJSON(event.Payload)
 		if err != nil {
@@ -477,6 +490,9 @@ func withProjectionRead[T any](ctx context.Context, s *Store, read func(pgx.Tx, 
 		return zero, fmt.Errorf("begin projection read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerLearning); err != nil {
+		return zero, err
+	}
 	metadata, _, _, _, err := metadataFrom(ctx, tx)
 	if err != nil {
 		return zero, err

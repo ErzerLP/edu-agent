@@ -216,6 +216,14 @@ func TestPairingCodeExpiresAndScopeIsEnforced(t *testing.T) {
 	if _, err := service.Authenticate(context.Background(), issued.Token, "learning:write"); err != nil {
 		t.Fatalf("issued token should include learning:write: %v", err)
 	}
+	for _, scope := range []string{"memory:read", "memory:write", "privacy:read"} {
+		if _, err := service.Authenticate(context.Background(), issued.Token, scope); err != nil {
+			t.Fatalf("issued token should include %s: %v", scope, err)
+		}
+	}
+	if _, err := service.Authenticate(context.Background(), issued.Token, "privacy:erase"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ordinary device token must not include privacy:erase: %v", err)
+	}
 	if _, err := service.Authenticate(context.Background(), issued.Token, "admin:unknown"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("missing scope should fail: %v", err)
 	}

@@ -1,7 +1,7 @@
 name: edu-agent
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     environment:
       POSTGRES_DB: edu_agent
       POSTGRES_USER: edu_agent
@@ -14,6 +14,64 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks:
+      - app-internal
+    restart: unless-stopped
+
+  nocturne-postgres:
+    image: postgres:15-alpine@sha256:fe0737ba566a2c5b2a28f34433c0a423261900ec17b9bf7ad115e1aae7e57f1b
+    environment:
+      POSTGRES_DB: ${NOCTURNE_POSTGRES_DB:-nocturne}
+      POSTGRES_USER: ${NOCTURNE_POSTGRES_USER:-nocturne}
+      POSTGRES_PASSWORD: ${NOCTURNE_POSTGRES_PASSWORD:?set a distinct NOCTURNE_POSTGRES_PASSWORD in .env}
+      TZ: UTC
+    volumes:
+      - nocturne-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - nocturne-internal
+    restart: unless-stopped
+
+  nocturne:
+    # Supply an imported OCI reference or registry reference pinned to the
+    # platform-manifest digest verified by deploy/nocturne/image.lock.json.
+    image: ${NOCTURNE_IMAGE:?set NOCTURNE_IMAGE to repository@sha256 digest in .env}
+    init: true
+    depends_on:
+      nocturne-postgres:
+        condition: service_healthy
+    expose:
+      - "8233"
+    environment:
+      HOST: 0.0.0.0
+      WEB_PORT: "8233"
+      AUTO_OPEN_BROWSER: "false"
+      DATABASE_URL: postgresql+asyncpg://${NOCTURNE_POSTGRES_USER:-nocturne}:${NOCTURNE_POSTGRES_PASSWORD:?set NOCTURNE_POSTGRES_PASSWORD}@nocturne-postgres:5432/${NOCTURNE_POSTGRES_DB:-nocturne}?ssl=disable
+      VALID_DOMAINS: core
+      CORE_MEMORY_URIS__edu-agent: core://edu-agent
+      API_TOKEN: ${NOCTURNE_BRIDGE_API_TOKEN:?set NOCTURNE_BRIDGE_API_TOKEN in .env}
+      EDU_AGENT_MAINTENANCE_TOKEN: ${NOCTURNE_MAINTENANCE_TOKEN:?set NOCTURNE_MAINTENANCE_TOKEN in .env}
+      EDU_AGENT_BACKUP_ROOT: /app/backups
+    volumes:
+      - nocturne-backups:/app/backups
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8233/health', timeout=3).read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - nocturne-internal
     restart: unless-stopped
 
   server:
@@ -47,13 +105,48 @@ services:
       MODEL_MIN_CONTEXT_WINDOW: "4096"
       MODEL_TIMEOUT: 30s
       MODEL_PROBE_CACHE_TTL: 15m
+      NOCTURNE_ENABLED: "true"
+      NOCTURNE_BASE_URL: http://nocturne:8233
+      NOCTURNE_API_TOKEN: ${NOCTURNE_BRIDGE_API_TOKEN:?set NOCTURNE_BRIDGE_API_TOKEN in .env}
+      NOCTURNE_MAINTENANCE_TOKEN: ${NOCTURNE_MAINTENANCE_TOKEN:?set NOCTURNE_MAINTENANCE_TOKEN in .env}
+      NOCTURNE_NAMESPACE: edu-agent
+      NOCTURNE_DOMAIN: core
+      NOCTURNE_HTTP_TIMEOUT: 10s
+      NOCTURNE_RECONCILIATION_INTERVAL: 30s
+      NOCTURNE_WORKER_POLL_INTERVAL: 1s
+      NOCTURNE_WORKER_LEASE_DURATION: 2m
+      NOCTURNE_WORKER_BATCH_SIZE: "50"
+      NOCTURNE_DELIVERY_TTL: 24h
+      NOCTURNE_CANDIDATE_SWEEP_INTERVAL: 5m
+      NOCTURNE_DELIVERY_SWEEP_INTERVAL: 5m
+      NOCTURNE_BACKUP_ROOT: /var/lib/edu-agent/nocturne-backups
+      NOCTURNE_BACKUP_CONTROLLER_INTERVAL: ${NOCTURNE_BACKUP_CONTROLLER_INTERVAL:-24h}
+      NOCTURNE_BACKUP_RETENTION: ${NOCTURNE_BACKUP_RETENTION:-720h}
+      NOCTURNE_BACKUP_MASTER_WRAPPING_KEY: ${NOCTURNE_BACKUP_MASTER_WRAPPING_KEY:?set a canonical 32-byte base64url key in .env}
+      NOCTURNE_PG_DUMP_DSN: postgres://${NOCTURNE_POSTGRES_USER:-nocturne}:${NOCTURNE_POSTGRES_PASSWORD:?set NOCTURNE_POSTGRES_PASSWORD}@nocturne-postgres:5432/${NOCTURNE_POSTGRES_DB:-nocturne}?sslmode=disable
+      NOCTURNE_IMAGE_LOCK_REFERENCE: ${NOCTURNE_IMAGE:?set NOCTURNE_IMAGE to repository@sha256 digest in .env}
+      PRIVACY_ERASURE_GRANT_TTL: 10m
+      PRIVACY_ERASURE_GRANT_MAX_ATTEMPTS: "5"
+    volumes:
+      - nocturne-backups:/var/lib/edu-agent/nocturne-backups
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
+      test:
+        ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 10s
+    networks:
+      - app-internal
+      - nocturne-internal
     restart: unless-stopped
 
 volumes:
   postgres-data:
+  nocturne-postgres-data:
+  nocturne-backups:
+
+networks:
+  app-internal:
+  nocturne-internal:
+    internal: true

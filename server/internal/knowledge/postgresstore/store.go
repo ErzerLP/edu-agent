@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,23 +22,58 @@ func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
 }
 
+func (s *Store) beginPrivacyRead(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("begin knowledge privacy read: %w", err)
+	}
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, err
+	}
+	return tx, nil
+}
+
 func (s *Store) Head(ctx context.Context) (*knowledge.KnowledgeRevision, error) {
+	tx, err := s.beginPrivacyRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	var id *string
-	if err := s.pool.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_catalog WHERE singleton_id=1`).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_catalog WHERE singleton_id=1`).Scan(&id); err != nil {
 		return nil, fmt.Errorf("read knowledge catalog: %w", err)
 	}
 	if id == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit empty knowledge head read: %w", err)
+		}
 		return nil, nil
 	}
-	revision, err := loadRevision(ctx, s.pool, *id)
+	revision, err := loadRevision(ctx, tx, *id)
 	if err != nil {
 		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit knowledge head read: %w", err)
 	}
 	return &revision, nil
 }
 
 func (s *Store) Revision(ctx context.Context, id string) (knowledge.KnowledgeRevision, error) {
-	return loadRevision(ctx, s.pool, id)
+	tx, err := s.beginPrivacyRead(ctx)
+	if err != nil {
+		return knowledge.KnowledgeRevision{}, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	revision, err := loadRevision(ctx, tx, id)
+	if err != nil {
+		return knowledge.KnowledgeRevision{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return knowledge.KnowledgeRevision{}, fmt.Errorf("commit knowledge revision read: %w", err)
+	}
+	return revision, nil
 }
 
 func (s *Store) DocumentIdentityExists(ctx context.Context, id string) (bool, error) {
@@ -61,7 +97,12 @@ func (s *Store) NodeIdentityOwner(ctx context.Context, id string) (string, bool,
 }
 
 func (s *Store) ReadyNodeArtifacts(ctx context.Context, knowledgeRevisionID string) ([]knowledge.NodeArtifact, error) {
-	rows, err := s.pool.Query(ctx, `
+	tx, err := s.beginPrivacyRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	rows, err := tx.Query(ctx, `
 		SELECT DISTINCT ON (a.node_revision_id)
 		       a.id,a.node_revision_id,a.kind,a.producer_version,a.prompt_version,a.model_version,
 		       a.input_hash,a.content,a.status,a.created_at
@@ -73,7 +114,6 @@ func (s *Store) ReadyNodeArtifacts(ctx context.Context, knowledgeRevisionID stri
 	if err != nil {
 		return nil, fmt.Errorf("read ready node artifacts: %w", err)
 	}
-	defer rows.Close()
 	var artifacts []knowledge.NodeArtifact
 	for rows.Next() {
 		var artifact knowledge.NodeArtifact
@@ -83,34 +123,51 @@ func (s *Store) ReadyNodeArtifacts(ctx context.Context, knowledgeRevisionID stri
 			&artifact.PromptVersion, &artifact.ModelVersion, &inputHash, &artifact.Content,
 			&artifact.Status, &artifact.CreatedAt,
 		); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan ready node artifact: %w", err)
 		}
 		artifact.InputHash = hex.EncodeToString(inputHash)
 		artifacts = append(artifacts, artifact)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("iterate ready node artifacts: %w", err)
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit ready node artifacts read: %w", err)
 	}
 	return artifacts, nil
 }
 
 func (s *Store) LookupImportOperation(ctx context.Context, operationID string) (knowledge.ImportOperationRecord, bool, error) {
+	tx, err := s.beginPrivacyRead(ctx)
+	if err != nil {
+		return knowledge.ImportOperationRecord{}, false, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	var requestHash []byte
 	var revisionID string
 	var unchanged bool
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT request_hash,result_revision_id,unchanged
 		FROM knowledge_import_operations WHERE operation_id=$1`, operationID).
 		Scan(&requestHash, &revisionID, &unchanged)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if err := tx.Commit(ctx); err != nil {
+			return knowledge.ImportOperationRecord{}, false, fmt.Errorf("commit missing import operation read: %w", err)
+		}
 		return knowledge.ImportOperationRecord{}, false, nil
 	}
 	if err != nil {
 		return knowledge.ImportOperationRecord{}, false, fmt.Errorf("read import operation: %w", err)
 	}
-	revision, err := loadRevision(ctx, s.pool, revisionID)
+	revision, err := loadRevision(ctx, tx, revisionID)
 	if err != nil {
 		return knowledge.ImportOperationRecord{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return knowledge.ImportOperationRecord{}, false, fmt.Errorf("commit import operation read: %w", err)
 	}
 	return knowledge.ImportOperationRecord{
 		RequestHash: hex.EncodeToString(requestHash), Result: knowledge.ImportResult{Revision: revision, Unchanged: unchanged},
@@ -123,6 +180,9 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		return knowledge.ImportResult{}, fmt.Errorf("begin knowledge import: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
+		return knowledge.ImportResult{}, err
+	}
 
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, prepared.OperationID); err != nil {
 		return knowledge.ImportResult{}, fmt.Errorf("lock knowledge import operation key: %w", err)

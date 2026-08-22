@@ -39,6 +39,13 @@ func (db *scriptedDBTX) QueryRow(_ context.Context, sql string, _ ...any) pgx.Ro
 	return row
 }
 
+func openTutoringGateRow() scriptedRow {
+	return func(dest ...any) error {
+		*dest[0].(*int64) = 1
+		return nil
+	}
+}
+
 func sessionRow() scriptedRow {
 	return func(dest ...any) error {
 		*dest[0].(*string) = "session"
@@ -73,6 +80,7 @@ func TestLoadSessionWithCarriesOnlyLatestUnresumedInvalidationMarker(t *testing.
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			db := &scriptedDBTX{rows: []scriptedRow{
+				openTutoringGateRow(),
 				sessionRow(),
 				func(...any) error { return pgx.ErrNoRows },
 				func(dest ...any) error {
@@ -88,7 +96,7 @@ func TestLoadSessionWithCarriesOnlyLatestUnresumedInvalidationMarker(t *testing.
 			if value.FocusFrameInvalidated != test.wantMarker {
 				t.Fatalf("marker=%v want=%v session=%+v", value.FocusFrameInvalidated, test.wantMarker, value)
 			}
-			if len(db.queries) != 3 || !strings.Contains(db.queries[2], "ORDER BY created_event_seq DESC,id DESC LIMIT 1") {
+			if len(db.queries) != 4 || !strings.Contains(db.queries[3], "ORDER BY created_event_seq DESC,id DESC LIMIT 1") {
 				t.Fatalf("queries=%v", db.queries)
 			}
 		})

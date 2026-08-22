@@ -67,15 +67,24 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 			}
 			continue
 		}
-		allowed, err := consumer.CanApply(ctx, message)
-		if err == nil && !allowed {
-			if err := w.store.MarkApplied(ctx, message.ID, message.LeaseToken, now); err != nil {
+		decision, err := consumer.CanApply(ctx, message)
+		if err == nil {
+			err = decision.Validate()
+		}
+		if err == nil && !decision.Apply {
+			if err := w.store.Cancel(ctx, CancelRequest{
+				IdempotencyKey: message.IdempotencyKey, LeaseToken: message.LeaseToken,
+				Disposition: decision.TerminalDisposition, CanceledAt: now,
+			}); err != nil {
 				return 0, err
 			}
 			continue
 		}
 		if err == nil {
 			err = consumer.Apply(ctx, message)
+		}
+		if errors.Is(err, ErrConsumerFinalized) {
+			continue
 		}
 		if err == nil {
 			if err := w.store.MarkApplied(ctx, message.ID, message.LeaseToken, now); err != nil {

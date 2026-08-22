@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -124,9 +125,9 @@ func (s *Store) FindCredentialByTokenHash(ctx context.Context, hash [32]byte) (i
 
 func (s *Store) TouchToken(ctx context.Context, tokenID string, now time.Time, minimumInterval time.Duration) error {
 	_, err := s.pool.Exec(ctx, `
-		UPDATE device_tokens SET last_used_at=$2
+		UPDATE device_tokens SET last_used_at=$2::timestamptz
 		WHERE id=$1 AND revoked_at IS NULL
-		  AND (last_used_at IS NULL OR last_used_at <= $2 - ($3 * interval '1 microsecond'))`,
+		  AND (last_used_at IS NULL OR last_used_at <= $2::timestamptz - ($3::bigint * interval '1 microsecond'))`,
 		tokenID, now, minimumInterval.Microseconds())
 	if err != nil {
 		return fmt.Errorf("touch device token: %w", err)
@@ -135,7 +136,15 @@ func (s *Store) TouchToken(ctx context.Context, tokenID string, now time.Time, m
 }
 
 func (s *Store) ListDevices(ctx context.Context) ([]identity.Device, error) {
-	rows, err := s.pool.Query(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("begin device list: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerIdentity); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `
 		SELECT d.id,d.display_name,d.created_at,d.revoked_at,
 		       max(dt.last_used_at),coalesce(array_agg(DISTINCT scope) FILTER (WHERE scope IS NOT NULL),'{}')
 		FROM devices d
@@ -146,17 +155,22 @@ func (s *Store) ListDevices(ctx context.Context) ([]identity.Device, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
-	defer rows.Close()
 	var devices []identity.Device
 	for rows.Next() {
 		var device identity.Device
 		if err := rows.Scan(&device.ID, &device.DisplayName, &device.CreatedAt, &device.RevokedAt, &device.LastUsedAt, &device.Scopes); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan device: %w", err)
 		}
 		devices = append(devices, device)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("iterate devices: %w", err)
+	}
+	rows.Close()
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit device list: %w", err)
 	}
 	return devices, nil
 }

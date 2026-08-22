@@ -1,0 +1,288 @@
+package privacy
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+const (
+	PolicyVersion              = "privacy-erasure-v1"
+	ManagedBackupPolicyVersion = "managed-backup-key-destruction-v1"
+
+	CodeInvalidRequest          = "invalid_request"
+	CodeNotFound                = "not_found"
+	CodeIdempotencyConflict     = "idempotency_conflict"
+	CodeErasureInProgress       = "erasure_in_progress"
+	CodeContentRedacted         = "content_redacted"
+	CodePrivacyClearInProgress  = "privacy_clear_in_progress"
+	CodeReceiptNotCurrent       = "receipt_not_current"
+	CodeVerificationFailed      = "verification_failed"
+	CodeUnsupportedReceiptStore = "unsupported_receipt_store"
+)
+
+type Error struct {
+	Code   string `json:"code"`
+	Reason string `json:"reason,omitempty"`
+	Cause  error  `json:"-"`
+}
+
+func (e *Error) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Cause != nil {
+		return fmt.Sprintf("privacy operation failed: code=%s reason=%s: %v", e.Code, e.Reason, e.Cause)
+	}
+	return fmt.Sprintf("privacy operation failed: code=%s reason=%s", e.Code, e.Reason)
+}
+func (e *Error) Unwrap() error { return e.Cause }
+func ErrorCode(err error) string {
+	var target *Error
+	if errors.As(err, &target) {
+		return target.Code
+	}
+	return ""
+}
+
+type OwnerKind string
+
+const (
+	OwnerIdentity  OwnerKind = "identity"
+	OwnerKnowledge OwnerKind = "knowledge"
+	OwnerLearning  OwnerKind = "learning"
+	OwnerTutoring  OwnerKind = "tutoring"
+	OwnerMemory    OwnerKind = "memory"
+	OwnerOutbox    OwnerKind = "outbox"
+)
+
+var AllOwners = []OwnerKind{OwnerIdentity, OwnerKnowledge, OwnerLearning, OwnerTutoring, OwnerMemory, OwnerOutbox}
+
+func (o OwnerKind) Valid() bool {
+	for _, candidate := range AllOwners {
+		if candidate == o {
+			return true
+		}
+	}
+	return false
+}
+
+type ErasureStatus string
+
+const (
+	StatusBarrierCommitted ErasureStatus = "barrier_committed"
+	StatusLocalScrubbed    ErasureStatus = "local_scrubbed"
+	StatusRemoteDraining   ErasureStatus = "remote_draining"
+	StatusRemotePurged     ErasureStatus = "remote_purged"
+	StatusVerified         ErasureStatus = "verified"
+	StatusPartial          ErasureStatus = "partial"
+	StatusBlocked          ErasureStatus = "blocked"
+)
+
+type StepStatus string
+
+const (
+	StepPending       StepStatus = "pending"
+	StepSucceeded     StepStatus = "succeeded"
+	StepPartial       StepStatus = "partial"
+	StepFailed        StepStatus = "failed"
+	StepUnknown       StepStatus = "unknown"
+	StepNotApplicable StepStatus = "not_applicable"
+	StepUnsupported   StepStatus = "unsupported"
+)
+
+type StoreKind string
+
+const (
+	StoreIdentityMetadata          StoreKind = "identity_metadata"
+	StoreKnowledgeContent          StoreKind = "knowledge_content"
+	StoreKnowledgeIndex            StoreKind = "knowledge_index"
+	StoreKnowledgeArtifacts        StoreKind = "knowledge_artifacts"
+	StoreLearningEventPayload      StoreKind = "learning_event_payload"
+	StoreLearningTypedPayload      StoreKind = "learning_typed_payload"
+	StoreTutoringPayload           StoreKind = "tutoring_payload"
+	StoreInboxOutbox               StoreKind = "inbox_outbox"
+	StoreProjectionGenerations     StoreKind = "projection_generations"
+	StoreMemoryCandidateDelivery   StoreKind = "memory_candidate_delivery"
+	StoreProcessCache              StoreKind = "process_cache"
+	StoreNocturnePaths             StoreKind = "nocturne_paths"
+	StoreNocturneOrphanHistory     StoreKind = "nocturne_orphan_history"
+	StoreNocturneSnapshotChangeset StoreKind = "nocturne_snapshot_changeset"
+	StoreManagedBackup             StoreKind = "managed_backup"
+	StoreExternalProvider          StoreKind = "external_provider"
+)
+
+var ReceiptSlots = []StoreKind{
+	StoreIdentityMetadata, StoreKnowledgeContent, StoreKnowledgeIndex, StoreKnowledgeArtifacts,
+	StoreLearningEventPayload, StoreLearningTypedPayload, StoreTutoringPayload, StoreInboxOutbox,
+	StoreProjectionGenerations, StoreMemoryCandidateDelivery, StoreProcessCache, StoreNocturnePaths,
+	StoreNocturneOrphanHistory, StoreNocturneSnapshotChangeset, StoreManagedBackup, StoreExternalProvider,
+}
+
+var LocalManagedSlots = []StoreKind{
+	StoreIdentityMetadata, StoreKnowledgeContent, StoreKnowledgeIndex, StoreKnowledgeArtifacts,
+	StoreLearningEventPayload, StoreLearningTypedPayload, StoreTutoringPayload, StoreInboxOutbox,
+	StoreProjectionGenerations, StoreMemoryCandidateDelivery, StoreProcessCache,
+}
+
+func (s StoreKind) Valid() bool {
+	for _, candidate := range ReceiptSlots {
+		if candidate == s {
+			return true
+		}
+	}
+	return false
+}
+
+func OwnerForStore(store StoreKind) (OwnerKind, bool) {
+	switch store {
+	case StoreIdentityMetadata:
+		return OwnerIdentity, true
+	case StoreKnowledgeContent, StoreKnowledgeIndex, StoreKnowledgeArtifacts:
+		return OwnerKnowledge, true
+	case StoreLearningEventPayload, StoreLearningTypedPayload, StoreProjectionGenerations:
+		return OwnerLearning, true
+	case StoreTutoringPayload:
+		return OwnerTutoring, true
+	case StoreInboxOutbox:
+		return OwnerOutbox, true
+	case StoreMemoryCandidateDelivery:
+		return OwnerMemory, true
+	default:
+		return "", false
+	}
+}
+
+func StoresForOwner(owner OwnerKind) []StoreKind {
+	stores := make([]StoreKind, 0, 3)
+	for _, store := range LocalManagedSlots {
+		if candidate, ok := OwnerForStore(store); ok && candidate == owner {
+			stores = append(stores, store)
+		}
+	}
+	return stores
+}
+
+const (
+	ReasonLearnerRequest  ReasonCode = "learner_request"
+	ReasonAccountClosure  ReasonCode = "account_closure"
+	ReasonOperatorRequest ReasonCode = "operator_request"
+)
+
+type ReasonCode string
+
+func ValidReasonCode(value string) bool {
+	switch ReasonCode(value) {
+	case ReasonLearnerRequest, ReasonAccountClosure, ReasonOperatorRequest:
+		return true
+	default:
+		return false
+	}
+}
+
+type ErasureRequest struct {
+	DeviceID                         string    `json:"device_id"`
+	OperationID                      string    `json:"operation_id"`
+	ReasonCode                       string    `json:"reason_code"`
+	ActorDeviceID                    string    `json:"actor_device_id"`
+	RequestedAt                      time.Time `json:"requested_at"`
+	ManagedBackupUnrecoverableAfter  time.Time `json:"managed_backup_unrecoverable_after"`
+	ExpectedCurrentLearnerGeneration int64     `json:"expected_current_learner_generation,omitempty"`
+}
+
+func (r ErasureRequest) Validate() error {
+	if uuid.Validate(r.DeviceID) != nil || uuid.Validate(r.OperationID) != nil || uuid.Validate(r.ActorDeviceID) != nil {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_operation_identity"}
+	}
+	if !ValidReasonCode(r.ReasonCode) {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_reason_code"}
+	}
+	if r.RequestedAt.IsZero() || r.ManagedBackupUnrecoverableAfter.IsZero() || r.ManagedBackupUnrecoverableAfter.Before(r.RequestedAt) || r.ManagedBackupUnrecoverableAfter.After(r.RequestedAt.Add(30*24*time.Hour)) {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_backup_deadline"}
+	}
+	if r.ExpectedCurrentLearnerGeneration < 0 {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_expected_generation"}
+	}
+	return nil
+}
+
+func (r ErasureRequest) OperationHash() (string, error) {
+	if err := r.Validate(); err != nil {
+		return "", err
+	}
+	canonical := struct {
+		ActorDeviceID                    string `json:"actor_device_id"`
+		BackupPolicyVersion              string `json:"backup_policy_version"`
+		DeviceID                         string `json:"device_id"`
+		ExpectedCurrentLearnerGeneration int64  `json:"expected_current_learner_generation"`
+		OperationID                      string `json:"operation_id"`
+		PolicyVersion                    string `json:"policy_version"`
+		ReasonCode                       string `json:"reason_code"`
+	}{
+		ActorDeviceID: r.ActorDeviceID, BackupPolicyVersion: ManagedBackupPolicyVersion, DeviceID: r.DeviceID,
+		ExpectedCurrentLearnerGeneration: r.ExpectedCurrentLearnerGeneration,
+		OperationID:                      r.OperationID, PolicyVersion: PolicyVersion,
+		ReasonCode: strings.TrimSpace(r.ReasonCode),
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+type RedactionPayload struct {
+	ErasureID       string `json:"erasure_id"`
+	Generation      int64  `json:"generation"`
+	PolicyVersion   string `json:"policy_version"`
+	ReasonCode      string `json:"reason_code"`
+	RedactedThrough int64  `json:"redacted_through"`
+}
+
+func (p RedactionPayload) Validate() error {
+	if uuid.Validate(p.ErasureID) != nil || p.Generation < 2 || p.RedactedThrough < 0 || p.PolicyVersion == "" || p.ReasonCode == "" {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_redaction_payload"}
+	}
+	return nil
+}
+
+type StepReceipt struct {
+	ID                 string     `json:"receipt_id"`
+	Store              StoreKind  `json:"store"`
+	Version            int64      `json:"version"`
+	Status             StepStatus `json:"status"`
+	StableReason       string     `json:"stable_reason"`
+	VerificationMethod string     `json:"verification_method"`
+	StartedAt          time.Time  `json:"started_at"`
+	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	EvidenceDigest     string     `json:"evidence_digest,omitempty"`
+}
+
+type ErasureReceipt struct {
+	ErasureID               string        `json:"erasure_id"`
+	Status                  ErasureStatus `json:"status"`
+	SummaryVersion          int64         `json:"summary_version"`
+	LearnerGeneration       int64         `json:"learner_generation"`
+	RedactedThroughEventSeq int64         `json:"redacted_through_event_seq"`
+	PolicyVersion           string        `json:"policy_version"`
+	ReasonCode              string        `json:"reason_code"`
+	RequestedAt             time.Time     `json:"requested_at"`
+	UpdatedAt               time.Time     `json:"updated_at"`
+	Steps                   []StepReceipt `json:"steps"`
+}
+
+func (r *ErasureReceipt) SortSteps() {
+	order := make(map[StoreKind]int, len(ReceiptSlots))
+	for index, store := range ReceiptSlots {
+		order[store] = index
+	}
+	sort.Slice(r.Steps, func(i, j int) bool { return order[r.Steps[i].Store] < order[r.Steps[j].Store] })
+}

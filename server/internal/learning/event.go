@@ -54,6 +54,7 @@ type LearningEvent struct {
 	PayloadID        string          `json:"payload_id"`
 	PayloadHash      string          `json:"payload_hash"`
 	Payload          json.RawMessage `json:"payload,omitempty"`
+	Redacted         bool            `json:"-"`
 }
 
 type Decoder func(json.RawMessage) (json.RawMessage, error)
@@ -153,6 +154,14 @@ func EmptyProjection(generationID string) Projection {
 }
 
 func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningEvent) error {
+	if event.Redacted {
+		if event.EventSequence <= projection.Metadata.AsOfEventSequence {
+			return fmt.Errorf("event sequence is not strictly increasing")
+		}
+		projection.Metadata.AsOfEventSequence = event.EventSequence
+		projection.RedactedEvents[event.ID] = true
+		return nil
+	}
 	decoded, err := registry.Decode(event)
 	if err != nil {
 		projection.Metadata.Incomplete = true
@@ -163,6 +172,27 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		return fmt.Errorf("event sequence is not strictly increasing")
 	}
 	projection.Metadata.AsOfEventSequence = decoded.EventSequence
+	if decoded.Type == EventRedacted && decoded.AggregateType == "privacy" {
+		var payload struct {
+			ErasureID       string `json:"erasure_id"`
+			Generation      int64  `json:"generation"`
+			RedactedThrough int64  `json:"redacted_through"`
+			PolicyVersion   string `json:"policy_version"`
+			ReasonCode      string `json:"reason_code"`
+		}
+		if err := json.Unmarshal(decoded.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.ErasureID == "" || payload.Generation < 2 || payload.RedactedThrough < 0 || payload.RedactedThrough >= decoded.EventSequence || payload.PolicyVersion == "" || payload.ReasonCode == "" || decoded.AggregateID != payload.ErasureID {
+			return fmt.Errorf("privacy redaction payload is incomplete")
+		}
+		generationID := projection.Metadata.GenerationID
+		*projection = EmptyProjection(generationID)
+		projection.Metadata.AsOfEventSequence = decoded.EventSequence
+		projection.RedactedEvents[decoded.ID] = true
+		projection.Timeline = append(projection.Timeline, TimelineItem{EventSequence: decoded.EventSequence, EventID: decoded.ID, Type: decoded.Type, AggregateID: decoded.AggregateID, ReceivedAt: decoded.ReceivedAt, OccurredAt: decoded.OccurredAt, OccurredAtTrusted: false})
+		return nil
+	}
 	projection.Timeline = append(projection.Timeline, TimelineItem{EventSequence: decoded.EventSequence, EventID: decoded.ID, Type: decoded.Type, AggregateID: decoded.AggregateID, ReceivedAt: decoded.ReceivedAt, OccurredAt: decoded.OccurredAt, OccurredAtTrusted: false})
 	switch decoded.Type {
 	case EventRouteRevisionCreated:

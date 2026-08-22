@@ -6,4 +6,6 @@
 # Local configuration and build outputs
 .env
 server/edu-agentd
+__pycache__/
+*.py[cod]
 # <<< Comet managed project state <<<

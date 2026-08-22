@@ -9,8 +9,11 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/edu-agentd ./cmd/edu-agentd
 
 FROM alpine:3.22
-RUN addgroup -S -g 10001 eduagent \
-    && adduser -S -D -H -u 10001 -G eduagent eduagent
+RUN apk add --no-cache postgresql17-client \
+    && addgroup -S -g 10001 eduagent \
+    && adduser -S -D -H -u 10001 -G eduagent eduagent \
+    && install -d -o eduagent -g eduagent -m 0700 /var/lib/edu-agent \
+    && install -d -o eduagent -g eduagent -m 0700 /var/lib/edu-agent/nocturne-backups
 COPY --from=build /out/edu-agentd /usr/local/bin/edu-agentd
 USER 10001:10001
 EXPOSE 8080

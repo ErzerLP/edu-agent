@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
 	outboxpostgresstore "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/edu-agent/edu-agent/server/migrations"
@@ -33,6 +35,74 @@ const (
 	learningNodeID             = "41000000-0000-4000-8000-000000000003"
 	learningNodeRevisionID     = "41000000-0000-4000-8000-000000000004"
 )
+
+func TestPostgreSQLLearningPublicLoadersRespectPersistentReadGateAfterRestart(t *testing.T) {
+	pool := learningIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'learning-loader-gate',now())`, learningDeviceOne); err != nil {
+		t.Fatal(err)
+	}
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
+	goalID := "11000000-0000-4000-8000-000000000001"
+	revisionID := "31000000-0000-4000-8000-000000000001"
+	request := goalCommitFor(t, learningDeviceOne, "21000000-0000-4000-8000-000000000001", goalID, revisionID, 0, 1, 1)
+	if _, err := store.Commit(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if goal, err := store.LoadGoalRevision(ctx, revisionID); err != nil || goal.Text == "" {
+		t.Fatalf("pre-barrier goal=%+v err=%v", goal, err)
+	}
+
+	erasureID := "71000000-0000-4000-8000-000000000001"
+	var generation int64
+	if err := pool.QueryRow(ctx, `SELECT learner_generation+1 FROM privacy_owner_generation_gates WHERE owner_kind='learning'`).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `INSERT INTO privacy_erasures(id,device_id,operation_id,request_hash,reason_code,actor_device_id,requested_at,target_learner_generation,managed_backup_scheduled_unrecoverable_after) VALUES($1,$2,$3,decode(repeat('ab',32),'hex'),'learner_request',$2,clock_timestamp(),$4,clock_timestamp()+interval '1 day')`, erasureID, learningDeviceOne, "72000000-0000-4000-8000-000000000001", generation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO privacy_erasure_heads(erasure_id,status,summary_version,stable_reason,updated_at) VALUES($1,'barrier_committed',1,'loader_gate_restart',clock_timestamp())`, erasureID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO privacy_redaction_barriers(erasure_id,learner_generation,redacted_through_event_seq,policy_version,reason_code,event_id,committed_at) VALUES($1,$2,0,$3,'learner_request',$4,clock_timestamp())`, erasureID, generation, privacy.PolicyVersion, "73000000-0000-4000-8000-000000000001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE privacy_owner_generation_gates SET learner_generation=$2,read_open=FALSE,write_open=FALSE,active_erasure_id=$1,updated_at=clock_timestamp() WHERE owner_kind='learning'`, erasureID, generation); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := postgresstore.New(pool, tutoringpostgres.New(pool))
+	loaders := map[string]func() error{
+		"aggregate_version": func() error { _, err := restarted.LoadAggregateVersion(ctx, "goal", goalID); return err },
+		"goal_revision":     func() error { _, err := restarted.LoadGoalRevision(ctx, revisionID); return err },
+		"route_revision":    func() error { _, err := restarted.LoadRouteRevision(ctx, revisionID); return err },
+		"activity":          func() error { _, err := restarted.LoadActivity(ctx, revisionID); return err },
+		"attempt":           func() error { _, err := restarted.LoadAttempt(ctx, revisionID); return err },
+		"assessment": func() error {
+			_, _, err := restarted.LoadAssessment(ctx, revisionID)
+			return err
+		},
+		"proposal":             func() error { _, err := restarted.LoadProposal(ctx, revisionID); return err },
+		"free_question":        func() error { _, err := restarted.LoadFreeQuestion(ctx, revisionID); return err },
+		"free_answer":          func() error { _, err := restarted.LoadFreeAnswer(ctx, revisionID); return err },
+		"valid_evidence":       func() error { _, err := restarted.LoadValidEvidence(ctx, revisionID); return err },
+		"misconceptions":       func() error { _, err := restarted.LoadMisconceptions(ctx, revisionID); return err },
+		"latest_free_question": func() error { _, err := restarted.LatestFreeQuestion(ctx, revisionID); return err },
+	}
+	for name, load := range loaders {
+		if err := load(); privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+			t.Fatalf("%s gate err=%v code=%q", name, err, privacy.ErrorCode(err))
+		}
+	}
+}
 
 func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	pool := learningIntegrationPool(t)
@@ -173,7 +243,7 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	if before.Metadata.AsOfEventSequence != before.HighWater || before.HighWater != clockBefore {
 		t.Fatalf("checkpoint/high-water mismatch: %+v", before)
 	}
-	assertPayloadHashMismatchFailsRebuild(t, pool, store, before.ActiveGenerationID)
+	assertPayloadMutationBlocked(t, pool, store, before.ActiveGenerationID)
 	rebuilt, err := store.Rebuild(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -630,29 +700,19 @@ func assertStaleRebuildTakeover(t *testing.T, store *postgresstore.Store, pool *
 	return after
 }
 
-func assertPayloadHashMismatchFailsRebuild(t *testing.T, pool *pgxpool.Pool, store *postgresstore.Store, activeGeneration string) {
+func assertPayloadMutationBlocked(t *testing.T, pool *pgxpool.Pool, store *postgresstore.Store, activeGeneration string) {
 	t.Helper()
 	ctx := context.Background()
 	var payloadID string
-	var original []byte
-	if err := pool.QueryRow(ctx, `SELECT id,payload FROM learning_event_payloads ORDER BY created_at,id LIMIT 1`).Scan(&payloadID, &original); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM learning_event_payloads ORDER BY created_at,id LIMIT 1`).Scan(&payloadID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE learning_event_payloads SET payload='{"tampered":true}'::jsonb WHERE id=$1`, payloadID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Rebuild(ctx); learning.ErrorCode(err) != learning.CodeProjectionUnavailable {
-		t.Fatalf("payload hash mismatch rebuild error=%v", err)
+	if _, err := pool.Exec(ctx, `UPDATE learning_event_payloads SET payload='{"tampered":true}'::jsonb WHERE id=$1`, payloadID); err == nil || !strings.Contains(err.Error(), "learning history is append-only") {
+		t.Fatalf("append-only payload mutation was not rejected: %v", err)
 	}
 	status, err := store.ProjectionStatus(ctx)
 	if err != nil || status.ActiveGenerationID != activeGeneration || status.RebuildingGenerationID != nil {
-		t.Fatalf("payload mismatch changed active generation: %+v err=%v", status, err)
-	}
-	if !status.Metadata.Incomplete || !status.Metadata.Degraded || !contains(status.Metadata.ReasonCodes, "rebuild_failed") {
-		t.Fatalf("payload mismatch did not degrade active status: %+v", status)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE learning_event_payloads SET payload=$2 WHERE id=$1`, payloadID, original); err != nil {
-		t.Fatal(err)
+		t.Fatalf("rejected payload mutation changed projection state: %+v err=%v", status, err)
 	}
 }
 

@@ -21,21 +21,63 @@ func TestMessageValidationAndTransitions(t *testing.T) {
 	if message.Status != StatusPending || message.ID == "" {
 		t.Fatalf("unexpected message: %+v", message)
 	}
-	allowed := [][2]Status{{StatusPending, StatusProcessing}, {StatusProcessing, StatusPending}, {StatusProcessing, StatusApplied}, {StatusProcessing, StatusDead}}
+	allowed := [][2]Status{
+		{StatusPending, StatusProcessing}, {StatusPending, StatusCanceled},
+		{StatusProcessing, StatusPending}, {StatusProcessing, StatusApplied},
+		{StatusProcessing, StatusDead}, {StatusProcessing, StatusCanceled},
+	}
 	for _, transition := range allowed {
 		if !CanTransition(transition[0], transition[1]) {
 			t.Fatalf("transition should be allowed: %v", transition)
 		}
 	}
-	if CanTransition(StatusApplied, StatusPending) || CanTransition(StatusDead, StatusPending) {
-		t.Fatal("terminal states must not transition")
+	if !CanTransition(StatusDead, StatusPending) {
+		t.Fatal("dead messages must support explicit manual requeue")
+	}
+	if CanTransition(StatusApplied, StatusPending) || CanTransition(StatusCanceled, StatusPending) {
+		t.Fatal("applied and canceled states must not transition")
+	}
+	canceled := message
+	canceled.Status = StatusCanceled
+	for _, disposition := range []TerminalDisposition{
+		DispositionFenced, DispositionSuperseded, DispositionPrivacyErasure,
+		DispositionExpired, DispositionPermanentlyRejected, DispositionDeleted,
+	} {
+		canceled.TerminalDisposition = disposition
+		if err := canceled.Validate(); err != nil {
+			t.Fatalf("valid canceled message with %q: %v", disposition, err)
+		}
+	}
+	canceled.TerminalDisposition = ""
+	if err := canceled.Validate(); err == nil {
+		t.Fatal("canceled message requires a terminal disposition")
+	}
+	for _, decision := range []ApplyDecision{
+		{Apply: true},
+		{TerminalDisposition: DispositionFenced},
+		{TerminalDisposition: DispositionSuperseded},
+		{TerminalDisposition: DispositionPrivacyErasure},
+		{TerminalDisposition: DispositionExpired},
+		{TerminalDisposition: DispositionPermanentlyRejected},
+		{TerminalDisposition: DispositionDeleted},
+	} {
+		if err := decision.Validate(); err != nil {
+			t.Fatalf("valid apply decision %+v: %v", decision, err)
+		}
+	}
+	if err := (ApplyDecision{}).Validate(); err == nil {
+		t.Fatal("non-applicable decision requires an explicit disposition")
+	}
+	if err := (ApplyDecision{Apply: true, TerminalDisposition: DispositionFenced}).Validate(); err == nil {
+		t.Fatal("applicable decision cannot also be terminal")
 	}
 }
 
 type memoryWorkerStore struct {
-	claimed []Message
-	applied []string
-	failed  []failure
+	claimed  []Message
+	applied  []string
+	failed   []failure
+	canceled []CancelRequest
 }
 
 type failure struct {
@@ -49,6 +91,11 @@ func (*memoryWorkerStore) Enqueue(context.Context, Message) (bool, error) { retu
 func (s *memoryWorkerStore) Claim(context.Context, time.Time, time.Duration, int) ([]Message, error) {
 	return append([]Message(nil), s.claimed...), nil
 }
+func (*memoryWorkerStore) RequeueDead(context.Context, RequeueRequest) error { return nil }
+func (s *memoryWorkerStore) Cancel(_ context.Context, request CancelRequest) error {
+	s.canceled = append(s.canceled, request)
+	return nil
+}
 func (s *memoryWorkerStore) MarkApplied(_ context.Context, id, leaseToken string, _ time.Time) error {
 	s.applied = append(s.applied, id+":"+leaseToken)
 	return nil
@@ -59,12 +106,14 @@ func (s *memoryWorkerStore) MarkFailed(_ context.Context, id, leaseToken, catego
 }
 
 type testConsumer struct {
-	allow bool
-	err   error
-	calls int
+	decision ApplyDecision
+	err      error
+	calls    int
 }
 
-func (c *testConsumer) CanApply(context.Context, Message) (bool, error) { return c.allow, nil }
+func (c *testConsumer) CanApply(context.Context, Message) (ApplyDecision, error) {
+	return c.decision, nil
+}
 func (c *testConsumer) Apply(context.Context, Message) error {
 	c.calls++
 	return c.err
@@ -79,14 +128,14 @@ func (permanentError) Permanent() bool  { return true }
 func TestWorkerHonorsFenceAndRetriesWithBoundedBackoff(t *testing.T) {
 	now := time.Date(2026, 8, 17, 0, 0, 0, 0, time.UTC)
 	store := &memoryWorkerStore{claimed: []Message{
-		{ID: "stale", LeaseToken: "lease-stale", BusinessType: "stale", Attempts: 1, MaxAttempts: 3},
+		{ID: "stale", IdempotencyKey: "stale-key", LeaseToken: "lease-stale", BusinessType: "stale", Attempts: 1, MaxAttempts: 3},
 		{ID: "retry", LeaseToken: "lease-retry", BusinessType: "retry", Attempts: 2, MaxAttempts: 3},
 		{ID: "dead", LeaseToken: "lease-dead", BusinessType: "dead", Attempts: 1, MaxAttempts: 3},
 		{ID: "unsupported", LeaseToken: "lease-unsupported", BusinessType: "missing", Attempts: 1, MaxAttempts: 3},
 	}}
-	stale := &testConsumer{allow: false}
-	retry := &testConsumer{allow: true, err: errors.New("temporary")}
-	dead := &testConsumer{allow: true, err: permanentError{}}
+	stale := &testConsumer{decision: ApplyDecision{TerminalDisposition: DispositionExpired}}
+	retry := &testConsumer{decision: ApplyDecision{Apply: true}, err: errors.New("temporary")}
+	dead := &testConsumer{decision: ApplyDecision{Apply: true}, err: permanentError{}}
 	worker, err := NewWorker(store, map[string]Consumer{"stale": stale, "retry": retry, "dead": dead}, WorkerOptions{
 		BatchSize: 10, Lease: time.Minute, BaseBackoff: time.Second, MaxBackoff: 10 * time.Second,
 		Jitter: func(time.Duration) time.Duration { return 500 * time.Millisecond }, Now: func() time.Time { return now },
@@ -98,8 +147,11 @@ func TestWorkerHonorsFenceAndRetriesWithBoundedBackoff(t *testing.T) {
 	if err != nil || count != 4 {
 		t.Fatalf("run worker: count=%d err=%v", count, err)
 	}
-	if stale.calls != 0 || len(store.applied) != 1 || store.applied[0] != "stale:lease-stale" {
-		t.Fatalf("fenced message should be a successful no-op: %+v", store)
+	if stale.calls != 0 || len(store.applied) != 0 || len(store.canceled) != 1 {
+		t.Fatalf("fenced message should be canceled, not applied: %+v", store)
+	}
+	if cancel := store.canceled[0]; cancel.IdempotencyKey != "stale-key" || cancel.LeaseToken != "lease-stale" || cancel.Disposition != DispositionExpired {
+		t.Fatalf("unexpected terminal cancellation: %+v", cancel)
 	}
 	if len(store.failed) != 3 {
 		t.Fatalf("expected three failures: %+v", store.failed)

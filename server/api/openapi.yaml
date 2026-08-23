@@ -73,6 +73,7 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: false
                 required: [devices]
                 properties:
                   devices:
@@ -575,9 +576,7 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema: { $ref: "#/components/schemas/SessionView" },
-                  },
+                  { schema: { $ref: "#/components/schemas/SessionView" } },
               },
           }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -601,9 +600,7 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema: { $ref: "#/components/schemas/SessionView" },
-                  },
+                  { schema: { $ref: "#/components/schemas/SessionView" } },
               },
           }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -680,9 +677,7 @@ paths:
             content:
               {
                 application/json:
-                  {
-                    schema: { $ref: "#/components/schemas/NodeView" },
-                  },
+                  { schema: { $ref: "#/components/schemas/NodeView" } },
               },
           }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -702,7 +697,11 @@ paths:
         [
           { $ref: "#/components/parameters/Cursor" },
           { $ref: "#/components/parameters/PageLimit" },
-          { name: node_revision_id, in: query, schema: { $ref: "#/components/schemas/LearningUUID" } },
+          {
+            name: node_revision_id,
+            in: query,
+            schema: { $ref: "#/components/schemas/LearningUUID" },
+          },
         ]
       responses:
         "200":
@@ -764,6 +763,404 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/candidates:
+    post:
+      operationId: createMemoryCandidate
+      summary: Propose an explicit user-stated memory candidate
+      x-required-scope: memory:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemoryCandidateRequest" }
+      responses:
+        "200":
+          description: Idempotent replay.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "201":
+          description: Candidate created; an automatically admitted candidate may include a durable delivery status.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    get:
+      operationId: listMemoryCandidates
+      summary: List memory candidates using a stable opaque cursor
+      x-required-scope: memory:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageLimit"
+      responses:
+        "200":
+          description: Candidate page. Pending candidates may include reviewable proposed content.
+          content:
+            {
+              application/json:
+                {
+                  schema: { $ref: "#/components/schemas/MemoryCandidatePage" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/candidates/{candidateID}:
+    get:
+      operationId: getMemoryCandidate
+      summary: Read one memory candidate
+      x-required-scope: memory:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MemoryCandidateID"
+      responses:
+        "200":
+          description: Candidate detail. Only a pending, available payload includes proposed_content.
+          content:
+            {
+              application/json:
+                {
+                  schema: { $ref: "#/components/schemas/MemoryCandidateView" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/candidates/{candidateID}/decisions:
+    post:
+      operationId: decideMemoryCandidate
+      summary: Admit or reject a pending memory candidate using expected revision
+      x-required-scope: memory:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MemoryCandidateID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/MemoryCandidateDecisionRequest" }
+      responses:
+        "200":
+          description: Decision committed or idempotently replayed.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/records:
+    get:
+      operationId: listMemoryRecords
+      summary: List current memory record metadata
+      x-required-scope: memory:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageLimit"
+      responses:
+        "200":
+          description: Current record metadata page without cached remote content.
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/MemoryRecordPage" } },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/records/{memoryID}:
+    get:
+      operationId: getMemoryRecord
+      summary: Read current record metadata with live remote content availability
+      x-required-scope: memory:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LogicalMemoryID"
+      responses:
+        "200":
+          description: Current metadata plus live content status; content is present only after a current Nocturne hash match.
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/MemoryRecordView" } },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      operationId: deleteMemoryRecord
+      summary: Tombstone a logical memory and queue verified remote deletion
+      x-required-scope: memory:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LogicalMemoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemoryDeleteRequest" }
+      responses:
+        "200":
+          description: Delete already reached a public terminal state or was replayed.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "202":
+          description: Delete intent is durably queued.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/records/{memoryID}/candidates:
+    post:
+      operationId: createMemoryCorrectionCandidate
+      summary: Propose a correction candidate for the current record revision
+      x-required-scope: memory:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/LogicalMemoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              { $ref: "#/components/schemas/MemoryCorrectionCandidateRequest" }
+      responses:
+        "200":
+          description: Idempotent replay.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "201":
+          description: Correction candidate created; the endpoint never writes a record revision directly.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/export:
+    get:
+      operationId: exportMemoryRecords
+      summary: Export record metadata with live remote content availability
+      x-required-scope: memory:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageLimit"
+      responses:
+        "200":
+          description: Typed export without credentials, raw upstream responses, attempt tokens, or leases.
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/MemoryExportPage" } },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/memory/deliveries/{deliveryID}/replays:
+    post:
+      operationId: replayMemoryDelivery
+      summary: Requeue one eligible dead-letter memory delivery
+      x-required-scope: memory:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MemoryDeliveryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemoryReplayRequest" }
+      responses:
+        "200":
+          description: Replay is terminal or idempotently returned.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "202":
+          description: Replay is durably queued.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/MemoryOperationResult" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/MemoryConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/privacy/erasures:
+    post:
+      operationId: createPrivacyErasure
+      summary: Commit and advance a globally fenced privacy erasure
+      description: A paired-device credential does not carry privacy:erase by default. For a new operation, a valid device-bound X-Privacy-Erasure-Grant is consumed atomically with the serializable barrier transaction and gives only this request the effective privacy:erase scope represented by x-required-scope. An exact replay of an already committed operation may omit the grant and returns the existing receipt.
+      x-required-scope: privacy:erase
+      x-required-erasure-grant: true
+      x-effective-scope-source: privacyErasureGrant
+      x-max-body-bytes: 1048576
+      security:
+        - deviceBearer: []
+          privacyErasureGrant: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PrivacyErasureRequest" }
+      responses:
+        "202":
+          description: Barrier committed and follow-up local or remote work applied or durably pending.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/PrivacyErasureReceipt" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/PrivacyConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/privacy/erasures/{erasureID}:
+    get:
+      operationId: getPrivacyErasureReceipt
+      summary: Read the current append-only erasure receipt summary
+      x-required-scope: privacy:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PrivacyErasureID"
+      responses:
+        "200":
+          description: Current receipt summary with managed and unsupported locations kept distinct.
+          content:
+            {
+              application/json:
+                {
+                  schema:
+                    { $ref: "#/components/schemas/PrivacyErasureReceipt" },
+                },
+            }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/PrivacyConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
     KnowledgeRevisionID:
@@ -801,11 +1198,37 @@ components:
       name: due_before
       in: query
       schema: { type: string, format: date-time }
+    MemoryCandidateID:
+      name: candidateID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/MemoryUUID" }
+    LogicalMemoryID:
+      name: memoryID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/MemoryUUID" }
+    MemoryDeliveryID:
+      name: deliveryID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/MemoryUUID" }
+    PrivacyErasureID:
+      name: erasureID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/MemoryUUID" }
   securitySchemes:
     deviceBearer:
       type: http
       scheme: bearer
       bearerFormat: opaque-device-token
+      description: Paired-device credential. The default credential scopes do not include privacy:erase; that effective scope exists only for an authorized erasure request.
+    privacyErasureGrant:
+      type: apiKey
+      in: header
+      name: X-Privacy-Erasure-Grant
+      description: One-time, device-bound, locally issued privacy erasure grant. For a new operation it is validated and consumed in the same serializable transaction as the barrier; a failed or conflicting barrier does not consume it. An exact committed-operation replay may omit it. The value is never returned or logged.
   responses:
     BadRequest:
       description: Request validation failed.
@@ -868,7 +1291,19 @@ components:
           schema:
             $ref: "#/components/schemas/LearningErrorEnvelope"
     DependencyUnavailable:
-      description: Model or projection dependency is unavailable.
+      description: Model, projection, memory, privacy, or response read permit is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    MemoryConflict:
+      description: Idempotency, candidate revision, record generation, delivery state, or cursor conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MemoryErrorEnvelope"
+    PrivacyConflict:
+      description: An erasure operation, expected learner generation, or receipt head conflicts with current state.
       content:
         application/json:
           schema:
@@ -880,7 +1315,15 @@ components:
       pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
     LearningOperationInput:
       type: object
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version]
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -891,7 +1334,16 @@ components:
     LearningGoalRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, text, source]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          text,
+          source,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -911,7 +1363,15 @@ components:
     TutoringSessionRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, goal_revision_id]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          goal_revision_id,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -923,7 +1383,17 @@ components:
     TutoringProposalRequest:
       type: object
       additionalProperties: false
-      required: [request_id, proposal_type, aggregate_type, aggregate_id, aggregate_version, knowledge_revision_id, node_revision_ids, input]
+      required:
+        [
+          request_id,
+          proposal_type,
+          aggregate_type,
+          aggregate_id,
+          aggregate_version,
+          knowledge_revision_id,
+          node_revision_ids,
+          input,
+        ]
       properties:
         request_id: { $ref: "#/components/schemas/LearningUUID" }
         proposal_type: { $ref: "#/components/schemas/ProposalType" }
@@ -982,7 +1452,15 @@ components:
     ActionNoFieldsRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -992,11 +1470,28 @@ components:
         occurred_at: { type: string, format: date-time }
         action:
           type: string
-          enum: [start_diagnostic, present_activity, acknowledge_feedback, resume_focus, end_activity, complete_session]
+          enum:
+            [
+              start_diagnostic,
+              present_activity,
+              acknowledge_feedback,
+              resume_focus,
+              end_activity,
+              complete_session,
+            ]
     ActionProposalRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, proposal_id]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          proposal_id,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1004,12 +1499,25 @@ components:
         aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
         expected_version: { type: integer, minimum: 0 }
         occurred_at: { type: string, format: date-time }
-        action: { type: string, enum: [apply_route, issue_activity, present_review, record_free_answer] }
+        action:
+          {
+            type: string,
+            enum:
+              [apply_route, issue_activity, present_review, record_free_answer],
+          }
         proposal_id: { $ref: "#/components/schemas/LearningUUID" }
     ActionAssessmentRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1022,7 +1530,17 @@ components:
     ActionAttemptRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, answer, help]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          answer,
+          help,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1039,7 +1557,16 @@ components:
     ActionQuestionRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, question]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          question,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1056,7 +1583,17 @@ components:
     ActionDirectExposureRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, exposure_kind, exposure_text]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          exposure_kind,
+          exposure_text,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1076,7 +1613,16 @@ components:
     ActionProposalExposureRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, proposal_id]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          proposal_id,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1092,7 +1638,18 @@ components:
     ActionAttachedQuizRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, proposal_id, question, answer]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          proposal_id,
+          question,
+          answer,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1107,7 +1664,16 @@ components:
     ActionSwitchGoalRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, goal_revision_id]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          action,
+          goal_revision_id,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1131,7 +1697,16 @@ components:
     AssessmentConfirmRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, kind, expected_disposition_version]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          kind,
+          expected_disposition_version,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1144,7 +1719,18 @@ components:
     AssessmentOverrideRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, kind, expected_disposition_version, reason, items]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          kind,
+          expected_disposition_version,
+          reason,
+          items,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1163,7 +1749,17 @@ components:
     AssessmentVoidRequest:
       type: object
       additionalProperties: false
-      required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, kind, expected_disposition_version, reason]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          kind,
+          expected_disposition_version,
+          reason,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
@@ -1211,7 +1807,23 @@ components:
     TutoringProposal:
       type: object
       additionalProperties: false
-      required: [proposal_id, schema_version, input_hash, proposal_type, aggregate_type, aggregate_id, aggregate_version, knowledge_revision_id, frozen_request, model_id, model_parameters, prompt_revision, attempt_categories, created_at]
+      required:
+        [
+          proposal_id,
+          schema_version,
+          input_hash,
+          proposal_type,
+          aggregate_type,
+          aggregate_id,
+          aggregate_version,
+          knowledge_revision_id,
+          frozen_request,
+          model_id,
+          model_parameters,
+          prompt_revision,
+          attempt_categories,
+          created_at,
+        ]
       properties:
         proposal_id: { type: string, format: uuid }
         schema_version: { type: integer, const: 1 }
@@ -1253,7 +1865,19 @@ components:
     ProjectionMetadata:
       type: object
       additionalProperties: false
-      required: [as_of_event_seq, projection_version, mastery_reducer_version, assessment_policy_version, review_policy_version, generation, rebuilding, degraded, incomplete, reason_codes]
+      required:
+        [
+          as_of_event_seq,
+          projection_version,
+          mastery_reducer_version,
+          assessment_policy_version,
+          review_policy_version,
+          generation,
+          rebuilding,
+          degraded,
+          incomplete,
+          reason_codes,
+        ]
       properties:
         as_of_event_seq: { type: integer, minimum: 0 }
         projection_version: { type: string }
@@ -1279,7 +1903,23 @@ components:
       enum: [route, activity, assessment, free_answer, explanation]
     TutoringState:
       type: string
-      enum: [Idle, GoalReady, Diagnostic, RouteActive, ActivityIssued, AwaitingResponse, Evaluating, Feedback, AdvanceOrReview, Completed, FocusSuspended, FreeQuestion, FreeAnswer, FocusResumed]
+      enum:
+        [
+          Idle,
+          GoalReady,
+          Diagnostic,
+          RouteActive,
+          ActivityIssued,
+          AwaitingResponse,
+          Evaluating,
+          Feedback,
+          AdvanceOrReview,
+          Completed,
+          FocusSuspended,
+          FreeQuestion,
+          FreeAnswer,
+          FocusResumed,
+        ]
     HelpLevel:
       type: string
       enum: [none, hint, scaffold, answer_revealed]
@@ -1305,7 +1945,8 @@ components:
     KnowledgeReference:
       type: object
       additionalProperties: false
-      required: [knowledge_revision_id, node_id, node_revision_id, range, slice_sha256]
+      required:
+        [knowledge_revision_id, node_id, node_revision_id, range, slice_sha256]
       properties:
         knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
         node_id: { $ref: "#/components/schemas/LearningUUID" }
@@ -1317,7 +1958,16 @@ components:
     GoalRevision:
       type: object
       additionalProperties: false
-      required: [goal_revision_id, goal_id, revision, text, source, actor_device_id, created_at]
+      required:
+        [
+          goal_revision_id,
+          goal_id,
+          revision,
+          text,
+          source,
+          actor_device_id,
+          created_at,
+        ]
       properties:
         goal_revision_id: { type: string, format: uuid }
         goal_id: { type: string, format: uuid }
@@ -1341,7 +1991,16 @@ components:
     FocusFrame:
       type: object
       additionalProperties: false
-      required: [focus_frame_id, session_id, saved_state, context, saved_aggregate_version, created_event_seq, invalidated]
+      required:
+        [
+          focus_frame_id,
+          session_id,
+          saved_state,
+          context,
+          saved_aggregate_version,
+          created_event_seq,
+          invalidated,
+        ]
       properties:
         focus_frame_id: { type: string, format: uuid }
         session_id: { type: string, format: uuid }
@@ -1354,7 +2013,15 @@ components:
     TutoringSession:
       type: object
       additionalProperties: false
-      required: [session_id, state, aggregate_version, focus, attached_quiz, completed_route]
+      required:
+        [
+          session_id,
+          state,
+          aggregate_version,
+          focus,
+          attached_quiz,
+          completed_route,
+        ]
       properties:
         session_id: { type: string, format: uuid }
         state: { $ref: "#/components/schemas/TutoringState" }
@@ -1381,11 +2048,20 @@ components:
       properties:
         metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
         session: { $ref: "#/components/schemas/TutoringSession" }
-        estimated_active_time: { $ref: "#/components/schemas/ActiveTimeEstimate" }
+        estimated_active_time:
+          { $ref: "#/components/schemas/ActiveTimeEstimate" }
     TimelineItem:
       type: object
       additionalProperties: false
-      required: [event_seq, event_id, event_type, aggregate_id, received_at, occurred_at_trusted]
+      required:
+        [
+          event_seq,
+          event_id,
+          event_type,
+          aggregate_id,
+          received_at,
+          occurred_at_trusted,
+        ]
       properties:
         event_seq: { type: integer, minimum: 1 }
         event_id: { type: string, format: uuid }
@@ -1407,7 +2083,15 @@ components:
     RouteStep:
       type: object
       additionalProperties: false
-      required: [route_step_id, ordinal, node_id, node_revision_id, teaching_intent, completion_condition]
+      required:
+        [
+          route_step_id,
+          ordinal,
+          node_id,
+          node_revision_id,
+          teaching_intent,
+          completion_condition,
+        ]
       properties:
         route_step_id: { $ref: "#/components/schemas/LearningUUID" }
         ordinal: { type: integer, minimum: 0 }
@@ -1418,7 +2102,18 @@ components:
     RouteRevision:
       type: object
       additionalProperties: false
-      required: [route_revision_id, route_id, revision, goal_revision_id, knowledge_revision_id, route_policy_version, source_proposal_id, steps, created_at]
+      required:
+        [
+          route_revision_id,
+          route_id,
+          revision,
+          goal_revision_id,
+          knowledge_revision_id,
+          route_policy_version,
+          source_proposal_id,
+          steps,
+          created_at,
+        ]
       properties:
         route_revision_id: { type: string, format: uuid }
         route_id: { type: string, format: uuid }
@@ -1468,7 +2163,28 @@ components:
     AcceptedEvidence:
       type: object
       additionalProperties: false
-      required: [evidence_id, disposition_decision_id, assessment_id, attempt_id, activity_id, activity_revision, goal_revision_id, route_revision_id, knowledge_revision_id, node_revision_id, rubric_revision, kind, activity_type, outcome, help, received_at, acceptance_policy_version, reducer_policy_version, review_policy_version]
+      required:
+        [
+          evidence_id,
+          disposition_decision_id,
+          assessment_id,
+          attempt_id,
+          activity_id,
+          activity_revision,
+          goal_revision_id,
+          route_revision_id,
+          knowledge_revision_id,
+          node_revision_id,
+          rubric_revision,
+          kind,
+          activity_type,
+          outcome,
+          help,
+          received_at,
+          acceptance_policy_version,
+          reducer_policy_version,
+          review_policy_version,
+        ]
       properties:
         evidence_id: { type: string, format: uuid }
         disposition_decision_id: { type: string, format: uuid }
@@ -1530,11 +2246,24 @@ components:
     MasteryProjection:
       type: object
       additionalProperties: false
-      required: [node_revision_id, state, baseline_state, valid_evidence_count, kinds, outcomes, help, pending_assessments, uncertainty_reasons, reducer_version]
+      required:
+        [
+          node_revision_id,
+          state,
+          baseline_state,
+          valid_evidence_count,
+          kinds,
+          outcomes,
+          help,
+          pending_assessments,
+          uncertainty_reasons,
+          reducer_version,
+        ]
       properties:
         node_revision_id: { type: string, format: uuid }
         state: { type: string, enum: [unseen, learning, provisional, retained] }
-        baseline_state: { type: string, enum: [unseen, learning, provisional, retained] }
+        baseline_state:
+          { type: string, enum: [unseen, learning, provisional, retained] }
         valid_evidence_count: { type: integer, minimum: 0 }
         kinds:
           type: object
@@ -1566,7 +2295,19 @@ components:
     MisconceptionHypothesis:
       type: object
       additionalProperties: false
-      required: [misconception_id, revision, node_revision_id, rubric_item_id, candidate_hash, candidate, status, source_evidence_ids, counter_evidence_ids, caused_by_evidence_id]
+      required:
+        [
+          misconception_id,
+          revision,
+          node_revision_id,
+          rubric_item_id,
+          candidate_hash,
+          candidate,
+          status,
+          source_evidence_ids,
+          counter_evidence_ids,
+          caused_by_evidence_id,
+        ]
       properties:
         misconception_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
@@ -1574,7 +2315,8 @@ components:
         rubric_item_id: { type: string }
         candidate_hash: { $ref: "#/components/schemas/SHA256" }
         candidate: { type: string }
-        status: { type: string, enum: [proposed, supported, challenged, resolved] }
+        status:
+          { type: string, enum: [proposed, supported, challenged, resolved] }
         source_evidence_ids:
           type: array
           items: { type: string, format: uuid }
@@ -1605,14 +2347,26 @@ components:
     AssessmentItemInput:
       type: object
       additionalProperties: false
-      required: [rubric_item_id, conclusion, answer_quote, answer_range, answer_quote_sha256, knowledge_reference_id, knowledge_quote, knowledge_range, knowledge_quote_sha256]
+      required:
+        [
+          rubric_item_id,
+          conclusion,
+          answer_quote,
+          answer_range,
+          answer_quote_sha256,
+          knowledge_reference_id,
+          knowledge_quote,
+          knowledge_range,
+          knowledge_quote_sha256,
+        ]
       properties:
         rubric_item_id: { type: string, minLength: 1 }
         conclusion: { type: string, enum: [pass, partial, fail, unassessed] }
         answer_quote: { type: string }
         answer_range: { $ref: "#/components/schemas/LearningSourceRange" }
         answer_quote_sha256: { $ref: "#/components/schemas/SHA256" }
-        knowledge_reference_id: { $ref: "#/components/schemas/AssessmentReferenceIDInput" }
+        knowledge_reference_id:
+          { $ref: "#/components/schemas/AssessmentReferenceIDInput" }
         knowledge_quote: { type: string }
         knowledge_range: { $ref: "#/components/schemas/LearningSourceRange" }
         knowledge_quote_sha256: { $ref: "#/components/schemas/SHA256" }
@@ -1622,7 +2376,25 @@ components:
     AssessmentArtifact:
       type: object
       additionalProperties: false
-      required: [assessment_id, session_id, attempt_id, activity_id, activity_revision, items, rubric_complete, confidence, risk_flags, model_id, model_parameters, prompt_revision, proposal_input_hash, attempts, attempt_categories, created_at]
+      required:
+        [
+          assessment_id,
+          session_id,
+          attempt_id,
+          activity_id,
+          activity_revision,
+          items,
+          rubric_complete,
+          confidence,
+          risk_flags,
+          model_id,
+          model_parameters,
+          prompt_revision,
+          proposal_input_hash,
+          attempts,
+          attempt_categories,
+          created_at,
+        ]
       properties:
         assessment_id: { type: string, format: uuid }
         session_id: { type: string, format: uuid }
@@ -1637,7 +2409,22 @@ components:
         confidence: { type: integer, minimum: 0, maximum: 1000 }
         risk_flags:
           type: array
-          items: { type: string, enum: [incomplete_rubric, insufficient_answer_evidence, insufficient_knowledge_support, conflicting_evidence, ambiguous_rubric, unsafe_content, schema_repaired, stale_context, retry_exhausted] }
+          items:
+            {
+              type: string,
+              enum:
+                [
+                  incomplete_rubric,
+                  insufficient_answer_evidence,
+                  insufficient_knowledge_support,
+                  conflicting_evidence,
+                  ambiguous_rubric,
+                  unsafe_content,
+                  schema_repaired,
+                  stale_context,
+                  retry_exhausted,
+                ],
+            }
         model_id: { type: string }
         model_parameters:
           type: object
@@ -1659,12 +2446,22 @@ components:
     AssessmentDecision:
       type: object
       additionalProperties: false
-      required: [decision_id, assessment_id, version, disposition, items, actor_device_id, created_at]
+      required:
+        [
+          decision_id,
+          assessment_id,
+          version,
+          disposition,
+          items,
+          actor_device_id,
+          created_at,
+        ]
       properties:
         decision_id: { type: string, format: uuid }
         assessment_id: { type: string, format: uuid }
         version: { type: integer, minimum: 1 }
-        disposition: { type: string, enum: [provisional, accepted, overridden, voided] }
+        disposition:
+          { type: string, enum: [provisional, accepted, overridden, voided] }
         items:
           type: array
           maxItems: 64
@@ -1720,7 +2517,29 @@ components:
     Activity:
       type: object
       additionalProperties: false
-      required: [activity_id, revision, session_id, goal_revision_id, route_revision_id, route_step_id, knowledge_revision_id, target_node_id, target_node_revision_id, knowledge_references, prompt, type, rubric, difficulty, allowed_help, activity_policy_version, assessment_policy_version, review_policy_version, review, created_at]
+      required:
+        [
+          activity_id,
+          revision,
+          session_id,
+          goal_revision_id,
+          route_revision_id,
+          route_step_id,
+          knowledge_revision_id,
+          target_node_id,
+          target_node_revision_id,
+          knowledge_references,
+          prompt,
+          type,
+          rubric,
+          difficulty,
+          allowed_help,
+          activity_policy_version,
+          assessment_policy_version,
+          review_policy_version,
+          review,
+          created_at,
+        ]
       properties:
         activity_id: { $ref: "#/components/schemas/LearningUUID" }
         revision: { type: integer, minimum: 1 }
@@ -1757,7 +2576,8 @@ components:
     ActivityProposal:
       type: object
       additionalProperties: false
-      required: [prompt, type, rubric, difficulty, allowed_help, knowledge_references]
+      required:
+        [prompt, type, rubric, difficulty, allowed_help, knowledge_references]
       properties:
         prompt: { type: string }
         type: { type: string, enum: [objective, open, explanation] }
@@ -1815,7 +2635,14 @@ components:
         conflict:
           type: object
           additionalProperties: false
-          required: [aggregate_type, aggregate_id, expected_version, current_version, as_of_event_seq]
+          required:
+            [
+              aggregate_type,
+              aggregate_id,
+              expected_version,
+              current_version,
+              as_of_event_seq,
+            ]
           properties:
             aggregate_type: { type: string }
             aggregate_id: { type: string }
@@ -1894,6 +2721,7 @@ components:
           type: string
         scopes:
           type: array
+          description: Default paired-device scopes include memory:read, memory:write, and privacy:read, but never privacy:erase.
           items:
             type: string
         created_at:
@@ -2397,6 +3225,7 @@ components:
           const: query-context-v1
         context:
           type: object
+          additionalProperties: {}
         limits:
           type: object
           additionalProperties: false
@@ -2605,6 +3434,656 @@ components:
           minimum: 0
         provenance:
           const: canonical_markdown
+    MemoryUUID:
+      type: string
+      format: uuid
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    MemorySHA256:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    MemoryCandidateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          content,
+          reason,
+          category,
+          sensitivity,
+          stability,
+          valid_until,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        content:
+          type: string
+          minLength: 1
+          maxLength: 32000
+          x-max-utf8-bytes: 262144
+        reason:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1000,
+            x-max-utf8-bytes: 2000,
+          }
+        category:
+          type: string
+          enum:
+            [
+              interaction_preference,
+              time_constraint,
+              personal_context,
+              generated_summary,
+              raw_chat,
+              complete_attempt,
+              question_or_rubric,
+              goal,
+              route,
+              mastery,
+              evidence,
+              misconception,
+              review_queue,
+              sync_state,
+              device_token,
+              model_secret,
+              nocturne_secret,
+            ]
+        sensitivity: { type: string, enum: [non_sensitive, sensitive] }
+        stability: { type: string, enum: [transient, stable] }
+        valid_until: { type: string, format: date-time }
+    MemoryCorrectionCandidateRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          content,
+          reason,
+          category,
+          sensitivity,
+          stability,
+          valid_until,
+          expected_record_revision,
+          expected_record_generation,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        content:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 32000,
+            x-max-utf8-bytes: 262144,
+          }
+        reason:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1000,
+            x-max-utf8-bytes: 2000,
+          }
+        category:
+          type: string
+          enum:
+            [
+              interaction_preference,
+              time_constraint,
+              personal_context,
+              generated_summary,
+              raw_chat,
+              complete_attempt,
+              question_or_rubric,
+              goal,
+              route,
+              mastery,
+              evidence,
+              misconception,
+              review_queue,
+              sync_state,
+              device_token,
+              model_secret,
+              nocturne_secret,
+            ]
+        sensitivity: { type: string, enum: [non_sensitive, sensitive] }
+        stability: { type: string, enum: [transient, stable] }
+        valid_until: { type: string, format: date-time }
+        expected_record_revision: { type: integer, minimum: 1 }
+        expected_record_generation: { type: integer, minimum: 1 }
+    MemoryCandidateDecisionRequest:
+      type: object
+      additionalProperties: false
+      dependentRequired:
+        expected_record_revision: [expected_record_generation]
+        expected_record_generation: [expected_record_revision]
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          expected_revision,
+          decision,
+          reason,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        expected_revision: { type: integer, minimum: 1 }
+        expected_record_revision: { type: integer, minimum: 1 }
+        expected_record_generation: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [admit, reject] }
+        reason:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1000,
+            x-max-utf8-bytes: 2000,
+          }
+    MemoryDeleteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          expected_revision,
+          expected_record_generation,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        expected_revision: { type: integer, minimum: 1 }
+        expected_record_generation: { type: integer, minimum: 1 }
+    MemoryReplayRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, payload_schema_version]
+      properties:
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+    PrivacyErasureRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          expected_current_learner_generation,
+          reason_code,
+          explicit_confirmation,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_schema_version: { type: integer, const: 1 }
+        expected_current_learner_generation: { type: integer, minimum: 1 }
+        reason_code:
+          {
+            type: string,
+            enum: [learner_request, account_closure, operator_request],
+          }
+        explicit_confirmation: { type: boolean, const: true }
+    MemoryGenerationStamp:
+      type: object
+      additionalProperties: false
+      required: [learner_generation, memory_generation]
+      properties:
+        learner_generation: { type: integer, minimum: 1 }
+        memory_generation: { type: integer, minimum: 1 }
+    MemorySourceReference:
+      type: object
+      additionalProperties: false
+      properties:
+        event_id: { $ref: "#/components/schemas/MemoryUUID" }
+        operation_id: { $ref: "#/components/schemas/MemoryUUID" }
+        model_id: { type: string, minLength: 1, maxLength: 500 }
+        prompt_revision: { type: string, minLength: 1, maxLength: 500 }
+        source_hashes:
+          type: array
+          items: { $ref: "#/components/schemas/MemorySHA256" }
+    MemoryCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          candidate_id,
+          candidate_uri,
+          payload_id,
+          content_sha256,
+          source_kind,
+          source_reference,
+          proposer_id,
+          reason,
+          category,
+          sensitivity,
+          stability,
+          valid_until,
+          admission_policy_version,
+          status,
+          revision,
+          created_at,
+        ]
+      properties:
+        candidate_id: { $ref: "#/components/schemas/MemoryUUID" }
+        candidate_uri: { type: string, pattern: "^candidate://[0-9a-f-]{36}$" }
+        logical_memory_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_id: { $ref: "#/components/schemas/MemoryUUID" }
+        content_sha256: { $ref: "#/components/schemas/MemorySHA256" }
+        source_kind:
+          {
+            type: string,
+            enum:
+              [
+                user_statement,
+                model_inference,
+                long_term_background,
+                generated_summary,
+              ],
+          }
+        source_reference: { $ref: "#/components/schemas/MemorySourceReference" }
+        proposer_id: { $ref: "#/components/schemas/MemoryUUID" }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        category:
+          type: string
+          enum:
+            [
+              interaction_preference,
+              time_constraint,
+              personal_context,
+              generated_summary,
+              raw_chat,
+              complete_attempt,
+              question_or_rubric,
+              goal,
+              route,
+              mastery,
+              evidence,
+              misconception,
+              review_queue,
+              sync_state,
+              device_token,
+              model_secret,
+              nocturne_secret,
+            ]
+        sensitivity: { type: string, enum: [non_sensitive, sensitive] }
+        stability: { type: string, enum: [transient, stable] }
+        valid_until: { type: string, format: date-time }
+        admission_policy_version: { const: memory-admission-v1 }
+        status:
+          { type: string, enum: [pending_review, admitted, rejected, expired] }
+        revision: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    MemoryCandidateView:
+      type: object
+      additionalProperties: false
+      required: [candidate, content_status]
+      properties:
+        candidate: { $ref: "#/components/schemas/MemoryCandidate" }
+        content_status: { type: string, enum: [available, scrubbed] }
+        proposed_content:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 32000,
+            x-max-utf8-bytes: 262144,
+          }
+        read_generation: { $ref: "#/components/schemas/MemoryGenerationStamp" }
+    MemoryCandidatePage:
+      type: object
+      additionalProperties: false
+      required: [items, read_generation]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MemoryCandidateView" }
+        next_cursor: { type: string, minLength: 1 }
+        read_generation: { $ref: "#/components/schemas/MemoryGenerationStamp" }
+    MemoryRecord:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          logical_memory_id,
+          record_revision_id,
+          revision,
+          record_generation,
+          learner_generation,
+          candidate_id,
+          external_uri,
+          external_uri_sha256,
+          content_sha256,
+          status,
+          delivery_id,
+          receipt_id,
+          created_at,
+        ]
+      properties:
+        logical_memory_id: { $ref: "#/components/schemas/MemoryUUID" }
+        record_revision_id: { $ref: "#/components/schemas/MemoryUUID" }
+        revision: { type: integer, minimum: 1 }
+        record_generation: { type: integer, minimum: 1 }
+        learner_generation: { type: integer, minimum: 1 }
+        candidate_id: { $ref: "#/components/schemas/MemoryUUID" }
+        previous_record_revision_id: { $ref: "#/components/schemas/MemoryUUID" }
+        external_uri:
+          { type: string, pattern: "^nocturne://core/edu-agent/[0-9a-f-]{36}$" }
+        external_uri_sha256: { $ref: "#/components/schemas/MemorySHA256" }
+        external_node_id: { $ref: "#/components/schemas/MemoryUUID" }
+        external_memory_id: { type: integer, minimum: 1 }
+        content_sha256: { $ref: "#/components/schemas/MemorySHA256" }
+        status:
+          {
+            type: string,
+            enum:
+              [
+                queued,
+                applied,
+                permanently_rejected,
+                superseded,
+                delete_pending,
+                deleted,
+              ],
+          }
+        delivery_id: { $ref: "#/components/schemas/MemoryUUID" }
+        receipt_id: { $ref: "#/components/schemas/MemoryUUID" }
+        created_at: { type: string, format: date-time }
+        applied_at: { type: string, format: date-time }
+        superseded_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time }
+    MemoryDelivery:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          delivery_id,
+          kind,
+          logical_memory_id,
+          record_revision_id,
+          record_revision,
+          learner_generation,
+          record_generation,
+          payload_id,
+          payload_sha256,
+          external_uri,
+          attempt_state,
+          status,
+          public_status,
+          valid_until,
+          attempt_count,
+          receipt_id,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        delivery_id: { $ref: "#/components/schemas/MemoryUUID" }
+        kind: { type: string, enum: [admit, correction, delete, erasure] }
+        logical_memory_id: { $ref: "#/components/schemas/MemoryUUID" }
+        record_revision_id: { $ref: "#/components/schemas/MemoryUUID" }
+        record_revision: { type: integer, minimum: 1 }
+        learner_generation: { type: integer, minimum: 1 }
+        record_generation: { type: integer, minimum: 1 }
+        payload_id: { $ref: "#/components/schemas/MemoryUUID" }
+        payload_sha256: { $ref: "#/components/schemas/MemorySHA256" }
+        external_uri:
+          { type: string, pattern: "^nocturne://core/edu-agent/[0-9a-f-]{36}$" }
+        attempt_state:
+          {
+            type: string,
+            enum:
+              [prepared, sent, unknown, reconciling, confirmed, fenced, failed],
+          }
+        status:
+          {
+            type: string,
+            enum:
+              [
+                queued,
+                applied,
+                permanently_rejected,
+                fenced,
+                expiry_reconciling,
+                expired,
+                delete_pending,
+                deleted,
+              ],
+          }
+        public_status: { type: string, enum: [queued, applied, rejected] }
+        disposition: { type: string, minLength: 1, maxLength: 1000 }
+        valid_until: { type: string, format: date-time }
+        attempt_count: { type: integer, minimum: 0 }
+        last_category: { type: string, minLength: 1, maxLength: 500 }
+        receipt_id: { $ref: "#/components/schemas/MemoryUUID" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MemoryDeliveryReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          receipt_id,
+          delivery_id,
+          version,
+          status,
+          reason,
+          verification_method,
+          created_at,
+        ]
+      properties:
+        receipt_id: { $ref: "#/components/schemas/MemoryUUID" }
+        delivery_id: { $ref: "#/components/schemas/MemoryUUID" }
+        version: { type: integer, minimum: 1 }
+        status:
+          {
+            type: string,
+            enum:
+              [
+                pending,
+                succeeded,
+                partial,
+                failed,
+                unknown,
+                not_applicable,
+                unsupported,
+              ],
+          }
+        reason: { type: string, minLength: 1, maxLength: 1000 }
+        verification_method: { type: string, minLength: 1, maxLength: 500 }
+        evidence_digest: { $ref: "#/components/schemas/MemorySHA256" }
+        created_at: { type: string, format: date-time }
+    MemoryOperationResult:
+      type: object
+      additionalProperties: false
+      required: [replayed]
+      properties:
+        candidate: { $ref: "#/components/schemas/MemoryCandidateView" }
+        record: { $ref: "#/components/schemas/MemoryRecord" }
+        delivery: { $ref: "#/components/schemas/MemoryDelivery" }
+        replayed: { type: boolean }
+    MemoryRecordPage:
+      type: object
+      additionalProperties: false
+      required: [items, read_generation]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MemoryRecord" }
+        next_cursor: { type: string, minLength: 1 }
+        read_generation: { $ref: "#/components/schemas/MemoryGenerationStamp" }
+    MemoryRecordView:
+      type: object
+      additionalProperties: false
+      required: [record, delivery, receipt, read_generation, content_status]
+      properties:
+        record: { $ref: "#/components/schemas/MemoryRecord" }
+        delivery: { $ref: "#/components/schemas/MemoryDelivery" }
+        receipt: { $ref: "#/components/schemas/MemoryDeliveryReceipt" }
+        read_generation: { $ref: "#/components/schemas/MemoryGenerationStamp" }
+        content_status:
+          { type: string, enum: [available, degraded, unavailable, redacted] }
+        content:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 32000,
+            x-max-utf8-bytes: 262144,
+          }
+    MemoryExportItem:
+      type: object
+      additionalProperties: false
+      required: [record, delivery_status, receipt, content_status]
+      properties:
+        record: { $ref: "#/components/schemas/MemoryRecord" }
+        delivery_status: { type: string, enum: [queued, applied, rejected] }
+        receipt: { $ref: "#/components/schemas/MemoryDeliveryReceipt" }
+        content_status:
+          { type: string, enum: [available, degraded, unavailable, redacted] }
+        content:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 32000,
+            x-max-utf8-bytes: 262144,
+          }
+    MemoryExportPage:
+      type: object
+      additionalProperties: false
+      required: [items, read_generation, degraded, reason_codes]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MemoryExportItem" }
+        next_cursor: { type: string, minLength: 1 }
+        read_generation: { $ref: "#/components/schemas/MemoryGenerationStamp" }
+        degraded: { type: boolean }
+        reason_codes:
+          type: array
+          items: { type: string, minLength: 1, maxLength: 500 }
+    PrivacyStepReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          receipt_id,
+          store,
+          version,
+          status,
+          stable_reason,
+          verification_method,
+          started_at,
+        ]
+      properties:
+        receipt_id: { $ref: "#/components/schemas/MemoryUUID" }
+        store:
+          type: string
+          enum:
+            [
+              identity_metadata,
+              knowledge_content,
+              knowledge_index,
+              knowledge_artifacts,
+              learning_event_payload,
+              learning_typed_payload,
+              tutoring_payload,
+              inbox_outbox,
+              projection_generations,
+              memory_candidate_delivery,
+              process_cache,
+              nocturne_paths,
+              nocturne_orphan_history,
+              nocturne_snapshot_changeset,
+              managed_backup,
+              external_provider,
+            ]
+        version: { type: integer, minimum: 1 }
+        status:
+          {
+            type: string,
+            enum:
+              [
+                pending,
+                succeeded,
+                partial,
+                failed,
+                unknown,
+                not_applicable,
+                unsupported,
+              ],
+          }
+        stable_reason: { type: string, minLength: 1, maxLength: 1000 }
+        verification_method: { type: string, minLength: 1, maxLength: 500 }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        evidence_digest: { $ref: "#/components/schemas/MemorySHA256" }
+    PrivacyErasureReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          erasure_id,
+          status,
+          summary_version,
+          learner_generation,
+          redacted_through_event_seq,
+          policy_version,
+          reason_code,
+          requested_at,
+          updated_at,
+          steps,
+        ]
+      properties:
+        erasure_id: { $ref: "#/components/schemas/MemoryUUID" }
+        status:
+          {
+            type: string,
+            enum:
+              [
+                barrier_committed,
+                local_scrubbed,
+                remote_draining,
+                remote_purged,
+                verified,
+                partial,
+                blocked,
+              ],
+          }
+        summary_version: { type: integer, minimum: 1 }
+        learner_generation: { type: integer, minimum: 2 }
+        redacted_through_event_seq: { type: integer, minimum: 0 }
+        policy_version: { const: privacy-erasure-v1 }
+        reason_code:
+          {
+            type: string,
+            enum: [learner_request, account_closure, operator_request],
+          }
+        requested_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/PrivacyStepReceipt" }
+    MemoryErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+        candidate_conflict:
+          type: object
+          additionalProperties: false
+          required: [candidate_id, expected_revision, current_revision]
+          properties:
+            candidate_id: { type: string }
+            expected_revision: { type: integer, minimum: 0 }
+            current_revision: { type: integer, minimum: 0 }
     ErrorEnvelope:
       type: object
       additionalProperties: false

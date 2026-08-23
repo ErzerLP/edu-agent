@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -90,10 +91,15 @@ func (s *Store) Persist(ctx context.Context, db DBTX, write WriteSet) error {
 }
 
 func (s *Store) LoadSession(ctx context.Context, id string) (tutoring.Session, error) {
-	return s.LoadSessionWith(ctx, s.pool, id)
+	return withPrivacyRead(ctx, s, func(db DBTX) (tutoring.Session, error) {
+		return s.LoadSessionWith(ctx, db, id)
+	})
 }
 
 func (s *Store) LoadSessionWith(ctx context.Context, db DBTX, id string) (tutoring.Session, error) {
+	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+		return tutoring.Session{}, err
+	}
 	var value tutoring.Session
 	var state string
 	var goal, route, step, knowledgeRevision, node *string
@@ -132,10 +138,15 @@ func (s *Store) LoadSessionWith(ctx context.Context, db DBTX, id string) (tutori
 }
 
 func (s *Store) LoadFreeQuestion(ctx context.Context, id string) (tutoring.FreeQuestion, error) {
-	return s.LoadFreeQuestionWith(ctx, s.pool, id)
+	return withPrivacyRead(ctx, s, func(db DBTX) (tutoring.FreeQuestion, error) {
+		return s.LoadFreeQuestionWith(ctx, db, id)
+	})
 }
 
 func (s *Store) LoadFreeQuestionWith(ctx context.Context, db DBTX, id string) (tutoring.FreeQuestion, error) {
+	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+		return tutoring.FreeQuestion{}, err
+	}
 	var value tutoring.FreeQuestion
 	var refs []byte
 	err := db.QueryRow(ctx, `SELECT id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at FROM tutoring_free_questions WHERE id=$1`, id).Scan(&value.ID, &value.SessionID, &value.FocusFrameID, &value.Text, &value.KnowledgeRevisionID, &refs, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt)
@@ -152,10 +163,15 @@ func (s *Store) LoadFreeQuestionWith(ctx context.Context, db DBTX, id string) (t
 }
 
 func (s *Store) LoadFreeAnswer(ctx context.Context, id string) (tutoring.FreeAnswer, error) {
-	return s.LoadFreeAnswerWith(ctx, s.pool, id)
+	return withPrivacyRead(ctx, s, func(db DBTX) (tutoring.FreeAnswer, error) {
+		return s.LoadFreeAnswerWith(ctx, db, id)
+	})
 }
 
 func (s *Store) LoadFreeAnswerWith(ctx context.Context, db DBTX, id string) (tutoring.FreeAnswer, error) {
+	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+		return tutoring.FreeAnswer{}, err
+	}
 	var value tutoring.FreeAnswer
 	var refs []byte
 	var proposal *string
@@ -174,10 +190,15 @@ func (s *Store) LoadFreeAnswerWith(ctx context.Context, db DBTX, id string) (tut
 }
 
 func (s *Store) LatestFreeQuestion(ctx context.Context, sessionID string) (string, error) {
-	return s.LatestFreeQuestionWith(ctx, s.pool, sessionID)
+	return withPrivacyRead(ctx, s, func(db DBTX) (string, error) {
+		return s.LatestFreeQuestionWith(ctx, db, sessionID)
+	})
 }
 
 func (s *Store) LatestFreeQuestionWith(ctx context.Context, db DBTX, sessionID string) (string, error) {
+	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+		return "", err
+	}
 	var id string
 	err := db.QueryRow(ctx, `SELECT id FROM tutoring_free_questions WHERE session_id=$1 ORDER BY received_at DESC,id DESC LIMIT 1`, sessionID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {

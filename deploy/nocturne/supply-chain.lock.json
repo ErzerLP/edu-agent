@@ -1,0 +1,68 @@
+{
+  "schema": "edu-agent.nocturne-supply-chain-lock.v1",
+  "upstream": {
+    "repository": "https://github.com/Dataojitori/nocturne_memory",
+    "tag": "2.5.6",
+    "tag_object": "341131c34f42fc9b8401fc4ef6dc01b4fe9f11d4",
+    "commit": "54c48eeaeea3cca61ff6bc065cbe1a4c32a3b254",
+    "source_archive_url": "https://codeload.github.com/Dataojitori/nocturne_memory/tar.gz/54c48eeaeea3cca61ff6bc065cbe1a4c32a3b254",
+    "source_archive_sha256": "518cabfd6e3f0eafaf6e0d8046e19e71fe5891b6c4a008496ee950c59a6c912b"
+  },
+  "overlay": {
+    "revision": "edu-agent-maintenance-v1",
+    "files": {
+      "Dockerfile": "c64d4f0d806b79b192445788d36f07d8f33bb0a9eda645bf30d92e791714fae4",
+      "overlay/edu_agent_maintenance.py": "c97407d9a148bdeb59977e2c22900c1bdde80fc8adfad2dfb3027e63b27cbe6e",
+      "overlay/web_app.py": "a18c63b2314b0668536d73c05f3d8a42e1a1d5741a88141dce6e172a9d874beb",
+      "backup-inventory.schema.json": "77176a17612e95706be791707018cb78bb1e28f56330e8a1bfd6566137d4bf24",
+      "scripts/tool.py": "00038703f4ef862decd5aef4f6ddf03a2a0ff0e269a3712e1eb5cf1915df4ffb"
+    }
+  },
+  "build": {
+    "buildkit_version": "v0.32.2",
+    "buildkit_image": "moby/buildkit@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8",
+    "buildx_version": "v0.36.1",
+    "buildx_linux_amd64_url": "https://github.com/docker/buildx/releases/download/v0.36.1/buildx-v0.36.1.linux-amd64",
+    "buildx_linux_amd64_sha256": "48af8a397ebd60178778bf63611dbcebe5f5e7a9be90eb9147b24b9587455778",
+    "platform": "linux/amd64",
+    "source_date_epoch": 1786297652,
+    "base_image": {
+      "reference": "docker.io/library/python:3.12.11-slim-bookworm",
+      "platform_manifest_digest": "sha256:c00fc7b44d844b6da22861ec24af43968a5200eac4ec607b4725d585165d6b49"
+    }
+  },
+  "python": {
+    "version": "3.12.11",
+    "requirements_file": "requirements.lock",
+    "requirements_sha256": "df48c0722f3d366f25d64e4a32a4e4d11df163664227daa83a7ac8ee18682e59",
+    "resolved_distributions": 48,
+    "artifact_hash_policy": "all hashes published for every resolved distribution are retained; installation requires hashes",
+    "build_requirements_file": "build-requirements.lock",
+    "build_requirements_sha256": "24c548909d36a6859fc5b9ef46544e703d16302ebff7f7c1af30970c4f6e9e11"
+  },
+  "debian": {
+    "snapshot": "20260801T000000Z",
+    "suite": "bookworm",
+    "repository": "https://snapshot.debian.org/archive/debian/20260801T000000Z",
+    "signed_release_required": true,
+    "explicit_install": [
+      "libpq5=15.18-0+deb12u1",
+      "netbase=6.4",
+      "postgresql-client-15=15.18-0+deb12u1",
+      "postgresql-client-common=248+deb12u1",
+      "sensible-utils=0.0.17+nmu1"
+    ]
+  },
+  "image_contract": {
+    "entrypoint": [
+      "python",
+      "main.py"
+    ],
+    "labels": {
+      "org.opencontainers.image.source": "https://github.com/Dataojitori/nocturne_memory",
+      "org.opencontainers.image.version": "2.5.6",
+      "org.opencontainers.image.revision": "54c48eeaeea3cca61ff6bc065cbe1a4c32a3b254",
+      "org.edu-agent.nocturne.compat-revision": "edu-agent-maintenance-v1"
+    }
+  }
+}

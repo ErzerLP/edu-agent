@@ -66,6 +66,9 @@ func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (Retri
 		}
 		revision = loaded
 	}
+	if revision.Redacted {
+		return RetrievalResult{}, &Error{Code: CodeContentRedacted}
+	}
 	result := RetrievalResult{
 		KnowledgeRevisionID: revision.ID, RetrieverVersion: RetrieverVersion, SelectorVersion: SelectorVersion,
 		QueryContextVersion: contextVersion, SummarySnapshot: []string{}, Trace: []RetrievalTrace{}, Hits: []RetrievalHit{},

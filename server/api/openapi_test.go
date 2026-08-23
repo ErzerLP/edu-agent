@@ -10,6 +10,8 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/memory"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/getkin/kin-openapi/openapi3"
 	"go.yaml.in/yaml/v3"
@@ -560,4 +562,245 @@ func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 	validateResponse("/v1/learning/evidence", "get", "200", evidencePage)
 	validateResponse("/v1/learning/reviews", "get", "200", reviews)
 	validateResponse("/v1/learning/projections/status", "get", "200", status)
+}
+
+func TestOpenAPIDeclaresMemoryPrivacyRoutesAndContracts(t *testing.T) {
+	data, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	paths := raw["paths"].(map[string]any)
+	type contract struct {
+		path, method, scope string
+		write               bool
+		codes               []string
+	}
+	contracts := []contract{
+		{"/v1/memory/candidates", "post", "memory:write", true, []string{"200", "201", "400", "401", "403", "409", "413", "422", "429", "500", "503"}},
+		{"/v1/memory/candidates", "get", "memory:read", false, []string{"200", "400", "401", "403", "409", "429", "500", "503"}},
+		{"/v1/memory/candidates/{candidateID}", "get", "memory:read", false, []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
+		{"/v1/memory/candidates/{candidateID}/decisions", "post", "memory:write", true, []string{"200", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503"}},
+		{"/v1/memory/records", "get", "memory:read", false, []string{"200", "400", "401", "403", "409", "429", "500", "503"}},
+		{"/v1/memory/records/{memoryID}", "get", "memory:read", false, []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
+		{"/v1/memory/records/{memoryID}/candidates", "post", "memory:write", true, []string{"200", "201", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503"}},
+		{"/v1/memory/records/{memoryID}", "delete", "memory:write", true, []string{"200", "202", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503"}},
+		{"/v1/memory/export", "get", "memory:read", false, []string{"200", "400", "401", "403", "409", "429", "500", "503"}},
+		{"/v1/memory/deliveries/{deliveryID}/replays", "post", "memory:write", true, []string{"200", "202", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503"}},
+		{"/v1/privacy/erasures", "post", "privacy:erase", true, []string{"202", "400", "401", "403", "409", "413", "422", "429", "500", "503"}},
+		{"/v1/privacy/erasures/{erasureID}", "get", "privacy:read", false, []string{"200", "400", "401", "403", "404", "409", "429", "500", "503"}},
+	}
+	for _, expected := range contracts {
+		item, ok := paths[expected.path].(map[string]any)
+		if !ok {
+			t.Fatalf("path %s is missing", expected.path)
+		}
+		operation, ok := item[expected.method].(map[string]any)
+		if !ok || operation["x-required-scope"] != expected.scope {
+			t.Fatalf("%s %s scope/method mismatch: %#v", expected.method, expected.path, operation)
+		}
+		if expected.write && (operation["x-max-body-bytes"] != 1048576 || operation["requestBody"] == nil) {
+			t.Errorf("%s %s lacks frozen 1MiB request contract", expected.method, expected.path)
+		}
+		responses := operation["responses"].(map[string]any)
+		for _, code := range expected.codes {
+			if responses[code] == nil {
+				t.Errorf("%s %s missing response %s", expected.method, expected.path, code)
+			}
+		}
+	}
+	for _, path := range []string{"/v1/memory/candidates", "/v1/memory/records", "/v1/memory/export"} {
+		encoded, _ := json.Marshal(paths[path].(map[string]any)["get"].(map[string]any)["parameters"])
+		if !strings.Contains(string(encoded), "#/components/parameters/Cursor") || !strings.Contains(string(encoded), "#/components/parameters/PageLimit") {
+			t.Errorf("%s lacks cursor and limit", path)
+		}
+	}
+	security, _ := json.Marshal(paths["/v1/privacy/erasures"].(map[string]any)["post"].(map[string]any)["security"])
+	if !strings.Contains(string(security), "deviceBearer") || !strings.Contains(string(security), "privacyErasureGrant") {
+		t.Fatalf("privacy erasure security does not require bearer and grant: %s", security)
+	}
+	erasureOperation := paths["/v1/privacy/erasures"].(map[string]any)["post"].(map[string]any)
+	if erasureOperation["x-required-erasure-grant"] != true || erasureOperation["x-effective-scope-source"] != "privacyErasureGrant" ||
+		!strings.Contains(erasureOperation["description"].(string), "effective privacy:erase") ||
+		!strings.Contains(erasureOperation["description"].(string), "already committed operation may omit the grant") {
+		t.Fatalf("privacy effective scope/grant semantics drifted: %#v", erasureOperation)
+	}
+	schemes := raw["components"].(map[string]any)["securitySchemes"].(map[string]any)
+	deviceBearer := schemes["deviceBearer"].(map[string]any)
+	grant := schemes["privacyErasureGrant"].(map[string]any)
+	if grant["in"] != "header" || grant["name"] != "X-Privacy-Erasure-Grant" ||
+		!strings.Contains(grant["description"].(string), "same serializable transaction") ||
+		!strings.Contains(deviceBearer["description"].(string), "do not include privacy:erase") {
+		t.Fatalf("privacy erasure security description drifted: bearer=%#v grant=%#v", deviceBearer, grant)
+	}
+	device := raw["components"].(map[string]any)["schemas"].(map[string]any)["Device"].(map[string]any)
+	scopeDescription := device["properties"].(map[string]any)["scopes"].(map[string]any)["description"].(string)
+	if !strings.Contains(scopeDescription, "never privacy:erase") {
+		t.Fatalf("default credential scope description drifted: %q", scopeDescription)
+	}
+}
+
+func TestMemoryPrivacyOpenAPISchemasAreClosedAndRejectClientOwnedFields(t *testing.T) {
+	data, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	schemas := raw["components"].(map[string]any)["schemas"].(map[string]any)
+	var assertClosed func(string, any)
+	assertClosed = func(path string, value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			if typed["type"] == "object" && typed["additionalProperties"] != false {
+				t.Errorf("%s is not additionalProperties:false", path)
+			}
+			for key, child := range typed {
+				assertClosed(path+"."+key, child)
+			}
+		case []any:
+			for _, child := range typed {
+				assertClosed(path+"[]", child)
+			}
+		}
+	}
+	for name, schema := range schemas {
+		if strings.HasPrefix(name, "Memory") || strings.HasPrefix(name, "Privacy") {
+			assertClosed(name, schema)
+		}
+	}
+
+	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(raw string) any {
+		t.Helper()
+		var value any
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	candidate := `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"content":"concise answers","reason":"explicit preference","category":"interaction_preference","sensitivity":"non_sensitive","stability":"stable","valid_until":"2030-01-01T00:00:00Z"}`
+	candidateSchema := document.Components.Schemas["MemoryCandidateRequest"].Value
+	if err := candidateSchema.VisitJSON(decode(candidate), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("valid memory request failed schema: %v", err)
+	}
+	offsetCandidate := strings.Replace(candidate, "2030-01-01T00:00:00Z", "2030-01-01T00:00:00+00:00", 1)
+	if err := candidateSchema.VisitJSON(decode(offsetCandidate), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("RFC3339 offset memory request failed schema: %v", err)
+	}
+	for _, forbidden := range []string{"source_kind", "source_event_id", "source_operation_id", "model_id", "proposer_id", "device_id", "namespace", "domain"} {
+		invalid := strings.TrimSuffix(candidate, "}") + `,"` + forbidden + `":"client-owned"}`
+		if err := candidateSchema.VisitJSON(decode(invalid), openapi3.EnableJSONSchema2020()); err == nil {
+			t.Fatalf("memory request accepted client-owned field %s", forbidden)
+		}
+	}
+	erasureSchema := document.Components.Schemas["PrivacyErasureRequest"].Value
+	erasure := `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"expected_current_learner_generation":1,"reason_code":"learner_request","explicit_confirmation":true}`
+	if err := erasureSchema.VisitJSON(decode(erasure), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("valid erasure request failed schema: %v", err)
+	}
+	for _, invalid := range []string{
+		strings.Replace(erasure, `"explicit_confirmation":true`, `"explicit_confirmation":false`, 1),
+		strings.TrimSuffix(erasure, "}") + `,"device_id":"90000000-0000-4000-8000-000000000001"}`,
+		strings.TrimSuffix(erasure, "}") + `,"requested_at":"2026-08-20T14:00:00Z"}`,
+	} {
+		if err := erasureSchema.VisitJSON(decode(invalid), openapi3.EnableJSONSchema2020()); err == nil {
+			t.Fatalf("erasure schema accepted server-owned or unconfirmed input: %s", invalid)
+		}
+	}
+}
+
+func TestMemoryPrivacyOpenAPIValidatesRepresentativeResponses(t *testing.T) {
+	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	decodeDTO := func(value any) any {
+		t.Helper()
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded any
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	validate := func(path, method, code string, value any) {
+		t.Helper()
+		item := document.Paths.Find(path)
+		var response *openapi3.ResponseRef
+		switch method {
+		case "get":
+			response = item.Get.Responses.Value(code)
+		case "post":
+			response = item.Post.Responses.Value(code)
+		case "delete":
+			response = item.Delete.Responses.Value(code)
+		}
+		schema := response.Value.Content.Get("application/json").Schema.Value
+		if err := schema.VisitJSON(decodeDTO(value), openapi3.EnableJSONSchema2020()); err != nil {
+			t.Fatalf("%s %s %s failed schema: %v", method, path, code, err)
+		}
+	}
+	now := time.Date(2026, time.August, 20, 14, 0, 0, 0, time.UTC)
+	candidate := memory.Candidate{
+		ID: "20000000-0000-4000-8000-000000000001", URI: "candidate://20000000-0000-4000-8000-000000000001",
+		PayloadID: "30000000-0000-4000-8000-000000000001", ContentHash: strings.Repeat("a", 64),
+		Source: memory.SourceUserStatement, SourceReference: memory.SourceReference{}, ProposerID: "90000000-0000-4000-8000-000000000001",
+		Reason: "explicit preference", Category: memory.CategoryInteractionPreference,
+		Sensitivity: memory.SensitivityNonSensitive, Stability: memory.StabilityStable,
+		ValidUntil: now.Add(time.Hour), PolicyVersion: memory.AdmissionPolicyVersion,
+		Status: memory.CandidatePending, Revision: 1, CreatedAt: now,
+	}
+	candidateView := memory.CandidateView{Candidate: candidate, ContentStatus: "available", ProposedContent: "concise answers", ReadGeneration: memory.GenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
+	validate("/v1/memory/candidates/{candidateID}", "get", "200", candidateView)
+
+	record := memory.Record{
+		LogicalMemoryID: "40000000-0000-4000-8000-000000000001", ID: "50000000-0000-4000-8000-000000000001",
+		Revision: 1, RecordGeneration: 1, LearnerGeneration: 1, CandidateID: candidate.ID,
+		ExternalURI:       "nocturne://core/edu-agent/40000000-0000-4000-8000-000000000001",
+		ExternalURIDigest: strings.Repeat("b", 64), ContentHash: strings.Repeat("c", 64), Status: memory.RecordApplied,
+		DeliveryID: "60000000-0000-4000-8000-000000000001", ReceiptID: "70000000-0000-4000-8000-000000000001", CreatedAt: now,
+	}
+	delivery := memory.Delivery{
+		ID: record.DeliveryID, Kind: memory.DeliveryAdmit, LogicalMemoryID: record.LogicalMemoryID,
+		RecordRevisionID: record.ID, RecordRevision: 1, LearnerGeneration: 1, RecordGeneration: 1,
+		PayloadID: "80000000-0000-4000-8000-000000000001", PayloadHash: record.ContentHash,
+		ExternalURI: record.ExternalURI, AttemptState: memory.AttemptConfirmed, Status: memory.DeliveryStatusApplied,
+		PublicStatus: memory.DeliveryApplied, ValidUntil: now.Add(time.Hour), ReceiptID: record.ReceiptID, CreatedAt: now, UpdatedAt: now,
+	}
+	receipt := memory.Receipt{ID: record.ReceiptID, DeliveryID: delivery.ID, Version: 1, Status: memory.ReceiptSucceeded, Reason: "hash_verified", VerificationMethod: "remote_readback", CreatedAt: now}
+	recordDetail := memory.RecordDetail{
+		Record: record, Delivery: delivery, Receipt: receipt,
+		ReadGeneration: memory.GenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1},
+		ContentStatus:  memory.ExportContentAvailable, Content: "concise answers",
+	}
+	validate("/v1/memory/records/{memoryID}", "get", "200", recordDetail)
+	export := memory.ExportPage{Items: []memory.ExportItem{{Record: record, DeliveryStatus: memory.DeliveryApplied, Receipt: receipt, ContentStatus: memory.ExportContentAvailable, Content: "concise answers"}}, ReadGeneration: recordDetail.ReadGeneration, ReasonCodes: []string{}}
+	validate("/v1/memory/export", "get", "200", export)
+
+	privacyReceipt := privacy.ErasureReceipt{
+		ErasureID: "90000000-0000-4000-8000-000000000002", Status: privacy.StatusPartial,
+		SummaryVersion: 2, LearnerGeneration: 2, PolicyVersion: privacy.PolicyVersion,
+		ReasonCode: string(privacy.ReasonLearnerRequest), RequestedAt: now, UpdatedAt: now,
+		Steps: []privacy.StepReceipt{{ID: "90000000-0000-4000-8000-000000000003", Store: privacy.StoreExternalProvider, Version: 1, Status: privacy.StepUnsupported, StableReason: "provider_controlled", VerificationMethod: "unsupported_by_local_core", StartedAt: now, CompletedAt: &now}},
+	}
+	validate("/v1/privacy/erasures", "post", "202", privacyReceipt)
+	validate("/v1/privacy/erasures/{erasureID}", "get", "200", privacyReceipt)
 }

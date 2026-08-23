@@ -68,6 +68,71 @@ func TestReplayMatchesIncrementalProjectionWithCompensation(t *testing.T) {
 	}
 }
 
+func TestPrivacyEventRedactedCanonicalAndLegacySchemas(t *testing.T) {
+	const erasureID = "10000000-0000-4000-8000-000000000001"
+	registry := NewEventRegistry()
+	canonical := eventFixture(4, EventRedacted, map[string]any{
+		"erasure_id": erasureID, "generation": 2, "redacted_through_event_seq": 3,
+		"policy_version": "privacy-erasure-v1", "reason_code": "learner_request",
+	})
+	canonical.AggregateType = "privacy"
+	canonical.AggregateID = erasureID
+	canonical.SchemaVersion = EventRedactedSchemaVersion
+	decoded, err := registry.Decode(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const golden = `{"erasure_id":"10000000-0000-4000-8000-000000000001","generation":2,"redacted_through_event_seq":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request"}`
+	if string(decoded.Payload) != golden {
+		t.Fatalf("canonical redaction payload=%s want=%s", decoded.Payload, golden)
+	}
+	projection, err := Replay([]LearningEvent{canonical}, registry, "generation-2")
+	if err != nil || projection.Metadata.AsOfEventSequence != 4 || !projection.RedactedEvents[canonical.ID] {
+		t.Fatalf("canonical replay projection=%+v err=%v", projection, err)
+	}
+
+	legacy := canonical
+	legacy.SchemaVersion = EventSchemaVersion
+	legacy.Payload = json.RawMessage(`{"erasure_id":"10000000-0000-4000-8000-000000000001","generation":2,"redacted_through":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request"}`)
+	legacy.PayloadHash = SHA256(legacy.Payload)
+	decoded, err = registry.Decode(legacy)
+	if err != nil || string(decoded.Payload) != golden {
+		t.Fatalf("legacy upcast payload=%s err=%v", decoded.Payload, err)
+	}
+}
+
+func TestPrivacyEventRedactedRejectsDualUnknownAndUnknownSchema(t *testing.T) {
+	const erasureID = "10000000-0000-4000-8000-000000000001"
+	base := eventFixture(4, EventRedacted, map[string]any{})
+	base.AggregateType = "privacy"
+	base.AggregateID = erasureID
+	registry := NewEventRegistry()
+	for name, schema := range map[string]struct {
+		version int
+		payload string
+	}{
+		"canonical legacy field":  {EventRedactedSchemaVersion, `{"erasure_id":"` + erasureID + `","generation":2,"redacted_through":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request"}`},
+		"canonical dual field":    {EventRedactedSchemaVersion, `{"erasure_id":"` + erasureID + `","generation":2,"redacted_through_event_seq":3,"redacted_through":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request"}`},
+		"canonical unknown field": {EventRedactedSchemaVersion, `{"erasure_id":"` + erasureID + `","generation":2,"redacted_through_event_seq":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request","content":"secret"}`},
+		"legacy canonical field":  {EventSchemaVersion, `{"erasure_id":"` + erasureID + `","generation":2,"redacted_through_event_seq":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			event := base
+			event.SchemaVersion = schema.version
+			event.Payload = json.RawMessage(schema.payload)
+			if _, err := registry.Decode(event); ErrorCode(err) != CodeProjectionUnavailable {
+				t.Fatalf("error=%v", err)
+			}
+		})
+	}
+	unknown := base
+	unknown.SchemaVersion = 99
+	unknown.Payload = json.RawMessage(`{"erasure_id":"` + erasureID + `","generation":2,"redacted_through_event_seq":3,"policy_version":"privacy-erasure-v1","reason_code":"learner_request"}`)
+	if _, err := registry.Decode(unknown); ErrorCode(err) != CodeUnsupportedEventSchema {
+		t.Fatalf("unknown schema error=%v", err)
+	}
+}
+
 func TestRouteRevisionReplayRequiresStableNodeIdentity(t *testing.T) {
 	route := RouteRevision{ID: "route-rev", RouteID: "route", Revision: 1, GoalRevisionID: "goal-rev", KnowledgeRevisionID: "knowledge", Steps: []RouteStep{{ID: "step", Ordinal: 0, NodeRevisionID: "node-rev", TeachingIntent: "teach", CompletionCondition: "pass"}}}
 	projection := EmptyProjection("generation")

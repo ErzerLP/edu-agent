@@ -30,12 +30,15 @@ type Pinger interface {
 }
 
 type ModelProbe func(context.Context) (compatible bool, reason string)
+type OptionalProbe func(context.Context) error
 
 type Checker struct {
 	database        Pinger
 	modelEnabled    bool
 	modelRequired   bool
 	modelProbe      ModelProbe
+	nocturneEnabled bool
+	nocturneProbe   OptionalProbe
 	insecureWarning bool
 	timeout         time.Duration
 }
@@ -45,6 +48,8 @@ type Options struct {
 	ModelEnabled    bool
 	ModelRequired   bool
 	ModelProbe      ModelProbe
+	NocturneEnabled bool
+	NocturneProbe   OptionalProbe
 	InsecureWarning bool
 	Timeout         time.Duration
 }
@@ -55,7 +60,8 @@ func New(options Options) *Checker {
 	}
 	return &Checker{
 		database: options.Database, modelEnabled: options.ModelEnabled, modelRequired: options.ModelRequired,
-		modelProbe: options.ModelProbe, insecureWarning: options.InsecureWarning, timeout: options.Timeout,
+		modelProbe: options.ModelProbe, nocturneEnabled: options.NocturneEnabled,
+		nocturneProbe: options.NocturneProbe, insecureWarning: options.InsecureWarning, timeout: options.Timeout,
 	}
 }
 
@@ -65,50 +71,62 @@ func (c *Checker) Ready(ctx context.Context) Report {
 		report.Warnings = []string{"insecure_non_loopback_http"}
 	}
 	if c.database == nil {
-		report.Components["postgresql"] = Component{Status: StatusNotReady, Reason: "not_configured"}
-		report.Status = StatusNotReady
+		setComponent(&report, "postgresql", StatusNotReady, "not_configured")
 	} else {
 		checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
 		err := c.database.Ping(checkCtx)
 		cancel()
 		if err != nil {
-			report.Components["postgresql"] = Component{Status: StatusNotReady, Reason: "unavailable"}
-			report.Status = StatusNotReady
+			setComponent(&report, "postgresql", StatusNotReady, "unavailable")
 		} else {
-			report.Components["postgresql"] = Component{Status: StatusHealthy}
+			setComponent(&report, "postgresql", StatusHealthy, "")
 		}
 	}
-	if !c.modelEnabled {
-		status := StatusDegraded
-		if c.modelRequired {
-			status = StatusNotReady
-		}
-		report.Components["model"] = Component{Status: status, Reason: "not_configured"}
-		report.Status = worse(report.Status, status)
-		return report
-	}
-	if c.modelProbe == nil {
-		report.Components["model"] = Component{Status: StatusNotReady, Reason: "probe_unavailable"}
-		report.Status = StatusNotReady
-		return report
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	compatible, reason := c.modelProbe(checkCtx)
-	cancel()
-	if compatible {
-		report.Components["model"] = Component{Status: StatusHealthy}
-		return report
-	}
-	status := StatusDegraded
+
+	modelStatus := StatusDegraded
 	if c.modelRequired {
-		status = StatusNotReady
+		modelStatus = StatusNotReady
 	}
-	if strings.TrimSpace(reason) == "" {
-		reason = "incompatible"
+	switch {
+	case !c.modelEnabled:
+		setComponent(&report, "model", modelStatus, "not_configured")
+	case c.modelProbe == nil:
+		setComponent(&report, "model", modelStatus, "probe_unavailable")
+	default:
+		checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
+		compatible, reason := c.modelProbe(checkCtx)
+		cancel()
+		if compatible {
+			setComponent(&report, "model", StatusHealthy, "")
+		} else {
+			if strings.TrimSpace(reason) == "" {
+				reason = "incompatible"
+			}
+			setComponent(&report, "model", modelStatus, reason)
+		}
 	}
-	report.Components["model"] = Component{Status: status, Reason: reason}
-	report.Status = worse(report.Status, status)
+
+	switch {
+	case !c.nocturneEnabled:
+		setComponent(&report, "nocturne", StatusDegraded, "not_configured")
+	case c.nocturneProbe == nil:
+		setComponent(&report, "nocturne", StatusDegraded, "probe_unavailable")
+	default:
+		checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
+		err := c.nocturneProbe(checkCtx)
+		cancel()
+		if err != nil {
+			setComponent(&report, "nocturne", StatusDegraded, "unavailable")
+		} else {
+			setComponent(&report, "nocturne", StatusHealthy, "")
+		}
+	}
 	return report
+}
+
+func setComponent(report *Report, name string, status Status, reason string) {
+	report.Components[name] = Component{Status: status, Reason: reason}
+	report.Status = worse(report.Status, status)
 }
 
 func worse(left, right Status) Status {

@@ -1,14 +1,21 @@
 package config
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/edu-agent/edu-agent/server/internal/integrations/nocturne"
 )
 
 const DefaultMinimumContextWindow = 4096
@@ -28,6 +35,8 @@ type Config struct {
 	AuthFailureLimitPerMinute  int
 	DeviceRateLimitPerMinute   int
 	Model                      ModelConfig
+	Nocturne                   NocturneConfig
+	Privacy                    PrivacyConfig
 }
 
 type ModelConfig struct {
@@ -40,6 +49,34 @@ type ModelConfig struct {
 	MinimumContext int
 	Timeout        time.Duration
 	ProbeCacheTTL  time.Duration
+}
+
+type NocturneConfig struct {
+	Enabled                  bool
+	BaseURL                  *url.URL
+	APIToken                 string
+	MaintenanceToken         string
+	Namespace                string
+	Domain                   string
+	HTTPTimeout              time.Duration
+	ReconciliationInterval   time.Duration
+	WorkerPollInterval       time.Duration
+	WorkerLeaseDuration      time.Duration
+	WorkerBatchSize          int
+	DeliveryTTL              time.Duration
+	CandidateSweepInterval   time.Duration
+	DeliverySweepInterval    time.Duration
+	BackupRoot               string
+	BackupControllerInterval time.Duration
+	BackupRetention          time.Duration
+	MasterWrappingKey        []byte
+	PGDumpDSN                string
+	ImageLockReference       string
+}
+
+type PrivacyConfig struct {
+	ErasureGrantTTL         time.Duration
+	ErasureGrantMaxAttempts int
 }
 
 type envReader func(string) (string, bool)
@@ -64,6 +101,19 @@ func load(lookup envReader) (Config, error) {
 			Timeout:        30 * time.Second,
 			ProbeCacheTTL:  15 * time.Minute,
 		},
+		Nocturne: NocturneConfig{
+			HTTPTimeout:              10 * time.Second,
+			ReconciliationInterval:   30 * time.Second,
+			WorkerPollInterval:       time.Second,
+			WorkerLeaseDuration:      2 * time.Minute,
+			WorkerBatchSize:          50,
+			DeliveryTTL:              24 * time.Hour,
+			CandidateSweepInterval:   5 * time.Minute,
+			DeliverySweepInterval:    5 * time.Minute,
+			BackupControllerInterval: 24 * time.Hour,
+			BackupRetention:          30 * 24 * time.Hour,
+		},
+		Privacy: PrivacyConfig{ErasureGrantTTL: 10 * time.Minute, ErasureGrantMaxAttempts: 5},
 	}
 
 	var err error
@@ -160,13 +210,222 @@ func load(lookup envReader) (Config, error) {
 		}
 	}
 
-	if cfg.ShutdownTimeout <= 0 || cfg.PairingCodeTTL <= 0 || cfg.TokenLastUsedTouchInterval <= 0 || cfg.Model.Timeout <= 0 || cfg.Model.ProbeCacheTTL <= 0 {
+	if err := loadNocturne(lookup, &cfg.Nocturne); err != nil {
+		return Config{}, err
+	}
+	if cfg.Privacy.ErasureGrantTTL, err = durationValue(lookup, "PRIVACY_ERASURE_GRANT_TTL", cfg.Privacy.ErasureGrantTTL); err != nil {
+		return Config{}, err
+	}
+	if cfg.Privacy.ErasureGrantMaxAttempts, err = intValue(lookup, "PRIVACY_ERASURE_GRANT_MAX_ATTEMPTS", cfg.Privacy.ErasureGrantMaxAttempts); err != nil {
+		return Config{}, err
+	}
+
+	if cfg.ShutdownTimeout <= 0 || cfg.PairingCodeTTL <= 0 || cfg.TokenLastUsedTouchInterval <= 0 || cfg.Model.Timeout <= 0 || cfg.Model.ProbeCacheTTL <= 0 || cfg.Privacy.ErasureGrantTTL <= 0 {
 		return Config{}, errors.New("duration settings must be positive")
 	}
-	if cfg.PairingCodeMaxAttempts <= 0 || cfg.PairingRateLimitPerMinute <= 0 || cfg.AuthFailureLimitPerMinute <= 0 || cfg.DeviceRateLimitPerMinute <= 0 || cfg.Model.MinimumContext <= 0 {
+	if cfg.PairingCodeMaxAttempts <= 0 || cfg.PairingRateLimitPerMinute <= 0 || cfg.AuthFailureLimitPerMinute <= 0 || cfg.DeviceRateLimitPerMinute <= 0 || cfg.Model.MinimumContext <= 0 || cfg.Privacy.ErasureGrantMaxAttempts <= 0 {
 		return Config{}, errors.New("numeric limits must be positive")
 	}
 	return cfg, nil
+}
+
+func loadNocturne(lookup envReader, cfg *NocturneConfig) error {
+	var err error
+	if cfg.Enabled, err = boolValue(lookup, "NOCTURNE_ENABLED", false); err != nil {
+		return err
+	}
+	if cfg.HTTPTimeout, err = durationValue(lookup, "NOCTURNE_HTTP_TIMEOUT", cfg.HTTPTimeout); err != nil {
+		return err
+	}
+	if cfg.ReconciliationInterval, err = durationValue(lookup, "NOCTURNE_RECONCILIATION_INTERVAL", cfg.ReconciliationInterval); err != nil {
+		return err
+	}
+	if cfg.WorkerPollInterval, err = durationValue(lookup, "NOCTURNE_WORKER_POLL_INTERVAL", cfg.WorkerPollInterval); err != nil {
+		return err
+	}
+	if cfg.WorkerLeaseDuration, err = durationValue(lookup, "NOCTURNE_WORKER_LEASE_DURATION", cfg.WorkerLeaseDuration); err != nil {
+		return err
+	}
+	if cfg.WorkerBatchSize, err = intValue(lookup, "NOCTURNE_WORKER_BATCH_SIZE", cfg.WorkerBatchSize); err != nil {
+		return err
+	}
+	if cfg.DeliveryTTL, err = durationValue(lookup, "NOCTURNE_DELIVERY_TTL", cfg.DeliveryTTL); err != nil {
+		return err
+	}
+	if cfg.CandidateSweepInterval, err = durationValue(lookup, "NOCTURNE_CANDIDATE_SWEEP_INTERVAL", cfg.CandidateSweepInterval); err != nil {
+		return err
+	}
+	if cfg.DeliverySweepInterval, err = durationValue(lookup, "NOCTURNE_DELIVERY_SWEEP_INTERVAL", cfg.DeliverySweepInterval); err != nil {
+		return err
+	}
+	if cfg.BackupControllerInterval, err = durationValue(lookup, "NOCTURNE_BACKUP_CONTROLLER_INTERVAL", cfg.BackupControllerInterval); err != nil {
+		return err
+	}
+	if cfg.BackupRetention, err = durationValue(lookup, "NOCTURNE_BACKUP_RETENTION", cfg.BackupRetention); err != nil {
+		return err
+	}
+
+	baseRaw := optionalTrimmed(lookup, "NOCTURNE_BASE_URL")
+	cfg.Namespace = optionalTrimmed(lookup, "NOCTURNE_NAMESPACE")
+	cfg.Domain = optionalTrimmed(lookup, "NOCTURNE_DOMAIN")
+	cfg.BackupRoot = optionalTrimmed(lookup, "NOCTURNE_BACKUP_ROOT")
+	cfg.PGDumpDSN = optionalTrimmed(lookup, "NOCTURNE_PG_DUMP_DSN")
+	cfg.ImageLockReference = optionalTrimmed(lookup, "NOCTURNE_IMAGE_LOCK_REFERENCE")
+	if cfg.APIToken, err = optionalSecret(lookup, "NOCTURNE_API_TOKEN"); err != nil {
+		return err
+	}
+	if cfg.MaintenanceToken, err = optionalSecret(lookup, "NOCTURNE_MAINTENANCE_TOKEN"); err != nil {
+		return err
+	}
+	wrappingKeyRaw, err := optionalSecret(lookup, "NOCTURNE_BACKUP_MASTER_WRAPPING_KEY")
+	if err != nil {
+		return err
+	}
+	profileValues := []string{
+		baseRaw, cfg.APIToken, cfg.MaintenanceToken, cfg.Namespace, cfg.Domain, cfg.BackupRoot,
+		wrappingKeyRaw, cfg.PGDumpDSN, cfg.ImageLockReference,
+	}
+	present := 0
+	for _, value := range profileValues {
+		if value != "" {
+			present++
+		}
+	}
+	if !cfg.Enabled {
+		if present != 0 {
+			return errors.New("NOCTURNE_ENABLED must be true when Nocturne connection or backup settings are configured")
+		}
+		return validateNocturneIntervals(*cfg)
+	}
+	if present != len(profileValues) {
+		return errors.New("Nocturne enabled configuration requires base URL, API and maintenance tokens, namespace, domain, backup root, master wrapping key, pg_dump DSN, and image lock reference")
+	}
+	cfg.BaseURL, err = parseHTTPURL("NOCTURNE_BASE_URL", baseRaw)
+	if err != nil {
+		return err
+	}
+	if !utf8.ValidString(cfg.APIToken) || utf8.RuneCountInString(cfg.APIToken) < 32 {
+		return errors.New("NOCTURNE_API_TOKEN must contain at least 32 characters")
+	}
+	if _, err := decodeSecret32("NOCTURNE_MAINTENANCE_TOKEN", cfg.MaintenanceToken); err != nil {
+		return err
+	}
+	if secretsEqual(cfg.APIToken, cfg.MaintenanceToken) {
+		return errors.New("Nocturne API and maintenance tokens must differ")
+	}
+	if !validFixedName(cfg.Namespace) || !validFixedName(cfg.Domain) {
+		return errors.New("NOCTURNE_NAMESPACE and NOCTURNE_DOMAIN must be fixed lowercase names")
+	}
+	if !filepath.IsAbs(cfg.BackupRoot) || filepath.Clean(cfg.BackupRoot) != cfg.BackupRoot || cfg.BackupRoot == string(filepath.Separator) {
+		return errors.New("NOCTURNE_BACKUP_ROOT must be a canonical absolute non-root path")
+	}
+	if err := validatePostgresURL(cfg.PGDumpDSN); err != nil {
+		return fmt.Errorf("NOCTURNE_PG_DUMP_DSN: %w", err)
+	}
+	if !validImageDigestReference(cfg.ImageLockReference) {
+		return errors.New("NOCTURNE_IMAGE_LOCK_REFERENCE must be repository@sha256:<64 lowercase hex characters>")
+	}
+	_, imageDigest, _ := strings.Cut(cfg.ImageLockReference, "@")
+	if imageDigest != nocturne.ImagePlatformManifestDigest {
+		return errors.New("NOCTURNE_IMAGE_LOCK_REFERENCE digest does not match the fixed Nocturne platform manifest")
+	}
+	cfg.MasterWrappingKey, err = decodeSecret32("NOCTURNE_BACKUP_MASTER_WRAPPING_KEY", wrappingKeyRaw)
+	if err != nil {
+		return err
+	}
+	return validateNocturneIntervals(*cfg)
+}
+
+func validateNocturneIntervals(cfg NocturneConfig) error {
+	if cfg.HTTPTimeout <= 0 || cfg.ReconciliationInterval <= 0 || cfg.WorkerPollInterval <= 0 || cfg.WorkerLeaseDuration <= 0 || cfg.DeliveryTTL <= 0 || cfg.CandidateSweepInterval <= 0 || cfg.DeliverySweepInterval <= 0 || cfg.BackupControllerInterval <= 0 || cfg.BackupRetention <= 0 {
+		return errors.New("Nocturne duration settings must be positive")
+	}
+	if cfg.WorkerBatchSize <= 0 {
+		return errors.New("NOCTURNE_WORKER_BATCH_SIZE must be positive")
+	}
+	if cfg.HTTPTimeout > cfg.WorkerLeaseDuration/12 {
+		return errors.New("NOCTURNE_WORKER_LEASE_DURATION must be at least 12 times NOCTURNE_HTTP_TIMEOUT")
+	}
+	if cfg.CandidateSweepInterval > 5*time.Minute || cfg.DeliverySweepInterval > 5*time.Minute {
+		return errors.New("Nocturne candidate and delivery sweep intervals must not exceed 5m")
+	}
+	if cfg.BackupControllerInterval > 24*time.Hour {
+		return errors.New("NOCTURNE_BACKUP_CONTROLLER_INTERVAL must not exceed 24h")
+	}
+	if cfg.BackupRetention > 30*24*time.Hour {
+		return errors.New("NOCTURNE_BACKUP_RETENTION must not exceed 30d")
+	}
+	return nil
+}
+
+func optionalSecret(lookup envReader, name string) (string, error) {
+	value, ok := lookup(name)
+	if !ok || value == "" {
+		return "", nil
+	}
+	if strings.TrimSpace(value) != value {
+		return "", fmt.Errorf("%s must not contain surrounding whitespace", name)
+	}
+	return value, nil
+}
+
+func decodeSecret32(name, encoded string) ([]byte, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != encoded {
+		return nil, fmt.Errorf("%s must be canonical unpadded base64url for exactly 32 bytes", name)
+	}
+	return decoded, nil
+}
+
+func secretsEqual(left, right string) bool {
+	leftHash := sha256.Sum256([]byte(left))
+	rightHash := sha256.Sum256([]byte(right))
+	return subtle.ConstantTimeCompare(leftHash[:], rightHash[:]) == 1
+}
+
+func validFixedName(value string) bool {
+	if len(value) == 0 || len(value) > 63 || value[0] < 'a' || value[0] > 'z' {
+		return false
+	}
+	for _, character := range value {
+		if character < 'a' || character > 'z' {
+			if character < '0' || character > '9' {
+				if character != '-' && character != '_' {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func validImageDigestReference(value string) bool {
+	if strings.Count(value, "@") != 1 {
+		return false
+	}
+	repository, digest, found := strings.Cut(value, "@sha256:")
+	if !found || repository == "" || len(digest) != 64 || strings.ToLower(repository) != repository {
+		return false
+	}
+	if strings.HasPrefix(repository, "/") || strings.HasSuffix(repository, "/") || strings.Contains(repository, "//") {
+		return false
+	}
+	lastSlash := strings.LastIndexByte(repository, '/')
+	if colon := strings.LastIndexByte(repository, ':'); colon > lastSlash {
+		return false
+	}
+	for _, character := range repository {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') &&
+			character != '.' && character != '_' && character != '-' && character != '/' && character != ':' {
+			return false
+		}
+	}
+	for _, character := range digest {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateListeningPolicy(cfg *Config) error {

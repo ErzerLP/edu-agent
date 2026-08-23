@@ -14,22 +14,23 @@ import (
 )
 
 const (
-	EventSchemaVersion      = 1
-	EventEnvelopeVersion    = "learning-event-v1"
-	ProjectionVersion       = "learning-projection-v1"
-	MasteryReducerVersion   = "mastery-reducer-v1"
-	AssessmentPolicyVersion = "assessment-acceptance-v1"
-	ReviewPolicyVersion     = "fixed-interval-v1"
-	ActiveTimePolicyVersion = "estimated-active-time-v1"
-	RoutePolicyVersion      = "route-policy-v1"
-	ActivityPolicyVersion   = "activity-policy-v1"
-	ProposalSchemaVersion   = 1
-	MaxGoalRunes            = 4000
-	MaxGoalSourceBytes      = 200
-	MaxQuestionRunes        = 8000
-	MaxAnswerBytes          = 256 << 10
-	MaxRubricItems          = 64
-	MaxProposalTextRunes    = 32000
+	EventSchemaVersion         = 1
+	EventRedactedSchemaVersion = 2
+	EventEnvelopeVersion       = "learning-event-v1"
+	ProjectionVersion          = "learning-projection-v1"
+	MasteryReducerVersion      = "mastery-reducer-v1"
+	AssessmentPolicyVersion    = "assessment-acceptance-v1"
+	ReviewPolicyVersion        = "fixed-interval-v1"
+	ActiveTimePolicyVersion    = "estimated-active-time-v1"
+	RoutePolicyVersion         = "route-policy-v1"
+	ActivityPolicyVersion      = "activity-policy-v1"
+	ProposalSchemaVersion      = 1
+	MaxGoalRunes               = 4000
+	MaxGoalSourceBytes         = 200
+	MaxQuestionRunes           = 8000
+	MaxAnswerBytes             = 256 << 10
+	MaxRubricItems             = 64
+	MaxProposalTextRunes       = 32000
 )
 
 const (

@@ -1,8 +1,10 @@
 package learning
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"time"
 
@@ -54,6 +56,7 @@ type LearningEvent struct {
 	PayloadID        string          `json:"payload_id"`
 	PayloadHash      string          `json:"payload_hash"`
 	Payload          json.RawMessage `json:"payload,omitempty"`
+	Redacted         bool            `json:"-"`
 }
 
 type Decoder func(json.RawMessage) (json.RawMessage, error)
@@ -76,6 +79,17 @@ func (r *EventRegistry) Register(version int, decoder Decoder) {
 	}
 }
 func (r *EventRegistry) Decode(event LearningEvent) (LearningEvent, error) {
+	if event.Type == EventRedacted && event.AggregateType == "privacy" {
+		payload, err := decodePrivacyRedactionPayload(event.SchemaVersion, event.Payload)
+		if err != nil {
+			if event.SchemaVersion != EventSchemaVersion && event.SchemaVersion != EventRedactedSchemaVersion {
+				return LearningEvent{}, &Error{Code: CodeUnsupportedEventSchema, Reason: fmt.Sprintf("version_%d", event.SchemaVersion)}
+			}
+			return LearningEvent{}, &Error{Code: CodeProjectionUnavailable, Cause: err}
+		}
+		event.Payload = payload
+		return event, nil
+	}
 	decoder := r.decoders[event.SchemaVersion]
 	if decoder == nil {
 		return LearningEvent{}, &Error{Code: CodeUnsupportedEventSchema, Reason: fmt.Sprintf("version_%d", event.SchemaVersion)}
@@ -86,6 +100,60 @@ func (r *EventRegistry) Decode(event LearningEvent) (LearningEvent, error) {
 	}
 	event.Payload = payload
 	return event, nil
+}
+
+type canonicalPrivacyRedactionPayload struct {
+	ErasureID               string `json:"erasure_id"`
+	Generation              int64  `json:"generation"`
+	RedactedThroughEventSeq *int64 `json:"redacted_through_event_seq"`
+	PolicyVersion           string `json:"policy_version"`
+	ReasonCode              string `json:"reason_code"`
+}
+
+type legacyPrivacyRedactionPayload struct {
+	ErasureID       string `json:"erasure_id"`
+	Generation      int64  `json:"generation"`
+	RedactedThrough *int64 `json:"redacted_through"`
+	PolicyVersion   string `json:"policy_version"`
+	ReasonCode      string `json:"reason_code"`
+}
+
+func decodePrivacyRedactionPayload(version int, payload json.RawMessage) (json.RawMessage, error) {
+	var canonical canonicalPrivacyRedactionPayload
+	switch version {
+	case EventSchemaVersion:
+		var legacy legacyPrivacyRedactionPayload
+		if err := decodeStrictEventPayload(payload, &legacy); err != nil {
+			return nil, err
+		}
+		canonical = canonicalPrivacyRedactionPayload{
+			ErasureID: legacy.ErasureID, Generation: legacy.Generation,
+			RedactedThroughEventSeq: legacy.RedactedThrough,
+			PolicyVersion:           legacy.PolicyVersion, ReasonCode: legacy.ReasonCode,
+		}
+	case EventRedactedSchemaVersion:
+		if err := decodeStrictEventPayload(payload, &canonical); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unsupported privacy redaction schema")
+	}
+	if canonical.RedactedThroughEventSeq == nil {
+		return nil, fmt.Errorf("privacy redaction sequence is required")
+	}
+	return json.Marshal(canonical)
+}
+
+func decodeStrictEventPayload(payload json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("event payload must contain one JSON object")
+	}
+	return nil
 }
 
 type ProjectionMetadata struct {
@@ -153,6 +221,14 @@ func EmptyProjection(generationID string) Projection {
 }
 
 func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningEvent) error {
+	if event.Redacted {
+		if event.EventSequence <= projection.Metadata.AsOfEventSequence {
+			return fmt.Errorf("event sequence is not strictly increasing")
+		}
+		projection.Metadata.AsOfEventSequence = event.EventSequence
+		projection.RedactedEvents[event.ID] = true
+		return nil
+	}
 	decoded, err := registry.Decode(event)
 	if err != nil {
 		projection.Metadata.Incomplete = true
@@ -163,6 +239,27 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		return fmt.Errorf("event sequence is not strictly increasing")
 	}
 	projection.Metadata.AsOfEventSequence = decoded.EventSequence
+	if decoded.Type == EventRedacted && decoded.AggregateType == "privacy" {
+		var payload struct {
+			ErasureID               string `json:"erasure_id"`
+			Generation              int64  `json:"generation"`
+			RedactedThroughEventSeq int64  `json:"redacted_through_event_seq"`
+			PolicyVersion           string `json:"policy_version"`
+			ReasonCode              string `json:"reason_code"`
+		}
+		if err := json.Unmarshal(decoded.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.ErasureID == "" || payload.Generation < 2 || payload.RedactedThroughEventSeq < 0 || payload.RedactedThroughEventSeq >= decoded.EventSequence || payload.PolicyVersion == "" || payload.ReasonCode == "" || decoded.AggregateID != payload.ErasureID {
+			return fmt.Errorf("privacy redaction payload is incomplete")
+		}
+		generationID := projection.Metadata.GenerationID
+		*projection = EmptyProjection(generationID)
+		projection.Metadata.AsOfEventSequence = decoded.EventSequence
+		projection.RedactedEvents[decoded.ID] = true
+		projection.Timeline = append(projection.Timeline, TimelineItem{EventSequence: decoded.EventSequence, EventID: decoded.ID, Type: decoded.Type, AggregateID: decoded.AggregateID, ReceivedAt: decoded.ReceivedAt, OccurredAt: decoded.OccurredAt, OccurredAtTrusted: false})
+		return nil
+	}
 	projection.Timeline = append(projection.Timeline, TimelineItem{EventSequence: decoded.EventSequence, EventID: decoded.ID, Type: decoded.Type, AggregateID: decoded.AggregateID, ReceivedAt: decoded.ReceivedAt, OccurredAt: decoded.OccurredAt, OccurredAtTrusted: false})
 	switch decoded.Type {
 	case EventRouteRevisionCreated:

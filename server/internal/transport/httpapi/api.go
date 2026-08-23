@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +19,9 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -62,16 +65,56 @@ type LearningService interface {
 	ProjectionStatus(context.Context) (learning.ProjectionStatus, error)
 }
 
+type MemoryService interface {
+	CreateCandidate(context.Context, memory.DevicePrincipal, memory.CreateCandidateCommand) (memory.OperationResult, error)
+	CreateCorrectionCandidate(context.Context, memory.DevicePrincipal, memory.CreateCorrectionCandidateCommand) (memory.OperationResult, error)
+	DecideCandidate(context.Context, memory.DevicePrincipal, memory.DecideCandidateCommand) (memory.OperationResult, error)
+	DeleteRecord(context.Context, memory.DevicePrincipal, memory.DeleteRecordCommand) (memory.OperationResult, error)
+	ReplayDelivery(context.Context, memory.DevicePrincipal, memory.ReplayDeliveryCommand) (memory.OperationResult, error)
+	Candidate(context.Context, string) (memory.CandidateView, error)
+	ListCandidates(context.Context, memory.PageRequest) (memory.CandidatePage, error)
+	ListRecords(context.Context, memory.PageRequest) (memory.RecordPage, error)
+	Record(context.Context, string) (memory.RecordView, error)
+}
+
+// MemoryExporter is separate from the mutation/query service because exported
+// content is loaded live from the optional remote memory dependency.
+type MemoryExporter interface {
+	Detail(context.Context, string) (memory.RecordDetail, error)
+	Export(context.Context, memory.PageRequest) (memory.ExportPage, error)
+}
+
+type PrivacyService interface {
+	AuthorizeAndCommitBarrier(context.Context, privacy.ErasureRequest, privacy.ErasureGrantAuthorization) (privacy.ErasureReceipt, error)
+	Receipt(context.Context, string) (privacy.ErasureReceipt, error)
+	RunLocal(context.Context, string) (privacy.ErasureReceipt, error)
+	RunNocturne(context.Context, string) (privacy.ErasureReceipt, error)
+}
+
+type PrivacyMigrationLeaseService interface {
+	AcquireMigrationLease(context.Context, privacy.MigrationLeaseRequest) (privacy.MigrationLease, error)
+	ReleaseMigrationLease(context.Context, privacy.MigrationLeaseRequest) error
+}
+
 type Options struct {
 	Identity                IdentityService
 	Model                   ModelProber
 	Knowledge               KnowledgeService
 	Learning                LearningService
+	Memory                  MemoryService
+	MemoryExporter          MemoryExporter
+	Privacy                 PrivacyService
+	MigrationLeases         PrivacyMigrationLeaseService
+	MaintenanceToken        string
+	ReadPermits             *privacy.ReadPermitManager
 	Readiness               Readiness
 	Logger                  *slog.Logger
 	PairLimiter             *FixedWindowLimiter
 	AuthLimiter             *FixedWindowLimiter
 	DeviceLimiter           *FixedWindowLimiter
+	PrivacyLimiter          *FixedWindowLimiter
+	Now                     func() time.Time
+	PrivacyBackupDeadline   time.Duration
 	MaxRequestBody          int64
 	MaxKnowledgeRequestBody int64
 	MaxLearningRequestBody  int64
@@ -82,11 +125,20 @@ type API struct {
 	model                   ModelProber
 	knowledge               KnowledgeService
 	learning                LearningService
+	memory                  MemoryService
+	memoryExporter          MemoryExporter
+	privacy                 PrivacyService
+	migrationLeases         PrivacyMigrationLeaseService
+	maintenanceToken        string
+	readPermits             *privacy.ReadPermitManager
 	readiness               Readiness
 	logger                  *slog.Logger
 	pairLimiter             *FixedWindowLimiter
 	authLimiter             *FixedWindowLimiter
 	deviceLimiter           *FixedWindowLimiter
+	privacyLimiter          *FixedWindowLimiter
+	now                     func() time.Time
+	privacyBackupDeadline   time.Duration
 	maxRequestBody          int64
 	maxKnowledgeRequestBody int64
 	maxLearningRequestBody  int64
@@ -97,6 +149,29 @@ type credentialContextKey struct{}
 func New(options Options) (http.Handler, error) {
 	if options.Identity == nil || options.Readiness == nil || options.Logger == nil || options.PairLimiter == nil || options.AuthLimiter == nil || options.DeviceLimiter == nil {
 		return nil, errors.New("HTTP API dependencies are required")
+	}
+	if (options.Memory == nil) != (options.MemoryExporter == nil) {
+		return nil, errors.New("memory HTTP API requires both service and exporter")
+	}
+	if options.MigrationLeases != nil && options.MaintenanceToken == "" {
+		return nil, errors.New("privacy migration lease HTTP API requires a maintenance token")
+	}
+	if options.ReadPermits == nil {
+		options.ReadPermits = privacy.DefaultReadPermits
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	if options.Privacy != nil {
+		if options.PrivacyLimiter == nil {
+			options.PrivacyLimiter = NewFixedWindowLimiter(5, time.Minute)
+		}
+		if options.PrivacyBackupDeadline == 0 {
+			options.PrivacyBackupDeadline = 30 * 24 * time.Hour
+		}
+		if options.PrivacyBackupDeadline < 0 || options.PrivacyBackupDeadline > 30*24*time.Hour {
+			return nil, errors.New("privacy backup deadline must be positive and no more than 30 days")
+		}
 	}
 	if options.MaxRequestBody <= 0 {
 		options.MaxRequestBody = 64 << 10
@@ -109,11 +184,15 @@ func New(options Options) (http.Handler, error) {
 	}
 	api := &API{
 		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, learning: options.Learning,
+		memory: options.Memory, memoryExporter: options.MemoryExporter,
+		privacy: options.Privacy, migrationLeases: options.MigrationLeases,
+		maintenanceToken: options.MaintenanceToken, readPermits: options.ReadPermits,
 		readiness: options.Readiness, logger: options.Logger,
 		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter,
-		deviceLimiter: options.DeviceLimiter, maxRequestBody: options.MaxRequestBody,
-		maxKnowledgeRequestBody: options.MaxKnowledgeRequestBody,
-		maxLearningRequestBody:  options.MaxLearningRequestBody,
+		deviceLimiter: options.DeviceLimiter, privacyLimiter: options.PrivacyLimiter,
+		now: options.Now, privacyBackupDeadline: options.PrivacyBackupDeadline,
+		maxRequestBody: options.MaxRequestBody, maxKnowledgeRequestBody: options.MaxKnowledgeRequestBody,
+		maxLearningRequestBody: options.MaxLearningRequestBody,
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -121,6 +200,10 @@ func New(options Options) (http.Handler, error) {
 	router.Use(api.audit)
 	router.Get("/livez", api.livez)
 	router.Get("/readyz", api.readyz)
+	if api.migrationLeases != nil {
+		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/acquire", api.acquirePrivacyMigrationLease)
+		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/release", api.releasePrivacyMigrationLease)
+	}
 	router.Post("/v1/pairings/exchange", api.exchangePairingCode)
 	router.Group(func(protected chi.Router) {
 		protected.Use(api.authenticate)
@@ -128,29 +211,89 @@ func New(options Options) (http.Handler, error) {
 		protected.With(api.requireScope("devices:manage")).Delete("/v1/devices/{deviceID}", api.revokeDevice)
 		protected.With(api.requireScope("model:probe")).Get("/v1/model/capabilities", api.modelCapabilities)
 		if api.knowledge != nil {
-			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/head", api.knowledgeHead)
-			protected.With(api.requireScope("knowledge:write")).Post("/v1/knowledge/imports", api.knowledgeImport)
-			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/{revisionID}/tree", api.knowledgeTree)
-			protected.With(api.requireScope("knowledge:read")).Get("/v1/knowledge/revisions/{revisionID}/export", api.knowledgeExport)
-			protected.With(api.requireScope("knowledge:read")).Post("/v1/knowledge/retrievals", api.knowledgeRetrieval)
+			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/head", api.knowledgeHead)
+			protected.With(api.requireScope("knowledge:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/imports", api.knowledgeImport)
+			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/{revisionID}/tree", api.knowledgeTree)
+			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/{revisionID}/export", api.knowledgeExport)
+			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/v1/knowledge/retrievals", api.knowledgeRetrieval)
 		}
 		if api.learning != nil {
-			protected.With(api.requireScope("learning:write")).Post("/v1/learning/goals", api.learningCreateGoal)
-			protected.With(api.requireScope("learning:write")).Post("/v1/tutoring/sessions", api.learningCreateSession)
-			protected.With(api.requireScope("learning:write")).Post("/v1/tutoring/proposals", api.learningProposal)
-			protected.With(api.requireScope("learning:write")).Post("/v1/tutoring/sessions/{sessionID}/actions", api.learningAction)
-			protected.With(api.requireScope("learning:write")).Post("/v1/learning/assessments/{assessmentID}/decisions", api.learningDecision)
-			protected.With(api.requireScope("learning:read")).Get("/v1/tutoring/sessions/current", api.learningCurrentSession)
-			protected.With(api.requireScope("learning:read")).Get("/v1/tutoring/sessions/{sessionID}", api.learningSession)
-			protected.With(api.requireScope("learning:read")).Get("/v1/learning/timeline", api.learningTimeline)
-			protected.With(api.requireScope("learning:read")).Get("/v1/learning/routes", api.learningRoutes)
-			protected.With(api.requireScope("learning:read")).Get("/v1/learning/nodes/{nodeRevisionID}", api.learningNode)
-			protected.With(api.requireScope("learning:read")).Get("/v1/learning/evidence", api.learningEvidence)
-			protected.With(api.requireScope("learning:read")).Get("/v1/learning/reviews", api.learningReviews)
-			protected.With(api.requireScope("learning:read")).Get("/v1/learning/projections/status", api.learningProjectionStatus)
+			learningOwners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/learning/goals", api.learningCreateGoal)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/sessions", api.learningCreateSession)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/proposals", api.learningProposal)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/sessions/{sessionID}/actions", api.learningAction)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/learning/assessments/{assessmentID}/decisions", api.learningDecision)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions/current", api.learningCurrentSession)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions/{sessionID}", api.learningSession)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/timeline", api.learningTimeline)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/routes", api.learningRoutes)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/nodes/{nodeRevisionID}", api.learningNode)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/evidence", api.learningEvidence)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/reviews", api.learningReviews)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/projections/status", api.learningProjectionStatus)
+		}
+		if api.memory != nil {
+			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Post("/v1/memory/candidates", api.memoryCreateCandidate)
+			protected.With(api.requireScope("memory:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/v1/memory/candidates", api.memoryListCandidates)
+			protected.With(api.requireScope("memory:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/v1/memory/candidates/{candidateID}", api.memoryCandidate)
+			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Post("/v1/memory/candidates/{candidateID}/decisions", api.memoryCandidateDecision)
+			protected.With(api.requireScope("memory:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/v1/memory/records", api.memoryListRecords)
+			protected.With(api.requireScope("memory:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/v1/memory/records/{memoryID}", api.memoryRecord)
+			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Post("/v1/memory/records/{memoryID}/candidates", api.memoryCreateCorrectionCandidate)
+			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Delete("/v1/memory/records/{memoryID}", api.memoryDeleteRecord)
+			protected.With(api.requireScope("memory:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/v1/memory/export", api.memoryExport)
+			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Post("/v1/memory/deliveries/{deliveryID}/replays", api.memoryReplayDelivery)
+		}
+		if api.privacy != nil {
+			protected.With(api.limitPrivacyErasure).Post("/v1/privacy/erasures", api.privacyCreateErasure)
+			protected.With(api.requireScope("privacy:read")).Get("/v1/privacy/erasures/{erasureID}", api.privacyErasureReceipt)
 		}
 	})
 	return router, nil
+}
+
+func (a *API) responseReadPermit(closedCode string, owners ...privacy.OwnerKind) func(http.Handler) http.Handler {
+	return a.handleResponseReadPermit(closedCode, owners...)
+}
+func (a *API) limitPrivacyErasure(next http.Handler) http.Handler {
+	return a.handlePrivacyErasureRateLimit(next)
+}
+func (a *API) memoryCreateCandidate(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryCreateCandidate(w, r)
+}
+func (a *API) memoryListCandidates(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryListCandidates(w, r)
+}
+func (a *API) memoryCandidate(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryCandidate(w, r)
+}
+func (a *API) memoryCandidateDecision(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryCandidateDecision(w, r)
+}
+func (a *API) memoryListRecords(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryListRecords(w, r)
+}
+func (a *API) memoryRecord(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryRecord(w, r)
+}
+func (a *API) memoryCreateCorrectionCandidate(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryCreateCorrectionCandidate(w, r)
+}
+func (a *API) memoryDeleteRecord(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryDeleteRecord(w, r)
+}
+func (a *API) memoryExport(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryExport(w, r)
+}
+func (a *API) memoryReplayDelivery(w http.ResponseWriter, r *http.Request) {
+	a.handleMemoryReplayDelivery(w, r)
+}
+func (a *API) privacyCreateErasure(w http.ResponseWriter, r *http.Request) {
+	a.handlePrivacyCreateErasure(w, r)
+}
+func (a *API) privacyErasureReceipt(w http.ResponseWriter, r *http.Request) {
+	a.handlePrivacyErasureReceipt(w, r)
 }
 
 func (a *API) learningCreateGoal(w http.ResponseWriter, r *http.Request) {
@@ -274,6 +417,63 @@ func (a *API) requireScope(scope string) func(http.Handler) http.Handler {
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+func (a *API) requireMaintenanceToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		values := r.Header.Values("Authorization")
+		provided, ok := bearerToken(r.Header.Get("Authorization"))
+		if len(values) != 1 || !ok || len(provided) != len(a.maintenanceToken) ||
+			subtle.ConstantTimeCompare([]byte(provided), []byte(a.maintenanceToken)) != 1 {
+			writeError(w, r, http.StatusUnauthorized, "authentication_failed", "Maintenance credentials are invalid")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *API) acquirePrivacyMigrationLease(w http.ResponseWriter, r *http.Request) {
+	var request privacy.MigrationLeaseRequest
+	if err := decodeJSON(w, r, a.maxRequestBody, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, privacy.CodeInvalidRequest, "Migration lease request is invalid")
+		return
+	}
+	lease, err := a.migrationLeases.AcquireMigrationLease(r.Context(), request)
+	if err != nil {
+		a.writePrivacyMigrationLeaseFailure(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"operation_id": lease.OperationID,
+		"status":       "acquired",
+		"replayed":     lease.Replayed,
+	})
+}
+
+func (a *API) releasePrivacyMigrationLease(w http.ResponseWriter, r *http.Request) {
+	var request privacy.MigrationLeaseRequest
+	if err := decodeJSON(w, r, a.maxRequestBody, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, privacy.CodeInvalidRequest, "Migration lease request is invalid")
+		return
+	}
+	if err := a.migrationLeases.ReleaseMigrationLease(r.Context(), request); err != nil {
+		a.writePrivacyMigrationLeaseFailure(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) writePrivacyMigrationLeaseFailure(w http.ResponseWriter, r *http.Request, err error) {
+	switch privacy.ErrorCode(err) {
+	case privacy.CodeInvalidRequest:
+		writeError(w, r, http.StatusBadRequest, privacy.CodeInvalidRequest, "Migration lease request is invalid")
+	case privacy.CodeMigrationLeaseConflict:
+		writeError(w, r, http.StatusConflict, privacy.CodeMigrationLeaseConflict, "Migration lease is unavailable")
+	default:
+		a.logger.ErrorContext(r.Context(), "privacy migration lease failed",
+			"request_id", middleware.GetReqID(r.Context()), "error_category", "unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "unavailable", "Migration lease service is unavailable")
 	}
 }
 
@@ -420,6 +620,8 @@ func (a *API) writeKnowledgeFailure(w http.ResponseWriter, r *http.Request, oper
 		status, message = http.StatusConflict, "Knowledge import could not be committed"
 	case knowledge.CodeNotFound:
 		status, message = http.StatusNotFound, "Knowledge revision was not found"
+	case knowledge.CodeContentRedacted:
+		status, message = http.StatusServiceUnavailable, "Knowledge content was redacted"
 	case "":
 		a.logger.ErrorContext(r.Context(), "knowledge request failed",
 			"request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")

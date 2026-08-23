@@ -1,9 +1,9 @@
 schema: comet.native.v4
 name: memory-bridge
 language: zh-CN
-phase: build
+phase: archive
 status: active
-state_version: 2
+state_version: 12
 brief: brief.md
 spec_changes:
   - capability: memory-bridge
@@ -15,35 +15,47 @@ workspace:
   target_branch: comet/teaching-interview-agent
   finish: null
 loop:
-  stage: building
+  stage: archive-ready
   goal_cycle: 1
-  iteration: 1
-  attempt: 0
+  iteration: 3
+  attempt: 1
   retry_epoch: 0
-  failed_iteration_count: 0
+  failed_iteration_count: 2
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: submit-builder-candidate
+  next_action: archive
 acceptance:
   - id: A1
     source: brief.md
     text: A1：准入矩阵证明只有用户明确陈述、稳定、非敏感的交互偏好或时间约束可以按 `memory-admission-v1` 自动
       admit；模型推断、敏感信息、长期背景和生成摘要保持 pending review。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A2
     source: brief.md
     text: A2：Candidate 查询返回状态、来源事件或操作、提议者、理由、policy version、敏感级别、稳定性、有效期和 candidate
       URI；并发或陈旧 decision 使用 expected revision 返回冲突而不静默覆盖。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A3
     source: brief.md
     text: A3：原始聊天、完整答题、目标、掌握度、误区结论、路线、复习队列和同步状态在准入与 adapter 两层均被拒绝，且不创建
       delivery、Outbox 或 Nocturne 内容。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A4
     source: brief.md
     text: A4：pending Candidate 和 queued delivery 的正文只存在于可清理的有界 payload
@@ -51,95 +63,151 @@ acceptance:
       cancel/scrub，曾sent的到期attempt继续用无正文URI/hash任务对账和删除，reject、applied、permanent
       rejection或verified expiry后Go Record仅保留hash、external
       URI/ID、revision、generation、状态和回执。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A5
     source: brief.md
     text: A5：部署预检验证 Nocturne `2.5.6` 的 source commit、完整依赖/apt
       snapshot、BuildKit/platform输入和registry manifest/config
       digest；Compose只消费锁定image，使用独立数据库、账号、volume、token和内部网络，Go与Nocturne数据库账号不能互读。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A6
     source: brief.md
     text: A6：真实固定Nocturne契约覆盖Bearer成功/失败、health、browse node
       create/read/update/delete、search、global orphan和positive-integer memory ID
       permanent delete；兼容maintenance capability完整枚举node引用、boot epoch和backup
       inventory，任何响应漂移会阻止升级。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A7
     source: brief.md
     text: A7：记忆写入在响应时读取 durable delivery 状态并返回 `applied / queued / rejected`；相同
       operation/hash 重放原 Record 与状态，不创建第二个 Candidate、Record、delivery 或远端节点。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A8
     source: brief.md
     text: A8：Nocturne 下线时教学、知识、评估、查询和重放继续工作，readiness 为 HTTP 200 degraded，记忆写入为
       queued；恢复后同一确定性 URI 被对账并应用。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A9
     source: brief.md
     text: A9：远端已提交但响应丢失时，重启后通过确定性 URI 和 canonical content hash 对账为 applied，不盲目
       append、覆盖未知内容或生成重复节点。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A10
     source: brief.md
     text: A10：两个 worker、乱序 revision、lease 过期和 delete 并发下，同一 logical memory 最多一个有效远端
       attempt；attempt进入sent/unknown后重领只能对账，旧 revision、旧 generation 或 tombstoned
       delivery 在调用前后均被 fence，不能复活已删除内容。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A11
     source: brief.md
     text: A11：瞬时错误超过自动预算进入dead
       letter且保持queued；payload在有效期内可受fence保护地人工replay。到期后正文立即scrub，但任何sent/unknown
       attempt继续以无正文URI/hash/boot-epoch任务对账，匹配远端内容会被永久删除，absence
       verified前不终态expired。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A12
     source: brief.md
     text: A12：privacy barrier先关闭所有正文read/write gate并等待或取消旧read
       permit，再在独立事务递增全局generation、建立tombstone和冻结旧attempt；提交后各owner独立幂等scrub
       Candidate、delivery、Outbox/Inbox及业务payload，barrier前启动的旧generation写在提交CAS时失败，旧read不能在barrier后发布正文。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A13
     source: brief.md
     text: A13：隐私清除与在途或结果未知的远端请求并发时，回执保持 pending/partial；只有 attempt 排空并完成 URI/hash
       对账及后续清除后才能进入 verified。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A14
     source: brief.md
     text: A14：单条删除和全局清除按“完整枚举全部path/alias/reference -> 解除路径 -> 确认deprecated orphan
       -> 逐个permanent delete history ->
       browse/search/orphan/reference复查”执行；active ID的409或任何不可枚举引用使回执保持partial。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A15
     source: brief.md
     text: A15：真实 PostgreSQL 扫描证明 identity 可识别标签、knowledge 正文与索引、learning/tutoring
       typed payload、event payload、Inbox/Outbox、memory payload 及 active/retired
       projection generation 不含原正文，只保留冻结的最小审计字段和 tombstone。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A16
     source: brief.md
     text: A16：从零重放先识别持久 redaction barrier，对已清 payload 使用版本化 no-op/补偿语义，能够完成并且不恢复
       Evidence、正文、旧 focus、旧 route 或退休 projection 内容。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A17
     source: brief.md
     text: A17：Nocturne 故障期间本地 scrub 可以完成，但总回执为 partial；恢复后同一 erasure operation
       幂等续跑远端清理，不重复删除其他记录或错误宣称完成。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A18
     source: brief.md
     text: A18：所有managed Nocturne migration backup只以generation专属key envelope
@@ -147,8 +215,12 @@ acceptance:
       key并验证不可恢复，使实际时间不晚于`erasure_requested_at +
       30d`，周期inventory/prune另负责普通retention和文件清理，operator/external
       backup与模型限制持续单列。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A19
     source: specs/memory-bridge/spec.md
     text: "`server/internal/memory` 拥有
@@ -158,8 +230,12 @@ acceptance:
       barrier 状态、逐存储 ErasureReceipt
       和恢复编排。`server/internal/integrations/nocturne` 只实现 memory 定义的 Nocturne
       port；HTTP、worker、PostgreSQL 和部署代码是 adapter。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A20
     source: specs/memory-bridge/spec.md
     text: Go/PostgreSQL 是 Candidate、decision、Record metadata、operation
@@ -167,8 +243,12 @@ acceptance:
       的权威源。Nocturne 是 applied MemoryRecord 正文的唯一权威源，不是
       Goal、Route、Activity、Attempt、Assessment、Evidence、Mastery、Misconception、Review、Focus
       或同步状态的输入或副本。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A21
     source: specs/memory-bridge/spec.md
     text: Go 可以在 `pending_review` Candidate 和未完成 delivery
@@ -177,16 +257,24 @@ acceptance:
       Candidate payload。Delivery 成为 applied、permanently_rejected、expired 或
       deleted 后立即 scrub。长期 Record 表只保存 SHA-256、外部
       URI/ID、revision、generation、状态、来源引用和 receipt，不保存正文。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A22
     source: specs/memory-bridge/spec.md
     text: "`privacy` 只编排。identity、knowledge、learning、tutoring 和 memory
       各自定义generation-gate、`RedactTx`和`VerifyRedacted`窄端口并拥有本模块的scrub规则。第一barrie\
       r事务由privacy应用服务拥有并在同一DBTX只调用owner gate port；提交后每个owner
       scrub步骤使用独立DBTX，允许失败后幂等续跑。禁止privacy store直接读取或修改其他模块私有表。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A23
     source: specs/memory-bridge/spec.md
     text: 生产兼容目标固定为 GitHub release `2.5.6` 和完整 commit
@@ -197,8 +285,12 @@ acceptance:
       platform和`SOURCE_DATE_EPOCH`固定。machine-readable lock至少包含upstream
       URL/tag/commit/source archive SHA-256、overlay revision、dependency
       artifacts、base/platform image digests和source labels。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A24
     source: specs/memory-bridge/spec.md
     text: 生产Compose只消费`registry/repository@sha256:<platform-manifest>`，不得同时声明`build:`或浮动tag。发布流程分别验证registry
@@ -206,8 +298,12 @@ acceptance:
       digest；离线部署使用锁定OCI
       layout及其SHA-256导入，不把本地tag当作digest。部署预检在启动前验证当前platform、image
       labels和lock一致。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A25
     source: specs/memory-bridge/spec.md
     text: "固定 REST capability 为：`GET /health` 或 `/api/health`；`GET/POST/PUT/DELETE
@@ -221,8 +317,12 @@ acceptance:
       `memory_id`是正整数，不是UUID。duplicate/graph validation错误按fixture归一化为422，active
       permanent delete为409，missing为404。所有非health请求使用至少32字符的`Authorization:
       Bearer` secret；响应、body上限和错误分类漂移使capability probe失败。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A26
     source: specs/memory-bridge/spec.md
     text: 上游 `2.5.6` 没有生产可用的完整 path/alias/review-reference/boot-preset 枚举或进程 epoch
@@ -239,8 +339,12 @@ acceptance:
       token、仅内部网络可达，不接收namespace，不实现业务准入或generation，不允许按空条件批量删除。maintenance
       token必须来自至少256-bit随机值、序列化后至少32字符，extension使用常量时间比较，缺失、弱值或与普通API
       token相同会拒绝启动。它的源码、测试和最终image digest与upstream commit一起锁定。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A27
     source: specs/memory-bridge/spec.md
     text: 生产 adapter 不使用 Nocturne MCP tool 的自由文本结果，不使用 Dashboard changeset
@@ -249,8 +353,12 @@ acceptance:
       allowlist只放行health、bridge使用的browse/search/orphan路由和`edu-agent-maintenance-v1`，拒绝settings、domain管理、Dashboard及其他REST写入口。Nocturne
       namespace 是路由标签，不是授权边界；bridge 使用固定 namespace 和 domain，拒绝调用方提供
       namespace/domain，并通过专用 token、内部网络和独立数据库实现隔离。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A28
     source: specs/memory-bridge/spec.md
     text: Compose 为 Nocturne 使用独立 PostgreSQL database、user、credential、volume 和
@@ -261,8 +369,12 @@ acceptance:
       overlay必须把它替换为backup-controller调用：`pg_dump`只经pipe或tmpfs产生，使用learner-generation专属data
       key生成envelope-encrypted artifact后原子发布，持久volume上不得出现plaintext dump。wrapped
       key只保存在Go的可销毁key表，backup-controller每次操作短时解封后清零，不长期cache。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A29
     source: specs/memory-bridge/spec.md
     text: MemoryCandidate 是不可变 proposal 加 append-only decision 的组合。Candidate 包含
@@ -272,8 +384,12 @@ acceptance:
       policy version、revision、created time 和当前状态。source kind 固定为 `user_statement
       / model_inference / long_term_background / generated_summary`；sensitivity
       固定为 `non_sensitive / sensitive`；stability 固定为 `transient / stable`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A30
     source: specs/memory-bridge/spec.md
     text: Candidate 状态为 `pending_review / admitted / rejected / expired`。创建从
@@ -284,14 +400,22 @@ acceptance:
       不可覆盖。pending Candidate 详情在 `memory:read` 下返回 `proposed_content` 和
       `content_status=available`；终态或已 scrub Candidate 只返回
       `content_status=scrubbed` 与 hash，不返回正文。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A31
     source: specs/memory-bridge/spec.md
     text: expiry worker 在启动时补扫，并以配置的不超过 5 分钟间隔扫描。过期状态转换、decision 记录和 payload scrub
       在同一事务完成；查询路径也会先执行惰性 expiry。最大过期正文清理延迟等于冻结的 sweep interval，不能因无人查询而无限保留。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A32
     source: specs/memory-bridge/spec.md
     text: 一个 admitted Candidate 创建 logical memory ID 和不可变 MemoryRecord revision
@@ -300,8 +424,12 @@ acceptance:
       Record revision。旧 revision 在新 revision 远端确认后变为 superseded。Record revision
       状态为 `queued / applied / permanently_rejected / superseded / delete_pending
       / deleted`。删除不复用 logical memory ID；重新创建产生新 ID。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A33
     source: specs/memory-bridge/spec.md
     text: Record metadata 包含 logical memory ID、record revision ID、revision
@@ -310,39 +438,59 @@ acceptance:
       hash、状态、delivery ID、created/applied/superseded/deleted time 和
       receipt。Record 查询默认不返回正文；显式详情或 export 通过 Nocturne 实时读取并返回
       `degraded`/`unavailable`，不把结果缓存为长期 Go 副本。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A34
     source: specs/memory-bridge/spec.md
     text: "`memory-admission-v1` 只允许同时满足以下条件的 Candidate 自动 admit：source kind
       是认证用户明确陈述；category 是交互偏好或时间约束；stability 是 stable；sensitivity 是
       non_sensitive；正文和来源通过禁止内容检查；valid-until 未过期。任何字段缺失、相互矛盾或无法证明时保持
       pending_review，而不是猜测。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A35
     source: specs/memory-bridge/spec.md
     text: model inference、sensitive 内容、long-term background 和 generated summary 一律
       pending_review。generated summary 标记为 non-authoritative model artifact，保留可信
       model ID、prompt revision 和 source hashes；不能显示为用户原话。显式 admit 可以接受 sensitive
       Candidate，但 decision 和后续查询必须保留 sensitivity 标记。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A36
     source: specs/memory-bridge/spec.md
     text: 禁止写入内容固定包括原始聊天、完整 Attempt/答案、题目与 rubric 全文、目标、路线、掌握度、Evidence
       明细、误区结论、复习队列、同步状态、设备 token、模型 secret 和 Nocturne secret。candidate service
       在创建 payload 前验证，Nocturne adapter 在读取 delivery payload 后再次验证
       category/source policy；任一层拒绝都不调用外部服务。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A37
     source: specs/memory-bridge/spec.md
     text: HTTP candidate create 只产生 `user_statement`，proposer 来自认证
       device。模型候选只能由服务端受信的 CandidateProposer port 创建，model ID 和 prompt revision
       来自配置，不接受客户端自报。未来 MCP 只能包装同一应用服务，不能绕过该边界。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A38
     source: specs/memory-bridge/spec.md
     text: 每个 admit、修正、delete 或 erasure remote step 创建 immutable Delivery。Delivery 包含
@@ -350,8 +498,12 @@ acceptance:
       generation、payload ID/hash、deterministic URI、attempt
       state、lease、unknown-result marker、valid-until、attempt count、last category
       和 receipt。一个 logical memory 同时最多一个远端 attempt permit。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A39
     source: specs/memory-bridge/spec.md
     text: 每个远端 attempt 是 durable 状态机 `prepared / sent / unknown / reconciling /
@@ -361,23 +513,35 @@ acceptance:
       reconciliation，不能再次发送 mutation。GET 404 本身不证明旧请求不会延迟提交；自动重发只允许 prior
       attempt 从未进入 sent，或 compatibility boot epoch 已变化且该 URI 经重复读仍不存在。其他未知结果保持
       queued，等待对账或受审计的 sidecar restart，不能靠固定睡眠猜测成功/失败。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A40
     source: specs/memory-bridge/spec.md
     text: 单条 delete 在一个本地 CAS 事务中递增 record generation、写 tombstone、fence旧 delivery并
       enqueue delete；barrier 或 delete 后取得的旧 lease 即使仍在运行也不能写业务 success，且必须纳入后续
       remote reconciliation。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A41
     source: specs/memory-bridge/spec.md
     text: 准入事务锁定 Candidate、logical memory 和 generation，写
       decision/Record/Delivery/payload，并通过 `outboxpostgres.EnqueueWith` 在同一事务
       enqueue。Outbox payload 只能包含 delivery ID、payload hash、Record
       revision、learner generation 和 record generation，不包含正文。外部调用永远发生在事务提交之后。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A42
     source: specs/memory-bridge/spec.md
     text: 通用 Outbox 状态扩展为 `pending / processing / applied / dead /
@@ -391,31 +555,47 @@ acceptance:
       永久终止。fenced/superseded/canceled delivery 的历史公开为 rejected 加稳定 reason，当前
       Record 状态仍由新 revision或 tombstone 决定。请求返回响应时读取当前 durable 状态，不保证新写一定同步
       applied。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A43
     source: specs/memory-bridge/spec.md
     text: 相同 operation ID 与相同 canonical request hash 返回第一次 Candidate/Record/Delivery
       和当前状态，不创建重复实体。相同 key 不同 hash 返回 idempotency conflict。Nocturne 没有原生
       idempotency，因此上游响应本身不能证明重试安全。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A44
     source: specs/memory-bridge/spec.md
     text: 外部 URI 使用固定 namespace、固定 domain `core`、受控 parent `edu-agent` 和 logical
       memory UUID；不得包含候选正文、用户名称、设备名称或其他 PII。Record revision 更新同一 URI，使用完整正文
       PUT，不使用非幂等 append。create 前后、update 前后和 timeout 恢复都读取同一 URI 并比较 canonical
       UTF-8 content SHA-256。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A45
     source: specs/memory-bridge/spec.md
     text: consumer 在获取 attempt permit 后重新读取当前 Record revision、learner
       generation、record generation、tombstone 和 payload hash。远端返回后在写 receipt
       前再次检查。若 fence 已变化，结果记录为 fenced 并触发当前 delete/erasure reconciliation，不能把旧
       delivery 标为业务 applied。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A46
     source: specs/memory-bridge/spec.md
     text: timeout、connection loss 或进程在远端提交后崩溃使 Delivery 进入 `unknown`。worker 不能盲重试
@@ -424,8 +604,12 @@ acceptance:
       epoch 已终止的 attempt 才能在稳定 404 后创建新的 prepared attempt。无法判定时保持 queued/partial
       并继续有界对账。privacy completion 必须等待所有旧 generation attempt 已结束或被新 boot epoch 与
       absence verification确定性关闭。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A47
     source: specs/memory-bridge/spec.md
     text: 瞬时错误按通用 worker 有界退避。超过自动预算进入 dead letter但保持公开 queued；在 payload
@@ -434,8 +618,12 @@ acceptance:
       Outbox及`prepared / sent / unknown / reconciling` attempt。到期事务CAS fence
       Delivery、把Outbox转为canceled/expired、使processing
       lease失效并立即scrub正文；从未进入sent的attempt可直接完成expired。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A48
     source: specs/memory-bridge/spec.md
     text: 任何曾进入`sent / unknown /
@@ -447,30 +635,46 @@ acceptance:
       generation执行完整unlink/orphan/history永久删除；hash冲突保持partial并要求审阅。absence或删除verified前Delivery不能进入最终expired，不能因payload已scrub而停止远端收敛。过期、applied、permanently
       rejected、tombstoned或旧generation delivery禁止人工replay；人工replay创建新的Outbox
       attempt，不修改历史receipt。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A49
     source: specs/memory-bridge/spec.md
     text: create 使用 `POST /api/browse/node` 的固定 body：bridge 提供固定 parent/domain、UUID
       title、完整 content 和受控 priority/disclosure。成功响应必须含 URI 和 memory ID，随后 GET 该
       URI 验证内容 hash。已存在 URI 时先 GET 对账；相同 hash视为幂等成功，不同 hash 只能由当前 Record
       revision 的 update protocol 处理。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A50
     source: specs/memory-bridge/spec.md
     text: 修正使用 `PUT /api/browse/node` 完整替换内容。Nocturne 会创建新 Memory row并使旧版本
       deprecated；bridge 记录新 memory ID 和已知历史 ID，但不复制历史正文。更新响应丢失时按 URI/hash
       对账。任何无法解释的 remote content conflict 为永久 conflict，禁止静默覆盖。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A51
     source: specs/memory-bridge/spec.md
     text: 普通 `DELETE /api/browse/node` 只解除一条访问 path。bridge 的 record delete
       必须枚举并解除所有由该 Record 创建或发现的 path/alias；若子节点规则拒绝、修复到其他 alias、或仍存在未知 path，删除保持
       partial。不能把 URI 404 单独作为正文已删除证据。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A52
     source: specs/memory-bridge/spec.md
     text: 最后路径消失后，active Memory 应成为 `deprecated=true`
@@ -483,8 +687,12 @@ acceptance:
       ID的409是未完成而非成功。每次删除后重新读取orphan detail，因为上游会修复migrated-to chain；browse
       CRUD通常不产生changeset，review位置可经完整枚举证明`not_applicable`，存在引用时才调用绑定node
       UUID的maintenance endpoint清理并复查。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A53
     source: specs/memory-bridge/spec.md
     text: 永久删除完成要求：browse URI 404；以确定性UUID title/path为`q`执行search且结果不含目标node
@@ -493,30 +701,46 @@ acceptance:
       detail 404；global
       orphan列表不存在目标node/memory；固定sidecar的独立数据库契约测试证明真实`nodes`、`memories`、`edges`、`paths`、`glossary_keywords`、`search_documents`和`memory_access_logs`相关row为零。生产Go
       adapter不跨库查询，完备性来自锁定maintenance capability；数据库断言只在隔离契约测试或Nocturne自身维护边界执行。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A54
     source: specs/memory-bridge/spec.md
     text: Nocturne 的“permanent”只表示在线数据库逻辑行删除。回执不得把它描述为 secure erase，也不得宣称
       WAL、空闲页、宿主快照或外部备份已物理擦除。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A55
     source: specs/memory-bridge/spec.md
     text: PrivacyErasure 是单用户全局 operation，状态为 `barrier_committed / local_scrubbed /
       remote_draining / remote_purged / verified / partial / blocked`。请求包含
       operation ID、request hash、reason、认证 actor 和显式确认；相同 operation/hash
       幂等重放。系统同一时间只允许一个 active erasure。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A56
     source: specs/memory-bridge/spec.md
     text: 第一事务只提交不可回滚的 barrier：按固定顺序锁 privacy singleton和所有owner generation
       gate，冻结旧generation attempt许可，递增learner
       generation，写全局tombstone、`redacted_through_event_seq`、最小`EventRedacted`
       audit和ErasureReceipt slots，然后提交。它不执行正文scrub或远端调用；任一后续owner失败都不能撤销barrier。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A57
     source: specs/memory-bridge/spec.md
     text: barrier提交后，identity、knowledge、learning/tutoring、memory和Outbox
@@ -525,15 +749,23 @@ acceptance:
       gate重新打开到新generation；memory远端写gate必须等旧attempt排空和Nocturne remote purge
       verified后才打开。partial/blocked期间barrier和旧generation
       fence持续有效，新generation数据绝不能被旧erasure步骤选中。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A58
     source: specs/memory-bridge/spec.md
     text: 所有可能写入PII的identity、knowledge、learning、tutoring、memory事务，Learning Event
       append、projection materializer和cache fill都必须在开始时读取owner gate与learner
       generation，在提交前锁gate并CAS验证generation仍相同且允许写入。barrier取得同一gate锁并推进generation：barrier前已提交的数据会被后续scrub覆盖，barrier前启动但尚未提交的旧generation事务必须回滚或显式重试到新generation，不能在scrub后提交旧正文。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A59
     source: specs/memory-bridge/spec.md
     text: 所有可能返回正文的Candidate detail、knowledge export/retrieval、learning/tutoring
@@ -541,15 +773,23 @@ acceptance:
       permit，并由transport持有到响应最后一个byte完成或请求取消。barrier先关闭新read
       permit，取消并有界等待旧permit排空，再提交数据库generation；取得旧generation内容但未完成响应的handler必须丢弃结果并返回`content_redacted`/degraded，不能在barrier后发布正文。M1单Go进程的in-process
       permit仍需与PostgreSQL gate generation双重校验，进程重启不能绕过持久barrier。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A60
     source: specs/memory-bridge/spec.md
     text: barrier active 时新的 memory create/update/replay返回
       `privacy_clear_in_progress`。知识、教学和查询可以按 owner 的清除状态返回空、degraded 或明确
       unavailable，不能读出旧正文。Nocturne 故障不回滚本地 barrier。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A61
     source: specs/memory-bridge/spec.md
     text: identity owner 清除设备可识别 display label 和非必要使用元数据，但保留随机 device ID、token
@@ -557,8 +797,12 @@ acceptance:
       owner 清除 canonical Markdown、导出正文、节点可识别标题/摘要和检索 artifact，保留 revision/node
       ID、hash、lineage tombstone和 redacted 标志。普通导出/检索遇到 redacted revision 返回稳定
       `content_redacted`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A62
     source: specs/memory-bridge/spec.md
     text: learning/tutoring owner 清除 Goal/Activity/Attempt/Assessment/Exposure/free
@@ -567,8 +811,12 @@ acceptance:
       materialization 和运行时缓存，保留 event header、ID、sequence、schema version、payload
       hash、operation/device引用、可信时间、redaction barrier 和最小 disposition审计。所有 active
       与 retired projection generation 都必须删除或重建为空，不能只切换 active head。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A63
     source: specs/memory-bridge/spec.md
     text: memory owner 清除 Candidate/delivery payload、可识别 source excerpt、dead letter
@@ -577,24 +825,36 @@ acceptance:
       disposition
       `privacy_erasure`或`fenced`，使任何旧lease失效，再把payload替换为无正文tombstone；Inbox/operation
       replay只能返回scrub后的最小结果。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A64
     source: specs/memory-bridge/spec.md
     text: append-only历史表的普通应用 API 仍禁止 UPDATE/DELETE。隐私清除通过每个 owner 的受控、可审计、事务内
       maintenance primitive执行；该 primitive只能在匹配 active
       PrivacyErasure、generation和receipt ID时运行。具体使用存储过程、专用 trigger
       guard或表分离属于实现细节，但不能开放为通用 Repository或任意 SQL bypass。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A65
     source: specs/memory-bridge/spec.md
     text: full erasure 在 barrier transaction 中追加 schema-versioned `EventRedacted`
       canonical event，payload只包含 erasure ID、新
       generation、`redacted_through_event_seq`、policy version和最小reason
       code。它不包含被删正文或正文列表。对应 event payload本身保留供重放。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A66
     source: specs/memory-bridge/spec.md
     text: "`learning_event_payloads` 对已覆盖 event 标记 redacted并移除正文；原 payload hash留在
@@ -602,8 +862,12 @@ acceptance:
       barrier。对 `event_seq <= redacted_through_event_seq` 且
       payload已redacted的事件产生版本化 no-op envelope，不执行原event decoder或hash
       recomputation；未被redact的payload仍严格校验header/row/computed hash。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A67
     source: specs/memory-bridge/spec.md
     text: Replay按 event sequence应用 no-op header和 EventRedacted
@@ -611,8 +875,12 @@ acceptance:
       audit；barrier后的新generation事件正常应用。增量处理与从零Replay必须得到相同fingerprint、checkpoint、空旧Evidence/route/focus和后续新状态。未知redaction
       schema使rebuild明确失败并保留旧可读generation，但旧generation在privacy
       barrier后不得向普通查询暴露正文。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A68
     source: specs/memory-bridge/spec.md
     text: ErasureReceipt 是append-only step result加current summary。每个位置记录
@@ -625,15 +893,23 @@ acceptance:
       generations、memory Candidate/delivery、process cache、Nocturne active
       paths、Nocturne orphan/history、Nocturne snapshot/changeset、managed
       backup和external model/provider。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A69
     source: specs/memory-bridge/spec.md
     text: "`local_scrubbed` 可以在Nocturne离线时达成，但总summary保持partial。远端步骤恢复后从durable
       receipt续跑；重复unlink、permanent
       delete的404、已scrubpayload和已完成step按固定幂等规则处理，不能删除不属于该erasure的orphan。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A70
     source: specs/memory-bridge/spec.md
     text: managed backup inventory以相对路径、created-at、size、SHA-256、learner
@@ -643,8 +919,12 @@ acceptance:
       inventory项同时绑定erasure ID；上游upgrade/migration与active
       erasure互斥，barrier后且remote purge完成前不得生成新managed
       backup。若inventory不可读，step保持pending/unknown，不能按任意路径删除。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A71
     source: specs/memory-bridge/spec.md
     text: retention必须是正数且不超过30天，所有时间使用UTC。第一barrier事务销毁旧learner generation的全部wrapped
@@ -657,16 +937,24 @@ acceptance:
       deadline。时间或文件删除本身不会自动成功；只有key表absence、controller
       memory/cache规则和加密artifact无法restore的fixture证据都存在才标succeeded。operator
       snapshot、Go数据库外部备份、宿主/云备份和外部模型数据分别标unsupported或unknown，不得合并成success。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A72
     source: specs/memory-bridge/spec.md
     text: 全局`verified`要求所有受管理活动存储succeeded/not-applicable、所有旧generation
       attempt排空、Nocturne absence verification通过且没有failed/unknown managed
       step。external provider
       unsupported不阻止活动存储verified，但必须在API和导出回执中持续显示限制。secure erase不属于任何状态名称。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A73
     source: specs/memory-bridge/spec.md
     text: 配置新增Nocturne enabled/base URL/API token/maintenance
@@ -679,16 +967,24 @@ acceptance:
       interval必须正数且不超过5分钟，backup controller
       interval不超过24小时，retention不超过30天。配置供应链lock、route allowlist或capability
       probe不匹配时memory integration不可启用。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A74
     source: specs/memory-bridge/spec.md
     text: Nocturne是optional runtime dependency。未配置或不可用时readiness增加`nocturne`
       component为degraded且HTTP仍为200；PostgreSQL不可用仍not_ready。Nocturne
       required模式不用于M1教学可用性。memory read返回degraded/unavailable，write
       intent可持久化为queued；policy rejection仍可在无sidecar时返回rejected。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A75
     source: specs/memory-bridge/spec.md
     text: "`app.Run`在migration后组合memory store、privacy owner adapters、Nocturne
@@ -699,8 +995,12 @@ acceptance:
       worker可以分发多business type，但memory
       consumer必须执行自己的serial/fence/receipt协议。服务器本地管理入口组合privacy grant
       store，但不通过HTTP提供grant签发。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A76
     source: specs/memory-bridge/spec.md
     text: HTTP端点为：`POST/GET /v1/memory/candidates`、`GET
@@ -712,23 +1012,35 @@ acceptance:
       /v1/memory/deliveries/{deliveryID}/replays`、`POST
       /v1/privacy/erasures`和`GET /v1/privacy/erasures/{erasureID}`。Record
       correction endpoint创建correction Candidate，不直接创建Record revision或delivery。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A77
     source: specs/memory-bridge/spec.md
     text: Candidate、Record和DeliveryReceipt读取以及export需要`memory:read`；Candidate创建、decision、correction
       Candidate、Record删除和delivery
       replay需要`memory:write`；ErasureReceipt端点需要`privacy:read`。migration只为当前未吊销第一方token补齐`memory:read`、`memory:write`和`privacy:read`，新配对token也只默认包含这三者；不得批量回填或默认授予`privacy:erase`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A78
     source: specs/memory-bridge/spec.md
     text: 全局erasure需要有效的`privacy:erase`临时授权。服务器本地管理命令为指定device生成至少128-bit、默认10分钟、一次性、只存SHA-256的erasure
       grant；HTTP在普通device Bearer认证后通过独立header消费该grant并把effective
       scope提升为本次`privacy:erase`。grant有失败尝试/IP限流、审计和统一不可枚举错误，不能通过远程API签发或重复使用。认证、设备/IP限流、scope/grant和审计在use
       case前执行。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A79
     source: specs/memory-bridge/spec.md
     text: 写请求使用UUID operation ID、payload schema version、expected
@@ -736,8 +1048,12 @@ acceptance:
       null；普通body最大1
       MiB，Candidate/Record正文另有UTF-8字符与字节上限。列表默认50、最大200并使用稳定cursor。响应不暴露Nocturne
       token、数据库credential、raw upstream body、Candidate被scrub正文或Outbox内部lease。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A80
     source: specs/memory-bridge/spec.md
     text: 稳定错误至少包括`invalid_request / not_found / idempotency_conflict /
@@ -746,16 +1062,24 @@ acceptance:
       privacy_clear_in_progress / erasure_conflict / content_redacted /
       upstream_contract_mismatch / stale_cursor`。transient
       sidecar故障不把已提交intent映射成HTTP失败；返回queued。未提交intent的内部数据库错误返回通用500并不消费operation。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A81
     source: specs/memory-bridge/spec.md
     text: OpenAPI 3.1为所有path提供`additionalProperties:false`、真实request/response
       schema、四个`x-required-scope`、cursor、公开delivery状态、receipt限制及实际400/401/403/404/409/413/429/500/503。日志只记录request
       ID、operation ID、entity ID、generation和脱敏类别，不记录Candidate正文、remote
       content、source excerpt、token或raw error。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A82
     source: specs/memory-bridge/spec.md
     text: "`000004_memory_bridge.sql`至少创建Candidate metadata/payload/decision、logical
@@ -766,30 +1090,52 @@ acceptance:
       ownership、Candidate revision、Record revision、单active
       delivery/attempt/reconciliation、generation、payload hash、current
       decision、single active erasure和grant single-use具有数据库约束。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A83
     source: specs/memory-bridge/spec.md
     text: Candidate、Record、decision、delivery attempt和receipt历史默认append-only；current
       head使用独立小表或受版本检查的row。可清理payload与immutable metadata分表。普通store
       API不提供任意历史UPDATE/DELETE；scrub只通过绑定erasure/generation的owner primitive。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A84
     source: specs/memory-bridge/spec.md
     text: Nocturne schema、migration或credential不进入Go
       migration。Compose/sidecar运行自己的固定migration lifecycle；Go只通过REST和capability
       probe使用它。上游升级没有down
       migration，回滚必须恢复升级前独立数据库backup和旧锁定image，不能只降级container。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: "Commit 943bbbde closes the same-digest gap: the harness builds and
+        canonically pins a failed-forward image with a platform digest distinct
+        from the old locked image, transactionally applies observable
+        incompatible schema/data changes and records fixture/base digests,
+        proves the old image cannot return the exact pre-upgrade seed hash, then
+        restores the pre-upgrade encrypted artifact into distinct new database
+        and snapshot volumes and validates the old locked image, schema, seed
+        read/search/references, and temporary CRUD. Runtime two-version rollback
+        and static checks passed."
+      truncated: false
   - id: A85
     source: specs/memory-bridge/spec.md
     text: domain
       fixture覆盖所有Candidate/Record/delivery/privacy状态和非法转换、自动准入边界、敏感/推断/摘要review、禁止内容、expiry、scrub时点、deterministic
       URI/hash、公开状态和receipt措辞。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A86
     source: specs/memory-bridge/spec.md
     text: fake Nocturne覆盖auth、schema/status/body
@@ -797,8 +1143,12 @@ acceptance:
       delete、active 409、timeout before/after apply、response
       lost、duplicate、delayed write、expiry后延迟写、conflicting content、boot
       epoch和sidecar restart。断言只比较ID、URI、hash、state、receipt和调用序列，不比较自由文本错误。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A87
     source: specs/memory-bridge/spec.md
     text: PostgreSQL集成测试在`TEST_DATABASE_URL`隔离schema中运行000001到000004
@@ -809,16 +1159,24 @@ acceptance:
       permit与erasure并发、grant single-use、all-generation
       projection清理、SQL正文扫描和redacted incremental/full
       replay一致。没有数据库时明确skip，不能用mock或SQLite宣称通过。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A88
     source: specs/memory-bridge/spec.md
     text: 固定Nocturne容器契约使用`2.5.6`锁定image与独立PostgreSQL，验证Bearer、health、REST
       fixture、namespace非授权、CRUD、别名/path、soft delete、global orphan/history
       permanent
       delete、migration和真实表absence。契约测试可以读取隔离Nocturne测试数据库验证底层row，但生产adapter禁止跨库。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
   - id: A89
     source: specs/memory-bridge/spec.md
     text: Compose E2E验证image digest预检、独立账号权限、internal-only route
@@ -827,12 +1185,213 @@ acceptance:
       shutdown，以及envelope-encrypted migration
       backup在key销毁前可restore、销毁后不可restore和常规retention prune。普通Go test、`go test
       -race`、vet、govulncheck、OpenAPI/YAML解析、gofmt、git diff和错误级diagnostics必须通过。
-    result: pending
-    reason: null
-builder_handoff: null
+    result: passed
+    reason:
+      text: Iteration 2 independent pass retained; the iteration 3 A84-only test
+        fixture, harness, and documentation diff does not regress this
+        acceptance.
+      truncated: false
+builder_handoff:
+  candidate_id: 3add52f7-2617-45aa-9cf5-976d6a37ff60
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:28867523-feaa-4a5f-883b-ebe83e5c938c
+  iteration: 3
+  summary:
+    text: Repair iteration 3 closes the sole remaining A84 failure in commit
+      943bbbde7c71948f1591b53cf663916e537a08ba. The Compose gate now creates a
+      distinct digest-pinned failed-forward Nocturne release from checked-in
+      fixture inputs, applies an observable incompatible database migration,
+      proves the old image cannot serve the upgraded seed, and then invokes the
+      production rollback entry point to restore the pre-upgrade encrypted
+      backup into new database and snapshot volumes before validating the old
+      locked image. The ephemeral original test volume is restored from the same
+      artifact only so later gate phases can continue.
+    truncated: false
+  addressed_acceptance_ids:
+    - A84
+  checks:
+    - name:
+        text: targeted real two-version rollback Compose rehearsal
+        truncated: false
+      result: passed
+      note:
+        text: contracttests/nocturne/run-compose-e2e.sh
+          deploy/nocturne/output/oci-layout rollback exited 0. It built and
+          pinned a forward image with a digest distinct from the old locked
+          image, applied the failed-forward schema/data migration, rejected the
+          old seed hash on the upgraded database, restored the pre-upgrade
+          encrypted artifact into new volumes, and validated old-image
+          read/search/references/CRUD.
+        truncated: false
+    - name:
+        text: rollback and Compose static contracts
+        truncated: false
+      result: passed
+      note:
+        text: Shell syntax, Python compilation, 7 rollback/Compose static tests, git
+          diff --check, and error-level diagnostics passed.
+        truncated: false
+    - name:
+        text: independent A84 audit
+        truncated: false
+      result: passed
+      note:
+        text: A fresh read-only audit marked A84 CLOSED and verified distinct canonical
+          old/forward digests, transactionally committed forward mutation
+          evidence, exact seed-hash incompatibility, new-volume restoration,
+          old-image validation, and retained negative boundaries.
+        truncated: false
+    - name:
+        text: previous iteration full gates
+        truncated: false
+      result: passed
+      note:
+        text: The iteration 2 Runtime serial PostgreSQL, full CGO race, Go static/build,
+          current locked Nocturne contracts/OCI, digest-pinned full Compose E2E,
+          and repo contracts remain passed; iteration 3 changes only the A84
+          test fixture, harness, and documentation.
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: The failed-forward release is a deterministic synthetic incompatible
+        fixture derived from the locked old image. It proves the rollback
+        machinery across distinct digests and an incompatible migration, but
+        does not replace future qualification against a real upstream Nocturne
+        release pair.
+      truncated: false
+    - text: No external registry push was performed and registry_digest remains null;
+        the test uses an isolated local registry and canonical platform-manifest
+        digests.
+      truncated: false
+    - text: No remote push was performed.
+      truncated: false
+  known_limits_truncated: false
+  submitted_at: 2026-08-23T12:52:02.353Z
 blockers: []
-verification: null
-history: []
+verification:
+  candidate_id: 3add52f7-2617-45aa-9cf5-976d6a37ff60
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:9b2fa463-01e0-43b4-a7bc-943083aa2436
+  iteration: 3
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: a84-two-version-rollback
+      name:
+        text: Real two-version Nocturne rollback rehearsal
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: contracttests/nocturne/run-compose-e2e.sh
+            "$(pwd)/deploy/nocturne/output/oci-layout" rollback
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 70686
+    - id: a84-static-contracts
+      name:
+        text: Rollback fixture and harness static contracts
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: sh -n contracttests/nocturne/run-compose-e2e.sh && python3 -m py_compile
+            contracttests/nocturne/compose_e2e.py
+            contracttests/nocturne/failed_forward.py &&
+            deploy/nocturne/output/contract-venv/bin/python -m pytest -q
+            contracttests/nocturne/test_compose_e2e_static.py
+            contracttests/nocturne/test_rollback.py && git diff --check -- .
+            ':(exclude)docs/comet/changes/memory-bridge/comet-state.yaml'
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 3943
+  summary:
+    text: Independent Verify iteration 3 passes A1-A89 for candidate
+      3add52f7-2617-45aa-9cf5-976d6a37ff60 at commit
+      943bbbde7c71948f1591b53cf663916e537a08ba. A84 is closed by a distinct
+      digest-pinned failed-forward release, committed incompatible database
+      mutation, exact old-image negative probe, pre-upgrade encrypted backup
+      restoration into new volumes, and locked old-image validation.
+    truncated: false
+  risks:
+    - text: The failed-forward release is a deterministic synthetic incompatible
+        fixture derived from the locked old image; a real future upstream
+        release pair still requires production qualification.
+      truncated: false
+    - text: No external registry publication was performed and registry_digest remains
+        null; the Runtime rehearsal uses an isolated registry with canonical
+        platform-manifest digests.
+      truncated: false
+    - text: Iteration 3 reran targeted A84 rollback and static checks rather than the
+        complete full Compose scenario; the other 88 acceptances retain the
+        formal iteration 2 pass because the diff is limited to eight A84
+        test/documentation files.
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-08-23T12:59:59.049Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A15
+      - A17
+      - A28
+      - A32
+      - A33
+      - A35
+      - A38
+      - A50
+      - A61
+      - A65
+      - A70
+      - A75
+      - A84
+      - A85
+      - A87
+      - A88
+      - A89
+    summary:
+      text: 候选commit与HEAD一致，除Runtime管理的comet-state外实现范围干净；Runtime
+        PostgreSQL/race/vet/vuln/build/OCI/合同/Compose检查均为passed。独立语义验收发现多项正式规格违约和强制验证矩阵缺口，因此verdict为fail。
+      truncated: false
+    completed_at: 2026-08-22T02:59:15.330Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A84
+    summary:
+      text: Independent Verify iteration 2 passed A1-A83 and A85-A89. A84 failed
+        because the executable rollback rehearsal restores with the same locked
+        Nocturne digest rather than proving rollback from a distinct
+        failed-forward version to a pre-upgrade locked version. No acceptance
+        item was blocked.
+      truncated: false
+    completed_at: 2026-08-23T12:24:18.515Z
+  - goal_cycle: 1
+    iteration: 3
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: Independent Verify iteration 3 passes A1-A89 for candidate
+        3add52f7-2617-45aa-9cf5-976d6a37ff60 at commit
+        943bbbde7c71948f1591b53cf663916e537a08ba. A84 is closed by a distinct
+        digest-pinned failed-forward release, committed incompatible database
+        mutation, exact old-image negative probe, pre-upgrade encrypted backup
+        restoration into new volumes, and locked old-image validation.
+      truncated: false
+    completed_at: 2026-08-23T12:59:59.049Z
 history_overflow:
   dropped_entries: 0
   first_dropped_at: null
@@ -843,7 +1402,7 @@ history_overflow:
     blocked: 0
     execution-error: 0
     recovery: 0
-verification_result: pending
-verification_report: null
+verification_result: pass
+verification_report: verification.md
 archived: false
 created_at: 2026-08-20T16:07:05.214Z

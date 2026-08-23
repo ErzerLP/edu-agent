@@ -25,6 +25,8 @@ ENV_FILE="$TMP_DIR/e2e.env"
 OVERRIDE_FILE="$TMP_DIR/compose.override.yaml"
 REGISTRY_NAME="$PROJECT-registry"
 REGISTRY_IMAGE="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+FAILED_FORWARD_TAG=""
+FAILED_FORWARD_IMAGE_REF=""
 
 cleanup() {
   status=$?
@@ -33,13 +35,21 @@ cleanup() {
   if [ "$status" -ne 0 ]; then
     docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" logs --no-color --tail=200 server nocturne >&2
   fi
-  docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" down --volumes --remove-orphans >/dev/null 2>&1
+  if [ -f "$ENV_FILE" ] && [ -f "$OVERRIDE_FILE" ]; then
+    docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" down --volumes --remove-orphans >/dev/null 2>&1
+  fi
   docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" | while IFS= read -r container; do
     [ -z "$container" ] || docker rm -f "$container" >/dev/null 2>&1
   done
   docker volume ls -q --filter "label=edu-agent.nocturne.rollback.project=$PROJECT" | while IFS= read -r volume; do
     [ -z "$volume" ] || docker volume rm "$volume" >/dev/null 2>&1
   done
+  if [ -n "${FAILED_FORWARD_IMAGE_REF:-}" ]; then
+    docker image rm "$FAILED_FORWARD_IMAGE_REF" >/dev/null 2>&1
+  fi
+  if [ -n "${FAILED_FORWARD_TAG:-}" ]; then
+    docker image rm "$FAILED_FORWARD_TAG" >/dev/null 2>&1
+  fi
   if [ -n "${NOCTURNE_IMAGE_REF:-}" ]; then
     docker image rm "$NOCTURNE_IMAGE_REF" >/dev/null 2>&1
   fi
@@ -72,7 +82,47 @@ REGISTRY_REPOSITORY="127.0.0.1:$REGISTRY_PORT/edu-agent/nocturne"
 skopeo copy --preserve-digests --dest-tls-verify=false "oci:$OCI_LAYOUT" "docker://$REGISTRY_REPOSITORY:verified" >/dev/null
 NOCTURNE_IMAGE_REF="$REGISTRY_REPOSITORY@$IMAGE_DIGEST"
 docker pull "$NOCTURNE_IMAGE_REF" >/dev/null
-python3 - "$ENV_FILE" "$NOCTURNE_IMAGE_REF" <<'PY'
+FAILED_FORWARD_FIXTURE_SHA256=$(
+  python3 - "$ROOT/contracttests/nocturne/failed_forward.Dockerfile" "$ROOT/contracttests/nocturne/failed_forward.py" <<'PY'
+import hashlib
+import sys
+h = hashlib.sha256()
+for path in sys.argv[1:]:
+    with open(path, "rb") as source:
+        h.update(path.rsplit("/", 1)[-1].encode("ascii") + b"\0" + source.read() + b"\0")
+print(h.hexdigest())
+PY
+)
+FAILED_FORWARD_TAG="$REGISTRY_REPOSITORY-failed-forward:a84-v1"
+docker build --no-cache --provenance=false --sbom=false \
+  --build-arg "BASE_IMAGE=$NOCTURNE_IMAGE_REF" \
+  --build-arg "SOURCE_DATE_EPOCH=1754006400" \
+  --label "edu-agent.nocturne.failed-forward-fixture-sha256=$FAILED_FORWARD_FIXTURE_SHA256" \
+  -f "$ROOT/contracttests/nocturne/failed_forward.Dockerfile" \
+  -t "$FAILED_FORWARD_TAG" "$ROOT/contracttests/nocturne" >/dev/null
+docker push "$FAILED_FORWARD_TAG" >/dev/null
+docker buildx imagetools inspect --raw "$FAILED_FORWARD_TAG" >"$TMP_DIR/failed-forward-manifest.json"
+FAILED_FORWARD_IMAGE_DIGEST=$(
+  python3 - "$TMP_DIR/failed-forward-manifest.json" <<'PY'
+import hashlib
+import sys
+print("sha256:" + hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+PY
+)
+FAILED_FORWARD_CONFIG_DIGEST=$(
+  python3 - "$TMP_DIR/failed-forward-manifest.json" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["config"]["digest"])
+PY
+)
+FAILED_FORWARD_IMAGE_REF="$REGISTRY_REPOSITORY-failed-forward@$FAILED_FORWARD_IMAGE_DIGEST"
+[ "$FAILED_FORWARD_IMAGE_DIGEST" != "$IMAGE_DIGEST" ] || {
+  printf '%s\n' "failed-forward image did not produce a distinct digest" >&2
+  exit 1
+}
+docker pull "$FAILED_FORWARD_IMAGE_REF" >/dev/null
+python3 - "$ENV_FILE" "$NOCTURNE_IMAGE_REF" "$FAILED_FORWARD_IMAGE_REF" "$FAILED_FORWARD_CONFIG_DIGEST" "$FAILED_FORWARD_FIXTURE_SHA256" <<'PY'
 import base64
 import secrets
 import socket
@@ -95,6 +145,9 @@ values = {
     "MODEL_API_KEY": "",
     "MODEL_CONTEXT_WINDOW": "",
     "NOCTURNE_IMAGE": sys.argv[2],
+    "NOCTURNE_FAILED_FORWARD_IMAGE": sys.argv[3],
+    "NOCTURNE_FAILED_FORWARD_CONFIG_DIGEST": sys.argv[4],
+    "NOCTURNE_FAILED_FORWARD_FIXTURE_SHA256": sys.argv[5],
     "NOCTURNE_POSTGRES_DB": "nocturne",
     "NOCTURNE_POSTGRES_USER": "nocturne",
     "NOCTURNE_POSTGRES_PASSWORD": token(),

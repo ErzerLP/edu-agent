@@ -64,8 +64,11 @@ class RollbackValidationTests(unittest.TestCase):
         self.assertIn("no supported down migration", runbook)
         self.assertIn("container-only downgrade", runbook)
         self.assertIn("failed-isolated", runbook)
-        self.assertIn("A84 same-digest rehearsal boundary", runbook)
-        self.assertIn("does not prove that two different Nocturne versions", runbook)
+        self.assertIn("A84 two-version rehearsal", runbook)
+        self.assertIn("failed-forward release", runbook)
+        self.assertNotIn("same locked digest used as the old image", runbook)
+        self.assertIn("distinct locked old and failed-forward images", runbook)
+        self.assertIn("transactionally renames the live `nodes` table", runbook)
 
 
 class ProbeHandler(BaseHTTPRequestHandler):

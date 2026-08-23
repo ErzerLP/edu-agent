@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 import urllib.error
@@ -764,6 +765,86 @@ SELECT
             time.sleep(1)
         raise GateError("a post-seed managed backup was not produced")
 
+    def apply_failed_forward_upgrade(self, seed_path: str) -> None:
+        forward_image = self.env["NOCTURNE_FAILED_FORWARD_IMAGE"]
+        forward_config = self.env["NOCTURNE_FAILED_FORWARD_CONFIG_DIGEST"]
+        fixture_digest = self.env["NOCTURNE_FAILED_FORWARD_FIXTURE_SHA256"]
+        old_digest = self.env["NOCTURNE_IMAGE"].split("@", 1)[1]
+        forward_digest = forward_image.split("@", 1)[1]
+        if forward_digest == old_digest or not re.fullmatch(r"sha256:[0-9a-f]{64}", forward_digest):
+            raise GateError("failed-forward release is not independently digest pinned")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", forward_config) or not re.fullmatch(r"[0-9a-f]{64}", fixture_digest):
+            raise GateError("failed-forward release metadata is invalid")
+
+        self.compose("stop", "server", "nocturne")
+        database_url = (
+            "postgresql+asyncpg://"
+            + self.env["NOCTURNE_POSTGRES_USER"] + ":" + self.env["NOCTURNE_POSTGRES_PASSWORD"]
+            + "@nocturne-postgres:5432/" + self.env["NOCTURNE_POSTGRES_DB"] + "?ssl=disable"
+        )
+        self.run([
+            "docker", "run", "--rm", "--network", self.project + "_nocturne-internal",
+            "-e", "DATABASE_URL=" + database_url,
+            "-e", "EDU_AGENT_FAILED_FORWARD_FIXTURE_SHA256=" + fixture_digest,
+            "-e", "EDU_AGENT_FAILED_FORWARD_BASE_DIGEST=" + old_digest,
+            forward_image,
+        ], expected=42)
+        marker = self.sql("nocturne-postgres", """
+            SELECT concat_ws('|',
+                COALESCE(to_regclass('public.nodes')::text,''),
+                COALESCE(to_regclass('public.nodes_pre_a84_failed_forward')::text,''),
+                COALESCE((SELECT fixture_sha256 FROM edu_agent_failed_forward_release WHERE singleton),''),
+                COALESCE((SELECT base_platform_digest FROM edu_agent_failed_forward_release WHERE singleton),''))
+        """).split("|")
+        if marker != ["", "nodes_pre_a84_failed_forward", fixture_digest, old_digest]:
+            raise GateError("failed-forward schema mutation evidence is incomplete")
+
+        self.compose("up", "-d", "nocturne")
+        old_image_accepted_forward_schema = False
+        try:
+            self.wait_service_health("nocturne", timeout=45.0)
+            query = urllib.parse.urlencode({"domain": "core", "path": seed_path})
+            status, body = self.internal("GET", "/api/browse/node?" + query, token_mode="api")
+            content = body.get("node", {}).get("content", "") if isinstance(body, dict) else ""
+            old_image_accepted_forward_schema = (
+                status == 200
+                and hashlib.sha256(content.encode("utf-8")).hexdigest() == self.rollback_evidence["seed_content_sha256"]
+            )
+        except GateError:
+            pass
+        if old_image_accepted_forward_schema:
+            raise GateError("old Nocturne image accepted the failed-forward database")
+        self.compose("stop", "nocturne")
+        self.rollback_evidence.update({
+            "failed_forward_image": forward_image,
+            "failed_forward_config_digest": forward_config,
+            "failed_forward_fixture_sha256": fixture_digest,
+        })
+
+    def restore_original_nocturne_database(self, artifact: str) -> None:
+        self.compose("up", "-d", "nocturne-postgres")
+        self.wait_service_health("nocturne-postgres")
+        script = (
+            'artifact=$1; output=/dev/shm/edu-agent-original-restore.dump; '
+            'edu-agentd nocturne-backup restore --artifact "$artifact" --output "$output"; '
+            'psql "$NOCTURNE_PG_DUMP_DSN" -v ON_ERROR_STOP=1 '
+            "-c 'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; DROP SCHEMA IF EXISTS edu_agent_maintenance CASCADE;'; "
+            'pg_restore --exit-on-error --no-owner --no-privileges --dbname="$NOCTURNE_PG_DUMP_DSN" "$output"; '
+            'rm -f "$output"'
+        )
+        self.run(self.compose_base + [
+            "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "server",
+            "-eu", "-c", script, "restore-original", artifact,
+        ])
+        restored = self.sql("nocturne-postgres", """
+            SELECT concat_ws('|',
+                COALESCE(to_regclass('public.nodes')::text,''),
+                COALESCE(to_regclass('public.nodes_pre_a84_failed_forward')::text,''),
+                COALESCE(to_regclass('public.edu_agent_failed_forward_release')::text,''))
+        """).split("|")
+        if restored != ["nodes", "", ""]:
+            raise GateError("pre-upgrade database was not restored after the rollback rehearsal")
+
     def check_real_rollback_rehearsal(self) -> None:
         status, inventory = self.internal("GET", "/internal/edu-agent/backups", token_mode="maintenance")
         if status != 200 or not isinstance(inventory, dict):
@@ -835,6 +916,7 @@ SELECT
         finally:
             self.run(["docker", "volume", "rm", nonempty_volume])
 
+        self.apply_failed_forward_upgrade(seed_path)
         target_volume = prefix + "-validated-db"
         target_snapshot = prefix + "-validated-snap"
         record_path = self.temp_dir / "rollback-validated.json"
@@ -856,6 +938,7 @@ SELECT
             or record.get("original_database_volume") != original_volume
             or record.get("config_digest") != self.image_lock["config_digest"]
             or record.get("old_image") != self.env["NOCTURNE_IMAGE"]
+            or record.get("old_image") == self.rollback_evidence["failed_forward_image"]
             or record.get("bridge_writer") != "stopped-pending-operator-release"
         ):
             raise GateError("rollback validation record is incomplete")
@@ -897,7 +980,8 @@ SELECT
             environment=rollback_environment,
         )
         self.run(["docker", "volume", "rm", target_volume, target_snapshot])
-        self.compose("up", "-d", "nocturne-postgres", "nocturne", "server")
+        self.restore_original_nocturne_database(self.rollback_evidence["artifact"])
+        self.compose("up", "-d", "nocturne", "server")
         for service in ("nocturne-postgres", "nocturne", "server"):
             self.wait_service_health(service)
         self.wait_ready_status("degraded")

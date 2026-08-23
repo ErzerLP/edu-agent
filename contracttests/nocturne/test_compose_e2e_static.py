@@ -11,6 +11,7 @@ DRIVER = ROOT / "contracttests/nocturne/compose_e2e.py"
 SUPPLY_TOOL = ROOT / "deploy/nocturne/scripts/tool.py"
 COMPOSE = ROOT / "deploy/compose.yaml"
 ENV_EXAMPLE = ROOT / "deploy/env.example"
+FAILED_FORWARD = ROOT / "contracttests/nocturne/failed_forward.py"
 
 
 def test_nocturne_snapshot_backup_and_database_volumes_are_independent_and_internal_only():
@@ -40,6 +41,7 @@ def test_compose_gate_has_secret_safe_cleanup_and_verified_oci_entrypoint():
     assert "edu-agent.nocturne.rollback.project=$PROJECT" in shell
     assert "com.docker.compose.project=$PROJECT" in shell
     assert "tool.py\" verify-oci" in shell and "skopeo copy --preserve-digests" in shell
+    assert "failed_forward.Dockerfile" in shell and "FAILED_FORWARD_IMAGE_REF" in shell and "docker push" in shell
     assert "mktemp -d" in shell and "rm -rf \"$TMP_DIR\"" in shell
     assert "set -x" not in shell and "eval " not in shell and "source " not in shell
     assert "echo $" not in shell and "printenv" not in shell and "docker compose config" not in shell
@@ -55,6 +57,8 @@ def test_compose_gate_covers_real_runtime_phases_without_printing_secrets():
         "check_database_account_isolation",
         "check_down_queue_and_replay",
         "check_real_rollback_rehearsal",
+        "apply_failed_forward_upgrade",
+        "restore_original_nocturne_database",
         "check_backup_encryption_key_destruction_and_prune",
         "check_destroyed_key_rollback_failure",
         "check_sigterm_shutdown",
@@ -69,13 +73,17 @@ def test_compose_gate_covers_real_runtime_phases_without_printing_secrets():
         "rollback.sh",
         "repository + \":floating\"",
         "failed-isolated",
+        "NOCTURNE_FAILED_FORWARD_IMAGE",
+        "nodes_pre_a84_failed_forward",
+        "failed_forward_image",
+        "restore-original",
         "PGDMP",
         "EDUMBKUP",
     ]
     for marker in required:
         assert marker in driver
     assert "print(self.env" not in driver and "print(self.token" not in driver and "print(grant" not in driver
-    subprocess.run(["python3", "-m", "py_compile", str(DRIVER)], check=True)
+    subprocess.run(["python3", "-m", "py_compile", str(DRIVER), str(FAILED_FORWARD)], check=True)
 
 
 def test_locked_oci_build_is_explicitly_no_cache():

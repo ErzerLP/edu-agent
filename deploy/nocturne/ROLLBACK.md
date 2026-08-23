@@ -123,27 +123,35 @@ docker volume rm -- "$TARGET_DB" "$TARGET_SNAPSHOTS"
 
 Never delete the original database volume as part of rollback cleanup.
 
-## A84 same-digest rehearsal boundary
+## A84 two-version rehearsal
 
-The current real-Compose gate invokes this entry point with an actual encrypted
-artifact and real volumes. Because only one independently locked Nocturne release
-is available in this change, it treats the running database as the
-forward-failed source and uses the same locked digest as the old image.
+The real Compose gate derives a test-only failed-forward release from the locked
+old image using the checked-in `failed_forward.Dockerfile` and
+`failed_forward.py`. It publishes that image to the gate's isolated registry and
+pins it by a platform-manifest digest distinct from the old release. The gate
+also records its config digest and the SHA-256 of both fixture inputs.
 
-The rehearsal creates a known seed, waits for a later encrypted artifact, stops
-the bridge writer, restores into a newly created empty PostgreSQL volume, and
-starts the locked image only against that restored volume. It verifies image and
-config digests, the new mount source, schema version, seed read/search/references,
-and a temporary CRUD/search/references cycle. It also invokes the same entry
-point against a floating image, the original database volume, a pre-existing
-non-empty target, and an artifact whose generation key was destroyed. Every
-negative case must fail closed; the destroyed-key case must fail before either
-target volume is created.
+After creating a known seed and a later encrypted managed backup, the gate stops
+the bridge writer and old Nocturne process. The failed-forward release connects
+to the original database, transactionally renames the live `nodes` table, replaces live memory/search
+content with an incompatible forward representation, records its base and
+fixture digests, and exits nonzero to simulate a failed
+forward deployment. The old locked image is then started against that upgraded
+database only as a negative probe; it must not serve the seed.
 
-This evidence proves the operator entry point, actual artifact decryption,
-tmpfs-only plaintext, new-volume isolation, old-image pinning, restored data, and
-failure boundaries. It does not prove that two different Nocturne versions have
-compatible forward and rollback migrations. Full A84 release qualification must
-repeat the sequence with independently locked pre-upgrade and failed-forward
-releases, then make the application writer reactivation decision at the old
-release boundary.
+The supported rollback entry point restores the pre-upgrade encrypted artifact
+into new PostgreSQL and snapshot volumes and starts the old locked image only
+against that restored database. It verifies image/config digests, mount source,
+schema version, seed read/search/references, and a temporary
+CRUD/search/references cycle. The ephemeral gate finally restores its original
+test volume from the same encrypted artifact so later scenarios can continue;
+production rollback still leaves the failed-forward volume isolated.
+
+The gate also invokes the entry point against a floating image, the original
+database volume, a pre-existing non-empty target, and an artifact whose
+generation key was destroyed. Every negative case fails closed, and the
+destroyed-key case fails before either target volume is created. This evidence
+covers distinct locked old and failed-forward images, a real incompatible schema
+change, actual artifact decryption, tmpfs-only plaintext, new-volume isolation,
+old-image pinning, restored data, and failure boundaries. Application writer
+reactivation remains an operator release decision at the old release boundary.

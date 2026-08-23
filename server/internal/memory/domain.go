@@ -318,6 +318,7 @@ type PolicyRejection struct {
 type ExpiryReconciliation struct {
 	ID                string               `json:"reconciliation_id"`
 	DeliveryID        string               `json:"delivery_id"`
+	ErasureDeliveryID string               `json:"erasure_delivery_id,omitempty"`
 	LogicalMemoryID   string               `json:"logical_memory_id"`
 	ExternalURI       string               `json:"external_uri"`
 	ContentHash       string               `json:"content_sha256"`
@@ -478,6 +479,9 @@ func (c Candidate) Validate() error {
 	}
 	if !validSource(c.Source) || !validCategory(c.Category) || !validSensitivity(c.Sensitivity) || !validStability(c.Stability) || !validCandidateStatus(c.Status) {
 		return invalid("invalid_candidate_enum")
+	}
+	if !supportedSourceCategory(c.Source, c.Category) {
+		return invalid("invalid_source_category")
 	}
 	if c.PolicyVersion != AdmissionPolicyVersion || !validText(c.Reason, MaxReasonRunes, MaxReferenceBytes*4) || c.CreatedAt.IsZero() || !isUTC(c.CreatedAt) || c.ValidUntil.IsZero() || !isUTC(c.ValidUntil) || !c.ValidUntil.After(c.CreatedAt) {
 		return invalid("invalid_candidate_metadata")
@@ -713,6 +717,7 @@ func ValidateProposedContent(category Category, content string) error {
 type DeliveryPolicy struct {
 	CandidateID       string
 	Source            SourceKind
+	SourceReference   SourceReference
 	Category          Category
 	Sensitivity       Sensitivity
 	Stability         Stability
@@ -727,10 +732,13 @@ func ValidateDeliveryPayload(policy DeliveryPolicy, content, expectedHash string
 	if err := ValidateProposedContent(policy.Category, content); err != nil {
 		return err
 	}
-	if !validUUID(policy.CandidateID) || policy.Source != SourceUserStatement ||
-		!remoteWritableCategory(policy.Category) || !validSensitivity(policy.Sensitivity) ||
-		policy.Stability != StabilityStable || policy.PolicyVersion != AdmissionPolicyVersion {
+	if !validUUID(policy.CandidateID) || !supportedSourceCategory(policy.Source, policy.Category) ||
+		!validSensitivity(policy.Sensitivity) || policy.Stability != StabilityStable ||
+		policy.PolicyVersion != AdmissionPolicyVersion {
 		return &Error{Code: CodeMemoryPolicyRejected, Reason: "delivery_policy_metadata_rejected"}
+	}
+	if err := policy.SourceReference.Validate(policy.Source); err != nil {
+		return &Error{Code: CodeMemoryPolicyRejected, Reason: "delivery_source_provenance_invalid", Cause: err}
 	}
 	if !validHash(policy.ContentHash) || !validHash(expectedHash) || policy.ContentHash != expectedHash ||
 		SHA256String(content) != policy.ContentHash {
@@ -745,7 +753,8 @@ func ValidateDeliveryPayload(policy DeliveryPolicy, content, expectedHash string
 		return &Error{Code: CodeMemoryPolicyRejected, Reason: "delivery_content_forbidden"}
 	}
 	if decision.ActorKind == "system" {
-		if policy.Sensitivity != SensitivityNonSensitive || disposition != AdmissionContentAutomatic {
+		if policy.Source != SourceUserStatement || !remoteWritableCategory(policy.Category) ||
+			policy.Sensitivity != SensitivityNonSensitive || disposition != AdmissionContentAutomatic {
 			return &Error{Code: CodeMemoryPolicyRejected, Reason: "automatic_admission_content_unproven"}
 		}
 		return nil
@@ -781,6 +790,25 @@ func CanTransitionRecord(from, to RecordStatus) bool {
 		return to == RecordSuperseded || to == RecordDeletePending
 	case RecordDeletePending:
 		return to == RecordDeleted
+	default:
+		return false
+	}
+}
+
+func CanTransitionDelivery(from, to DeliveryStatus) bool {
+	switch from {
+	case DeliveryStatusQueued:
+		return to == DeliveryStatusApplied || to == DeliveryStatusPermanentlyRejected ||
+			to == DeliveryStatusFenced || to == DeliveryStatusExpiryReconciling ||
+			to == DeliveryStatusExpired
+	case DeliveryStatusApplied:
+		return to == DeliveryStatusFenced || to == DeliveryStatusDeleted
+	case DeliveryStatusFenced:
+		return to == DeliveryStatusDeleted
+	case DeliveryStatusExpiryReconciling:
+		return to == DeliveryStatusExpired || to == DeliveryStatusFenced || to == DeliveryStatusDeleted
+	case DeliveryStatusDeletePending:
+		return to == DeliveryStatusDeleted || to == DeliveryStatusFenced
 	default:
 		return false
 	}
@@ -904,6 +932,16 @@ func validCategory(v Category) bool {
 }
 func remoteWritableCategory(v Category) bool {
 	return v == CategoryInteractionPreference || v == CategoryTimeConstraint || v == CategoryPersonalContext
+}
+
+func supportedSourceCategory(source SourceKind, category Category) bool {
+	if !validSource(source) {
+		return false
+	}
+	if source == SourceGeneratedSummary {
+		return category == CategoryGeneratedSummary
+	}
+	return category != CategoryGeneratedSummary && remoteWritableCategory(category)
 }
 
 func containsAny(value string, markers []string) bool {

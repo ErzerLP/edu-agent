@@ -5,9 +5,10 @@ umask 077
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 COMPOSE_FILE="$ROOT/deploy/compose.yaml"
 OCI_LAYOUT=${1:-}
+SCENARIO=${2:-full}
 
-if [ -z "$OCI_LAYOUT" ] || [ ! -d "$OCI_LAYOUT" ]; then
-  printf '%s\n' "usage: $0 /absolute/path/to/verified-oci-layout" >&2
+if [ -z "$OCI_LAYOUT" ] || [ ! -d "$OCI_LAYOUT" ] || { [ "$SCENARIO" != full ] && [ "$SCENARIO" != rollback ] && [ "$SCENARIO" != backup ]; }; then
+  printf '%s\n' "usage: $0 /absolute/path/to/verified-oci-layout [full|rollback|backup]" >&2
   exit 2
 fi
 for command in docker skopeo python3 go; do
@@ -33,6 +34,12 @@ cleanup() {
     docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" logs --no-color --tail=200 server nocturne >&2
   fi
   docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" down --volumes --remove-orphans >/dev/null 2>&1
+  docker ps -aq --filter "label=com.docker.compose.project=$PROJECT" | while IFS= read -r container; do
+    [ -z "$container" ] || docker rm -f "$container" >/dev/null 2>&1
+  done
+  docker volume ls -q --filter "label=edu-agent.nocturne.rollback.project=$PROJECT" | while IFS= read -r volume; do
+    [ -z "$volume" ] || docker volume rm "$volume" >/dev/null 2>&1
+  done
   if [ -n "${NOCTURNE_IMAGE_REF:-}" ]; then
     docker image rm "$NOCTURNE_IMAGE_REF" >/dev/null 2>&1
   fi
@@ -95,7 +102,7 @@ values = {
     "NOCTURNE_MAINTENANCE_TOKEN": token(),
     "NOCTURNE_BACKUP_MASTER_WRAPPING_KEY": token(),
     "NOCTURNE_BACKUP_CONTROLLER_INTERVAL": "2s",
-    "NOCTURNE_BACKUP_RETENTION": "8s",
+    "NOCTURNE_BACKUP_RETENTION": "90s",
 }
 Path(sys.argv[1]).write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
 PY
@@ -104,6 +111,15 @@ cat >"$OVERRIDE_FILE" <<'EOF'
 services:
   nocturne:
     pull_policy: never
+  server:
+    environment:
+      NOCTURNE_HTTP_TIMEOUT: 1s
+      NOCTURNE_RECONCILIATION_INTERVAL: 1s
+      NOCTURNE_WORKER_POLL_INTERVAL: 1s
+      NOCTURNE_WORKER_LEASE_DURATION: 12s
+      NOCTURNE_DELIVERY_TTL: 12s
+      NOCTURNE_CANDIDATE_SWEEP_INTERVAL: 1s
+      NOCTURNE_DELIVERY_SWEEP_INTERVAL: 1s
 EOF
 
 (
@@ -116,4 +132,5 @@ python3 "$ROOT/contracttests/nocturne/compose_e2e.py" \
   --compose-file "$COMPOSE_FILE" \
   --override-file "$OVERRIDE_FILE" \
   --env-file "$ENV_FILE" \
-  --project "$PROJECT"
+  --project "$PROJECT" \
+  --scenario "$SCENARIO"

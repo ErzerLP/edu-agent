@@ -40,6 +40,7 @@ const (
 	CodeRevisionConflict          = "revision_conflict"
 	CodeIdempotencyConflict       = "idempotency_conflict"
 	CodeNotFound                  = "not_found"
+	CodeContentRedacted           = "content_redacted"
 )
 
 type Error struct {
@@ -120,6 +121,7 @@ type KnowledgeRevision struct {
 	ParserVersion         string             `json:"parser_version"`
 	IndexerVersion        string             `json:"indexer_version"`
 	IdentityPolicyVersion string             `json:"identity_policy_version"`
+	Redacted              bool               `json:"-"`
 	Documents             []SnapshotDocument `json:"documents,omitempty"`
 	Lineages              []Lineage          `json:"lineages,omitempty"`
 }

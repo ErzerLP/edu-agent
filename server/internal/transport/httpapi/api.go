@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,11 @@ type PrivacyService interface {
 	RunNocturne(context.Context, string) (privacy.ErasureReceipt, error)
 }
 
+type PrivacyMigrationLeaseService interface {
+	AcquireMigrationLease(context.Context, privacy.MigrationLeaseRequest) (privacy.MigrationLease, error)
+	ReleaseMigrationLease(context.Context, privacy.MigrationLeaseRequest) error
+}
+
 type Options struct {
 	Identity                IdentityService
 	Model                   ModelProber
@@ -98,6 +104,8 @@ type Options struct {
 	Memory                  MemoryService
 	MemoryExporter          MemoryExporter
 	Privacy                 PrivacyService
+	MigrationLeases         PrivacyMigrationLeaseService
+	MaintenanceToken        string
 	ReadPermits             *privacy.ReadPermitManager
 	Readiness               Readiness
 	Logger                  *slog.Logger
@@ -120,6 +128,8 @@ type API struct {
 	memory                  MemoryService
 	memoryExporter          MemoryExporter
 	privacy                 PrivacyService
+	migrationLeases         PrivacyMigrationLeaseService
+	maintenanceToken        string
 	readPermits             *privacy.ReadPermitManager
 	readiness               Readiness
 	logger                  *slog.Logger
@@ -142,6 +152,9 @@ func New(options Options) (http.Handler, error) {
 	}
 	if (options.Memory == nil) != (options.MemoryExporter == nil) {
 		return nil, errors.New("memory HTTP API requires both service and exporter")
+	}
+	if options.MigrationLeases != nil && options.MaintenanceToken == "" {
+		return nil, errors.New("privacy migration lease HTTP API requires a maintenance token")
 	}
 	if options.ReadPermits == nil {
 		options.ReadPermits = privacy.DefaultReadPermits
@@ -172,7 +185,8 @@ func New(options Options) (http.Handler, error) {
 	api := &API{
 		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, learning: options.Learning,
 		memory: options.Memory, memoryExporter: options.MemoryExporter,
-		privacy: options.Privacy, readPermits: options.ReadPermits,
+		privacy: options.Privacy, migrationLeases: options.MigrationLeases,
+		maintenanceToken: options.MaintenanceToken, readPermits: options.ReadPermits,
 		readiness: options.Readiness, logger: options.Logger,
 		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter,
 		deviceLimiter: options.DeviceLimiter, privacyLimiter: options.PrivacyLimiter,
@@ -186,6 +200,10 @@ func New(options Options) (http.Handler, error) {
 	router.Use(api.audit)
 	router.Get("/livez", api.livez)
 	router.Get("/readyz", api.readyz)
+	if api.migrationLeases != nil {
+		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/acquire", api.acquirePrivacyMigrationLease)
+		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/release", api.releasePrivacyMigrationLease)
+	}
 	router.Post("/v1/pairings/exchange", api.exchangePairingCode)
 	router.Group(func(protected chi.Router) {
 		protected.Use(api.authenticate)
@@ -402,6 +420,63 @@ func (a *API) requireScope(scope string) func(http.Handler) http.Handler {
 	}
 }
 
+func (a *API) requireMaintenanceToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		values := r.Header.Values("Authorization")
+		provided, ok := bearerToken(r.Header.Get("Authorization"))
+		if len(values) != 1 || !ok || len(provided) != len(a.maintenanceToken) ||
+			subtle.ConstantTimeCompare([]byte(provided), []byte(a.maintenanceToken)) != 1 {
+			writeError(w, r, http.StatusUnauthorized, "authentication_failed", "Maintenance credentials are invalid")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (a *API) acquirePrivacyMigrationLease(w http.ResponseWriter, r *http.Request) {
+	var request privacy.MigrationLeaseRequest
+	if err := decodeJSON(w, r, a.maxRequestBody, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, privacy.CodeInvalidRequest, "Migration lease request is invalid")
+		return
+	}
+	lease, err := a.migrationLeases.AcquireMigrationLease(r.Context(), request)
+	if err != nil {
+		a.writePrivacyMigrationLeaseFailure(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"operation_id": lease.OperationID,
+		"status":       "acquired",
+		"replayed":     lease.Replayed,
+	})
+}
+
+func (a *API) releasePrivacyMigrationLease(w http.ResponseWriter, r *http.Request) {
+	var request privacy.MigrationLeaseRequest
+	if err := decodeJSON(w, r, a.maxRequestBody, &request); err != nil {
+		writeError(w, r, http.StatusBadRequest, privacy.CodeInvalidRequest, "Migration lease request is invalid")
+		return
+	}
+	if err := a.migrationLeases.ReleaseMigrationLease(r.Context(), request); err != nil {
+		a.writePrivacyMigrationLeaseFailure(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) writePrivacyMigrationLeaseFailure(w http.ResponseWriter, r *http.Request, err error) {
+	switch privacy.ErrorCode(err) {
+	case privacy.CodeInvalidRequest:
+		writeError(w, r, http.StatusBadRequest, privacy.CodeInvalidRequest, "Migration lease request is invalid")
+	case privacy.CodeMigrationLeaseConflict:
+		writeError(w, r, http.StatusConflict, privacy.CodeMigrationLeaseConflict, "Migration lease is unavailable")
+	default:
+		a.logger.ErrorContext(r.Context(), "privacy migration lease failed",
+			"request_id", middleware.GetReqID(r.Context()), "error_category", "unavailable")
+		writeError(w, r, http.StatusServiceUnavailable, "unavailable", "Migration lease service is unavailable")
+	}
+}
+
 func (a *API) listDevices(w http.ResponseWriter, r *http.Request) {
 	devices, err := a.identity.ListDevices(r.Context())
 	if err != nil {
@@ -545,6 +620,8 @@ func (a *API) writeKnowledgeFailure(w http.ResponseWriter, r *http.Request, oper
 		status, message = http.StatusConflict, "Knowledge import could not be committed"
 	case knowledge.CodeNotFound:
 		status, message = http.StatusNotFound, "Knowledge revision was not found"
+	case knowledge.CodeContentRedacted:
+		status, message = http.StatusServiceUnavailable, "Knowledge content was redacted"
 	case "":
 		a.logger.ErrorContext(r.Context(), "knowledge request failed",
 			"request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")

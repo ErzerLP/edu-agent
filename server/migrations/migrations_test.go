@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -26,8 +28,8 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 4 || latest.name != "000004_memory_bridge.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("memory migration was not embedded with checksum: %+v", latest)
+	if latest.version != 5 || latest.name != "000005_memory_bridge_contract_repairs.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("memory contract repair migration was not embedded with checksum: %+v", latest)
 	}
 }
 
@@ -210,6 +212,290 @@ func TestMemoryBridgeMigrationDeclaresDurabilityAndPrivacyBoundaries(t *testing.
 	}
 }
 
+func TestMemoryContractRepairMigrationDeclaresRevisionAndErasureBoundaries(t *testing.T) {
+	items, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := migrationBody(t, items, 5)
+	for _, required := range []string{
+		"CREATE TABLE memory_record_external_refs",
+		"memory_record_external_refs_immutable",
+		"CREATE TABLE memory_erasure_deliveries",
+		"memory_erasure_delivery_once",
+		"CREATE TABLE memory_erasure_delivery_sources",
+		"CREATE TABLE memory_erasure_delivery_attempts",
+		"CREATE TABLE memory_erasure_delivery_attempt_heads",
+		"memory_erasure_delivery_single_active_attempt",
+		"CREATE TABLE memory_erasure_delivery_receipts",
+		"CREATE TABLE memory_erasure_delivery_scopes",
+		"ADD COLUMN erasure_delivery_id UUID UNIQUE",
+		"ADD COLUMN redacted_at TIMESTAMPTZ",
+		"ADD COLUMN redacted_by_erasure_id UUID",
+		"knowledge_revision_redaction_shape",
+		"memory_managed_backup_erasure_binding_immutable",
+		"managed backup erasure binding is immutable",
+		"CREATE TABLE privacy_migration_lease",
+		"privacy_migration_lease_shape",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("000005 is missing %q", required)
+		}
+	}
+}
+
+func TestMemoryContractRepairMigrationUpgrades000004(t *testing.T) {
+	pool := migrationPoolThrough(t, 4)
+	ctx := context.Background()
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade 000004 schema through 000005: %v", err)
+	}
+	if err := Check(ctx, pool); err != nil {
+		t.Fatalf("check upgraded migrations: %v", err)
+	}
+	for _, table := range []string{
+		"memory_record_external_refs",
+		"memory_erasure_deliveries",
+		"memory_erasure_delivery_sources",
+		"memory_erasure_delivery_attempts",
+		"memory_erasure_delivery_receipts",
+		"privacy_migration_lease",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("000005 table %s was not created", table)
+		}
+	}
+	var redactionColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		WHERE table_schema=current_schema() AND table_name='knowledge_revisions'
+		  AND column_name IN ('redacted_at','redacted_by_erasure_id')`).Scan(&redactionColumns); err != nil {
+		t.Fatal(err)
+	}
+	if redactionColumns != 2 {
+		t.Fatalf("knowledge redaction columns=%d", redactionColumns)
+	}
+	var singletonRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM privacy_migration_lease WHERE singleton_id=1`).Scan(&singletonRows); err != nil || singletonRows != 1 {
+		t.Fatalf("privacy migration singleton rows=%d err=%v", singletonRows, err)
+	}
+}
+
+func TestMemoryContractRepairMigrationBackfillsCurrentRevisionExternalReference(t *testing.T) {
+	pool := migrationPoolThrough(t, 4)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	candidateID := uuid.NewString()
+	candidatePayloadID := uuid.NewString()
+	logicalMemoryID := uuid.NewString()
+	recordRevisionID := uuid.NewString()
+	deliveryID := uuid.NewString()
+	deliveryPayloadID := uuid.NewString()
+	outboxID := uuid.NewString()
+	attemptID := uuid.NewString()
+	attemptToken := uuid.NewString()
+	appliedReceiptID := uuid.NewString()
+	externalNodeID := uuid.NewString()
+	historicalCandidateID := uuid.NewString()
+	historicalCandidatePayloadID := uuid.NewString()
+	historicalRecordRevisionID := uuid.NewString()
+	historicalDeliveryID := uuid.NewString()
+	historicalDeliveryPayloadID := uuid.NewString()
+	historicalOutboxID := uuid.NewString()
+	historicalReceiptID := uuid.NewString()
+	historicalAttemptID := uuid.NewString()
+	historicalAttemptToken := uuid.NewString()
+	historicalLeaseToken := uuid.NewString()
+	erasureDeviceID := uuid.NewString()
+	erasureID := uuid.NewString()
+	reconciliationID := uuid.NewString()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		t.Fatal(err)
+	}
+	batch := &pgx.Batch{}
+	batch.Queue(`
+		INSERT INTO outbox_messages(
+			id,business_type,aggregate_id,idempotency_key,revision,generation,payload,audit_metadata,
+			status,available_at,attempts,max_attempts,created_at,updated_at)
+		VALUES($1,'memory.delivery',$2,$3,1,1,'{}','{}','applied',$4,1,5,$4,$4)`,
+		outboxID, logicalMemoryID, "memory.delivery:"+deliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_candidates(
+			id,candidate_uri,logical_memory_id,payload_id,content_hash,source_kind,source_hashes,
+			proposer_id,reason,category,sensitivity,stability,valid_until,admission_policy_version,created_at)
+		VALUES($1::uuid,'candidate://' || $1::uuid::text,$2::uuid,$3,decode(repeat('ab',32),'hex'),
+		       'user_statement','{}',$4,'migration fixture','interaction_preference',
+		       'non_sensitive','stable',$5::timestamptz+interval '1 hour','memory-admission-v1',$5::timestamptz)`,
+		candidateID, logicalMemoryID, candidatePayloadID, uuid.NewString(), now)
+	batch.Queue(`
+		INSERT INTO memory_logical_memories(id,created_from_candidate_id,created_at)
+		VALUES($1,$2,$3)`, logicalMemoryID, candidateID, now)
+	batch.Queue(`
+		INSERT INTO memory_record_revisions(
+			id,logical_memory_id,revision,record_generation,learner_generation,candidate_id,
+			previous_revision_id,external_uri,external_uri_digest,content_hash,delivery_id,created_at)
+		VALUES($1,$2::uuid,1,1,1,$3,NULL,'memory://' || $2::uuid::text,decode(repeat('cd',32),'hex'),
+		       decode(repeat('ab',32),'hex'),$4,$5)`,
+		recordRevisionID, logicalMemoryID, candidateID, deliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_deliveries(
+			id,kind,logical_memory_id,record_revision_id,record_revision,learner_generation,record_generation,
+			payload_id,payload_hash,external_uri,outbox_id,outbox_idempotency_key,valid_until,created_at)
+		VALUES($1,'admit',$2::uuid,$3,1,1,1,$4,decode(repeat('ab',32),'hex'),
+		       'memory://' || $2::uuid::text,$5,$6,$7::timestamptz+interval '1 hour',$7::timestamptz)`,
+		deliveryID, logicalMemoryID, recordRevisionID, deliveryPayloadID,
+		outboxID, "memory.delivery:"+deliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_receipts(
+			id,delivery_id,version,status,reason,verification_method,created_at)
+		VALUES($1,$2,1,'succeeded','applied','migration_fixture',$3)`,
+		appliedReceiptID, deliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_attempts(id,delivery_id,attempt_token,created_at)
+		VALUES($1,$2,$3,$4)`, attemptID, deliveryID, attemptToken, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_attempt_heads(
+			attempt_id,delivery_id,state,boot_epoch,sent_at,updated_at)
+		VALUES($1,$2,'confirmed','migration-backfill',$3,$3)`, attemptID, deliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_heads(
+			delivery_id,logical_memory_id,status,public_status,attempt_state,current_attempt_id,
+			attempt_count,current_receipt_id,current_receipt_version,updated_at)
+		VALUES($1,$2,'applied','applied','confirmed',$3,1,$4,1,$5)`,
+		deliveryID, logicalMemoryID, attemptID, appliedReceiptID, now)
+	batch.Queue(`
+		INSERT INTO memory_record_heads(
+			logical_memory_id,current_record_revision_id,current_revision,record_generation,status,
+			current_delivery_id,receipt_id,external_node_id,external_memory_id,applied_at,updated_at)
+		VALUES($1,$2,1,1,'applied',$3,$4,$5,73,$6,$6)`,
+		logicalMemoryID, recordRevisionID, deliveryID, appliedReceiptID, externalNodeID, now)
+	batch.Queue(`
+		INSERT INTO outbox_messages(
+			id,business_type,aggregate_id,idempotency_key,revision,generation,payload,audit_metadata,
+			status,available_at,attempts,max_attempts,created_at,updated_at)
+		VALUES($1,'memory.delivery',$2,$3,2,1,'{}','{}','applied',$4,1,5,$4,$4)`,
+		historicalOutboxID, logicalMemoryID, "memory.delivery:"+historicalDeliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_candidates(
+			id,candidate_uri,logical_memory_id,payload_id,content_hash,source_kind,source_hashes,
+			proposer_id,reason,category,sensitivity,stability,valid_until,admission_policy_version,created_at)
+		VALUES($1::uuid,'candidate://' || $1::uuid::text,$2::uuid,$3,decode(repeat('ef',32),'hex'),
+		       'user_statement','{}',$4,'historical identity unavailable','interaction_preference',
+		       'non_sensitive','stable',$5::timestamptz+interval '1 hour','memory-admission-v1',$5::timestamptz)`,
+		historicalCandidateID, logicalMemoryID, historicalCandidatePayloadID, uuid.NewString(), now)
+	batch.Queue(`
+		INSERT INTO memory_record_revisions(
+			id,logical_memory_id,revision,record_generation,learner_generation,candidate_id,
+			previous_revision_id,external_uri,external_uri_digest,content_hash,delivery_id,created_at)
+		VALUES($1,$2::uuid,2,2,1,$3,$4,'memory://' || $2::uuid::text,decode(repeat('cd',32),'hex'),
+		       decode(repeat('ef',32),'hex'),$5,$6)`,
+		historicalRecordRevisionID, logicalMemoryID, historicalCandidateID, recordRevisionID, historicalDeliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_deliveries(
+			id,kind,logical_memory_id,record_revision_id,record_revision,learner_generation,record_generation,
+			payload_id,payload_hash,external_uri,outbox_id,outbox_idempotency_key,valid_until,created_at)
+		VALUES($1,'correction',$2::uuid,$3,2,1,2,$4,decode(repeat('ef',32),'hex'),
+		       'memory://' || $2::uuid::text,$5,$6,$7::timestamptz+interval '1 hour',$7::timestamptz)`,
+		historicalDeliveryID, logicalMemoryID, historicalRecordRevisionID, historicalDeliveryPayloadID,
+		historicalOutboxID, "memory.delivery:"+historicalDeliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_receipts(
+			id,delivery_id,version,status,reason,verification_method,created_at)
+		VALUES($1,$2,1,'pending','queued correction','migration_fixture',$3)`,
+		historicalReceiptID, historicalDeliveryID, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_attempts(id,delivery_id,attempt_token,created_at)
+		VALUES($1,$2,$3,$4)`, historicalAttemptID, historicalDeliveryID, historicalAttemptToken, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_attempt_heads(
+			attempt_id,delivery_id,state,lease_token,lease_expires_at,boot_epoch,sent_at,updated_at)
+		VALUES($1,$2,'sent',$3,$4::timestamptz+interval '10 minutes','migration-backfill',$4::timestamptz,$4::timestamptz)`,
+		historicalAttemptID, historicalDeliveryID, historicalLeaseToken, now)
+	batch.Queue(`
+		INSERT INTO memory_delivery_heads(
+			delivery_id,logical_memory_id,status,public_status,attempt_state,current_attempt_id,
+			attempt_count,current_receipt_id,current_receipt_version,updated_at)
+		VALUES($1,$2,'queued','queued','sent',$3,1,$4,1,$5)`,
+		historicalDeliveryID, logicalMemoryID, historicalAttemptID, historicalReceiptID, now)
+	batch.Queue(`
+		UPDATE memory_record_heads
+		SET current_record_revision_id=$2,current_revision=2,record_generation=2,status='queued',
+		    current_delivery_id=$3,receipt_id=$4,updated_at=$5
+		WHERE logical_memory_id=$1`, logicalMemoryID, historicalRecordRevisionID, historicalDeliveryID, historicalReceiptID, now)
+	batch.Queue(`INSERT INTO devices(id,display_name,created_at) VALUES($1,'migration-erasure-device',$2)`, erasureDeviceID, now)
+	batch.Queue(`
+		INSERT INTO privacy_erasures(
+			id,device_id,operation_id,request_hash,reason_code,actor_device_id,requested_at,
+			target_learner_generation,managed_backup_scheduled_unrecoverable_after,managed_backup_verified_unrecoverable_at)
+		VALUES($1,$2,$3,decode(repeat('aa',32),'hex'),'learner_request',$2,$4::timestamptz,2,$4::timestamptz+interval '1 day',$4::timestamptz)`,
+		erasureID, erasureDeviceID, uuid.NewString(), now)
+	batch.Queue(`
+		INSERT INTO privacy_erasure_heads(erasure_id,status,summary_version,stable_reason,updated_at)
+		VALUES($1,'partial',1,'migration active erasure',$2)`, erasureID, now)
+	batch.Queue(`
+		INSERT INTO memory_expiry_reconciliations(
+			id,delivery_id,logical_memory_id,external_uri,content_hash,attempt_token,sent_boot_epoch,
+			learner_generation,record_generation,status,created_at,updated_at)
+		VALUES($1,$2,$3,'memory://' || $3::uuid::text,decode(repeat('ab',32),'hex'),$4,
+		       'migration-backfill',1,1,'verified',$5,$5)`,
+		reconciliationID, deliveryID, logicalMemoryID, attemptToken, now)
+	batch.Queue(`
+		UPDATE privacy_owner_generation_gates
+		SET learner_generation=2,read_open=FALSE,write_open=FALSE,active_erasure_id=$1,updated_at=$2
+		WHERE owner_kind='memory'`, erasureID, now)
+	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade applied memory head through 000005: %v", err)
+	}
+	var storedDeliveryID, storedNodeID, storedAttemptID, storedReceiptID string
+	var storedMemoryID int64
+	if err := pool.QueryRow(ctx, `
+		SELECT delivery_id,external_node_id,external_memory_id,delivery_attempt_id,delivery_receipt_id
+		FROM memory_record_external_refs WHERE record_revision_id=$1`,
+		recordRevisionID).Scan(&storedDeliveryID, &storedNodeID, &storedMemoryID, &storedAttemptID, &storedReceiptID); err != nil {
+		t.Fatal(err)
+	}
+	if storedDeliveryID != deliveryID || storedNodeID != externalNodeID || storedMemoryID != 73 ||
+		storedAttemptID != attemptID || storedReceiptID != appliedReceiptID {
+		t.Fatalf("backfilled ref delivery=%s node=%s memory=%d attempt=%s receipt=%s",
+			storedDeliveryID, storedNodeID, storedMemoryID, storedAttemptID, storedReceiptID)
+	}
+	var queuedRefCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM memory_record_external_refs WHERE record_revision_id=$1`, historicalRecordRevisionID).
+		Scan(&queuedRefCount); err != nil {
+		t.Fatal(err)
+	}
+	if queuedRefCount != 0 {
+		t.Fatalf("queued correction received a premature external ref count=%d", queuedRefCount)
+	}
+	var scopeCount, succeededScopes, attempts int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*),count(*) FILTER (WHERE s.status='succeeded'),COALESCE(sum(s.attempt_count),0)
+		FROM memory_erasure_delivery_scopes s
+		JOIN memory_erasure_deliveries d ON d.id=s.erasure_delivery_id
+		WHERE d.erasure_id=$1`, erasureID).Scan(&scopeCount, &succeededScopes, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if scopeCount != 2 || succeededScopes != 2 || attempts != 0 {
+		t.Fatalf("migrated terminal scopes count=%d succeeded=%d attempts=%d", scopeCount, succeededScopes, attempts)
+	}
+}
+
 func TestMemoryBridgeMigrationUpgradesLegacyOutboxRows(t *testing.T) {
 	pool := legacyMigrationPool(t)
 	ctx := context.Background()
@@ -323,6 +609,11 @@ func containsScope(scopes []string, expected string) bool {
 
 func legacyMigrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
+	return migrationPoolThrough(t, 3)
+}
+
+func migrationPoolThrough(t *testing.T, maxVersion int64) *pgxpool.Pool {
+	t.Helper()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("TEST_DATABASE_URL is not set; legacy migration integration test not run")
@@ -333,7 +624,7 @@ func legacyMigrationPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
-	schema := fmt.Sprintf("migration_upgrade_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("migration_upgrade_%d_%d", maxVersion, time.Now().UnixNano())
 	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
@@ -356,7 +647,7 @@ func legacyMigrationPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	for _, item := range items {
-		if item.version > 3 {
+		if item.version > maxVersion {
 			break
 		}
 		tx, err := pool.Begin(ctx)

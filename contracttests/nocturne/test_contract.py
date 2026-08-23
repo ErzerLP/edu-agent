@@ -111,7 +111,7 @@ def test_upgrade_backup_must_be_recent_and_bound_to_the_upgrade_window(monkeypat
         web_app._require_encrypted_managed_backup(not_before=not_before, checked_at=checked_at)
 
     artifact["created_at"] = "2026-09-01T11:50:00Z"
-    web_app._require_encrypted_managed_backup(not_before=not_before, checked_at=checked_at)
+    assert web_app._require_encrypted_managed_backup(not_before=not_before, checked_at=checked_at) == "0" * 64
     artifact["created_at"] = "2026-09-01T11:50:00+00:00"
     with pytest.raises(RuntimeError, match="valid UTC artifact"):
         web_app._require_encrypted_managed_backup(not_before=not_before, checked_at=checked_at)
@@ -147,6 +147,124 @@ def test_existing_database_requires_managed_encrypted_migration_backup(tmp_path,
     asyncio.run(exercise())
     assert not list(tmp_path.glob("*.sql"))
     assert not list(tmp_path.glob("*.json"))
+
+
+def test_migration_lease_http_contract(monkeypatch):
+    import web_app
+
+    operation_id = "11111111-1111-4111-8111-111111111111"
+    backup_identity = "a" * 64
+    monkeypatch.setenv("EDU_AGENT_SERVER_INTERNAL_URL", "http://server:8080")
+    monkeypatch.setenv("EDU_AGENT_SERVER_MAINTENANCE_TOKEN", MAINTENANCE_TOKEN)
+    monkeypatch.setenv("EDU_AGENT_MAINTENANCE_TOKEN", MAINTENANCE_TOKEN)
+    observed = []
+
+    class Response:
+        def __init__(self, status, body=b""):
+            self.status = status
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return self.body
+
+    def urlopen(request, timeout):
+        observed.append((request.full_url, request.get_header("Authorization"), request.data, timeout))
+        if request.full_url.endswith("/acquire"):
+            return Response(200, json.dumps({
+                "operation_id": operation_id, "status": "acquired", "replayed": False,
+            }).encode())
+        return Response(204)
+
+    monkeypatch.setattr(web_app.urllib.request, "urlopen", urlopen)
+    web_app._migration_lease_request("acquire", operation_id, backup_identity)
+    web_app._migration_lease_request("release", operation_id, backup_identity)
+    assert [item[0].rsplit("/", 1)[-1] for item in observed] == ["acquire", "release"]
+    assert all(item[1] == f"Bearer {MAINTENANCE_TOKEN}" and item[3] == 10 for item in observed)
+    assert all(json.loads(item[2]) == {"operation_id": operation_id, "backup_identity": backup_identity} for item in observed)
+
+    monkeypatch.setenv("EDU_AGENT_SERVER_MAINTENANCE_TOKEN", API_TOKEN)
+    with pytest.raises(RuntimeError, match="configuration is invalid"):
+        web_app._migration_lease_request("acquire", operation_id, backup_identity)
+
+
+def test_existing_migration_lease_recovers_after_release_crash(tmp_path, monkeypatch):
+    from sqlalchemy import Integer
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import DeclarativeBase, mapped_column
+    import web_app
+    from db.models import Base as NocturneBase
+
+    class LegacyBase(DeclarativeBase):
+        pass
+
+    class LegacyContent(LegacyBase):
+        __tablename__ = "legacy_content_for_lease"
+        id = mapped_column(Integer, primary_key=True)
+
+    async def exercise():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'lease-existing.db'}")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(NocturneBase.metadata.create_all)
+                await connection.run_sync(LegacyBase.metadata.create_all)
+            async with AsyncSession(engine) as session:
+                async with session.begin():
+                    session.add(LegacyContent(id=1))
+
+            backup_identity = "b" * 64
+            monkeypatch.setattr(web_app, "_require_encrypted_managed_backup", lambda **_: backup_identity)
+            calls = []
+            fail_release = True
+
+            def lease_request(action, operation_id, identity):
+                nonlocal fail_release
+                calls.append((action, operation_id, identity))
+                if action == "release" and fail_release:
+                    fail_release = False
+                    raise RuntimeError("injected release outage")
+
+            monkeypatch.setattr(web_app, "_migration_lease_request", lease_request)
+            with pytest.raises(RuntimeError, match="injected release outage"):
+                await web_app._managed_run_migrations(engine)
+            async with AsyncSession(engine) as session:
+                state = await session.get(web_app._MigrationLeaseState, 1)
+                assert state is not None
+                stored = (state.operation_id, state.backup_identity)
+            assert calls[0] == ("acquire", stored[0], backup_identity)
+            assert calls[1] == ("release", stored[0], backup_identity)
+
+            await web_app._managed_run_migrations(engine)
+            assert calls[2] == ("release", stored[0], backup_identity)
+            async with AsyncSession(engine) as session:
+                assert await session.get(web_app._MigrationLeaseState, 1) is None
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())
+
+
+def test_fresh_database_migrations_do_not_acquire_lease(tmp_path, monkeypatch):
+    from sqlalchemy.ext.asyncio import create_async_engine
+    import web_app
+    from db.models import Base as NocturneBase
+
+    async def exercise():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'fresh.db'}")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(NocturneBase.metadata.create_all)
+            monkeypatch.setattr(web_app, "_migration_lease_request", lambda *_: pytest.fail("fresh database acquired migration lease"))
+            await web_app._managed_run_migrations(engine)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(exercise())
 
 
 def test_fixed_overlay_contract(tmp_path, monkeypatch):

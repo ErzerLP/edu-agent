@@ -34,10 +34,14 @@ func (s *Store) AppendEventRedactedTx(ctx context.Context, db privacy.DBTX, requ
 	if err := db.QueryRow(ctx, `SELECT current_event_seq FROM learning_event_clock WHERE singleton_id=1 FOR UPDATE`).Scan(&through); err != nil {
 		return privacy.RedactionEventAppendResult{}, fmt.Errorf("lock learning event clock for redaction: %w", err)
 	}
-	payload := privacy.RedactionPayload{ErasureID: request.ErasureID, Generation: request.LearnerGeneration, PolicyVersion: privacy.PolicyVersion, ReasonCode: request.ReasonCode, RedactedThrough: through}
+	payload := privacy.RedactionPayload{ErasureID: request.ErasureID, Generation: request.LearnerGeneration, RedactedThroughEventSeq: through, PolicyVersion: privacy.PolicyVersion, ReasonCode: request.ReasonCode}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return privacy.RedactionEventAppendResult{}, fmt.Errorf("encode learning redaction event: %w", err)
+	}
+	encoded, err = canonicalJSON(encoded)
+	if err != nil {
+		return privacy.RedactionEventAppendResult{}, fmt.Errorf("canonicalize learning redaction event: %w", err)
 	}
 	payloadHash := sha256.Sum256(encoded)
 	eventID := uuid.NewSHA1(redactionEventNamespace, []byte(request.ErasureID)).String()
@@ -49,7 +53,7 @@ func (s *Store) AppendEventRedactedTx(ctx context.Context, db privacy.DBTX, requ
 	if _, err := db.Exec(ctx, `INSERT INTO learning_event_payloads(id,payload,payload_hash,created_at) VALUES($1,$2,$3,$4)`, payloadID, encoded, payloadHash[:], request.At.UTC()); err != nil {
 		return privacy.RedactionEventAppendResult{}, fmt.Errorf("insert learning redaction payload: %w", err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO learning_events(event_seq,id,event_type,event_schema_version,aggregate_type,aggregate_id,aggregate_version,device_id,operation_id,operation_ordinal,received_at,payload_id,payload_hash) VALUES($1,$2,'EventRedacted',$3,'privacy',$4,1,$5,$6,0,$7,$8,$9)`, sequence, eventID, learning.EventSchemaVersion, request.ErasureID, request.ActorDeviceID, request.OperationID, request.At.UTC(), payloadID, payloadHash[:]); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO learning_events(event_seq,id,event_type,event_schema_version,aggregate_type,aggregate_id,aggregate_version,device_id,operation_id,operation_ordinal,received_at,payload_id,payload_hash) VALUES($1,$2,'EventRedacted',$3,'privacy',$4,1,$5,$6,0,$7,$8,$9)`, sequence, eventID, learning.EventRedactedSchemaVersion, request.ErasureID, request.ActorDeviceID, request.OperationID, request.At.UTC(), payloadID, payloadHash[:]); err != nil {
 		return privacy.RedactionEventAppendResult{}, fmt.Errorf("insert canonical learning redaction event: %w", err)
 	}
 	if _, err := db.Exec(ctx, `UPDATE learning_event_clock SET current_event_seq=$1,updated_at=$2 WHERE singleton_id=1`, sequence, request.At.UTC()); err != nil {
@@ -295,18 +299,28 @@ func loadCanonicalRedactionEvent(ctx context.Context, db redactionEventDB, reque
 	if len(events) != 1 {
 		return learning.LearningEvent{}, &privacy.Error{Code: privacy.CodeVerificationFailed, Reason: "canonical_redaction_event_count_invalid"}
 	}
-	event := events[0]
+	return validateCanonicalRedactionEvent(events[0], request, eventID, policyVersion, reasonCode)
+}
+
+func validateCanonicalRedactionEvent(event learning.LearningEvent, request privacy.LocalRedactionRequest, eventID, policyVersion, reasonCode string) (learning.LearningEvent, error) {
+	decoded, err := learning.NewEventRegistry().Decode(event)
+	if err != nil {
+		return learning.LearningEvent{}, &privacy.Error{Code: privacy.CodeVerificationFailed, Reason: "canonical_redaction_payload_invalid", Cause: err}
+	}
 	var payload privacy.RedactionPayload
-	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+	if err := json.Unmarshal(decoded.Payload, &payload); err != nil {
 		return learning.LearningEvent{}, &privacy.Error{Code: privacy.CodeVerificationFailed, Reason: "canonical_redaction_payload_invalid", Cause: err}
 	}
 	if err := payload.Validate(); err != nil {
 		return learning.LearningEvent{}, err
 	}
-	if event.ID != eventID || event.EventSequence != request.RedactedThroughEvent+1 || event.Type != learning.EventRedacted || event.SchemaVersion != learning.EventSchemaVersion || event.AggregateType != "privacy" || event.AggregateID != request.ErasureID || event.Redacted || payload.ErasureID != request.ErasureID || payload.Generation != request.LearnerGeneration || payload.RedactedThrough != request.RedactedThroughEvent || payload.PolicyVersion != policyVersion || payload.ReasonCode != reasonCode {
+	if decoded.ID != eventID || decoded.EventSequence != request.RedactedThroughEvent+1 || decoded.Type != learning.EventRedacted || (decoded.SchemaVersion != learning.EventSchemaVersion && decoded.SchemaVersion != learning.EventRedactedSchemaVersion) || decoded.AggregateType != "privacy" || decoded.AggregateID != request.ErasureID || decoded.Redacted || payload.ErasureID != request.ErasureID || payload.Generation != request.LearnerGeneration || payload.RedactedThroughEventSeq != request.RedactedThroughEvent || payload.PolicyVersion != policyVersion || payload.ReasonCode != reasonCode {
 		return learning.LearningEvent{}, &privacy.Error{Code: privacy.CodeVerificationFailed, Reason: "canonical_redaction_event_mismatch"}
 	}
-	return event, nil
+	// Replay must decode the canonical payload as the canonical schema. The
+	// stored schema version remains unchanged in learning_events for audit.
+	decoded.SchemaVersion = learning.EventRedactedSchemaVersion
+	return decoded, nil
 }
 
 func redactedProjectionGenerationID(request privacy.LocalRedactionRequest) string {

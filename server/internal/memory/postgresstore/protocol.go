@@ -29,13 +29,19 @@ func (s *Store) LoadDeliveryWork(ctx context.Context, intent memory.OutboxIntent
 	}
 	work.CurrentGeneration = locked.generation
 	var content, previousHash, externalNode, decisionActorID, decisionOperationID *string
+	var sourceEventID, sourceOperationID, sourceModelID, sourcePromptRevision *string
 	var externalMemory *int64
 	var policyContentHash, decisionRequestHash []byte
+	var sourceHashes [][]byte
 	err = tx.QueryRow(ctx, `
-		SELECT c.id,c.source_kind,c.category,c.sensitivity,c.stability,c.admission_policy_version,c.content_hash,
+		SELECT c.id,c.source_kind,c.source_event_id::text,c.source_operation_id::text,
+		       c.source_model_id,c.source_prompt_revision,c.source_hashes,
+		       c.category,c.sensitivity,c.stability,c.admission_policy_version,c.content_hash,
 		       cd.id,cd.candidate_id,cd.revision,cd.decision,cd.reason,cd.actor_device_id::text,cd.actor_kind,
 		       cd.operation_id::text,cd.request_hash,cd.created_at,
-		       p.content,encode(previous.content_hash,'hex'),rh.external_node_id::text,rh.external_memory_id
+		       p.content,encode(previous.content_hash,'hex'),
+		       CASE WHEN d.kind='correction' THEN previous_ref.external_node_id::text ELSE current_ref.external_node_id::text END,
+		       CASE WHEN d.kind='correction' THEN previous_ref.external_memory_id ELSE current_ref.external_memory_id END
 		FROM memory_deliveries d
 		JOIN memory_record_revisions r ON r.id=d.record_revision_id
 		JOIN memory_candidates c ON c.id=r.candidate_id
@@ -44,9 +50,13 @@ func (s *Store) LoadDeliveryWork(ctx context.Context, intent memory.OutboxIntent
 		JOIN memory_record_heads rh ON rh.logical_memory_id=d.logical_memory_id
 		LEFT JOIN memory_delivery_payloads p ON p.delivery_id=d.id
 		LEFT JOIN memory_record_revisions previous ON previous.id=r.previous_revision_id
+		LEFT JOIN memory_record_external_refs previous_ref ON previous_ref.record_revision_id=previous.id
+		LEFT JOIN memory_record_external_refs current_ref ON current_ref.record_revision_id=r.id
 		WHERE d.id=$1`, intent.DeliveryID).Scan(
-		&work.Policy.CandidateID, &work.Policy.Source, &work.Policy.Category, &work.Policy.Sensitivity,
-		&work.Policy.Stability, &work.Policy.PolicyVersion, &policyContentHash,
+		&work.Policy.CandidateID, &work.Policy.Source, &sourceEventID, &sourceOperationID,
+		&sourceModelID, &sourcePromptRevision, &sourceHashes,
+		&work.Policy.Category, &work.Policy.Sensitivity, &work.Policy.Stability,
+		&work.Policy.PolicyVersion, &policyContentHash,
 		&work.Policy.AdmissionDecision.ID, &work.Policy.AdmissionDecision.CandidateID,
 		&work.Policy.AdmissionDecision.Revision, &work.Policy.AdmissionDecision.Decision,
 		&work.Policy.AdmissionDecision.Reason, &decisionActorID, &work.Policy.AdmissionDecision.ActorKind,
@@ -57,6 +67,13 @@ func (s *Store) LoadDeliveryWork(ctx context.Context, intent memory.OutboxIntent
 		return work, outbox.ApplyDecision{}, fmt.Errorf("load memory delivery work: %w", err)
 	}
 	work.Policy.ContentHash = fmt.Sprintf("%x", policyContentHash)
+	work.Policy.SourceReference = memory.SourceReference{
+		EventID: derefProtocol(sourceEventID), OperationID: derefProtocol(sourceOperationID),
+		ModelID: derefProtocol(sourceModelID), PromptRevision: derefProtocol(sourcePromptRevision),
+	}
+	for _, hash := range sourceHashes {
+		work.Policy.SourceReference.SourceHashes = append(work.Policy.SourceReference.SourceHashes, fmt.Sprintf("%x", hash))
+	}
 	work.Policy.AdmissionDecision.ActorID = derefProtocol(decisionActorID)
 	work.Policy.AdmissionDecision.OperationID = derefProtocol(decisionOperationID)
 	if len(decisionRequestHash) > 0 {
@@ -296,15 +313,17 @@ func (s *Store) LoadRemoteDeletePlan(ctx context.Context, deliveryID string) (me
 
 func loadRemoteDeletePlan(ctx context.Context, db DBTX, deliveryID string) (memory.RemoteDeletePlan, error) {
 	var value memory.RemoteDeletePlan
+	var erasureDeliveryID *string
 	var digest []byte
-	err := db.QueryRow(ctx, `SELECT id,delivery_id,node_uuid,external_uri,active_memory_id,review_cleanup_needed,snapshot_digest,created_at FROM memory_remote_delete_plans WHERE delivery_id=$1`, deliveryID).Scan(
-		&value.ID, &value.DeliveryID, &value.NodeID, &value.ExternalURI, &value.ActiveMemoryID, &value.ReviewCleanupNeeded, &digest, &value.CreatedAt)
+	err := db.QueryRow(ctx, `SELECT id,delivery_id,erasure_delivery_id::text,node_uuid,external_uri,active_memory_id,review_cleanup_needed,snapshot_digest,created_at FROM memory_remote_delete_plans WHERE delivery_id=$1`, deliveryID).Scan(
+		&value.ID, &value.DeliveryID, &erasureDeliveryID, &value.NodeID, &value.ExternalURI, &value.ActiveMemoryID, &value.ReviewCleanupNeeded, &digest, &value.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, &memory.Error{Code: memory.CodeNotFound}
 	}
 	if err != nil {
 		return value, err
 	}
+	value.ErasureDeliveryID = derefProtocol(erasureDeliveryID)
 	value.SnapshotDigest = fmt.Sprintf("%x", digest)
 	value.CreatedAt = value.CreatedAt.UTC()
 	rows, err := db.Query(ctx, `SELECT memory_id FROM memory_remote_delete_versions WHERE plan_id=$1 ORDER BY memory_id`, value.ID)

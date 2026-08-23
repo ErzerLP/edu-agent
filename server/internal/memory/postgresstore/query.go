@@ -257,8 +257,8 @@ func loadRecord(ctx context.Context, db DBTX, id string) (memory.Record, error) 
 		       END,
 		       CASE WHEN h.current_record_revision_id=r.id THEN h.current_delivery_id ELSE r.delivery_id END,
 		       CASE WHEN h.current_record_revision_id=r.id THEN h.receipt_id ELSE dh.current_receipt_id END,
-		       CASE WHEN h.current_record_revision_id=r.id THEN h.external_node_id::text END,
-		       CASE WHEN h.current_record_revision_id=r.id THEN h.external_memory_id END,
+		       external_ref.external_node_id::text,
+		       external_ref.external_memory_id,
 		       r.created_at,
 		       CASE
 		         WHEN h.current_record_revision_id=r.id THEN h.applied_at
@@ -273,6 +273,7 @@ func loadRecord(ctx context.Context, db DBTX, id string) (memory.Record, error) 
 		JOIN memory_record_heads h ON h.logical_memory_id=r.logical_memory_id
 		JOIN memory_delivery_heads dh ON dh.delivery_id=r.delivery_id
 		JOIN memory_delivery_receipts delivery_receipt ON delivery_receipt.id=dh.current_receipt_id
+		LEFT JOIN memory_record_external_refs external_ref ON external_ref.record_revision_id=r.id
 		LEFT JOIN memory_record_revisions successor ON successor.previous_revision_id=r.id
 		LEFT JOIN memory_delivery_heads successor_head ON successor_head.delivery_id=successor.delivery_id
 		LEFT JOIN memory_delivery_receipts successor_receipt ON successor_receipt.id=successor_head.current_receipt_id
@@ -487,9 +488,11 @@ func (s *Store) ListRecords(ctx context.Context, request memory.PageRequest) (me
 	rows, err := tx.Query(ctx, `
 		SELECT r.logical_memory_id,r.id,r.revision,h.record_generation,r.learner_generation,r.candidate_id,
 		       r.previous_revision_id::text,r.external_uri,r.external_uri_digest,r.content_hash,h.status,
-		       h.current_delivery_id,h.receipt_id,h.external_node_id::text,h.external_memory_id,r.created_at,
-		       h.applied_at,h.superseded_at,h.deleted_at
-		FROM memory_record_heads h JOIN memory_record_revisions r ON r.id=h.current_record_revision_id
+		       h.current_delivery_id,h.receipt_id,external_ref.external_node_id::text,
+		       external_ref.external_memory_id,r.created_at,h.applied_at,h.superseded_at,h.deleted_at
+		FROM memory_record_heads h
+		JOIN memory_record_revisions r ON r.id=h.current_record_revision_id
+		LEFT JOIN memory_record_external_refs external_ref ON external_ref.record_revision_id=r.id
 		WHERE ($1::timestamptz IS NULL OR (r.created_at,r.id)<($1,$2::uuid))
 		ORDER BY r.created_at DESC,r.id DESC LIMIT $3`, cursorTime, cursorID, limit+1)
 	if err != nil {

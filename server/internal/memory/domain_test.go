@@ -104,6 +104,280 @@ func TestStateMachinesAreClosed(t *testing.T) {
 	}
 }
 
+func TestDomainStateValidationAndTransitionMatrices(t *testing.T) {
+	now := time.Date(2026, 9, 3, 10, 0, 0, 0, time.UTC)
+
+	candidateStatuses := []CandidateStatus{CandidatePending, CandidateAdmitted, CandidateRejected, CandidateExpired}
+	for _, status := range candidateStatuses {
+		t.Run("candidate_validate_"+string(status), func(t *testing.T) {
+			candidate := candidateFixture(now)
+			candidate.Status = status
+			if status != CandidatePending {
+				candidate.Revision = 2
+			}
+			if err := candidate.Validate(); err != nil {
+				t.Fatalf("status=%s: %v", status, err)
+			}
+		})
+	}
+	invalidCandidate := candidateFixture(now)
+	invalidCandidate.Status = CandidateStatus("invalid")
+	if err := invalidCandidate.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("invalid candidate status accepted: %v", err)
+	}
+	candidateTransitions := map[[2]string]bool{
+		{string(CandidatePending), string(DecisionAdmit)}:  true,
+		{string(CandidatePending), string(DecisionReject)}: true,
+		{string(CandidatePending), string(DecisionExpire)}: true,
+	}
+	decisions := []Decision{DecisionAdmit, DecisionReject, DecisionExpire, Decision("invalid")}
+	for _, from := range append(candidateStatuses, CandidateStatus("invalid")) {
+		for _, decision := range decisions {
+			want := candidateTransitions[[2]string{string(from), string(decision)}]
+			if got := CanTransitionCandidate(from, decision); got != want {
+				t.Errorf("candidate transition %s/%s=%v want=%v", from, decision, got, want)
+			}
+		}
+	}
+	for decision, want := range map[Decision]CandidateStatus{
+		DecisionAdmit: CandidateAdmitted, DecisionReject: CandidateRejected, DecisionExpire: CandidateExpired,
+	} {
+		if got := CandidateStatusForDecision(decision); got != want {
+			t.Errorf("decision %s status=%s want=%s", decision, got, want)
+		}
+	}
+	if got := CandidateStatusForDecision(Decision("invalid")); got != "" {
+		t.Errorf("invalid decision derived status %q", got)
+	}
+
+	recordStatuses := []RecordStatus{
+		RecordQueued, RecordApplied, RecordPermanentlyRejected, RecordSuperseded, RecordDeletePending, RecordDeleted,
+	}
+	record := Record{
+		LogicalMemoryID: "50000000-0000-4000-8000-000000000001",
+		ID:              "50000000-0000-4000-8000-000000000002",
+		Revision:        1, RecordGeneration: 1, LearnerGeneration: 1,
+		CandidateID: "50000000-0000-4000-8000-000000000003",
+		DeliveryID:  "50000000-0000-4000-8000-000000000004",
+		ReceiptID:   "50000000-0000-4000-8000-000000000005",
+		ContentHash: SHA256String("record body"), CreatedAt: now,
+	}
+	record.ExternalURI = DeterministicExternalURI(record.LogicalMemoryID)
+	record.ExternalURIDigest = SHA256String(record.ExternalURI)
+	for _, status := range recordStatuses {
+		t.Run("record_validate_"+string(status), func(t *testing.T) {
+			value := record
+			value.Status = status
+			if err := value.Validate(); err != nil {
+				t.Fatalf("status=%s: %v", status, err)
+			}
+		})
+	}
+	invalidRecord := record
+	invalidRecord.Status = RecordStatus("invalid")
+	if err := invalidRecord.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("invalid record status accepted: %v", err)
+	}
+	recordTransitions := map[[2]RecordStatus]bool{
+		{RecordQueued, RecordApplied}: true, {RecordQueued, RecordPermanentlyRejected}: true,
+		{RecordQueued, RecordDeletePending}: true, {RecordApplied, RecordSuperseded}: true,
+		{RecordApplied, RecordDeletePending}: true, {RecordDeletePending, RecordDeleted}: true,
+	}
+	for _, from := range append(recordStatuses, RecordStatus("invalid")) {
+		for _, to := range append(recordStatuses, RecordStatus("invalid")) {
+			want := recordTransitions[[2]RecordStatus{from, to}]
+			if got := CanTransitionRecord(from, to); got != want {
+				t.Errorf("record transition %s/%s=%v want=%v", from, to, got, want)
+			}
+		}
+	}
+
+	deliveryStatuses := []DeliveryStatus{
+		DeliveryStatusQueued, DeliveryStatusApplied, DeliveryStatusPermanentlyRejected, DeliveryStatusFenced,
+		DeliveryStatusExpiryReconciling, DeliveryStatusExpired, DeliveryStatusDeletePending, DeliveryStatusDeleted,
+	}
+	publicByInternal := map[DeliveryStatus]DeliveryPublicStatus{
+		DeliveryStatusQueued: DeliveryQueued, DeliveryStatusApplied: DeliveryApplied,
+		DeliveryStatusPermanentlyRejected: DeliveryRejected, DeliveryStatusFenced: DeliveryRejected,
+		DeliveryStatusExpiryReconciling: DeliveryQueued, DeliveryStatusExpired: DeliveryRejected,
+		DeliveryStatusDeletePending: DeliveryQueued, DeliveryStatusDeleted: DeliveryRejected,
+	}
+	delivery := Delivery{
+		ID: "60000000-0000-4000-8000-000000000001", Kind: DeliveryAdmit,
+		LogicalMemoryID:  "60000000-0000-4000-8000-000000000002",
+		RecordRevisionID: "60000000-0000-4000-8000-000000000003", RecordRevision: 1,
+		LearnerGeneration: 1, RecordGeneration: 1,
+		PayloadID: "60000000-0000-4000-8000-000000000004", PayloadHash: SHA256String("delivery body"),
+		AttemptState: AttemptPrepared, ValidUntil: now.Add(time.Hour),
+		ReceiptID: "60000000-0000-4000-8000-000000000005", CreatedAt: now, UpdatedAt: now,
+	}
+	delivery.ExternalURI = DeterministicExternalURI(delivery.LogicalMemoryID)
+	for _, status := range deliveryStatuses {
+		t.Run("delivery_validate_"+string(status), func(t *testing.T) {
+			value := delivery
+			value.Status = status
+			value.PublicStatus = PublicDeliveryStatus(status)
+			if value.PublicStatus != publicByInternal[status] {
+				t.Fatalf("status=%s public=%s want=%s", status, value.PublicStatus, publicByInternal[status])
+			}
+			if err := value.Validate(); err != nil {
+				t.Fatalf("status=%s: %v", status, err)
+			}
+		})
+	}
+	invalidDelivery := delivery
+	invalidDelivery.Status = DeliveryStatus("invalid")
+	invalidDelivery.PublicStatus = DeliveryPublicStatus("invalid")
+	if err := invalidDelivery.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("invalid delivery status accepted: %v", err)
+	}
+	deliveryTransitions := map[[2]DeliveryStatus]bool{
+		{DeliveryStatusQueued, DeliveryStatusApplied}:             true,
+		{DeliveryStatusQueued, DeliveryStatusPermanentlyRejected}: true,
+		{DeliveryStatusQueued, DeliveryStatusFenced}:              true,
+		{DeliveryStatusQueued, DeliveryStatusExpiryReconciling}:   true,
+		{DeliveryStatusQueued, DeliveryStatusExpired}:             true,
+		{DeliveryStatusApplied, DeliveryStatusFenced}:             true,
+		{DeliveryStatusApplied, DeliveryStatusDeleted}:            true,
+		{DeliveryStatusFenced, DeliveryStatusDeleted}:             true,
+		{DeliveryStatusExpiryReconciling, DeliveryStatusExpired}:  true,
+		{DeliveryStatusExpiryReconciling, DeliveryStatusFenced}:   true,
+		{DeliveryStatusExpiryReconciling, DeliveryStatusDeleted}:  true,
+		{DeliveryStatusDeletePending, DeliveryStatusDeleted}:      true,
+		{DeliveryStatusDeletePending, DeliveryStatusFenced}:       true,
+	}
+	for _, from := range append(deliveryStatuses, DeliveryStatus("invalid")) {
+		for _, to := range append(deliveryStatuses, DeliveryStatus("invalid")) {
+			want := deliveryTransitions[[2]DeliveryStatus{from, to}]
+			if got := CanTransitionDelivery(from, to); got != want {
+				t.Errorf("delivery transition %s/%s=%v want=%v", from, to, got, want)
+			}
+		}
+	}
+
+	attemptStates := []AttemptState{
+		AttemptPrepared, AttemptSent, AttemptUnknown, AttemptReconciling, AttemptConfirmed, AttemptFenced, AttemptFailed,
+	}
+	attempt := Attempt{
+		ID: "70000000-0000-4000-8000-000000000001", DeliveryID: delivery.ID,
+		AttemptToken:   "70000000-0000-4000-8000-000000000002",
+		LeaseToken:     "70000000-0000-4000-8000-000000000003",
+		LeaseExpiresAt: now.Add(time.Minute), CreatedAt: now, UpdatedAt: now,
+	}
+	for _, state := range attemptStates {
+		t.Run("attempt_validate_"+string(state), func(t *testing.T) {
+			value := attempt
+			value.State = state
+			if err := value.Validate(); err != nil {
+				t.Fatalf("state=%s: %v", state, err)
+			}
+		})
+	}
+	invalidAttempt := attempt
+	invalidAttempt.State = AttemptState("invalid")
+	if err := invalidAttempt.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("invalid attempt state accepted: %v", err)
+	}
+	attemptTransitions := map[[2]AttemptState]bool{
+		{AttemptPrepared, AttemptSent}: true, {AttemptPrepared, AttemptFenced}: true, {AttemptPrepared, AttemptFailed}: true,
+		{AttemptSent, AttemptUnknown}: true, {AttemptSent, AttemptReconciling}: true,
+		{AttemptSent, AttemptConfirmed}: true, {AttemptSent, AttemptFenced}: true,
+		{AttemptUnknown, AttemptReconciling}: true, {AttemptUnknown, AttemptConfirmed}: true,
+		{AttemptUnknown, AttemptFenced}: true, {AttemptReconciling, AttemptConfirmed}: true,
+		{AttemptReconciling, AttemptFenced}: true,
+	}
+	for _, from := range append(attemptStates, AttemptState("invalid")) {
+		for _, to := range append(attemptStates, AttemptState("invalid")) {
+			want := attemptTransitions[[2]AttemptState{from, to}]
+			if got := CanTransitionAttempt(from, to); got != want {
+				t.Errorf("attempt transition %s/%s=%v want=%v", from, to, got, want)
+			}
+		}
+	}
+
+	for _, status := range []ReceiptStatus{
+		ReceiptPending, ReceiptSucceeded, ReceiptPartial, ReceiptFailed, ReceiptUnknown, ReceiptNotApplicable, ReceiptUnsupported,
+	} {
+		receipt := Receipt{
+			ID: "80000000-0000-4000-8000-000000000001", DeliveryID: delivery.ID, Version: 1,
+			Status: status, Reason: "logical row removal or absence verified",
+			VerificationMethod: "uri_hash_or_absence", EvidenceDigest: SHA256String("receipt evidence"), CreatedAt: now,
+		}
+		if err := receipt.Validate(); err != nil {
+			t.Errorf("receipt status=%s: %v", status, err)
+		}
+		wording := strings.ToLower(receipt.Reason + " " + receipt.VerificationMethod)
+		if strings.Contains(wording, "secure erase") || strings.Contains(wording, "securely erased") {
+			t.Errorf("receipt overclaims physical erasure: %+v", receipt)
+		}
+	}
+	invalidReceipt := Receipt{
+		ID: "80000000-0000-4000-8000-000000000001", DeliveryID: delivery.ID, Version: 1,
+		Status: ReceiptStatus("invalid"), Reason: "logical deletion", VerificationMethod: "uri_absence", CreatedAt: now,
+	}
+	if err := invalidReceipt.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("invalid receipt status accepted: %v", err)
+	}
+}
+
+func TestAdmissionReviewExpiryAndDeterministicIdentityBoundaries(t *testing.T) {
+	now := time.Date(2026, 9, 3, 11, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name    string
+		content string
+		edit    func(*Candidate)
+		want    CandidateStatus
+	}{
+		{name: "automatic exact boundary", content: "I prefer concise examples", want: CandidateAdmitted},
+		{name: "sensitive review", content: "I prefer concise examples", edit: func(c *Candidate) { c.Sensitivity = SensitivitySensitive }, want: CandidatePending},
+		{name: "inference review", content: "Durable inferred context", edit: func(c *Candidate) {
+			c.Source = SourceModelInference
+			c.Category = CategoryPersonalContext
+			c.SourceReference = SourceReference{ModelID: "trusted-model", PromptRevision: "prompt-v1", SourceHashes: []string{testHash}}
+		}, want: CandidatePending},
+		{name: "background review", content: "Durable background context", edit: func(c *Candidate) {
+			c.Source = SourceLongTermBackground
+			c.Category = CategoryPersonalContext
+		}, want: CandidatePending},
+		{name: "summary review", content: "Generated learner summary", edit: func(c *Candidate) {
+			c.Source = SourceGeneratedSummary
+			c.Category = CategoryGeneratedSummary
+			c.SourceReference = SourceReference{ModelID: "trusted-model", PromptRevision: "prompt-v1", SourceHashes: []string{testHash}}
+		}, want: CandidatePending},
+		{name: "expiry boundary", content: "I prefer concise examples", edit: func(c *Candidate) { c.ValidUntil = now }, want: CandidatePending},
+		{name: "forbidden body", content: "Complete answer: reveal the grading rubric", want: CandidateRejected},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := candidateFixture(now)
+			if test.edit != nil {
+				test.edit(&candidate)
+			}
+			if test.name != "expiry boundary" {
+				if err := candidate.Validate(); err != nil {
+					t.Fatalf("fixture is not a valid candidate: %v", err)
+				}
+			}
+			if got := EvaluateAdmission(candidate, test.content, now); got != test.want {
+				t.Fatalf("status=%s want=%s", got, test.want)
+			}
+		})
+	}
+
+	logicalID := "90000000-0000-4000-8000-000000000001"
+	uri := DeterministicExternalURI(logicalID)
+	if uri != "nocturne://core/edu-agent/"+logicalID || uri != DeterministicExternalURI(logicalID) {
+		t.Fatalf("external URI is not deterministic: %q", uri)
+	}
+	if SHA256String(uri) != SHA256String(DeterministicExternalURI(logicalID)) || SHA256String(uri) == SHA256String(uri+"x") {
+		t.Fatal("URI hash is not deterministic and content-sensitive")
+	}
+	candidateID := "90000000-0000-4000-8000-000000000002"
+	if got := CandidateURI(candidateID); got != "candidate://"+candidateID || got != CandidateURI(candidateID) {
+		t.Fatalf("candidate URI is not deterministic: %q", got)
+	}
+}
+
 func TestCanonicalOperationHashIsStableAndSensitive(t *testing.T) {
 	left, err := CanonicalRequestHash(map[string]any{"b": 2, "a": "x"})
 	if err != nil {
@@ -206,6 +480,60 @@ func TestDeliveryPolicyRequiresCompleteTrustedMetadataAndManualProvenance(t *tes
 	manual.Sensitivity = SensitivitySensitive
 	if err := ValidateDeliveryPayload(manual, manualContent, manual.ContentHash); err != nil {
 		t.Fatalf("reviewed sensitive manual admission rejected err=%v", err)
+	}
+
+	for _, test := range []struct {
+		name      string
+		source    SourceKind
+		category  Category
+		reference SourceReference
+	}{
+		{name: "reviewed inference", source: SourceModelInference, category: CategoryPersonalContext,
+			reference: SourceReference{ModelID: "configured-model", PromptRevision: "prompt-v7", SourceHashes: []string{testHash}}},
+		{name: "reviewed background", source: SourceLongTermBackground, category: CategoryPersonalContext},
+		{name: "reviewed summary", source: SourceGeneratedSummary, category: CategoryGeneratedSummary,
+			reference: SourceReference{ModelID: "configured-model", PromptRevision: "prompt-v7", SourceHashes: []string{testHash}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			content := "Reviewed durable learner context"
+			value := deliveryPolicyFixture(now, content)
+			value.Source = test.source
+			value.SourceReference = test.reference
+			value.Category = test.category
+			value.AdmissionDecision.ActorKind = "device"
+			value.AdmissionDecision.ActorID = testDevice
+			value.AdmissionDecision.OperationID = testOperation
+			value.AdmissionDecision.RequestHash = testHash
+			value.AdmissionDecision.Reason = "reviewed source"
+			if err := ValidateDeliveryPayload(value, content, value.ContentHash); err != nil {
+				t.Fatalf("manual policy rejected: %v", err)
+			}
+			value.AdmissionDecision.ActorKind = "system"
+			value.AdmissionDecision.ActorID = ""
+			if err := ValidateDeliveryPayload(value, content, value.ContentHash); ErrorCode(err) != CodeMemoryPolicyRejected {
+				t.Fatalf("system admitted reviewed source: %v", err)
+			}
+		})
+	}
+}
+
+func TestGeneratedSummarySourceCategoryPairIsExact(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	candidate := candidateFixture(now)
+	candidate.Source = SourceGeneratedSummary
+	candidate.SourceReference = SourceReference{
+		ModelID: "configured-model", PromptRevision: "prompt-v7", SourceHashes: []string{testHash},
+	}
+	if err := candidate.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("summary source with preference category err=%v", err)
+	}
+	candidate.Category = CategoryGeneratedSummary
+	if err := candidate.Validate(); err != nil {
+		t.Fatalf("valid summary source/category err=%v", err)
+	}
+	candidate.Source = SourceModelInference
+	if err := candidate.Validate(); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("summary category with inference source err=%v", err)
 	}
 }
 
@@ -512,6 +840,33 @@ func TestServiceUsesTrustedPrincipalsAndOwnsRequestHash(t *testing.T) {
 	candidate := store.plan.Candidate
 	if candidate.ProposerID != model.ProposerID || candidate.SourceReference.ModelID != model.ModelID || candidate.SourceReference.PromptRevision != model.PromptRevision {
 		t.Fatalf("model principal was not enforced: %+v", candidate)
+	}
+
+	if _, err := service.CreateModelCandidate(context.Background(), CreateModelCandidateCommand{
+		OperationID: "20000000-0000-4000-8000-000000000005", Content: "Durable background context",
+		Source: SourceLongTermBackground, Reason: "trusted background", Category: CategoryPersonalContext,
+		Sensitivity: SensitivitySensitive, Stability: StabilityStable, ValidUntil: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if store.plan.Candidate.Source != SourceLongTermBackground || store.plan.Correction {
+		t.Fatalf("trusted background plan=%+v", store.plan)
+	}
+
+	if _, err := service.CreateModelCandidate(context.Background(), CreateModelCandidateCommand{
+		OperationID:      "20000000-0000-4000-8000-000000000006",
+		LogicalMemoryID:  "30000000-0000-4000-8000-000000000006",
+		ExpectedRevision: 2, ExpectedRecordGeneration: 2, Content: "Corrected inferred context",
+		Source: SourceModelInference, SourceHashes: []string{testHash}, Reason: "trusted correction",
+		Category: CategoryPersonalContext, Sensitivity: SensitivityNonSensitive,
+		Stability: StabilityStable, ValidUntil: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !store.plan.Correction || store.plan.Candidate.Source != SourceModelInference ||
+		store.plan.LogicalMemoryID != "30000000-0000-4000-8000-000000000006" ||
+		store.plan.ExpectedRecordRevision != 2 || store.plan.ExpectedRecordGeneration != 2 {
+		t.Fatalf("trusted correction plan=%+v", store.plan)
 	}
 
 	if _, err := service.DecideCandidate(context.Background(), DevicePrincipal{DeviceID: testDevice}, DecideCandidateCommand{

@@ -794,6 +794,9 @@ func (s *Service) Export(ctx context.Context, revisionID string) (ExportResult, 
 	if err != nil {
 		return ExportResult{}, err
 	}
+	if tree.Revision.Redacted {
+		return ExportResult{}, &Error{Code: CodeContentRedacted}
+	}
 	result := ExportResult{RevisionID: tree.Revision.ID, Documents: make([]ExportDocument, 0, len(tree.Revision.Documents))}
 	for _, document := range tree.Revision.Documents {
 		markdown, err := ExportMarkdown(document.Revision.CanonicalMarkdown, tree.Revision.ID)

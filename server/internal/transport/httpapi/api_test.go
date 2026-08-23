@@ -16,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
 
 type fakeIdentity struct {
@@ -42,6 +43,23 @@ func (f *fakeIdentity) RevokeDevice(_ context.Context, id string) error {
 	return f.revokeErr
 }
 
+type fakeMigrationLeases struct {
+	acquireRequest privacy.MigrationLeaseRequest
+	releaseRequest privacy.MigrationLeaseRequest
+	acquireErr     error
+	releaseErr     error
+}
+
+func (f *fakeMigrationLeases) AcquireMigrationLease(_ context.Context, request privacy.MigrationLeaseRequest) (privacy.MigrationLease, error) {
+	f.acquireRequest = request
+	return privacy.MigrationLease{OperationID: request.OperationID, AcquiredAt: time.Now().UTC()}, f.acquireErr
+}
+
+func (f *fakeMigrationLeases) ReleaseMigrationLease(_ context.Context, request privacy.MigrationLeaseRequest) error {
+	f.releaseRequest = request
+	return f.releaseErr
+}
+
 type fakeReadiness struct{ report health.Report }
 
 func (f fakeReadiness) Ready(context.Context) health.Report { return f.report }
@@ -52,29 +70,33 @@ func (f fakeModel) Probe(context.Context) llm.Capabilities { return f.result }
 
 type fakeKnowledge struct {
 	head          *knowledge.KnowledgeRevision
+	headErr       error
 	importResult  knowledge.ImportResult
 	importErr     error
 	importCommand knowledge.ImportCommand
 	tree          knowledge.TreeResult
+	treeErr       error
 	export        knowledge.ExportResult
+	exportErr     error
 	retrieval     knowledge.RetrievalResult
+	retrievalErr  error
 }
 
 func (f *fakeKnowledge) Head(context.Context) (*knowledge.KnowledgeRevision, error) {
-	return f.head, nil
+	return f.head, f.headErr
 }
 func (f *fakeKnowledge) Import(_ context.Context, command knowledge.ImportCommand) (knowledge.ImportResult, error) {
 	f.importCommand = command
 	return f.importResult, f.importErr
 }
 func (f *fakeKnowledge) Tree(context.Context, string) (knowledge.TreeResult, error) {
-	return f.tree, nil
+	return f.tree, f.treeErr
 }
 func (f *fakeKnowledge) Export(context.Context, string) (knowledge.ExportResult, error) {
-	return f.export, nil
+	return f.export, f.exportErr
 }
 func (f *fakeKnowledge) Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error) {
-	return f.retrieval, nil
+	return f.retrieval, f.retrievalErr
 }
 
 func newTestAPI(t *testing.T, id *fakeIdentity, pairLimit, authLimit int, logs *bytes.Buffer) http.Handler {
@@ -113,6 +135,60 @@ func TestHealthAndPairingHTTPContract(t *testing.T) {
 	}
 	if strings.Contains(logs.String(), "pair-secret") || strings.Contains(logs.String(), "one-time-device-token") {
 		t.Fatalf("audit log leaked secret: %s", logs.String())
+	}
+}
+
+func TestInternalPrivacyMigrationLeaseRequiresMaintenanceToken(t *testing.T) {
+	var logs bytes.Buffer
+	leases := &fakeMigrationLeases{}
+	const maintenanceToken = "maintenance-token-not-returned-to-callers"
+	const operationID = "10000000-0000-4000-8000-000000000001"
+	backupIdentity := strings.Repeat("ab", 32)
+	handler, err := New(Options{
+		Identity: &fakeIdentity{}, MigrationLeases: leases, MaintenanceToken: maintenanceToken,
+		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger:    slog.New(slog.NewJSONHandler(&logs, nil)), PairLimiter: NewFixedWindowLimiter(10, time.Minute),
+		AuthLimiter: NewFixedWindowLimiter(10, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"operation_id":"` + operationID + `","backup_identity":"` + backupIdentity + `"}`
+	for _, token := range []string{"", "wrong-token"} {
+		request := httptest.NewRequest(http.MethodPost, "/internal/privacy/migrations/acquire", strings.NewReader(body))
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized || leases.acquireRequest.OperationID != "" {
+			t.Fatalf("unauthorized acquire: %d %s", response.Code, response.Body.String())
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/internal/privacy/migrations/acquire", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+maintenanceToken)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || leases.acquireRequest.OperationID != operationID || leases.acquireRequest.BackupIdentity != backupIdentity || strings.Contains(response.Body.String(), backupIdentity) || strings.Contains(response.Body.String(), maintenanceToken) {
+		t.Fatalf("authorized acquire: %d %s request=%+v", response.Code, response.Body.String(), leases.acquireRequest)
+	}
+	request = httptest.NewRequest(http.MethodPost, "/internal/privacy/migrations/release", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+maintenanceToken)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || leases.releaseRequest.OperationID != operationID || response.Body.Len() != 0 {
+		t.Fatalf("authorized release: %d %s request=%+v", response.Code, response.Body.String(), leases.releaseRequest)
+	}
+	leases.acquireErr = &privacy.Error{Code: privacy.CodeMigrationLeaseConflict, Reason: "privacy_erasure_active"}
+	request = httptest.NewRequest(http.MethodPost, "/internal/privacy/migrations/acquire", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer "+maintenanceToken)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), privacy.CodeMigrationLeaseConflict) || strings.Contains(response.Body.String(), backupIdentity) {
+		t.Fatalf("migration conflict: %d %s", response.Code, response.Body.String())
+	}
+	if strings.Contains(logs.String(), maintenanceToken) || strings.Contains(logs.String(), backupIdentity) {
+		t.Fatalf("migration lease log leaked secret or identity: %s", logs.String())
 	}
 }
 
@@ -348,6 +424,39 @@ func TestKnowledgeRoutesScopesStrictJSONAndRedactedLogs(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("knowledge write scope was not enforced: %d", response.Code)
+	}
+}
+
+func TestKnowledgeContentRedactedHTTPMapping(t *testing.T) {
+	var logs bytes.Buffer
+	const revisionID = "10000000-0000-4000-8000-000000000001"
+	knowledgeService := &fakeKnowledge{
+		exportErr:    &knowledge.Error{Code: knowledge.CodeContentRedacted},
+		retrievalErr: &knowledge.Error{Code: knowledge.CodeContentRedacted},
+	}
+	id := &fakeIdentity{auth: identity.Credential{
+		Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"},
+		Scopes: []string{"knowledge:read"},
+	}}
+	handler, err := New(Options{
+		Identity: id, Knowledge: knowledgeService,
+		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger:    slog.New(slog.NewJSONHandler(&logs, nil)), PairLimiter: NewFixedWindowLimiter(10, time.Minute),
+		AuthLimiter: NewFixedWindowLimiter(10, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, request := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/v1/knowledge/revisions/"+revisionID+"/export", nil),
+		httptest.NewRequest(http.MethodPost, "/v1/knowledge/retrievals", strings.NewReader(`{"query":"private","knowledge_revision_id":"`+revisionID+`"}`)),
+	} {
+		request.Header.Set("Authorization", "Bearer valid")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), knowledge.CodeContentRedacted) || strings.Contains(response.Body.String(), "[redacted]") {
+			t.Fatalf("content redacted mapping: %d %s", response.Code, response.Body.String())
+		}
 	}
 }
 

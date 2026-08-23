@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -54,6 +55,93 @@ func TestPostgreSQLDisabledNocturneErasureConvergesWithoutHistoryAndAllowsSecond
 				}
 			}
 		}
+	}
+}
+
+type appUnknownRemoteEraser struct{ calls int }
+
+func (e *appUnknownRemoteEraser) Erase(context.Context, privacy.RemoteEraseRequest) (privacy.RemoteEraseResult, error) {
+	e.calls++
+	return privacy.RemoteEraseResult{
+		Status: privacy.StepUnknown, StableReason: "nocturne_unavailable",
+		EvidenceDigest: strings.Repeat("ab", 32), CompletedAt: time.Now().UTC(),
+	}, nil
+}
+
+func TestPostgreSQLPrivacyResumeAfterRestartRunsLocalScrubWithoutNocturne(t *testing.T) {
+	for name, preflightErr := range map[string]error{
+		"unavailable":       errors.New("sidecar unavailable"),
+		"contract_mismatch": appPreflightError{category: "contract_mismatch"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			pool := appIntegrationPool(t)
+			ctx := context.Background()
+			stores := newApplicationStores(pool)
+			initial, err := composeMemoryBridge(pool, stores, bridgeTestConfig(t, false), memoryBridgeDependencies{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			deviceID := uuid.NewString()
+			if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'restart private label',clock_timestamp())`, deviceID); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			barrier, err := initial.privacyStore.CommitBarrier(ctx, privacy.ErasureRequest{
+				DeviceID: deviceID, OperationID: uuid.NewString(), ActorDeviceID: deviceID,
+				ReasonCode: string(privacy.ReasonLearnerRequest), RequestedAt: now,
+				ManagedBackupUnrecoverableAfter: now.Add(24 * time.Hour), ExpectedCurrentLearnerGeneration: 1,
+			})
+			if err != nil || barrier.Status != privacy.StatusBarrierCommitted {
+				t.Fatalf("barrier=%+v err=%v", barrier, err)
+			}
+
+			// Recompose against the same database to model a process restart before local scrub.
+			restartedStores := newApplicationStores(pool)
+			restarted, err := composeMemoryBridge(pool, restartedStores, bridgeTestConfig(t, false), memoryBridgeDependencies{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			probe := &appPreflightProbe{err: preflightErr}
+			gate, err := newNocturnePreflightGate(probe, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyNocturneStartupPreflightForRuntime(ctx, pool, gate); err != nil {
+				t.Fatalf("active erasure restart was blocked by preflight: %v", err)
+			}
+			eraser := &appUnknownRemoteEraser{}
+			restarted.privacyService.preflight = gate
+			restarted.privacyService.eraser = eraser
+			processed, err := resumeActivePrivacyErasure(ctx, pool, restarted.privacyService)
+			if err != nil || processed != 1 {
+				t.Fatalf("privacy resume processed=%d err=%v", processed, err)
+			}
+			receipt, err := restarted.privacyStore.Receipt(ctx, barrier.ErasureID)
+			if err != nil || receipt.Status != privacy.StatusPartial {
+				t.Fatalf("privacy resume receipt=%+v err=%v", receipt, err)
+			}
+			var label string
+			if err := pool.QueryRow(ctx, `SELECT display_name FROM devices WHERE id=$1`, deviceID).Scan(&label); err != nil || label != "[redacted]" {
+				t.Fatalf("local scrub did not complete label=%q err=%v", label, err)
+			}
+			if name == "unavailable" && eraser.calls != 1 {
+				t.Fatalf("transient unavailable did not call remote eraser: %d", eraser.calls)
+			}
+			if name == "contract_mismatch" && eraser.calls != 0 {
+				t.Fatalf("contract mismatch reached remote mutation: %d", eraser.calls)
+			}
+			for _, step := range receipt.Steps {
+				switch step.Store {
+				case privacy.StoreIdentityMetadata, privacy.StoreKnowledgeContent, privacy.StoreKnowledgeIndex,
+					privacy.StoreKnowledgeArtifacts, privacy.StoreLearningEventPayload, privacy.StoreLearningTypedPayload,
+					privacy.StoreTutoringPayload, privacy.StoreInboxOutbox, privacy.StoreProjectionGenerations,
+					privacy.StoreMemoryCandidateDelivery, privacy.StoreProcessCache:
+					if step.Status != privacy.StepSucceeded {
+						t.Fatalf("local step %s status=%s", step.Store, step.Status)
+					}
+				}
+			}
+		})
 	}
 }
 

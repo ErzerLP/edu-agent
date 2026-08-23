@@ -9,7 +9,9 @@ import (
 	"time"
 
 	identitydb "github.com/edu-agent/edu-agent/server/internal/identity/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	knowledgedb "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningdb "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	memorydb "github.com/edu-agent/edu-agent/server/internal/memory/postgresstore"
 	outboxdb "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
@@ -100,6 +102,26 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	}
 	if barrier.Status != privacy.StatusBarrierCommitted || barrier.LearnerGeneration != 2 || barrier.RedactedThroughEventSeq != 0 || len(barrier.Steps) != len(privacy.ReceiptSlots) {
 		t.Fatalf("barrier receipt=%+v", barrier)
+	}
+	var redactionSchema int
+	var canonicalRedactionPayload bool
+	if err := pool.QueryRow(ctx, `
+		SELECT e.event_schema_version,
+		       (SELECT count(*) FROM jsonb_object_keys(p.payload))=5
+		       AND p.payload ? 'erasure_id'
+		       AND p.payload ? 'generation'
+		       AND p.payload ? 'redacted_through_event_seq'
+		       AND NOT p.payload ? 'redacted_through'
+		       AND p.payload ? 'policy_version'
+		       AND p.payload ? 'reason_code'
+		FROM privacy_redaction_barriers b
+		JOIN learning_events e ON e.id=b.event_id
+		JOIN learning_event_payloads p ON p.id=e.payload_id
+		WHERE b.erasure_id=$1`, barrier.ErasureID).Scan(&redactionSchema, &canonicalRedactionPayload); err != nil {
+		t.Fatal(err)
+	}
+	if redactionSchema != learning.EventRedactedSchemaVersion || !canonicalRedactionPayload {
+		t.Fatalf("EventRedacted schema=%d canonical=%v", redactionSchema, canonicalRedactionPayload)
 	}
 	replayed, err := store.CommitBarrier(ctx, request)
 	if err != nil || replayed.ErasureID != barrier.ErasureID {
@@ -228,6 +250,115 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	}
 }
 
+func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
+	ctx := context.Background()
+	pool := privacyIntegrationPool(t)
+	deviceID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'knowledge actor',clock_timestamp())`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	knowledgeStore := knowledgedb.New(pool)
+	knowledgeService, err := knowledge.NewService(knowledgeStore, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := knowledgeService.Import(ctx, knowledge.ImportCommand{
+		OperationID: uuid.NewString(), ExpectedParentProvided: true,
+		Source: "private-import-source", ActorDeviceID: deviceID,
+		Documents: []knowledge.ImportDocument{{Path: "private.md", Markdown: "# Private title\nprivate body needle\n"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeRevisionID := first.Revision.Documents[0].Revision.Nodes[1].ID
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO knowledge_node_artifacts(
+			id,node_revision_id,kind,producer_version,prompt_version,model_version,
+			input_hash,content,status,created_at)
+		VALUES($1,$2,'summary','producer-v1','prompt-v1','model-v1',
+		       decode(repeat('ab',32),'hex'),'private summary body','ready',clock_timestamp())`,
+		uuid.NewString(), nodeRevisionID); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := privacy.NewReadPermitManager()
+	tutoringStore := tutoringdb.New(pool)
+	store := privacydb.New(pool,
+		privacydb.WithReadPermits(manager),
+		privacydb.WithLocalOwner(identitydb.New(pool)),
+		privacydb.WithLocalOwner(knowledgeStore),
+		privacydb.WithLocalOwner(learningdb.New(pool, tutoringStore)),
+		privacydb.WithLocalOwner(tutoringStore),
+		privacydb.WithLocalOwner(memorydb.New(pool)),
+		privacydb.WithLocalOwner(outboxdb.New(pool)),
+	)
+	now := time.Now().UTC()
+	barrier, err := store.CommitBarrier(ctx, privacy.ErasureRequest{
+		DeviceID: deviceID, OperationID: uuid.NewString(), ActorDeviceID: deviceID,
+		ReasonCode: string(privacy.ReasonLearnerRequest), RequestedAt: now,
+		ManagedBackupUnrecoverableAfter: now.Add(24 * time.Hour), ExpectedCurrentLearnerGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RunLocalScrub(ctx, barrier.ErasureID); err != nil {
+		t.Fatal(err)
+	}
+
+	head, err := knowledgeService.Head(ctx)
+	if err != nil || head == nil || head.ID != first.Revision.ID || !head.Redacted || len(head.Documents) != 0 || len(head.Lineages) != 0 {
+		t.Fatalf("redacted head=%+v err=%v", head, err)
+	}
+	tree, err := knowledgeService.Tree(ctx, first.Revision.ID)
+	if err != nil || !tree.Revision.Redacted || len(tree.Revision.Documents) != 0 || len(tree.Revision.Lineages) != 0 {
+		t.Fatalf("redacted tree=%+v err=%v", tree, err)
+	}
+	if _, err := knowledgeService.Export(ctx, first.Revision.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("old revision export error=%v", err)
+	}
+	oldRevisionID := first.Revision.ID
+	if _, err := knowledgeService.Retrieve(ctx, knowledge.RetrievalCommand{Query: "private", KnowledgeRevisionID: &oldRevisionID}); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("old revision retrieval error=%v", err)
+	}
+	var placeholderRows, residualBodies int64
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown LIKE '%[redacted]%')+
+		  (SELECT count(*) FROM knowledge_node_revisions WHERE title LIKE '%[redacted]%')+
+		  (SELECT count(*) FROM knowledge_node_artifacts WHERE content LIKE '%[redacted]%')+
+		  (SELECT count(*) FROM knowledge_snapshot_documents WHERE canonical_path LIKE '%[redacted]%' OR folded_path LIKE '%[redacted]%')+
+		  (SELECT count(*) FROM knowledge_revisions WHERE source LIKE '%[redacted]%')+
+		  (SELECT count(*) FROM knowledge_lineages WHERE reason LIKE '%[redacted]%'),
+		  (SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown<>'')+
+		  (SELECT count(*) FROM knowledge_node_revisions WHERE title<>'')+
+		  (SELECT count(*) FROM knowledge_node_artifacts WHERE content<>'')`).Scan(&placeholderRows, &residualBodies); err != nil {
+		t.Fatal(err)
+	}
+	if placeholderRows != 0 || residualBodies != 0 {
+		t.Fatalf("knowledge scrub placeholders=%d residual_bodies=%d", placeholderRows, residualBodies)
+	}
+
+	parent := first.Revision.ID
+	fresh, err := knowledgeService.Import(ctx, knowledge.ImportCommand{
+		OperationID: uuid.NewString(), ExpectedParentRevisionID: &parent, ExpectedParentProvided: true,
+		Source: "post-erasure-import", ActorDeviceID: deviceID,
+		Documents: []knowledge.ImportDocument{{Path: "fresh.md", Markdown: "# Fresh title\nfresh body needle\n"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Revision.Redacted || fresh.Revision.RevisionNo != first.Revision.RevisionNo+1 || len(fresh.Revision.Documents) != 1 {
+		t.Fatalf("fresh revision=%+v", fresh.Revision)
+	}
+	freshExport, err := knowledgeService.Export(ctx, fresh.Revision.ID)
+	if err != nil || len(freshExport.Documents) != 1 || !strings.Contains(freshExport.Documents[0].Markdown, "fresh body needle") {
+		t.Fatalf("fresh export=%+v err=%v", freshExport, err)
+	}
+	if _, err := knowledgeService.Export(ctx, first.Revision.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("old revision export after fresh import error=%v", err)
+	}
+}
+
 func TestBarrierDestroysManagedBackupKeysAtomically(t *testing.T) {
 	ctx := context.Background()
 	pool := privacyIntegrationPool(t)
@@ -248,9 +379,12 @@ func TestBarrierDestroysManagedBackupKeysAtomically(t *testing.T) {
 	if _, err := failing.CommitBarrier(ctx, request); err == nil {
 		t.Fatal("barrier without learning owner unexpectedly committed")
 	}
-	var wrappedStillPresent bool
+	var wrappedStillPresent, inventoryStillUnbound bool
 	if err := pool.QueryRow(ctx, `SELECT wrapped_key IS NOT NULL AND destroyed_at IS NULL FROM memory_generation_keys WHERE id=$1`, keyID).Scan(&wrappedStillPresent); err != nil || !wrappedStillPresent {
 		t.Fatalf("failed barrier did not roll back key destruction present=%v err=%v", wrappedStillPresent, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT erasure_id IS NULL FROM memory_managed_backup_inventory WHERE id=$1`, backupID).Scan(&inventoryStillUnbound); err != nil || !inventoryStillUnbound {
+		t.Fatalf("failed barrier did not roll back inventory binding unbound=%v err=%v", inventoryStillUnbound, err)
 	}
 	tutoringStore := tutoringdb.New(pool)
 	store := privacydb.New(pool,
@@ -268,14 +402,90 @@ func TestBarrierDestroysManagedBackupKeysAtomically(t *testing.T) {
 	}
 	var wrappedDestroyed, evidencePresent bool
 	var destroyedAt, verifiedAt time.Time
+	var boundErasureID string
 	if err := pool.QueryRow(ctx, `SELECT wrapped_key IS NULL,destruction_evidence_digest IS NOT NULL,destroyed_at FROM memory_generation_keys WHERE id=$1`, keyID).Scan(&wrappedDestroyed, &evidencePresent, &destroyedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT erasure_id::text FROM memory_managed_backup_inventory WHERE id=$1`, backupID).Scan(&boundErasureID); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT managed_backup_verified_unrecoverable_at FROM privacy_erasures WHERE id=$1`, barrier.ErasureID).Scan(&verifiedAt); err != nil {
 		t.Fatal(err)
 	}
-	if !wrappedDestroyed || !evidencePresent || destroyedAt.IsZero() || !verifiedAt.Equal(destroyedAt) || verifiedAt.After(request.ManagedBackupUnrecoverableAfter) {
-		t.Fatalf("backup key destruction wrapped=%v evidence=%v destroyed=%s verified=%s deadline=%s", wrappedDestroyed, evidencePresent, destroyedAt, verifiedAt, request.ManagedBackupUnrecoverableAfter)
+	if !wrappedDestroyed || !evidencePresent || destroyedAt.IsZero() || !verifiedAt.Equal(destroyedAt) || verifiedAt.After(request.ManagedBackupUnrecoverableAfter) || boundErasureID != barrier.ErasureID {
+		t.Fatalf("backup key destruction wrapped=%v evidence=%v destroyed=%s verified=%s deadline=%s bound_erasure=%s", wrappedDestroyed, evidencePresent, destroyedAt, verifiedAt, request.ManagedBackupUnrecoverableAfter, boundErasureID)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE memory_managed_backup_inventory SET erasure_id=NULL WHERE id=$1`, backupID); err == nil || !strings.Contains(err.Error(), "managed backup erasure binding is immutable") {
+		t.Fatalf("managed backup erasure binding was cleared: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE memory_managed_backup_inventory SET erasure_id=$2 WHERE id=$1`, backupID, uuid.NewString()); err == nil || !strings.Contains(err.Error(), "managed backup erasure binding is immutable") {
+		t.Fatalf("managed backup erasure binding was rewritten: %v", err)
+	}
+}
+
+func TestMigrationLeaseAndPrivacyBarrierAreMutuallyExclusive(t *testing.T) {
+	ctx := context.Background()
+	pool := privacyIntegrationPool(t)
+	deviceID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'migration actor',clock_timestamp())`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	tutoringStore := tutoringdb.New(pool)
+	store := privacydb.New(pool,
+		privacydb.WithReadPermits(privacy.NewReadPermitManager()),
+		privacydb.WithLocalOwner(identitydb.New(pool)),
+		privacydb.WithLocalOwner(knowledgedb.New(pool)),
+		privacydb.WithLocalOwner(learningdb.New(pool, tutoringStore)),
+		privacydb.WithLocalOwner(tutoringStore),
+		privacydb.WithLocalOwner(memorydb.New(pool)),
+		privacydb.WithLocalOwner(outboxdb.New(pool)),
+	)
+	leaseRequest := privacy.MigrationLeaseRequest{OperationID: uuid.NewString(), BackupIdentity: strings.Repeat("ab", 32)}
+	lease, err := store.AcquireMigrationLease(ctx, leaseRequest)
+	if err != nil || lease.OperationID != leaseRequest.OperationID || lease.Replayed {
+		t.Fatalf("acquire migration lease=%+v err=%v", lease, err)
+	}
+	replayed, err := store.AcquireMigrationLease(ctx, leaseRequest)
+	if err != nil || !replayed.Replayed || !replayed.AcquiredAt.Equal(lease.AcquiredAt) {
+		t.Fatalf("reacquire migration lease=%+v err=%v", replayed, err)
+	}
+	changedIdentity := leaseRequest
+	changedIdentity.BackupIdentity = strings.Repeat("cd", 32)
+	if _, err := store.AcquireMigrationLease(ctx, changedIdentity); privacy.ErrorCode(err) != privacy.CodeMigrationLeaseConflict {
+		t.Fatalf("migration identity mismatch error=%v", err)
+	}
+	otherOperation := leaseRequest
+	otherOperation.OperationID = uuid.NewString()
+	if _, err := store.AcquireMigrationLease(ctx, otherOperation); privacy.ErrorCode(err) != privacy.CodeMigrationLeaseConflict {
+		t.Fatalf("second migration operation error=%v", err)
+	}
+
+	now := time.Now().UTC()
+	erasureRequest := privacy.ErasureRequest{
+		DeviceID: deviceID, OperationID: uuid.NewString(), ActorDeviceID: deviceID,
+		ReasonCode: string(privacy.ReasonLearnerRequest), RequestedAt: now,
+		ManagedBackupUnrecoverableAfter: now.Add(24 * time.Hour), ExpectedCurrentLearnerGeneration: 1,
+	}
+	if _, err := store.CommitBarrier(ctx, erasureRequest); privacy.ErrorCode(err) != privacy.CodeMigrationLeaseConflict {
+		t.Fatalf("active migration did not block barrier: %v", err)
+	}
+	if err := store.ReleaseMigrationLease(ctx, changedIdentity); privacy.ErrorCode(err) != privacy.CodeMigrationLeaseConflict {
+		t.Fatalf("migration release identity mismatch error=%v", err)
+	}
+	if err := store.ReleaseMigrationLease(ctx, leaseRequest); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReleaseMigrationLease(ctx, leaseRequest); err != nil {
+		t.Fatalf("idempotent migration release: %v", err)
+	}
+	barrier, err := store.CommitBarrier(ctx, erasureRequest)
+	if err != nil || barrier.Status != privacy.StatusBarrierCommitted {
+		t.Fatalf("barrier after release=%+v err=%v", barrier, err)
+	}
+	if _, err := store.AcquireMigrationLease(ctx, privacy.MigrationLeaseRequest{
+		OperationID: uuid.NewString(), BackupIdentity: strings.Repeat("ef", 32),
+	}); privacy.ErrorCode(err) != privacy.CodeMigrationLeaseConflict {
+		t.Fatalf("active erasure did not block migration: %v", err)
 	}
 }
 

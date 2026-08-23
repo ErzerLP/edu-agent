@@ -71,41 +71,41 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 	switch request.Store {
 	case privacy.StoreKnowledgeContent:
 		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_revisions
+			SET source='privacy_erasure',redacted_at=clock_timestamp(),redacted_by_erasure_id=$1
+			WHERE redacted_at IS NULL AND privacy_owner_scrub_permitted('knowledge')`, request.ErasureID); err != nil {
+			return fmt.Errorf("mark knowledge revisions redacted: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_document_payloads
-			SET canonical_markdown='[redacted]'
+			SET canonical_markdown=''
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge canonical markdown: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_snapshot_documents
-			SET canonical_path='[redacted]/'||document_revision_id::text,
-				folded_path='[redacted]/'||document_revision_id::text
+			SET canonical_path='erased/'||document_revision_id::text,
+				folded_path='erased/'||document_revision_id::text
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge snapshot paths: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE knowledge_revisions
-			SET source='[redacted]'
-			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
-			return fmt.Errorf("redact knowledge revision sources: %w", err)
-		}
-		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_lineages
-			SET reason='[redacted]'
+			SET reason='privacy_erasure'
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge lineage reasons: %w", err)
 		}
 	case privacy.StoreKnowledgeIndex:
 		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_node_revisions
-			SET title='[redacted]',ancestor_titles='[]'::jsonb
+			SET title='',ancestor_titles='[]'::jsonb
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge node index: %w", err)
 		}
 	case privacy.StoreKnowledgeArtifacts:
 		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_node_artifacts
-			SET content='[redacted]'
+			SET content=''
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge artifacts: %w", err)
 		}
@@ -124,28 +124,29 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 	}
 	var residual int64
 	var query string
+	var arguments []any
 	switch request.Store {
 	case privacy.StoreKnowledgeContent:
 		query = `
 			SELECT
-				(SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown <> '[redacted]')+
-				(SELECT count(*) FROM knowledge_snapshot_documents
-				 WHERE canonical_path <> '[redacted]' AND canonical_path NOT LIKE '[redacted]/%')+
-				(SELECT count(*) FROM knowledge_snapshot_documents
-				 WHERE folded_path <> '[redacted]' AND folded_path NOT LIKE '[redacted]/%')+
-				(SELECT count(*) FROM knowledge_revisions WHERE source <> '[redacted]')+
-				(SELECT count(*) FROM knowledge_lineages WHERE reason <> '[redacted]')`
+				(SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown <> '')+
+				(SELECT count(*) FROM knowledge_snapshot_documents WHERE canonical_path NOT LIKE 'erased/%')+
+				(SELECT count(*) FROM knowledge_snapshot_documents WHERE folded_path NOT LIKE 'erased/%')+
+				(SELECT count(*) FROM knowledge_revisions
+				 WHERE source <> 'privacy_erasure' OR redacted_at IS NULL OR redacted_by_erasure_id <> $1)+
+				(SELECT count(*) FROM knowledge_lineages WHERE reason <> 'privacy_erasure')`
+		arguments = append(arguments, request.ErasureID)
 	case privacy.StoreKnowledgeIndex:
 		query = `
 			SELECT
-				(SELECT count(*) FROM knowledge_node_revisions WHERE title <> '[redacted]')+
+				(SELECT count(*) FROM knowledge_node_revisions WHERE title <> '')+
 				(SELECT count(*) FROM knowledge_node_revisions WHERE ancestor_titles <> '[]'::jsonb)`
 	case privacy.StoreKnowledgeArtifacts:
-		query = `SELECT count(*) FROM knowledge_node_artifacts WHERE content <> '[redacted]'`
+		query = `SELECT count(*) FROM knowledge_node_artifacts WHERE content <> ''`
 	default:
 		return 0, &privacy.Error{Code: privacy.CodeInvalidRequest, Reason: "unsupported_knowledge_local_store"}
 	}
-	if err := s.pool.QueryRow(ctx, query).Scan(&residual); err != nil {
+	if err := s.pool.QueryRow(ctx, query, arguments...).Scan(&residual); err != nil {
 		return 0, fmt.Errorf("verify knowledge privacy scrub: %w", err)
 	}
 	return residual, nil

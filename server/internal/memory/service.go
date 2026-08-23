@@ -51,17 +51,20 @@ type CreateCandidateCommand struct {
 }
 
 type CreateModelCandidateCommand struct {
-	OperationID       string
-	Content           string
-	Source            SourceKind
-	SourceEventID     string
-	SourceOperationID string
-	SourceHashes      []string
-	Reason            string
-	Category          Category
-	Sensitivity       Sensitivity
-	Stability         Stability
-	ValidUntil        time.Time
+	OperationID              string
+	LogicalMemoryID          string
+	ExpectedRevision         int64
+	ExpectedRecordGeneration int64
+	Content                  string
+	Source                   SourceKind
+	SourceEventID            string
+	SourceOperationID        string
+	SourceHashes             []string
+	Reason                   string
+	Category                 Category
+	Sensitivity              Sensitivity
+	Stability                Stability
+	ValidUntil               time.Time
 }
 
 type CreateCorrectionCandidateCommand struct {
@@ -208,7 +211,7 @@ func (s *Service) CreateModelCandidate(ctx context.Context, command CreateModelC
 	if s.modelPrincipal == nil {
 		return OperationResult{}, &Error{Code: CodeMemoryUnavailable, Reason: "model_principal_not_configured"}
 	}
-	if command.Source != SourceModelInference && command.Source != SourceGeneratedSummary {
+	if command.Source != SourceModelInference && command.Source != SourceLongTermBackground && command.Source != SourceGeneratedSummary {
 		return OperationResult{}, invalid("invalid_model_source")
 	}
 	reference := SourceReference{
@@ -216,9 +219,11 @@ func (s *Service) CreateModelCandidate(ctx context.Context, command CreateModelC
 		ModelID: s.modelPrincipal.ModelID, PromptRevision: s.modelPrincipal.PromptRevision,
 		SourceHashes: append([]string(nil), command.SourceHashes...),
 	}
+	correction := command.LogicalMemoryID != "" || command.ExpectedRevision != 0 || command.ExpectedRecordGeneration != 0
 	return s.createCandidate(ctx, s.modelPrincipal.DeviceID, command.OperationID, command.Content, command.Source,
 		reference, s.modelPrincipal.ProposerID, command.Reason, command.Category, command.Sensitivity,
-		command.Stability, command.ValidUntil, false, "", 0, 0)
+		command.Stability, command.ValidUntil, correction, command.LogicalMemoryID,
+		command.ExpectedRevision, command.ExpectedRecordGeneration)
 }
 
 func (s *Service) CreateCorrectionCandidate(

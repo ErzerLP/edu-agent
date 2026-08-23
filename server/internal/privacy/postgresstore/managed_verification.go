@@ -48,6 +48,15 @@ func (r *ManagedBackupRepository) VerifyManagedBackupBarrier(ctx context.Context
 	if invalidOldKeys != 0 {
 		return privacy.ManagedBackupBarrierState{}, privacy.ErrManagedBackupLiveOldKey
 	}
+	var unboundInventory int64
+	if err := r.pool.QueryRow(ctx, `
+		SELECT count(*) FROM memory_managed_backup_inventory
+		WHERE learner_generation<$1 AND erasure_id IS NULL`, targetGeneration).Scan(&unboundInventory); err != nil {
+		return privacy.ManagedBackupBarrierState{}, fmt.Errorf("verify managed backup erasure binding: %w", err)
+	}
+	if unboundInventory != 0 {
+		return privacy.ManagedBackupBarrierState{}, privacy.ErrManagedBackupBarrierUnproven
+	}
 	return privacy.ManagedBackupBarrierState{
 		VerifiedUnrecoverableAt: verifiedAt.UTC(),
 		DestroyedOldKeyCount:    oldKeys,

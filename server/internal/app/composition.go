@@ -281,17 +281,16 @@ func composeMemoryBridge(pool *pgxpool.Pool, stores applicationStores, cfg confi
 		if err != nil {
 			return memoryBridgeComposition{}, fmt.Errorf("initialize Nocturne preflight: %w", err)
 		}
+		composition.privacyService.preflight = composition.preflight
 		if err := composition.composeEnabledNocturne(pool, stores, cfg, dependencies); err != nil {
 			return memoryBridgeComposition{}, err
 		}
 	}
-	privacyResume := periodicWorker("privacy_erasure_resume", cfg.Nocturne.ReconciliationInterval, 1, func(ctx context.Context) (int, error) {
-		return resumeActivePrivacyErasure(ctx, pool, composition.privacyService)
-	})
-	if composition.preflight != nil {
-		privacyResume = composition.preflight.protect(privacyResume)
-	}
-	composition.workers = append(composition.workers, privacyResume)
+	composition.workers = append(composition.workers,
+		periodicWorker("privacy_erasure_resume", cfg.Nocturne.ReconciliationInterval, 1, func(ctx context.Context) (int, error) {
+			return resumeActivePrivacyErasure(ctx, pool, composition.privacyService)
+		}),
+	)
 	return composition, nil
 }
 

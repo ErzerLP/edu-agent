@@ -39,6 +39,7 @@ const (
 	testMaintenanceReceiptID  = "b0000000-0000-4000-8000-000000000001"
 	testReconciliationID      = "c0000000-0000-4000-8000-000000000001"
 	testReconciliationLeaseID = "d0000000-0000-4000-8000-000000000001"
+	testErasureDeliveryID     = "e0000000-0000-4000-8000-000000000001"
 	testMaintenanceGeneration = int64(2)
 )
 
@@ -228,6 +229,31 @@ func TestConsumerResponseLostReconcilesWithoutSecondMutation(t *testing.T) {
 	wantPrefix := []string{"capabilities", "get", "create", "capabilities", "get", "references"}
 	if !reflect.DeepEqual(remote.calls, wantPrefix) {
 		t.Fatalf("calls=%v want=%v", remote.calls, wantPrefix)
+	}
+}
+
+func TestCorrectionResponseLostResolvesNewActiveMemoryIDFromReferences(t *testing.T) {
+	store := newProtocolStore()
+	content := "Prefer detailed examples"
+	store.work.Content = content
+	store.work.Delivery.Kind = memory.DeliveryCorrection
+	store.work.Delivery.PayloadHash = memory.SHA256String(content)
+	store.work.Policy.ContentHash = store.work.Delivery.PayloadHash
+	store.work.PreviousContentHash = memory.SHA256String("Prefer concise examples")
+	store.work.ExternalNodeID = testNodeID
+	store.work.ExternalMemoryID = 7
+	store.attempt.State = memory.AttemptReconciling
+	store.attempt.BootEpoch = "boot-1"
+	remote := &scriptedRemote{boot: "boot-1", nodeContent: content, activeMemoryID: 8}
+	consumer := testConsumer(t, store, remote)
+	if err := consumer.Apply(context.Background(), testMessage(t, store.work)); err != nil {
+		t.Fatalf("correction reconciliation err=%v", err)
+	}
+	if store.finalized.ExternalMemoryID != 8 || store.finalized.ExternalMemoryID == store.work.ExternalMemoryID {
+		t.Fatalf("correction finalized=%+v prior_memory_id=%d", store.finalized, store.work.ExternalMemoryID)
+	}
+	if !reflect.DeepEqual(remote.calls, []string{"capabilities", "get", "references"}) {
+		t.Fatalf("correction reconciliation calls=%v", remote.calls)
 	}
 }
 
@@ -666,8 +692,9 @@ func TestMaintenanceRemoteEraserResumesDurableDeletePlanIdempotently(t *testing.
 func newMaintenanceProtocolStore(status memory.ReconciliationStatus, sentBoot string) *protocolStore {
 	store := newProtocolStore()
 	store.maintenance = memory.ExpiryReconciliation{
-		ID: testReconciliationID, DeliveryID: testDeliveryID, LogicalMemoryID: testLogicalID,
-		ExternalURI: memory.DeterministicExternalURI(testLogicalID), ContentHash: store.work.Delivery.PayloadHash,
+		ID: testReconciliationID, DeliveryID: testDeliveryID, ErasureDeliveryID: testErasureDeliveryID,
+		LogicalMemoryID: testLogicalID,
+		ExternalURI:     memory.DeterministicExternalURI(testLogicalID), ContentHash: store.work.Delivery.PayloadHash,
 		AttemptToken: testAttemptToken, SentBootEpoch: sentBoot, LearnerGeneration: 1, RecordGeneration: 1,
 		Status: status, CreatedAt: store.work.Delivery.CreatedAt, UpdatedAt: store.work.Delivery.UpdatedAt,
 	}
@@ -964,6 +991,13 @@ func (s *protocolStore) FinalizeMaintenanceExpiryReconciliation(_ context.Contex
 		s.maintenance.Status = memory.ReconciliationConflict
 	}
 	return s.maintenance, nil
+}
+func (s *protocolStore) LoadMaintenanceRemoteDeletePlan(_ context.Context, auth memory.MaintenanceAuthorization, erasureDeliveryID string) (memory.RemoteDeletePlan, error) {
+	s.maintenanceAuths = append(s.maintenanceAuths, auth)
+	if s.savedPlan.ID == "" || s.savedPlan.ErasureDeliveryID != erasureDeliveryID {
+		return memory.RemoteDeletePlan{}, &memory.Error{Code: memory.CodeNotFound}
+	}
+	return s.savedPlan, nil
 }
 func (s *protocolStore) SaveMaintenanceRemoteDeletePlan(_ context.Context, auth memory.MaintenanceAuthorization, plan memory.RemoteDeletePlan) (memory.RemoteDeletePlan, error) {
 	s.maintenanceAuths = append(s.maintenanceAuths, auth)

@@ -159,6 +159,19 @@ func NewBackupController(options BackupControllerOptions) (*BackupController, er
 		options.DumpSource == nil || options.Keys == nil || options.Inventory == nil {
 		return nil, errors.New("managed backup controller requires a fixed absolute root, dump source, key repository, and inventory repository")
 	}
+	return newBackupController(options)
+}
+
+// NewBackupRestoreController constructs the read-only operator surface without
+// requiring pg_dump configuration. Produce remains unavailable on this value.
+func NewBackupRestoreController(root string, keys privacy.GenerationKeyRepository, inventory privacy.ManagedBackupInventoryRepository) (*BackupController, error) {
+	if root == "" || root == string(filepath.Separator) || !filepath.IsAbs(root) || filepath.Clean(root) != root || keys == nil || inventory == nil {
+		return nil, errors.New("managed backup restore controller requires a fixed absolute root, key repository, and inventory repository")
+	}
+	return newBackupController(BackupControllerOptions{Root: root, Keys: keys, Inventory: inventory})
+}
+
+func newBackupController(options BackupControllerOptions) (*BackupController, error) {
 	chunkSize := options.ChunkSize
 	if chunkSize == 0 {
 		chunkSize = backupDefaultChunkSize
@@ -191,6 +204,9 @@ func NewBackupController(options BackupControllerOptions) (*BackupController, er
 // Produce encrypts the dump stream directly into a same-directory temporary
 // artifact. Only ciphertext is fsynced and atomically published.
 func (c *BackupController) Produce(ctx context.Context, generation int64) (privacy.ManagedBackupArtifact, error) {
+	if c.dump == nil {
+		return privacy.ManagedBackupArtifact{}, ErrBackupDumpFailed
+	}
 	if generation < 1 {
 		return privacy.ManagedBackupArtifact{}, privacy.ErrManagedBackupInvalid
 	}

@@ -80,11 +80,30 @@ plaintext dump is written to the persistent backup volume. The maintenance
 overlay validates and prunes the same locked inventory; migration startup accepts
 only a fresh encrypted artifact bound to the current upgrade window.
 
+Compose mounts three independent named volumes: `nocturne-postgres-data` for the
+Nocturne database, `nocturne-backups` for encrypted managed backups, and
+`nocturne-snapshots` for `/app/snapshots`. The Nocturne service remains exposed
+only on the internal Compose network.
+
+## Rollback
+
+There is no supported down migration. Never point an old Nocturne container at
+an upgraded database or treat a container-only downgrade as rollback. Use the
+local `edu-agentd nocturne-backup restore` operator command through the supported
+new-volume procedure in [ROLLBACK.md](ROLLBACK.md). It verifies the DB inventory,
+live generation key, manifest/hash, encrypted stream, tmpfs destination, and
+mode `0600` without printing keys or restored content.
+
 ## Repeatable Compose gate
 
 `contracttests/nocturne/run-compose-e2e.sh` consumes an already verified offline
 OCI layout, imports it without rebuilding, creates temporary secrets and an
 isolated Compose project, and automatically covers the A88/A89 real-container
-contract. See `contracttests/nocturne/COMPOSE_E2E.md` for prerequisites and the
-single command. The gate always removes its project, volumes, imported tag, and
-temporary secret directory.
+contract plus the A84 same-digest new-volume rollback preparation. The gate uses
+real PostgreSQL state, the real restore command, real expiry/Purger workers, and
+a real encrypted artifact. Same-digest rollback evidence does not establish
+cross-version schema compatibility; full release qualification still requires
+two independently locked releases. See `contracttests/nocturne/COMPOSE_E2E.md`
+for prerequisites and the single command. The gate always removes its project,
+rollback containers and labeled external volumes, imported tag, and temporary
+secret directory.

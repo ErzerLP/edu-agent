@@ -12,13 +12,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func lockMaintenanceAuthorization(ctx context.Context, tx pgx.Tx, auth memory.MaintenanceAuthorization) (time.Time, error) {
+func lockMaintenanceAuthorization(ctx context.Context, tx pgx.Tx, auth memory.MaintenanceAuthorization) (time.Time, string, error) {
 	if err := auth.Validate(); err != nil {
-		return time.Time{}, err
+		return time.Time{}, "", err
 	}
 	var now time.Time
+	var storeKind string
 	err := tx.QueryRow(ctx, `
-		SELECT clock_timestamp()
+		SELECT clock_timestamp(),r.store_kind
 		FROM privacy_owner_generation_gates g
 		JOIN privacy_erasures e ON e.id=g.active_erasure_id AND e.target_learner_generation=g.learner_generation
 		JOIN privacy_erasure_heads eh ON eh.erasure_id=e.id AND eh.status<>'verified'
@@ -27,19 +28,19 @@ func lockMaintenanceAuthorization(ctx context.Context, tx pgx.Tx, auth memory.Ma
 		JOIN privacy_erasure_step_receipts r ON r.id=rh.current_receipt_id AND r.erasure_id=e.id
 		WHERE g.owner_kind='memory' AND g.active_erasure_id=$1 AND g.learner_generation=$3
 		  AND NOT g.read_open AND NOT g.write_open AND r.status IN ('pending','partial','unknown')
-		FOR UPDATE OF g,eh,rh`, auth.ErasureID, auth.ReceiptID, auth.TargetLearnerGeneration).Scan(&now)
+		FOR UPDATE OF g,eh,rh`, auth.ErasureID, auth.ReceiptID, auth.TargetLearnerGeneration).Scan(&now, &storeKind)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, &memory.Error{Code: memory.CodePrivacyClearInProgress, Reason: "maintenance_authorization_not_current"}
+		return time.Time{}, "", &memory.Error{Code: memory.CodePrivacyClearInProgress, Reason: "maintenance_authorization_not_current"}
 	}
 	if err != nil {
-		return time.Time{}, fmt.Errorf("lock maintenance reconciliation authorization: %w", err)
+		return time.Time{}, "", fmt.Errorf("lock maintenance reconciliation authorization: %w", err)
 	}
 	var permit string
 	if err := tx.QueryRow(ctx, `SELECT privacy_begin_owner_scrub($1,$2,'memory',$3)::text`,
 		auth.ErasureID, auth.TargetLearnerGeneration, auth.ReceiptID).Scan(&permit); err != nil {
-		return time.Time{}, fmt.Errorf("authorize maintenance reconciliation mutation: %w", err)
+		return time.Time{}, "", fmt.Errorf("authorize maintenance reconciliation mutation: %w", err)
 	}
-	return now.UTC(), nil
+	return now.UTC(), storeKind, nil
 }
 
 type maintenanceDeliveryState struct {
@@ -87,6 +88,79 @@ func maintenanceReconciliationDeliveryID(ctx context.Context, tx pgx.Tx, reconci
 	return deliveryID, nil
 }
 
+func materializeMaintenanceErasureDeliveries(ctx context.Context, tx pgx.Tx, auth memory.MaintenanceAuthorization, now time.Time) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_deliveries(
+			id,erasure_id,logical_memory_id,target_learner_generation,created_at)
+		SELECT gen_random_uuid(),$1,reconciliation.logical_memory_id,$2,min(reconciliation.created_at)
+		FROM memory_expiry_reconciliations reconciliation
+		WHERE reconciliation.learner_generation<$2
+		GROUP BY reconciliation.logical_memory_id
+		ON CONFLICT(erasure_id,logical_memory_id) DO NOTHING`,
+		auth.ErasureID, auth.TargetLearnerGeneration); err != nil {
+		return fmt.Errorf("materialize maintenance erasure deliveries: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_sources(erasure_delivery_id,reconciliation_id,bound_at)
+		SELECT erasure_delivery.id,reconciliation.id,$3
+		FROM memory_erasure_deliveries erasure_delivery
+		JOIN memory_expiry_reconciliations reconciliation
+		  ON reconciliation.logical_memory_id=erasure_delivery.logical_memory_id
+		 AND reconciliation.learner_generation<erasure_delivery.target_learner_generation
+		WHERE erasure_delivery.erasure_id=$1
+		  AND erasure_delivery.target_learner_generation=$2
+		ON CONFLICT(erasure_delivery_id,reconciliation_id) DO NOTHING`,
+		auth.ErasureID, auth.TargetLearnerGeneration, now); err != nil {
+		return fmt.Errorf("bind maintenance erasure delivery sources: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_receipts(
+			id,erasure_delivery_id,store_kind,version,status,reason,verification_method,created_at)
+		SELECT gen_random_uuid(),erasure_delivery.id,scope.store_kind,1,
+		       CASE WHEN EXISTS (
+		         SELECT 1 FROM memory_erasure_delivery_sources source
+		         JOIN memory_expiry_reconciliations reconciliation ON reconciliation.id=source.reconciliation_id
+		         WHERE source.erasure_delivery_id=erasure_delivery.id
+		           AND reconciliation.status NOT IN ('absence_verified','verified')
+		       ) THEN 'pending' ELSE 'succeeded' END,
+		       CASE WHEN EXISTS (
+		         SELECT 1 FROM memory_erasure_delivery_sources source
+		         JOIN memory_expiry_reconciliations reconciliation ON reconciliation.id=source.reconciliation_id
+		         WHERE source.erasure_delivery_id=erasure_delivery.id
+		           AND reconciliation.status NOT IN ('absence_verified','verified')
+		       ) THEN 'remote_erasure_pending' ELSE 'remote_reconciliation_already_verified' END,
+		       CASE WHEN EXISTS (
+		         SELECT 1 FROM memory_erasure_delivery_sources source
+		         JOIN memory_expiry_reconciliations reconciliation ON reconciliation.id=source.reconciliation_id
+		         WHERE source.erasure_delivery_id=erasure_delivery.id
+		           AND reconciliation.status NOT IN ('absence_verified','verified')
+		       ) THEN 'not_yet_verified' ELSE 'existing_reconciliation_terminal_state' END,
+		       $2
+		FROM memory_erasure_deliveries erasure_delivery
+		CROSS JOIN (VALUES ('nocturne_paths'),('nocturne_orphan_history')) AS scope(store_kind)
+		WHERE erasure_delivery.erasure_id=$1
+		  AND NOT EXISTS (
+		    SELECT 1 FROM memory_erasure_delivery_scopes existing
+		    WHERE existing.erasure_delivery_id=erasure_delivery.id
+		      AND existing.store_kind=scope.store_kind
+		  )`, auth.ErasureID, now); err != nil {
+		return fmt.Errorf("initialize maintenance erasure delivery receipts: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_scopes(
+			erasure_delivery_id,store_kind,status,current_attempt_id,attempt_count,
+			current_receipt_id,current_receipt_version,updated_at)
+		SELECT receipt.erasure_delivery_id,receipt.store_kind,receipt.status,NULL,0,
+		       receipt.id,receipt.version,receipt.created_at
+		FROM memory_erasure_delivery_receipts receipt
+		JOIN memory_erasure_deliveries erasure_delivery ON erasure_delivery.id=receipt.erasure_delivery_id
+		WHERE erasure_delivery.erasure_id=$1 AND receipt.version=1
+		ON CONFLICT(erasure_delivery_id,store_kind) DO NOTHING`, auth.ErasureID); err != nil {
+		return fmt.Errorf("initialize maintenance erasure delivery scopes: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ClaimMaintenanceExpiryReconciliation(ctx context.Context, auth memory.MaintenanceAuthorization, _ time.Time, lease time.Duration) (memory.ExpiryReconciliation, error) {
 	if lease <= 0 {
 		return memory.ExpiryReconciliation{}, invalid("invalid_maintenance_reconciliation_claim")
@@ -96,20 +170,32 @@ func (s *Store) ClaimMaintenanceExpiryReconciliation(ctx context.Context, auth m
 		return memory.ExpiryReconciliation{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	now, err := lockMaintenanceAuthorization(ctx, tx, auth)
+	now, storeKind, err := lockMaintenanceAuthorization(ctx, tx, auth)
 	if err != nil {
 		return memory.ExpiryReconciliation{}, err
 	}
-	var id, deliveryID string
+	if err := materializeMaintenanceErasureDeliveries(ctx, tx, auth, now); err != nil {
+		return memory.ExpiryReconciliation{}, err
+	}
+	var id, deliveryID, erasureDeliveryID string
 	err = tx.QueryRow(ctx, `
-		SELECT r.id,r.delivery_id
+		SELECT r.id,r.delivery_id,erasure_delivery.id
 		FROM memory_expiry_reconciliations r
 		JOIN memory_delivery_attempts attempt
 		  ON attempt.delivery_id=r.delivery_id AND attempt.attempt_token=r.attempt_token
 		LEFT JOIN memory_reconciliation_maintenance_claims c ON c.reconciliation_id=r.id
 		LEFT JOIN privacy_erasure_step_receipts claimed_receipt ON claimed_receipt.id=c.receipt_id
 		JOIN privacy_erasure_step_receipts requested_receipt ON requested_receipt.id=$3 AND requested_receipt.erasure_id=$2
+		JOIN memory_erasure_delivery_sources source ON source.reconciliation_id=r.id
+		JOIN memory_erasure_deliveries erasure_delivery
+		  ON erasure_delivery.id=source.erasure_delivery_id
+		 AND erasure_delivery.erasure_id=$2
+		 AND erasure_delivery.target_learner_generation=$1
+		JOIN memory_erasure_delivery_scopes erasure_scope
+		  ON erasure_scope.erasure_delivery_id=erasure_delivery.id
+		 AND erasure_scope.store_kind=requested_receipt.store_kind
 		WHERE r.learner_generation<$1
+		  AND erasure_scope.status IN ('pending','reconciling','delete_pending')
 		  AND (r.status='pending' OR (r.status IN ('reconciling','delete_pending') AND r.lease_expires_at<=clock_timestamp()))
 		  AND (c.reconciliation_id IS NULL OR (
 		       c.erasure_id=$2 AND c.target_learner_generation=$1
@@ -131,7 +217,7 @@ func (s *Store) ClaimMaintenanceExpiryReconciliation(ctx context.Context, auth m
 		         AND (newer.record_generation,newer.learner_generation,newer_attempt.created_at,newer.id)
 		             >(r.record_generation,r.learner_generation,attempt.created_at,r.id))
 		ORDER BY r.record_generation DESC,r.learner_generation DESC,attempt.created_at DESC,r.id DESC
-		LIMIT 1`, auth.TargetLearnerGeneration, auth.ErasureID, auth.ReceiptID).Scan(&id, &deliveryID)
+		LIMIT 1`, auth.TargetLearnerGeneration, auth.ErasureID, auth.ReceiptID).Scan(&id, &deliveryID, &erasureDeliveryID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return memory.ExpiryReconciliation{}, &memory.Error{Code: memory.CodeNotFound}
 	}
@@ -198,10 +284,150 @@ func (s *Store) ClaimMaintenanceExpiryReconciliation(ctx context.Context, auth m
 	value.Status, value.LeaseToken = status, leaseToken
 	expires := now.Add(lease)
 	value.LeaseExpiresAt, value.UpdatedAt = &expires, now
+	if err := claimErasureDeliveryAttempt(ctx, tx, auth, storeKind, erasureDeliveryID, value, leaseToken, expires, now); err != nil {
+		return memory.ExpiryReconciliation{}, err
+	}
+	value.ErasureDeliveryID = erasureDeliveryID
 	if err := tx.Commit(ctx); err != nil {
 		return memory.ExpiryReconciliation{}, err
 	}
 	return value, nil
+}
+
+func claimErasureDeliveryAttempt(
+	ctx context.Context,
+	tx pgx.Tx,
+	auth memory.MaintenanceAuthorization,
+	storeKind, erasureDeliveryID string,
+	value memory.ExpiryReconciliation,
+	leaseToken string,
+	leaseExpiresAt, now time.Time,
+) error {
+	var scopeStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT status
+		FROM memory_erasure_delivery_scopes
+		WHERE erasure_delivery_id=$1 AND store_kind=$2
+		FOR UPDATE`, erasureDeliveryID, storeKind).Scan(&scopeStatus); err != nil {
+		return fmt.Errorf("lock memory erasure delivery scope: %w", err)
+	}
+	if scopeStatus != "pending" && scopeStatus != "reconciling" && scopeStatus != "delete_pending" {
+		return &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "erasure_delivery_scope_not_claimable"}
+	}
+	attemptID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_attempts(
+			id,erasure_delivery_id,store_kind,reconciliation_id,attempt_token,created_at)
+		VALUES($1,$2,$3,$4,$5,$6)
+		ON CONFLICT(erasure_delivery_id,store_kind,reconciliation_id) DO NOTHING`,
+		attemptID, erasureDeliveryID, storeKind, value.ID, uuid.NewString(), now); err != nil {
+		return fmt.Errorf("create memory erasure delivery attempt: %w", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM memory_erasure_delivery_attempts
+		WHERE erasure_delivery_id=$1 AND store_kind=$2 AND reconciliation_id=$3`,
+		erasureDeliveryID, storeKind, value.ID).Scan(&attemptID); err != nil {
+		return fmt.Errorf("load memory erasure delivery attempt: %w", err)
+	}
+	var activeAttemptID string
+	var activeLeaseExpiresAt time.Time
+	err := tx.QueryRow(ctx, `
+		SELECT attempt_id,lease_expires_at
+		FROM memory_erasure_delivery_attempt_heads
+		WHERE erasure_delivery_id=$1 AND state IN ('reconciling','delete_pending')
+		FOR UPDATE`, erasureDeliveryID).Scan(&activeAttemptID, &activeLeaseExpiresAt)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lock active memory erasure delivery attempt: %w", err)
+	}
+	if err == nil && activeAttemptID != attemptID {
+		return outbox.ErrLeaseLost
+	}
+	state := string(memory.ReconciliationReconciling)
+	if value.Status == memory.ReconciliationDeletePending {
+		state = string(memory.ReconciliationDeletePending)
+	}
+	var claimed bool
+	err = tx.QueryRow(ctx, `
+		WITH claimed AS (
+		  INSERT INTO memory_erasure_delivery_attempt_heads AS existing(
+		    attempt_id,erasure_delivery_id,store_kind,state,authorization_receipt_id,
+		    lease_token,lease_expires_at,updated_at)
+		  VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+		  ON CONFLICT(attempt_id) DO UPDATE
+		  SET state=EXCLUDED.state,authorization_receipt_id=EXCLUDED.authorization_receipt_id,
+		      lease_token=EXCLUDED.lease_token,lease_expires_at=EXCLUDED.lease_expires_at,
+		      updated_at=EXCLUDED.updated_at
+		  WHERE existing.erasure_delivery_id=EXCLUDED.erasure_delivery_id
+		    AND existing.store_kind=EXCLUDED.store_kind
+		    AND existing.state IN ('reconciling','delete_pending')
+		    AND existing.lease_expires_at<=$8
+		  RETURNING TRUE
+		)
+		SELECT EXISTS(SELECT 1 FROM claimed)`, attemptID, erasureDeliveryID, storeKind,
+		state, auth.ReceiptID, leaseToken, leaseExpiresAt, now).Scan(&claimed)
+	if err != nil {
+		return fmt.Errorf("claim memory erasure delivery attempt: %w", err)
+	}
+	if !claimed {
+		return outbox.ErrLeaseLost
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE memory_erasure_delivery_scopes
+		SET status=$3,current_attempt_id=$4,attempt_count=attempt_count+1,updated_at=$5
+		WHERE erasure_delivery_id=$1 AND store_kind=$2
+		  AND status IN ('pending','reconciling','delete_pending')`,
+		erasureDeliveryID, storeKind, state, attemptID, now)
+	if err != nil {
+		return fmt.Errorf("advance memory erasure delivery scope: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "erasure_delivery_scope_claim_lost"}
+	}
+	return nil
+}
+
+func lockErasureDeliveryPermit(
+	ctx context.Context,
+	tx pgx.Tx,
+	auth memory.MaintenanceAuthorization,
+	storeKind string,
+	value memory.ExpiryReconciliation,
+	leaseToken string,
+	now time.Time,
+) (string, string, error) {
+	var erasureDeliveryID, attemptID string
+	err := tx.QueryRow(ctx, `
+		SELECT erasure_delivery.id,attempt.id
+		FROM memory_erasure_delivery_sources source
+		JOIN memory_erasure_deliveries erasure_delivery
+		  ON erasure_delivery.id=source.erasure_delivery_id
+		JOIN memory_erasure_delivery_scopes scope
+		  ON scope.erasure_delivery_id=erasure_delivery.id AND scope.store_kind=$4
+		JOIN memory_erasure_delivery_attempts attempt
+		  ON attempt.id=scope.current_attempt_id
+		 AND attempt.erasure_delivery_id=erasure_delivery.id
+		 AND attempt.store_kind=scope.store_kind
+		 AND attempt.reconciliation_id=source.reconciliation_id
+		JOIN memory_erasure_delivery_attempt_heads attempt_head
+		  ON attempt_head.attempt_id=attempt.id
+		WHERE source.reconciliation_id=$1
+		  AND erasure_delivery.erasure_id=$2
+		  AND erasure_delivery.target_learner_generation=$3
+		  AND attempt_head.authorization_receipt_id=$5
+		  AND attempt_head.lease_token=$6
+		  AND attempt_head.lease_expires_at>$7
+		  AND attempt_head.state IN ('reconciling','delete_pending')
+		FOR UPDATE OF scope,attempt_head`, value.ID, auth.ErasureID,
+		auth.TargetLearnerGeneration, storeKind, auth.ReceiptID, leaseToken, now).Scan(
+		&erasureDeliveryID, &attemptID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", outbox.ErrLeaseLost
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("lock memory erasure delivery permit: %w", err)
+	}
+	return erasureDeliveryID, attemptID, nil
 }
 
 func validateMaintenanceClaim(ctx context.Context, tx pgx.Tx, auth memory.MaintenanceAuthorization, value memory.ExpiryReconciliation) error {
@@ -230,7 +456,7 @@ func (s *Store) TransitionMaintenanceExpiryReconciliation(ctx context.Context, a
 		return memory.ExpiryReconciliation{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	now, err := lockMaintenanceAuthorization(ctx, tx, auth)
+	now, storeKind, err := lockMaintenanceAuthorization(ctx, tx, auth)
 	if err != nil {
 		return memory.ExpiryReconciliation{}, err
 	}
@@ -251,6 +477,10 @@ func (s *Store) TransitionMaintenanceExpiryReconciliation(ctx context.Context, a
 	if value.Status != input.From || value.LeaseToken != input.LeaseToken || value.LeaseExpiresAt == nil || !value.LeaseExpiresAt.After(now) {
 		return memory.ExpiryReconciliation{}, outbox.ErrLeaseLost
 	}
+	erasureDeliveryID, erasureAttemptID, err := lockErasureDeliveryPermit(ctx, tx, auth, storeKind, value, input.LeaseToken, now)
+	if err != nil {
+		return memory.ExpiryReconciliation{}, err
+	}
 	tag, err := tx.Exec(ctx, `UPDATE memory_expiry_reconciliations SET status='delete_pending',updated_at=$2 WHERE id=$1 AND status='reconciling' AND lease_token=$3 AND lease_expires_at>$2`, value.ID, now, input.LeaseToken)
 	if err != nil {
 		return memory.ExpiryReconciliation{}, err
@@ -258,11 +488,147 @@ func (s *Store) TransitionMaintenanceExpiryReconciliation(ctx context.Context, a
 	if tag.RowsAffected() != 1 {
 		return memory.ExpiryReconciliation{}, outbox.ErrLeaseLost
 	}
+	tag, err = tx.Exec(ctx, `
+		UPDATE memory_erasure_delivery_attempt_heads
+		SET state='delete_pending',updated_at=$3
+		WHERE attempt_id=$1 AND erasure_delivery_id=$2 AND state='reconciling'
+		  AND lease_token=$4 AND lease_expires_at>$3`,
+		erasureAttemptID, erasureDeliveryID, now, input.LeaseToken)
+	if err != nil {
+		return memory.ExpiryReconciliation{}, fmt.Errorf("advance memory erasure delivery attempt: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return memory.ExpiryReconciliation{}, outbox.ErrLeaseLost
+	}
+	tag, err = tx.Exec(ctx, `
+		UPDATE memory_erasure_delivery_scopes
+		SET status='delete_pending',updated_at=$3
+		WHERE erasure_delivery_id=$1 AND store_kind=$2 AND current_attempt_id=$4
+		  AND status='reconciling'`, erasureDeliveryID, storeKind, now, erasureAttemptID)
+	if err != nil {
+		return memory.ExpiryReconciliation{}, fmt.Errorf("advance memory erasure delivery scope: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return memory.ExpiryReconciliation{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "erasure_delivery_scope_transition_lost"}
+	}
 	value.Status, value.UpdatedAt = memory.ReconciliationDeletePending, now
+	value.ErasureDeliveryID = erasureDeliveryID
 	if err := tx.Commit(ctx); err != nil {
 		return memory.ExpiryReconciliation{}, err
 	}
 	return value, nil
+}
+
+func appendErasureDeliveryReceipt(
+	ctx context.Context,
+	tx pgx.Tx,
+	erasureDeliveryID, storeKind, status, reason, verificationMethod, evidenceDigest string,
+	now time.Time,
+) (string, int64, error) {
+	var version int64
+	if err := tx.QueryRow(ctx, `
+		SELECT current_receipt_version+1
+		FROM memory_erasure_delivery_scopes
+		WHERE erasure_delivery_id=$1 AND store_kind=$2
+		FOR UPDATE`, erasureDeliveryID, storeKind).Scan(&version); err != nil {
+		return "", 0, fmt.Errorf("lock memory erasure delivery receipt version: %w", err)
+	}
+	receiptID := uuid.NewString()
+	var evidence any
+	if evidenceDigest != "" {
+		evidence = mustHash(evidenceDigest)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_receipts(
+			id,erasure_delivery_id,store_kind,version,status,reason,
+			verification_method,evidence_digest,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		receiptID, erasureDeliveryID, storeKind, version, status, reason,
+		verificationMethod, evidence, now); err != nil {
+		return "", 0, fmt.Errorf("append memory erasure delivery receipt: %w", err)
+	}
+	return receiptID, version, nil
+}
+
+func finalizeErasureDeliveryPermit(
+	ctx context.Context,
+	tx pgx.Tx,
+	erasureDeliveryID, erasureAttemptID, storeKind, leaseToken string,
+	result memory.ReconciliationResult,
+	evidenceDigest string,
+	now time.Time,
+) error {
+	attemptState := "succeeded"
+	scopeStatus := "pending"
+	receiptStatus := "partial"
+	reason := "remote_reconciliation_pending"
+	if result == memory.ReconciliationConflictResult {
+		attemptState = "conflict"
+		scopeStatus = "conflict"
+		reason = "remote_reconciliation_conflict"
+	} else {
+		var remaining int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*)
+			FROM memory_erasure_delivery_sources source
+			JOIN memory_expiry_reconciliations reconciliation
+			  ON reconciliation.id=source.reconciliation_id
+			WHERE source.erasure_delivery_id=$1
+			  AND reconciliation.status NOT IN ('absence_verified','verified')`,
+			erasureDeliveryID).Scan(&remaining); err != nil {
+			return fmt.Errorf("count memory erasure delivery sources: %w", err)
+		}
+		if result == memory.ReconciliationDeleteResult || remaining == 0 {
+			scopeStatus = "succeeded"
+			receiptStatus = "succeeded"
+			reason = "remote_logical_delete_verified"
+		}
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE memory_erasure_delivery_attempt_heads
+		SET state=$3,lease_token=NULL,lease_expires_at=NULL,updated_at=$4
+		WHERE attempt_id=$1 AND erasure_delivery_id=$2
+		  AND state IN ('reconciling','delete_pending') AND lease_token=$5 AND lease_expires_at>$4`,
+		erasureAttemptID, erasureDeliveryID, attemptState, now, leaseToken)
+	if err != nil {
+		return fmt.Errorf("finalize memory erasure delivery attempt: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return outbox.ErrLeaseLost
+	}
+	stores := []string{storeKind}
+	if result == memory.ReconciliationDeleteResult {
+		stores = []string{"nocturne_paths", "nocturne_orphan_history"}
+	}
+	for _, currentStore := range stores {
+		currentStatus := scopeStatus
+		currentReceiptStatus := receiptStatus
+		currentReason := reason
+		if result == memory.ReconciliationDeleteResult {
+			currentStatus = "succeeded"
+			currentReceiptStatus = "succeeded"
+			currentReason = "remote_logical_delete_verified"
+		}
+		receiptID, receiptVersion, err := appendErasureDeliveryReceipt(
+			ctx, tx, erasureDeliveryID, currentStore, currentReceiptStatus, currentReason,
+			"erasure_bound_remote_reconciliation", evidenceDigest, now,
+		)
+		if err != nil {
+			return err
+		}
+		tag, err = tx.Exec(ctx, `
+			UPDATE memory_erasure_delivery_scopes
+			SET status=$3,current_receipt_id=$4,current_receipt_version=$5,updated_at=$6
+			WHERE erasure_delivery_id=$1 AND store_kind=$2`,
+			erasureDeliveryID, currentStore, currentStatus, receiptID, receiptVersion, now)
+		if err != nil {
+			return fmt.Errorf("finalize memory erasure delivery scope: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "erasure_delivery_scope_finalization_lost"}
+		}
+	}
+	return nil
 }
 
 func (s *Store) FinalizeMaintenanceExpiryReconciliation(ctx context.Context, auth memory.MaintenanceAuthorization, input memory.ReconciliationFinalization) (memory.ExpiryReconciliation, error) {
@@ -281,7 +647,7 @@ func (s *Store) FinalizeMaintenanceExpiryReconciliation(ctx context.Context, aut
 		return memory.ExpiryReconciliation{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	now, err := lockMaintenanceAuthorization(ctx, tx, auth)
+	now, storeKind, err := lockMaintenanceAuthorization(ctx, tx, auth)
 	if err != nil {
 		return memory.ExpiryReconciliation{}, err
 	}
@@ -301,6 +667,10 @@ func (s *Store) FinalizeMaintenanceExpiryReconciliation(ctx context.Context, aut
 	}
 	if value.DeliveryID != deliveryID || value.Status != input.From || value.LeaseToken != input.LeaseToken || value.LeaseExpiresAt == nil || !value.LeaseExpiresAt.After(now) {
 		return memory.ExpiryReconciliation{}, outbox.ErrLeaseLost
+	}
+	erasureDeliveryID, erasureAttemptID, err := lockErasureDeliveryPermit(ctx, tx, auth, storeKind, value, input.LeaseToken, now)
+	if err != nil {
+		return memory.ExpiryReconciliation{}, err
 	}
 	status := memory.ReconciliationVerified
 	if input.Result == memory.ReconciliationAbsenceResult {
@@ -413,7 +783,12 @@ func (s *Store) FinalizeMaintenanceExpiryReconciliation(ctx context.Context, aut
 		if !currentFinalized {
 			return memory.ExpiryReconciliation{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "maintenance_current_delivery_not_converged"}
 		}
+		if err := finalizeErasureDeliveryPermit(ctx, tx, erasureDeliveryID, erasureAttemptID, storeKind,
+			input.LeaseToken, input.Result, input.EvidenceDigest, now); err != nil {
+			return memory.ExpiryReconciliation{}, err
+		}
 		value.Status, value.LeaseToken, value.LeaseExpiresAt, value.Reason, value.UpdatedAt = status, "", nil, "", now
+		value.ErasureDeliveryID = erasureDeliveryID
 		if err := tx.Commit(ctx); err != nil {
 			return memory.ExpiryReconciliation{}, err
 		}
@@ -470,11 +845,57 @@ func (s *Store) FinalizeMaintenanceExpiryReconciliation(ctx context.Context, aut
 			return memory.ExpiryReconciliation{}, err
 		}
 	}
+	if err := finalizeErasureDeliveryPermit(ctx, tx, erasureDeliveryID, erasureAttemptID, storeKind,
+		input.LeaseToken, input.Result, input.EvidenceDigest, now); err != nil {
+		return memory.ExpiryReconciliation{}, err
+	}
 	value.Status, value.LeaseToken, value.LeaseExpiresAt, value.Reason, value.UpdatedAt = status, "", nil, "", now
+	value.ErasureDeliveryID = erasureDeliveryID
 	if err := tx.Commit(ctx); err != nil {
 		return memory.ExpiryReconciliation{}, err
 	}
 	return value, nil
+}
+
+func (s *Store) LoadMaintenanceRemoteDeletePlan(ctx context.Context, auth memory.MaintenanceAuthorization, erasureDeliveryID string) (memory.RemoteDeletePlan, error) {
+	if !canonicalUUID(erasureDeliveryID) {
+		return memory.RemoteDeletePlan{}, invalid("invalid_erasure_delivery_id")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return memory.RemoteDeletePlan{}, err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	_, storeKind, err := lockMaintenanceAuthorization(ctx, tx, auth)
+	if err != nil {
+		return memory.RemoteDeletePlan{}, err
+	}
+	var deliveryID string
+	err = tx.QueryRow(ctx, `
+		SELECT plan.delivery_id
+		FROM memory_erasure_deliveries erasure_delivery
+		JOIN memory_erasure_delivery_scopes scope
+		  ON scope.erasure_delivery_id=erasure_delivery.id AND scope.store_kind=$3
+		JOIN memory_remote_delete_plans plan ON plan.erasure_delivery_id=erasure_delivery.id
+		WHERE erasure_delivery.id=$1 AND erasure_delivery.erasure_id=$2`,
+		erasureDeliveryID, auth.ErasureID, storeKind).Scan(&deliveryID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return memory.RemoteDeletePlan{}, &memory.Error{Code: memory.CodeNotFound}
+	}
+	if err != nil {
+		return memory.RemoteDeletePlan{}, fmt.Errorf("load maintenance remote delete plan identity: %w", err)
+	}
+	plan, err := loadRemoteDeletePlan(ctx, tx, deliveryID)
+	if err != nil {
+		return memory.RemoteDeletePlan{}, err
+	}
+	if plan.ErasureDeliveryID != erasureDeliveryID {
+		return memory.RemoteDeletePlan{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "maintenance_delete_plan_erasure_mismatch"}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return memory.RemoteDeletePlan{}, err
+	}
+	return plan, nil
 }
 
 func (s *Store) SaveMaintenanceRemoteDeletePlan(ctx context.Context, auth memory.MaintenanceAuthorization, plan memory.RemoteDeletePlan) (memory.RemoteDeletePlan, error) {
@@ -486,7 +907,7 @@ func (s *Store) SaveMaintenanceRemoteDeletePlan(ctx context.Context, auth memory
 		return memory.RemoteDeletePlan{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	now, err := lockMaintenanceAuthorization(ctx, tx, auth)
+	now, storeKind, err := lockMaintenanceAuthorization(ctx, tx, auth)
 	if err != nil {
 		return memory.RemoteDeletePlan{}, err
 	}
@@ -518,7 +939,26 @@ func (s *Store) SaveMaintenanceRemoteDeletePlan(ctx context.Context, auth memory
 		value.LeaseExpiresAt == nil || !value.LeaseExpiresAt.After(now) {
 		return memory.RemoteDeletePlan{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "maintenance_delete_plan_lease_lost"}
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO memory_remote_delete_plans(id,delivery_id,node_uuid,external_uri,active_memory_id,review_cleanup_needed,snapshot_digest,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(delivery_id) DO NOTHING`, plan.ID, plan.DeliveryID, plan.NodeID, plan.ExternalURI, plan.ActiveMemoryID, plan.ReviewCleanupNeeded, mustHash(plan.SnapshotDigest), now)
+	erasureDeliveryID, _, err := lockErasureDeliveryPermit(ctx, tx, auth, storeKind, value, value.LeaseToken, now)
+	if err != nil {
+		return memory.RemoteDeletePlan{}, err
+	}
+	if plan.ErasureDeliveryID != erasureDeliveryID {
+		return memory.RemoteDeletePlan{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "maintenance_delete_plan_erasure_mismatch"}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE memory_remote_delete_plans
+		SET erasure_delivery_id=$2
+		WHERE delivery_id=$1 AND erasure_delivery_id IS NULL`, plan.DeliveryID, erasureDeliveryID); err != nil {
+		return memory.RemoteDeletePlan{}, fmt.Errorf("bind legacy maintenance remote delete plan: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO memory_remote_delete_plans(
+			id,delivery_id,erasure_delivery_id,node_uuid,external_uri,active_memory_id,
+			review_cleanup_needed,snapshot_digest,created_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		ON CONFLICT DO NOTHING`, plan.ID, plan.DeliveryID, erasureDeliveryID, plan.NodeID,
+		plan.ExternalURI, plan.ActiveMemoryID, plan.ReviewCleanupNeeded, mustHash(plan.SnapshotDigest), now)
 	if err != nil {
 		return memory.RemoteDeletePlan{}, err
 	}
@@ -534,11 +974,18 @@ func (s *Store) SaveMaintenanceRemoteDeletePlan(ctx context.Context, auth memory
 			}
 		}
 	}
-	stored, err := loadRemoteDeletePlan(ctx, tx, plan.DeliveryID)
+	var storedDeliveryID string
+	if err := tx.QueryRow(ctx, `
+		SELECT delivery_id FROM memory_remote_delete_plans WHERE erasure_delivery_id=$1`,
+		erasureDeliveryID).Scan(&storedDeliveryID); err != nil {
+		return memory.RemoteDeletePlan{}, fmt.Errorf("load maintenance remote delete plan binding: %w", err)
+	}
+	stored, err := loadRemoteDeletePlan(ctx, tx, storedDeliveryID)
 	if err != nil {
 		return memory.RemoteDeletePlan{}, err
 	}
-	if stored.SnapshotDigest != plan.SnapshotDigest || stored.NodeID != plan.NodeID || stored.ActiveMemoryID != plan.ActiveMemoryID {
+	if stored.ErasureDeliveryID != erasureDeliveryID || stored.SnapshotDigest != plan.SnapshotDigest ||
+		stored.NodeID != plan.NodeID || stored.ActiveMemoryID != plan.ActiveMemoryID {
 		return memory.RemoteDeletePlan{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "maintenance_delete_snapshot_conflict"}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -555,7 +1002,7 @@ func (s *Store) MaintenanceReconciliationSummary(ctx context.Context, auth memor
 	var summary memory.MaintenanceReconciliationSummary
 	err := s.pool.QueryRow(ctx, `
 		WITH authorized_scope AS (
-			SELECT TRUE AS authorized
+			SELECT receipt.store_kind
 			FROM privacy_owner_generation_gates g
 			JOIN privacy_erasures e
 			  ON e.id=g.active_erasure_id AND e.target_learner_generation=g.learner_generation
@@ -570,15 +1017,14 @@ func (s *Store) MaintenanceReconciliationSummary(ctx context.Context, auth memor
 			  AND NOT g.read_open AND NOT g.write_open
 			  AND receipt.status IN ('pending','partial','unknown')
 		), scoped AS (
-			SELECT r.status
-			FROM authorized_scope
-			JOIN memory_expiry_reconciliations r ON r.learner_generation<$3
-			LEFT JOIN memory_reconciliation_maintenance_claims c ON c.reconciliation_id=r.id
-			LEFT JOIN privacy_erasure_step_receipts claimed_receipt ON claimed_receipt.id=c.receipt_id
-			JOIN privacy_erasure_step_receipts requested_receipt ON requested_receipt.id=$2 AND requested_receipt.erasure_id=$1
-			WHERE c.reconciliation_id IS NULL OR (
-			      c.erasure_id=$1 AND c.target_learner_generation=$3
-			      AND claimed_receipt.store_kind=requested_receipt.store_kind)
+			SELECT scope.status
+			FROM authorized_scope authorized
+			JOIN memory_erasure_deliveries erasure_delivery
+			  ON erasure_delivery.erasure_id=$1
+			 AND erasure_delivery.target_learner_generation=$3
+			JOIN memory_erasure_delivery_scopes scope
+			  ON scope.erasure_delivery_id=erasure_delivery.id
+			 AND scope.store_kind=authorized.store_kind
 		)
 		SELECT EXISTS(SELECT 1 FROM authorized_scope),
 		       (SELECT count(*) FROM scoped WHERE status IN ('pending','reconciling','delete_pending')),

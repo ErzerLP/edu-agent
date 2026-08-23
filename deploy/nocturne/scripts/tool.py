@@ -421,7 +421,7 @@ def build() -> None:
             container_image = subprocess.run(docker + ["inspect", "--format", "{{.Config.Image}}", container], text=True, capture_output=True, env=env, check=True).stdout.strip()
             if container_image != lock["build"]["buildkit_image"]:
                 raise SystemExit("running builder image digest does not match the input lock")
-            command = docker + ["buildx", "build", "--builder", builder, "--platform", lock["build"]["platform"], "--provenance=false", "--sbom=false", "--build-arg", f"SOURCE_DATE_EPOCH={lock['build']['source_date_epoch']}", "--build-arg", f"SUPPLY_CHAIN_LOCK_SHA256={sha256(LOCK_PATH)}", "--output", f"type=oci,dest={layout},tar=false,rewrite-timestamp=true", str(context)]
+            command = docker + ["buildx", "build", "--builder", builder, "--platform", lock["build"]["platform"], "--no-cache", "--provenance=false", "--sbom=false", "--build-arg", f"SOURCE_DATE_EPOCH={lock['build']['source_date_epoch']}", "--build-arg", f"SUPPLY_CHAIN_LOCK_SHA256={sha256(LOCK_PATH)}", "--output", f"type=oci,dest={layout},tar=false,rewrite-timestamp=true", str(context)]
             subprocess.run(command, env=env, check=True)
         finally:
             if created:

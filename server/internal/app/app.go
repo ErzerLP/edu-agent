@@ -28,6 +28,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func verifyNocturneStartupPreflightForRuntime(ctx context.Context, pool *pgxpool.Pool, gate *nocturnePreflightGate) error {
+	err := verifyNocturneStartupPreflight(ctx, gate)
+	if err == nil || pool == nil {
+		return err
+	}
+	var activeErasure bool
+	if queryErr := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM privacy_erasure_heads WHERE status<>'verified')`).Scan(&activeErasure); queryErr != nil {
+		return fmt.Errorf("check privacy erasure before Nocturne startup: %w", queryErr)
+	}
+	if activeErasure {
+		return nil
+	}
+	return err
+}
+
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	pool, err := platformpostgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -73,7 +88,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	if err := verifyNocturneStartupPreflight(ctx, bridge.preflight); err != nil {
+	if err := verifyNocturneStartupPreflightForRuntime(ctx, pool, bridge.preflight); err != nil {
 		return err
 	}
 	var modelProber httpapi.ModelProber
@@ -86,10 +101,17 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		NocturneProbe: optionalNocturneHealthProbe(bridge.remote), InsecureWarning: cfg.InsecureNonLoopbackWarning,
 		Timeout: minDuration(minDuration(cfg.Model.Timeout, cfg.Nocturne.HTTPTimeout), 5*time.Second),
 	})
+	var migrationLeases httpapi.PrivacyMigrationLeaseService
+	maintenanceToken := ""
+	if cfg.Nocturne.Enabled {
+		migrationLeases = bridge.privacyStore
+		maintenanceToken = cfg.Nocturne.MaintenanceToken
+	}
 	handler, err := httpapi.New(httpapi.Options{
 		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Learning: learningService,
 		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,
-		Privacy: bridge.privacyService, ReadPermits: bridge.readPermits,
+		Privacy: bridge.privacyService, MigrationLeases: migrationLeases,
+		MaintenanceToken: maintenanceToken, ReadPermits: bridge.readPermits,
 		Readiness: readiness, Logger: logger,
 		PairLimiter:           httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
 		AuthLimiter:           httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),

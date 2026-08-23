@@ -137,6 +137,14 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 	if err != nil {
 		return privacy.ErasureReceipt{}, err
 	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, privacyMigrationAdvisoryLock); err != nil {
+		return privacy.ErasureReceipt{}, fmt.Errorf("lock privacy migration singleton: %w", err)
+	}
+	if active, err := activeMigrationLeaseTx(ctx, tx); err != nil {
+		return privacy.ErasureReceipt{}, err
+	} else if active {
+		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeMigrationLeaseConflict, Reason: "migration_lease_active"}
+	}
 	committed := false
 	permitsClosing := false
 	var current, target int64
@@ -243,6 +251,21 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO privacy_erasure_heads(erasure_id,status,summary_version,stable_reason,updated_at) VALUES($1,'barrier_committed',1,$2,$3)`, erasureID, request.ReasonCode, now); err != nil {
 		return privacy.ErasureReceipt{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE memory_managed_backup_inventory
+		SET erasure_id=$1
+		WHERE learner_generation<$2 AND erasure_id IS NULL`, erasureID, target); err != nil {
+		return privacy.ErasureReceipt{}, fmt.Errorf("bind pre-barrier managed backup inventory: %w", err)
+	}
+	var unboundBackups int64
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM memory_managed_backup_inventory
+		WHERE learner_generation<$1 AND erasure_id IS NULL`, target).Scan(&unboundBackups); err != nil {
+		return privacy.ErasureReceipt{}, fmt.Errorf("verify pre-barrier managed backup binding: %w", err)
+	}
+	if unboundBackups != 0 {
+		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeVerificationFailed, Reason: "pre_barrier_managed_backup_unbound"}
 	}
 	if s.backupKeys == nil {
 		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeUnsupportedReceiptStore, Reason: "backup_key_destroyer_missing"}

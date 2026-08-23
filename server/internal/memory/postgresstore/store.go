@@ -840,8 +840,8 @@ func insertAdmission(ctx context.Context, db DBTX, candidate memory.Candidate, c
 
 func deliveryPolicy(candidate memory.Candidate, decision memory.CandidateDecision) memory.DeliveryPolicy {
 	return memory.DeliveryPolicy{
-		CandidateID: candidate.ID, Source: candidate.Source, Category: candidate.Category,
-		Sensitivity: candidate.Sensitivity, Stability: candidate.Stability,
+		CandidateID: candidate.ID, Source: candidate.Source, SourceReference: candidate.SourceReference,
+		Category: candidate.Category, Sensitivity: candidate.Sensitivity, Stability: candidate.Stability,
 		PolicyVersion: candidate.PolicyVersion, ContentHash: candidate.ContentHash,
 		AdmissionDecision: decision,
 	}

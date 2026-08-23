@@ -436,17 +436,20 @@ func (a *API) handlePrivacyCreateErasure(w http.ResponseWriter, r *http.Request)
 	}
 	receipt, err = a.privacy.RunLocal(r.Context(), receipt.ErasureID)
 	if err != nil {
-		a.writePrivacyFailure(w, r, "run_local", err)
+		a.logger.InfoContext(r.Context(), "privacy local erase queued", "request_id", middleware.GetReqID(r.Context()), "erasure_id", receipt.ErasureID, "error_category", privacyFailureCategory(err))
+		if current, currentErr := a.privacy.Receipt(r.Context(), receipt.ErasureID); currentErr == nil {
+			receipt = current
+		}
+		writeJSON(w, http.StatusAccepted, receipt)
 		return
 	}
 	remote, err := a.privacy.RunNocturne(r.Context(), receipt.ErasureID)
 	if err != nil {
-		if privacy.ErrorCode(err) == "" {
-			a.logger.InfoContext(r.Context(), "privacy remote erase queued", "request_id", middleware.GetReqID(r.Context()), "erasure_id", receipt.ErasureID, "error_category", "nocturne_unavailable")
-			writeJSON(w, http.StatusAccepted, receipt)
-			return
+		a.logger.InfoContext(r.Context(), "privacy remote erase queued", "request_id", middleware.GetReqID(r.Context()), "erasure_id", receipt.ErasureID, "error_category", privacyFailureCategory(err))
+		if current, currentErr := a.privacy.Receipt(r.Context(), receipt.ErasureID); currentErr == nil {
+			receipt = current
 		}
-		a.writePrivacyFailure(w, r, "run_nocturne", err)
+		writeJSON(w, http.StatusAccepted, receipt)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, remote)
@@ -651,6 +654,13 @@ func (a *API) writeMemoryFailure(w http.ResponseWriter, r *http.Request, operati
 		}
 	}
 	writeJSON(w, status, response)
+}
+
+func privacyFailureCategory(err error) string {
+	if code := privacy.ErrorCode(err); code != "" {
+		return code
+	}
+	return "unavailable"
 }
 
 func (a *API) writePrivacyFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {

@@ -109,6 +109,7 @@ func (s *Store) ReadyNodeArtifacts(ctx context.Context, knowledgeRevisionID stri
 		FROM knowledge_node_artifacts a
 		JOIN knowledge_node_revisions nr ON nr.id=a.node_revision_id
 		JOIN knowledge_snapshot_documents sd ON sd.document_revision_id=nr.document_revision_id
+		JOIN knowledge_revisions kr ON kr.id=sd.knowledge_revision_id AND kr.redacted_at IS NULL
 		WHERE sd.knowledge_revision_id=$1 AND a.kind='summary' AND a.status='ready'
 		ORDER BY a.node_revision_id,a.created_at DESC,a.id DESC`, knowledgeRevisionID)
 	if err != nil {
@@ -346,11 +347,12 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 	var manifestHash []byte
 	err := db.QueryRow(ctx, `
 		SELECT id,revision_no,parent_revision_id,manifest_hash,source,created_by_device_id,created_at,
-		       canonicalizer_version,parser_version,indexer_version,identity_policy_version
+		       canonicalizer_version,parser_version,indexer_version,identity_policy_version,
+		       redacted_at IS NOT NULL
 		FROM knowledge_revisions WHERE id=$1`, id).Scan(
 		&revision.ID, &revision.RevisionNo, &revision.ParentRevisionID, &manifestHash, &revision.Source,
 		&revision.CreatedByDeviceID, &revision.CreatedAt, &revision.CanonicalizerVersion, &revision.ParserVersion,
-		&revision.IndexerVersion, &revision.IdentityPolicyVersion,
+		&revision.IndexerVersion, &revision.IdentityPolicyVersion, &revision.Redacted,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return knowledge.KnowledgeRevision{}, &knowledge.Error{Code: knowledge.CodeNotFound}
@@ -360,6 +362,9 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 	}
 	revision.CreatedAt = revision.CreatedAt.UTC()
 	revision.ManifestHash = hex.EncodeToString(manifestHash)
+	if revision.Redacted {
+		return revision, nil
+	}
 	rows, err := db.Query(ctx, `
 		SELECT sd.canonical_path,dr.id,dr.document_id,dr.root_node_id,dr.canonical_hash,dr.semantic_hash,p.canonical_markdown
 		FROM knowledge_snapshot_documents sd

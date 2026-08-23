@@ -662,6 +662,32 @@ func (s *Store) FinalizeAttempt(ctx context.Context, input memory.AttemptOutcome
 	if tag.RowsAffected() != 1 {
 		return memory.Attempt{}, outbox.ErrLeaseLost
 	}
+	if input.Kind == memory.AttemptOutcomeApplied {
+		tag, err = tx.Exec(ctx, `
+			INSERT INTO memory_record_external_refs(
+				record_revision_id,delivery_id,external_node_id,external_memory_id,
+				delivery_attempt_id,delivery_receipt_id,observed_at)
+			VALUES($1,$2,$3,$4,$5,$6,$7)
+			ON CONFLICT(record_revision_id) DO NOTHING`,
+			locked.recordRevisionID, deliveryID, input.ExternalNodeID, input.ExternalMemoryID,
+			input.AttemptID, receipt.ID, locked.dbNow)
+		if err != nil {
+			return memory.Attempt{}, fmt.Errorf("persist memory revision external reference: %w", err)
+		}
+		var storedDeliveryID, storedNodeID, storedAttemptID, storedReceiptID string
+		var storedMemoryID int64
+		if err := tx.QueryRow(ctx, `
+			SELECT delivery_id,external_node_id,external_memory_id,delivery_attempt_id,delivery_receipt_id
+			FROM memory_record_external_refs WHERE record_revision_id=$1`, locked.recordRevisionID).Scan(
+			&storedDeliveryID, &storedNodeID, &storedMemoryID, &storedAttemptID, &storedReceiptID,
+		); err != nil {
+			return memory.Attempt{}, fmt.Errorf("verify memory revision external reference: %w", err)
+		}
+		if storedDeliveryID != deliveryID || storedNodeID != input.ExternalNodeID || storedMemoryID != input.ExternalMemoryID ||
+			storedAttemptID != input.AttemptID || storedReceiptID != receipt.ID {
+			return memory.Attempt{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "revision_external_reference_conflict"}
+		}
+	}
 	deliveryStatus := memory.DeliveryStatusApplied
 	publicStatus := memory.DeliveryApplied
 	disposition := ""

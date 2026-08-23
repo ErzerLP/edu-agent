@@ -55,9 +55,13 @@ services:
       CORE_MEMORY_URIS__edu-agent: core://edu-agent
       API_TOKEN: ${NOCTURNE_BRIDGE_API_TOKEN:?set NOCTURNE_BRIDGE_API_TOKEN in .env}
       EDU_AGENT_MAINTENANCE_TOKEN: ${NOCTURNE_MAINTENANCE_TOKEN:?set NOCTURNE_MAINTENANCE_TOKEN in .env}
+      EDU_AGENT_SERVER_INTERNAL_URL: http://server:8080
+      EDU_AGENT_SERVER_MAINTENANCE_TOKEN: ${NOCTURNE_MAINTENANCE_TOKEN:?set NOCTURNE_MAINTENANCE_TOKEN in .env}
       EDU_AGENT_BACKUP_ROOT: /app/backups
+      SNAPSHOT_DIR: /app/snapshots
     volumes:
       - nocturne-backups:/app/backups
+      - nocturne-snapshots:/app/snapshots
     healthcheck:
       test:
         [
@@ -145,6 +149,7 @@ volumes:
   postgres-data:
   nocturne-postgres-data:
   nocturne-backups:
+  nocturne-snapshots:
 
 networks:
   app-internal:

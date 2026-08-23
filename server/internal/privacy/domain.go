@@ -26,6 +26,7 @@ const (
 	CodeReceiptNotCurrent       = "receipt_not_current"
 	CodeVerificationFailed      = "verification_failed"
 	CodeUnsupportedReceiptStore = "unsupported_receipt_store"
+	CodeMigrationLeaseConflict  = "migration_lease_conflict"
 )
 
 type Error struct {
@@ -97,6 +98,39 @@ const (
 	StepNotApplicable StepStatus = "not_applicable"
 	StepUnsupported   StepStatus = "unsupported"
 )
+
+func CanTransitionErasure(from, to ErasureStatus) bool {
+	switch from {
+	case StatusBarrierCommitted:
+		return to == StatusLocalScrubbed || to == StatusPartial || to == StatusBlocked
+	case StatusLocalScrubbed:
+		return to == StatusRemoteDraining || to == StatusRemotePurged || to == StatusPartial || to == StatusBlocked
+	case StatusRemoteDraining:
+		return to == StatusRemotePurged || to == StatusPartial || to == StatusBlocked
+	case StatusRemotePurged:
+		return to == StatusVerified || to == StatusPartial || to == StatusBlocked
+	case StatusPartial:
+		return to == StatusLocalScrubbed || to == StatusRemoteDraining || to == StatusRemotePurged ||
+			to == StatusVerified || to == StatusBlocked
+	case StatusBlocked:
+		return to == StatusPartial
+	default:
+		return false
+	}
+}
+
+func CanTransitionStep(from, to StepStatus) bool {
+	switch from {
+	case StepPending:
+		return to == StepSucceeded || to == StepPartial || to == StepFailed || to == StepUnknown ||
+			to == StepNotApplicable || to == StepUnsupported
+	case StepPartial, StepFailed, StepUnknown:
+		return to == StepSucceeded || to == StepPartial || to == StepFailed || to == StepUnknown ||
+			to == StepNotApplicable
+	default:
+		return false
+	}
+}
 
 type StoreKind string
 
@@ -240,18 +274,40 @@ func (r ErasureRequest) OperationHash() (string, error) {
 }
 
 type RedactionPayload struct {
-	ErasureID       string `json:"erasure_id"`
-	Generation      int64  `json:"generation"`
-	PolicyVersion   string `json:"policy_version"`
-	ReasonCode      string `json:"reason_code"`
-	RedactedThrough int64  `json:"redacted_through"`
+	ErasureID               string `json:"erasure_id"`
+	Generation              int64  `json:"generation"`
+	RedactedThroughEventSeq int64  `json:"redacted_through_event_seq"`
+	PolicyVersion           string `json:"policy_version"`
+	ReasonCode              string `json:"reason_code"`
 }
 
 func (p RedactionPayload) Validate() error {
-	if uuid.Validate(p.ErasureID) != nil || p.Generation < 2 || p.RedactedThrough < 0 || p.PolicyVersion == "" || p.ReasonCode == "" {
+	if uuid.Validate(p.ErasureID) != nil || p.Generation < 2 || p.RedactedThroughEventSeq < 0 || p.PolicyVersion == "" || p.ReasonCode == "" {
 		return &Error{Code: CodeInvalidRequest, Reason: "invalid_redaction_payload"}
 	}
 	return nil
+}
+
+type MigrationLeaseRequest struct {
+	OperationID    string `json:"operation_id"`
+	BackupIdentity string `json:"backup_identity"`
+}
+
+func (r MigrationLeaseRequest) Validate() error {
+	if uuid.Validate(r.OperationID) != nil || len(r.BackupIdentity) != 64 || r.BackupIdentity != strings.ToLower(r.BackupIdentity) {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_migration_lease_request"}
+	}
+	identity, err := hex.DecodeString(r.BackupIdentity)
+	if err != nil || len(identity) != sha256.Size {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_migration_backup_identity"}
+	}
+	return nil
+}
+
+type MigrationLease struct {
+	OperationID string    `json:"operation_id"`
+	AcquiredAt  time.Time `json:"acquired_at"`
+	Replayed    bool      `json:"replayed"`
 }
 
 type StepReceipt struct {

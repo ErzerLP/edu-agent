@@ -219,14 +219,14 @@ func (c *Consumer) reconcile(ctx context.Context, work memory.DeliveryWork, atte
 
 func (c *Consumer) finalizeApplied(ctx context.Context, work memory.DeliveryWork, attempt memory.Attempt, node memory.RemoteNode, memoryID int64, reason string) error {
 	if memoryID <= 0 {
-		if work.ExternalNodeID == node.NodeID && work.ExternalMemoryID > 0 {
+		if work.Delivery.Kind != memory.DeliveryCorrection && work.ExternalNodeID == node.NodeID && work.ExternalMemoryID > 0 {
 			memoryID = work.ExternalMemoryID
 		} else {
 			references, err := c.remote.References(ctx, node.NodeID)
 			if err != nil {
 				return err
 			}
-			if !references.Complete || references.ActiveMemoryID <= 0 {
+			if !references.Complete || references.NodeID != node.NodeID || references.ActiveMemoryID <= 0 {
 				return &protocolError{category: "active_memory_id_unavailable"}
 			}
 			memoryID = references.ActiveMemoryID
@@ -455,25 +455,45 @@ func NewPurger(store memory.DeliveryProtocolPersistence, remote memory.NocturneR
 }
 
 func (p *Purger) Purge(ctx context.Context, deliveryID, logicalMemoryID, expectedHash string) error {
-	return p.purge(ctx, deliveryID, logicalMemoryID, expectedHash, nil)
+	return p.purge(ctx, deliveryID, "", logicalMemoryID, expectedHash, nil, nil)
 }
 
-func (p *Purger) PurgeMaintenance(ctx context.Context, auth memory.MaintenanceAuthorization, deliveryID, logicalMemoryID, expectedHash string) error {
+func (p *Purger) PurgeMaintenance(ctx context.Context, auth memory.MaintenanceAuthorization, erasureDeliveryID, deliveryID, logicalMemoryID, expectedHash string) error {
 	if err := auth.Validate(); err != nil {
 		return err
+	}
+	if erasureDeliveryID == "" {
+		return &protocolError{category: "erasure_delivery_identity_unavailable", permanent: true}
 	}
 	if p.maintenanceStore == nil {
 		return &protocolError{category: "maintenance_persistence_unavailable", permanent: true}
 	}
-	return p.purge(ctx, deliveryID, logicalMemoryID, expectedHash, func(ctx context.Context, plan memory.RemoteDeletePlan) (memory.RemoteDeletePlan, error) {
-		return p.maintenanceStore.SaveMaintenanceRemoteDeletePlan(ctx, auth, plan)
-	})
+	return p.purge(ctx, deliveryID, erasureDeliveryID, logicalMemoryID, expectedHash,
+		func(ctx context.Context) (memory.RemoteDeletePlan, error) {
+			return p.maintenanceStore.LoadMaintenanceRemoteDeletePlan(ctx, auth, erasureDeliveryID)
+		},
+		func(ctx context.Context, plan memory.RemoteDeletePlan) (memory.RemoteDeletePlan, error) {
+			return p.maintenanceStore.SaveMaintenanceRemoteDeletePlan(ctx, auth, plan)
+		},
+	)
 }
 
+type remoteDeletePlanLoader func(context.Context) (memory.RemoteDeletePlan, error)
 type remoteDeletePlanSaver func(context.Context, memory.RemoteDeletePlan) (memory.RemoteDeletePlan, error)
 
-func (p *Purger) purge(ctx context.Context, deliveryID, logicalMemoryID, expectedHash string, maintenanceSave remoteDeletePlanSaver) error {
-	plan, err := p.store.LoadRemoteDeletePlan(ctx, deliveryID)
+func (p *Purger) purge(
+	ctx context.Context,
+	deliveryID, erasureDeliveryID, logicalMemoryID, expectedHash string,
+	maintenanceLoad remoteDeletePlanLoader,
+	maintenanceSave remoteDeletePlanSaver,
+) error {
+	var plan memory.RemoteDeletePlan
+	var err error
+	if maintenanceLoad == nil {
+		plan, err = p.store.LoadRemoteDeletePlan(ctx, deliveryID)
+	} else {
+		plan, err = maintenanceLoad(ctx)
+	}
 	if memory.ErrorCode(err) == memory.CodeNotFound {
 		path := p.parentPath + "/" + logicalMemoryID
 		node, getErr := p.remote.GetNode(ctx, path)
@@ -499,7 +519,7 @@ func (p *Purger) purge(ctx context.Context, deliveryID, logicalMemoryID, expecte
 		if digestErr != nil {
 			return digestErr
 		}
-		plan = memory.RemoteDeletePlan{ID: uuid.NewString(), DeliveryID: deliveryID, NodeID: node.NodeID,
+		plan = memory.RemoteDeletePlan{ID: uuid.NewString(), DeliveryID: deliveryID, ErasureDeliveryID: erasureDeliveryID, NodeID: node.NodeID,
 			ExternalURI: memory.DeterministicExternalURI(logicalMemoryID), ActiveMemoryID: references.ActiveMemoryID,
 			MemoryIDs: references.MemoryIDs, Paths: references.Paths, ReviewCleanupNeeded: len(references.ReviewReferences) > 0,
 			SnapshotDigest: digest, CreatedAt: p.now().UTC()}
@@ -792,7 +812,7 @@ func (w *MaintenanceExpiryReconciler) reconcileObservedNode(ctx context.Context,
 }
 
 func (w *MaintenanceExpiryReconciler) purgeAndFinalize(ctx context.Context, value memory.ExpiryReconciliation) error {
-	if err := w.purger.PurgeMaintenance(ctx, w.auth, value.DeliveryID, value.LogicalMemoryID, value.ContentHash); err != nil {
+	if err := w.purger.PurgeMaintenance(ctx, w.auth, value.ErasureDeliveryID, value.DeliveryID, value.LogicalMemoryID, value.ContentHash); err != nil {
 		return err
 	}
 	_, err := w.store.FinalizeMaintenanceExpiryReconciliation(ctx, w.auth, memory.ReconciliationFinalization{

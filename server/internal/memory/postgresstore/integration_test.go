@@ -158,6 +158,87 @@ func TestPostgreSQLPrivacyRedactionMaterializesAllSentAttemptsAndFencesUnsent(t 
 	}
 }
 
+func TestPostgreSQLPrivacyInitializesTerminalReconciliationScopesAsSucceeded(t *testing.T) {
+	pool, store, ctx, _ := memoryHarness(t)
+	plan := automaticPlan(dbClock(t, pool))
+	plan.Candidate.ValidUntil = plan.Candidate.CreatedAt.Add(time.Hour)
+	if _, err := store.CreateCandidate(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err = store.TransitionAttempt(ctx, memory.AttemptTransition{
+		AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken, LeaseToken: attempt.LeaseToken,
+		From: memory.AttemptPrepared, To: memory.AttemptSent, BootEpoch: "privacy-already-verified",
+		At: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO memory_expiry_reconciliations(
+			id,delivery_id,logical_memory_id,external_uri,content_hash,attempt_token,
+			sent_boot_epoch,learner_generation,record_generation,status,created_at,updated_at)
+		SELECT $2,d.id,d.logical_memory_id,d.external_uri,d.payload_hash,$3,
+		       'privacy-already-verified',d.learner_generation,d.record_generation,
+		       'verified',clock_timestamp(),clock_timestamp()
+		FROM memory_deliveries d WHERE d.id=$1`, plan.DeliveryID, uuid.NewString(), attempt.AttemptToken); err != nil {
+		t.Fatal(err)
+	}
+	erasureID, generation, localReceipt := installMemoryPrivacyBarrier(t, pool)
+	request := privacy.LocalRedactionRequest{
+		ErasureID: erasureID, Store: privacy.StoreMemoryCandidateDelivery,
+		ReceiptID: localReceipt, LearnerGeneration: generation,
+	}
+	if err := store.RedactTx(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	var scopeCount, succeededCount, attemptCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*),count(*) FILTER (WHERE s.status='succeeded'),COALESCE(sum(s.attempt_count),0)
+		FROM memory_erasure_delivery_scopes s
+		JOIN memory_erasure_deliveries d ON d.id=s.erasure_delivery_id
+		WHERE d.erasure_id=$1`, erasureID).Scan(&scopeCount, &succeededCount, &attemptCount); err != nil {
+		t.Fatal(err)
+	}
+	if scopeCount != 2 || succeededCount != 2 || attemptCount != 0 {
+		t.Fatalf("terminal erasure scopes count=%d succeeded=%d attempts=%d", scopeCount, succeededCount, attemptCount)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE privacy_erasure_heads SET status='verified',updated_at=clock_timestamp() WHERE erasure_id=$1`, erasureID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE privacy_owner_generation_gates
+		SET read_open=TRUE,write_open=TRUE,active_erasure_id=NULL,updated_at=clock_timestamp()
+		WHERE owner_kind='memory' AND active_erasure_id=$1`, erasureID); err != nil {
+		t.Fatal(err)
+	}
+	secondErasureID, secondGeneration, secondReceipt := installMemoryPrivacyBarrier(t, pool)
+	secondRequest := privacy.LocalRedactionRequest{
+		ErasureID: secondErasureID, Store: privacy.StoreMemoryCandidateDelivery,
+		ReceiptID: secondReceipt, LearnerGeneration: secondGeneration,
+	}
+	if err := store.RedactTx(ctx, secondRequest); err != nil {
+		t.Fatal(err)
+	}
+	var sourceBindings, secondSucceeded int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM memory_erasure_delivery_sources WHERE reconciliation_id=(SELECT id FROM memory_expiry_reconciliations WHERE delivery_id=$1)),
+		  (SELECT count(*) FROM memory_erasure_delivery_scopes s
+		   JOIN memory_erasure_deliveries d ON d.id=s.erasure_delivery_id
+		   WHERE d.erasure_id=$2 AND s.status='succeeded')`, plan.DeliveryID, secondErasureID).
+		Scan(&sourceBindings, &secondSucceeded); err != nil {
+		t.Fatal(err)
+	}
+	if sourceBindings != 2 || secondSucceeded != 2 {
+		t.Fatalf("second erasure source bindings=%d succeeded_scopes=%d", sourceBindings, secondSucceeded)
+	}
+}
+
 func TestPostgreSQLMaintenanceSummaryScopesConflictAndPrivacyConvergence(t *testing.T) {
 	pool, store, ctx, _ := memoryHarness(t)
 	for range 2 {
@@ -211,8 +292,8 @@ func TestPostgreSQLMaintenanceSummaryScopesConflictAndPrivacyConvergence(t *test
 		t.Fatalf("conflict summary=%+v err=%v", summary, err)
 	}
 	otherSummary, err := store.MaintenanceReconciliationSummary(ctx, orphanAuth)
-	if err != nil || otherSummary.Pending != 1 || otherSummary.Conflicts != 0 {
-		t.Fatalf("receipt-scoped summary=%+v err=%v", otherSummary, err)
+	if err != nil || otherSummary.Pending != 2 || otherSummary.Conflicts != 0 {
+		t.Fatalf("delivery-scoped summary=%+v err=%v", otherSummary, err)
 	}
 
 	succeeded, err := store.ClaimMaintenanceExpiryReconciliation(ctx, pathsAuth, time.Time{}, 20*time.Millisecond)
@@ -453,6 +534,99 @@ func TestPostgreSQLMaintenanceLatestAttemptPurgeConvergesSentAttempts(t *testing
 	}
 }
 
+func TestPostgreSQLErasureDeliveryIsSingleAndResumeKeepsOnePermit(t *testing.T) {
+	pool, store, ctx, now := memoryHarness(t)
+	plan := automaticPlan(now)
+	plan.Candidate.ValidUntil = now.Add(time.Hour)
+	if _, err := store.CreateCandidate(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err = store.TransitionAttempt(ctx, memory.AttemptTransition{
+		AttemptID: first.ID, AttemptToken: first.AttemptToken, LeaseToken: first.LeaseToken,
+		From: memory.AttemptPrepared, To: memory.AttemptSent, BootEpoch: "erasure-permit-1", At: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE memory_delivery_attempt_heads
+		SET lease_expires_at=clock_timestamp()-interval '1 second'
+		WHERE attempt_id=$1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	reconciling, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.AuthorizeAttemptRetry(ctx, memory.AttemptRetryAuthorization{
+		AttemptID: reconciling.ID, AttemptToken: reconciling.AttemptToken, LeaseToken: reconciling.LeaseToken,
+		From: memory.AttemptReconciling, ObservedBootEpoch: "erasure-permit-2", AbsenceObservations: 2,
+		EvidenceDigest: memory.SHA256String("erasure-permit-restart"), At: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err = store.TransitionAttempt(ctx, memory.AttemptTransition{
+		AttemptID: second.ID, AttemptToken: second.AttemptToken, LeaseToken: second.LeaseToken,
+		From: memory.AttemptPrepared, To: memory.AttemptSent, BootEpoch: "erasure-permit-2", At: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := startMaintenancePrivacyCleanup(t, pool, store)
+	var erasureDeliveryID string
+	var deliveries, sources, scopes int
+	if err := pool.QueryRow(ctx, `
+		SELECT min(erasure_delivery.id::text),count(DISTINCT erasure_delivery.id),
+		       count(DISTINCT source.reconciliation_id),count(DISTINCT scope.store_kind)
+		FROM memory_erasure_deliveries erasure_delivery
+		JOIN memory_erasure_delivery_sources source ON source.erasure_delivery_id=erasure_delivery.id
+		JOIN memory_erasure_delivery_scopes scope ON scope.erasure_delivery_id=erasure_delivery.id
+		WHERE erasure_delivery.erasure_id=$1 AND erasure_delivery.logical_memory_id=$2`,
+		auth.ErasureID, plan.LogicalMemoryID).Scan(&erasureDeliveryID, &deliveries, &sources, &scopes); err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 1 || sources != 2 || scopes != 2 {
+		t.Fatalf("erasure delivery=%s deliveries=%d sources=%d scopes=%d", erasureDeliveryID, deliveries, sources, scopes)
+	}
+	claimed, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, 200*time.Millisecond)
+	if err != nil || claimed.ErasureDeliveryID != erasureDeliveryID || claimed.AttemptToken != second.AttemptToken {
+		t.Fatalf("first erasure claim=%+v err=%v", claimed, err)
+	}
+	if _, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, time.Minute); memory.ErrorCode(err) != memory.CodeNotFound {
+		t.Fatalf("second active erasure permit err=%v", err)
+	}
+	if _, err := pool.Exec(ctx, `SELECT pg_sleep(0.25)`); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, time.Minute)
+	if err != nil || resumed.ID != claimed.ID || resumed.ErasureDeliveryID != erasureDeliveryID {
+		t.Fatalf("resumed erasure claim=%+v first=%+v err=%v", resumed, claimed, err)
+	}
+	var attempts, activePermits, attemptCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM memory_erasure_delivery_attempts
+		   WHERE erasure_delivery_id=$1 AND store_kind='nocturne_paths'),
+		  (SELECT count(*) FROM memory_erasure_delivery_attempt_heads
+		   WHERE erasure_delivery_id=$1 AND state IN ('reconciling','delete_pending')),
+		  (SELECT attempt_count FROM memory_erasure_delivery_scopes
+		   WHERE erasure_delivery_id=$1 AND store_kind='nocturne_paths')`,
+		erasureDeliveryID).Scan(&attempts, &activePermits, &attemptCount); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 1 || activePermits != 1 || attemptCount != 2 {
+		t.Fatalf("erasure attempts=%d active=%d claim_count=%d", attempts, activePermits, attemptCount)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM memory_erasure_deliveries WHERE id=$1`, erasureDeliveryID); err == nil {
+		t.Fatal("immutable erasure delivery accepted delete")
+	}
+}
+
 func TestPostgreSQLMaintenanceLatestExternalHashConflictBlocksHistoricalClaim(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	initial := automaticPlan(now)
@@ -479,8 +653,8 @@ func TestPostgreSQLMaintenanceLatestExternalHashConflictBlocksHistoricalClaim(t 
 		t.Fatal(err)
 	}
 	summary, err := store.MaintenanceReconciliationSummary(ctx, auth)
-	if err != nil || summary.Pending != 1 || summary.Conflicts != 1 {
-		t.Fatalf("external conflict summary=%+v err=%v", summary, err)
+	if err != nil || summary.Pending != 0 || summary.Conflicts != 1 {
+		t.Fatalf("external conflict delivery summary=%+v err=%v", summary, err)
 	}
 	if _, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, time.Minute); memory.ErrorCode(err) != memory.CodeNotFound {
 		t.Fatalf("historical hash claimed behind latest conflict: %v", err)
@@ -1926,6 +2100,56 @@ func TestPostgreSQLPrivacyScrubPermitBoundary(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLRevisionExternalReferencesAreImmutableAndRevisionScoped(t *testing.T) {
+	pool, store, ctx, now := memoryHarness(t)
+	initial := automaticPlan(now)
+	initial.Candidate.ValidUntil = now.Add(time.Hour)
+	if _, err := store.CreateCandidate(ctx, initial); err != nil {
+		t.Fatal(err)
+	}
+	nodeID := uuid.NewString()
+	_, initialReceiptID := finalizeAppliedDeliveryWithReference(t, store, ctx, initial.DeliveryID, "revision-ref-initial", nodeID, 41)
+	correction := automaticCorrectionPlan(dbClock(t, pool), initial.LogicalMemoryID, 1, 1)
+	if _, err := store.CreateCandidate(ctx, correction); err != nil {
+		t.Fatal(err)
+	}
+	_, correctionReceiptID := finalizeAppliedDeliveryWithReference(t, store, ctx, correction.DeliveryID, "revision-ref-correction", nodeID, 42)
+
+	initialReplay, err := store.CreateCandidate(ctx, initial)
+	if err != nil || initialReplay.Record == nil || initialReplay.Record.ExternalNodeID != nodeID || initialReplay.Record.ExternalMemoryID != 41 {
+		t.Fatalf("initial replay=%+v err=%v", initialReplay, err)
+	}
+	correctionReplay, err := store.CreateCandidate(ctx, correction)
+	if err != nil || correctionReplay.Record == nil || correctionReplay.Record.ExternalNodeID != nodeID || correctionReplay.Record.ExternalMemoryID != 42 {
+		t.Fatalf("correction replay=%+v err=%v", correctionReplay, err)
+	}
+	current, err := store.Record(ctx, initial.LogicalMemoryID)
+	if err != nil || current.Record.ExternalNodeID != nodeID || current.Record.ExternalMemoryID != 42 {
+		t.Fatalf("current record=%+v err=%v", current.Record, err)
+	}
+	var refs, attempts, receipts int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*),count(DISTINCT delivery_attempt_id),count(DISTINCT delivery_receipt_id)
+		FROM memory_record_external_refs
+		WHERE record_revision_id IN ($1,$2)
+		  AND external_node_id=$3
+		  AND ((record_revision_id=$1 AND external_memory_id=41 AND delivery_receipt_id=$4)
+		    OR (record_revision_id=$2 AND external_memory_id=42 AND delivery_receipt_id=$5))`,
+		initial.RecordRevisionID, correction.RecordRevisionID, nodeID, initialReceiptID, correctionReceiptID).Scan(
+		&refs, &attempts, &receipts); err != nil {
+		t.Fatal(err)
+	}
+	if refs != 2 || attempts != 2 || receipts != 2 {
+		t.Fatalf("revision refs=%d attempts=%d receipts=%d", refs, attempts, receipts)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE memory_record_external_refs SET external_memory_id=43 WHERE record_revision_id=$1`, correction.RecordRevisionID); err == nil {
+		t.Fatal("revision external reference accepted an update")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM memory_record_external_refs WHERE record_revision_id=$1`, initial.RecordRevisionID); err == nil {
+		t.Fatal("revision external reference accepted a delete")
+	}
+}
+
 func TestPostgreSQLCorrectionCandidateCASAndConfirmedSupersede(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	initial := automaticPlan(now)
@@ -2163,6 +2387,42 @@ func TestPostgreSQLDeliveryWorkLoadsCompleteAdmissionPolicy(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLReviewedTrustedSourcesCreateDeliveries(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		source    memory.SourceKind
+		category  memory.Category
+		reference memory.SourceReference
+	}{
+		{name: "model inference", source: memory.SourceModelInference, category: memory.CategoryPersonalContext,
+			reference: memory.SourceReference{ModelID: "configured-model", PromptRevision: "prompt-v7", SourceHashes: []string{memory.SHA256String("source")}}},
+		{name: "long term background", source: memory.SourceLongTermBackground, category: memory.CategoryPersonalContext},
+		{name: "generated summary", source: memory.SourceGeneratedSummary, category: memory.CategoryGeneratedSummary,
+			reference: memory.SourceReference{ModelID: "configured-model", PromptRevision: "prompt-v7", SourceHashes: []string{memory.SHA256String("source")}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, store, ctx, now := memoryHarness(t)
+			plan := pendingPlan(now)
+			plan.Candidate.Source = test.source
+			plan.Candidate.SourceReference = test.reference
+			plan.Candidate.Category = test.category
+			if _, err := store.CreateCandidate(ctx, plan); err != nil {
+				t.Fatal(err)
+			}
+			result, err := store.DecideCandidate(ctx, admitPlan(now, plan.Candidate.ID))
+			if err != nil || result.Record == nil || result.Delivery == nil {
+				t.Fatalf("reviewed source result=%+v err=%v", result, err)
+			}
+			work, err := store.LoadDeliveryWorkByID(ctx, result.Delivery.ID)
+			if err != nil || work.Policy.Source != test.source || work.Policy.Category != test.category ||
+				work.Policy.SourceReference.ModelID != test.reference.ModelID ||
+				len(work.Policy.SourceReference.SourceHashes) != len(test.reference.SourceHashes) {
+				t.Fatalf("reviewed source work=%+v err=%v", work, err)
+			}
+		})
+	}
+}
+
 func TestPostgreSQLSensitiveManualAdmissionCreatesReviewedDelivery(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	plan := pendingPlan(now)
@@ -2257,6 +2517,17 @@ func TestPostgreSQLDeleteDeadReplayAfterSidecarBudgetExhaustionAndVerification(t
 
 func finalizeAppliedDelivery(t *testing.T, store *postgresstore.Store, ctx context.Context, deliveryID, bootEpoch string) {
 	t.Helper()
+	finalizeAppliedDeliveryWithReference(t, store, ctx, deliveryID, bootEpoch, uuid.NewString(), 42)
+}
+
+func finalizeAppliedDeliveryWithReference(
+	t *testing.T,
+	store *postgresstore.Store,
+	ctx context.Context,
+	deliveryID, bootEpoch, nodeID string,
+	memoryID int64,
+) (string, string) {
+	t.Helper()
 	attempt, err := store.ClaimAttempt(ctx, deliveryID, time.Time{}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -2268,14 +2539,16 @@ func finalizeAppliedDelivery(t *testing.T, store *postgresstore.Store, ctx conte
 	if err != nil {
 		t.Fatal(err)
 	}
+	receiptID := uuid.NewString()
 	if _, err := store.FinalizeAttempt(ctx, memory.AttemptOutcome{
 		AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken, LeaseToken: attempt.LeaseToken,
-		From: memory.AttemptSent, Kind: memory.AttemptOutcomeApplied, ReceiptID: uuid.NewString(),
+		From: memory.AttemptSent, Kind: memory.AttemptOutcomeApplied, ReceiptID: receiptID,
 		ReceiptStatus: memory.ReceiptSucceeded, Reason: "remote_hash_verified", VerificationMethod: "uri_hash",
-		ExternalNodeID: uuid.NewString(), ExternalMemoryID: 42, At: time.Now().UTC(),
+		ExternalNodeID: nodeID, ExternalMemoryID: memoryID, At: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
+	return attempt.ID, receiptID
 }
 
 func markDeliveryOutboxDead(t *testing.T, pool *pgxpool.Pool, outboxID string) {

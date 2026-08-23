@@ -271,6 +271,10 @@ func TestComposeStaticNocturneIsolationContract(t *testing.T) {
 	if nocturne.Environment["API_TOKEN"] == nocturne.Environment["EDU_AGENT_MAINTENANCE_TOKEN"] || nocturne.Environment["API_TOKEN"] != server.Environment["NOCTURNE_API_TOKEN"] {
 		t.Fatalf("bridge and maintenance credentials are not separated")
 	}
+	if nocturne.Environment["EDU_AGENT_SERVER_INTERNAL_URL"] != "http://server:8080" ||
+		nocturne.Environment["EDU_AGENT_SERVER_MAINTENANCE_TOKEN"] != server.Environment["NOCTURNE_MAINTENANCE_TOKEN"] {
+		t.Fatalf("Nocturne migration guard is not bound to the internal server maintenance endpoint")
+	}
 	if server.Environment["NOCTURNE_IMAGE_LOCK_REFERENCE"] != nocturne.Image {
 		t.Fatalf("server image lock %q does not use the same required value as Nocturne image %q", server.Environment["NOCTURNE_IMAGE_LOCK_REFERENCE"], nocturne.Image)
 	}

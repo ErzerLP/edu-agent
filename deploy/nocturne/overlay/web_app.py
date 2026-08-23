@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import re
 import secrets
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
+from uuid import NAMESPACE_URL, uuid5
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import ConfigDict
-from sqlalchemy import DateTime, MetaData, String, func, select
+from sqlalchemy import DateTime, Integer, MetaData, String, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from starlette.applications import Starlette
@@ -106,6 +110,14 @@ class _SchemaMigration(_MigrationBase):
     applied_at: Mapped[object] = mapped_column(DateTime, server_default=func.current_timestamp())
 
 
+class _MigrationLeaseState(_MigrationBase):
+    __tablename__ = "edu_agent_migration_lease_state"
+
+    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    operation_id: Mapped[str] = mapped_column(String, nullable=False)
+    backup_identity: Mapped[str] = mapped_column(String, nullable=False)
+
+
 async def _has_application_data(engine) -> bool:
     metadata = MetaData()
     async with engine.connect() as connection:
@@ -137,7 +149,7 @@ def _artifact_created_at(value: object) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _require_encrypted_managed_backup(*, not_before: datetime, checked_at: datetime) -> None:
+def _require_encrypted_managed_backup(*, not_before: datetime, checked_at: datetime) -> str:
     try:
         _, artifacts, manifest_digest = validated_inventory()
     except Exception as exc:
@@ -151,6 +163,69 @@ def _require_encrypted_managed_backup(*, not_before: datetime, checked_at: datet
     if latest < not_before or latest > checked_at + _MIGRATION_BACKUP_FUTURE_SKEW:
         raise RuntimeError("managed encrypted migration backup is not fresh for this schema upgrade")
     logging.getLogger(__name__).info("validated fresh managed encrypted migration backup before schema upgrade")
+    return manifest_digest
+
+
+def _migration_operation_id(migration_files: list[str]) -> str:
+    target = "edu-agent-nocturne-migration-v1\n" + "\n".join(migration_files)
+    return str(uuid5(NAMESPACE_URL, target))
+
+
+def _migration_lease_request(action: str, operation_id: str, backup_identity: str) -> None:
+    base_url = os.environ.get("EDU_AGENT_SERVER_INTERNAL_URL", "").strip()
+    token = os.environ.get("EDU_AGENT_SERVER_MAINTENANCE_TOKEN", "")
+    local_token = os.environ.get("EDU_AGENT_MAINTENANCE_TOKEN", "")
+    parsed = urlsplit(base_url)
+    if (
+        action not in {"acquire", "release"}
+        or parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+        or not token
+        or not local_token
+        or not secrets.compare_digest(token, local_token)
+        or not re.fullmatch(r"[0-9a-f]{64}", backup_identity)
+    ):
+        raise RuntimeError("edu-agent migration lease configuration is invalid")
+    request = urllib.request.Request(
+        base_url.rstrip("/") + f"/internal/privacy/migrations/{action}",
+        data=json.dumps({
+            "operation_id": operation_id,
+            "backup_identity": backup_identity,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            status = response.status
+            body = response.read()
+    except (OSError, urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise RuntimeError("edu-agent migration lease service is unavailable") from exc
+    if action == "release":
+        if status != 204 or body:
+            raise RuntimeError("edu-agent migration lease release response is invalid")
+        return
+    try:
+        payload = json.loads(body)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("edu-agent migration lease acquire response is invalid") from exc
+    if (
+        status != 200
+        or not isinstance(payload, dict)
+        or set(payload) != {"operation_id", "status", "replayed"}
+        or payload.get("operation_id") != operation_id
+        or payload.get("status") != "acquired"
+        or not isinstance(payload.get("replayed"), bool)
+    ):
+        raise RuntimeError("edu-agent migration lease acquire response is invalid")
 
 
 async def _managed_run_migrations(engine) -> None:
@@ -171,13 +246,36 @@ async def _managed_run_migrations(engine) -> None:
         name for name in directory_entries if name.endswith(".py") and name[0].isdigit()
     )
     pending = [name for name in migration_files if name not in applied_versions]
+    async with AsyncSession(engine) as session:
+        lease_state = await session.get(_MigrationLeaseState, 1)
+        stored_lease = None if lease_state is None else (lease_state.operation_id, lease_state.backup_identity)
     if not pending:
+        if stored_lease is not None:
+            _migration_lease_request("release", stored_lease[0], stored_lease[1])
+            async with AsyncSession(engine) as session:
+                async with session.begin():
+                    await session.execute(delete(_MigrationLeaseState).where(_MigrationLeaseState.singleton_id == 1))
         return
+
+    acquired_lease: tuple[str, str] | None = None
     if await _has_application_data(engine):
         not_before = upgrade_checked_at - _MIGRATION_BACKUP_MAX_AGE
         if latest_applied_at is not None:
             not_before = max(not_before, _as_utc(latest_applied_at))
-        _require_encrypted_managed_backup(not_before=not_before, checked_at=upgrade_checked_at)
+        backup_identity = _require_encrypted_managed_backup(not_before=not_before, checked_at=upgrade_checked_at)
+        operation_id = _migration_operation_id(migration_files)
+        if stored_lease is not None and stored_lease != (operation_id, backup_identity):
+            raise RuntimeError("persisted migration lease identity does not match the pending migration")
+        _migration_lease_request("acquire", operation_id, backup_identity)
+        acquired_lease = (operation_id, backup_identity)
+        if stored_lease is None:
+            async with AsyncSession(engine) as session:
+                async with session.begin():
+                    session.add(_MigrationLeaseState(
+                        singleton_id=1,
+                        operation_id=operation_id,
+                        backup_identity=backup_identity,
+                    ))
     else:
         logging.getLogger(__name__).info("initializing fresh database without a pre-migration backup")
 
@@ -197,6 +295,11 @@ async def _managed_run_migrations(engine) -> None:
         async with AsyncSession(engine) as session:
             async with session.begin():
                 session.add(_SchemaMigration(version=filename))
+    if acquired_lease is not None:
+        _migration_lease_request("release", acquired_lease[0], acquired_lease[1])
+        async with AsyncSession(engine) as session:
+            async with session.begin():
+                await session.execute(delete(_MigrationLeaseState).where(_MigrationLeaseState.singleton_id == 1))
     logging.getLogger(__name__).info("successfully applied pending migrations")
 
 

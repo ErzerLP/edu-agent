@@ -38,7 +38,7 @@ func lockMemoryPrivacyGeneration(ctx context.Context, tx pgx.Tx, targetGeneratio
 	return nil
 }
 
-func preparePrivacyRemoteCleanup(ctx context.Context, tx pgx.Tx, targetGeneration int64) error {
+func preparePrivacyRemoteCleanup(ctx context.Context, tx pgx.Tx, erasureID string, targetGeneration int64) error {
 	if err := lockPrivacyRows(ctx, tx, `
 		SELECT h.delivery_id::text
 		FROM memory_delivery_heads h
@@ -79,6 +79,71 @@ func preparePrivacyRemoteCleanup(ctx context.Context, tx pgx.Tx, targetGeneratio
 		WHERE d.learner_generation<$1 AND h.sent_at IS NOT NULL
 		ON CONFLICT(delivery_id,attempt_token) DO NOTHING`, targetGeneration); err != nil {
 		return fmt.Errorf("materialize old sent memory reconciliations: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_deliveries(
+			id,erasure_id,logical_memory_id,target_learner_generation,created_at)
+		SELECT gen_random_uuid(),$1,r.logical_memory_id,$2,min(r.created_at)
+		FROM memory_expiry_reconciliations r
+		WHERE r.learner_generation<$2
+		GROUP BY r.logical_memory_id
+		ON CONFLICT(erasure_id,logical_memory_id) DO NOTHING`, erasureID, targetGeneration); err != nil {
+		return fmt.Errorf("materialize memory erasure deliveries: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_sources(erasure_delivery_id,reconciliation_id,bound_at)
+		SELECT ed.id,r.id,clock_timestamp()
+		FROM memory_erasure_deliveries ed
+		JOIN memory_expiry_reconciliations r
+		  ON r.logical_memory_id=ed.logical_memory_id
+		 AND r.learner_generation<ed.target_learner_generation
+		WHERE ed.erasure_id=$1
+		ON CONFLICT(erasure_delivery_id,reconciliation_id) DO NOTHING`, erasureID); err != nil {
+		return fmt.Errorf("bind memory erasure delivery sources: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_receipts(
+			id,erasure_delivery_id,store_kind,version,status,reason,verification_method,created_at)
+		SELECT gen_random_uuid(),ed.id,scope.store_kind,1,
+		       CASE WHEN EXISTS (
+		         SELECT 1 FROM memory_erasure_delivery_sources source
+		         JOIN memory_expiry_reconciliations reconciliation ON reconciliation.id=source.reconciliation_id
+		         WHERE source.erasure_delivery_id=ed.id
+		           AND reconciliation.status NOT IN ('absence_verified','verified')
+		       ) THEN 'pending' ELSE 'succeeded' END,
+		       CASE WHEN EXISTS (
+		         SELECT 1 FROM memory_erasure_delivery_sources source
+		         JOIN memory_expiry_reconciliations reconciliation ON reconciliation.id=source.reconciliation_id
+		         WHERE source.erasure_delivery_id=ed.id
+		           AND reconciliation.status NOT IN ('absence_verified','verified')
+		       ) THEN 'remote_erasure_pending' ELSE 'remote_reconciliation_already_verified' END,
+		       CASE WHEN EXISTS (
+		         SELECT 1 FROM memory_erasure_delivery_sources source
+		         JOIN memory_expiry_reconciliations reconciliation ON reconciliation.id=source.reconciliation_id
+		         WHERE source.erasure_delivery_id=ed.id
+		           AND reconciliation.status NOT IN ('absence_verified','verified')
+		       ) THEN 'not_yet_verified' ELSE 'existing_reconciliation_terminal_state' END,
+		       clock_timestamp()
+		FROM memory_erasure_deliveries ed
+		CROSS JOIN (VALUES ('nocturne_paths'),('nocturne_orphan_history')) AS scope(store_kind)
+		WHERE ed.erasure_id=$1
+		  AND NOT EXISTS (
+		    SELECT 1 FROM memory_erasure_delivery_scopes existing
+		    WHERE existing.erasure_delivery_id=ed.id AND existing.store_kind=scope.store_kind
+		  )`, erasureID); err != nil {
+		return fmt.Errorf("initialize memory erasure delivery receipts: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO memory_erasure_delivery_scopes(
+			erasure_delivery_id,store_kind,status,current_attempt_id,attempt_count,
+			current_receipt_id,current_receipt_version,updated_at)
+		SELECT receipt.erasure_delivery_id,receipt.store_kind,receipt.status,NULL,0,
+		       receipt.id,receipt.version,receipt.created_at
+		FROM memory_erasure_delivery_receipts receipt
+		JOIN memory_erasure_deliveries ed ON ed.id=receipt.erasure_delivery_id
+		WHERE ed.erasure_id=$1 AND receipt.version=1
+		ON CONFLICT(erasure_delivery_id,store_kind) DO NOTHING`, erasureID); err != nil {
+		return fmt.Errorf("initialize memory erasure delivery scopes: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE memory_delivery_attempt_heads h
@@ -224,7 +289,7 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 	if permit == "" {
 		return fmt.Errorf("acquire memory privacy scrub permit for erasure %s generation %d: empty permit", request.ErasureID, request.LearnerGeneration)
 	}
-	if err := preparePrivacyRemoteCleanup(ctx, tx, request.LearnerGeneration); err != nil {
+	if err := preparePrivacyRemoteCleanup(ctx, tx, request.ErasureID, request.LearnerGeneration); err != nil {
 		return fmt.Errorf("prepare memory privacy cleanup for erasure %s generation %d: %w", request.ErasureID, request.LearnerGeneration, err)
 	}
 
@@ -284,6 +349,18 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 		  (SELECT count(*) FROM memory_delivery_receipts WHERE reason<>$1) +
 		  (SELECT count(*) FROM memory_expiry_reconciliations WHERE reason IS NOT NULL) +
 		  (SELECT count(*)
+		   FROM memory_expiry_reconciliations r
+		   LEFT JOIN memory_erasure_delivery_sources source ON source.reconciliation_id=r.id
+		   LEFT JOIN memory_erasure_deliveries erasure_delivery
+		     ON erasure_delivery.id=source.erasure_delivery_id AND erasure_delivery.erasure_id=$3
+		   WHERE r.learner_generation<$2 AND erasure_delivery.id IS NULL) +
+		  (SELECT count(*)
+		   FROM memory_erasure_deliveries erasure_delivery
+		   WHERE erasure_delivery.erasure_id=$3 AND (
+		     SELECT count(*) FROM memory_erasure_delivery_scopes scope
+		     WHERE scope.erasure_delivery_id=erasure_delivery.id
+		   )<>2) +
+		  (SELECT count(*)
 		   FROM memory_delivery_attempts a
 		   JOIN memory_delivery_attempt_heads ah ON ah.attempt_id=a.id
 		   JOIN memory_deliveries d ON d.id=a.delivery_id
@@ -317,7 +394,7 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 		   WHERE d.learner_generation<$2 AND (
 		     (dh.status='fenced' AND rh.status<>'delete_pending')
 		     OR (dh.status='deleted' AND (rh.status<>'deleted' OR rh.deleted_at IS NULL))
-		   ))`, memoryRedactionTombstone, request.LearnerGeneration).Scan(&residual)
+		   ))`, memoryRedactionTombstone, request.LearnerGeneration, request.ErasureID).Scan(&residual)
 	if err != nil {
 		return 0, fmt.Errorf("verify memory privacy scrub for erasure %s generation %d: %w", request.ErasureID, request.LearnerGeneration, err)
 	}

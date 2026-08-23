@@ -199,6 +199,7 @@ type NocturneRemote interface {
 type RemoteDeletePlan struct {
 	ID                  string
 	DeliveryID          string
+	ErasureDeliveryID   string
 	NodeID              string
 	ExternalURI         string
 	ActiveMemoryID      int64
@@ -210,7 +211,8 @@ type RemoteDeletePlan struct {
 }
 
 func (p RemoteDeletePlan) Validate() error {
-	if !validUUID(p.ID) || !validUUID(p.DeliveryID) || !validUUID(p.NodeID) || p.ActiveMemoryID <= 0 ||
+	if !validUUID(p.ID) || !validUUID(p.DeliveryID) ||
+		(p.ErasureDeliveryID != "" && !validUUID(p.ErasureDeliveryID)) || !validUUID(p.NodeID) || p.ActiveMemoryID <= 0 ||
 		p.ExternalURI == "" || !validHash(p.SnapshotDigest) || p.CreatedAt.IsZero() || !isUTC(p.CreatedAt) ||
 		len(p.MemoryIDs) == 0 || len(p.Paths) == 0 {
 		return invalid("invalid_remote_delete_plan")
@@ -306,6 +308,7 @@ type MaintenanceReconciliationPersistence interface {
 	ClaimMaintenanceExpiryReconciliation(context.Context, MaintenanceAuthorization, time.Time, time.Duration) (ExpiryReconciliation, error)
 	TransitionMaintenanceExpiryReconciliation(context.Context, MaintenanceAuthorization, ReconciliationTransition) (ExpiryReconciliation, error)
 	FinalizeMaintenanceExpiryReconciliation(context.Context, MaintenanceAuthorization, ReconciliationFinalization) (ExpiryReconciliation, error)
+	LoadMaintenanceRemoteDeletePlan(context.Context, MaintenanceAuthorization, string) (RemoteDeletePlan, error)
 	SaveMaintenanceRemoteDeletePlan(context.Context, MaintenanceAuthorization, RemoteDeletePlan) (RemoteDeletePlan, error)
 	MaintenanceReconciliationSummary(context.Context, MaintenanceAuthorization) (MaintenanceReconciliationSummary, error)
 }

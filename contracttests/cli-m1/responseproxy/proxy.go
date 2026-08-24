@@ -27,6 +27,11 @@ type Rule struct {
 	OperationID string `json:"operation_id"`
 }
 
+type CaptureNext struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
 type RuleStats struct {
 	Rule          Rule `json:"rule"`
 	Calls         int  `json:"calls"`
@@ -86,6 +91,7 @@ type Proxy struct {
 	rulesMu    sync.RWMutex
 	rules      map[ruleKey]*ruleState
 	paths      map[methodPath]int
+	captures   map[methodPath]bool
 	generation uint64
 
 	auditMu       sync.Mutex
@@ -116,7 +122,7 @@ func New(rawUpstream string, options Options) (*Proxy, error) {
 	return &Proxy{
 		upstream: upstream, controlKey: options.ControlKey,
 		maxRequestBytes: options.MaxRequestBytes, maxResponseBytes: options.MaxResponseBytes,
-		client: &clone, rules: map[ruleKey]*ruleState{}, paths: map[methodPath]int{}, generation: 1,
+		client: &clone, rules: map[ruleKey]*ruleState{}, paths: map[methodPath]int{}, captures: map[methodPath]bool{}, generation: 1,
 	}, nil
 }
 
@@ -129,6 +135,9 @@ func (p *Proxy) AddRule(rule Rule) error {
 	pathKey := methodPath{method: normalized.Method, path: normalized.Path}
 	p.rulesMu.Lock()
 	defer p.rulesMu.Unlock()
+	if p.captures[pathKey] {
+		return fmt.Errorf("response-loss capture is armed for method and path")
+	}
 	if _, exists := p.rules[key]; exists {
 		return fmt.Errorf("response-loss rule already exists")
 	}
@@ -137,12 +146,47 @@ func (p *Proxy) AddRule(rule Rule) error {
 	return nil
 }
 
+func (p *Proxy) ArmCaptureNext(capture CaptureNext) error {
+	normalized, err := normalizeCapture(capture)
+	if err != nil {
+		return err
+	}
+	key := methodPath{method: normalized.Method, path: normalized.Path}
+	p.rulesMu.Lock()
+	defer p.rulesMu.Unlock()
+	if p.paths[key] > 0 {
+		return fmt.Errorf("response-loss rule already exists for method and path")
+	}
+	if p.captures[key] {
+		return fmt.Errorf("response-loss capture is already armed")
+	}
+	p.captures[key] = true
+	return nil
+}
+
+func (p *Proxy) Captures() []CaptureNext {
+	p.rulesMu.RLock()
+	defer p.rulesMu.RUnlock()
+	result := make([]CaptureNext, 0, len(p.captures))
+	for key := range p.captures {
+		result = append(result, CaptureNext{Method: key.method, Path: key.path})
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].Method != result[right].Method {
+			return result[left].Method < result[right].Method
+		}
+		return result[left].Path < result[right].Path
+	})
+	return result
+}
+
 func (p *Proxy) Reset() {
 	p.rulesMu.Lock()
 	defer p.rulesMu.Unlock()
 	p.generation++
 	p.rules = map[ruleKey]*ruleState{}
 	p.paths = map[methodPath]int{}
+	p.captures = map[methodPath]bool{}
 	p.auditMu.Lock()
 	p.audit = nil
 	p.auditSequence = 0
@@ -229,7 +273,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := strings.ToUpper(r.Method)
 	pathKey := methodPath{method: method, path: r.URL.Path}
 	p.rulesMu.RLock()
-	configuredPath := generation == p.generation && p.paths[pathKey] > 0
+	configuredPath := generation == p.generation && (p.paths[pathKey] > 0 || p.captures[pathKey])
 	p.rulesMu.RUnlock()
 	operationID := ""
 	if configuredPath {
@@ -256,11 +300,32 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		state = p.rules[ruleKey{method: method, path: r.URL.Path, operationID: operationID}]
 	}
 	p.rulesMu.RUnlock()
+	if state == nil && operationID != "" {
+		state = p.bindCapture(generation, method, r.URL.Path, operationID)
+	}
 	if state == nil {
 		p.forwardUnconfigured(generation, w, r, body, operationID)
 		return
 	}
 	p.forwardConfigured(generation, w, r, body, state)
+}
+
+func (p *Proxy) bindCapture(generation uint64, method, path, operationID string) *ruleState {
+	pathKey := methodPath{method: method, path: path}
+	p.rulesMu.Lock()
+	defer p.rulesMu.Unlock()
+	if generation != p.generation || !p.captures[pathKey] {
+		return nil
+	}
+	delete(p.captures, pathKey)
+	key := ruleKey{method: method, path: path, operationID: operationID}
+	if state := p.rules[key]; state != nil {
+		return state
+	}
+	state := &ruleState{rule: Rule{Method: method, Path: path, OperationID: operationID}}
+	p.rules[key] = state
+	p.paths[pathKey]++
+	return state
 }
 
 func (p *Proxy) forwardConfigured(generation uint64, w http.ResponseWriter, request *http.Request, body []byte, state *ruleState) {
@@ -402,6 +467,15 @@ func normalizeRule(rule Rule) (Rule, error) {
 	return rule, nil
 }
 
+func normalizeCapture(capture CaptureNext) (CaptureNext, error) {
+	capture.Method = strings.ToUpper(strings.TrimSpace(capture.Method))
+	capture.Path = strings.TrimSpace(capture.Path)
+	if capture.Method == "" || !strings.HasPrefix(capture.Path, "/") || strings.ContainsAny(capture.Path, "?#") {
+		return CaptureNext{}, fmt.Errorf("capture requires method and absolute path")
+	}
+	return capture, nil
+}
+
 func keyFor(rule Rule) ruleKey {
 	return ruleKey{method: rule.Method, path: rule.Path, operationID: rule.OperationID}
 }
@@ -497,6 +571,22 @@ func (p *Proxy) serveControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.URL.Path == ControlPrefix+"/capture-next" && r.Method == http.MethodPost:
+		body, err := readBounded(r.Body, 64<<10)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "response_loss_invalid_capture")
+			return
+		}
+		var capture CaptureNext
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&capture); err != nil || decoder.Decode(&struct{}{}) != io.EOF || p.ArmCaptureNext(capture) != nil {
+			writeError(w, http.StatusBadRequest, "response_loss_invalid_capture")
+			return
+		}
+		writeControlJSON(w, http.StatusAccepted, capture)
+	case r.URL.Path == ControlPrefix+"/capture-next" && r.Method == http.MethodGet:
+		writeControlJSON(w, http.StatusOK, map[string]any{"captures": p.Captures()})
 	case r.URL.Path == ControlPrefix+"/rules" && r.Method == http.MethodPost:
 		body, err := readBounded(r.Body, 64<<10)
 		if err != nil {

@@ -257,6 +257,59 @@ func TestA101FreeAnswerProposalChecksActiveFrameBeforeQuestionLookup(t *testing.
 	}
 }
 
+func TestAttachedAssessmentRequiresOwnedFreeQuestionAndAnswerContext(t *testing.T) {
+	savedContext := tutoring.FocusContext{
+		GoalRevisionID: "goal", RouteRevisionID: "route", RouteStepID: "step",
+		KnowledgeRevisionID: "knowledge", FocusNodeRevisionID: "node-revision",
+	}
+	frame := &tutoring.FocusFrame{
+		ID: "frame", SessionID: "session", SavedState: tutoring.StateRouteActive,
+		Context: savedContext, SavedAggregateVersion: 4, CreatedEventSequence: 9,
+	}
+	activityID, attemptID := "activity", "attempt"
+	sessionContext := savedContext
+	sessionContext.ActivityID = &activityID
+	sessionContext.AttemptID = &attemptID
+	session := tutoring.Session{
+		ID: "session", State: tutoring.StateEvaluating, AggregateVer: 8,
+		Context: sessionContext, ActiveFrame: frame, AttachedQuiz: true,
+	}
+	question := tutoring.FreeQuestion{
+		ID: "question", SessionID: session.ID, FocusFrameID: frame.ID,
+		SessionAggregateVer: 5, KnowledgeRevisionID: "knowledge",
+	}
+	answer := tutoring.FreeAnswer{
+		ID: "answer", SessionID: session.ID, FocusFrameID: frame.ID,
+		FreeQuestionID: question.ID, KnowledgeRevisionID: question.KnowledgeRevisionID,
+	}
+	activity := Activity{
+		ID: activityID, SessionID: session.ID, GoalRevisionID: "goal", RouteRevisionID: "route",
+		RouteStepID: "step", KnowledgeRevisionID: "knowledge", TargetNodeID: "node",
+		TargetNodeRevisionID: "node-revision", References: []KnowledgeReference{{KnowledgeRevisionID: "knowledge", NodeID: "node", NodeRevisionID: "node-revision"}},
+	}
+	store := &proposalTestStore{
+		session: session, goal: GoalRevision{ID: "goal"},
+		route:    RouteRevision{ID: "route", GoalRevisionID: "goal", KnowledgeRevisionID: "knowledge", Steps: []RouteStep{{ID: "step", Ordinal: 0, NodeID: "node", NodeRevisionID: "node-revision"}}},
+		activity: activity, attempt: Attempt{ID: attemptID, SessionID: session.ID, ActivityID: activityID},
+		freeQuestion: question, freeAnswer: answer,
+	}
+	service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
+	request := frozenSessionRequest(session, ProposalAssessment, "knowledge", []string{"node-revision"})
+	if _, err := service.freezeProposalRequest(context.Background(), request); ErrorCode(err) != CodeInvalidRequest {
+		t.Fatalf("missing attached assessment context error=%v code=%q", err, ErrorCode(err))
+	}
+	request.FreeQuestionID = question.ID
+	request.FreeAnswerID = answer.ID
+	frozen, err := service.freezeProposalRequest(context.Background(), request)
+	if err != nil || frozen.FocusFrameID != frame.ID || frozen.FreeQuestionID != question.ID || frozen.FreeAnswerID != answer.ID {
+		t.Fatalf("owned attached assessment context=%+v err=%v", frozen, err)
+	}
+	store.freeAnswer.FocusFrameID = "other"
+	if _, err := service.freezeProposalRequest(context.Background(), request); ErrorCode(err) != CodeStaleProposal {
+		t.Fatalf("foreign attached assessment answer error=%v code=%q", err, ErrorCode(err))
+	}
+}
+
 func TestA101FocusFrameAndQuestionVersionMatrixFailsClosed(t *testing.T) {
 	frame := &tutoring.FocusFrame{
 		ID: "frame", SessionID: "session", SavedState: tutoring.StateRouteActive,

@@ -121,10 +121,156 @@ func TestOneShotPostCommitResponseLossAndReplayGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"private multiline", "changed private answer", "succeeded", "replayed"} {
+	for _, secret := range []string{"private multiline", "changed private answer", "succeeded", "replayed", "proxy-private-token", "proxy-private-header", "Authorization", "X-Private-Header"} {
 		if strings.Contains(string(auditJSON), secret) {
 			t.Fatalf("audit recorded body content %q: %s", secret, auditJSON)
 		}
+	}
+}
+
+func TestCaptureNextBindsRealOperationIDAndRejectsDifferentBodyBeforeUpstream(t *testing.T) {
+	var upstreamMu sync.Mutex
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		upstreamMu.Lock()
+		upstreamCalls++
+		upstreamMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"status":"committed"}`))
+	}))
+	defer upstream.Close()
+
+	proxy, err := New(upstream.URL, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := CaptureNext{Method: http.MethodPost, Path: testPath}
+	if err := proxy.ArmCaptureNext(capture); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(proxy)
+	defer server.Close()
+
+	body := []byte(`{"operation_id":"` + testOperationID + `","payload_schema_version":1}`)
+	response, err := postJSON(server.URL+testPath, body)
+	if response != nil {
+		response.Body.Close()
+	}
+	if err == nil || !errors.Is(err, io.EOF) {
+		t.Fatalf("captured request error=%T %v want EOF", err, err)
+	}
+	if captures := proxy.Captures(); len(captures) != 0 {
+		t.Fatalf("capture remained armed: %+v", captures)
+	}
+	rules := proxy.Rules()
+	if len(rules) != 1 || rules[0].Rule.OperationID != testOperationID || rules[0].Drops != 1 || rules[0].UpstreamCalls != 1 {
+		t.Fatalf("captured rules=%+v", rules)
+	}
+
+	response, err = postJSON(server.URL+testPath, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("replay status=%d", response.StatusCode)
+	}
+
+	different := []byte(`{"operation_id":"` + testOperationID + `","payload_schema_version":1,"changed":true}`)
+	response, err = postJSON(server.URL+testPath, different)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("different-body status=%d", response.StatusCode)
+	}
+	upstreamMu.Lock()
+	calls := upstreamCalls
+	upstreamMu.Unlock()
+	if calls != 2 {
+		t.Fatalf("different body reached upstream: calls=%d", calls)
+	}
+	stats, ok := proxy.Stats(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID})
+	if !ok || stats.Calls != 3 || stats.UpstreamCalls != 2 || stats.Drops != 1 || stats.Rejections != 1 {
+		t.Fatalf("capture stats=%+v found=%v", stats, ok)
+	}
+}
+
+func TestCaptureNextAndExactRuleAreMutuallyExclusiveBeforeFirstRequest(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func(*testing.T, *Proxy)
+		body     []byte
+		wantDrop bool
+	}{
+		{
+			name: "exact rule rejects capture without stealing another operation",
+			setup: func(t *testing.T, proxy *Proxy) {
+				t.Helper()
+				if err := proxy.AddRule(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID}); err != nil {
+					t.Fatal(err)
+				}
+				if err := proxy.ArmCaptureNext(CaptureNext{Method: http.MethodPost, Path: testPath}); err == nil {
+					t.Fatal("capture was armed on an exact-rule path")
+				}
+			},
+			body: []byte(`{"operation_id":"20000000-0000-4000-8000-000000000002"}`),
+		},
+		{
+			name: "capture rejects exact rule and binds first operation",
+			setup: func(t *testing.T, proxy *Proxy) {
+				t.Helper()
+				if err := proxy.ArmCaptureNext(CaptureNext{Method: http.MethodPost, Path: testPath}); err != nil {
+					t.Fatal(err)
+				}
+				if err := proxy.AddRule(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID}); err == nil {
+					t.Fatal("exact rule was added on a capture-next path")
+				}
+			},
+			body:     []byte(`{"operation_id":"` + testOperationID + `"}`),
+			wantDrop: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			upstreamCalls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				upstreamCalls++
+				w.WriteHeader(http.StatusCreated)
+			}))
+			defer upstream.Close()
+			proxy, err := New(upstream.URL, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.setup(t, proxy)
+			server := httptest.NewServer(proxy)
+			defer server.Close()
+
+			response, requestErr := postJSON(server.URL+testPath, test.body)
+			if response != nil {
+				response.Body.Close()
+			}
+			if !test.wantDrop {
+				if requestErr != nil || response == nil || response.StatusCode != http.StatusCreated || upstreamCalls != 1 {
+					t.Fatalf("unconfigured first request error=%v response=%v upstream=%d", requestErr, response != nil, upstreamCalls)
+				}
+				stats, ok := proxy.Stats(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID})
+				if !ok || stats.Calls != 0 || stats.UpstreamCalls != 0 || stats.Drops != 0 {
+					t.Fatalf("exact rule consumed another operation: stats=%+v found=%v", stats, ok)
+				}
+				return
+			}
+			if requestErr == nil || !errors.Is(requestErr, io.EOF) || upstreamCalls != 1 {
+				t.Fatalf("captured first request error=%v upstream=%d", requestErr, upstreamCalls)
+			}
+			rules := proxy.Rules()
+			if len(rules) != 1 || rules[0].Rule.OperationID != testOperationID || rules[0].Drops != 1 {
+				t.Fatalf("captured first request rules=%+v", rules)
+			}
+		})
 	}
 }
 
@@ -259,8 +405,8 @@ func TestControlAPIConfiguresAndQueriesAudit(t *testing.T) {
 	server := httptest.NewServer(proxy)
 	defer server.Close()
 
-	ruleBody, _ := json.Marshal(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID})
-	request, _ := http.NewRequest(http.MethodPost, server.URL+ControlPrefix+"/rules", bytes.NewReader(ruleBody))
+	captureBody, _ := json.Marshal(CaptureNext{Method: http.MethodPost, Path: testPath})
+	request, _ := http.NewRequest(http.MethodPost, server.URL+ControlPrefix+"/capture-next", bytes.NewReader(captureBody))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Fixture-Control-Key", "control")
 	response, err := http.DefaultClient.Do(request)
@@ -268,8 +414,43 @@ func TestControlAPIConfiguresAndQueriesAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("arm capture status=%d", response.StatusCode)
+	}
+
+	ruleBody, _ := json.Marshal(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID})
+	request, _ = http.NewRequest(http.MethodPost, server.URL+ControlPrefix+"/rules", bytes.NewReader(ruleBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Fixture-Control-Key", "control")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("capture path accepted exact rule status=%d", response.StatusCode)
+	}
+	request, _ = http.NewRequest(http.MethodPost, server.URL+ControlPrefix+"/reset", nil)
+	request.Header.Set("X-Fixture-Control-Key", "control")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("reset status=%d", response.StatusCode)
+	}
+	ruleBody, _ = json.Marshal(Rule{Method: http.MethodPost, Path: testPath, OperationID: testOperationID})
+	request, _ = http.NewRequest(http.MethodPost, server.URL+ControlPrefix+"/rules", bytes.NewReader(ruleBody))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Fixture-Control-Key", "control")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
 	if response.StatusCode != http.StatusCreated {
-		t.Fatalf("create rule status=%d", response.StatusCode)
+		t.Fatalf("create rule after reset status=%d", response.StatusCode)
 	}
 	request, _ = http.NewRequest(http.MethodGet, server.URL+ControlPrefix+"/rules", nil)
 	request.Header.Set("X-Fixture-Control-Key", "control")
@@ -292,5 +473,7 @@ func postJSON(rawURL string, body []byte) (*http.Response, error) {
 		return nil, err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer proxy-private-token")
+	request.Header.Set("X-Private-Header", "proxy-private-header")
 	return http.DefaultClient.Do(request)
 }

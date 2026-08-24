@@ -5,6 +5,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+const (
+	maxRouteCanonicalExcerptRunes = 96
+	maxRouteCanonicalExcerptBytes = 256
 )
 
 type sourceRange struct {
@@ -33,42 +41,10 @@ type proposalRequest struct {
 	Input               json.RawMessage `json:"input"`
 }
 
-type contextReference struct {
-	KnowledgeRevisionID string      `json:"knowledge_revision_id"`
-	DocumentRevisionID  string      `json:"document_revision_id"`
-	NodeID              string      `json:"node_id"`
-	NodeRevisionID      string      `json:"node_revision_id"`
-	Range               sourceRange `json:"range"`
-	Slice               string      `json:"slice"`
-	SliceSHA256         string      `json:"slice_sha256"`
-}
-
-type contextRubricItem struct {
-	RubricItemID         string   `json:"rubric_item_id"`
-	Criterion            string   `json:"criterion"`
-	RequiredReferenceIDs []string `json:"required_reference_ids,omitempty"`
-}
-
-type proposalContext struct {
-	SchemaVersion string `json:"schema_version"`
-	WorkItem      struct {
-		Activity *struct {
-			Rubric struct {
-				Items []contextRubricItem `json:"items"`
-			} `json:"rubric"`
-			KnowledgeReferences []contextReference `json:"knowledge_references"`
-		} `json:"activity,omitempty"`
-		Attempt *struct {
-			Answer string `json:"answer"`
-		} `json:"attempt,omitempty"`
-	} `json:"work_item"`
-	Retrieval struct {
-		Hits []contextReference `json:"hits"`
-	} `json:"retrieval"`
-}
-
 type modelReference struct {
-	NodeRevisionID string `json:"node_revision_id"`
+	NodeRevisionID string      `json:"node_revision_id"`
+	SliceSHA256    string      `json:"slice_sha256"`
+	Range          sourceRange `json:"range"`
 }
 
 type routeStep struct {
@@ -118,27 +94,31 @@ type assessmentItem struct {
 }
 
 func renderArtifact(kind RequestKind, request proposalRequest, scenario Scenario) ([]byte, error) {
+	contextValue, err := validateProposalFixtureContext(request, kind)
+	if err != nil {
+		return nil, err
+	}
 	switch kind {
 	case KindRoute:
-		steps := make([]routeStep, 0, len(request.NodeRevisionIDs))
-		for index, nodeID := range request.NodeRevisionIDs {
-			steps = append(steps, routeStep{
-				NodeRevisionID:      nodeID,
-				TeachingIntent:      fmt.Sprintf("Teach canonical node %d", index+1),
-				CompletionCondition: fmt.Sprintf("Complete canonical node %d activity", index+1),
-			})
+		steps, err := renderRouteSteps(request, contextValue, scenario)
+		if err != nil {
+			return nil, err
 		}
 		return json.Marshal(struct {
 			Route []routeStep `json:"route"`
 		}{Route: steps})
 	case KindActivity:
-		return renderActivity(request, scenario)
+		return renderActivity(request, contextValue, scenario)
 	case KindAssessment:
-		return renderAssessment(request, scenario)
+		return renderAssessment(contextValue, scenario)
 	case KindFreeAnswer, KindExplanation:
-		text := "Strict fake answer grounded in canonical knowledge."
+		excerpt, err := normalizeRouteCanonicalSlice(contextValue.references[0].Slice)
+		if err != nil {
+			return nil, err
+		}
+		text := "Strict fake answer grounded in canonical knowledge: " + excerpt
 		if kind == KindExplanation {
-			text = "Strict fake explanation grounded in canonical knowledge."
+			text = "Strict fake explanation grounded in canonical knowledge: " + excerpt
 		}
 		return json.Marshal(struct {
 			Text struct {
@@ -148,13 +128,81 @@ func renderArtifact(kind RequestKind, request proposalRequest, scenario Scenario
 		}{Text: struct {
 			Text                string           `json:"text"`
 			KnowledgeReferences []modelReference `json:"knowledge_references"`
-		}{Text: text, KnowledgeReferences: referencesFor(request)}})
+		}{Text: text, KnowledgeReferences: modelReferencesFor(contextValue.references)}})
 	default:
 		return nil, fmt.Errorf("unsupported proposal kind %q", kind)
 	}
 }
 
-func renderActivity(request proposalRequest, scenario Scenario) ([]byte, error) {
+func renderRouteSteps(request proposalRequest, contextValue validatedProposalContext, scenario Scenario) ([]routeStep, error) {
+	references := contextValue.references
+	if scenario.RouteStepLimit > 0 && scenario.RouteStepLimit < len(references) {
+		references = references[:scenario.RouteStepLimit]
+	}
+	steps := make([]routeStep, 0, len(references))
+	for _, reference := range references {
+		excerpt, err := normalizeRouteCanonicalSlice(reference.Slice)
+		if err != nil {
+			return nil, fmt.Errorf("normalize route retrieval hit for node revision %q: %w", reference.NodeRevisionID, err)
+		}
+		steps = append(steps, routeStep{
+			NodeRevisionID:      reference.NodeRevisionID,
+			TeachingIntent:      "Teach the canonical concept: " + excerpt,
+			CompletionCondition: "Complete when the learner explains the canonical concept: " + excerpt,
+		})
+	}
+	if len(steps) == 0 || len(request.NodeRevisionIDs) == 0 {
+		return nil, fmt.Errorf("route proposal has no canonical references")
+	}
+	return steps, nil
+}
+
+func normalizeRouteCanonicalSlice(value string) (string, error) {
+	if !utf8.ValidString(value) {
+		return "", fmt.Errorf("canonical slice is not valid UTF-8")
+	}
+
+	runes := make([]rune, 0, maxRouteCanonicalExcerptRunes)
+	bytesUsed := 0
+	pendingSpace := false
+	for _, r := range value {
+		if unicode.IsSpace(r) {
+			if len(runes) > 0 {
+				pendingSpace = true
+			}
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			continue
+		}
+
+		size := utf8.RuneLen(r)
+		spaceRunes := 0
+		spaceBytes := 0
+		if pendingSpace {
+			spaceRunes = 1
+			spaceBytes = 1
+		}
+		if len(runes)+spaceRunes+1 > maxRouteCanonicalExcerptRunes || bytesUsed+spaceBytes+size > maxRouteCanonicalExcerptBytes {
+			break
+		}
+		if pendingSpace {
+			runes = append(runes, ' ')
+			bytesUsed++
+			pendingSpace = false
+		}
+		runes = append(runes, r)
+		bytesUsed += size
+	}
+
+	result := strings.TrimSpace(string(runes))
+	if result == "" {
+		return "", fmt.Errorf("canonical slice is empty after normalization")
+	}
+	return result, nil
+}
+
+func renderActivity(request proposalRequest, contextValue validatedProposalContext, scenario Scenario) ([]byte, error) {
 	activityType := scenario.ActivityType
 	if activityType == "" {
 		activityType = "open"
@@ -164,20 +212,29 @@ func renderActivity(request proposalRequest, scenario Scenario) ([]byte, error) 
 		allowedHelp = []string{"none", "hint"}
 	}
 	target := request.FocusNodeRevisionID
-	if target == "" && len(request.NodeRevisionIDs) > 0 {
-		target = request.NodeRevisionIDs[0]
+	if target == "" {
+		target = contextValue.references[0].NodeRevisionID
 	}
-	item := rubricItem{RubricItemID: "strict-rubric-item-1", Criterion: "Answer is supported by canonical knowledge"}
-	if target != "" {
-		item.RequiredReferenceIDs = []string{target}
+	targetReference, ok := contextValue.byNodeID[target]
+	if !ok {
+		return nil, fmt.Errorf("activity target canonical reference is missing")
+	}
+	excerpt, err := normalizeRouteCanonicalSlice(targetReference.Slice)
+	if err != nil {
+		return nil, err
+	}
+	item := rubricItem{
+		RubricItemID:         "strict-rubric-item-1",
+		Criterion:            "Answer is supported by the canonical concept: " + excerpt,
+		RequiredReferenceIDs: []string{target},
 	}
 	value := activity{
-		Prompt:              "Answer using the referenced canonical knowledge.",
+		Prompt:              "Answer using the canonical concept: " + excerpt,
 		Type:                activityType,
 		Rubric:              rubric{RubricRevision: "strict-rubric-v1", Items: []rubricItem{item}},
 		Difficulty:          2,
 		AllowedHelp:         allowedHelp,
-		KnowledgeReferences: referencesFor(request),
+		KnowledgeReferences: modelReferencesFor(contextValue.references),
 	}
 	if activityType == "objective" {
 		value.Rubric.ObjectiveRule = &objectiveRule{AcceptedAnswers: []string{"expected"}, TrimSpace: true}
@@ -187,38 +244,28 @@ func renderActivity(request proposalRequest, scenario Scenario) ([]byte, error) 
 	}{Activity: value})
 }
 
-func renderAssessment(request proposalRequest, scenario Scenario) ([]byte, error) {
-	var contextValue proposalContext
-	if err := json.Unmarshal(request.Input, &contextValue); err != nil {
-		return nil, fmt.Errorf("decode proposal context: %w", err)
-	}
-	answer := "strict fake answer"
-	items := []contextRubricItem{{RubricItemID: "strict-rubric-item-1", Criterion: "Answer is supported"}}
-	references := contextValue.Retrieval.Hits
-	if contextValue.WorkItem.Activity != nil {
-		if len(contextValue.WorkItem.Activity.Rubric.Items) > 0 {
-			items = contextValue.WorkItem.Activity.Rubric.Items
-		}
-		if len(contextValue.WorkItem.Activity.KnowledgeReferences) > 0 {
-			references = contextValue.WorkItem.Activity.KnowledgeReferences
-		}
-	}
-	if contextValue.WorkItem.Attempt != nil {
-		answer = contextValue.WorkItem.Attempt.Answer
+func renderAssessment(contextValue validatedProposalContext, scenario Scenario) ([]byte, error) {
+	activityValue := contextValue.value.WorkItem.Activity
+	attempt := contextValue.value.WorkItem.Attempt
+	if activityValue == nil || attempt == nil {
+		return nil, fmt.Errorf("assessment authority context is incomplete")
 	}
 	conclusion := scenario.AssessmentConclusion
 	if conclusion == "" {
 		conclusion = "pass"
 	}
-	outputItems := make([]assessmentItem, 0, len(items))
-	for _, inputItem := range items {
-		reference := chooseReference(inputItem.RequiredReferenceIDs, references, request.NodeRevisionIDs)
+	outputItems := make([]assessmentItem, 0, len(activityValue.Rubric.Items))
+	for _, inputItem := range activityValue.Rubric.Items {
+		reference, err := chooseAssessmentReference(inputItem.RequiredReferenceIDs, activityValue.KnowledgeReferences)
+		if err != nil {
+			return nil, fmt.Errorf("rubric item %q: %w", inputItem.RubricItemID, err)
+		}
 		outputItems = append(outputItems, assessmentItem{
 			RubricItemID:         inputItem.RubricItemID,
 			Conclusion:           conclusion,
-			AnswerQuote:          answer,
-			AnswerRange:          sourceRange{End: len(answer)},
-			AnswerQuoteSHA256:    sha256Hex(answer),
+			AnswerQuote:          attempt.Answer,
+			AnswerRange:          sourceRange{End: len(attempt.Answer)},
+			AnswerQuoteSHA256:    sha256Hex(attempt.Answer),
 			KnowledgeReferenceID: reference.NodeRevisionID,
 			KnowledgeQuote:       reference.Slice,
 			KnowledgeRange:       sourceRange{End: len(reference.Slice)},
@@ -248,32 +295,35 @@ func renderAssessment(request proposalRequest, scenario Scenario) ([]byte, error
 	}{Items: outputItems, RubricComplete: true, Confidence: confidence, RiskFlags: risks}})
 }
 
-func referencesFor(request proposalRequest) []modelReference {
-	result := make([]modelReference, 0, len(request.NodeRevisionIDs))
-	for _, nodeID := range request.NodeRevisionIDs {
-		result = append(result, modelReference{NodeRevisionID: nodeID})
+func modelReferencesFor(references []contextReference) []modelReference {
+	result := make([]modelReference, 0, len(references))
+	for _, reference := range references {
+		result = append(result, modelReference{
+			NodeRevisionID: reference.NodeRevisionID,
+			SliceSHA256:    reference.SliceSHA256,
+			Range:          reference.Range,
+		})
 	}
 	return result
 }
 
-func chooseReference(required []string, references []contextReference, nodeIDs []string) contextReference {
+func chooseAssessmentReference(required []string, references []contextReference) (contextReference, error) {
+	byNodeID := make(map[string]contextReference, len(references))
+	for _, reference := range references {
+		byNodeID[reference.NodeRevisionID] = reference
+	}
 	for _, requiredID := range required {
-		for _, reference := range references {
-			if reference.NodeRevisionID == requiredID {
-				return reference
-			}
+		if reference, ok := byNodeID[requiredID]; ok {
+			return reference, nil
 		}
 	}
-	if len(references) > 0 {
-		return references[0]
-	}
 	if len(required) > 0 {
-		return contextReference{NodeRevisionID: required[0]}
+		return contextReference{}, fmt.Errorf("required canonical reference is missing")
 	}
-	if len(nodeIDs) > 0 {
-		return contextReference{NodeRevisionID: nodeIDs[0]}
+	if len(references) == 0 {
+		return contextReference{}, fmt.Errorf("canonical reference is missing")
 	}
-	return contextReference{}
+	return references[0], nil
 }
 
 func sha256Hex(value string) string {

@@ -550,7 +550,9 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/AssessmentDecisionOperationResult" },
+                      {
+                        $ref: "#/components/schemas/AssessmentDecisionOperationResult",
+                      },
                   },
               },
           }
@@ -562,7 +564,9 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/AssessmentDecisionOperationResult" },
+                      {
+                        $ref: "#/components/schemas/AssessmentDecisionOperationResult",
+                      },
                   },
               },
           }
@@ -1425,6 +1429,19 @@ components:
     TutoringProposalRequest:
       type: object
       additionalProperties: false
+      description: >-
+        Proposal context is frozen by the server. An assessment for an attached
+        quiz must provide focus_frame_id, free_question_id, and free_answer_id
+        together; omission or ownership mismatch is rejected.
+      oneOf:
+        - required:
+            [proposal_type, focus_frame_id, free_question_id, free_answer_id]
+          properties:
+            proposal_type: { const: assessment }
+        - not:
+            required: [proposal_type, focus_frame_id]
+            properties:
+              proposal_type: { const: assessment }
       required:
         [
           request_id,
@@ -2192,8 +2209,7 @@ components:
         activity: { $ref: "#/components/schemas/Activity" }
         attempt: { $ref: "#/components/schemas/Attempt" }
         assessment: { $ref: "#/components/schemas/AssessmentArtifact" }
-        assessment_decision:
-          { $ref: "#/components/schemas/AssessmentDecision" }
+        assessment_decision: { $ref: "#/components/schemas/AssessmentDecision" }
         free_question: { $ref: "#/components/schemas/FreeQuestion" }
         free_answer: { $ref: "#/components/schemas/FreeAnswer" }
     Attempt:
@@ -3043,7 +3059,10 @@ components:
           required: [code, message, request_id]
           properties:
             code:
-              { type: string, enum: [idempotency_conflict, activity_state_conflict] }
+              {
+                type: string,
+                enum: [idempotency_conflict, activity_state_conflict],
+              }
             message: { type: string }
             request_id: { type: string }
     LearningCursorConflictEnvelope:

@@ -186,13 +186,13 @@ func TestObjectiveAssessmentUsesFrozenRule(t *testing.T) {
 func TestAssessmentDispositionAppendOnlyEffects(t *testing.T) {
 	_, _, artifact := assessmentFixture()
 	evidenceID := "evidence-1"
-	accepted := AssessmentDecision{ID: "decision-1", AssessmentID: artifact.ID, Version: 2, Disposition: DispositionAccepted, ProducedEvidenceID: &evidenceID}
+	accepted := AssessmentDecision{ID: "decision-1", AssessmentID: artifact.ID, Version: 2, Disposition: DispositionAccepted, Items: append([]AssessmentItem(nil), artifact.Items...), ProducedEvidenceID: &evidenceID}
 	override, err := DecideAssessment(accepted, artifact, DecisionCommand{Kind: "override", ExpectedVersion: 2, Reason: "manual correction", Items: artifact.Items})
 	if err != nil || !override.InvalidateEvidence || !override.CreateEvidence || override.Disposition != DispositionOverridden {
 		t.Fatalf("override=%+v error=%v", override, err)
 	}
 	voided, err := DecideAssessment(accepted, artifact, DecisionCommand{Kind: "void", ExpectedVersion: 2})
-	if err != nil || !voided.InvalidateEvidence || voided.CreateEvidence || voided.Disposition != DispositionVoided {
+	if err != nil || !voided.InvalidateEvidence || voided.CreateEvidence || voided.Disposition != DispositionVoided || len(voided.Items) != len(accepted.Items) || voided.Items[0] != accepted.Items[0] {
 		t.Fatalf("void=%+v error=%v", voided, err)
 	}
 	provisional := AssessmentDecision{Version: 1, Disposition: DispositionProvisional}

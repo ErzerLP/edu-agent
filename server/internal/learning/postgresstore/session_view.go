@@ -61,6 +61,7 @@ func (s *Store) readSessionView(ctx context.Context, id string, current bool) (l
 	if !consistentSessionProjection(view.Session, authority) {
 		return learning.SessionView{}, projectionFailure("session_projection_authority_mismatch", nil)
 	}
+	view.Session.ActiveFrame = authority.ActiveFrame
 	if authority.State == tutoring.StateCompleted {
 		view.WorkItem = nil
 	} else {
@@ -77,12 +78,23 @@ func (s *Store) readSessionView(ctx context.Context, id string, current bool) (l
 }
 
 func consistentSessionProjection(projected, authority tutoring.Session) bool {
-	return projected.ID == authority.ID &&
-		projected.State == authority.State &&
-		projected.AggregateVer == authority.AggregateVer &&
-		projected.AttachedQuiz == authority.AttachedQuiz &&
-		reflect.DeepEqual(projected.Context, authority.Context) &&
-		reflect.DeepEqual(projected.ActiveFrame, authority.ActiveFrame)
+	if projected.ID != authority.ID ||
+		projected.State != authority.State ||
+		projected.AggregateVer != authority.AggregateVer ||
+		projected.AttachedQuiz != authority.AttachedQuiz ||
+		!reflect.DeepEqual(projected.Context, authority.Context) {
+		return false
+	}
+	if reflect.DeepEqual(projected.ActiveFrame, authority.ActiveFrame) {
+		return true
+	}
+	return projected.ActiveFrame != nil &&
+		projected.ActiveFrame.Invalidated &&
+		projected.ActiveFrame.ID != "" &&
+		projected.ActiveFrame.SessionID == projected.ID &&
+		projected.ActiveFrame.InvalidationReason != "" &&
+		authority.ActiveFrame == nil &&
+		authority.FocusFrameInvalidated
 }
 
 func (s *Store) assembleSessionWorkItem(ctx context.Context, tx pgx.Tx, generationID string, session tutoring.Session) (*learning.SessionWorkItem, error) {

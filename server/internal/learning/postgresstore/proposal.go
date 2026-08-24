@@ -111,7 +111,8 @@ func (s *Store) CompleteProposal(ctx context.Context, deviceID, lease string, ar
 	return tx.Commit(ctx)
 }
 func (s *Store) FailProposal(ctx context.Context, deviceID, lease string, categories []string, category string, now time.Time) error {
-	command, err := s.pool.Exec(ctx, `UPDATE tutoring_proposal_requests SET status='failed',attempt_categories=$3,error_category=$4,lease_token=NULL,lease_expires_at=NULL,updated_at=$5 WHERE device_id=$1 AND lease_token=$2 AND status='processing' AND lease_expires_at>clock_timestamp()`, deviceID, lease, categories, category, now)
+	normalizedCategories := append([]string{}, categories...)
+	command, err := s.pool.Exec(ctx, `UPDATE tutoring_proposal_requests SET status='failed',attempt_categories=$3,error_category=$4,lease_token=NULL,lease_expires_at=NULL,updated_at=$5 WHERE device_id=$1 AND lease_token=$2 AND status='processing' AND lease_expires_at>clock_timestamp()`, deviceID, lease, normalizedCategories, category, now)
 	if err != nil {
 		return err
 	}

@@ -133,7 +133,15 @@ func TestFreeQuestionFollowUpReusesFrame(t *testing.T) {
 
 func TestAttachedQuizReturnsToFreeAnswerUntilExplicitResume(t *testing.T) {
 	session := matrixSession(StateFreeAnswer)
-	converted, err := Apply(session, Command{Action: ActionConvertFreeAnswerToQuiz})
+	savedContext := cloneContext(session.Context)
+	savedContext.ActivityID = nil
+	savedContext.AttemptID = nil
+	session.ActiveFrame.Context = cloneContext(savedContext)
+	quizActivity, quizAttempt := "attached-activity", "attached-attempt"
+	quizContext := cloneContext(savedContext)
+	quizContext.ActivityID = &quizActivity
+	quizContext.AttemptID = &quizAttempt
+	converted, err := Apply(session, Command{Action: ActionConvertFreeAnswerToQuiz, Context: &quizContext})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +153,8 @@ func TestAttachedQuizReturnsToFreeAnswerUntilExplicitResume(t *testing.T) {
 		}
 		current = result.Session
 	}
-	if current.State != StateFreeAnswer || current.ActiveFrame == nil {
-		t.Fatalf("attached quiz did not return to active free-answer frame: %+v", current)
+	if current.State != StateFreeAnswer || current.ActiveFrame == nil || current.AttachedQuiz || !reflect.DeepEqual(current.Context, savedContext) {
+		t.Fatalf("attached quiz did not restore the active free-answer frame: %+v", current)
 	}
 }
 

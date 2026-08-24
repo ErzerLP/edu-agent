@@ -53,6 +53,27 @@ func (a *App) currentSession(ctx context.Context, client APIClient) (api.Session
 	return api.SessionView{}, false, mapAPIError(err)
 }
 
+func refetchSession(ctx context.Context, client APIClient, sessionID string) (api.SessionView, error) {
+	view, err := client.CurrentSession(ctx)
+	if err == nil && view.Session.SessionID == sessionID {
+		return view, nil
+	}
+	if err != nil {
+		var apiErr *api.APIError
+		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
+			return api.SessionView{}, err
+		}
+	}
+	view, err = client.Session(ctx, sessionID)
+	if err != nil {
+		return api.SessionView{}, err
+	}
+	if view.Session.SessionID != sessionID {
+		return api.SessionView{}, &api.ProtocolError{Category: "session_refetch_mismatch"}
+	}
+	return view, nil
+}
+
 func sessionOperation(view api.SessionView, operationID string) api.SessionOperation {
 	return api.SessionOperation{
 		OperationID: operationID, PayloadSchemaVersion: 1, AggregateType: "session",
@@ -74,7 +95,7 @@ func (a *App) applyAndRefetch(ctx context.Context, client APIClient, view api.Se
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Code == "version_conflict" {
-			fresh, fetchErr := client.CurrentSession(ctx)
+			fresh, fetchErr := refetchSession(ctx, client, view.Session.SessionID)
 			if fetchErr != nil {
 				return api.SessionView{}, true, mapAPIError(fetchErr)
 			}
@@ -83,7 +104,7 @@ func (a *App) applyAndRefetch(ctx context.Context, client APIClient, view api.Se
 		}
 		return api.SessionView{}, false, mapAPIError(err)
 	}
-	fresh, err := client.CurrentSession(ctx)
+	fresh, err := refetchSession(ctx, client, view.Session.SessionID)
 	if err != nil {
 		return api.SessionView{}, false, mapAPIError(err)
 	}
@@ -292,7 +313,7 @@ func assessmentProposalRequest(view api.SessionView, requestID string) (api.Tuto
 			nodeIDs = append(nodeIDs, reference.NodeRevisionID)
 		}
 	}
-	return api.TutoringProposalRequest{
+	request := api.TutoringProposalRequest{
 		RequestID: requestID, ProposalType: "assessment", AggregateType: "session",
 		AggregateID: view.Session.SessionID, AggregateVersion: view.Session.AggregateVersion,
 		GoalRevisionID: activity.GoalRevisionID, RouteRevisionID: activity.RouteRevisionID,
@@ -300,7 +321,15 @@ func assessmentProposalRequest(view api.SessionView, requestID string) (api.Tuto
 		ActivityID: activity.ActivityID, AttemptID: item.Attempt.AttemptID,
 		TutoringState: view.Session.State, KnowledgeRevisionID: activity.KnowledgeRevisionID,
 		NodeRevisionIDs: nodeIDs, Input: proposalContextFromReferences(*item, activity.KnowledgeRevisionID, activity.KnowledgeReferences),
-	}, nil
+	}
+	if item.FreeQuestion != nil {
+		request.FreeQuestionID = item.FreeQuestion.FreeQuestionID
+		request.FocusFrameID = item.FreeQuestion.FocusFrameID
+	}
+	if item.FreeAnswer != nil {
+		request.FreeAnswerID = item.FreeAnswer.FreeAnswerID
+	}
+	return request, nil
 }
 
 func printProjectionWarning(out interface{ Write([]byte) (int, error) }, metadata api.ProjectionMetadata) {

@@ -660,6 +660,15 @@ func TestPostgreSQLPersistedFocusInvalidationThroughService(t *testing.T) {
 			if actionEvents <= beforeEvents || actionVersion <= beforeVersion || actionVersion != afterInvalidation.Session.AggregateVer {
 				t.Fatalf("action did not advance authority: events %d->%d version %d->%d authority=%+v", beforeEvents, actionEvents, beforeVersion, actionVersion, afterInvalidation)
 			}
+			if test.action != tutoring.ActionEndActivity {
+				view, viewErr := store.Session(ctx, sessionID)
+				if viewErr != nil || view.Session.ActiveFrame != nil || view.Session.State != afterInvalidation.Session.State {
+					t.Fatalf("post-invalidation session view=%+v err=%v", view, viewErr)
+				}
+				if test.action == tutoring.ActionCompleteSession && view.WorkItem != nil {
+					t.Fatalf("completed invalidated session retained work item: %+v", view.WorkItem)
+				}
+			}
 
 			resume := persistedFocusAction(fmt.Sprintf("65000000-0000-4000-8000-%012d", index+1), sessionID, afterInvalidation.Session.AggregateVer, tutoring.ActionResumeFocus, "")
 			if _, err := service.ApplyAction(ctx, learningDeviceOne, sessionID, resume); learning.ErrorCode(err) != learning.CodeFocusFrameInvalidated {
@@ -866,6 +875,51 @@ func pgErrConstraint(err *pgconn.PgError) string {
 		return ""
 	}
 	return err.ConstraintName
+}
+
+func TestPostgreSQLNilProposalFailurePersistsEmptyAttempts(t *testing.T) {
+	pool := learningIntegrationPool(t)
+	ctx := context.Background()
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'nil-model-proposal',now())`, learningDeviceOne); err != nil {
+		t.Fatal(err)
+	}
+	assertNilProposalFailurePersisted(t, store, pool)
+}
+
+func assertNilProposalFailurePersisted(t *testing.T, store *postgresstore.Store, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	request := learning.ProposalRequest{
+		RequestID: "56000000-0000-4000-8000-000000000001", Type: learning.ProposalRoute,
+		AggregateType: "goal", AggregateID: learningGoalID, AggregateVersion: 2,
+		KnowledgeRevisionID: learningKnowledgeRevision, NodeRevisionIDs: []string{learningNodeRevisionID},
+		Input: json.RawMessage(`{"goal":"nil-model"}`),
+	}
+	hash, err := learning.HashJSON(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimProposal(ctx, learningDeviceOne, request, hash, now)
+	if err != nil || claim.State != "claimed" {
+		t.Fatalf("nil-model proposal claim=%+v err=%v", claim, err)
+	}
+	if err := store.FailProposal(ctx, learningDeviceOne, claim.LeaseToken, nil, "not_configured", now); err != nil {
+		t.Fatalf("persist nil-model proposal failure: %v", err)
+	}
+	var status, category string
+	var attempts []string
+	if err := pool.QueryRow(ctx, `SELECT status,error_category,attempt_categories FROM tutoring_proposal_requests WHERE device_id=$1 AND request_id=$2`, learningDeviceOne, request.RequestID).Scan(&status, &category, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || category != "not_configured" || attempts == nil || len(attempts) != 0 {
+		t.Fatalf("nil-model proposal failure status=%s category=%s attempts=%v", status, category, attempts)
+	}
+	replayed, err := store.ClaimProposal(ctx, learningDeviceOne, request, hash, now.Add(time.Second))
+	if err != nil || replayed.State != "failed" || replayed.Category != "not_configured" {
+		t.Fatalf("nil-model failed replay=%+v err=%v", replayed, err)
+	}
 }
 
 func assertExpiredProposalWorkerFenced(t *testing.T, store *postgresstore.Store, pool *pgxpool.Pool) {

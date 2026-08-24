@@ -1,5 +1,6 @@
 .PHONY: fmt server-fmt cli-fmt test server-test cli-test test-race server-test-race cli-test-race \
-	vet server-vet cli-vet build server-build cli-build cli-check cli-cross-build cli-platform-evidence cli-release check
+	vet server-vet cli-vet build server-build cli-build cli-check cli-cross-build cli-platform-evidence cli-release \
+	cli-m1-blackbox check
 
 fmt: server-fmt cli-fmt
 
@@ -43,6 +44,12 @@ cli-build:
 	cd clients/cli-go && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$${CLI_VERSION:-dev} -X main.commit=$${CLI_COMMIT:-unknown}" -o bin/edu-agent ./cmd/edu-agent
 
 cli-check: cli-test cli-test-race cli-vet cli-build
+
+cli-m1-blackbox:
+	cd contracttests/fakellm && go test ./...
+	cd contracttests/cli-m1 && go test ./responseproxy ./cmd/response-loss-proxy
+	@test -n "$$TEST_DATABASE_URL" || { echo "cli-m1-blackbox requires TEST_DATABASE_URL after independent fixture contracts pass" >&2; exit 2; }
+	cd contracttests/cli-m1 && go test -p=1 -count=1 -v ./blackbox
 
 cli-platform-evidence:
 	pwsh -NoProfile -File clients/cli-go/scripts/cli-platform-evidence.ps1

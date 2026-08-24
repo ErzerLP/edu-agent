@@ -38,7 +38,16 @@ func TestLearnMultilineHelpAndNoLocalPersistence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+			if state == "Completed" {
+				writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "no active session", RequestID: "request-current-completed"}})
+				return
+			}
 			writeJSONTest(w, http.StatusOK, commandSessionView(state, "open", "", false, false))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID:
+			if state != "Completed" {
+				t.Fatalf("unexpected by-ID read before completion, state=%s", state)
+			}
+			writeJSONTest(w, http.StatusOK, commandSessionView("Completed", "open", "", false, false))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/actions"):
 			if err := json.NewDecoder(r.Body).Decode(&submitted); err != nil {
 				t.Fatal(err)
@@ -145,10 +154,19 @@ func TestLearnAskBeforeAutomaticActivityProgression(t *testing.T) {
 func TestLearnVersionConflictRefreshDoesNotReplayAnswer(t *testing.T) {
 	t.Parallel()
 	var actionCalls atomic.Int32
+	var currentCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
-			writeJSONTest(w, http.StatusOK, commandSessionView("AwaitingResponse", "open", "", false, false))
+			if currentCalls.Add(1) == 1 {
+				writeJSONTest(w, http.StatusOK, commandSessionView("AwaitingResponse", "open", "", false, false))
+				return
+			}
+			other := commandSessionView("Completed", "open", "", false, false)
+			other.Session.SessionID = "11000000-0000-4000-8000-000000000099"
+			writeJSONTest(w, http.StatusOK, other)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID:
+			writeJSONTest(w, http.StatusOK, commandSessionView("Completed", "open", "", false, false))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/actions"):
 			actionCalls.Add(1)
 			writeJSONTest(w, http.StatusConflict, api.ErrorResponse{
@@ -403,6 +421,32 @@ func TestLearnAttachedQuizRequiresExplicitResumeAfterFeedback(t *testing.T) {
 	want := []string{"convert_free_answer_to_quiz", "present_activity", "submit_attempt", "record_assessment", "acknowledge_feedback", "resume_focus"}
 	if strings.Join(actions, ",") != strings.Join(want, ",") {
 		t.Fatalf("actions=%v want=%v", actions, want)
+	}
+}
+
+func TestAssessmentProposalRequestIncludesAttachedFocusContext(t *testing.T) {
+	view := commandSessionView("Evaluating", "open", "", false, true)
+	question := api.FreeQuestion{
+		FreeQuestionID: commandQuestionID, SessionID: commandSessionID,
+		FocusFrameID: "bb000000-0000-4000-8000-000000000001", SessionAggregateVersion: 8,
+		Text: "How does it connect?", KnowledgeRevisionID: commandKnowledgeID,
+		References: []api.FrozenReference{}, ActorDeviceID: testDeviceID, ReceivedAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
+	}
+	answer := api.FreeAnswer{
+		FreeAnswerID: commandAnswerID, SessionID: commandSessionID,
+		FocusFrameID: question.FocusFrameID, FreeQuestionID: question.FreeQuestionID,
+		Text: "It connects through the canonical note.", KnowledgeRevisionID: commandKnowledgeID,
+		References: []api.FrozenReference{}, SourceProposalID: "cc000000-0000-4000-8000-000000000002", ReceivedAt: question.ReceivedAt,
+	}
+	view.WorkItem.FreeQuestion = &question
+	view.WorkItem.FreeAnswer = &answer
+
+	request, err := assessmentProposalRequest(view, "e0000000-0000-4000-8000-000000000010")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.FreeQuestionID != question.FreeQuestionID || request.FreeAnswerID != answer.FreeAnswerID || request.FocusFrameID != question.FocusFrameID {
+		t.Fatalf("attached assessment context was not frozen")
 	}
 }
 

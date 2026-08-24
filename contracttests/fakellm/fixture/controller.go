@@ -89,6 +89,7 @@ type Scenario struct {
 	ActivityType         string       `json:"activity_type,omitempty"`
 	AllowedHelp          []string     `json:"allowed_help,omitempty"`
 	AssessmentConclusion string       `json:"assessment_conclusion,omitempty"`
+	RouteStepLimit       int          `json:"route_step_limit,omitempty"`
 }
 
 func DefaultScenario() Scenario { return Scenario{Kind: ScenarioAccepted} }
@@ -127,6 +128,9 @@ func (s Scenario) validate() error {
 	}
 	if s.AssessmentConclusion != "" && s.AssessmentConclusion != "pass" && s.AssessmentConclusion != "partial" && s.AssessmentConclusion != "fail" && s.AssessmentConclusion != "unassessed" {
 		return fmt.Errorf("unknown assessment conclusion %q", s.AssessmentConclusion)
+	}
+	if s.RouteStepLimit < 0 || s.RouteStepLimit > 1000 {
+		return fmt.Errorf("route_step_limit must be between 0 and 1000")
 	}
 	if strings.ContainsAny(s.RetryAfter, "\r\n") {
 		return fmt.Errorf("retry_after contains a line break")

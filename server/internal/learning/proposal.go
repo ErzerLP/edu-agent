@@ -240,7 +240,9 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 				return request, &Error{Code: CodeStaleProposal, Reason: "free_question_ownership"}
 			}
 		}
-		if request.Type == ProposalActivity && session.State == tutoring.StateFreeAnswer {
+		attachedQuizProposal := request.Type == ProposalActivity && session.State == tutoring.StateFreeAnswer ||
+			request.Type == ProposalAssessment && session.AttachedQuiz
+		if attachedQuizProposal {
 			if request.FreeQuestionID == "" || request.FreeAnswerID == "" || !validActiveFocusFrame(session) {
 				return request, &Error{Code: CodeInvalidRequest, Reason: "attached_quiz_context_required"}
 			}
@@ -259,7 +261,7 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 			if err != nil {
 				return request, err
 			}
-			if !currentFreeQuestionMatchesSession(session, question) || answer.SessionID != session.ID || answer.FocusFrameID != session.ActiveFrame.ID || answer.FreeQuestionID != question.ID || answer.KnowledgeRevisionID != question.KnowledgeRevisionID {
+			if question.ID != request.FreeQuestionID || answer.ID != request.FreeAnswerID || !currentFreeQuestionMatchesSession(session, question) || answer.SessionID != session.ID || answer.FocusFrameID != session.ActiveFrame.ID || answer.FreeQuestionID != question.ID || answer.KnowledgeRevisionID != question.KnowledgeRevisionID {
 				return request, &Error{Code: CodeStaleProposal, Reason: "attached_quiz_ownership"}
 			}
 		}

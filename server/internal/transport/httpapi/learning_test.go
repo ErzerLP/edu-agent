@@ -902,7 +902,7 @@ func TestLearningHTTPActualResponsesValidateOpenAPI(t *testing.T) {
 	response = learningRequest(t, handler, http.MethodGet, "/v1/learning/evidence?limit=0", "")
 	validate("/v1/learning/evidence", http.MethodGet, "400", response)
 
-	service = &fakeLearning{err: &learning.Error{Code: learning.CodeVersionConflict, AggregateType: "session", AggregateID: testAggregateID, ExpectedVersion: 2, CurrentVersion: 3, AsOfEventSequence: 9}}
+	service = &fakeLearning{err: &learning.Error{Code: learning.CodeStaleCursor}}
 	handler = newLearningTestAPI(t, []string{"learning:read"}, service, &logs)
 	response = learningRequest(t, handler, http.MethodGet, "/v1/learning/evidence", "")
 	validate("/v1/learning/evidence", http.MethodGet, "409", response)

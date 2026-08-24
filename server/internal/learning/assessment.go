@@ -251,7 +251,7 @@ func DecideAssessment(current AssessmentDecision, artifact AssessmentArtifact, c
 		if current.Disposition == DispositionVoided {
 			return DecisionEffect{}, &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(current.Disposition)}
 		}
-		return DecisionEffect{Disposition: DispositionVoided, InvalidateEvidence: invalidate}, nil
+		return DecisionEffect{Disposition: DispositionVoided, Items: append([]AssessmentItem(nil), current.Items...), InvalidateEvidence: invalidate}, nil
 	default:
 		return DecisionEffect{}, &Error{Code: CodeInvalidRequest}
 	}

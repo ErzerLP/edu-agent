@@ -252,6 +252,9 @@ func decodeChatRequest(contentType string, body []byte) (chatRequest, RequestKin
 	if err := validateProposalContract(request, kind); err != nil {
 		return request, "", nil, err
 	}
+	if _, err := validateProposalFixtureContext(proposal, kind); err != nil {
+		return request, "", nil, err
+	}
 	return request, kind, &proposal, nil
 }
 

@@ -302,6 +302,7 @@ func TestStrictChatRequestParsingAndMetadataOnlyAudit(t *testing.T) {
 	}
 	request.Header.Set("Authorization", "Bearer test-key")
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Private-Header", "private-header-secret")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +315,12 @@ func TestStrictChatRequestParsingAndMetadataOnlyAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(auditJSON, []byte("do not audit this body")) || len(controller.Audit()) != 1 || controller.Audit()[0].Status != http.StatusBadRequest {
+	for _, secret := range []string{"do not audit this body", "test-key", "private-header-secret", "Authorization", "X-Private-Header", "messages", "sensitive_answer"} {
+		if bytes.Contains(auditJSON, []byte(secret)) {
+			t.Fatalf("audit recorded request content, token, or header %q: %s", secret, auditJSON)
+		}
+	}
+	if len(controller.Audit()) != 1 || controller.Audit()[0].Status != http.StatusBadRequest {
 		t.Fatalf("audit=%s", auditJSON)
 	}
 }
@@ -602,7 +608,14 @@ func adapterProposalRequest(t *testing.T, kind learning.ProposalType) learning.P
 		"slice_sha256":          hashText("canonical knowledge"),
 	}
 	activity := map[string]any{
-		"activity_id": testActivityID,
+		"activity_id":             testActivityID,
+		"session_id":              testSessionID,
+		"goal_revision_id":        testGoalRevisionID,
+		"route_revision_id":       testRouteRevisionID,
+		"route_step_id":           testRouteStepID,
+		"knowledge_revision_id":   testKnowledgeRevisionID,
+		"target_node_id":          testNodeID,
+		"target_node_revision_id": testNodeRevisionID,
 		"rubric": map[string]any{
 			"rubric_revision": "rubric-v1",
 			"items": []map[string]any{{
@@ -612,17 +625,41 @@ func adapterProposalRequest(t *testing.T, kind learning.ProposalType) learning.P
 		},
 		"knowledge_references": []any{reference},
 	}
+	workItem := map[string]any{
+		"allowed_actions":              []string{},
+		"allowed_assessment_decisions": []string{},
+		"goal_revision": map[string]any{
+			"goal_revision_id": testGoalRevisionID,
+		},
+		"route_revision": map[string]any{
+			"route_revision_id":     testRouteRevisionID,
+			"goal_revision_id":      testGoalRevisionID,
+			"knowledge_revision_id": testKnowledgeRevisionID,
+			"steps": []map[string]any{{
+				"route_step_id":    testRouteStepID,
+				"node_id":          testNodeID,
+				"node_revision_id": testNodeRevisionID,
+			}},
+		},
+		"activity": activity,
+		"attempt": map[string]any{
+			"attempt_id":  testAttemptID,
+			"session_id":  testSessionID,
+			"activity_id": testActivityID,
+			"answer":      "candidate answer",
+		},
+	}
+	if kind == learning.ProposalFreeAnswer {
+		workItem["free_question"] = map[string]any{
+			"free_question_id":      testFreeQuestionID,
+			"session_id":            testSessionID,
+			"focus_frame_id":        testFocusFrameID,
+			"knowledge_revision_id": testKnowledgeRevisionID,
+		}
+	}
 	contextValue := map[string]any{
 		"schema_version": "go-cli-context-v1",
-		"work_item": map[string]any{
-			"allowed_actions":              []string{},
-			"allowed_assessment_decisions": []string{},
-			"activity":                     activity,
-			"attempt": map[string]any{
-				"attempt_id": testAttemptID,
-				"answer":     "candidate answer",
-			},
-		},
+		"work_item":      workItem,
 		"retrieval": map[string]any{
 			"knowledge_revision_id": testKnowledgeRevisionID,
 			"hits":                  []any{reference},

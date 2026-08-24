@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"strings"
@@ -28,8 +29,8 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 5 || latest.name != "000005_memory_bridge_contract_repairs.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("memory contract repair migration was not embedded with checksum: %+v", latest)
+	if latest.version != 6 || latest.name != "000006_go_cli_m1.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("Go CLI M1 migration was not embedded with checksum: %+v", latest)
 	}
 }
 
@@ -241,6 +242,200 @@ func TestMemoryContractRepairMigrationDeclaresRevisionAndErasureBoundaries(t *te
 		if !strings.Contains(body, required) {
 			t.Errorf("000005 is missing %q", required)
 		}
+	}
+}
+
+func TestGoCLIM1MigrationDeclaresFreeQuestionVersionBoundaries(t *testing.T) {
+	items, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := migrationBody(t, items, 6)
+	for _, required := range []string{
+		"ADD COLUMN session_aggregate_version BIGINT",
+		"LOCK TABLE tutoring_free_questions IN ACCESS EXCLUSIVE MODE",
+		"LOCK TABLE learning_events IN SHARE MODE",
+		"LOCK TABLE learning_event_payloads IN SHARE MODE",
+		"DROP TRIGGER tutoring_free_questions_immutable",
+		"CREATE TRIGGER tutoring_free_questions_immutable",
+		"event.event_type='FreeQuestionAsked'",
+		"payload.payload->>'free_question_id'=question.id::text",
+		"payload.redacted_at IS NOT NULL",
+		"max(batch.aggregate_version)",
+		"tutoring_focus_frame_session_owner_unique",
+		"tutoring_free_question_frame_owner",
+		"tutoring_free_question_session_frame_version_unique",
+		"tutoring_free_question_current_lookup",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("000006 is missing %q", required)
+		}
+	}
+	if strings.Contains(body, "row_number()") || strings.Contains(body, "ordinal=rows.ordinal") {
+		t.Fatal("000006 must not guess Question/Event ownership by ordinal")
+	}
+}
+
+func TestGoCLIM1MigrationUpgrades000005(t *testing.T) {
+	pool := migrationPoolThrough(t, 5)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	deviceID := uuid.NewString()
+	knowledgeRevisionID := uuid.NewString()
+	sessionID := uuid.NewString()
+	focusFrameID := uuid.NewString()
+	questionID := uuid.NewString()
+	payloadID := uuid.NewString()
+	eventID := uuid.NewString()
+	operationID := uuid.NewString()
+	payload := fmt.Sprintf(`{"free_question_id":%q,"session_id":%q,"focus_frame_id":%q}`, questionID, sessionID, focusFrameID)
+	payloadHash := sha256.Sum256([]byte(payload))
+	batch := &pgx.Batch{}
+	batch.Queue(`INSERT INTO devices(id,display_name,created_at) VALUES($1,'go-cli-migration',$2)`, deviceID, now)
+	batch.Queue(`
+		INSERT INTO knowledge_revisions(
+			id,revision_no,manifest_hash,source,created_by_device_id,created_at,
+			canonicalizer_version,parser_version,indexer_version,identity_policy_version)
+		VALUES($1,1,decode(repeat('11',32),'hex'),'go-cli-migration',$2,$3,
+		       'canonical-v1','parser-v1','indexer-v1','identity-v1')`, knowledgeRevisionID, deviceID, now)
+	batch.Queue(`
+		INSERT INTO tutoring_sessions(
+			id,aggregate_version,state,knowledge_revision_id,started_at,updated_at)
+		VALUES($1,3,'FreeQuestion',$2,$3,$3)`, sessionID, knowledgeRevisionID, now)
+	batch.Queue(`
+		INSERT INTO tutoring_focus_frames(
+			id,session_id,saved_state,knowledge_revision_id,saved_aggregate_version,created_event_seq)
+		VALUES($1,$2,'RouteActive',$3,1,1)`, focusFrameID, sessionID, knowledgeRevisionID)
+	batch.Queue(`
+		INSERT INTO tutoring_free_questions(
+			id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,received_at)
+		VALUES($1,$2,$3,'Why?',$4,'[]',$5,$6)`, questionID, sessionID, focusFrameID, knowledgeRevisionID, deviceID, now)
+	batch.Queue(`
+		INSERT INTO learning_event_payloads(id,payload,payload_hash,created_at)
+		VALUES($1,$2::jsonb,$3,$4)`, payloadID, payload, payloadHash[:], now)
+	batch.Queue(`
+		INSERT INTO learning_events(
+			event_seq,id,event_type,event_schema_version,aggregate_type,aggregate_id,aggregate_version,
+			device_id,operation_id,operation_ordinal,received_at,payload_id,payload_hash)
+		VALUES(1,$1,'FreeQuestionAsked',1,'session',$2,3,$3,$4,0,$5,$6,$7)`,
+		eventID, sessionID, deviceID, operationID, now, payloadID, payloadHash[:])
+	results := pool.SendBatch(ctx, batch)
+	if err := results.Close(); err != nil {
+		t.Fatalf("seed 000005 free question: %v", err)
+	}
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade 000005 schema through 000006: %v", err)
+	}
+	if err := Check(ctx, pool); err != nil {
+		t.Fatalf("check upgraded migrations: %v", err)
+	}
+	var nullable string
+	if err := pool.QueryRow(ctx, `SELECT is_nullable FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='tutoring_free_questions' AND column_name='session_aggregate_version'`).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "NO" {
+		t.Fatalf("session_aggregate_version nullable=%s", nullable)
+	}
+	var storedVersion int64
+	if err := pool.QueryRow(ctx, `SELECT session_aggregate_version FROM tutoring_free_questions WHERE id=$1`, questionID).Scan(&storedVersion); err != nil {
+		t.Fatal(err)
+	}
+	if storedVersion != 3 {
+		t.Fatalf("backfilled session aggregate version=%d want=3", storedVersion)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE tutoring_free_questions SET session_aggregate_version=4 WHERE id=$1`, questionID); err == nil || !strings.Contains(err.Error(), "tutoring history is append-only") {
+		t.Fatalf("restored immutable trigger error=%v", err)
+	}
+	for _, constraint := range []string{"tutoring_free_question_frame_owner", "tutoring_free_question_session_frame_version_unique"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_constraint WHERE connamespace=current_schema()::regnamespace AND conname=$1)`, constraint).Scan(&exists); err != nil || !exists {
+			t.Fatalf("constraint %s exists=%v err=%v", constraint, exists, err)
+		}
+	}
+}
+
+func TestGoCLIM1MigrationFailsClosedOnUnrecoverableQuestionEvents(t *testing.T) {
+	for _, fixture := range []string{"missing", "redacted", "duplicate", "ownership"} {
+		t.Run(fixture, func(t *testing.T) {
+			pool := migrationPoolThrough(t, 5)
+			seedGoCLIM1MigrationFailure(t, pool, fixture)
+			err := Run(context.Background(), pool)
+			if err == nil || !strings.Contains(err.Error(), "cannot recover") {
+				t.Fatalf("fixture %s migration error=%v", fixture, err)
+			}
+		})
+	}
+}
+
+func seedGoCLIM1MigrationFailure(t *testing.T, pool *pgxpool.Pool, fixture string) {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	deviceID := uuid.NewString()
+	knowledgeRevisionID := uuid.NewString()
+	sessionID := uuid.NewString()
+	focusFrameID := uuid.NewString()
+	questionID := uuid.NewString()
+	batch := &pgx.Batch{}
+	batch.Queue(`INSERT INTO devices(id,display_name,created_at) VALUES($1,'go-cli-migration-failure',$2)`, deviceID, now)
+	batch.Queue(`
+		INSERT INTO knowledge_revisions(
+			id,revision_no,manifest_hash,source,created_by_device_id,created_at,
+			canonicalizer_version,parser_version,indexer_version,identity_policy_version)
+		VALUES($1,1,decode(repeat('11',32),'hex'),'go-cli-migration-failure',$2,$3,
+		       'canonical-v1','parser-v1','indexer-v1','identity-v1')`, knowledgeRevisionID, deviceID, now)
+	batch.Queue(`
+		INSERT INTO tutoring_sessions(id,aggregate_version,state,knowledge_revision_id,started_at,updated_at)
+		VALUES($1,4,'FreeQuestion',$2,$3,$3)`, sessionID, knowledgeRevisionID, now)
+	batch.Queue(`
+		INSERT INTO tutoring_focus_frames(id,session_id,saved_state,knowledge_revision_id,saved_aggregate_version,created_event_seq)
+		VALUES($1,$2,'RouteActive',$3,1,1)`, focusFrameID, sessionID, knowledgeRevisionID)
+	batch.Queue(`
+		INSERT INTO tutoring_free_questions(id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,received_at)
+		VALUES($1,$2,$3,'Why?',$4,'[]',$5,$6)`, questionID, sessionID, focusFrameID, knowledgeRevisionID, deviceID, now)
+	if err := pool.SendBatch(ctx, batch).Close(); err != nil {
+		t.Fatal(err)
+	}
+	payloadFrameID := focusFrameID
+	payload := fmt.Sprintf(`{"free_question_id":%q,"session_id":%q,"focus_frame_id":%q}`, questionID, sessionID, payloadFrameID)
+	redacted := false
+	switch fixture {
+	case "missing":
+		payload = `{}`
+	case "redacted":
+		payload = `{"redacted":true}`
+		redacted = true
+	case "ownership":
+		payloadFrameID = uuid.NewString()
+		payload = fmt.Sprintf(`{"free_question_id":%q,"session_id":%q,"focus_frame_id":%q}`, questionID, sessionID, payloadFrameID)
+	case "duplicate":
+	default:
+		t.Fatalf("unknown migration failure fixture %q", fixture)
+	}
+	insertEvent := func(sequence, aggregateVersion int64, operationID string) {
+		payloadID := uuid.NewString()
+		eventID := uuid.NewString()
+		hash := sha256.Sum256([]byte(payload))
+		var redactedAt any
+		if redacted {
+			redactedAt = now
+		}
+		batch := &pgx.Batch{}
+		batch.Queue(`
+			INSERT INTO learning_event_payloads(id,payload,payload_hash,created_at,redacted_at)
+			VALUES($1,$2::jsonb,$3,$4,$5)`, payloadID, payload, hash[:], now, redactedAt)
+		batch.Queue(`
+			INSERT INTO learning_events(
+				event_seq,id,event_type,event_schema_version,aggregate_type,aggregate_id,aggregate_version,
+				device_id,operation_id,operation_ordinal,received_at,payload_id,payload_hash)
+			VALUES($1,$2,'FreeQuestionAsked',1,'session',$3,$4,$5,$6,0,$7,$8,$9)`, sequence, eventID, sessionID, aggregateVersion, deviceID, operationID, now, payloadID, hash[:])
+		if err := pool.SendBatch(ctx, batch).Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insertEvent(1, 3, uuid.NewString())
+	if fixture == "duplicate" {
+		insertEvent(2, 4, uuid.NewString())
 	}
 }
 

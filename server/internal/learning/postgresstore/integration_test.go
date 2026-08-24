@@ -104,6 +104,278 @@ func TestPostgreSQLLearningPublicLoadersRespectPersistentReadGateAfterRestart(t 
 	}
 }
 
+func TestPostgreSQLSessionWorkItemUsesOwnerSnapshotAndFrameVersion(t *testing.T) {
+	pool := learningIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'work-item',now())`, learningDeviceOne); err != nil {
+		t.Fatal(err)
+	}
+	insertLearningKnowledgeFixture(t, pool)
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
+	goal := goalCommit(t, learningDeviceOne, "20000000-0000-4000-8000-000000000001", "30000000-0000-4000-8000-000000000001", 0, 1, 1)
+	if _, err := store.Commit(ctx, goal); err != nil {
+		t.Fatal(err)
+	}
+	sessionID, version := commitLearningAuthorityFixture(t, store, false)
+	view, err := store.Session(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.WorkItem == nil || view.WorkItem.GoalRevision == nil || view.WorkItem.RouteRevision == nil || view.WorkItem.FreeQuestion == nil || view.WorkItem.FreeAnswer != nil {
+		t.Fatalf("free-question work item=%+v", view.WorkItem)
+	}
+	if view.WorkItem.FreeQuestion.SessionAggregateVer != version || view.WorkItem.FreeQuestion.FocusFrameID != view.Session.ActiveFrame.ID {
+		t.Fatalf("question=%+v session=%+v version=%d", view.WorkItem.FreeQuestion, view.Session, version)
+	}
+	wantActions := []tutoring.Action{tutoring.ActionRecordFreeAnswer, tutoring.ActionResumeFocus, tutoring.ActionSwitchGoal}
+	if !reflect.DeepEqual(view.WorkItem.AllowedActions, wantActions) || len(view.WorkItem.AllowedAssessmentDecisions) != 0 {
+		t.Fatalf("allowed actions=%v decisions=%v", view.WorkItem.AllowedActions, view.WorkItem.AllowedAssessmentDecisions)
+	}
+	current, err := store.CurrentSession(ctx)
+	if err != nil || current.Session.ID != sessionID || current.WorkItem == nil || current.WorkItem.FreeQuestion == nil || current.WorkItem.FreeQuestion.ID != view.WorkItem.FreeQuestion.ID {
+		t.Fatalf("current work item=%+v err=%v", current, err)
+	}
+	var storedVersion int64
+	if err := pool.QueryRow(ctx, `SELECT session_aggregate_version FROM tutoring_free_questions WHERE id=$1`, view.WorkItem.FreeQuestion.ID).Scan(&storedVersion); err != nil || storedVersion != version {
+		t.Fatalf("stored question version=%d want=%d err=%v", storedVersion, version, err)
+	}
+
+	if _, err := pool.Exec(ctx, `INSERT INTO learning_assessment_decisions(id,assessment_id,version,disposition,conclusions,actor_device_id,replaces_decision_id,created_at) VALUES($1,$2,4,'accepted','[]'::jsonb,$3,$4,now())`, "50000000-0000-4000-8000-000000000014", "50000000-0000-4000-8000-000000000007", learningDeviceOne, "50000000-0000-4000-8000-000000000009"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LoadAssessment(ctx, "50000000-0000-4000-8000-000000000007"); learning.ErrorCode(err) != learning.CodeProjectionUnavailable {
+		t.Fatalf("broken decision chain error=%v code=%s", err, learning.ErrorCode(err))
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE privacy_owner_generation_gates SET learner_generation=learner_generation+1 WHERE owner_kind='tutoring'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Session(ctx, sessionID); learning.ErrorCode(err) != learning.CodeContentRedacted {
+		t.Fatalf("owner generation mismatch error=%v code=%s", err, learning.ErrorCode(err))
+	}
+}
+
+func TestA101PostgreSQLSessionWorkItemFeedbackCompletedFreeAnswerAndAttachedQuiz(t *testing.T) {
+	t.Run("feedback and completed null", func(t *testing.T) {
+		_, store := newA101WorkItemStore(t)
+		ctx := context.Background()
+		sessionID, version := commitLearningAuthorityFixture(t, store, true)
+		view, err := store.Session(ctx, sessionID)
+		if err != nil || view.WorkItem == nil || view.WorkItem.Activity == nil || view.WorkItem.Attempt == nil || view.WorkItem.Assessment == nil || view.WorkItem.AssessmentDecision == nil {
+			t.Fatalf("feedback work item=%+v err=%v", view.WorkItem, err)
+		}
+		if view.WorkItem.Assessment.AttemptID != view.WorkItem.Attempt.ID || view.WorkItem.Assessment.ActivityID != view.WorkItem.Activity.ID || view.WorkItem.AssessmentDecision.AssessmentID != view.WorkItem.Assessment.ID {
+			t.Fatalf("feedback chain activity=%+v attempt=%+v assessment=%+v decision=%+v", view.WorkItem.Activity, view.WorkItem.Attempt, view.WorkItem.Assessment, view.WorkItem.AssessmentDecision)
+		}
+		authority, err := store.LoadSessionAuthority(ctx, sessionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		completed := authority.Session
+		completed.State = tutoring.StateCompleted
+		result, err := store.Commit(ctx, learning.CommitRequest{
+			DeviceID:    learningDeviceOne,
+			Operation:   learning.OperationEnvelope{OperationID: "51000000-0000-4000-8000-000000000020", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: version, Payload: json.RawMessage(`{}`)},
+			RequestHash: learning.SHA256([]byte("a101 completed")), Expectations: []learning.AggregateExpectation{{Type: "session", ID: sessionID, ExpectedVersion: version}},
+			Batch: learning.CommandBatch{Session: &completed, TutoringState: string(completed.State), Events: []learning.EventDraft{eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: completed})}}, ReceivedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		completedView, err := store.Session(ctx, sessionID)
+		if err != nil || completedView.Session.AggregateVer != result.AggregateVersion || completedView.WorkItem != nil {
+			t.Fatalf("completed view=%+v err=%v", completedView, err)
+		}
+		if _, err := store.CurrentSession(ctx); learning.ErrorCode(err) != learning.CodeNotFound {
+			t.Fatalf("completed current session error=%v code=%q", err, learning.ErrorCode(err))
+		}
+	})
+
+	t.Run("free answer and attached quiz", func(t *testing.T) {
+		_, store := newA101WorkItemStore(t)
+		ctx := context.Background()
+		sessionID, version := commitLearningAuthorityFixture(t, store, false)
+		version, question, answer := commitA101FreeAnswer(t, store, sessionID, version)
+		view, err := store.Session(ctx, sessionID)
+		if err != nil || view.WorkItem == nil || view.WorkItem.FreeQuestion == nil || view.WorkItem.FreeAnswer == nil || view.WorkItem.FreeQuestion.ID != question.ID || view.WorkItem.FreeAnswer.ID != answer.ID || view.WorkItem.FreeAnswer.FreeQuestionID != question.ID {
+			t.Fatalf("free-answer work item=%+v err=%v", view.WorkItem, err)
+		}
+		version, activity := commitA101AttachedQuiz(t, store, sessionID, version, question, answer)
+		view, err = store.Session(ctx, sessionID)
+		if err != nil || view.Session.AggregateVer != version || !view.Session.AttachedQuiz || view.WorkItem == nil || view.WorkItem.Activity == nil || view.WorkItem.Activity.ID != activity.ID || view.WorkItem.Activity.AttachedFreeQuestionID != question.ID || view.WorkItem.Activity.AttachedFreeAnswerID != answer.ID || view.WorkItem.FreeQuestion == nil || view.WorkItem.FreeAnswer == nil {
+			t.Fatalf("attached quiz work item=%+v session=%+v err=%v", view.WorkItem, view.Session, err)
+		}
+	})
+}
+
+func TestA101PostgreSQLSessionWorkItemDamageMatrixFailsClosed(t *testing.T) {
+	for _, fixture := range []string{"frame_context", "question_session", "question_event_version", "attached_quiz_pair", "assessment_lineage"} {
+		t.Run(fixture, func(t *testing.T) {
+			pool, store := newA101WorkItemStore(t)
+			ctx := context.Background()
+			stopAtFeedback := fixture == "assessment_lineage"
+			sessionID, version := commitLearningAuthorityFixture(t, store, stopAtFeedback)
+			switch fixture {
+			case "frame_context":
+				if _, err := pool.Exec(ctx, `UPDATE tutoring_focus_frames SET focus_node_revision_id=NULL WHERE session_id=$1`, sessionID); err != nil {
+					t.Fatal(err)
+				}
+			case "question_session":
+				otherSessionID := "50000000-0000-4000-8000-000000000030"
+				if _, err := pool.Exec(ctx, `INSERT INTO tutoring_sessions(id,aggregate_version,state,started_at,updated_at) VALUES($1,1,'GoalReady',now(),now())`, otherSessionID); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `ALTER TABLE tutoring_free_questions DROP CONSTRAINT tutoring_free_question_frame_owner; DROP TRIGGER tutoring_free_questions_immutable ON tutoring_free_questions`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `UPDATE tutoring_free_questions SET session_id=$1 WHERE session_id=$2`, otherSessionID, sessionID); err != nil {
+					t.Fatal(err)
+				}
+			case "question_event_version":
+				if _, err := pool.Exec(ctx, `DROP TRIGGER tutoring_free_questions_immutable ON tutoring_free_questions`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `UPDATE tutoring_free_questions SET session_aggregate_version=session_aggregate_version-1 WHERE session_id=$1`, sessionID); err != nil {
+					t.Fatal(err)
+				}
+			case "attached_quiz_pair":
+				version, question, answer := commitA101FreeAnswer(t, store, sessionID, version)
+				_, activity := commitA101AttachedQuiz(t, store, sessionID, version, question, answer)
+				if _, err := pool.Exec(ctx, `DROP TRIGGER learning_activities_immutable ON learning_activities`); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := pool.Exec(ctx, `UPDATE learning_activities SET attached_free_answer_id=NULL WHERE id=$1`, activity.ID); err != nil {
+					t.Fatal(err)
+				}
+			case "assessment_lineage":
+				if _, err := pool.Exec(ctx, `INSERT INTO learning_assessment_decisions(id,assessment_id,version,disposition,conclusions,actor_device_id,replaces_decision_id,created_at) VALUES($1,$2,4,'accepted','[]'::jsonb,$3,$4,now())`, "50000000-0000-4000-8000-000000000031", "50000000-0000-4000-8000-000000000007", learningDeviceOne, "50000000-0000-4000-8000-000000000009"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := store.Session(ctx, sessionID); learning.ErrorCode(err) != learning.CodeProjectionUnavailable {
+				t.Fatalf("fixture=%s error=%v code=%q", fixture, err, learning.ErrorCode(err))
+			}
+		})
+	}
+}
+
+func newA101WorkItemStore(t *testing.T) (*pgxpool.Pool, *postgresstore.Store) {
+	t.Helper()
+	pool := learningIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'a101-work-item',now())`, learningDeviceOne); err != nil {
+		t.Fatal(err)
+	}
+	insertLearningKnowledgeFixture(t, pool)
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
+	goal := goalCommit(t, learningDeviceOne, "20000000-0000-4000-8000-000000000001", "30000000-0000-4000-8000-000000000001", 0, 1, 1)
+	if _, err := store.Commit(ctx, goal); err != nil {
+		t.Fatal(err)
+	}
+	return pool, store
+}
+
+func commitA101FreeAnswer(t *testing.T, store *postgresstore.Store, sessionID string, version int64) (int64, tutoring.FreeQuestion, tutoring.FreeAnswer) {
+	t.Helper()
+	ctx := context.Background()
+	authority, err := store.LoadSessionAuthority(ctx, sessionID)
+	if err != nil || authority.Session.ActiveFrame == nil {
+		t.Fatalf("load free-question authority=%+v err=%v", authority, err)
+	}
+	question, err := store.LoadFreeQuestion(ctx, "50000000-0000-4000-8000-000000000013")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := tutoring.FreeAnswer{ID: "50000000-0000-4000-8000-000000000015", SessionID: sessionID, FocusFrameID: authority.Session.ActiveFrame.ID, FreeQuestionID: question.ID, Text: "Because.", KnowledgeRevisionID: question.KnowledgeRevisionID, References: []tutoring.FrozenReference{}, ReceivedAt: time.Now().UTC()}
+	session := authority.Session
+	session.State = tutoring.StateFreeAnswer
+	result, err := store.Commit(ctx, learning.CommitRequest{
+		DeviceID:    learningDeviceOne,
+		Operation:   learning.OperationEnvelope{OperationID: "51000000-0000-4000-8000-000000000021", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: version, Payload: json.RawMessage(`{}`)},
+		RequestHash: learning.SHA256([]byte("a101 free answer")), Expectations: []learning.AggregateExpectation{{Type: "session", ID: sessionID, ExpectedVersion: version}},
+		Batch: learning.CommandBatch{Session: &session, FocusFrame: session.ActiveFrame, FreeAnswer: &answer, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventFreeAnswerRecorded, sessionID, answer), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}}, ReceivedAt: answer.ReceivedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.AggregateVersion, question, answer
+}
+
+func commitA101AttachedQuiz(t *testing.T, store *postgresstore.Store, sessionID string, version int64, question tutoring.FreeQuestion, answer tutoring.FreeAnswer) (int64, learning.Activity) {
+	t.Helper()
+	ctx := context.Background()
+	authority, err := store.LoadSessionAuthority(ctx, sessionID)
+	if err != nil || authority.Session.ActiveFrame == nil {
+		t.Fatalf("load free-answer authority=%+v err=%v", authority, err)
+	}
+	reference := learning.KnowledgeReference{KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID, NodeRevisionID: learningNodeRevisionID, DocumentRevisionID: learningDocumentRevisionID, Range: learning.SourceRange{Start: 0, End: 5}, Slice: "topic", SliceSHA256: learning.SHA256([]byte("topic"))}
+	activity := learning.Activity{ID: "50000000-0000-4000-8000-000000000016", Revision: 1, SessionID: sessionID, GoalRevisionID: authority.Session.Context.GoalRevisionID, RouteRevisionID: authority.Session.Context.RouteRevisionID, RouteStepID: authority.Session.Context.RouteStepID, KnowledgeRevisionID: authority.Session.Context.KnowledgeRevisionID, TargetNodeID: learningNodeID, TargetNodeRevisionID: authority.Session.Context.FocusNodeRevisionID, Prompt: "quiz?", Type: learning.ActivityObjective, Rubric: learning.Rubric{Revision: "quiz-r1", Items: []learning.RubricItem{{ID: "quiz-item", Criterion: "correct"}}, ObjectiveRule: &learning.ObjectiveRule{AcceptedAnswers: []string{"ok"}}}, Difficulty: 1, AllowedHelp: []learning.HelpLevel{learning.HelpNone}, References: []learning.KnowledgeReference{reference}, ActivityPolicyVersion: learning.ActivityPolicyVersion, AssessmentPolicyVersion: learning.AssessmentPolicyVersion, ReviewPolicyVersion: learning.ReviewPolicyVersion, AttachedFreeQuestionID: question.ID, AttachedFreeAnswerID: answer.ID, CreatedAt: time.Now().UTC()}
+	session := authority.Session
+	session.State = tutoring.StateActivityIssued
+	session.AttachedQuiz = true
+	session.Context.ActivityID = &activity.ID
+	session.Context.AttemptID = nil
+	result, err := store.Commit(ctx, learning.CommitRequest{
+		DeviceID:    learningDeviceOne,
+		Operation:   learning.OperationEnvelope{OperationID: "51000000-0000-4000-8000-000000000022", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: version, Payload: json.RawMessage(`{}`)},
+		RequestHash: learning.SHA256([]byte("a101 attached quiz")), Expectations: []learning.AggregateExpectation{{Type: "session", ID: sessionID, ExpectedVersion: version}},
+		Batch: learning.CommandBatch{Session: &session, FocusFrame: session.ActiveFrame, Activity: &activity, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventActivityIssued, sessionID, activity), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}}, ReceivedAt: activity.CreatedAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result.AggregateVersion, activity
+}
+
+func TestPostgreSQLRoutesCurrentOnlyStablePagination(t *testing.T) {
+	pool := learningIntegrationPool(t)
+	ctx := context.Background()
+	store := postgresstore.New(pool, tutoringpostgres.New(pool))
+	var generationID string
+	if err := pool.QueryRow(ctx, `SELECT active_generation_id FROM learning_projection_head WHERE singleton_id=1`).Scan(&generationID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	route := func(revisionID, routeID string, revision int64) learning.RouteProjection {
+		return learning.RouteProjection{Route: learning.RouteRevision{ID: revisionID, RouteID: routeID, Revision: revision, GoalRevisionID: "30000000-0000-4000-8000-000000000001", KnowledgeRevisionID: "40000000-0000-4000-8000-000000000001", PolicyVersion: learning.RoutePolicyVersion, Steps: []learning.RouteStep{{ID: "60000000-0000-4000-8000-000000000001", Ordinal: 0, NodeID: "70000000-0000-4000-8000-000000000001", NodeRevisionID: "80000000-0000-4000-8000-000000000001", TeachingIntent: "teach", CompletionCondition: "pass"}}, CreatedAt: now}}
+	}
+	fixtures := []struct {
+		item      learning.RouteProjection
+		sequence  int64
+		isCurrent bool
+	}{
+		{route("50000000-0000-4000-8000-000000000001", "40000000-0000-4000-8000-000000000010", 1), 10, false},
+		{route("50000000-0000-4000-8000-000000000002", "40000000-0000-4000-8000-000000000020", 1), 15, true},
+		{route("50000000-0000-4000-8000-000000000003", "40000000-0000-4000-8000-000000000010", 2), 20, true},
+	}
+	for _, fixture := range fixtures {
+		fixture.item.EventSequence = fixture.sequence
+		fixture.item.Current = fixture.isCurrent
+		encoded, err := json.Marshal(fixture.item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO learning_projection_routes(generation_id,route_revision_id,route_id,revision,event_seq,is_current,item) VALUES($1,$2,$3,$4,$5,$6,$7)`, generationID, fixture.item.Route.ID, fixture.item.Route.RouteID, fixture.item.Route.Revision, fixture.sequence, fixture.isCurrent, encoded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := store.Routes(ctx, learning.CursorPageRequest{Limit: 1, CurrentOnly: true})
+	if err != nil || len(first.Items) != 1 || !first.Items[0].Current || first.Items[0].EventSequence != 15 || first.NextCursor == "" {
+		t.Fatalf("current first page=%+v err=%v", first, err)
+	}
+	second, err := store.Routes(ctx, learning.CursorPageRequest{Limit: 1, Cursor: first.NextCursor, CurrentOnly: true})
+	if err != nil || len(second.Items) != 1 || second.Items[0].EventSequence != 20 || second.NextCursor != "" {
+		t.Fatalf("current second page=%+v err=%v", second, err)
+	}
+	history, err := store.Routes(ctx, learning.CursorPageRequest{Limit: 10})
+	if err != nil || len(history.Items) != 3 {
+		t.Fatalf("history=%+v err=%v", history, err)
+	}
+	if _, err := store.Routes(ctx, learning.CursorPageRequest{Limit: 10, Cursor: first.NextCursor}); learning.ErrorCode(err) != learning.CodeStaleCursor {
+		t.Fatalf("cross-filter cursor error=%v code=%s", err, learning.ErrorCode(err))
+	}
+}
+
 func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	pool := learningIntegrationPool(t)
 	ctx := context.Background()
@@ -193,7 +465,7 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	}
 
 	assertIndependentAggregateClock(t, store, pool)
-	sessionID, sessionVersion := commitLearningAuthorityFixture(t, store)
+	sessionID, sessionVersion := commitLearningAuthorityFixture(t, store, false)
 	assertProjectionKnowledgeAndStats(t, store, pool, sessionID)
 	assertKnowledgeOwnerCompositeFK(t, store, pool, sessionID, sessionVersion)
 	assertSessionAuthoritySnapshot(t, store, sessionID, sessionVersion)
@@ -798,7 +1070,7 @@ func assertIndependentAggregateClock(t *testing.T, store *postgresstore.Store, p
 	}
 }
 
-func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store) (string, int64) {
+func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store, stopAtFeedback bool) (string, int64) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
@@ -873,11 +1145,17 @@ func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store) (s
 	if err != nil || node.Node.Mastery.PendingAssessments != 0 {
 		t.Fatalf("provisional assessment was not independently resolved: %+v err=%v", node, err)
 	}
+	if stopAtFeedback {
+		return sessionID, result.AggregateVersion
+	}
 
+	session.Context.ActivityID = nil
+	session.Context.AttemptID = nil
 	frame := &tutoring.FocusFrame{ID: "50000000-0000-4000-8000-000000000012", SessionID: sessionID, SavedState: tutoring.StateRouteActive, Context: session.Context, SavedAggregateVersion: result.AggregateVersion}
+	question := &tutoring.FreeQuestion{ID: "50000000-0000-4000-8000-000000000013", SessionID: sessionID, FocusFrameID: frame.ID, Text: "Why?", KnowledgeRevisionID: learningKnowledgeRevision, ActorDeviceID: learningDeviceOne, ReceivedAt: now}
 	session.State = tutoring.StateFreeQuestion
 	session.ActiveFrame = frame
-	result = commit("51000000-0000-4000-8000-000000000007", result.AggregateVersion, learning.CommandBatch{Session: &session, FocusFrame: frame, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventFocusSuspended, sessionID, learning.SessionProjection{Session: session}), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}})
+	result = commit("51000000-0000-4000-8000-000000000007", result.AggregateVersion, learning.CommandBatch{Session: &session, FocusFrame: frame, FreeQuestion: question, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventFocusSuspended, sessionID, learning.SessionProjection{Session: session}), eventDraft(learning.EventFreeQuestionAsked, sessionID, question), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}})
 	return sessionID, result.AggregateVersion
 }
 

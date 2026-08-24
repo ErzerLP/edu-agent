@@ -23,11 +23,18 @@ var eventNamespace = uuid.MustParse("7d812fdc-fc90-4c6b-8f8f-9badf3281f70")
 
 type tutoringOwner interface {
 	Persist(context.Context, tutoringpostgres.DBTX, tutoringpostgres.WriteSet) error
+	LockReadWith(context.Context, tutoringpostgres.DBTX) (int64, error)
 	LoadSession(context.Context, string) (tutoring.Session, error)
 	LoadSessionWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.Session, error)
+	LoadSessionLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.Session, error)
 	LoadFreeQuestion(context.Context, string) (tutoring.FreeQuestion, error)
+	LoadFreeQuestionLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeQuestion, error)
 	LoadFreeAnswer(context.Context, string) (tutoring.FreeAnswer, error)
+	LoadFreeAnswerLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeAnswer, error)
 	LatestFreeQuestion(context.Context, string) (string, error)
+	LatestFreeQuestionForFrame(context.Context, string, string) (string, error)
+	LatestFreeQuestionForFrameLockedWith(context.Context, tutoringpostgres.DBTX, string, string, int64) (tutoring.FreeQuestion, error)
+	LoadFreeAnswerForQuestionLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeAnswer, bool, error)
 }
 
 // Store is the PostgreSQL transaction authority for learning commands and projections.
@@ -239,6 +246,9 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 	if err := tx.QueryRow(ctx, `SELECT current_event_seq FROM learning_event_clock WHERE singleton_id=1 FOR UPDATE`).Scan(&clock); err != nil {
 		return learning.OperationResult{}, fmt.Errorf("lock learning event clock: %w", err)
 	}
+	if err := stampFreeQuestionVersion(&request.Batch, versions); err != nil {
+		return learning.OperationResult{}, err
+	}
 	firstSequence := clock + 1
 	focusCreatedSequence := int64(0)
 	for ordinal, draft := range request.Batch.Events {
@@ -419,6 +429,48 @@ func payloadWithAuthority(eventType learning.EventType, payload json.RawMessage,
 		return nil, fmt.Errorf("encode authoritative event payload: %w", err)
 	}
 	return result, nil
+}
+
+func stampFreeQuestionVersion(batch *learning.CommandBatch, versions map[aggregateKey]int64) error {
+	if batch.FreeQuestion == nil {
+		return nil
+	}
+	key := aggregateKey{"session", batch.FreeQuestion.SessionID}
+	version, ok := versions[key]
+	if !ok {
+		return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "free_question_session_not_locked"}
+	}
+	questionEvents := 0
+	for index := range batch.Events {
+		event := &batch.Events[index]
+		if event.AggregateType == key.kind && event.AggregateID == key.id {
+			version++
+		}
+		if event.Type != learning.EventFreeQuestionAsked {
+			continue
+		}
+		var question tutoring.FreeQuestion
+		if err := json.Unmarshal(event.Payload, &question); err != nil || question.ID != batch.FreeQuestion.ID || question.SessionID != key.id {
+			return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "free_question_event_mismatch", Cause: err}
+		}
+		questionEvents++
+	}
+	if questionEvents != 1 || version < 1 {
+		return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "free_question_event_count"}
+	}
+	batch.FreeQuestion.SessionAggregateVer = version
+	for index := range batch.Events {
+		if batch.Events[index].Type != learning.EventFreeQuestionAsked {
+			continue
+		}
+		question := *batch.FreeQuestion
+		encoded, err := json.Marshal(question)
+		if err != nil {
+			return fmt.Errorf("encode versioned free question event: %w", err)
+		}
+		batch.Events[index].Payload = encoded
+	}
+	return nil
 }
 
 func finalizeSessionResult(batch *learning.CommandBatch, versions map[aggregateKey]int64, focusCreatedSequence int64) error {

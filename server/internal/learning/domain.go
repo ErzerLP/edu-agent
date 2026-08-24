@@ -47,6 +47,7 @@ const (
 	CodeFocusFrameInvalidated         = "focus_frame_invalidated"
 	CodeUnsupportedEventSchema        = "unsupported_event_schema"
 	CodeProjectionUnavailable         = "projection_unavailable"
+	CodeContentRedacted               = "content_redacted"
 	CodeStaleCursor                   = "stale_cursor"
 	CodeModelUnavailable              = "model_unavailable"
 )

@@ -74,7 +74,7 @@ func (s *Store) Persist(ctx context.Context, db DBTX, write WriteSet) error {
 		if err != nil {
 			return fmt.Errorf("encode free question references: %w", err)
 		}
-		if _, err := db.Exec(ctx, `INSERT INTO tutoring_free_questions(id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, value.ID, value.SessionID, value.FocusFrameID, value.Text, value.KnowledgeRevisionID, references, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt); err != nil {
+		if _, err := db.Exec(ctx, `INSERT INTO tutoring_free_questions(id,session_id,focus_frame_id,session_aggregate_version,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, value.ID, value.SessionID, value.FocusFrameID, value.SessionAggregateVer, value.Text, value.KnowledgeRevisionID, references, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt); err != nil {
 			return fmt.Errorf("insert free question: %w", err)
 		}
 	}
@@ -96,10 +96,18 @@ func (s *Store) LoadSession(ctx context.Context, id string) (tutoring.Session, e
 	})
 }
 
+func (s *Store) LockReadWith(ctx context.Context, db DBTX) (int64, error) {
+	return privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring)
+}
+
 func (s *Store) LoadSessionWith(ctx context.Context, db DBTX, id string) (tutoring.Session, error) {
-	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+	if _, err := s.LockReadWith(ctx, db); err != nil {
 		return tutoring.Session{}, err
 	}
+	return s.LoadSessionLockedWith(ctx, db, id)
+}
+
+func (s *Store) LoadSessionLockedWith(ctx context.Context, db DBTX, id string) (tutoring.Session, error) {
 	var value tutoring.Session
 	var state string
 	var goal, route, step, knowledgeRevision, node *string
@@ -144,12 +152,16 @@ func (s *Store) LoadFreeQuestion(ctx context.Context, id string) (tutoring.FreeQ
 }
 
 func (s *Store) LoadFreeQuestionWith(ctx context.Context, db DBTX, id string) (tutoring.FreeQuestion, error) {
-	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+	if _, err := s.LockReadWith(ctx, db); err != nil {
 		return tutoring.FreeQuestion{}, err
 	}
+	return s.LoadFreeQuestionLockedWith(ctx, db, id)
+}
+
+func (s *Store) LoadFreeQuestionLockedWith(ctx context.Context, db DBTX, id string) (tutoring.FreeQuestion, error) {
 	var value tutoring.FreeQuestion
 	var refs []byte
-	err := db.QueryRow(ctx, `SELECT id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at FROM tutoring_free_questions WHERE id=$1`, id).Scan(&value.ID, &value.SessionID, &value.FocusFrameID, &value.Text, &value.KnowledgeRevisionID, &refs, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt)
+	err := db.QueryRow(ctx, `SELECT id,session_id,focus_frame_id,session_aggregate_version,question_text,knowledge_revision_id,references_snapshot,actor_device_id,occurred_at,received_at FROM tutoring_free_questions WHERE id=$1`, id).Scan(&value.ID, &value.SessionID, &value.FocusFrameID, &value.SessionAggregateVer, &value.Text, &value.KnowledgeRevisionID, &refs, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, ErrNotFound
 	}
@@ -169,9 +181,13 @@ func (s *Store) LoadFreeAnswer(ctx context.Context, id string) (tutoring.FreeAns
 }
 
 func (s *Store) LoadFreeAnswerWith(ctx context.Context, db DBTX, id string) (tutoring.FreeAnswer, error) {
-	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+	if _, err := s.LockReadWith(ctx, db); err != nil {
 		return tutoring.FreeAnswer{}, err
 	}
+	return s.LoadFreeAnswerLockedWith(ctx, db, id)
+}
+
+func (s *Store) LoadFreeAnswerLockedWith(ctx context.Context, db DBTX, id string) (tutoring.FreeAnswer, error) {
 	var value tutoring.FreeAnswer
 	var refs []byte
 	var proposal *string
@@ -196,11 +212,11 @@ func (s *Store) LatestFreeQuestion(ctx context.Context, sessionID string) (strin
 }
 
 func (s *Store) LatestFreeQuestionWith(ctx context.Context, db DBTX, sessionID string) (string, error) {
-	if _, err := privacy.LockOwnerRead(ctx, db, privacy.OwnerTutoring); err != nil {
+	if _, err := s.LockReadWith(ctx, db); err != nil {
 		return "", err
 	}
 	var id string
-	err := db.QueryRow(ctx, `SELECT id FROM tutoring_free_questions WHERE session_id=$1 ORDER BY received_at DESC,id DESC LIMIT 1`, sessionID).Scan(&id)
+	err := db.QueryRow(ctx, `SELECT id FROM tutoring_free_questions WHERE session_id=$1 ORDER BY session_aggregate_version DESC,id DESC LIMIT 1`, sessionID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -208,6 +224,57 @@ func (s *Store) LatestFreeQuestionWith(ctx context.Context, db DBTX, sessionID s
 		return "", fmt.Errorf("load latest free question: %w", err)
 	}
 	return id, nil
+}
+
+func (s *Store) LatestFreeQuestionForFrame(ctx context.Context, sessionID, frameID string) (string, error) {
+	return withPrivacyRead(ctx, s, func(db DBTX) (string, error) {
+		if _, err := s.LockReadWith(ctx, db); err != nil {
+			return "", err
+		}
+		question, err := s.LatestFreeQuestionForFrameLockedWith(ctx, db, sessionID, frameID, 0)
+		return question.ID, err
+	})
+}
+
+func (s *Store) LatestFreeQuestionForFrameLockedWith(ctx context.Context, db DBTX, sessionID, frameID string, throughVersion int64) (tutoring.FreeQuestion, error) {
+	var id *string
+	var matches int64
+	err := db.QueryRow(ctx, `
+		WITH eligible AS (
+			SELECT id,session_aggregate_version
+			FROM tutoring_free_questions
+			WHERE session_id=$1
+			  AND focus_frame_id=$2
+			  AND ($3::bigint=0 OR session_aggregate_version<=$3)
+		), latest AS (
+			SELECT max(session_aggregate_version) AS session_aggregate_version
+			FROM eligible
+		)
+		SELECT min(eligible.id::text),count(*)
+		FROM eligible
+		JOIN latest USING(session_aggregate_version)`, sessionID, frameID, throughVersion).Scan(&id, &matches)
+	if err != nil {
+		return tutoring.FreeQuestion{}, fmt.Errorf("load latest frame free question: %w", err)
+	}
+	if matches == 0 || id == nil {
+		return tutoring.FreeQuestion{}, ErrNotFound
+	}
+	if matches != 1 {
+		return tutoring.FreeQuestion{}, fmt.Errorf("load latest frame free question: ambiguous current version")
+	}
+	return s.LoadFreeQuestionLockedWith(ctx, db, *id)
+}
+
+func (s *Store) LoadFreeAnswerForQuestionLockedWith(ctx context.Context, db DBTX, questionID string) (tutoring.FreeAnswer, bool, error) {
+	var id string
+	if err := db.QueryRow(ctx, `SELECT id FROM tutoring_free_answers WHERE free_question_id=$1`, questionID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return tutoring.FreeAnswer{}, false, nil
+		}
+		return tutoring.FreeAnswer{}, false, fmt.Errorf("load free answer for question: %w", err)
+	}
+	answer, err := s.LoadFreeAnswerLockedWith(ctx, db, id)
+	return answer, err == nil, err
 }
 
 func nullable(value string) any {

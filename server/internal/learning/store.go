@@ -123,12 +123,14 @@ type AuthorityStore interface {
 	LoadActivity(context.Context, string) (Activity, error)
 	LoadAttempt(context.Context, string) (Attempt, error)
 	LoadAssessment(context.Context, string) (AssessmentArtifact, AssessmentDecision, error)
+	LoadAssessmentForAttempt(context.Context, string) (AssessmentArtifact, AssessmentDecision, error)
 	LoadProposal(context.Context, string) (ProposalArtifact, error)
 	LoadFreeQuestion(context.Context, string) (tutoring.FreeQuestion, error)
 	LoadFreeAnswer(context.Context, string) (tutoring.FreeAnswer, error)
 	LoadValidEvidence(context.Context, string) ([]AcceptedEvidence, error)
 	LoadMisconceptions(context.Context, string) ([]MisconceptionHypothesis, error)
 	LatestFreeQuestion(context.Context, string) (string, error)
+	LatestFreeQuestionForFrame(context.Context, string, string) (string, error)
 }
 
 type ApplicationStore interface {
@@ -137,8 +139,9 @@ type ApplicationStore interface {
 }
 
 type CursorPageRequest struct {
-	Cursor string
-	Limit  int
+	Cursor      string
+	Limit       int
+	CurrentOnly bool
 }
 
 type TimelineQuery struct {
@@ -192,6 +195,20 @@ type SessionView struct {
 	Metadata ProjectionMetadata `json:"metadata"`
 	Session  tutoring.Session   `json:"session"`
 	Estimate ActiveTimeEstimate `json:"estimated_active_time"`
+	WorkItem *SessionWorkItem   `json:"work_item"`
+}
+
+type SessionWorkItem struct {
+	AllowedActions             []tutoring.Action      `json:"allowed_actions"`
+	AllowedAssessmentDecisions []string               `json:"allowed_assessment_decisions"`
+	GoalRevision               *GoalRevision          `json:"goal_revision,omitempty"`
+	RouteRevision              *RouteRevision         `json:"route_revision,omitempty"`
+	Activity                   *Activity              `json:"activity,omitempty"`
+	Attempt                    *Attempt               `json:"attempt,omitempty"`
+	Assessment                 *AssessmentArtifact    `json:"assessment,omitempty"`
+	AssessmentDecision         *AssessmentDecision    `json:"assessment_decision,omitempty"`
+	FreeQuestion               *tutoring.FreeQuestion `json:"free_question,omitempty"`
+	FreeAnswer                 *tutoring.FreeAnswer   `json:"free_answer,omitempty"`
 }
 
 type NodeView struct {

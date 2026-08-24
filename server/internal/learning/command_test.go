@@ -3,6 +3,8 @@ package learning
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
@@ -28,10 +30,38 @@ func TestCoordinatorCommitsStateMachineTransitionBatch(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRejectsEveryProvisionalFeedbackExit(t *testing.T) {
+	sessionID := "10000000-0000-4000-8000-000000000080"
+	attemptID := "10000000-0000-4000-8000-000000000081"
+	assessmentID := "10000000-0000-4000-8000-000000000082"
+	for index, action := range []tutoring.Action{tutoring.ActionAcknowledgeFeedback, tutoring.ActionEndActivity, tutoring.ActionSwitchGoal} {
+		t.Run(string(action), func(t *testing.T) {
+			store := &proposalTestStore{
+				session:    tutoring.Session{ID: sessionID, State: tutoring.StateFeedback, AggregateVer: 4, Context: tutoring.FocusContext{AttemptID: &attemptID}},
+				assessment: AssessmentArtifact{ID: assessmentID, SessionID: sessionID, AttemptID: attemptID},
+				decision:   AssessmentDecision{ID: "decision", AssessmentID: assessmentID, Version: 1, Disposition: DispositionProvisional},
+			}
+			service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
+			command := ActionCommand{
+				Operation:      OperationEnvelope{OperationID: fmt.Sprintf("10000000-0000-4000-8000-%012d", 90+index), PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: 4, Payload: json.RawMessage(`{}`)},
+				Action:         action,
+				GoalRevisionID: "10000000-0000-4000-8000-000000000083",
+			}
+			_, err := service.ApplyAction(context.Background(), "90000000-0000-4000-8000-000000000001", sessionID, command)
+			var domain *Error
+			if !errors.As(err, &domain) || domain.Code != CodeAssessmentDispositionConflict || domain.CurrentDisposition != string(DispositionProvisional) || store.commits != 0 {
+				t.Fatalf("action=%s err=%v commits=%d", action, err, store.commits)
+			}
+		})
+	}
+}
+
 func TestCoordinatorVoidsAssessmentAndInvalidatesEvidence(t *testing.T) {
 	sessionID := "10000000-0000-4000-8000-000000000030"
 	evidenceID := "10000000-0000-4000-8000-000000000031"
-	store := &proposalTestStore{session: tutoring.Session{ID: sessionID, State: tutoring.StateFeedback, AggregateVer: 4}, assessment: AssessmentArtifact{ID: "10000000-0000-4000-8000-000000000032", SessionID: sessionID, ActivityID: "activity", AttemptID: "attempt", ActivityRevision: 1}, decision: AssessmentDecision{ID: "decision", AssessmentID: "10000000-0000-4000-8000-000000000032", Version: 1, Disposition: DispositionAccepted, ProducedEvidenceID: &evidenceID}, activity: Activity{ID: "activity", Revision: 1, SessionID: sessionID}, attempt: Attempt{ID: "attempt", ActivityID: "activity", ActivityRevision: 1}}
+	activity := Activity{ID: "activity", Revision: 1, SessionID: sessionID}
+	attempt := Attempt{ID: "attempt", SessionID: sessionID, ActivityID: activity.ID, ActivityRevision: activity.Revision}
+	store := &proposalTestStore{session: assessmentFeedbackSession(activity, attempt, 4), assessment: AssessmentArtifact{ID: "10000000-0000-4000-8000-000000000032", SessionID: sessionID, ActivityID: activity.ID, AttemptID: attempt.ID, ActivityRevision: activity.Revision}, decision: AssessmentDecision{ID: "decision", AssessmentID: "10000000-0000-4000-8000-000000000032", Version: 1, Disposition: DispositionAccepted, ProducedEvidenceID: &evidenceID}, activity: activity, attempt: attempt}
 	service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
 	command := AssessmentDecisionCommand{Operation: OperationEnvelope{OperationID: "10000000-0000-4000-8000-000000000033", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: 4, Payload: json.RawMessage(`{"kind":"void"}`)}, Kind: "void", ExpectedDispositionVersion: 1, Reason: "invalid source"}
 	if _, err := service.Decide(context.Background(), "90000000-0000-4000-8000-000000000001", store.assessment.ID, command); err != nil {
@@ -46,6 +76,40 @@ func TestCoordinatorVoidsAssessmentAndInvalidatesEvidence(t *testing.T) {
 	}
 	if len(batch.Events) != 3 || batch.Events[0].Type != EventAssessmentVoided || batch.Events[1].Type != EventEvidenceInvalidated || batch.Events[2].Type != EventTutoringStateChanged {
 		t.Fatalf("compensation events = %#v", batch.Events)
+	}
+}
+
+func TestA101DecideRequiresCurrentFeedbackAssessmentChainWithoutCommit(t *testing.T) {
+	activity, attempt, artifact := assessmentFixture()
+	artifact.SessionID = "10000000-0000-4000-8000-000000000040"
+	activity.SessionID = artifact.SessionID
+	attempt.SessionID = artifact.SessionID
+	decision := AssessmentDecision{ID: "decision", AssessmentID: artifact.ID, Version: 1, Disposition: DispositionProvisional, Items: artifact.Items}
+	for index, test := range []struct {
+		name         string
+		assessmentID string
+		mutate       func(*proposalTestStore)
+	}{
+		{name: "historical assessment URL", assessmentID: "10000000-0000-4000-8000-000000000041"},
+		{name: "session not in feedback", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.session.State = tutoring.StateEvaluating }},
+		{name: "attempt assessment ownership", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.assessment.AttemptID = "10000000-0000-4000-8000-000000000042" }},
+		{name: "decision assessment ownership", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.decision.AssessmentID = "10000000-0000-4000-8000-000000000043" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &proposalTestStore{
+				session: assessmentFeedbackSession(activity, attempt, 5), activity: activity, attempt: attempt,
+				assessment: artifact, decision: decision,
+			}
+			if test.mutate != nil {
+				test.mutate(store)
+			}
+			service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
+			command := AssessmentDecisionCommand{Operation: coordinatorOperation(fmt.Sprintf("10000000-0000-4000-8000-%012d", 50+index), artifact.SessionID, 5), Kind: "confirm", ExpectedDispositionVersion: 1}
+			_, err := service.Decide(context.Background(), "90000000-0000-4000-8000-000000000001", test.assessmentID, command)
+			if ErrorCode(err) != CodeActivityStateConflict || store.commits != 0 || len(store.lastCommit.Batch.Decisions) != 0 || len(store.lastCommit.Batch.Evidence) != 0 {
+				t.Fatalf("err=%v commits=%d batch=%+v", err, store.commits, store.lastCommit.Batch)
+			}
+		})
 	}
 }
 

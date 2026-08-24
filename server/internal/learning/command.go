@@ -212,6 +212,9 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 	if session.AggregateVer != command.Operation.ExpectedVersion {
 		return OperationResult{}, &Error{Code: CodeVersionConflict, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: command.Operation.ExpectedVersion, CurrentVersion: session.AggregateVer, AsOfEventSequence: authority.AsOfEventSequence}
 	}
+	if err := s.guardFeedbackExit(ctx, session, command.Action); err != nil {
+		return OperationResult{}, err
+	}
 	now := s.now().UTC().Truncate(time.Microsecond)
 	batch := CommandBatch{}
 	expectations := []AggregateExpectation{{Type: "session", ID: session.ID, ExpectedVersion: command.Operation.ExpectedVersion}}
@@ -267,7 +270,7 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 			return OperationResult{}, err
 		}
 		if command.Action == tutoring.ActionConvertFreeAnswerToQuiz {
-			if session.ActiveFrame == nil {
+			if !validActiveFocusFrame(session) {
 				return OperationResult{}, &Error{Code: CodeFocusFrameInvalidated}
 			}
 			if command.Question == "" || command.Answer == "" || command.Question != proposal.FrozenRequest.FreeQuestionID || command.Answer != proposal.FrozenRequest.FreeAnswerID {
@@ -281,7 +284,11 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 			if err != nil {
 				return OperationResult{}, err
 			}
-			if question.SessionID != session.ID || answer.SessionID != session.ID || question.FocusFrameID != session.ActiveFrame.ID || answer.FocusFrameID != session.ActiveFrame.ID || answer.FreeQuestionID != question.ID {
+			latestQuestionID, err := s.authority.LatestFreeQuestionForFrame(ctx, session.ID, session.ActiveFrame.ID)
+			if err != nil {
+				return OperationResult{}, err
+			}
+			if latestQuestionID != question.ID || !currentFreeQuestionMatchesSession(session, question) || answer.SessionID != session.ID || answer.FocusFrameID != session.ActiveFrame.ID || answer.FreeQuestionID != question.ID || answer.KnowledgeRevisionID != question.KnowledgeRevisionID {
 				return OperationResult{}, &Error{Code: CodeFocusFrameInvalidated, Reason: "attached_quiz_ownership"}
 			}
 			activity.AttachedFreeQuestionID = question.ID
@@ -444,12 +451,19 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 		if err != nil {
 			return OperationResult{}, err
 		}
-		if session.ActiveFrame == nil || proposal.Text == nil {
+		if !validActiveFocusFrame(session) || proposal.Text == nil {
 			return OperationResult{}, &Error{Code: CodeFocusFrameInvalidated}
 		}
-		questionID, err := s.authority.LatestFreeQuestion(ctx, session.ID)
+		questionID, err := s.authority.LatestFreeQuestionForFrame(ctx, session.ID, session.ActiveFrame.ID)
 		if err != nil {
 			return OperationResult{}, err
+		}
+		question, err := s.authority.LoadFreeQuestion(ctx, questionID)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		if questionID != proposal.FrozenRequest.FreeQuestionID || !currentFreeQuestionMatchesSession(session, question) || proposal.KnowledgeRevisionID != question.KnowledgeRevisionID {
+			return OperationResult{}, &Error{Code: CodeStaleProposal, Reason: "free_question_context_changed"}
 		}
 		answer := tutoring.FreeAnswer{ID: s.newUUID(), SessionID: session.ID, FocusFrameID: session.ActiveFrame.ID, FreeQuestionID: questionID, Text: proposal.Text.Text, KnowledgeRevisionID: proposal.KnowledgeRevisionID, References: toFrozen(proposal.Text.References), SourceProposalID: proposal.ID, ReceivedAt: now}
 		batch.FreeAnswer = &answer
@@ -529,18 +543,34 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 	return s.commit(ctx, deviceID, command.Operation, expectations, batch, command, now)
 }
 
+func (s *Service) guardFeedbackExit(ctx context.Context, session tutoring.Session, action tutoring.Action) error {
+	if session.State != tutoring.StateFeedback || (action != tutoring.ActionAcknowledgeFeedback && action != tutoring.ActionEndActivity && action != tutoring.ActionSwitchGoal) {
+		return nil
+	}
+	if session.Context.AttemptID == nil {
+		return &Error{Code: CodeActivityStateConflict, Reason: "feedback_attempt_missing"}
+	}
+	artifact, decision, err := s.authority.LoadAssessmentForAttempt(ctx, *session.Context.AttemptID)
+	if err != nil {
+		return err
+	}
+	if artifact.SessionID != session.ID || artifact.AttemptID != *session.Context.AttemptID || decision.AssessmentID != artifact.ID {
+		return &Error{Code: CodeActivityStateConflict, Reason: "feedback_assessment_ownership"}
+	}
+	if decision.Disposition == DispositionProvisional {
+		return &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(decision.Disposition), Reason: "provisional_feedback_unresolved"}
+	}
+	return nil
+}
+
 func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, command AssessmentDecisionCommand) (OperationResult, error) {
 	if err := ValidateOperation(command.Operation); err != nil {
 		return OperationResult{}, err
 	}
-	artifact, current, err := s.authority.LoadAssessment(ctx, assessmentID)
-	if err != nil {
-		return OperationResult{}, err
-	}
-	if command.Operation.AggregateType != "session" || command.Operation.AggregateID != artifact.SessionID {
+	if command.Operation.AggregateType != "session" || command.Operation.AggregateID == "" || assessmentID == "" {
 		return OperationResult{}, &Error{Code: CodeInvalidRequest}
 	}
-	authority, err := s.authority.LoadSessionAuthority(ctx, artifact.SessionID)
+	authority, err := s.authority.LoadSessionAuthority(ctx, command.Operation.AggregateID)
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -548,13 +578,26 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 	if session.AggregateVer != command.Operation.ExpectedVersion {
 		return OperationResult{}, &Error{Code: CodeVersionConflict, AggregateType: "session", AggregateID: session.ID, ExpectedVersion: command.Operation.ExpectedVersion, CurrentVersion: session.AggregateVer, AsOfEventSequence: authority.AsOfEventSequence}
 	}
-	activity, err := s.authority.LoadActivity(ctx, artifact.ActivityID)
+	if session.State != tutoring.StateFeedback || session.Context.ActivityID == nil || session.Context.AttemptID == nil {
+		return OperationResult{}, &Error{Code: CodeActivityStateConflict, Reason: "assessment_decision_requires_current_feedback"}
+	}
+	artifact, current, err := s.authority.LoadAssessmentForAttempt(ctx, *session.Context.AttemptID)
 	if err != nil {
 		return OperationResult{}, err
 	}
-	attempt, err := s.authority.LoadAttempt(ctx, artifact.AttemptID)
+	if artifact.ID != assessmentID || artifact.SessionID != session.ID || artifact.ActivityID != *session.Context.ActivityID || artifact.AttemptID != *session.Context.AttemptID || current.AssessmentID != artifact.ID {
+		return OperationResult{}, &Error{Code: CodeActivityStateConflict, Reason: "assessment_decision_not_current"}
+	}
+	activity, err := s.authority.LoadActivity(ctx, *session.Context.ActivityID)
 	if err != nil {
 		return OperationResult{}, err
+	}
+	attempt, err := s.authority.LoadAttempt(ctx, *session.Context.AttemptID)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	if !activityOwnsCurrentAssessment(session, activity, attempt, artifact) {
+		return OperationResult{}, &Error{Code: CodeActivityStateConflict, Reason: "assessment_decision_chain_mismatch"}
 	}
 	effect, err := DecideAssessment(current, artifact, DecisionCommand{Kind: command.Kind, ExpectedVersion: command.ExpectedDispositionVersion, Reason: command.Reason, Items: command.Items}, ConfirmableAssessment(activity, attempt, artifact))
 	if err != nil {
@@ -615,6 +658,24 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 	batch.Events = events
 	batch.TypedResult = mustJSON(decision)
 	return s.commit(ctx, deviceID, command.Operation, []AggregateExpectation{{Type: "session", ID: artifact.SessionID, ExpectedVersion: command.Operation.ExpectedVersion}}, batch, command, now)
+}
+
+func activityOwnsCurrentAssessment(session tutoring.Session, activity Activity, attempt Attempt, artifact AssessmentArtifact) bool {
+	return activity.ID == *session.Context.ActivityID &&
+		activity.SessionID == session.ID &&
+		activity.GoalRevisionID == session.Context.GoalRevisionID &&
+		activity.RouteRevisionID == session.Context.RouteRevisionID &&
+		activity.RouteStepID == session.Context.RouteStepID &&
+		activity.KnowledgeRevisionID == session.Context.KnowledgeRevisionID &&
+		activity.TargetNodeRevisionID == session.Context.FocusNodeRevisionID &&
+		attempt.ID == *session.Context.AttemptID &&
+		attempt.SessionID == session.ID &&
+		attempt.ActivityID == activity.ID &&
+		attempt.ActivityRevision == activity.Revision &&
+		artifact.SessionID == session.ID &&
+		artifact.ActivityID == activity.ID &&
+		artifact.ActivityRevision == activity.Revision &&
+		artifact.AttemptID == attempt.ID
 }
 
 func (s *Service) commit(ctx context.Context, deviceID string, operation OperationEnvelope, expectations []AggregateExpectation, batch CommandBatch, hashValue any, now time.Time) (OperationResult, error) {

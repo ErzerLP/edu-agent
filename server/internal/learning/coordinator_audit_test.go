@@ -13,6 +13,18 @@ func coordinatorOperation(id, sessionID string, version int64) OperationEnvelope
 	return OperationEnvelope{OperationID: id, PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: version, Payload: json.RawMessage(`{}`)}
 }
 
+func assessmentFeedbackSession(activity Activity, attempt Attempt, version int64) tutoring.Session {
+	activityID, attemptID := activity.ID, attempt.ID
+	return tutoring.Session{
+		ID: activity.SessionID, State: tutoring.StateFeedback, AggregateVer: version,
+		Context: tutoring.FocusContext{
+			GoalRevisionID: activity.GoalRevisionID, RouteRevisionID: activity.RouteRevisionID,
+			RouteStepID: activity.RouteStepID, KnowledgeRevisionID: activity.KnowledgeRevisionID,
+			FocusNodeRevisionID: activity.TargetNodeRevisionID, ActivityID: &activityID, AttemptID: &attemptID,
+		},
+	}
+}
+
 func frozenSessionRequest(session tutoring.Session, kind ProposalType, knowledgeRevision string, nodes []string) ProposalRequest {
 	request := ProposalRequest{
 		RequestID: "71000000-0000-4000-8000-000000000001", Type: kind,
@@ -162,6 +174,11 @@ func TestCoordinatorRouteLineageAdvanceAndCompletion(t *testing.T) {
 	store.session = *store.lastCommit.Batch.Session
 	store.session.State = tutoring.StateFeedback
 	store.session.AggregateVer = 7
+	attemptID := "73000000-0000-4000-8000-000000000020"
+	assessmentID := "73000000-0000-4000-8000-000000000021"
+	store.session.Context.AttemptID = &attemptID
+	store.assessment = AssessmentArtifact{ID: assessmentID, SessionID: sessionID, AttemptID: attemptID}
+	store.decision = AssessmentDecision{AssessmentID: assessmentID, Disposition: DispositionAccepted}
 	ack := ActionCommand{Operation: coordinatorOperation("73000000-0000-4000-8000-000000000012", sessionID, 7), Action: tutoring.ActionAcknowledgeFeedback}
 	if _, err := service.ApplyAction(context.Background(), deviceID, sessionID, ack); err != nil {
 		t.Fatal(err)
@@ -174,6 +191,7 @@ func TestCoordinatorRouteLineageAdvanceAndCompletion(t *testing.T) {
 	store.session = advanced
 	store.session.State = tutoring.StateFeedback
 	store.session.AggregateVer = 10
+	store.session.Context.AttemptID = &attemptID
 	ack.Operation = coordinatorOperation("73000000-0000-4000-8000-000000000013", sessionID, 10)
 	if _, err := service.ApplyAction(context.Background(), deviceID, sessionID, ack); err != nil {
 		t.Fatal(err)
@@ -259,9 +277,9 @@ func TestCoordinatorSwitchGoalUsesTargetHeadWithoutFakeGoalEvent(t *testing.T) {
 
 func TestCoordinatorAttachedQuizRequiresOwnedImmutableFreeRecords(t *testing.T) {
 	sessionID := "75500000-0000-4000-8000-000000000001"
-	frame := &tutoring.FocusFrame{ID: "frame", SessionID: sessionID, SavedState: tutoring.StateRouteActive, Context: tutoring.FocusContext{GoalRevisionID: "goal-revision", RouteRevisionID: "route", RouteStepID: "step", KnowledgeRevisionID: "knowledge", FocusNodeRevisionID: "node"}}
+	frame := &tutoring.FocusFrame{ID: "frame", SessionID: sessionID, SavedState: tutoring.StateRouteActive, Context: tutoring.FocusContext{GoalRevisionID: "goal-revision", RouteRevisionID: "route", RouteStepID: "step", KnowledgeRevisionID: "knowledge", FocusNodeRevisionID: "node"}, SavedAggregateVersion: 7, CreatedEventSequence: 1}
 	session := tutoring.Session{ID: sessionID, State: tutoring.StateFreeAnswer, AggregateVer: 8, Context: frame.Context, ActiveFrame: frame}
-	question := tutoring.FreeQuestion{ID: "question", SessionID: sessionID, FocusFrameID: frame.ID, KnowledgeRevisionID: "knowledge"}
+	question := tutoring.FreeQuestion{ID: "question", SessionID: sessionID, FocusFrameID: frame.ID, SessionAggregateVer: 8, KnowledgeRevisionID: "knowledge"}
 	answer := tutoring.FreeAnswer{ID: "answer", SessionID: sessionID, FocusFrameID: frame.ID, FreeQuestionID: question.ID, KnowledgeRevisionID: "knowledge"}
 	request := frozenSessionRequest(session, ProposalActivity, "knowledge", []string{"node"})
 	request.FreeQuestionID, request.FreeAnswerID = question.ID, answer.ID
@@ -324,7 +342,7 @@ func TestCoordinatorConfirmCreatesEvidenceOnlyForFullySupportedArtifact(t *testi
 	activity.SessionID = artifact.SessionID
 	attempt.SessionID = artifact.SessionID
 	store := &proposalTestStore{
-		session:  tutoring.Session{ID: artifact.SessionID, State: tutoring.StateFeedback, AggregateVer: 5},
+		session:  assessmentFeedbackSession(activity, attempt, 5),
 		activity: activity, attempt: attempt, assessment: artifact,
 		decision: AssessmentDecision{ID: "provisional", AssessmentID: artifact.ID, Version: 1, Disposition: DispositionProvisional, Items: artifact.Items},
 	}
@@ -361,7 +379,7 @@ func TestCoordinatorOverrideRecomputesMisconceptionAndCanonicalOrdinals(t *testi
 	oldHypothesis.Revision = 1
 	oldEvidenceID := oldEvidence.ID
 	store := &proposalTestStore{
-		session:  tutoring.Session{ID: artifact.SessionID, State: tutoring.StateFeedback, AggregateVer: 6},
+		session:  assessmentFeedbackSession(activity, attempt, 6),
 		activity: activity, attempt: attempt, assessment: artifact,
 		decision: AssessmentDecision{ID: "old-decision", AssessmentID: artifact.ID, Version: 1, Disposition: DispositionAccepted, Items: artifact.Items, ProducedEvidenceID: &oldEvidenceID},
 		evidence: []AcceptedEvidence{oldEvidence}, misconceptions: []MisconceptionHypothesis{oldHypothesis},

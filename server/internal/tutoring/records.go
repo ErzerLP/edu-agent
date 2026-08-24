@@ -6,6 +6,7 @@ type FreeQuestion struct {
 	ID                  string            `json:"free_question_id"`
 	SessionID           string            `json:"session_id"`
 	FocusFrameID        string            `json:"focus_frame_id"`
+	SessionAggregateVer int64             `json:"session_aggregate_version"`
 	Text                string            `json:"text"`
 	KnowledgeRevisionID string            `json:"knowledge_revision_id"`
 	References          []FrozenReference `json:"references"`

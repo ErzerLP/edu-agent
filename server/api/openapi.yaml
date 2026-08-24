@@ -64,6 +64,7 @@ paths:
     get:
       operationId: listDevices
       summary: List paired devices
+      x-required-scope: devices:read
       security:
         - deviceBearer: []
       responses:
@@ -92,6 +93,7 @@ paths:
     delete:
       operationId: revokeDevice
       summary: Revoke a device and all of its tokens
+      x-required-scope: devices:manage
       security:
         - deviceBearer: []
       parameters:
@@ -120,6 +122,7 @@ paths:
     get:
       operationId: probeModelCapabilities
       summary: Probe the configured OpenAI-compatible Chat Completions profile
+      x-required-scope: model:probe
       security:
         - deviceBearer: []
       responses:
@@ -166,6 +169,8 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/imports:
     post:
       operationId: importKnowledgeDocuments
@@ -212,6 +217,8 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/revisions/{revisionID}/tree:
     get:
       operationId: getKnowledgeRevisionTree
@@ -245,6 +252,8 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/revisions/{revisionID}/export:
     get:
       operationId: exportKnowledgeRevision
@@ -273,6 +282,8 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/retrievals:
     post:
       operationId: retrieveKnowledge
@@ -307,6 +318,8 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          $ref: "#/components/responses/DependencyUnavailable"
   /v1/learning/goals:
     post:
       operationId: createLearningGoal
@@ -649,6 +662,11 @@ paths:
         [
           { $ref: "#/components/parameters/Cursor" },
           { $ref: "#/components/parameters/PageLimit" },
+          {
+            name: current_only,
+            in: query,
+            schema: { type: boolean, default: false },
+          },
         ]
       responses:
         "200":
@@ -2044,12 +2062,168 @@ components:
     SessionView:
       type: object
       additionalProperties: false
-      required: [metadata, session, estimated_active_time]
+      required: [metadata, session, estimated_active_time, work_item]
       properties:
         metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
         session: { $ref: "#/components/schemas/TutoringSession" }
         estimated_active_time:
           { $ref: "#/components/schemas/ActiveTimeEstimate" }
+        work_item:
+          oneOf:
+            - $ref: "#/components/schemas/SessionWorkItem"
+            - type: "null"
+    SessionAllowedAction:
+      type: string
+      enum:
+        [
+          start_diagnostic,
+          apply_route,
+          issue_activity,
+          present_activity,
+          submit_attempt,
+          record_assessment,
+          acknowledge_feedback,
+          present_review,
+          record_exposure,
+          ask_free_question,
+          record_free_answer,
+          convert_free_answer_to_quiz,
+          resume_focus,
+          end_activity,
+          switch_goal,
+          complete_session,
+        ]
+    SessionAllowedAssessmentDecision:
+      type: string
+      enum: [confirm, override, void]
+    SessionWorkItem:
+      type: object
+      additionalProperties: false
+      required: [allowed_actions, allowed_assessment_decisions]
+      properties:
+        allowed_actions:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/SessionAllowedAction" }
+        allowed_assessment_decisions:
+          type: array
+          uniqueItems: true
+          items:
+            { $ref: "#/components/schemas/SessionAllowedAssessmentDecision" }
+        goal_revision: { $ref: "#/components/schemas/GoalRevision" }
+        route_revision: { $ref: "#/components/schemas/RouteRevision" }
+        activity: { $ref: "#/components/schemas/Activity" }
+        attempt: { $ref: "#/components/schemas/Attempt" }
+        assessment: { $ref: "#/components/schemas/AssessmentArtifact" }
+        assessment_decision:
+          { $ref: "#/components/schemas/AssessmentDecision" }
+        free_question: { $ref: "#/components/schemas/FreeQuestion" }
+        free_answer: { $ref: "#/components/schemas/FreeAnswer" }
+    Attempt:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          attempt_id,
+          session_id,
+          activity_id,
+          activity_revision,
+          answer_payload_id,
+          answer,
+          answer_sha256,
+          help,
+          actor_device_id,
+          received_at,
+        ]
+      properties:
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_revision: { type: integer, minimum: 1 }
+        answer_payload_id: { $ref: "#/components/schemas/LearningUUID" }
+        answer: { type: string }
+        answer_sha256: { $ref: "#/components/schemas/SHA256" }
+        help: { $ref: "#/components/schemas/HelpLevel" }
+        actor_device_id: { $ref: "#/components/schemas/LearningUUID" }
+        occurred_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+    FrozenReference:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          knowledge_revision_id,
+          node_id,
+          node_revision_id,
+          document_revision_id,
+          start,
+          end,
+          slice,
+          slice_sha256,
+        ]
+      properties:
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 0 }
+        slice: { type: string }
+        slice_sha256: { $ref: "#/components/schemas/SHA256" }
+    FreeQuestion:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          free_question_id,
+          session_id,
+          focus_frame_id,
+          session_aggregate_version,
+          text,
+          knowledge_revision_id,
+          references,
+          actor_device_id,
+          received_at,
+        ]
+      properties:
+        free_question_id: { $ref: "#/components/schemas/LearningUUID" }
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
+        focus_frame_id: { $ref: "#/components/schemas/LearningUUID" }
+        session_aggregate_version: { type: integer, minimum: 1 }
+        text: { type: string, minLength: 1, maxLength: 8000 }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        references:
+          type: array
+          items: { $ref: "#/components/schemas/FrozenReference" }
+        actor_device_id: { $ref: "#/components/schemas/LearningUUID" }
+        occurred_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+    FreeAnswer:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          free_answer_id,
+          session_id,
+          focus_frame_id,
+          free_question_id,
+          text,
+          knowledge_revision_id,
+          references,
+          received_at,
+        ]
+      properties:
+        free_answer_id: { $ref: "#/components/schemas/LearningUUID" }
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
+        focus_frame_id: { $ref: "#/components/schemas/LearningUUID" }
+        free_question_id: { $ref: "#/components/schemas/LearningUUID" }
+        text: { type: string, minLength: 1, maxLength: 32000 }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        references:
+          type: array
+          items: { $ref: "#/components/schemas/FrozenReference" }
+        source_proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        received_at: { type: string, format: date-time }
     TimelineItem:
       type: object
       additionalProperties: false

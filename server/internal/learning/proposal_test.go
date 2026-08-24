@@ -108,6 +108,10 @@ func (s *proposalTestStore) LoadAssessment(context.Context, string) (AssessmentA
 	s.loads++
 	return s.assessment, s.decision, nil
 }
+func (s *proposalTestStore) LoadAssessmentForAttempt(context.Context, string) (AssessmentArtifact, AssessmentDecision, error) {
+	s.loads++
+	return s.assessment, s.decision, nil
+}
 func (s *proposalTestStore) LoadProposal(context.Context, string) (ProposalArtifact, error) {
 	return s.proposal, nil
 }
@@ -124,6 +128,9 @@ func (s *proposalTestStore) LoadMisconceptions(context.Context, string) ([]Misco
 	return append([]MisconceptionHypothesis(nil), s.misconceptions...), nil
 }
 func (*proposalTestStore) LatestFreeQuestion(context.Context, string) (string, error) { return "", nil }
+func (s *proposalTestStore) LatestFreeQuestionForFrame(context.Context, string, string) (string, error) {
+	return s.freeQuestion.ID, nil
+}
 
 type proposalTestRepository struct {
 	claim          ProposalClaim
@@ -230,6 +237,67 @@ func TestProposalStrictRecursiveDecodeFailsPermanently(t *testing.T) {
 	}
 	if model.calls != 1 || store.commits != 0 || repo.completed != nil || repo.failedCategory != "schema_mismatch" || len(repo.failedAttempts) != 1 || repo.failedAttempts[0] != "schema_mismatch" {
 		t.Fatalf("calls=%d commits=%d completed=%v failed=%q", model.calls, store.commits, repo.completed != nil, repo.failedCategory)
+	}
+}
+
+func TestA101FreeAnswerProposalChecksActiveFrameBeforeQuestionLookup(t *testing.T) {
+	sessionID := "10000000-0000-4000-8000-000000000060"
+	session := tutoring.Session{
+		ID: sessionID, State: tutoring.StateFreeQuestion, AggregateVer: 7,
+		Context: tutoring.FocusContext{GoalRevisionID: "goal", RouteRevisionID: "route", RouteStepID: "step", KnowledgeRevisionID: "knowledge", FocusNodeRevisionID: "node"},
+	}
+	store := &proposalTestStore{session: session}
+	service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
+	request := frozenSessionRequest(session, ProposalFreeAnswer, "knowledge", []string{"node"})
+	if _, err := service.freezeProposalRequest(context.Background(), request); ErrorCode(err) != CodeStaleProposal {
+		t.Fatalf("missing active frame error=%v code=%q", err, ErrorCode(err))
+	}
+	if store.commits != 0 {
+		t.Fatalf("missing active frame committed %d batches", store.commits)
+	}
+}
+
+func TestA101FocusFrameAndQuestionVersionMatrixFailsClosed(t *testing.T) {
+	frame := &tutoring.FocusFrame{
+		ID: "frame", SessionID: "session", SavedState: tutoring.StateRouteActive,
+		Context:               tutoring.FocusContext{GoalRevisionID: "goal", RouteRevisionID: "route", RouteStepID: "step", KnowledgeRevisionID: "knowledge", FocusNodeRevisionID: "node"},
+		SavedAggregateVersion: 4, CreatedEventSequence: 9,
+	}
+	base := tutoring.Session{ID: "session", State: tutoring.StateFreeQuestion, AggregateVer: 7, Context: frame.Context, ActiveFrame: frame}
+	question := tutoring.FreeQuestion{ID: "question", SessionID: base.ID, FocusFrameID: frame.ID, SessionAggregateVer: base.AggregateVer, KnowledgeRevisionID: "knowledge"}
+	if !validActiveFocusFrame(base) || !currentFreeQuestionMatchesSession(base, question) {
+		t.Fatal("valid frame/question fixture was rejected")
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*tutoring.Session, *tutoring.FreeQuestion)
+	}{
+		{name: "goal mismatch", mutate: func(session *tutoring.Session, _ *tutoring.FreeQuestion) { session.Context.GoalRevisionID = "other" }},
+		{name: "route mismatch", mutate: func(session *tutoring.Session, _ *tutoring.FreeQuestion) { session.Context.RouteRevisionID = "other" }},
+		{name: "step mismatch", mutate: func(session *tutoring.Session, _ *tutoring.FreeQuestion) { session.Context.RouteStepID = "other" }},
+		{name: "knowledge mismatch", mutate: func(session *tutoring.Session, _ *tutoring.FreeQuestion) {
+			session.Context.KnowledgeRevisionID = "other"
+		}},
+		{name: "node mismatch", mutate: func(session *tutoring.Session, _ *tutoring.FreeQuestion) {
+			session.Context.FocusNodeRevisionID = "other"
+		}},
+		{name: "invalid saved state", mutate: func(session *tutoring.Session, _ *tutoring.FreeQuestion) {
+			session.ActiveFrame.SavedState = tutoring.StateFeedback
+		}},
+		{name: "question before frame", mutate: func(_ *tutoring.Session, question *tutoring.FreeQuestion) { question.SessionAggregateVer = 4 }},
+		{name: "question future version", mutate: func(_ *tutoring.Session, question *tutoring.FreeQuestion) { question.SessionAggregateVer = 8 }},
+		{name: "question frame mismatch", mutate: func(_ *tutoring.Session, question *tutoring.FreeQuestion) { question.FocusFrameID = "other" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			frameCopy := *frame
+			session := base
+			session.ActiveFrame = &frameCopy
+			questionCopy := question
+			test.mutate(&session, &questionCopy)
+			if validActiveFocusFrame(session) && currentFreeQuestionMatchesSession(session, questionCopy) {
+				t.Fatalf("damaged frame/question accepted: session=%+v question=%+v", session, questionCopy)
+			}
+		})
 	}
 }
 

@@ -4,17 +4,16 @@ package terminal
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
-	"unsafe"
 
+	conpty "github.com/UserExistsError/conpty"
 	"golang.org/x/sys/windows"
 )
-
-const windowsWaitTimeout = 258
 
 type windowsOutputEvent struct {
 	data []byte
@@ -22,184 +21,249 @@ type windowsOutputEvent struct {
 	done bool
 }
 
+type windowsConPTYProcess struct {
+	console *conpty.ConPty
+	events  chan windowsOutputEvent
+	closed  bool
+}
+
 func runNativeSecretProbe(secret string) ([]byte, string, error) {
-	const method = "windows-conpty+xterm-readpassword"
-	var inputRead, inputWrite windows.Handle
-	var outputRead, outputWrite windows.Handle
-	var pseudoConsole windows.Handle
-	defer func() {
-		for _, handle := range []windows.Handle{inputRead, inputWrite, outputRead, outputWrite} {
-			if handle != 0 {
-				_ = windows.CloseHandle(handle)
-			}
-		}
-		if pseudoConsole != 0 {
-			windows.ClosePseudoConsole(pseudoConsole)
-		}
-	}()
-
-	if err := windows.CreatePipe(&inputRead, &inputWrite, nil, 0); err != nil {
-		return nil, method, fmt.Errorf("create ConPTY input pipe: %w", err)
-	}
-	if err := windows.CreatePipe(&outputRead, &outputWrite, nil, 0); err != nil {
-		return nil, method, fmt.Errorf("create ConPTY output pipe: %w", err)
-	}
-	if err := windows.CreatePseudoConsole(windows.Coord{X: 80, Y: 25}, inputRead, outputWrite, 0, &pseudoConsole); err != nil {
-		return nil, method, fmt.Errorf("create ConPTY: %w", err)
-	}
-	_ = windows.CloseHandle(inputRead)
-	inputRead = 0
-	_ = windows.CloseHandle(outputWrite)
-	outputWrite = 0
-
-	inputFile := os.NewFile(uintptr(inputWrite), "conpty-input")
-	if inputFile == nil {
-		return nil, method, errors.New("wrap ConPTY input handle")
-	}
-	inputWrite = 0
-	defer inputFile.Close()
-	outputFile := os.NewFile(uintptr(outputRead), "conpty-output")
-	if outputFile == nil {
-		return nil, method, errors.New("wrap ConPTY output handle")
-	}
-	outputRead = 0
-	defer outputFile.Close()
-
-	attributes, err := windows.NewProcThreadAttributeList(1)
+	const method = "windows-conpty+xterm-readpassword+input-echo-probe+final-fragment-rejection"
+	process, err := startWindowsConPTYTestHelper(nativeSecretHelperEnvironment, "1", "TestPlatformPairSecretInput")
 	if err != nil {
-		return nil, method, fmt.Errorf("allocate ConPTY process attributes: %w", err)
+		return nil, method, err
 	}
-	defer attributes.Delete()
-	if err := attributes.Update(windows.PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, unsafe.Pointer(&pseudoConsole), unsafe.Sizeof(pseudoConsole)); err != nil {
-		return nil, method, fmt.Errorf("bind ConPTY process attribute: %w", err)
+	defer process.close()
+
+	var output bytes.Buffer
+	if err := process.readUntil(&output, []byte("Pairing code:"), 10*time.Second); err != nil {
+		return nil, method, err
 	}
-	startup := windows.StartupInfoEx{
-		StartupInfo:             windows.StartupInfo{Cb: uint32(unsafe.Sizeof(windows.StartupInfoEx{}))},
-		ProcThreadAttributeList: attributes.List(),
+	probe, remainder := splitNativeSecretFixture(secret)
+	if _, err := io.WriteString(process, probe); err != nil {
+		return nil, method, fmt.Errorf("write ConPTY no-echo probe: %w", err)
 	}
+	checkpoint := output.Len()
+	if err := process.requireQuietInput(&output, checkpoint, 250*time.Millisecond); err != nil {
+		return nil, method, err
+	}
+	if _, err := io.WriteString(process, remainder+"\r"); err != nil {
+		return nil, method, fmt.Errorf("write ConPTY secret remainder: %w", err)
+	}
+	if err := process.readUntil(&output, []byte(nativeSecretSuccessMarker), 10*time.Second); err != nil {
+		return nil, method, err
+	}
+	if err := process.waitAndDrain(&output, 10*time.Second); err != nil {
+		return nil, method, err
+	}
+	return output.Bytes(), method, nil
+}
+
+func startWindowsConPTYTestHelper(helperEnvironment, helperValue, testName string) (*windowsConPTYProcess, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return nil, method, fmt.Errorf("resolve native helper executable: %w", err)
+		return nil, fmt.Errorf("resolve native helper executable: %w", err)
 	}
-	executableUTF16, err := windows.UTF16PtrFromString(executable)
-	if err != nil {
-		return nil, method, err
+	helperCommand := windows.ComposeCommandLine([]string{
+		executable,
+		"-test.run=" + testName,
+		"-test.count=1",
+	})
+	commandInterpreter := os.Getenv("ComSpec")
+	if commandInterpreter == "" {
+		commandInterpreter = `C:\Windows\System32\cmd.exe`
 	}
-	commandLineUTF16, err := windows.UTF16PtrFromString(windows.ComposeCommandLine([]string{executable, "-test.run=^TestPlatformPairSecretInput$", "-test.count=1"}))
-	if err != nil {
-		return nil, method, err
-	}
+	commandLine := windows.ComposeCommandLine([]string{commandInterpreter}) + ` /d /s /c "` + helperCommand + `"`
 
-	previousHelper, helperWasSet := os.LookupEnv(nativeSecretHelperEnvironment)
-	if err := os.Setenv(nativeSecretHelperEnvironment, "1"); err != nil {
-		return nil, method, fmt.Errorf("set native helper environment: %w", err)
+	previousHelper, helperWasSet := os.LookupEnv(helperEnvironment)
+	if err := os.Setenv(helperEnvironment, helperValue); err != nil {
+		return nil, fmt.Errorf("set native helper environment: %w", err)
 	}
 	restoreEnvironment := func() error {
 		if helperWasSet {
-			return os.Setenv(nativeSecretHelperEnvironment, previousHelper)
+			return os.Setenv(helperEnvironment, previousHelper)
 		}
-		return os.Unsetenv(nativeSecretHelperEnvironment)
+		return os.Unsetenv(helperEnvironment)
 	}
-	processInfo := new(windows.ProcessInformation)
-	createErr := windows.CreateProcess(
-		executableUTF16,
-		commandLineUTF16,
-		nil,
-		nil,
-		false,
-		windows.CREATE_DEFAULT_ERROR_MODE|windows.CREATE_UNICODE_ENVIRONMENT|windows.EXTENDED_STARTUPINFO_PRESENT,
-		nil,
-		nil,
-		&startup.StartupInfo,
-		processInfo,
-	)
+	console, startErr := conpty.Start(commandLine, conpty.ConPtyDimensions(80, 25))
 	restoreErr := restoreEnvironment()
-	if createErr != nil {
-		return nil, method, fmt.Errorf("start ConPTY helper: %w", createErr)
+	if startErr != nil {
+		return nil, fmt.Errorf("start ConPTY helper: %w", startErr)
 	}
 	if restoreErr != nil {
-		_ = windows.TerminateProcess(processInfo.Process, 1)
-		_, _ = windows.WaitForSingleObject(processInfo.Process, 5000)
-		_ = windows.CloseHandle(processInfo.Thread)
-		_ = windows.CloseHandle(processInfo.Process)
-		return nil, method, fmt.Errorf("restore native helper environment: %w", restoreErr)
+		_ = console.Close()
+		return nil, fmt.Errorf("restore native helper environment: %w", restoreErr)
 	}
-	defer windows.CloseHandle(processInfo.Process)
-	_ = windows.CloseHandle(processInfo.Thread)
-	processExited := false
-	defer func() {
-		if !processExited {
-			_ = windows.TerminateProcess(processInfo.Process, 1)
-			_, _ = windows.WaitForSingleObject(processInfo.Process, 5000)
-		}
-	}()
 
-	events := make(chan windowsOutputEvent, 64)
-	go streamWindowsNativeOutput(outputFile, events)
-	var output bytes.Buffer
-	promptDeadline := time.NewTimer(10 * time.Second)
-	defer promptDeadline.Stop()
-	for !bytes.Contains(output.Bytes(), []byte(nativeSecretPrompt)) {
+	process := &windowsConPTYProcess{
+		console: console,
+		events:  make(chan windowsOutputEvent, 256),
+	}
+	go streamWindowsNativeOutput(console, process.events)
+	return process, nil
+}
+
+func (p *windowsConPTYProcess) Write(data []byte) (int, error) {
+	if p.closed || p.console == nil {
+		return 0, errors.New("ConPTY helper is closed")
+	}
+	return p.console.Write(data)
+}
+
+func (p *windowsConPTYProcess) readUntil(output *bytes.Buffer, marker []byte, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for !bytes.Contains(output.Bytes(), marker) {
 		select {
-		case event := <-events:
+		case event := <-p.events:
 			output.Write(event.data)
 			if event.done {
-				return nil, method, fmt.Errorf("ConPTY helper ended before prompt: %w", event.err)
+				return windowsConPTYOutputEnded("wait for ConPTY helper output", event.err)
 			}
-		case <-promptDeadline.C:
-			return nil, method, errors.New("timed out waiting for ConPTY secret prompt")
+		case <-deadline.C:
+			visible := bytes.TrimSpace(windowsVisibleConPTYText(output.Bytes()))
+			if len(visible) > 240 {
+				visible = visible[len(visible)-240:]
+			}
+			return fmt.Errorf("timed out waiting for ConPTY helper marker %q after output %q", marker, visible)
 		}
 	}
+	return nil
+}
 
-	// ReadPassword disables console echo immediately after printing the prompt.
-	time.Sleep(100 * time.Millisecond)
-	if _, err := io.WriteString(inputFile, secret+"\r\n"); err != nil {
-		return nil, method, fmt.Errorf("write ConPTY secret: %w", err)
-	}
-	waitResult, err := windows.WaitForSingleObject(processInfo.Process, 10000)
-	if err != nil {
-		return nil, method, fmt.Errorf("wait for ConPTY helper: %w", err)
-	}
-	if waitResult == windowsWaitTimeout {
-		return nil, method, errors.New("ConPTY helper timed out")
-	}
-	if waitResult != windows.WAIT_OBJECT_0 {
-		return nil, method, fmt.Errorf("unexpected ConPTY wait result: %d", waitResult)
-	}
-	processExited = true
-	var exitCode uint32
-	if err := windows.GetExitCodeProcess(processInfo.Process, &exitCode); err != nil {
-		return nil, method, fmt.Errorf("read ConPTY helper exit code: %w", err)
-	}
-	if exitCode != 0 {
-		return nil, method, fmt.Errorf("ConPTY helper exited with code %d", exitCode)
-	}
-
-	windows.ClosePseudoConsole(pseudoConsole)
-	pseudoConsole = 0
-	_ = inputFile.Close()
-	drainDeadline := time.NewTimer(5 * time.Second)
-	defer drainDeadline.Stop()
+func (p *windowsConPTYProcess) requireQuietInput(output *bytes.Buffer, checkpoint int, timeout time.Duration) error {
+	quiet := time.NewTimer(timeout)
+	defer quiet.Stop()
 	for {
 		select {
-		case event := <-events:
+		case event := <-p.events:
 			output.Write(event.data)
-			if event.done {
-				if event.err != nil && !errors.Is(event.err, io.EOF) && !errors.Is(event.err, windows.ERROR_BROKEN_PIPE) && !errors.Is(event.err, windows.ERROR_OPERATION_ABORTED) {
-					return nil, method, fmt.Errorf("read ConPTY helper output: %w", event.err)
-				}
-				return output.Bytes(), method, nil
+			if len(bytes.TrimSpace(windowsVisibleConPTYText(output.Bytes()[checkpoint:]))) != 0 {
+				return errors.New("ConPTY emitted printable input before no-echo state")
 			}
-		case <-drainDeadline.C:
-			return nil, method, errors.New("timed out draining ConPTY helper output")
+			if event.done {
+				return windowsConPTYOutputEnded("wait for ConPTY no-echo state", event.err)
+			}
+		case <-quiet.C:
+			return nil
 		}
 	}
 }
 
-func streamWindowsNativeOutput(file *os.File, events chan<- windowsOutputEvent) {
+func (p *windowsConPTYProcess) waitAndDrain(output *bytes.Buffer, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	exitCode, waitErr := p.console.Wait(ctx)
+	if waitErr != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("ConPTY helper timed out")
+		}
+		return fmt.Errorf("wait for ConPTY helper: %w", waitErr)
+	}
+	closeErr := p.close()
+	if err := p.drainOutput(output, 5*time.Second); err != nil {
+		return err
+	}
+	if closeErr != nil && !isExpectedWindowsPipeClose(closeErr) {
+		return fmt.Errorf("close ConPTY helper: %w", closeErr)
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("ConPTY helper exited with code %d", exitCode)
+	}
+	return nil
+}
+
+func (p *windowsConPTYProcess) drainOutput(output *bytes.Buffer, timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	for {
+		select {
+		case event := <-p.events:
+			output.Write(event.data)
+			if event.done {
+				if event.err != nil && !isExpectedWindowsPipeClose(event.err) {
+					return fmt.Errorf("read ConPTY helper output: %w", event.err)
+				}
+				return nil
+			}
+		case <-deadline.C:
+			return errors.New("timed out draining ConPTY helper output")
+		}
+	}
+}
+
+func (p *windowsConPTYProcess) close() error {
+	if p.closed || p.console == nil {
+		return nil
+	}
+	p.closed = true
+	return p.console.Close()
+}
+
+func windowsConPTYOutputEnded(stage string, err error) error {
+	if err == nil || isExpectedWindowsPipeClose(err) {
+		return fmt.Errorf("%s: output pipe closed", stage)
+	}
+	return fmt.Errorf("%s: %w", stage, err)
+}
+
+func isExpectedWindowsPipeClose(err error) bool {
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, windows.ERROR_BROKEN_PIPE) ||
+		errors.Is(err, windows.ERROR_OPERATION_ABORTED) ||
+		errors.Is(err, windows.ERROR_INVALID_HANDLE)
+}
+
+func windowsVisibleConPTYText(input []byte) []byte {
+	visible := make([]byte, 0, len(input))
+	for index := 0; index < len(input); {
+		current := input[index]
+		if current == 0x1b {
+			index++
+			if index >= len(input) {
+				break
+			}
+			switch input[index] {
+			case '[':
+				index++
+				for index < len(input) {
+					value := input[index]
+					index++
+					if value >= 0x40 && value <= 0x7e {
+						break
+					}
+				}
+			case ']':
+				index++
+				for index < len(input) {
+					if input[index] == 0x07 {
+						index++
+						break
+					}
+					if input[index] == 0x1b && index+1 < len(input) && input[index+1] == '\\' {
+						index += 2
+						break
+					}
+					index++
+				}
+			default:
+				index++
+			}
+			continue
+		}
+		index++
+		if current < 0x20 || current == 0x7f || (current >= 0x80 && current <= 0x9f) {
+			continue
+		}
+		visible = append(visible, current)
+	}
+	return visible
+}
+
+func streamWindowsNativeOutput(reader io.Reader, events chan<- windowsOutputEvent) {
 	buffer := make([]byte, 4096)
 	for {
-		count, err := file.Read(buffer)
+		count, err := reader.Read(buffer)
 		if count > 0 {
 			data := append([]byte(nil), buffer[:count]...)
 			events <- windowsOutputEvent{data: data}

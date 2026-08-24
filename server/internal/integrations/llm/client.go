@@ -7,12 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type ErrorCategory string
@@ -357,15 +360,48 @@ func validateJSONSchema(schemaBytes, valueBytes []byte) error {
 }
 
 func validateValue(schema map[string]any, value any, path string) error {
-	if expected, _ := schema["type"].(string); expected != "" && !matchesType(expected, value) {
-		return fmt.Errorf("%s must be %s", path, expected)
+	if expected, exists := schema["type"]; exists {
+		typeName, ok := expected.(string)
+		if !ok || !matchesType(typeName, value) {
+			return fmt.Errorf("%s must be %v", path, expected)
+		}
 	}
-	object, isObject := value.(map[string]any)
-	if isObject {
-		properties, _ := schema["properties"].(map[string]any)
-		if required, ok := schema["required"].([]any); ok {
+	if rawEnum, exists := schema["enum"]; exists {
+		allowed, ok := rawEnum.([]any)
+		if !ok {
+			return fmt.Errorf("%s has invalid enum schema", path)
+		}
+		matched := false
+		for _, candidate := range allowed {
+			if reflect.DeepEqual(candidate, value) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%s is not an allowed value", path)
+		}
+	}
+
+	if object, ok := value.(map[string]any); ok {
+		properties := map[string]any{}
+		if rawProperties, exists := schema["properties"]; exists {
+			var valid bool
+			properties, valid = rawProperties.(map[string]any)
+			if !valid {
+				return fmt.Errorf("%s has invalid properties schema", path)
+			}
+		}
+		if rawRequired, exists := schema["required"]; exists {
+			required, valid := rawRequired.([]any)
+			if !valid {
+				return fmt.Errorf("%s has invalid required schema", path)
+			}
 			for _, item := range required {
-				name, _ := item.(string)
+				name, valid := item.(string)
+				if !valid || name == "" {
+					return fmt.Errorf("%s has invalid required schema", path)
+				}
 				if _, exists := object[name]; !exists {
 					return fmt.Errorf("%s.%s is required", path, name)
 				}
@@ -373,23 +409,113 @@ func validateValue(schema map[string]any, value any, path string) error {
 		}
 		for name, rawChild := range properties {
 			childValue, exists := object[name]
-			childSchema, ok := rawChild.(map[string]any)
-			if exists && ok {
-				if err := validateValue(childSchema, childValue, path+"."+name); err != nil {
-					return err
-				}
+			if !exists {
+				continue
+			}
+			childSchema, valid := rawChild.(map[string]any)
+			if !valid {
+				return fmt.Errorf("%s.%s has invalid schema", path, name)
+			}
+			if err := validateValue(childSchema, childValue, path+"."+name); err != nil {
+				return err
 			}
 		}
-		if additional, ok := schema["additionalProperties"].(bool); ok && !additional {
-			for name := range object {
-				if _, declared := properties[name]; !declared {
-					return fmt.Errorf("%s.%s is not allowed", path, name)
+		if rawAdditional, exists := schema["additionalProperties"]; exists {
+			additional, valid := rawAdditional.(bool)
+			if !valid {
+				return fmt.Errorf("%s has unsupported additionalProperties schema", path)
+			}
+			if !additional {
+				for name := range object {
+					if _, declared := properties[name]; !declared {
+						return fmt.Errorf("%s.%s is not allowed", path, name)
+					}
 				}
 			}
 		}
 	}
+
+	if array, ok := value.([]any); ok {
+		if err := validateCountConstraint(schema, "minItems", len(array), path, "items"); err != nil {
+			return err
+		}
+		if err := validateCountConstraint(schema, "maxItems", len(array), path, "items"); err != nil {
+			return err
+		}
+		if rawItems, exists := schema["items"]; exists {
+			itemSchema, valid := rawItems.(map[string]any)
+			if !valid {
+				return fmt.Errorf("%s has invalid items schema", path)
+			}
+			for index, item := range array {
+				if err := validateValue(itemSchema, item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if text, ok := value.(string); ok {
+		length := utf8.RuneCountInString(text)
+		if err := validateCountConstraint(schema, "minLength", length, path, "characters"); err != nil {
+			return err
+		}
+		if err := validateCountConstraint(schema, "maxLength", length, path, "characters"); err != nil {
+			return err
+		}
+	}
+
+	if number, ok := value.(float64); ok {
+		if err := validateNumberConstraint(schema, "minimum", number, path); err != nil {
+			return err
+		}
+		if err := validateNumberConstraint(schema, "maximum", number, path); err != nil {
+			return err
+		}
+	}
 	return nil
 }
+
+func validateCountConstraint(schema map[string]any, keyword string, actual int, path, unit string) error {
+	raw, exists := schema[keyword]
+	if !exists {
+		return nil
+	}
+	limit, ok := raw.(float64)
+	if !ok || limit < 0 || math.Trunc(limit) != limit || limit > float64(maxInt()) {
+		return fmt.Errorf("%s has invalid %s schema", path, keyword)
+	}
+	if keyword == "minItems" || keyword == "minLength" {
+		if actual < int(limit) {
+			return fmt.Errorf("%s must contain at least %d %s", path, int(limit), unit)
+		}
+		return nil
+	}
+	if actual > int(limit) {
+		return fmt.Errorf("%s must contain at most %d %s", path, int(limit), unit)
+	}
+	return nil
+}
+
+func validateNumberConstraint(schema map[string]any, keyword string, actual float64, path string) error {
+	raw, exists := schema[keyword]
+	if !exists {
+		return nil
+	}
+	limit, ok := raw.(float64)
+	if !ok {
+		return fmt.Errorf("%s has invalid %s schema", path, keyword)
+	}
+	if keyword == "minimum" && actual < limit {
+		return fmt.Errorf("%s must be at least %v", path, limit)
+	}
+	if keyword == "maximum" && actual > limit {
+		return fmt.Errorf("%s must be at most %v", path, limit)
+	}
+	return nil
+}
+
+func maxInt() int { return int(^uint(0) >> 1) }
 
 func matchesType(expected string, value any) bool {
 	switch expected {
@@ -410,7 +536,7 @@ func matchesType(expected string, value any) bool {
 		return ok
 	case "integer":
 		number, ok := value.(float64)
-		return ok && number == float64(int64(number))
+		return ok && math.Trunc(number) == number
 	case "null":
 		return value == nil
 	default:

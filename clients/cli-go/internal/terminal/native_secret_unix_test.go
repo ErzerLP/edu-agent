@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"time"
 
 	"github.com/creack/pty"
@@ -17,7 +18,8 @@ import (
 )
 
 func runNativeSecretProbe(secret string) ([]byte, string, error) {
-	const method = "unix-pty+xterm-readpassword+termios-echo-check"
+	const noEchoProbeTimeout = 250 * time.Millisecond
+	method := nativeSecretProbeMethod()
 	command := exec.Command(os.Args[0], "-test.run=^TestPlatformPairSecretInput$")
 	command.Env = append(os.Environ(), nativeSecretHelperEnvironment+"=1")
 	terminalFile, err := pty.Start(command)
@@ -45,17 +47,24 @@ func runNativeSecretProbe(secret string) ([]byte, string, error) {
 		}
 		_ = output.WriteByte(value)
 	}
-	if err := waitForNativeEchoDisabled(terminalFile, 2*time.Second); err != nil {
+	if err := waitForPlatformSecretReady(terminalFile, 2*time.Second); err != nil {
 		return nil, method, err
 	}
-	if _, err := io.WriteString(terminalFile, secret+"\n"); err != nil {
-		return nil, method, fmt.Errorf("write native secret: %w", err)
+	probe, remainder := splitNativeSecretFixture(secret)
+	if _, err := io.WriteString(terminalFile, probe); err != nil {
+		return nil, method, fmt.Errorf("write native no-echo probe: %w", err)
+	}
+	if err := requireQuietPTYInput(reader, terminalFile, noEchoProbeTimeout); err != nil {
+		return nil, method, err
+	}
+	if _, err := io.WriteString(terminalFile, remainder+"\n"); err != nil {
+		return nil, method, fmt.Errorf("write native secret remainder: %w", err)
 	}
 	if err := terminalFile.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		return nil, method, fmt.Errorf("reset PTY read deadline: %w", err)
 	}
-	remainder, readErr := io.ReadAll(reader)
-	output.Write(remainder)
+	outputRemainder, readErr := io.ReadAll(reader)
+	output.Write(outputRemainder)
 	waitErr := command.Wait()
 	finished = true
 	if waitErr != nil {
@@ -67,7 +76,17 @@ func runNativeSecretProbe(secret string) ([]byte, string, error) {
 	return output.Bytes(), method, nil
 }
 
-func waitForNativeEchoDisabled(file *os.File, timeout time.Duration) error {
+func nativeSecretProbeMethod() string {
+	if runtime.GOOS == "linux" {
+		return "linux-pty+xterm-readpassword+termios-echo-check+input-echo-probe+final-fragment-rejection"
+	}
+	return "darwin-pty+xterm-readpassword+input-echo-probe+final-fragment-rejection"
+}
+
+func waitForPlatformSecretReady(file *os.File, timeout time.Duration) error {
+	if runtime.GOOS != "linux" {
+		return nil
+	}
 	deadline := time.Now().Add(timeout)
 	for {
 		disabled, err := nativeEchoDisabled(file)
@@ -81,5 +100,30 @@ func waitForNativeEchoDisabled(file *os.File, timeout time.Duration) error {
 			return errors.New("native PTY did not disable input echo")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func requireQuietPTYInput(reader *bufio.Reader, file *os.File, timeout time.Duration) error {
+	if reader.Buffered() != 0 {
+		return errors.New("native PTY produced output before no-echo state")
+	}
+	deadline := time.Now().Add(timeout)
+	pollDescriptors := []unix.PollFd{{Fd: int32(file.Fd()), Events: unix.POLLIN}}
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil
+		}
+		ready, err := unix.Poll(pollDescriptors, int(remaining.Milliseconds()))
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("poll native no-echo probe: %w", err)
+		}
+		if ready == 0 {
+			return nil
+		}
+		return errors.New("native PTY produced output or closed before no-echo state")
 	}
 }

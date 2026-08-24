@@ -9,4 +9,7 @@ require (
 	golang.org/x/text v0.41.0
 )
 
-require github.com/creack/pty v1.1.24
+require (
+	github.com/UserExistsError/conpty v0.1.4
+	github.com/creack/pty v1.1.24
+)

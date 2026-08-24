@@ -15,6 +15,7 @@ var (
 	kernel32                   = windows.NewLazySystemDLL("kernel32.dll")
 	fillConsoleOutputCharacter = kernel32.NewProc("FillConsoleOutputCharacterW")
 	fillConsoleOutputAttribute = kernel32.NewProc("FillConsoleOutputAttribute")
+	setConsoleModeForClear     = windows.SetConsoleMode
 )
 
 func clearScreen(out io.Writer) error {
@@ -25,7 +26,7 @@ func clearScreen(out io.Writer) error {
 	handle := windows.Handle(file.Fd())
 	var mode uint32
 	if err := windows.GetConsoleMode(handle, &mode); err == nil {
-		if err := windows.SetConsoleMode(handle, mode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING); err == nil {
+		if err := setConsoleModeForClear(handle, mode|windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING); err == nil {
 			_, err = io.WriteString(file, "\x1b[2J\x1b[H> ")
 			return err
 		}

@@ -153,6 +153,51 @@ func TestChatRejectsSchemaMismatch(t *testing.T) {
 	}
 }
 
+func TestValidateJSONSchemaRecursesAndEnforcesSupportedConstraints(t *testing.T) {
+	schema := []byte(`{
+		"type":"object",
+		"properties":{
+			"mode":{"type":"string","enum":["strict"],"minLength":3,"maxLength":8},
+			"items":{"type":"array","minItems":1,"maxItems":2,"items":{
+				"type":"object",
+				"properties":{"score":{"type":"integer","minimum":1,"maximum":10}},
+				"required":["score"],
+				"additionalProperties":false
+			}}
+		},
+		"required":["mode","items"],
+		"additionalProperties":false
+	}`)
+	if err := validateJSONSchema(schema, []byte(`{"mode":"strict","items":[{"score":7}]}`)); err != nil {
+		t.Fatalf("valid nested value rejected: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		schema string
+		value  string
+	}{
+		{name: "required", schema: `{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}`, value: `{}`},
+		{name: "additional property", schema: `{"type":"object","properties":{},"additionalProperties":false}`, value: `{"extra":true}`},
+		{name: "recursive array item", schema: `{"type":"array","items":{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"],"additionalProperties":false}}`, value: `[{"value":"wrong"}]`},
+		{name: "minimum items", schema: `{"type":"array","minItems":2,"items":{"type":"string"}}`, value: `["one"]`},
+		{name: "maximum items", schema: `{"type":"array","maxItems":1,"items":{"type":"string"}}`, value: `["one","two"]`},
+		{name: "enum", schema: `{"type":"string","enum":["allowed"]}`, value: `"denied"`},
+		{name: "minimum length", schema: `{"type":"string","minLength":2}`, value: `"x"`},
+		{name: "maximum length", schema: `{"type":"string","maxLength":1}`, value: `"xy"`},
+		{name: "integer type", schema: `{"type":"integer"}`, value: `1.5`},
+		{name: "integer minimum", schema: `{"type":"integer","minimum":2}`, value: `1`},
+		{name: "integer maximum", schema: `{"type":"integer","maximum":2}`, value: `3`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateJSONSchema([]byte(test.schema), []byte(test.value)); err == nil {
+				t.Fatalf("schema accepted invalid value %s", test.value)
+			}
+		})
+	}
+}
+
 func newTestClient(t *testing.T, base string, timeout time.Duration) *Client {
 	return newTestClientWithKey(t, base, "test-key", timeout)
 }

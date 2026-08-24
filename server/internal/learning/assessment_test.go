@@ -205,10 +205,15 @@ func TestAssessmentDispositionAppendOnlyEffects(t *testing.T) {
 func TestAssessmentDispositionRejectsStaleAndIncompleteOverride(t *testing.T) {
 	_, _, artifact := assessmentFixture()
 	current := AssessmentDecision{Version: 3, Disposition: DispositionProvisional}
-	if _, err := DecideAssessment(current, artifact, DecisionCommand{Kind: "confirm", ExpectedVersion: 2}); ErrorCode(err) != CodeAssessmentDispositionConflict {
+	if _, err := DecideAssessment(current, artifact, DecisionCommand{Kind: "confirm", ExpectedVersion: 2}); ErrorCode(err) != CodeAssessmentDispositionConflict || err.(*Error).CurrentDisposition != string(current.Disposition) {
 		t.Fatalf("stale decision error=%v", err)
 	}
-	if _, err := DecideAssessment(current, artifact, DecisionCommand{Kind: "override", ExpectedVersion: 3, Reason: "reason"}); ErrorCode(err) != CodeAssessmentDispositionConflict {
+	if _, err := DecideAssessment(current, artifact, DecisionCommand{Kind: "override", ExpectedVersion: 3, Reason: "reason"}); ErrorCode(err) != CodeAssessmentDispositionConflict || err.(*Error).CurrentDisposition != string(current.Disposition) {
 		t.Fatalf("incomplete override error=%v", err)
+	}
+	invalid := append([]AssessmentItem(nil), artifact.Items...)
+	invalid[0].Conclusion = ConclusionUnassessed
+	if _, err := DecideAssessment(current, artifact, DecisionCommand{Kind: "override", ExpectedVersion: 3, Reason: "reason", Items: invalid}); ErrorCode(err) != CodeAssessmentDispositionConflict || err.(*Error).CurrentDisposition != string(current.Disposition) {
+		t.Fatalf("invalid replacement error=%v", err)
 	}
 }

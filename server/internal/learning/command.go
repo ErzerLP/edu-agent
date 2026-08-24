@@ -619,6 +619,12 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 	if effect.CreateEvidence {
 		outcome, err := ValidateAssessmentReplacement(activity, attempt, artifact, effect.Items)
 		if err != nil {
+			var domain *Error
+			if errors.As(err, &domain) && domain.Code == CodeAssessmentDispositionConflict && domain.CurrentDisposition == "" {
+				copy := *domain
+				copy.CurrentDisposition = string(current.Disposition)
+				return OperationResult{}, &copy
+			}
 			return OperationResult{}, err
 		}
 		evidence := s.makeEvidence(activity, attempt, artifact, decision, effect.Items, outcome, now)

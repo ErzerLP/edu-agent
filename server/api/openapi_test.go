@@ -523,6 +523,102 @@ func mapsClone(value map[string]any) map[string]any {
 	return clone
 }
 
+func TestLearningOpenAPIConflictSchemaFreezesEndpointAndCodeCoupling(t *testing.T) {
+	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	const aggregateID = "10000000-0000-4000-8000-000000000001"
+	errorOnly := func(code string) map[string]any {
+		return map[string]any{"error": map[string]any{"code": code, "message": "Learning request conflicts with current state", "request_id": "request-1"}}
+	}
+	versionConflict := func(aggregateType string) map[string]any {
+		value := errorOnly("version_conflict")
+		value["conflict"] = map[string]any{
+			"aggregate_type": aggregateType, "aggregate_id": aggregateID,
+			"expected_version": 0, "current_version": 0, "as_of_event_seq": 0,
+		}
+		return value
+	}
+	dispositionConflict := func() map[string]any {
+		value := errorOnly("assessment_disposition_conflict")
+		value["current_disposition"] = "provisional"
+		return value
+	}
+	schemaFor := func(path, method string) *openapi3.Schema {
+		t.Helper()
+		item := document.Paths.Find(path)
+		var response *openapi3.ResponseRef
+		if method == "get" {
+			response = item.Get.Responses.Value("409")
+		} else {
+			response = item.Post.Responses.Value("409")
+		}
+		if response == nil || response.Value == nil {
+			t.Fatalf("%s %s learning 409 response is missing", method, path)
+		}
+		media := response.Value.Content.Get("application/json")
+		if media == nil || media.Schema == nil || media.Schema.Value == nil {
+			t.Fatalf("%s %s learning 409 schema is missing", method, path)
+		}
+		return media.Schema.Value
+	}
+	validate := func(name, path, method string, value map[string]any, wantValid bool) {
+		t.Helper()
+		err := schemaFor(path, method).VisitJSON(value, openapi3.EnableJSONSchema2020())
+		if wantValid && err != nil {
+			t.Fatalf("%s rejected handler-compatible payload: %v", name, err)
+		}
+		if !wantValid && err == nil {
+			t.Fatalf("%s accepted invalid payload: %#v", name, value)
+		}
+	}
+
+	const (
+		goalPath       = "/v1/learning/goals"
+		sessionPath    = "/v1/tutoring/sessions"
+		proposalPath   = "/v1/tutoring/proposals"
+		actionPath     = "/v1/tutoring/sessions/{sessionID}/actions"
+		assessmentPath = "/v1/learning/assessments/{assessmentID}/decisions"
+		cursorPath     = "/v1/learning/timeline"
+	)
+	validate("goal version", goalPath, "post", versionConflict("goal"), true)
+	validate("goal rejects session tuple", goalPath, "post", versionConflict("session"), false)
+	validate("goal idempotency", goalPath, "post", errorOnly("idempotency_conflict"), true)
+	validate("session version", sessionPath, "post", versionConflict("session"), true)
+	validate("session rejects goal tuple", sessionPath, "post", versionConflict("goal"), false)
+	validate("proposal stale", proposalPath, "post", errorOnly("stale_proposal"), true)
+	validate("proposal rejects version", proposalPath, "post", versionConflict("session"), false)
+	validate("action version", actionPath, "post", versionConflict("session"), true)
+	validate("action state", actionPath, "post", errorOnly("invalid_transition"), true)
+	validate("action disposition", actionPath, "post", dispositionConflict(), true)
+	validate("action disposition without current value", actionPath, "post", errorOnly("assessment_disposition_conflict"), true)
+	validate("assessment version", assessmentPath, "post", versionConflict("session"), true)
+	validate("assessment state", assessmentPath, "post", errorOnly("activity_state_conflict"), true)
+	validate("assessment disposition", assessmentPath, "post", dispositionConflict(), true)
+	validate("cursor stale", cursorPath, "get", errorOnly("stale_cursor"), true)
+
+	missingTuple := errorOnly("version_conflict")
+	validate("version requires tuple", actionPath, "post", missingTuple, false)
+	missingDisposition := errorOnly("assessment_disposition_conflict")
+	validate("assessment conflict requires disposition", assessmentPath, "post", missingDisposition, false)
+	invalidActionDisposition := errorOnly("assessment_disposition_conflict")
+	invalidActionDisposition["current_disposition"] = "unknown"
+	validate("action conflict rejects invalid disposition", actionPath, "post", invalidActionDisposition, false)
+	withDisposition := versionConflict("session")
+	withDisposition["current_disposition"] = "provisional"
+	validate("version rejects disposition", assessmentPath, "post", withDisposition, false)
+	withTuple := errorOnly("activity_state_conflict")
+	withTuple["conflict"] = versionConflict("session")["conflict"]
+	validate("state conflict rejects tuple", actionPath, "post", withTuple, false)
+	withUnknown := errorOnly("unknown_conflict")
+	validate("unknown code", actionPath, "post", withUnknown, false)
+	validate("cursor rejects mutation code", cursorPath, "get", errorOnly("idempotency_conflict"), false)
+}
+
 func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
 	if err != nil {
@@ -588,10 +684,27 @@ func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 		}
 		return learning.OperationResult{Status: "succeeded", AggregateType: aggregateType, AggregateID: aggregateID, AggregateVersion: version, FirstEventSequence: 10, LastEventSequence: 11, ProjectionAsOf: 11, Result: encoded}
 	}
-	validateResponse("/v1/learning/goals", "post", "201", operationResult("goal", id2, 1, goal))
-	validateResponse("/v1/tutoring/sessions", "post", "201", operationResult("session", id2, 2, session))
-	validateResponse("/v1/tutoring/sessions/{sessionID}/actions", "post", "201", operationResult("session", id2, 4, session))
-	validateResponse("/v1/learning/assessments/{assessmentID}/decisions", "post", "201", operationResult("session", id2, 5, decision))
+	goalResult := operationResult("goal", id2, 1, goal)
+	sessionResult := operationResult("session", id2, 2, session)
+	actionResult := operationResult("session", id2, 4, session)
+	decisionResult := operationResult("session", id2, 5, decision)
+	validateResponse("/v1/learning/goals", "post", "201", goalResult)
+	validateResponse("/v1/tutoring/sessions", "post", "201", sessionResult)
+	validateResponse("/v1/tutoring/sessions/{sessionID}/actions", "post", "201", actionResult)
+	validateResponse("/v1/learning/assessments/{assessmentID}/decisions", "post", "201", decisionResult)
+	for name, candidate := range map[string]struct {
+		path  string
+		value learning.OperationResult
+	}{
+		"goal endpoint with session aggregate":    {"/v1/learning/goals", sessionResult},
+		"session endpoint with goal aggregate":    {"/v1/tutoring/sessions", goalResult},
+		"assessment endpoint with session result": {"/v1/learning/assessments/{assessmentID}/decisions", actionResult},
+	} {
+		schema := document.Paths.Find(candidate.path).Post.Responses.Value("201").Value.Content.Get("application/json").Schema.Value
+		if err := schema.VisitJSON(decodeDTO(candidate.value), openapi3.EnableJSONSchema2020()); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
 
 	frozen := learning.ProposalRequest{RequestID: id1, Type: learning.ProposalRoute, AggregateType: "goal", AggregateID: id2, AggregateVersion: 1, GoalRevisionID: id3, KnowledgeRevisionID: id4, NodeRevisionIDs: []string{id7}, Input: json.RawMessage(`{"topic":"fractions"}`)}
 	proposal := learning.ProposalArtifact{ID: id5, SchemaVersion: learning.ProposalSchemaVersion, InputHash: strings.Repeat("a", 64), Type: learning.ProposalRoute, AggregateType: "goal", AggregateID: id2, AggregateVersion: 1, GoalRevisionID: id3, KnowledgeRevisionID: id4, FrozenRequest: frozen, Route: []learning.RouteProposalStep{{NodeRevisionID: id7, TeachingIntent: "Explain", CompletionCondition: "Recall"}}, ModelID: "model", ModelParameters: map[string]any{"temperature": 0.0}, PromptRevision: "prompt-v1", AttemptCategories: []string{"success"}, CreatedAt: now}

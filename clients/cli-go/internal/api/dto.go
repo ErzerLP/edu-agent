@@ -9,9 +9,19 @@ type ErrorBody struct {
 }
 
 type ErrorResponse struct {
-	Error             ErrorBody       `json:"error"`
-	CurrentRevisionID *string         `json:"current_revision_id,omitempty"`
-	IdentityReview    *IdentityReview `json:"identity_review,omitempty"`
+	Error              ErrorBody         `json:"error"`
+	CurrentRevisionID  *string           `json:"current_revision_id,omitempty"`
+	IdentityReview     *IdentityReview   `json:"identity_review,omitempty"`
+	Conflict           *LearningConflict `json:"conflict,omitempty"`
+	CurrentDisposition string            `json:"current_disposition,omitempty"`
+}
+
+type LearningConflict struct {
+	AggregateType   string `json:"aggregate_type"`
+	AggregateID     string `json:"aggregate_id"`
+	ExpectedVersion int64  `json:"expected_version"`
+	CurrentVersion  int64  `json:"current_version"`
+	AsOfEventSeq    int64  `json:"as_of_event_seq"`
 }
 
 type Device struct {

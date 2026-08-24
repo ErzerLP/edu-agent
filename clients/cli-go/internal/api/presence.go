@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-var timeType = reflect.TypeFor[time.Time]()
+var (
+	timeType       = reflect.TypeFor[time.Time]()
+	rawMessageType = reflect.TypeFor[json.RawMessage]()
+)
 
 func validateRequiredJSONFields(data []byte, target any) error {
 	targetType := reflect.TypeOf(target)
@@ -27,7 +30,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 		}
 		valueType = valueType.Elem()
 	}
-	if valueType == timeType || valueType.Kind() == reflect.Interface {
+	if valueType == timeType || valueType == rawMessageType || valueType.Kind() == reflect.Interface {
 		return nil
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {

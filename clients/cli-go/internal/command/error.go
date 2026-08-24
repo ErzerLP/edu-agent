@@ -72,6 +72,33 @@ func mapAPIError(err error) *Error {
 		case "identity_review_required", "stale_identity_review":
 			mapped.Detail = "knowledge identity requires explicit review"
 			mapped.Next = "review the candidates and submit new explicit decisions"
+		case "not_found":
+			mapped.Detail = "the requested authoritative record was not found"
+			mapped.Next = "refresh the current session or query without the missing identifier"
+		case "version_conflict":
+			mapped.Detail = "the session changed before the operation was applied"
+			if apiErr.Conflict != nil {
+				mapped.Detail += fmt.Sprintf(" current_version=%d as_of_event_seq=%d", apiErr.Conflict.CurrentVersion, apiErr.Conflict.AsOfEventSeq)
+			}
+			mapped.Next = "use the refreshed work item; the previous answer or decision was not replayed"
+		case "assessment_disposition_conflict":
+			mapped.Detail = "the assessment disposition changed before the decision was applied"
+			if apiErr.CurrentDisposition != "" {
+				mapped.Detail += " current_disposition=" + apiErr.CurrentDisposition
+			}
+			mapped.Next = "run assessment show and choose from the current allowed decisions"
+		case "focus_frame_invalidated":
+			mapped.Detail = "the saved focus frame was invalidated and cannot be resumed"
+			mapped.Next = "continue from the refreshed authoritative work item"
+		case "stale_proposal":
+			mapped.Detail = "the proposal no longer matches the current aggregate version"
+			mapped.Next = "refresh the work item and request a new proposal"
+		case "stale_cursor":
+			mapped.Detail = "the projection generation changed while paging"
+			mapped.Next = "restart the read from the first page without combining old items"
+		case "invalid_state", "assessment_not_confirmable":
+			mapped.Detail = "the operation is not allowed in the current authoritative state"
+			mapped.Next = "refresh the work item and use a displayed allowed action"
 		case "rate_limited":
 			mapped.ExitCode = ExitUnavailable
 			mapped.Detail = "the server rate limit was reached"
@@ -80,10 +107,18 @@ func mapAPIError(err error) *Error {
 			mapped.ExitCode = ExitUnavailable
 			mapped.Detail = "content is unavailable because it was redacted"
 			mapped.Next = "discard displayed content and retry only after the server is ready"
-		case "privacy_clear_in_progress", "projection_unavailable", "dependency_unavailable", "unavailable", "service_unavailable", "temporarily_unavailable", "upstream_unavailable":
+		case "privacy_clear_in_progress":
 			mapped.ExitCode = ExitUnavailable
-			mapped.Detail = "a required service is unavailable"
-			mapped.Next = "retry later; no offline operation was queued"
+			mapped.Detail = "privacy clearing is in progress"
+			mapped.Next = "retry after the server barrier completes; no operation was queued"
+		case "projection_unavailable":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "the authoritative projection is temporarily unavailable"
+			mapped.Next = "retry later; no local state was substituted"
+		case "dependency_unavailable", "model_unavailable", "unavailable", "service_unavailable", "temporarily_unavailable", "upstream_unavailable":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "a required service or model is unavailable"
+			mapped.Next = "retry later; authoritative teaching state was not advanced and no offline operation was queued"
 		case "invalid_request", "invalid_path", "invalid_markdown", "invalid_identity_marker", "payload_too_large":
 			mapped.ExitCode = ExitInput
 			mapped.Detail = "the request was rejected as invalid"

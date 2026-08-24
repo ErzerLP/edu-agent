@@ -347,7 +347,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/GoalOperationResult" },
                   },
               },
           }
@@ -359,7 +359,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/GoalOperationResult" },
                   },
               },
           }
@@ -367,7 +367,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/LearningGoalConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -401,7 +401,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/SessionOperationResult" },
                   },
               },
           }
@@ -413,7 +413,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/SessionOperationResult" },
                   },
               },
           }
@@ -421,7 +421,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/TutoringSessionConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -460,7 +460,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/TutoringProposalConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -495,7 +495,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/SessionOperationResult" },
                   },
               },
           }
@@ -507,7 +507,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/SessionOperationResult" },
                   },
               },
           }
@@ -515,7 +515,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/TutoringActionConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -550,7 +550,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/AssessmentDecisionOperationResult" },
                   },
               },
           }
@@ -562,7 +562,7 @@ paths:
                 application/json:
                   {
                     schema:
-                      { $ref: "#/components/schemas/LearningOperationResult" },
+                      { $ref: "#/components/schemas/AssessmentDecisionOperationResult" },
                   },
               },
           }
@@ -570,7 +570,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/AssessmentDecisionConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -648,7 +648,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
@@ -677,7 +677,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
@@ -730,7 +730,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
@@ -755,7 +755,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "409": { $ref: "#/components/responses/LearningConflict" }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
@@ -1302,12 +1302,36 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
-    LearningConflict:
-      description: Idempotency, expected-version, state, disposition, proposal, focus-frame, or cursor conflict.
+    LearningGoalConflict:
+      description: Goal idempotency or expected-version conflict.
       content:
         application/json:
-          schema:
-            $ref: "#/components/schemas/LearningErrorEnvelope"
+          schema: { $ref: "#/components/schemas/LearningGoalConflict" }
+    TutoringSessionConflict:
+      description: Session creation idempotency or expected-version conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TutoringSessionConflict" }
+    TutoringProposalConflict:
+      description: Proposal idempotency or frozen-context conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TutoringProposalConflict" }
+    TutoringActionConflict:
+      description: Session action idempotency, version, state, proposal, disposition, or focus-frame conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TutoringActionConflict" }
+    AssessmentDecisionConflict:
+      description: Assessment decision idempotency, session version, state, or disposition conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AssessmentDecisionConflict" }
+    LearningCursorConflict:
+      description: The projection cursor belongs to a stale generation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/LearningCursorConflict" }
     DependencyUnavailable:
       description: Model, projection, memory, privacy, or response read permit is unavailable.
       content:
@@ -1788,7 +1812,7 @@ components:
         kind: { const: void }
         expected_disposition_version: { type: integer, minimum: 1 }
         reason: { type: string, minLength: 1 }
-    LearningOperationResult:
+    GoalOperationResult:
       type: object
       additionalProperties: false
       required:
@@ -1808,8 +1832,35 @@ components:
         status: { type: string, enum: [succeeded] }
         replayed: { type: boolean }
         archived: { type: boolean }
-        aggregate_type: { type: string, enum: [goal, session] }
-        aggregate_id: { type: string, format: uuid }
+        aggregate_type: { const: goal }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        aggregate_version: { type: integer, minimum: 1 }
+        first_event_seq: { type: integer, minimum: 1 }
+        last_event_seq: { type: integer, minimum: 1 }
+        projection_as_of_event_seq: { type: integer, minimum: 1 }
+        result: { $ref: "#/components/schemas/GoalRevision" }
+    SessionOperationResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          status,
+          replayed,
+          archived,
+          aggregate_type,
+          aggregate_id,
+          aggregate_version,
+          first_event_seq,
+          last_event_seq,
+          projection_as_of_event_seq,
+          result,
+        ]
+      properties:
+        status: { type: string, enum: [succeeded] }
+        replayed: { type: boolean }
+        archived: { type: boolean }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
         aggregate_version: { type: integer, minimum: 1 }
         first_event_seq: { type: integer, minimum: 1 }
         last_event_seq: { type: integer, minimum: 1 }
@@ -1817,11 +1868,37 @@ components:
         tutoring_state: { type: string }
         evidence_disposition:
           { type: string, enum: [provisional, accepted, overridden, voided] }
-        result:
-          oneOf:
-            - $ref: "#/components/schemas/GoalRevision"
-            - $ref: "#/components/schemas/TutoringSession"
-            - $ref: "#/components/schemas/AssessmentDecision"
+        result: { $ref: "#/components/schemas/TutoringSession" }
+    AssessmentDecisionOperationResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          status,
+          replayed,
+          archived,
+          aggregate_type,
+          aggregate_id,
+          aggregate_version,
+          first_event_seq,
+          last_event_seq,
+          projection_as_of_event_seq,
+          result,
+        ]
+      properties:
+        status: { type: string, enum: [succeeded] }
+        replayed: { type: boolean }
+        archived: { type: boolean }
+        aggregate_type: { const: session }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        aggregate_version: { type: integer, minimum: 1 }
+        first_event_seq: { type: integer, minimum: 1 }
+        last_event_seq: { type: integer, minimum: 1 }
+        projection_as_of_event_seq: { type: integer, minimum: 1 }
+        tutoring_state: { type: string }
+        evidence_disposition:
+          { type: string, enum: [provisional, accepted, overridden, voided] }
+        result: { $ref: "#/components/schemas/AssessmentDecision" }
     TutoringProposal:
       type: object
       additionalProperties: false
@@ -2793,17 +2870,41 @@ components:
         fingerprint: { $ref: "#/components/schemas/SHA256" }
         active_generation_id: { type: string, format: uuid }
         rebuilding_generation_id: { type: string, format: uuid }
-    LearningErrorEnvelope:
+    LearningGoalConflict:
+      oneOf:
+        - $ref: "#/components/schemas/GoalVersionConflictEnvelope"
+        - $ref: "#/components/schemas/LearningIdempotencyConflictEnvelope"
+    TutoringSessionConflict:
+      oneOf:
+        - $ref: "#/components/schemas/SessionVersionConflictEnvelope"
+        - $ref: "#/components/schemas/LearningIdempotencyConflictEnvelope"
+    TutoringProposalConflict:
+      oneOf:
+        - $ref: "#/components/schemas/TutoringProposalStateConflictEnvelope"
+    TutoringActionConflict:
+      oneOf:
+        - $ref: "#/components/schemas/SessionVersionConflictEnvelope"
+        - $ref: "#/components/schemas/TutoringActionAssessmentDispositionConflictEnvelope"
+        - $ref: "#/components/schemas/TutoringActionStateConflictEnvelope"
+    AssessmentDecisionConflict:
+      oneOf:
+        - $ref: "#/components/schemas/SessionVersionConflictEnvelope"
+        - $ref: "#/components/schemas/AssessmentDispositionConflictEnvelope"
+        - $ref: "#/components/schemas/AssessmentDecisionStateConflictEnvelope"
+    LearningCursorConflict:
+      oneOf:
+        - $ref: "#/components/schemas/LearningCursorConflictEnvelope"
+    GoalVersionConflictEnvelope:
       type: object
       additionalProperties: false
-      required: [error]
+      required: [error, conflict]
       properties:
         error:
           type: object
           additionalProperties: false
           required: [code, message, request_id]
           properties:
-            code: { type: string }
+            code: { const: version_conflict }
             message: { type: string }
             request_id: { type: string }
         conflict:
@@ -2818,12 +2919,146 @@ components:
               as_of_event_seq,
             ]
           properties:
-            aggregate_type: { type: string }
-            aggregate_id: { type: string }
-            expected_version: { type: integer }
-            current_version: { type: integer }
-            as_of_event_seq: { type: integer }
-        current_disposition: { type: string }
+            aggregate_type: { const: goal }
+            aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+            expected_version: { type: integer, minimum: 0 }
+            current_version: { type: integer, minimum: 0 }
+            as_of_event_seq: { type: integer, minimum: 0 }
+    SessionVersionConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, conflict]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: version_conflict }
+            message: { type: string }
+            request_id: { type: string }
+        conflict:
+          type: object
+          additionalProperties: false
+          required:
+            [
+              aggregate_type,
+              aggregate_id,
+              expected_version,
+              current_version,
+              as_of_event_seq,
+            ]
+          properties:
+            aggregate_type: { const: session }
+            aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+            expected_version: { type: integer, minimum: 0 }
+            current_version: { type: integer, minimum: 0 }
+            as_of_event_seq: { type: integer, minimum: 0 }
+    AssessmentDispositionConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, current_disposition]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: assessment_disposition_conflict }
+            message: { type: string }
+            request_id: { type: string }
+        current_disposition:
+          { type: string, enum: [provisional, accepted, overridden, voided] }
+    TutoringActionAssessmentDispositionConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: assessment_disposition_conflict }
+            message: { type: string }
+            request_id: { type: string }
+        current_disposition:
+          { type: string, enum: [provisional, accepted, overridden, voided] }
+    LearningIdempotencyConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: idempotency_conflict }
+            message: { type: string }
+            request_id: { type: string }
+    TutoringProposalStateConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, enum: [idempotency_conflict, stale_proposal] }
+            message: { type: string }
+            request_id: { type: string }
+    TutoringActionStateConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              enum:
+                [
+                  idempotency_conflict,
+                  invalid_transition,
+                  activity_state_conflict,
+                  stale_proposal,
+                  focus_frame_invalidated,
+                ]
+            message: { type: string }
+            request_id: { type: string }
+    AssessmentDecisionStateConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              { type: string, enum: [idempotency_conflict, activity_state_conflict] }
+            message: { type: string }
+            request_id: { type: string }
+    LearningCursorConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: stale_cursor }
+            message: { type: string }
+            request_id: { type: string }
     Liveness:
       type: object
       additionalProperties: false

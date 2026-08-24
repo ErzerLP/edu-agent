@@ -13,6 +13,20 @@ function Add-Evidence([string] $Line) {
     $Line | Tee-Object -FilePath $evidenceFile -Append
 }
 
+function ConvertTo-GitHubCommandValue([string] $Value, [bool] $Property = $false) {
+    $escaped = $Value.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+    if ($Property) {
+        $escaped = $escaped.Replace(":", "%3A").Replace(",", "%2C")
+    }
+    return $escaped
+}
+
+function Write-FailureAnnotation([string] $CheckName, [string] $Method, [int] $ExitCode) {
+    $title = ConvertTo-GitHubCommandValue "CLI native check failed" $true
+    $message = ConvertTo-GitHubCommandValue "check=$CheckName method=$Method exit_code=$ExitCode"
+    Write-Output "::error title=$title::$message"
+}
+
 if ([string]::IsNullOrWhiteSpace($env:CANDIDATE_SHA)) {
     throw "CANDIDATE_SHA is required"
 }
@@ -63,15 +77,14 @@ try {
         $command = "go test $package -run '$pattern' -count=1 -v"
         Add-Evidence "method[$($check.Name)]=$($check.Method)"
         Add-Evidence "command[$($check.Name)]=$command"
-        $output = & go test $package -run $pattern -count=1 -v 2>&1
+        $output = @(& go test $package -run $pattern -count=1 -v 2>&1)
         $exitCode = $LASTEXITCODE
-        foreach ($line in $output) {
-            Add-Evidence "output[$($check.Name)]=$line"
-        }
+        Add-Evidence "output[$($check.Name)]=captured_lines=$($output.Count) raw_output=omitted"
         if ($exitCode -eq 0) {
             Add-Evidence "result[$($check.Name)]=pass"
         } else {
             Add-Evidence "result[$($check.Name)]=fail exit_code=$exitCode"
+            Write-FailureAnnotation $check.Name $check.Method $exitCode
             $failed = $true
         }
     }

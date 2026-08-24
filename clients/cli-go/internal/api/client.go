@@ -22,11 +22,13 @@ const (
 )
 
 type APIError struct {
-	Code              string
-	RequestID         string
-	Status            int
-	CurrentRevisionID *string
-	IdentityReview    *IdentityReview
+	Code               string
+	RequestID          string
+	Status             int
+	CurrentRevisionID  *string
+	IdentityReview     *IdentityReview
+	Conflict           *LearningConflict
+	CurrentDisposition string
 }
 
 func (e *APIError) Error() string {
@@ -122,6 +124,181 @@ func (c *Client) ImportKnowledge(ctx context.Context, request ImportRequest) (Im
 	return response, err
 }
 
+func (c *Client) RetrieveKnowledge(ctx context.Context, request KnowledgeRetrievalRequest) (KnowledgeRetrievalResult, error) {
+	if err := validateKnowledgeRetrievalRequest(request); err != nil {
+		return KnowledgeRetrievalResult{}, &ProtocolError{Category: "invalid_retrieval_request"}
+	}
+	var response KnowledgeRetrievalResult
+	err := c.doJSON(ctx, http.MethodPost, "/v1/knowledge/retrievals", true, request, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) CreateGoal(ctx context.Context, request LearningGoalRequest) (GoalOperationResult, error) {
+	if err := validateGoalRequest(request); err != nil {
+		return GoalOperationResult{}, &ProtocolError{Category: "invalid_goal_request"}
+	}
+	var response GoalOperationResult
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/learning/goals", true, request, map[int]bool{http.StatusOK: true, http.StatusCreated: true}, true, &response); err != nil {
+		return response, err
+	}
+	return response, protocolSuccessError(validateGoalOperationBinding(response, request))
+}
+
+func (c *Client) CreateSession(ctx context.Context, request TutoringSessionRequest) (SessionOperationResult, error) {
+	if err := validateSessionRequest(request); err != nil {
+		return SessionOperationResult{}, &ProtocolError{Category: "invalid_session_request"}
+	}
+	var response SessionOperationResult
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/tutoring/sessions", true, request, map[int]bool{http.StatusOK: true, http.StatusCreated: true}, true, &response); err != nil {
+		return response, err
+	}
+	return response, protocolSuccessError(validateSessionCreateBinding(response, request))
+}
+
+func (c *Client) CreateProposal(ctx context.Context, request TutoringProposalRequest) (TutoringProposal, error) {
+	if err := validateProposalRequest(request); err != nil {
+		return TutoringProposal{}, &ProtocolError{Category: "invalid_proposal_request"}
+	}
+	var response TutoringProposal
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/tutoring/proposals", true, request, map[int]bool{http.StatusCreated: true}, true, &response); err != nil {
+		return response, err
+	}
+	return response, protocolSuccessError(validateProposalBinding(response, request))
+}
+
+func (c *Client) ApplySessionAction(ctx context.Context, sessionID string, request TutoringAction) (SessionOperationResult, error) {
+	if err := validateTutoringActionRequest(sessionID, request); err != nil {
+		return SessionOperationResult{}, &ProtocolError{Category: "invalid_action_request"}
+	}
+	var response SessionOperationResult
+	path := "/v1/tutoring/sessions/" + url.PathEscape(sessionID) + "/actions"
+	if err := c.doJSON(ctx, http.MethodPost, path, true, request, map[int]bool{http.StatusOK: true, http.StatusCreated: true}, true, &response); err != nil {
+		return response, err
+	}
+	return response, protocolSuccessError(validateSessionOperationBinding(response, sessionID))
+}
+
+func (c *Client) DecideAssessment(ctx context.Context, assessmentID string, request AssessmentDecisionRequest) (AssessmentDecisionOperationResult, error) {
+	if err := validateAssessmentDecisionRequest(assessmentID, request); err != nil {
+		return AssessmentDecisionOperationResult{}, &ProtocolError{Category: "invalid_assessment_decision_request"}
+	}
+	var response AssessmentDecisionOperationResult
+	path := "/v1/learning/assessments/" + url.PathEscape(assessmentID) + "/decisions"
+	if err := c.doJSON(ctx, http.MethodPost, path, true, request, map[int]bool{http.StatusOK: true, http.StatusCreated: true}, true, &response); err != nil {
+		return response, err
+	}
+	return response, protocolSuccessError(validateAssessmentDecisionOperationBinding(response, assessmentID, assessmentDecisionAggregateID(request)))
+}
+
+func (c *Client) CurrentSession(ctx context.Context) (SessionView, error) {
+	var response SessionView
+	err := c.doJSON(ctx, http.MethodGet, "/v1/tutoring/sessions/current", true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) Session(ctx context.Context, sessionID string) (SessionView, error) {
+	if !validLearningUUID(sessionID) {
+		return SessionView{}, &ProtocolError{Category: "invalid_session_id"}
+	}
+	var response SessionView
+	path := "/v1/tutoring/sessions/" + url.PathEscape(sessionID)
+	err := c.doJSON(ctx, http.MethodGet, path, true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) Timeline(ctx context.Context, cursor string, limit int, sessionID string) (TimelinePage, error) {
+	if err := validateTimelineRequest(cursor, limit, sessionID); err != nil {
+		return TimelinePage{}, &ProtocolError{Category: "invalid_timeline_request"}
+	}
+	var response TimelinePage
+	values := url.Values{}
+	setPageQuery(values, cursor, limit)
+	if sessionID != "" {
+		values.Set("session_id", sessionID)
+	}
+	err := c.doJSON(ctx, http.MethodGet, withQuery("/v1/learning/timeline", values), true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) Routes(ctx context.Context, cursor string, limit int, currentOnly bool) (RoutesPage, error) {
+	if err := validatePageRequest(cursor, limit); err != nil {
+		return RoutesPage{}, &ProtocolError{Category: "invalid_routes_request"}
+	}
+	var response RoutesPage
+	values := url.Values{}
+	setPageQuery(values, cursor, limit)
+	values.Set("current_only", strconv.FormatBool(currentOnly))
+	err := c.doJSON(ctx, http.MethodGet, withQuery("/v1/learning/routes", values), true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) Node(ctx context.Context, nodeRevisionID string) (NodeView, error) {
+	if !validLearningUUID(nodeRevisionID) {
+		return NodeView{}, &ProtocolError{Category: "invalid_node_revision_id"}
+	}
+	var response NodeView
+	path := "/v1/learning/nodes/" + url.PathEscape(nodeRevisionID)
+	err := c.doJSON(ctx, http.MethodGet, path, true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) Evidence(ctx context.Context, cursor string, limit int, nodeRevisionID string) (EvidencePage, error) {
+	if err := validateEvidenceRequest(cursor, limit, nodeRevisionID); err != nil {
+		return EvidencePage{}, &ProtocolError{Category: "invalid_evidence_request"}
+	}
+	var response EvidencePage
+	values := url.Values{}
+	setPageQuery(values, cursor, limit)
+	if nodeRevisionID != "" {
+		values.Set("node_revision_id", nodeRevisionID)
+	}
+	err := c.doJSON(ctx, http.MethodGet, withQuery("/v1/learning/evidence", values), true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) Reviews(ctx context.Context, cursor string, limit int, dueBefore *time.Time) (ReviewsPage, error) {
+	if err := validateReviewsRequest(cursor, limit, dueBefore); err != nil {
+		return ReviewsPage{}, &ProtocolError{Category: "invalid_reviews_request"}
+	}
+	var response ReviewsPage
+	values := url.Values{}
+	setPageQuery(values, cursor, limit)
+	if dueBefore != nil {
+		values.Set("due_before", dueBefore.UTC().Format(time.RFC3339Nano))
+	}
+	err := c.doJSON(ctx, http.MethodGet, withQuery("/v1/learning/reviews", values), true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func (c *Client) ProjectionStatus(ctx context.Context) (ProjectionStatus, error) {
+	var response ProjectionStatus
+	err := c.doJSON(ctx, http.MethodGet, "/v1/learning/projections/status", true, nil, map[int]bool{http.StatusOK: true}, true, &response)
+	return response, err
+}
+
+func protocolSuccessError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &ProtocolError{Category: "invalid_success_response"}
+}
+
+func setPageQuery(values url.Values, cursor string, limit int) {
+	if cursor != "" {
+		values.Set("cursor", cursor)
+	}
+	if limit > 0 {
+		values.Set("limit", strconv.Itoa(limit))
+	}
+}
+
+func withQuery(path string, values url.Values) string {
+	if len(values) == 0 {
+		return path
+	}
+	return path + "?" + values.Encode()
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, authenticated bool, requestValue any, success map[int]bool, retry bool, target any) error {
 	var body []byte
 	var err error
@@ -215,12 +392,13 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 		return false, 0, err
 	}
 	var envelope ErrorResponse
-	if err := decodeStrict(data, &envelope); err != nil || validateErrorResponse(envelope) != nil {
+	if err := decodeStrict(data, &envelope); err != nil || validateErrorResponse(method, path, response.StatusCode, envelope) != nil || validateErrorBinding(envelope, body, hasBody) != nil {
 		return false, 0, &ProtocolError{Category: "malformed_error_response"}
 	}
 	apiErr := &APIError{
 		Code: envelope.Error.Code, RequestID: envelope.Error.RequestID, Status: response.StatusCode,
 		CurrentRevisionID: envelope.CurrentRevisionID, IdentityReview: envelope.IdentityReview,
+		Conflict: envelope.Conflict, CurrentDisposition: envelope.CurrentDisposition,
 	}
 	if response.StatusCode == http.StatusTooManyRequests {
 		delay, ok := parseRetryAfter(response.Header.Get("Retry-After"), c.now())
@@ -293,6 +471,7 @@ func decodeStrict(data []byte, target any) error {
 	return validateRequiredJSONFields(data, target)
 }
 
+// validateDecoded applies semantic checks after strict JSON shape validation.
 func validateDecoded(target any) error {
 	switch value := target.(type) {
 	case *IssuedCredential:
@@ -325,6 +504,35 @@ func validateDecoded(target any) error {
 		return validateRevision(value.Revision)
 	case *ImportResult:
 		return validateRevision(value.Revision)
+	case *KnowledgeRetrievalResult:
+		return validateRetrieval(*value)
+	case *GoalOperationResult:
+		return validateGoalOperationResult(*value)
+	case *SessionOperationResult:
+		return validateSessionOperationResult(*value)
+	case *AssessmentDecisionOperationResult:
+		return validateAssessmentDecisionOperationResult(*value)
+	case *TutoringProposal:
+		return validateTutoringProposal(*value)
+	case *SessionView:
+		return validateSessionView(*value)
+	case *TimelinePage:
+		return validateProjectionPageCursor[TimelineItem](value.Metadata, value.Items, value.NextCursor)
+	case *RoutesPage:
+		return validateProjectionPageCursor[RouteProjection](value.Metadata, value.Items, value.NextCursor)
+	case *NodeView:
+		return validateProjectionMetadata(value.Metadata)
+	case *EvidencePage:
+		return validateProjectionPageCursor[AcceptedEvidence](value.Metadata, value.Items, value.NextCursor)
+	case *ReviewsPage:
+		return validateProjectionPageCursor[ReviewSchedule](value.Metadata, value.Items, value.NextCursor)
+	case *ProjectionStatus:
+		if err := validateProjectionMetadata(value.Metadata); err != nil {
+			return err
+		}
+		if value.ActiveGenerationID == "" || len(value.Fingerprint) != 64 {
+			return errors.New("projection status is incomplete")
+		}
 	}
 	return nil
 }
@@ -345,15 +553,127 @@ func validateRevision(value KnowledgeRevision) error {
 	return nil
 }
 
-func validateErrorResponse(value ErrorResponse) error {
+func validateErrorResponse(method, path string, status int, value ErrorResponse) error {
 	if value.Error.Code == "" || value.Error.Message == "" || value.Error.RequestID == "" {
 		return errors.New("error envelope is incomplete")
 	}
-	if value.IdentityReview != nil {
-		review := value.IdentityReview
-		if len(review.BasisHash) != 64 || review.OperationID == "" || len(review.Receipt) != 64 || review.Documents == nil || review.Nodes == nil {
+	if status != http.StatusConflict && (value.CurrentRevisionID != nil || value.IdentityReview != nil || value.Conflict != nil || value.CurrentDisposition != "") {
+		return errors.New("non-conflict response contains conflict fields")
+	}
+	if value.CurrentRevisionID != nil && !validLearningUUID(*value.CurrentRevisionID) {
+		return errors.New("current revision ID is invalid")
+	}
+	if value.Conflict != nil {
+		conflict := value.Conflict
+		if (conflict.AggregateType != "goal" && conflict.AggregateType != "session") || !validLearningUUID(conflict.AggregateID) || conflict.ExpectedVersion < 0 || conflict.CurrentVersion < 0 || conflict.AsOfEventSeq < 0 {
+			return errors.New("learning conflict is invalid")
+		}
+		if value.Error.Code != "version_conflict" && value.Error.Code != "idempotency_conflict" {
+			return errors.New("unexpected learning conflict details")
+		}
+	}
+	if value.Error.Code == "version_conflict" && value.Conflict == nil {
+		return errors.New("version conflict details are missing")
+	}
+	if value.Error.Code == "assessment_disposition_conflict" {
+		switch assessmentDispositionConflictEndpoint(method, path) {
+		case "action":
+			if value.CurrentDisposition != "" && !validAssessmentDisposition(value.CurrentDisposition) {
+				return errors.New("assessment conflict disposition is invalid")
+			}
+		case "decision":
+			if !validAssessmentDisposition(value.CurrentDisposition) {
+				return errors.New("assessment conflict disposition is invalid")
+			}
+		default:
+			return errors.New("assessment conflict is invalid for endpoint")
+		}
+	} else if value.CurrentDisposition != "" {
+		return errors.New("unexpected assessment disposition")
+	}
+	if value.Error.Code == "identity_review_required" {
+		if value.IdentityReview == nil || validateIdentityReview(*value.IdentityReview) != nil {
 			return errors.New("identity review is incomplete")
 		}
+	} else if value.IdentityReview != nil {
+		return errors.New("unexpected identity review")
+	}
+	if value.Error.Code == "revision_conflict" {
+		if value.CurrentRevisionID == nil {
+			return errors.New("revision conflict head is missing")
+		}
+	} else if value.CurrentRevisionID != nil {
+		return errors.New("unexpected current revision")
+	}
+	return nil
+}
+
+func assessmentDispositionConflictEndpoint(method, path string) string {
+	if method != http.MethodPost {
+		return ""
+	}
+	path, _, _ = strings.Cut(path, "?")
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) != 5 || parts[0] != "v1" || !validLearningUUID(parts[3]) {
+		return ""
+	}
+	if parts[1] == "tutoring" && parts[2] == "sessions" && parts[4] == "actions" {
+		return "action"
+	}
+	if parts[1] == "learning" && parts[2] == "assessments" && parts[4] == "decisions" {
+		return "decision"
+	}
+	return ""
+}
+
+func validateIdentityReview(value IdentityReview) error {
+	if !validSHA256(value.BasisHash) || !validLearningUUID(value.OperationID) || !validSHA256(value.Receipt) || value.Documents == nil || value.Nodes == nil {
+		return errors.New("identity review envelope is invalid")
+	}
+	for _, document := range value.Documents {
+		if document.Path == "" || !validSHA256(document.Locator) || document.ReasonCode == "" || document.Candidates == nil || !validIdentityCandidates(document.Candidates) {
+			return errors.New("document identity review is invalid")
+		}
+	}
+	for _, node := range value.Nodes {
+		if node.Path == "" || !validSHA256(node.Locator) || node.Preorder < 0 || node.ReasonCode == "" || node.Candidates == nil || !validIdentityCandidates(node.Candidates) {
+			return errors.New("node identity review is invalid")
+		}
+	}
+	return nil
+}
+
+func validIdentityCandidates(values []IdentityCandidate) bool {
+	for _, candidate := range values {
+		if !validLearningUUID(candidate.StableID) || !validLearningUUID(candidate.RevisionID) || candidate.ReasonCode == "" || candidate.Score < 0 || candidate.Score > 1000000 {
+			return false
+		}
+		if candidate.Evidence != nil {
+			if _, err := json.Marshal(candidate.Evidence); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validateErrorBinding(value ErrorResponse, body []byte, hasBody bool) error {
+	if value.Conflict == nil {
+		return nil
+	}
+	if !hasBody {
+		return errors.New("learning conflict has no request body to bind")
+	}
+	var request struct {
+		AggregateType   string `json:"aggregate_type"`
+		AggregateID     string `json:"aggregate_id"`
+		ExpectedVersion int64  `json:"expected_version"`
+	}
+	if err := json.Unmarshal(body, &request); err != nil || request.AggregateType == "" || request.AggregateID == "" {
+		return errors.New("learning conflict request binding is unavailable")
+	}
+	if value.Conflict.AggregateType != request.AggregateType || value.Conflict.AggregateID != request.AggregateID || value.Conflict.ExpectedVersion != request.ExpectedVersion {
+		return errors.New("learning conflict does not belong to the request")
 	}
 	return nil
 }

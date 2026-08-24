@@ -17,7 +17,7 @@ make cli-build
 
 `make cli-release` writes binaries and `SHA256SUMS` under `clients/cli-go/dist/`. The release directory contains no configuration, credentials, or learning content.
 
-## Commands In This Foundation
+## Commands
 
 ```text
 edu-agent pair [--server URL] [--name NAME]
@@ -25,13 +25,24 @@ edu-agent device status
 edu-agent device forget-local
 edu-agent logout
 edu-agent knowledge import <file-or-directory>
+edu-agent goal set <text>
+edu-agent learn
+edu-agent assessment show|confirm|override|void
+edu-agent route [--history] [--limit N] [--cursor CURSOR]
+edu-agent progress [--all]
+edu-agent evidence [--node ID] [--limit N] [--cursor CURSOR]
+edu-agent reviews [--due-before RFC3339] [--limit N] [--cursor CURSOR]
 edu-agent clear
 edu-agent version
 ```
 
 Pairing codes are read without echo from a TTY or as one line from non-TTY stdin. There is no `--code` flag. Pairing output never includes the device token.
 
-The teaching commands `goal`, `learn`, `assessment`, `route`, `progress`, `evidence`, and `reviews` are intentionally not implemented in this foundation because they depend on the pending authoritative session `work_item` contract.
+`learn` resumes exclusively from the server-provided `SessionView.work_item`. Its interactive commands are `:ask`, `:answer`, `:quiz`, `:resume`, `:assessment`, `:progress`, `:route`, `:reviews`, `:clear`, `:end`, `:complete`, `:quit`, and `:help`. `:answer` starts a multiline block terminated by a line containing only `.`. Plain text is an answer only while awaiting a response, and is a follow-up question only while showing a free answer. `:quit` exits the client without ending the server session.
+
+The CLI uses the server's allowed actions and assessment decisions. Provisional feedback is not shown as accepted evidence and must be confirmed, overridden, or voided before feedback can be acknowledged. Objective activities use the deterministic server assessment path; open activities request a frozen proposal. A successful mutation is immediately followed by a fresh session read. A version conflict refreshes the work item but never automatically replays an answer or decision.
+
+Free answers are explicitly non-scoring. Enter on a free answer calls `resume_focus`; converting a free answer to a quiz follows the normal attempt and assessment flow, then still requires an explicit resume after feedback.
 
 ## Local State
 
@@ -47,6 +58,8 @@ Pairing first writes a fail-closed pending journal, then saves the credential an
 
 The default server is `http://127.0.0.1:8080`. Plain HTTP to a non-loopback host is rejected unless explicitly approved with `--allow-insecure-http`; every such network command prints a warning. URLs with embedded credentials, query strings, or fragments are rejected. Redirects are disabled.
 
-The default color mode is `never`. `edu-agent clear` clears only the visible application viewport in a TTY and redraws a neutral `>` prompt. It does not clear terminal scrollback, shell history, OS audit records, remote terminal logs, server events, projections, or credentials. Non-TTY clear emits no control sequence and returns a diagnostic error. The implementation does not execute `clear`, `cls`, a shell, or another external command.
+The default color mode is `never`. `edu-agent clear`, interactive `:clear`, and Ctrl-L clear only the visible application viewport in a TTY and redraw a neutral `>` prompt. They do not clear terminal scrollback, shell history, OS audit records, remote terminal logs, server events, projections, or credentials. Non-TTY clear emits no control sequence and returns a diagnostic error. The implementation does not execute `clear`, `cls`, a shell, or another external command.
 
-This is an online client. Network failures do not create an offline business queue, and the CLI does not persist Markdown, answers, assessments, routes, progress, or session content.
+Text entered directly in a shell command, including `goal set` text, may be retained by shell history. Interactive `learn` keeps answers and free questions out of argv and does not create a persistent input history.
+
+This is an online client. Network failures do not create an offline business queue, and the CLI does not persist Markdown, goals, activities, attempts, answers, assessments, free questions, free answers, routes, evidence, progress, cursors, or pending operations. Proposal input is `go-cli-context-v1` and contains only authoritative work-item records plus canonical retrieval IDs, ranges, slices, and hashes returned by the server.

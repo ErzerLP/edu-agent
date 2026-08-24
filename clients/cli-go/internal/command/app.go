@@ -49,6 +49,20 @@ type APIClient interface {
 	RevokeDevice(context.Context, string) error
 	KnowledgeHead(context.Context) (api.KnowledgeRevision, error)
 	ImportKnowledge(context.Context, api.ImportRequest) (api.ImportResult, error)
+	RetrieveKnowledge(context.Context, api.KnowledgeRetrievalRequest) (api.KnowledgeRetrievalResult, error)
+	CreateGoal(context.Context, api.LearningGoalRequest) (api.GoalOperationResult, error)
+	CreateSession(context.Context, api.TutoringSessionRequest) (api.SessionOperationResult, error)
+	CreateProposal(context.Context, api.TutoringProposalRequest) (api.TutoringProposal, error)
+	ApplySessionAction(context.Context, string, api.TutoringAction) (api.SessionOperationResult, error)
+	DecideAssessment(context.Context, string, api.AssessmentDecisionRequest) (api.AssessmentDecisionOperationResult, error)
+	CurrentSession(context.Context) (api.SessionView, error)
+	Session(context.Context, string) (api.SessionView, error)
+	Timeline(context.Context, string, int, string) (api.TimelinePage, error)
+	Routes(context.Context, string, int, bool) (api.RoutesPage, error)
+	Node(context.Context, string) (api.NodeView, error)
+	Evidence(context.Context, string, int, string) (api.EvidencePage, error)
+	Reviews(context.Context, string, int, *time.Time) (api.ReviewsPage, error)
+	ProjectionStatus(context.Context) (api.ProjectionStatus, error)
 }
 
 type BuildInfo struct {
@@ -81,14 +95,15 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), Terminal: terminal.New(in, out, errOut),
 		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, Build: build,
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
-			return api.NewClient(serverURL, token, timeout, http.DefaultClient)
+			client := api.NewClient(serverURL, token, timeout, http.DefaultClient)
+			return client
 		},
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, knowledge, logout, or clear", ExitInput))
+		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput))
 	}
 	if err := a.dispatch(ctx, args); err != nil {
 		return a.fail(err)
@@ -96,6 +111,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	return ExitOK
 }
 
+// dispatch keeps command parsing centralized while workflows remain in focused files.
 func (a *App) dispatch(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "version":
@@ -119,6 +135,20 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		return a.runLogout(ctx, args[1:])
 	case "knowledge":
 		return a.runKnowledge(ctx, args[1:])
+	case "goal":
+		return a.runGoal(ctx, args[1:])
+	case "learn":
+		return a.runLearn(ctx, args[1:])
+	case "assessment":
+		return a.runAssessment(ctx, args[1:])
+	case "route":
+		return a.runRoute(ctx, args[1:])
+	case "progress":
+		return a.runProgress(ctx, args[1:])
+	case "evidence":
+		return a.runEvidence(ctx, args[1:])
+	case "reviews":
+		return a.runReviews(ctx, args[1:])
 	case "clear":
 		if len(args) != 1 {
 			return commandError("usage", "clear accepts no arguments", "run edu-agent clear", ExitInput)
@@ -131,7 +161,7 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		}
 		return nil
 	default:
-		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, knowledge, logout, or clear", ExitInput)
+		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput)
 	}
 }
 

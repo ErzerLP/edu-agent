@@ -79,6 +79,39 @@ func TestCoordinatorVoidsAssessmentAndInvalidatesEvidence(t *testing.T) {
 	}
 }
 
+func TestCoordinatorReturnsCurrentDispositionForReplacementValidationConflict(t *testing.T) {
+	activity, attempt, artifact := assessmentFixture()
+	sessionID := "10000000-0000-4000-8000-000000000034"
+	activity.ID = "10000000-0000-4000-8000-000000000035"
+	activity.SessionID = sessionID
+	activity.Type = ActivityObjective
+	attempt.ID = "10000000-0000-4000-8000-000000000036"
+	attempt.SessionID = sessionID
+	attempt.ActivityID = activity.ID
+	artifact.ID = "10000000-0000-4000-8000-000000000037"
+	artifact.SessionID = sessionID
+	artifact.ActivityID = activity.ID
+	artifact.AttemptID = attempt.ID
+	current := AssessmentDecision{ID: "10000000-0000-4000-8000-000000000038", AssessmentID: artifact.ID, Version: 1, Disposition: DispositionAccepted, Items: artifact.Items}
+	store := &proposalTestStore{
+		session: assessmentFeedbackSession(activity, attempt, 4), activity: activity, attempt: attempt,
+		assessment: artifact, decision: current,
+	}
+	service := newProposalTestService(t, store, &proposalTestRepository{}, nil)
+	command := AssessmentDecisionCommand{
+		Operation:                  coordinatorOperation("10000000-0000-4000-8000-000000000039", sessionID, 4),
+		Kind:                       "override",
+		ExpectedDispositionVersion: 1,
+		Reason:                     "manual correction",
+		Items:                      artifact.Items,
+	}
+	_, err := service.Decide(context.Background(), "90000000-0000-4000-8000-000000000001", artifact.ID, command)
+	var domain *Error
+	if !errors.As(err, &domain) || domain.Code != CodeAssessmentDispositionConflict || domain.CurrentDisposition != string(DispositionAccepted) || store.commits != 0 {
+		t.Fatalf("err=%v commits=%d", err, store.commits)
+	}
+}
+
 func TestA101DecideRequiresCurrentFeedbackAssessmentChainWithoutCommit(t *testing.T) {
 	activity, attempt, artifact := assessmentFixture()
 	artifact.SessionID = "10000000-0000-4000-8000-000000000040"

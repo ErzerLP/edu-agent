@@ -73,7 +73,7 @@ OpenAPI 是 client/server 共享契约。CLI 使用独立 DTO 和 HTTP client，
 
 # Open questions
 
-- [blocking] CONFIRM: 确认按上述范围交付独立在线Go CLI，并允许本child补充`SessionView.work_item`、provisional Feedback离态门禁、Routes `current_only`、FreeQuestion单调顺序字段、三平台原生CI门禁和本地credential修复命令；默认无颜色且不持久化学习内容，离线、MCP、Fast Note Sync、Rust、Web与知识自动维护继续留在后续child。
+无。
 
 # Verification expectations
 

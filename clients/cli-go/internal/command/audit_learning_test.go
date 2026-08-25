@@ -151,6 +151,232 @@ func TestLearnHelpCommandsAreContextLegal(t *testing.T) {
 	}
 }
 
+func TestLearnRouteActivePaginatesDueReviewForCurrentNode(t *testing.T) {
+	t.Parallel()
+	metadata := commandMetadata()
+	view := commandSessionView("RouteActive", "open", "", false, false)
+	view.WorkItem.AllowedActions = []string{"present_review"}
+	var reviewCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/learning/reviews" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+		if r.URL.Query().Get("limit") != "50" || r.URL.Query().Get("due_before") == "" {
+			t.Fatalf("query=%q", r.URL.RawQuery)
+		}
+		switch cursor := r.URL.Query().Get("cursor"); cursor {
+		case "":
+			reviewCalls.Add(1)
+			writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: metadata, Items: reviewSchedules(defaultPageLimit), NextCursor: "review-page-2"})
+		case "review-page-2":
+			reviewCalls.Add(1)
+			writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: metadata, Items: []api.ReviewSchedule{{NodeRevisionID: commandNodeRevision, Step: 1, DueAt: time.Now().UTC(), Intervals: []int64{86400}, PolicyVersion: "review-v1"}}})
+		default:
+			t.Fatalf("unexpected cursor %q", cursor)
+		}
+	}))
+	defer server.Close()
+	terminal := &fakeTerminal{lines: []string{"", ":quit"}}
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Terminal: terminal}
+	fresh, quit, err := app.learnRouteActive(t.Context(), api.NewClient(server.URL, "token", time.Second, nil), view)
+	if err != nil || !quit || fresh.Session.SessionID != view.Session.SessionID || reviewCalls.Load() != 2 || terminal.confirmCalls != 1 {
+		t.Fatalf("quit=%t session=%s reviews=%d confirms=%d err=%v", quit, fresh.Session.SessionID, reviewCalls.Load(), terminal.confirmCalls, err)
+	}
+}
+
+func TestLearnRouteActiveRestartsDueReviewsAfterStaleCursor(t *testing.T) {
+	t.Parallel()
+	oldMetadata := commandMetadata()
+	newMetadata := oldMetadata
+	newMetadata.AsOfEventSeq++
+	newMetadata.Generation = "dd000000-0000-4000-8000-000000000006"
+	view := commandSessionView("RouteActive", "open", "", false, false)
+	view.WorkItem.AllowedActions = []string{"present_review"}
+	freshView := view
+	freshView.Metadata = newMetadata
+	var reviewCalls, currentCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/tutoring/sessions/current":
+			currentCalls.Add(1)
+			writeJSONTest(w, http.StatusOK, freshView)
+		case "/v1/learning/reviews":
+			call := reviewCalls.Add(1)
+			cursor := r.URL.Query().Get("cursor")
+			switch {
+			case call == 1 && cursor == "":
+				writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: oldMetadata, Items: reviewSchedules(defaultPageLimit), NextCursor: "stale-review"})
+			case call == 2 && cursor == "stale-review":
+				writeJSONTest(w, http.StatusConflict, api.ErrorResponse{Error: api.ErrorBody{Code: "stale_cursor", Message: "changed", RequestID: "request-stale-review"}})
+			case call == 3 && cursor == "":
+				writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: newMetadata, Items: []api.ReviewSchedule{{NodeRevisionID: commandNodeRevision, Step: 1, DueAt: time.Now().UTC(), Intervals: []int64{86400}, PolicyVersion: "review-v1"}}})
+			default:
+				t.Fatalf("unexpected review call=%d cursor=%q", call, cursor)
+			}
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	terminal := &fakeTerminal{lines: []string{"", ":quit"}}
+	errOut := &bytes.Buffer{}
+	app := &App{Out: &bytes.Buffer{}, Err: errOut, Terminal: terminal}
+	_, quit, err := app.learnRouteActive(t.Context(), api.NewClient(server.URL, "token", time.Second, nil), view)
+	if err != nil || !quit || reviewCalls.Load() != 3 || currentCalls.Load() != 1 || terminal.confirmCalls != 1 || !strings.Contains(errOut.String(), "stale_cursor") {
+		t.Fatalf("quit=%t reviews=%d current=%d confirms=%d err=%v warnings=%q", quit, reviewCalls.Load(), currentCalls.Load(), terminal.confirmCalls, err, errOut.String())
+	}
+}
+
+func TestProgressAllPaginatesEvidenceAndReviews(t *testing.T) {
+	t.Parallel()
+	metadata := commandMetadata()
+	var evidenceCalls, reviewCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/learning/projections/status":
+			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
+		case "/v1/tutoring/sessions/current":
+			writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-no-session"}})
+		case "/v1/learning/routes":
+			writeJSONTest(w, http.StatusOK, api.RoutesPage{Metadata: metadata, Items: []api.RouteProjection{}})
+		case "/v1/learning/evidence":
+			evidenceCalls.Add(1)
+			if r.URL.Query().Get("cursor") == "" {
+				writeJSONTest(w, http.StatusOK, api.EvidencePage{Metadata: metadata, Items: make([]api.AcceptedEvidence, defaultPageLimit), NextCursor: "evidence-page-2"})
+			} else if r.URL.Query().Get("cursor") == "evidence-page-2" {
+				writeJSONTest(w, http.StatusOK, api.EvidencePage{Metadata: metadata, Items: []api.AcceptedEvidence{{EvidenceID: "99000000-0000-4000-8000-000000000001"}}})
+			} else {
+				t.Fatalf("unexpected evidence cursor %q", r.URL.Query().Get("cursor"))
+			}
+		case "/v1/learning/reviews":
+			reviewCalls.Add(1)
+			if r.URL.Query().Get("cursor") == "" {
+				writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: metadata, Items: reviewSchedules(defaultPageLimit), NextCursor: "review-page-2"})
+			} else if r.URL.Query().Get("cursor") == "review-page-2" {
+				writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: metadata, Items: []api.ReviewSchedule{{NodeRevisionID: commandNodeRevision, Intervals: []int64{}}}})
+			} else {
+				t.Fatalf("unexpected review cursor %q", r.URL.Query().Get("cursor"))
+			}
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	configStore, credentialStore := pairedStores(server.URL, "token")
+	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"progress", "--all"}); exit != ExitOK || evidenceCalls.Load() != 2 || reviewCalls.Load() != 2 || !strings.Contains(out.String(), "Evidence: 51 bounded items") || !strings.Contains(out.String(), "Reviews: 51 bounded items") || strings.Contains(errOut.String(), "warning[truncated]") {
+		t.Fatalf("exit=%d evidence=%d reviews=%d out=%q err=%q", exit, evidenceCalls.Load(), reviewCalls.Load(), out.String(), errOut.String())
+	}
+}
+
+func TestProgressAllEvidenceStaleCursorRestartsWholeSnapshot(t *testing.T) {
+	oldMetadata := commandMetadata()
+	newMetadata := oldMetadata
+	newMetadata.AsOfEventSeq++
+	newMetadata.Generation = "dd000000-0000-4000-8000-000000000007"
+	var statusCalls, routeCalls, evidenceCalls, reviewCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/learning/projections/status":
+			metadata := oldMetadata
+			if statusCalls.Add(1) > 1 {
+				metadata = newMetadata
+			}
+			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
+		case "/v1/tutoring/sessions/current":
+			writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-no-session"}})
+		case "/v1/learning/routes":
+			metadata := oldMetadata
+			if routeCalls.Add(1) > 1 {
+				metadata = newMetadata
+			}
+			writeJSONTest(w, http.StatusOK, api.RoutesPage{Metadata: metadata, Items: []api.RouteProjection{}})
+		case "/v1/learning/evidence":
+			call := evidenceCalls.Add(1)
+			switch {
+			case call == 1 && r.URL.Query().Get("cursor") == "":
+				writeJSONTest(w, http.StatusOK, api.EvidencePage{Metadata: oldMetadata, Items: make([]api.AcceptedEvidence, defaultPageLimit), NextCursor: "stale-evidence"})
+			case call == 2 && r.URL.Query().Get("cursor") == "stale-evidence":
+				writeJSONTest(w, http.StatusConflict, api.ErrorResponse{Error: api.ErrorBody{Code: "stale_cursor", Message: "changed", RequestID: "request-stale-evidence"}})
+			case call == 3 && r.URL.Query().Get("cursor") == "":
+				writeJSONTest(w, http.StatusOK, api.EvidencePage{Metadata: newMetadata, Items: []api.AcceptedEvidence{{EvidenceID: "99000000-0000-4000-8000-000000000002"}}})
+			default:
+				t.Fatalf("unexpected evidence call=%d cursor=%q", call, r.URL.Query().Get("cursor"))
+			}
+		case "/v1/learning/reviews":
+			reviewCalls.Add(1)
+			writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: newMetadata, Items: []api.ReviewSchedule{{NodeRevisionID: commandNodeRevision, Intervals: []int64{}}}})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	configStore, credentialStore := pairedStores(server.URL, "token")
+	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"progress", "--all"}); exit != ExitOK || statusCalls.Load() != 2 || routeCalls.Load() != 2 || evidenceCalls.Load() != 3 || reviewCalls.Load() != 1 || !strings.Contains(out.String(), "Evidence: 1 bounded items") || !strings.Contains(errOut.String(), "stale_cursor") {
+		t.Fatalf("exit=%d status=%d routes=%d evidence=%d reviews=%d out=%q err=%q", exit, statusCalls.Load(), routeCalls.Load(), evidenceCalls.Load(), reviewCalls.Load(), out.String(), errOut.String())
+	}
+}
+
+func TestLearnRouteActiveFailsClosedWhenDueReviewExceedsPageBudget(t *testing.T) {
+	t.Parallel()
+	metadata := commandMetadata()
+	view := commandSessionView("RouteActive", "open", "", false, false)
+	view.WorkItem.AllowedActions = []string{"present_review", "issue_activity"}
+	var reviewCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/learning/reviews" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+		reviewCalls.Add(1)
+		writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: metadata, Items: reviewSchedules(defaultPageLimit), NextCursor: "more-reviews"})
+	}))
+	defer server.Close()
+	terminal := &fakeTerminal{lines: []string{""}}
+	app := &App{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}, Terminal: terminal}
+	_, _, err := app.learnRouteActive(t.Context(), api.NewClient(server.URL, "token", time.Second, nil), view)
+	if err == nil || !strings.Contains(err.Error(), "review_lookup_truncated") || reviewCalls.Load() != maxProgressPages || terminal.confirmCalls != 0 {
+		t.Fatalf("reviews=%d confirms=%d err=%v", reviewCalls.Load(), terminal.confirmCalls, err)
+	}
+}
+
+func TestProgressAllMarksEvidencePageBudgetTruncated(t *testing.T) {
+	t.Parallel()
+	metadata := commandMetadata()
+	var evidenceCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/learning/projections/status":
+			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
+		case "/v1/tutoring/sessions/current":
+			writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-no-session"}})
+		case "/v1/learning/routes":
+			writeJSONTest(w, http.StatusOK, api.RoutesPage{Metadata: metadata, Items: []api.RouteProjection{}})
+		case "/v1/learning/evidence":
+			evidenceCalls.Add(1)
+			writeJSONTest(w, http.StatusOK, api.EvidencePage{Metadata: metadata, Items: make([]api.AcceptedEvidence, defaultPageLimit), NextCursor: "more-evidence"})
+		case "/v1/learning/reviews":
+			writeJSONTest(w, http.StatusOK, api.ReviewsPage{Metadata: metadata, Items: []api.ReviewSchedule{}})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+	configStore, credentialStore := pairedStores(server.URL, "token")
+	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"progress", "--all"}); exit != ExitOK || evidenceCalls.Load() != maxProgressPages || !strings.Contains(out.String(), "Evidence: 500 bounded items") || !strings.Contains(errOut.String(), "warning[truncated]") {
+		t.Fatalf("exit=%d evidence=%d out=%q err=%q", exit, evidenceCalls.Load(), out.String(), errOut.String())
+	}
+}
+
+func reviewSchedules(count int) []api.ReviewSchedule {
+	items := make([]api.ReviewSchedule, count)
+	for index := range items {
+		items[index].Intervals = []int64{}
+	}
+	return items
+}
+
 func TestProgressAllRestartsWithoutCombiningStaleGeneration(t *testing.T) {
 	t.Parallel()
 	oldNode := "55000000-0000-4000-8000-000000000091"

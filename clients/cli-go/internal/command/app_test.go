@@ -122,11 +122,12 @@ func (s *memoryCredentialStore) Delete() error {
 }
 
 type fakeTerminal struct {
-	secret     string
-	lines      []string
-	confirmed  bool
-	clearErr   error
-	clearCalls int
+	secret       string
+	lines        []string
+	confirmed    bool
+	confirmCalls int
+	clearErr     error
+	clearCalls   int
 }
 
 func (t *fakeTerminal) ReadSecret(string) (string, error) { return t.secret, nil }
@@ -138,7 +139,10 @@ func (t *fakeTerminal) ReadLine(string) (string, error) {
 	t.lines = t.lines[1:]
 	return value, nil
 }
-func (t *fakeTerminal) Confirm(string) (bool, error) { return t.confirmed, nil }
+func (t *fakeTerminal) Confirm(string) (bool, error) {
+	t.confirmCalls++
+	return t.confirmed, nil
+}
 func (t *fakeTerminal) Clear() error {
 	t.clearCalls++
 	return t.clearErr

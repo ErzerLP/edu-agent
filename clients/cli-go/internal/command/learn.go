@@ -212,24 +212,24 @@ func (a *App) learnRouteActive(ctx context.Context, client APIClient, view api.S
 		return a.handleLearnCommand(ctx, client, view, trimmed)
 	}
 	if allowed(view.WorkItem.AllowedActions, "present_review") {
-		now := time.Now().UTC()
-		reviews, err := client.Reviews(ctx, "", defaultPageLimit, &now)
+		resolvedView, review, metadata, refreshRequired, err := a.currentDueReview(ctx, client, view, time.Now().UTC())
 		if err != nil {
-			return view, false, mapAPIError(err)
+			return view, false, err
 		}
-		printProjectionWarning(a.Err, reviews.Metadata)
-		for _, review := range reviews.Items {
-			if review.NodeRevisionID == view.Session.Focus.FocusNodeRevisionID {
-				confirmed, confirmErr := a.Terminal.Confirm("A review is due for the current node. Present it now?")
-				if confirmErr != nil {
-					return view, false, commandError("confirmation_failed", "review confirmation could not be read", "retry in an interactive terminal", ExitInput)
-				}
-				if confirmed {
-					fresh, err := a.issueRouteActivity(ctx, client, view, "present_review")
-					return fresh, false, err
-				}
-				break
-			}
+		if refreshRequired {
+			return resolvedView, false, nil
+		}
+		view = resolvedView
+		for _, pageMetadata := range metadata {
+			printProjectionWarning(a.Err, pageMetadata)
+		}
+		confirmed, confirmErr := a.Terminal.Confirm("A review is due for the current node. Present it now?")
+		if confirmErr != nil {
+			return view, false, commandError("confirmation_failed", "review confirmation could not be read", "retry in an interactive terminal", ExitInput)
+		}
+		if confirmed && review != nil {
+			fresh, err := a.issueRouteActivity(ctx, client, view, "present_review")
+			return fresh, false, err
 		}
 	}
 	if allowed(view.WorkItem.AllowedActions, "record_exposure") {
@@ -281,6 +281,48 @@ func (a *App) learnRouteActive(ctx context.Context, client APIClient, view api.S
 	}
 	fresh, err := a.issueRouteActivity(ctx, client, view, "issue_activity")
 	return fresh, false, err
+}
+
+func (a *App) currentDueReview(ctx context.Context, client APIClient, view api.SessionView, dueBefore time.Time) (api.SessionView, *api.ReviewSchedule, []api.ProjectionMetadata, bool, error) {
+	current := view
+	for attempt := 0; attempt <= progressSnapshotRestartLimit; attempt++ {
+		pages, err := collectProjectionPages(current.Metadata.Generation, maxProgressPages, func(cursor string) (api.ProjectionMetadata, []api.ReviewSchedule, string, error) {
+			page, pageErr := client.Reviews(ctx, cursor, defaultPageLimit, &dueBefore)
+			return page.Metadata, page.Items, page.NextCursor, pageErr
+		})
+		if err != nil {
+			return view, nil, nil, false, err
+		}
+		if pages.restartReason == "" {
+			for index := range pages.items {
+				if pages.items[index].NodeRevisionID == current.Session.Focus.FocusNodeRevisionID {
+					return current, &pages.items[index], pages.metadata, false, nil
+				}
+			}
+			if pages.truncated {
+				return view, nil, nil, false, commandError("review_lookup_truncated", "the due review for the current node is beyond the bounded page budget", "run reviews to inspect due items, then retry learn", ExitConflict)
+			}
+			return view, nil, nil, false, commandError("projection_unavailable", "the session allows a review but no due review exists for the current node", "retry after the learning projection is rebuilt", ExitUnavailable)
+		}
+		if attempt == progressSnapshotRestartLimit {
+			return view, nil, nil, false, commandError("unstable_review_snapshot", "due reviews changed while locating the current node", "retry after the projection stabilizes", ExitConflict)
+		}
+		if pages.restartReason == "stale_cursor" {
+			_, _ = fmt.Fprintln(a.Err, "warning[stale_cursor]: due reviews changed; restarting without combining old pages")
+		} else {
+			_, _ = fmt.Fprintln(a.Err, "warning[progress_snapshot]: review generation changed; restarting without combining old pages")
+		}
+		fresh, refetchErr := refetchSession(ctx, client, current.Session.SessionID)
+		if refetchErr != nil {
+			return view, nil, nil, false, mapAPIError(refetchErr)
+		}
+		if fresh.Session.State != "RouteActive" || fresh.WorkItem == nil || !allowed(fresh.WorkItem.AllowedActions, "present_review") ||
+			fresh.Session.AggregateVersion != current.Session.AggregateVersion || fresh.Session.Focus.FocusNodeRevisionID != current.Session.Focus.FocusNodeRevisionID {
+			return fresh, nil, nil, true, nil
+		}
+		current = fresh
+	}
+	return view, nil, nil, false, commandError("unstable_review_snapshot", "due reviews changed while locating the current node", "retry after the projection stabilizes", ExitConflict)
 }
 
 func (a *App) issueRouteActivity(ctx context.Context, client APIClient, view api.SessionView, action string) (api.SessionView, error) {

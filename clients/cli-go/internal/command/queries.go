@@ -206,14 +206,16 @@ func printReviewsPage(out, errOut interface{ Write([]byte) (int, error) }, page 
 const progressSnapshotRestartLimit = 1
 
 type progressSnapshot struct {
-	status        api.ProjectionStatus
-	view          api.SessionView
-	active        bool
-	nodes         []api.NodeView
-	routeMetadata []api.ProjectionMetadata
-	truncated     bool
-	evidence      api.EvidencePage
-	reviews       api.ReviewsPage
+	status           api.ProjectionStatus
+	view             api.SessionView
+	active           bool
+	nodes            []api.NodeView
+	routeMetadata    []api.ProjectionMetadata
+	evidenceMetadata []api.ProjectionMetadata
+	reviewMetadata   []api.ProjectionMetadata
+	truncated        bool
+	evidence         api.EvidencePage
+	reviews          api.ReviewsPage
 }
 
 type progressRouteSnapshot struct {
@@ -262,9 +264,17 @@ func (a *App) runProgress(ctx context.Context, args []string) error {
 			_, _ = fmt.Fprintf(a.Out, "Review: step=%d due=%s\n", node.Node.Review.Step, node.Node.Review.DueAt.UTC().Format("2006-01-02T15:04:05Z"))
 		}
 	}
-	printProjectionWarning(a.Err, snapshot.evidence.Metadata)
-	printProjectionWarning(a.Err, snapshot.reviews.Metadata)
-	_, _ = fmt.Fprintf(a.Out, "Evidence: %d current-page items\nReviews: %d current-page items\n", len(snapshot.evidence.Items), len(snapshot.reviews.Items))
+	for _, metadata := range snapshot.evidenceMetadata {
+		printProjectionWarning(a.Err, metadata)
+	}
+	for _, metadata := range snapshot.reviewMetadata {
+		printProjectionWarning(a.Err, metadata)
+	}
+	itemScope := "current-page"
+	if all {
+		itemScope = "bounded"
+	}
+	_, _ = fmt.Fprintf(a.Out, "Evidence: %d %s items\nReviews: %d %s items\n", len(snapshot.evidence.Items), itemScope, len(snapshot.reviews.Items), itemScope)
 	if snapshot.truncated || snapshot.evidence.NextCursor != "" || snapshot.reviews.NextCursor != "" {
 		_, _ = fmt.Fprintln(a.Err, "warning[truncated]: progress is bounded; additional route, evidence, or review pages exist")
 	}
@@ -328,21 +338,44 @@ func (a *App) progressSnapshotAttempt(ctx context.Context, client APIClient, all
 		}
 		nodes = append(nodes, node)
 	}
-	evidence, err := client.Evidence(ctx, "", defaultPageLimit, "")
+	pageLimit := 1
+	if all {
+		pageLimit = maxProgressPages
+	}
+	evidencePages, err := collectProjectionPages(generation, pageLimit, func(cursor string) (api.ProjectionMetadata, []api.AcceptedEvidence, string, error) {
+		page, pageErr := client.Evidence(ctx, cursor, defaultPageLimit, "")
+		return page.Metadata, page.Items, page.NextCursor, pageErr
+	})
 	if err != nil {
-		return progressSnapshot{}, "", mapAPIError(err)
+		return progressSnapshot{}, "", err
 	}
-	if !adoptProgressGeneration(&generation, evidence.Metadata.Generation) {
-		return progressSnapshot{}, "generation_mismatch", nil
+	if evidencePages.restartReason != "" {
+		return progressSnapshot{}, evidencePages.restartReason, nil
 	}
-	reviews, err := client.Reviews(ctx, "", defaultPageLimit, nil)
+	generation = evidencePages.generation
+	reviewPages, err := collectProjectionPages(generation, pageLimit, func(cursor string) (api.ProjectionMetadata, []api.ReviewSchedule, string, error) {
+		page, pageErr := client.Reviews(ctx, cursor, defaultPageLimit, nil)
+		return page.Metadata, page.Items, page.NextCursor, pageErr
+	})
 	if err != nil {
-		return progressSnapshot{}, "", mapAPIError(err)
+		return progressSnapshot{}, "", err
 	}
-	if !adoptProgressGeneration(&generation, reviews.Metadata.Generation) {
-		return progressSnapshot{}, "generation_mismatch", nil
+	if reviewPages.restartReason != "" {
+		return progressSnapshot{}, reviewPages.restartReason, nil
 	}
-	return progressSnapshot{status: status, view: view, active: active, nodes: nodes, routeMetadata: routes.metadata, truncated: routes.truncated, evidence: evidence, reviews: reviews}, "", nil
+	evidence := api.EvidencePage{Items: evidencePages.items, NextCursor: evidencePages.nextCursor}
+	if len(evidencePages.metadata) != 0 {
+		evidence.Metadata = evidencePages.metadata[0]
+	}
+	reviews := api.ReviewsPage{Items: reviewPages.items, NextCursor: reviewPages.nextCursor}
+	if len(reviewPages.metadata) != 0 {
+		reviews.Metadata = reviewPages.metadata[0]
+	}
+	return progressSnapshot{
+		status: status, view: view, active: active, nodes: nodes,
+		routeMetadata: routes.metadata, evidenceMetadata: evidencePages.metadata, reviewMetadata: reviewPages.metadata,
+		truncated: routes.truncated || evidencePages.truncated || reviewPages.truncated, evidence: evidence, reviews: reviews,
+	}, "", nil
 }
 
 func adoptProgressGeneration(expected *string, observed string) bool {
@@ -351,6 +384,47 @@ func adoptProgressGeneration(expected *string, observed string) bool {
 		return true
 	}
 	return *expected == observed
+}
+
+type boundedPageSnapshot[T any] struct {
+	items         []T
+	metadata      []api.ProjectionMetadata
+	nextCursor    string
+	truncated     bool
+	generation    string
+	restartReason string
+}
+
+func collectProjectionPages[T any](expectedGeneration string, maxPages int, fetch func(string) (api.ProjectionMetadata, []T, string, error)) (boundedPageSnapshot[T], error) {
+	result := boundedPageSnapshot[T]{generation: expectedGeneration}
+	if maxPages < 1 {
+		maxPages = 1
+	}
+	cursor := ""
+	for pageIndex := 0; pageIndex < maxPages; pageIndex++ {
+		metadata, items, nextCursor, err := fetch(cursor)
+		if err != nil {
+			var apiErr *api.APIError
+			if cursor != "" && errors.As(err, &apiErr) && apiErr.Code == "stale_cursor" {
+				result.restartReason = "stale_cursor"
+				return result, nil
+			}
+			return boundedPageSnapshot[T]{}, mapAPIError(err)
+		}
+		if !adoptProgressGeneration(&result.generation, metadata.Generation) {
+			result.restartReason = "generation_mismatch"
+			return result, nil
+		}
+		result.metadata = append(result.metadata, metadata)
+		result.items = append(result.items, items...)
+		result.nextCursor = nextCursor
+		result.truncated = nextCursor != ""
+		if nextCursor == "" {
+			return result, nil
+		}
+		cursor = nextCursor
+	}
+	return result, nil
 }
 
 func progressBaseNodeIDs(view api.SessionView, active bool) []string {

@@ -5,12 +5,14 @@ package terminal
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -20,24 +22,43 @@ import (
 func runNativeSecretProbe(secret string) ([]byte, string, error) {
 	const noEchoProbeTimeout = 250 * time.Millisecond
 	method := nativeSecretProbeMethod()
-	command := exec.Command(os.Args[0], "-test.run=^TestPlatformPairSecretInput$")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestPlatformPairSecretInput$")
 	command.Env = append(os.Environ(), nativeSecretHelperEnvironment+"=1")
-	terminalFile, err := pty.Start(command)
+	terminalFile, controlFile, err := pty.Open()
 	if err != nil {
-		return nil, method, fmt.Errorf("start PTY helper: %w", err)
+		return nil, method, fmt.Errorf("open PTY helper: %w", err)
 	}
 	defer terminalFile.Close()
+	defer controlFile.Close()
+	command.Stdin = controlFile
+	command.Stdout = controlFile
+	command.Stderr = controlFile
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	if err := command.Start(); err != nil {
+		return nil, method, fmt.Errorf("start PTY helper: %w", err)
+	}
+	stopTimeoutIO := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = controlFile.Close()
+			_ = terminalFile.Close()
+		case <-stopTimeoutIO:
+		}
+	}()
+	defer close(stopTimeoutIO)
 	finished := false
 	defer func() {
 		if !finished && command.Process != nil {
 			_ = command.Process.Kill()
+			_ = terminalFile.Close()
+			_ = controlFile.Close()
 			_ = command.Wait()
 		}
 	}()
 
-	if err := terminalFile.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return nil, method, fmt.Errorf("set PTY read deadline: %w", err)
-	}
 	reader := bufio.NewReader(terminalFile)
 	var output bytes.Buffer
 	for !bytes.Contains(output.Bytes(), []byte(nativeSecretPrompt)) {
@@ -47,8 +68,11 @@ func runNativeSecretProbe(secret string) ([]byte, string, error) {
 		}
 		_ = output.WriteByte(value)
 	}
-	if err := waitForPlatformSecretReady(terminalFile, 2*time.Second); err != nil {
+	if err := waitForPlatformSecretReady(controlFile, 2*time.Second); err != nil {
 		return nil, method, err
+	}
+	if err := controlFile.Close(); err != nil {
+		return nil, method, fmt.Errorf("close parent PTY control file: %w", err)
 	}
 	probe, remainder := splitNativeSecretFixture(secret)
 	if _, err := io.WriteString(terminalFile, probe); err != nil {
@@ -59,9 +83,6 @@ func runNativeSecretProbe(secret string) ([]byte, string, error) {
 	}
 	if _, err := io.WriteString(terminalFile, remainder+"\n"); err != nil {
 		return nil, method, fmt.Errorf("write native secret remainder: %w", err)
-	}
-	if err := terminalFile.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return nil, method, fmt.Errorf("reset PTY read deadline: %w", err)
 	}
 	outputRemainder, readErr := io.ReadAll(reader)
 	output.Write(outputRemainder)
@@ -80,13 +101,10 @@ func nativeSecretProbeMethod() string {
 	if runtime.GOOS == "linux" {
 		return "linux-pty+xterm-readpassword+termios-echo-check+input-echo-probe+final-fragment-rejection"
 	}
-	return "darwin-pty+xterm-readpassword+input-echo-probe+final-fragment-rejection"
+	return "darwin-pty+xterm-readpassword+termios-echo-check+input-echo-probe+final-fragment-rejection"
 }
 
 func waitForPlatformSecretReady(file *os.File, timeout time.Duration) error {
-	if runtime.GOOS != "linux" {
-		return nil
-	}
 	deadline := time.Now().Add(timeout)
 	for {
 		disabled, err := nativeEchoDisabled(file)

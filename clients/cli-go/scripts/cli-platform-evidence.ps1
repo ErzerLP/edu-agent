@@ -121,7 +121,7 @@ switch ($env:RUNNER_OS_NAME) {
     }
     "macOS" {
         $rootConfinementMethod = "root-handle+openat-o_nofollow"
-        $hiddenInputMethod = "darwin-pty+xterm-readpassword+input-echo-probe+final-fragment-rejection"
+        $hiddenInputMethod = "darwin-pty+xterm-readpassword+termios-echo-check+input-echo-probe+final-fragment-rejection"
         $clearMethod = "production-clearscreen+csi-output"
     }
     "Windows" {

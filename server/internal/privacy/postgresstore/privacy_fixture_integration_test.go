@@ -482,8 +482,8 @@ func seedLearningTutoringMarkerFixture(t *testing.T, pool *pgxpool.Pool, fixture
 		fixture.nodeRevisionID, fixture.activityID, fixture.attemptID, fixture.marker)
 	mustExecPrivacyFixture(t, tx, `
 		INSERT INTO tutoring_free_questions(
-			id,session_id,focus_frame_id,question_text,knowledge_revision_id,references_snapshot,actor_device_id,received_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, fixture.freeQuestionID, fixture.sessionID, fixture.focusFrameID,
+			id,session_id,focus_frame_id,session_aggregate_version,question_text,knowledge_revision_id,references_snapshot,actor_device_id,received_at)
+		VALUES($1,$2,$3,1,$4,$5,$6,$7,$8)`, fixture.freeQuestionID, fixture.sessionID, fixture.focusFrameID,
 		fixture.marker, fixture.knowledgeRevisionID, markerJSON, fixture.deviceID, now)
 	mustExecPrivacyFixture(t, tx, `
 		INSERT INTO tutoring_proposal_requests(

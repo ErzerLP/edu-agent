@@ -617,13 +617,20 @@ func (a *API) handleLearningTimeline(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 func (a *API) handleLearningRoutes(w http.ResponseWriter, r *http.Request) {
-	query, ok := strictLearningQuery(w, r, "cursor", "limit")
+	query, ok := strictLearningQuery(w, r, "cursor", "limit", "current_only")
 	if !ok {
 		return
 	}
 	page, ok := learningPage(w, r, query)
 	if !ok {
 		return
+	}
+	if values, present := query["current_only"]; present {
+		if values[0] != "true" && values[0] != "false" {
+			writeLearningInvalid(w, r)
+			return
+		}
+		page.CurrentOnly = values[0] == "true"
 	}
 	result, err := a.learning.Routes(r.Context(), page)
 	if err != nil {
@@ -981,6 +988,8 @@ func (a *API) writeLearningFailure(w http.ResponseWriter, r *http.Request, opera
 		status, message = http.StatusServiceUnavailable, "Model is unavailable"
 	case learning.CodeIdempotencyConflict, learning.CodeVersionConflict, learning.CodeInvalidTransition, learning.CodeActivityStateConflict, learning.CodeStaleProposal, learning.CodeAssessmentDispositionConflict, learning.CodeFocusFrameInvalidated, learning.CodeStaleCursor:
 		status, message = http.StatusConflict, "Learning request conflicts with current state"
+	case learning.CodeContentRedacted:
+		status, message = http.StatusServiceUnavailable, "Learning content is unavailable"
 	case learning.CodeUnsupportedEventSchema, learning.CodeProjectionUnavailable:
 		status, message = http.StatusServiceUnavailable, "Learning projection is unavailable"
 	case "":

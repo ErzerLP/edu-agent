@@ -1,0 +1,45 @@
+name: CLI native platform evidence
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-cli:
+    name: native ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Install exact Go toolchain
+        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
+        with:
+          go-version: 1.26.6
+          cache-dependency-path: clients/cli-go/go.sum
+      - name: Run native CLI evidence checks
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ github.sha }}
+          RUNNER_OS_NAME: ${{ runner.os }}
+          RUNNER_ARCH_NAME: ${{ runner.arch }}
+        run: ./clients/cli-go/scripts/cli-platform-evidence.ps1
+      - name: Upload SHA-bound native evidence
+        if: always()
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: cli-native-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: clients/cli-go/platform-evidence/${{ runner.os }}-${{ runner.arch }}/
+          if-no-files-found: error
+          retention-days: 14

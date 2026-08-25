@@ -533,31 +533,11 @@ func (s *Store) LoadSession(ctx context.Context, id string) (tutoring.Session, e
 }
 
 func (s *Store) CurrentSession(ctx context.Context) (learning.SessionView, error) {
-	return withProjectionRead(ctx, s, func(tx pgx.Tx, metadata learning.ProjectionMetadata) (learning.SessionView, error) {
-		var raw, stats []byte
-		err := tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.item->'session'->>'state'<>'Completed' ORDER BY s.updated_event_seq DESC,s.session_id DESC LIMIT 1`, metadata.GenerationID).Scan(&raw, &stats)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return learning.SessionView{}, &learning.Error{Code: learning.CodeNotFound}
-		}
-		if err != nil {
-			return learning.SessionView{}, fmt.Errorf("read current projected session: %w", err)
-		}
-		return sessionViewFromProjection(metadata, raw, stats)
-	})
+	return s.readSessionView(ctx, "", true)
 }
 
 func (s *Store) Session(ctx context.Context, id string) (learning.SessionView, error) {
-	return withProjectionRead(ctx, s, func(tx pgx.Tx, metadata learning.ProjectionMetadata) (learning.SessionView, error) {
-		var raw, stats []byte
-		err := tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.session_id=$2`, metadata.GenerationID, id).Scan(&raw, &stats)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return learning.SessionView{}, &learning.Error{Code: learning.CodeNotFound}
-		}
-		if err != nil {
-			return learning.SessionView{}, fmt.Errorf("read projected session: %w", err)
-		}
-		return sessionViewFromProjection(metadata, raw, stats)
-	})
+	return s.readSessionView(ctx, id, false)
 }
 
 func sessionViewFromProjection(metadata learning.ProjectionMetadata, raw, rawStats []byte) (learning.SessionView, error) {
@@ -620,7 +600,11 @@ func (s *Store) Timeline(ctx context.Context, query learning.TimelineQuery) (lea
 }
 func (s *Store) Routes(ctx context.Context, page learning.CursorPageRequest) (learning.RoutesPage, error) {
 	return withProjectionRead(ctx, s, func(tx pgx.Tx, metadata learning.ProjectionMetadata) (learning.RoutesPage, error) {
-		keys, err := decodeCursor(page.Cursor, "routes", metadata.GenerationID, metadata.AsOfEventSequence, 2)
+		cursorKind := "routes"
+		if page.CurrentOnly {
+			cursorKind = "routes-current"
+		}
+		keys, err := decodeCursor(page.Cursor, cursorKind, metadata.GenerationID, metadata.AsOfEventSequence, 2)
 		if err != nil {
 			return learning.RoutesPage{}, err
 		}
@@ -634,7 +618,7 @@ func (s *Store) Routes(ctx context.Context, page learning.CursorPageRequest) (le
 			afterID = keys[1]
 		}
 		limit := normalizeLimit(page.Limit)
-		rows, err := tx.Query(ctx, `SELECT event_seq,route_revision_id,item FROM learning_projection_routes WHERE generation_id=$1 AND (event_seq,route_revision_id)>($2,$3) ORDER BY event_seq,route_revision_id LIMIT $4`, metadata.GenerationID, afterSeq, afterID, limit+1)
+		rows, err := tx.Query(ctx, `SELECT event_seq,route_revision_id,item FROM learning_projection_routes WHERE generation_id=$1 AND (event_seq,route_revision_id)>($2,$3) AND (NOT $4 OR is_current) ORDER BY event_seq,route_revision_id LIMIT $5`, metadata.GenerationID, afterSeq, afterID, page.CurrentOnly, limit+1)
 		if err != nil {
 			return learning.RoutesPage{}, err
 		}
@@ -664,7 +648,7 @@ func (s *Store) Routes(ctx context.Context, page learning.CursorPageRequest) (le
 		if len(result.Items) > limit {
 			result.Items = result.Items[:limit]
 			last := positions[limit-1]
-			result.NextCursor = encodeCursor("routes", metadata.GenerationID, metadata.AsOfEventSequence, strconv.FormatInt(last.sequence, 10), last.id)
+			result.NextCursor = encodeCursor(cursorKind, metadata.GenerationID, metadata.AsOfEventSequence, strconv.FormatInt(last.sequence, 10), last.id)
 		}
 		return result, nil
 	})

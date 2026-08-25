@@ -206,48 +206,84 @@ type assessmentLoadResult struct {
 
 func (s *Store) LoadAssessment(ctx context.Context, id string) (learning.AssessmentArtifact, learning.AssessmentDecision, error) {
 	loaded, err := withLearningLoaderRead(ctx, s, func(db learningLoaderDB) (assessmentLoadResult, error) {
-		var result assessmentLoadResult
-		var params []byte
-		var inputHash []byte
-		var risks []string
-		err := db.QueryRow(ctx, `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at FROM learning_assessments WHERE id=$1`, id).Scan(&result.artifact.ID, &result.artifact.SessionID, &result.artifact.AttemptID, &result.artifact.ActivityID, &result.artifact.ActivityRevision, &result.artifact.RubricComplete, &result.artifact.Confidence, &risks, &result.artifact.ModelID, &params, &result.artifact.PromptRevision, &inputHash, &result.artifact.Attempts, &result.artifact.AttemptCategories, &result.artifact.CreatedAt)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return result, &learning.Error{Code: learning.CodeNotFound}
-		}
-		if err != nil {
-			return result, fmt.Errorf("load assessment: %w", err)
-		}
-		_ = json.Unmarshal(params, &result.artifact.ModelParameters)
-		result.artifact.ProposalInputHash = hex.EncodeToString(inputHash)
-		for _, risk := range risks {
-			result.artifact.RiskFlags = append(result.artifact.RiskFlags, learning.RiskFlag(risk))
-		}
-		rows, err := db.Query(ctx, `SELECT rubric_item_id,conclusion,answer_start,answer_end,answer_quote,answer_quote_hash,knowledge_node_revision_id,knowledge_start,knowledge_end,knowledge_quote,knowledge_quote_hash,misconception_candidate FROM learning_assessment_items WHERE assessment_id=$1 ORDER BY ordinal`, id)
-		if err != nil {
-			return result, err
-		}
-		items, err := scanAssessmentItems(rows)
-		rows.Close()
-		if err != nil {
-			return result, err
-		}
-		result.artifact.Items = items
-		var conclusions []byte
-		var reason *string
-		err = db.QueryRow(ctx, `SELECT d.id,d.assessment_id,d.version,d.disposition,d.conclusions,d.reason,d.actor_device_id,d.created_at,d.replaces_decision_id,e.id FROM learning_assessment_decisions d LEFT JOIN learning_evidence e ON e.decision_id=d.id WHERE d.assessment_id=$1 ORDER BY d.version DESC LIMIT 1`, id).Scan(&result.decision.ID, &result.decision.AssessmentID, &result.decision.Version, &result.decision.Disposition, &conclusions, &reason, &result.decision.ActorDeviceID, &result.decision.CreatedAt, &result.decision.ReplacesDecisionID, &result.decision.ProducedEvidenceID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return result, &learning.Error{Code: learning.CodeNotFound, Reason: "assessment_decision_missing"}
-		}
-		if err != nil {
-			return result, err
-		}
-		result.decision.Reason = deref(reason)
-		if err := json.Unmarshal(conclusions, &result.decision.Items); err != nil {
-			return result, err
-		}
-		return result, nil
+		return loadAssessmentWith(ctx, db, id, false)
 	})
 	return loaded.artifact, loaded.decision, err
+}
+
+func (s *Store) LoadAssessmentForAttempt(ctx context.Context, attemptID string) (learning.AssessmentArtifact, learning.AssessmentDecision, error) {
+	loaded, err := withLearningLoaderRead(ctx, s, func(db learningLoaderDB) (assessmentLoadResult, error) {
+		return loadAssessmentWith(ctx, db, attemptID, true)
+	})
+	return loaded.artifact, loaded.decision, err
+}
+
+func loadAssessmentWith(ctx context.Context, db learningLoaderDB, key string, byAttempt bool) (assessmentLoadResult, error) {
+	var result assessmentLoadResult
+	var params []byte
+	var inputHash []byte
+	var risks []string
+	query := `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at FROM learning_assessments WHERE id=$1`
+	if byAttempt {
+		query = `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at FROM learning_assessments WHERE attempt_id=$1`
+	}
+	err := db.QueryRow(ctx, query, key).Scan(&result.artifact.ID, &result.artifact.SessionID, &result.artifact.AttemptID, &result.artifact.ActivityID, &result.artifact.ActivityRevision, &result.artifact.RubricComplete, &result.artifact.Confidence, &risks, &result.artifact.ModelID, &params, &result.artifact.PromptRevision, &inputHash, &result.artifact.Attempts, &result.artifact.AttemptCategories, &result.artifact.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, &learning.Error{Code: learning.CodeNotFound}
+	}
+	if err != nil {
+		return result, fmt.Errorf("load assessment: %w", err)
+	}
+	if err := json.Unmarshal(params, &result.artifact.ModelParameters); err != nil {
+		return result, fmt.Errorf("decode assessment model parameters: %w", err)
+	}
+	result.artifact.ProposalInputHash = hex.EncodeToString(inputHash)
+	for _, risk := range risks {
+		result.artifact.RiskFlags = append(result.artifact.RiskFlags, learning.RiskFlag(risk))
+	}
+	rows, err := db.Query(ctx, `SELECT rubric_item_id,conclusion,answer_start,answer_end,answer_quote,answer_quote_hash,knowledge_node_revision_id,knowledge_start,knowledge_end,knowledge_quote,knowledge_quote_hash,misconception_candidate FROM learning_assessment_items WHERE assessment_id=$1 ORDER BY ordinal`, result.artifact.ID)
+	if err != nil {
+		return result, err
+	}
+	items, err := scanAssessmentItems(rows)
+	rows.Close()
+	if err != nil {
+		return result, err
+	}
+	result.artifact.Items = items
+
+	decisionRows, err := db.Query(ctx, `SELECT d.id,d.assessment_id,d.version,d.disposition,d.conclusions,d.reason,d.actor_device_id,d.created_at,d.replaces_decision_id,e.id FROM learning_assessment_decisions d LEFT JOIN learning_evidence e ON e.decision_id=d.id WHERE d.assessment_id=$1 ORDER BY d.version,d.id`, result.artifact.ID)
+	if err != nil {
+		return result, err
+	}
+	defer decisionRows.Close()
+	expectedVersion := int64(1)
+	previousID := ""
+	for decisionRows.Next() {
+		var decision learning.AssessmentDecision
+		var conclusions []byte
+		var reason *string
+		if err := decisionRows.Scan(&decision.ID, &decision.AssessmentID, &decision.Version, &decision.Disposition, &conclusions, &reason, &decision.ActorDeviceID, &decision.CreatedAt, &decision.ReplacesDecisionID, &decision.ProducedEvidenceID); err != nil {
+			return result, err
+		}
+		decision.Reason = deref(reason)
+		if err := json.Unmarshal(conclusions, &decision.Items); err != nil {
+			return result, fmt.Errorf("decode assessment decision items: %w", err)
+		}
+		if decision.AssessmentID != result.artifact.ID || decision.Version != expectedVersion || (expectedVersion == 1 && decision.ReplacesDecisionID != nil) || (expectedVersion > 1 && (decision.ReplacesDecisionID == nil || *decision.ReplacesDecisionID != previousID)) {
+			return result, &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "assessment_decision_lineage"}
+		}
+		result.decision = decision
+		previousID = decision.ID
+		expectedVersion++
+	}
+	if err := decisionRows.Err(); err != nil {
+		return result, err
+	}
+	if expectedVersion == 1 {
+		return result, &learning.Error{Code: learning.CodeNotFound, Reason: "assessment_decision_missing"}
+	}
+	return result, nil
 }
 func (s *Store) LoadProposal(ctx context.Context, id string) (learning.ProposalArtifact, error) {
 	return withLearningLoaderRead(ctx, s, func(db learningLoaderDB) (learning.ProposalArtifact, error) {
@@ -271,6 +307,7 @@ type tutoringLoaderOwner interface {
 	LoadFreeQuestionWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeQuestion, error)
 	LoadFreeAnswerWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeAnswer, error)
 	LatestFreeQuestionWith(context.Context, tutoringpostgres.DBTX, string) (string, error)
+	LatestFreeQuestionForFrame(context.Context, string, string) (string, error)
 }
 
 func (s *Store) LoadFreeQuestion(ctx context.Context, id string) (tutoring.FreeQuestion, error) {
@@ -351,6 +388,15 @@ func (s *Store) LatestFreeQuestion(ctx context.Context, sessionID string) (strin
 		id, err := owner.LatestFreeQuestionWith(ctx, db, sessionID)
 		return id, mapTutoringLoadError(err)
 	})
+}
+
+func (s *Store) LatestFreeQuestionForFrame(ctx context.Context, sessionID, frameID string) (string, error) {
+	owner, ok := s.tutoring.(tutoringLoaderOwner)
+	if !ok {
+		return "", fmt.Errorf("load latest frame free question: tutoring transactional loader unavailable")
+	}
+	id, err := owner.LatestFreeQuestionForFrame(ctx, sessionID, frameID)
+	return id, mapTutoringLoadError(err)
 }
 
 func deref(value *string) string {

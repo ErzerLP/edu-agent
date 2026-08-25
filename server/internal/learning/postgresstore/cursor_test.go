@@ -51,6 +51,31 @@ func TestProjectionSwitchRequiresMatchingSeals(t *testing.T) {
 	}
 }
 
+func TestStampFreeQuestionUsesPostCommitSessionVersion(t *testing.T) {
+	sessionID := "session"
+	question := &tutoring.FreeQuestion{ID: "question", SessionID: sessionID, FocusFrameID: "frame"}
+	payload, err := json.Marshal(question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := learning.CommandBatch{FreeQuestion: question, Events: []learning.EventDraft{
+		{Type: learning.EventFocusSuspended, AggregateType: "session", AggregateID: sessionID, Payload: json.RawMessage(`{}`)},
+		{Type: learning.EventFreeQuestionAsked, AggregateType: "session", AggregateID: sessionID, Payload: payload},
+		{Type: learning.EventTutoringStateChanged, AggregateType: "session", AggregateID: sessionID, Payload: json.RawMessage(`{}`)},
+	}}
+	versions := map[aggregateKey]int64{{kind: "session", id: sessionID}: 4}
+	if err := stampFreeQuestionVersion(&batch, versions); err != nil {
+		t.Fatal(err)
+	}
+	if batch.FreeQuestion.SessionAggregateVer != 7 {
+		t.Fatalf("question version=%d want=7", batch.FreeQuestion.SessionAggregateVer)
+	}
+	var eventQuestion tutoring.FreeQuestion
+	if err := json.Unmarshal(batch.Events[1].Payload, &eventQuestion); err != nil || eventQuestion.SessionAggregateVer != 7 {
+		t.Fatalf("event question=%+v err=%v", eventQuestion, err)
+	}
+}
+
 func TestFinalizeSessionResultUsesCommittedVersionAndFocusSequence(t *testing.T) {
 	sessionID := "session"
 	frame := &tutoring.FocusFrame{ID: "frame", SessionID: sessionID}

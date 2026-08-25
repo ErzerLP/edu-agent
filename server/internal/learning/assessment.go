@@ -244,14 +244,14 @@ func DecideAssessment(current AssessmentDecision, artifact AssessmentArtifact, c
 			return DecisionEffect{}, &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(current.Disposition)}
 		}
 		if err := completeReplacement(artifact, command.Items); err != nil {
-			return DecisionEffect{}, err
+			return DecisionEffect{}, &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(current.Disposition), Cause: err}
 		}
 		return DecisionEffect{Disposition: DispositionOverridden, Items: append([]AssessmentItem(nil), command.Items...), InvalidateEvidence: invalidate, CreateEvidence: true}, nil
 	case "void":
 		if current.Disposition == DispositionVoided {
 			return DecisionEffect{}, &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(current.Disposition)}
 		}
-		return DecisionEffect{Disposition: DispositionVoided, InvalidateEvidence: invalidate}, nil
+		return DecisionEffect{Disposition: DispositionVoided, Items: append([]AssessmentItem(nil), current.Items...), InvalidateEvidence: invalidate}, nil
 	default:
 		return DecisionEffect{}, &Error{Code: CodeInvalidRequest}
 	}

@@ -34,11 +34,11 @@ func TestOpenAPIParsesAndDeclaresKnowledgeRoutes(t *testing.T) {
 		scope string
 		codes []string
 	}{
-		"/v1/knowledge/revisions/head":                {"knowledge:read", []string{"200", "401", "403", "404", "429", "500"}},
-		"/v1/knowledge/imports":                       {"knowledge:write", []string{"200", "201", "400", "401", "403", "409", "413", "422", "429", "500"}},
-		"/v1/knowledge/revisions/{revisionID}/tree":   {"knowledge:read", []string{"200", "400", "401", "403", "404", "429", "500"}},
-		"/v1/knowledge/revisions/{revisionID}/export": {"knowledge:read", []string{"200", "400", "401", "403", "404", "429", "500"}},
-		"/v1/knowledge/retrievals":                    {"knowledge:read", []string{"200", "400", "401", "403", "404", "413", "429", "500"}},
+		"/v1/knowledge/revisions/head":                {"knowledge:read", []string{"200", "401", "403", "404", "429", "500", "503"}},
+		"/v1/knowledge/imports":                       {"knowledge:write", []string{"200", "201", "400", "401", "403", "409", "413", "422", "429", "500", "503"}},
+		"/v1/knowledge/revisions/{revisionID}/tree":   {"knowledge:read", []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
+		"/v1/knowledge/revisions/{revisionID}/export": {"knowledge:read", []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
+		"/v1/knowledge/retrievals":                    {"knowledge:read", []string{"200", "400", "401", "403", "404", "413", "429", "500", "503"}},
 	} {
 		pathItem := paths[route].(map[string]any)
 		var operation map[string]any
@@ -221,6 +221,64 @@ func TestOpenAPIDeclaresLearningRoutesAndContracts(t *testing.T) {
 		if !strings.Contains(string(encoded), "#/components/parameters/Cursor") || !strings.Contains(string(encoded), "#/components/parameters/PageLimit") {
 			t.Errorf("route %s lacks cursor and limit contracts", route)
 		}
+		if route == "/v1/learning/routes" && !strings.Contains(string(encoded), "current_only") {
+			t.Error("routes lacks current_only contract")
+		}
+	}
+}
+
+func TestGoCLIM1OpenAPIReadContractsAreClosedAndScoped(t *testing.T) {
+	data, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	paths := raw["paths"].(map[string]any)
+	for path, expectedScope := range map[string]string{
+		"/v1/devices":            "devices:read",
+		"/v1/devices/{deviceID}": "devices:manage",
+		"/v1/model/capabilities": "model:probe",
+	} {
+		item := paths[path].(map[string]any)
+		method := "get"
+		if path == "/v1/devices/{deviceID}" {
+			method = "delete"
+		}
+		operation := item[method].(map[string]any)
+		if operation["x-required-scope"] != expectedScope {
+			t.Fatalf("%s scope=%v want=%s", path, operation["x-required-scope"], expectedScope)
+		}
+	}
+	for _, path := range []string{"/v1/tutoring/sessions/current", "/v1/tutoring/sessions/{sessionID}"} {
+		responses := paths[path].(map[string]any)["get"].(map[string]any)["responses"].(map[string]any)
+		if responses["503"] == nil {
+			t.Fatalf("%s lacks read-gate 503", path)
+		}
+	}
+	routeParameters, _ := json.Marshal(paths["/v1/learning/routes"].(map[string]any)["get"].(map[string]any)["parameters"])
+	if !strings.Contains(string(routeParameters), `"name":"current_only"`) || !strings.Contains(string(routeParameters), `"type":"boolean"`) {
+		t.Fatalf("routes current_only is not a strict boolean query: %s", routeParameters)
+	}
+
+	schemas := raw["components"].(map[string]any)["schemas"].(map[string]any)
+	for _, name := range []string{"SessionView", "SessionWorkItem", "Attempt", "FreeQuestion", "FreeAnswer", "FrozenReference", "GoalRevision", "RouteRevision", "Activity", "AssessmentArtifact", "AssessmentDecision"} {
+		schema := schemas[name].(map[string]any)
+		if schema["type"] == "object" && schema["additionalProperties"] != false {
+			t.Fatalf("schema %s is not closed", name)
+		}
+	}
+	sessionView := schemas["SessionView"].(map[string]any)
+	required, _ := json.Marshal(sessionView["required"])
+	if !strings.Contains(string(required), "work_item") {
+		t.Fatalf("SessionView.work_item is not required: %s", required)
+	}
+	workItem := sessionView["properties"].(map[string]any)["work_item"].(map[string]any)
+	oneOf, _ := json.Marshal(workItem["oneOf"])
+	if !strings.Contains(string(oneOf), "SessionWorkItem") || !strings.Contains(string(oneOf), `"null"`) {
+		t.Fatalf("SessionView.work_item is not object-or-null: %s", oneOf)
 	}
 }
 
@@ -270,6 +328,9 @@ func TestLearningOpenAPIWriteSchemasAreClosedAndDiscriminated(t *testing.T) {
 	validate("LearningGoalRequest", `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"aggregate_type":"goal","aggregate_id":"20000000-0000-4000-8000-000000000001","expected_version":0,"text":"Learn","source":"device"}`, true)
 	validate("LearningGoalRequest", `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"aggregate_type":"goal","aggregate_id":"20000000-0000-4000-8000-000000000001","text":"Learn","source":"device"}`, false)
 	validate("TutoringProposalRequest", `{"request_id":"10000000-0000-4000-8000-000000000001","proposal_type":"route","aggregate_type":"goal","aggregate_id":"20000000-0000-4000-8000-000000000001","aggregate_version":1,"knowledge_revision_id":"30000000-0000-4000-8000-000000000001","node_revision_ids":["40000000-0000-4000-8000-000000000001"],"input":{},"unknown":true}`, false)
+	attachedAssessment := `{"request_id":"10000000-0000-4000-8000-000000000001","proposal_type":"assessment","aggregate_type":"session","aggregate_id":"20000000-0000-4000-8000-000000000001","aggregate_version":8,"goal_revision_id":"30000000-0000-4000-8000-000000000001","route_revision_id":"30000000-0000-4000-8000-000000000002","route_step_id":"30000000-0000-4000-8000-000000000003","focus_node_revision_id":"30000000-0000-4000-8000-000000000004","activity_id":"30000000-0000-4000-8000-000000000005","attempt_id":"30000000-0000-4000-8000-000000000006","focus_frame_id":"30000000-0000-4000-8000-000000000007","tutoring_state":"Evaluating","knowledge_revision_id":"30000000-0000-4000-8000-000000000008","node_revision_ids":["40000000-0000-4000-8000-000000000001"],"input":{}}`
+	validate("TutoringProposalRequest", attachedAssessment, false)
+	validate("TutoringProposalRequest", strings.TrimSuffix(attachedAssessment, "}")+`,"free_question_id":"30000000-0000-4000-8000-000000000009","free_answer_id":"30000000-0000-4000-8000-000000000010"}`, true)
 
 	actionMapping := document.Components.Schemas["TutoringActionRequest"].Value.Discriminator.Mapping
 	if len(actionMapping) != 16 {
@@ -465,6 +526,102 @@ func mapsClone(value map[string]any) map[string]any {
 	return clone
 }
 
+func TestLearningOpenAPIConflictSchemaFreezesEndpointAndCodeCoupling(t *testing.T) {
+	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	const aggregateID = "10000000-0000-4000-8000-000000000001"
+	errorOnly := func(code string) map[string]any {
+		return map[string]any{"error": map[string]any{"code": code, "message": "Learning request conflicts with current state", "request_id": "request-1"}}
+	}
+	versionConflict := func(aggregateType string) map[string]any {
+		value := errorOnly("version_conflict")
+		value["conflict"] = map[string]any{
+			"aggregate_type": aggregateType, "aggregate_id": aggregateID,
+			"expected_version": 0, "current_version": 0, "as_of_event_seq": 0,
+		}
+		return value
+	}
+	dispositionConflict := func() map[string]any {
+		value := errorOnly("assessment_disposition_conflict")
+		value["current_disposition"] = "provisional"
+		return value
+	}
+	schemaFor := func(path, method string) *openapi3.Schema {
+		t.Helper()
+		item := document.Paths.Find(path)
+		var response *openapi3.ResponseRef
+		if method == "get" {
+			response = item.Get.Responses.Value("409")
+		} else {
+			response = item.Post.Responses.Value("409")
+		}
+		if response == nil || response.Value == nil {
+			t.Fatalf("%s %s learning 409 response is missing", method, path)
+		}
+		media := response.Value.Content.Get("application/json")
+		if media == nil || media.Schema == nil || media.Schema.Value == nil {
+			t.Fatalf("%s %s learning 409 schema is missing", method, path)
+		}
+		return media.Schema.Value
+	}
+	validate := func(name, path, method string, value map[string]any, wantValid bool) {
+		t.Helper()
+		err := schemaFor(path, method).VisitJSON(value, openapi3.EnableJSONSchema2020())
+		if wantValid && err != nil {
+			t.Fatalf("%s rejected handler-compatible payload: %v", name, err)
+		}
+		if !wantValid && err == nil {
+			t.Fatalf("%s accepted invalid payload: %#v", name, value)
+		}
+	}
+
+	const (
+		goalPath       = "/v1/learning/goals"
+		sessionPath    = "/v1/tutoring/sessions"
+		proposalPath   = "/v1/tutoring/proposals"
+		actionPath     = "/v1/tutoring/sessions/{sessionID}/actions"
+		assessmentPath = "/v1/learning/assessments/{assessmentID}/decisions"
+		cursorPath     = "/v1/learning/timeline"
+	)
+	validate("goal version", goalPath, "post", versionConflict("goal"), true)
+	validate("goal rejects session tuple", goalPath, "post", versionConflict("session"), false)
+	validate("goal idempotency", goalPath, "post", errorOnly("idempotency_conflict"), true)
+	validate("session version", sessionPath, "post", versionConflict("session"), true)
+	validate("session rejects goal tuple", sessionPath, "post", versionConflict("goal"), false)
+	validate("proposal stale", proposalPath, "post", errorOnly("stale_proposal"), true)
+	validate("proposal rejects version", proposalPath, "post", versionConflict("session"), false)
+	validate("action version", actionPath, "post", versionConflict("session"), true)
+	validate("action state", actionPath, "post", errorOnly("invalid_transition"), true)
+	validate("action disposition", actionPath, "post", dispositionConflict(), true)
+	validate("action disposition without current value", actionPath, "post", errorOnly("assessment_disposition_conflict"), true)
+	validate("assessment version", assessmentPath, "post", versionConflict("session"), true)
+	validate("assessment state", assessmentPath, "post", errorOnly("activity_state_conflict"), true)
+	validate("assessment disposition", assessmentPath, "post", dispositionConflict(), true)
+	validate("cursor stale", cursorPath, "get", errorOnly("stale_cursor"), true)
+
+	missingTuple := errorOnly("version_conflict")
+	validate("version requires tuple", actionPath, "post", missingTuple, false)
+	missingDisposition := errorOnly("assessment_disposition_conflict")
+	validate("assessment conflict requires disposition", assessmentPath, "post", missingDisposition, false)
+	invalidActionDisposition := errorOnly("assessment_disposition_conflict")
+	invalidActionDisposition["current_disposition"] = "unknown"
+	validate("action conflict rejects invalid disposition", actionPath, "post", invalidActionDisposition, false)
+	withDisposition := versionConflict("session")
+	withDisposition["current_disposition"] = "provisional"
+	validate("version rejects disposition", assessmentPath, "post", withDisposition, false)
+	withTuple := errorOnly("activity_state_conflict")
+	withTuple["conflict"] = versionConflict("session")["conflict"]
+	validate("state conflict rejects tuple", actionPath, "post", withTuple, false)
+	withUnknown := errorOnly("unknown_conflict")
+	validate("unknown code", actionPath, "post", withUnknown, false)
+	validate("cursor rejects mutation code", cursorPath, "get", errorOnly("idempotency_conflict"), false)
+}
+
 func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
 	if err != nil {
@@ -530,10 +687,27 @@ func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 		}
 		return learning.OperationResult{Status: "succeeded", AggregateType: aggregateType, AggregateID: aggregateID, AggregateVersion: version, FirstEventSequence: 10, LastEventSequence: 11, ProjectionAsOf: 11, Result: encoded}
 	}
-	validateResponse("/v1/learning/goals", "post", "201", operationResult("goal", id2, 1, goal))
-	validateResponse("/v1/tutoring/sessions", "post", "201", operationResult("session", id2, 2, session))
-	validateResponse("/v1/tutoring/sessions/{sessionID}/actions", "post", "201", operationResult("session", id2, 4, session))
-	validateResponse("/v1/learning/assessments/{assessmentID}/decisions", "post", "201", operationResult("session", id2, 5, decision))
+	goalResult := operationResult("goal", id2, 1, goal)
+	sessionResult := operationResult("session", id2, 2, session)
+	actionResult := operationResult("session", id2, 4, session)
+	decisionResult := operationResult("session", id2, 5, decision)
+	validateResponse("/v1/learning/goals", "post", "201", goalResult)
+	validateResponse("/v1/tutoring/sessions", "post", "201", sessionResult)
+	validateResponse("/v1/tutoring/sessions/{sessionID}/actions", "post", "201", actionResult)
+	validateResponse("/v1/learning/assessments/{assessmentID}/decisions", "post", "201", decisionResult)
+	for name, candidate := range map[string]struct {
+		path  string
+		value learning.OperationResult
+	}{
+		"goal endpoint with session aggregate":    {"/v1/learning/goals", sessionResult},
+		"session endpoint with goal aggregate":    {"/v1/tutoring/sessions", goalResult},
+		"assessment endpoint with session result": {"/v1/learning/assessments/{assessmentID}/decisions", actionResult},
+	} {
+		schema := document.Paths.Find(candidate.path).Post.Responses.Value("201").Value.Content.Get("application/json").Schema.Value
+		if err := schema.VisitJSON(decodeDTO(candidate.value), openapi3.EnableJSONSchema2020()); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
 
 	frozen := learning.ProposalRequest{RequestID: id1, Type: learning.ProposalRoute, AggregateType: "goal", AggregateID: id2, AggregateVersion: 1, GoalRevisionID: id3, KnowledgeRevisionID: id4, NodeRevisionIDs: []string{id7}, Input: json.RawMessage(`{"topic":"fractions"}`)}
 	proposal := learning.ProposalArtifact{ID: id5, SchemaVersion: learning.ProposalSchemaVersion, InputHash: strings.Repeat("a", 64), Type: learning.ProposalRoute, AggregateType: "goal", AggregateID: id2, AggregateVersion: 1, GoalRevisionID: id3, KnowledgeRevisionID: id4, FrozenRequest: frozen, Route: []learning.RouteProposalStep{{NodeRevisionID: id7, TeachingIntent: "Explain", CompletionCondition: "Recall"}}, ModelID: "model", ModelParameters: map[string]any{"temperature": 0.0}, PromptRevision: "prompt-v1", AttemptCategories: []string{"success"}, CreatedAt: now}
@@ -546,9 +720,10 @@ func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 	mastery := learning.MasteryProjection{NodeRevisionID: id7, State: learning.MasteryLearning, BaselineState: learning.MasteryLearning, ValidEvidenceCount: 1, Kinds: map[learning.EvidenceKind]int{learning.EvidencePracticeRecall: 1}, Outcomes: map[learning.Outcome]int{learning.OutcomePass: 1}, Help: map[learning.HelpLevel]int{learning.HelpNone: 1}, LastEvidenceAt: &now, PendingAssessments: 0, UncertaintyReasons: []string{}, ReducerVersion: learning.MasteryReducerVersion}
 	misconception := learning.MisconceptionHypothesis{ID: id6, Revision: 1, NodeRevisionID: id7, RubricItemID: "item-1", CandidateHash: strings.Repeat("c", 64), Candidate: "denominator confusion", Status: learning.MisconceptionProposed, SourceEvidenceIDs: []string{id8}, CounterEvidenceIDs: []string{}, CausedByEvidenceID: id8}
 
-	sessionView := learning.SessionView{Metadata: metadata, Session: session, Estimate: learning.ActiveTimeEstimate{DurationSeconds: 30, Estimated: true, AlgorithmVersion: learning.ActiveTimePolicyVersion, SampleCount: 2, FirstReceivedAt: &now, LastReceivedAt: &now}}
+	routeRevision := learning.RouteRevision{ID: id5, RouteID: id4, Revision: 1, GoalRevisionID: id3, KnowledgeRevisionID: id2, PolicyVersion: learning.RoutePolicyVersion, SourceProposalID: id1, Steps: []learning.RouteStep{{ID: id6, Ordinal: 0, NodeID: id7, NodeRevisionID: id8, TeachingIntent: "Explain", CompletionCondition: "Recall"}}, CreatedAt: now}
+	sessionView := learning.SessionView{Metadata: metadata, Session: session, Estimate: learning.ActiveTimeEstimate{DurationSeconds: 30, Estimated: true, AlgorithmVersion: learning.ActiveTimePolicyVersion, SampleCount: 2, FirstReceivedAt: &now, LastReceivedAt: &now}, WorkItem: &learning.SessionWorkItem{AllowedActions: []tutoring.Action{tutoring.ActionIssueActivity}, AllowedAssessmentDecisions: []string{}, GoalRevision: &goal, RouteRevision: &routeRevision}}
 	timeline := learning.TimelinePage{Metadata: metadata, Items: []learning.TimelineItem{{EventSequence: 17, EventID: id8, Type: learning.EventTutoringStateChanged, AggregateID: id2, ReceivedAt: now, OccurredAt: &now, OccurredAtTrusted: false}}, NextCursor: "opaque"}
-	routes := learning.RoutesPage{Metadata: metadata, Items: []learning.RouteProjection{{Route: learning.RouteRevision{ID: id5, RouteID: id4, Revision: 1, GoalRevisionID: id3, KnowledgeRevisionID: id2, PolicyVersion: learning.RoutePolicyVersion, SourceProposalID: id1, Steps: []learning.RouteStep{{ID: id6, Ordinal: 0, NodeID: id7, NodeRevisionID: id8, TeachingIntent: "Explain", CompletionCondition: "Recall"}}, CreatedAt: now}, EventSequence: 12, Current: true}}, NextCursor: "opaque"}
+	routes := learning.RoutesPage{Metadata: metadata, Items: []learning.RouteProjection{{Route: routeRevision, EventSequence: 12, Current: true}}, NextCursor: "opaque"}
 	node := learning.NodeView{Metadata: metadata, Node: learning.NodeReduction{Mastery: mastery, Review: &review, Misconceptions: []learning.MisconceptionHypothesis{misconception}}, Evidence: []learning.AcceptedEvidence{evidence}}
 	evidencePage := learning.EvidencePage{Metadata: metadata, Items: []learning.AcceptedEvidence{evidence}, NextCursor: "opaque"}
 	reviews := learning.ReviewsPage{Metadata: metadata, Items: []learning.ReviewSchedule{review}, NextCursor: "opaque"}

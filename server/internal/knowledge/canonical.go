@@ -174,7 +174,7 @@ func (c *Canonicalizer) Index(canonical string) (DocumentRevision, error) {
 			}
 		}
 		parentRevisionID := nodes[parentIndex].ID
-		ancestorTitles := append([]string(nil), nodes[parentIndex].AncestorTitles...)
+		ancestorTitles := append([]string{}, nodes[parentIndex].AncestorTitles...)
 		if nodes[parentIndex].HeadingLevel != 0 {
 			ancestorTitles = append(ancestorTitles, nodes[parentIndex].Title)
 		}

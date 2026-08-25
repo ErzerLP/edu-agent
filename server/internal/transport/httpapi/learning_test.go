@@ -14,33 +14,36 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
 type fakeLearning struct {
-	actor          string
-	actors         []string
-	method         string
-	calls          int
-	goal           learning.GoalCommand
-	session        learning.SessionCommand
-	proposal       learning.ProposalRequest
-	action         learning.ActionCommand
-	decision       learning.AssessmentDecisionCommand
-	timeline       learning.TimelineQuery
-	page           learning.CursorPageRequest
-	evidence       learning.EvidenceQuery
-	review         learning.ReviewQuery
-	err            error
-	operation      learning.OperationResult
-	proposalResult learning.ProposalArtifact
-	sessionView    learning.SessionView
-	timelinePage   learning.TimelinePage
-	routesPage     learning.RoutesPage
-	nodeView       learning.NodeView
-	evidencePage   learning.EvidencePage
-	reviewsPage    learning.ReviewsPage
-	status         learning.ProjectionStatus
+	actor            string
+	actors           []string
+	method           string
+	calls            int
+	goal             learning.GoalCommand
+	session          learning.SessionCommand
+	proposal         learning.ProposalRequest
+	action           learning.ActionCommand
+	decision         learning.AssessmentDecisionCommand
+	timeline         learning.TimelineQuery
+	page             learning.CursorPageRequest
+	evidence         learning.EvidenceQuery
+	review           learning.ReviewQuery
+	err              error
+	operation        learning.OperationResult
+	proposalResult   learning.ProposalArtifact
+	sessionView      learning.SessionView
+	timelinePage     learning.TimelinePage
+	routesPage       learning.RoutesPage
+	nodeView         learning.NodeView
+	evidencePage     learning.EvidencePage
+	reviewsPage      learning.ReviewsPage
+	status           learning.ProjectionStatus
+	currentSessionFn func(context.Context) (learning.SessionView, error)
 }
 
 func (f *fakeLearning) called(method, actor string) {
@@ -91,8 +94,11 @@ func (f *fakeLearning) Decide(_ context.Context, actor, _ string, command learni
 	}
 	return f.operationResult("session", command.Operation.AggregateID), nil
 }
-func (f *fakeLearning) CurrentSession(context.Context) (learning.SessionView, error) {
+func (f *fakeLearning) CurrentSession(ctx context.Context) (learning.SessionView, error) {
 	f.called("current_session", "")
+	if f.currentSessionFn != nil {
+		return f.currentSessionFn(ctx)
+	}
 	return f.sessionView, f.err
 }
 func (f *fakeLearning) Session(context.Context, string) (learning.SessionView, error) {
@@ -130,8 +136,13 @@ func (f *fakeLearning) ProjectionStatus(context.Context) (learning.ProjectionSta
 
 func newLearningTestAPI(t *testing.T, scopes []string, service *fakeLearning, logs *bytes.Buffer) http.Handler {
 	t.Helper()
+	return newLearningTestAPIWithPermits(t, scopes, service, nil, logs)
+}
+
+func newLearningTestAPIWithPermits(t *testing.T, scopes []string, service *fakeLearning, permits *privacy.ReadPermitManager, logs *bytes.Buffer) http.Handler {
+	t.Helper()
 	id := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"}, Scopes: scopes}}
-	handler, err := New(Options{Identity: id, Learning: service, Readiness: fakeReadiness{}, Logger: slog.New(slog.NewJSONHandler(logs, nil)), PairLimiter: NewFixedWindowLimiter(100, time.Minute), AuthLimiter: NewFixedWindowLimiter(100, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute)})
+	handler, err := New(Options{Identity: id, Learning: service, Readiness: fakeReadiness{}, ReadPermits: permits, Logger: slog.New(slog.NewJSONHandler(logs, nil)), PairLimiter: NewFixedWindowLimiter(100, time.Minute), AuthLimiter: NewFixedWindowLimiter(100, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -549,6 +560,33 @@ func TestLearningHTTPRejectsNonCanonicalUUIDsBeforeService(t *testing.T) {
 	}
 }
 
+func TestLearningHTTPRoutesStrictCurrentOnly(t *testing.T) {
+	var logs bytes.Buffer
+	for _, test := range []struct {
+		query string
+		want  bool
+	}{
+		{"", false},
+		{"?current_only=false", false},
+		{"?current_only=true", true},
+	} {
+		service := &fakeLearning{}
+		handler := newLearningTestAPI(t, []string{"learning:read"}, service, &logs)
+		response := learningRequest(t, handler, http.MethodGet, "/v1/learning/routes"+test.query, "")
+		if response.Code != http.StatusOK || service.calls != 1 || service.page.CurrentOnly != test.want {
+			t.Fatalf("query=%q status=%d calls=%d page=%+v body=%s", test.query, response.Code, service.calls, service.page, response.Body.String())
+		}
+	}
+	for _, query := range []string{"?current_only=TRUE", "?current_only=1", "?current_only=", "?current_only=true&current_only=false"} {
+		service := &fakeLearning{}
+		handler := newLearningTestAPI(t, []string{"learning:read"}, service, &logs)
+		response := learningRequest(t, handler, http.MethodGet, "/v1/learning/routes"+query, "")
+		if response.Code != http.StatusBadRequest || service.calls != 0 {
+			t.Fatalf("invalid query=%q status=%d calls=%d body=%s", query, response.Code, service.calls, response.Body.String())
+		}
+	}
+}
+
 func TestLearningHTTPStrictRawQueryMatrix(t *testing.T) {
 	cases := []string{
 		"/v1/learning/routes?cursor=%zz",
@@ -713,6 +751,119 @@ func TestLearningHTTPStableDomainErrorPayloads(t *testing.T) {
 	}
 }
 
+func TestA101LearningHTTPSessionNestedAndCompletedResponsesMatchOpenAPI(t *testing.T) {
+	document, err := openapi3.NewLoader().LoadFromFile("../../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	validate := func(path string, response *httptest.ResponseRecorder) {
+		t.Helper()
+		var payload any
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode session response: %v; body=%s", err, response.Body.String())
+		}
+		schema := document.Paths.Find(path).Get.Responses.Value("200").Value.Content.Get("application/json").Schema.Value
+		if err := schema.VisitJSON(payload, openapi3.EnableJSONSchema2020()); err != nil {
+			t.Fatalf("session response failed schema: %v; body=%s", err, response.Body.String())
+		}
+	}
+	view := a101HTTPSessionViewFixture()
+	var logs bytes.Buffer
+	service := &fakeLearning{sessionView: view}
+	handler := newLearningTestAPI(t, []string{"learning:read"}, service, &logs)
+	response := learningRequest(t, handler, http.MethodGet, "/v1/tutoring/sessions/current", "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"free_question"`) || !strings.Contains(response.Body.String(), `"free_answer"`) || !strings.Contains(response.Body.String(), `"session_aggregate_version":6`) {
+		t.Fatalf("nested session response=%d body=%s", response.Code, response.Body.String())
+	}
+	validate("/v1/tutoring/sessions/current", response)
+
+	completed := view
+	completed.Session.State = tutoring.StateCompleted
+	completed.Session.ActiveFrame = nil
+	completed.WorkItem = nil
+	service = &fakeLearning{sessionView: completed}
+	handler = newLearningTestAPI(t, []string{"learning:read"}, service, &logs)
+	response = learningRequest(t, handler, http.MethodGet, "/v1/tutoring/sessions/"+testAggregateID, "")
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"work_item":null`) {
+		t.Fatalf("completed session response=%d body=%s", response.Code, response.Body.String())
+	}
+	validate("/v1/tutoring/sessions/{sessionID}", response)
+}
+
+func TestA101LearningHTTPBarrierAndRedactedResponsesDropWorkItemContent(t *testing.T) {
+	secret := "private free-answer body must not escape"
+	view := a101HTTPSessionViewFixture()
+	view.WorkItem.FreeAnswer.Text = secret
+	manager := privacy.NewReadPermitManager()
+	started := make(chan struct{})
+	service := &fakeLearning{currentSessionFn: func(ctx context.Context) (learning.SessionView, error) {
+		close(started)
+		<-ctx.Done()
+		return view, nil
+	}}
+	var logs bytes.Buffer
+	handler := newLearningTestAPIWithPermits(t, []string{"learning:read"}, service, manager, &logs)
+	responseCh := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		responseCh <- learningRequest(t, handler, http.MethodGet, "/v1/tutoring/sessions/current", "")
+	}()
+	<-started
+	drainCh := make(chan error, 1)
+	go func() {
+		drainCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		drainCh <- manager.CloseAndDrain(drainCtx, 2, privacy.OwnerLearning, privacy.OwnerTutoring)
+	}()
+	response := <-responseCh
+	if err := <-drainCh; err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), learning.CodeContentRedacted) || strings.Contains(response.Body.String(), secret) || strings.Contains(logs.String(), secret) {
+		t.Fatalf("barrier response=%d body=%s logs=%s", response.Code, response.Body.String(), logs.String())
+	}
+
+	logs.Reset()
+	service = &fakeLearning{err: &learning.Error{Code: learning.CodeContentRedacted, Cause: errors.New(secret)}}
+	handler = newLearningTestAPIWithPermits(t, []string{"learning:read"}, service, privacy.NewReadPermitManager(), &logs)
+	response = learningRequest(t, handler, http.MethodGet, "/v1/tutoring/sessions/current", "")
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), learning.CodeContentRedacted) || strings.Contains(response.Body.String(), secret) || strings.Contains(logs.String(), secret) {
+		t.Fatalf("redacted response=%d body=%s logs=%s", response.Code, response.Body.String(), logs.String())
+	}
+}
+
+func a101HTTPSessionViewFixture() learning.SessionView {
+	now := time.Date(2026, 8, 20, 15, 0, 0, 0, time.UTC)
+	const (
+		goalRevisionID      = "31000000-0000-4000-8000-000000000001"
+		goalID              = "31000000-0000-4000-8000-000000000002"
+		routeRevisionID     = "32000000-0000-4000-8000-000000000001"
+		routeID             = "32000000-0000-4000-8000-000000000002"
+		routeStepID         = "32000000-0000-4000-8000-000000000003"
+		knowledgeRevisionID = "33000000-0000-4000-8000-000000000001"
+		nodeID              = "33000000-0000-4000-8000-000000000002"
+		nodeRevisionID      = "33000000-0000-4000-8000-000000000003"
+		frameID             = "34000000-0000-4000-8000-000000000001"
+		questionID          = "35000000-0000-4000-8000-000000000001"
+		answerID            = "35000000-0000-4000-8000-000000000002"
+		proposalID          = "36000000-0000-4000-8000-000000000001"
+	)
+	focus := tutoring.FocusContext{GoalRevisionID: goalRevisionID, RouteRevisionID: routeRevisionID, RouteStepID: routeStepID, KnowledgeRevisionID: knowledgeRevisionID, FocusNodeRevisionID: nodeRevisionID}
+	frame := &tutoring.FocusFrame{ID: frameID, SessionID: testAggregateID, SavedState: tutoring.StateRouteActive, Context: focus, SavedAggregateVersion: 4, CreatedEventSequence: 12}
+	goal := learning.GoalRevision{ID: goalRevisionID, GoalID: goalID, Revision: 1, Text: "Learn a topic", Source: "go-cli-m1", ActorDeviceID: testActorID, CreatedAt: now}
+	route := learning.RouteRevision{ID: routeRevisionID, RouteID: routeID, Revision: 1, GoalRevisionID: goalRevisionID, KnowledgeRevisionID: knowledgeRevisionID, PolicyVersion: learning.RoutePolicyVersion, SourceProposalID: proposalID, Steps: []learning.RouteStep{{ID: routeStepID, Ordinal: 0, NodeID: nodeID, NodeRevisionID: nodeRevisionID, TeachingIntent: "teach", CompletionCondition: "pass"}}, CreatedAt: now}
+	question := tutoring.FreeQuestion{ID: questionID, SessionID: testAggregateID, FocusFrameID: frameID, SessionAggregateVer: 6, Text: "Why?", KnowledgeRevisionID: knowledgeRevisionID, References: []tutoring.FrozenReference{}, ActorDeviceID: testActorID, ReceivedAt: now}
+	answer := tutoring.FreeAnswer{ID: answerID, SessionID: testAggregateID, FocusFrameID: frameID, FreeQuestionID: questionID, Text: "Because.", KnowledgeRevisionID: knowledgeRevisionID, References: []tutoring.FrozenReference{}, SourceProposalID: proposalID, ReceivedAt: now}
+	return learning.SessionView{
+		Metadata: learning.ProjectionMetadata{AsOfEventSequence: 20, ProjectionVersion: learning.ProjectionVersion, MasteryReducerVersion: learning.MasteryReducerVersion, AssessmentPolicy: learning.AssessmentPolicyVersion, ReviewPolicy: learning.ReviewPolicyVersion, KnowledgeRevisionID: knowledgeRevisionID, GenerationID: testRelatedID, ReasonCodes: []string{}},
+		Session:  tutoring.Session{ID: testAggregateID, State: tutoring.StateFreeAnswer, AggregateVer: 7, Context: focus, ActiveFrame: frame},
+		Estimate: learning.ActiveTimeEstimate{Estimated: true, AlgorithmVersion: learning.ActiveTimePolicyVersion, SampleCount: 1},
+		WorkItem: &learning.SessionWorkItem{AllowedActions: []tutoring.Action{tutoring.ActionAskFreeQuestion, tutoring.ActionConvertFreeAnswerToQuiz, tutoring.ActionResumeFocus, tutoring.ActionSwitchGoal}, AllowedAssessmentDecisions: []string{}, GoalRevision: &goal, RouteRevision: &route, FreeQuestion: &question, FreeAnswer: &answer},
+	}
+}
+
 func TestLearningHTTPActualResponsesValidateOpenAPI(t *testing.T) {
 	document, err := openapi3.NewLoader().LoadFromFile("../../../api/openapi.yaml")
 	if err != nil {
@@ -751,7 +902,7 @@ func TestLearningHTTPActualResponsesValidateOpenAPI(t *testing.T) {
 	response = learningRequest(t, handler, http.MethodGet, "/v1/learning/evidence?limit=0", "")
 	validate("/v1/learning/evidence", http.MethodGet, "400", response)
 
-	service = &fakeLearning{err: &learning.Error{Code: learning.CodeVersionConflict, AggregateType: "session", AggregateID: testAggregateID, ExpectedVersion: 2, CurrentVersion: 3, AsOfEventSequence: 9}}
+	service = &fakeLearning{err: &learning.Error{Code: learning.CodeStaleCursor}}
 	handler = newLearningTestAPI(t, []string{"learning:read"}, service, &logs)
 	response = learningRequest(t, handler, http.MethodGet, "/v1/learning/evidence", "")
 	validate("/v1/learning/evidence", http.MethodGet, "409", response)

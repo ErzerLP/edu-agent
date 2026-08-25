@@ -3,6 +3,7 @@ package learning
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,35 @@ func TestPrivacyEventRedactedCanonicalAndLegacySchemas(t *testing.T) {
 	decoded, err = registry.Decode(legacy)
 	if err != nil || string(decoded.Payload) != golden {
 		t.Fatalf("legacy upcast payload=%s err=%v", decoded.Payload, err)
+	}
+}
+
+func TestA101PrivacyEventRedactedReplayDoesNotRestorePriorContent(t *testing.T) {
+	const (
+		erasureID = "10000000-0000-4000-8000-000000000001"
+		secret    = "private free-answer body"
+	)
+	session := eventFixture(1, EventLearningSessionStarted, SessionProjection{Session: tutoring.Session{ID: "session-1", State: tutoring.StateGoalReady}})
+	exposure := eventFixture(2, EventExposureRecorded, Exposure{ID: "exposure-1", SessionID: "session-1", Kind: "free_answer", Text: secret, ReceivedAt: time.Now().UTC()})
+	redaction := eventFixture(3, EventRedacted, map[string]any{
+		"erasure_id": erasureID, "generation": 2, "redacted_through_event_seq": 2,
+		"policy_version": "privacy-erasure-v1", "reason_code": "learner_request",
+	})
+	redaction.ID = "redaction-event"
+	redaction.AggregateType = "privacy"
+	redaction.AggregateID = erasureID
+	redaction.AggregateVersion = 1
+	redaction.SchemaVersion = EventRedactedSchemaVersion
+	projection, err := Replay([]LearningEvent{session, exposure, redaction}, NewEventRegistry(), "generation-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projection.Sessions) != 0 || len(projection.Exposures) != 0 || len(projection.Evidence) != 0 || len(projection.Pending) != 0 || len(projection.Timeline) != 1 || !projection.RedactedEvents[redaction.ID] || strings.Contains(string(encoded), secret) {
+		t.Fatalf("redacted replay restored prior content: projection=%+v json=%s", projection, encoded)
 	}
 }
 

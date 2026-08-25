@@ -36,6 +36,9 @@ func TestCanonicalizerBuildsDeterministicTreeAndRanges(t *testing.T) {
 	if first.Nodes[2].ParentNodeRevisionID == nil || *first.Nodes[2].ParentNodeRevisionID != first.Nodes[1].ID {
 		t.Fatalf("heading level jump did not attach to nearest lower heading: %+v", first.Nodes)
 	}
+	if first.Nodes[1].AncestorTitles == nil || len(first.Nodes[1].AncestorTitles) != 0 {
+		t.Fatalf("top-level ancestor titles must encode as an empty array: %+v", first.Nodes[1].AncestorTitles)
+	}
 	for _, node := range first.Nodes {
 		for _, sourceRange := range []SourceRange{node.HeadingRange, node.LocalBodyRange, node.SectionRange} {
 			if sourceRange.Start < 0 || sourceRange.End < sourceRange.Start || sourceRange.End > len(first.CanonicalMarkdown) {

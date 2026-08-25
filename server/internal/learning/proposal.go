@@ -222,7 +222,10 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 			return request, &Error{Code: CodeStaleProposal, Reason: "knowledge_revision_changed"}
 		}
 		if request.Type == ProposalFreeAnswer {
-			questionID, err := s.authority.LatestFreeQuestion(ctx, session.ID)
+			if !validActiveFocusFrame(session) {
+				return request, &Error{Code: CodeStaleProposal, Reason: "active_focus_frame_invalid"}
+			}
+			questionID, err := s.authority.LatestFreeQuestionForFrame(ctx, session.ID, session.ActiveFrame.ID)
 			if err != nil {
 				return request, err
 			}
@@ -233,13 +236,22 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 			if err != nil {
 				return request, err
 			}
-			if session.ActiveFrame == nil || question.SessionID != session.ID || question.FocusFrameID != session.ActiveFrame.ID || question.KnowledgeRevisionID != request.KnowledgeRevisionID {
+			if !currentFreeQuestionMatchesSession(session, question) || question.KnowledgeRevisionID != request.KnowledgeRevisionID {
 				return request, &Error{Code: CodeStaleProposal, Reason: "free_question_ownership"}
 			}
 		}
-		if request.Type == ProposalActivity && session.State == tutoring.StateFreeAnswer {
-			if request.FreeQuestionID == "" || request.FreeAnswerID == "" || session.ActiveFrame == nil {
+		attachedQuizProposal := request.Type == ProposalActivity && session.State == tutoring.StateFreeAnswer ||
+			request.Type == ProposalAssessment && session.AttachedQuiz
+		if attachedQuizProposal {
+			if request.FreeQuestionID == "" || request.FreeAnswerID == "" || !validActiveFocusFrame(session) {
 				return request, &Error{Code: CodeInvalidRequest, Reason: "attached_quiz_context_required"}
+			}
+			latestQuestionID, err := s.authority.LatestFreeQuestionForFrame(ctx, session.ID, session.ActiveFrame.ID)
+			if err != nil {
+				return request, err
+			}
+			if latestQuestionID != request.FreeQuestionID {
+				return request, &Error{Code: CodeStaleProposal, Reason: "attached_quiz_question_changed"}
 			}
 			question, err := s.authority.LoadFreeQuestion(ctx, request.FreeQuestionID)
 			if err != nil {
@@ -249,7 +261,7 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 			if err != nil {
 				return request, err
 			}
-			if question.SessionID != session.ID || answer.SessionID != session.ID || question.FocusFrameID != session.ActiveFrame.ID || answer.FocusFrameID != session.ActiveFrame.ID || answer.FreeQuestionID != question.ID {
+			if question.ID != request.FreeQuestionID || answer.ID != request.FreeAnswerID || !currentFreeQuestionMatchesSession(session, question) || answer.SessionID != session.ID || answer.FocusFrameID != session.ActiveFrame.ID || answer.FreeQuestionID != question.ID || answer.KnowledgeRevisionID != question.KnowledgeRevisionID {
 				return request, &Error{Code: CodeStaleProposal, Reason: "attached_quiz_ownership"}
 			}
 		}
@@ -384,6 +396,66 @@ func routeContainsStep(route RouteRevision, stepID, nodeID string) bool {
 		}
 	}
 	return false
+}
+
+func validActiveFocusFrame(session tutoring.Session) bool {
+	frame := session.ActiveFrame
+	if frame == nil || frame.Invalidated || session.FocusFrameInvalidated || frame.ID == "" || frame.SessionID != session.ID || frame.SavedAggregateVersion < 1 || frame.SavedAggregateVersion >= session.AggregateVer || frame.CreatedEventSequence < 1 {
+		return false
+	}
+	if !sameStableFocusContext(session.Context, frame.Context) || frame.Context.GoalRevisionID == "" || frame.Context.RouteRevisionID == "" || frame.Context.RouteStepID == "" || frame.Context.KnowledgeRevisionID == "" || frame.Context.FocusNodeRevisionID == "" {
+		return false
+	}
+	switch frame.SavedState {
+	case tutoring.StateRouteActive:
+		if frame.Context.ActivityID != nil || frame.Context.AttemptID != nil {
+			return false
+		}
+	case tutoring.StateActivityIssued, tutoring.StateAwaitingResponse:
+		if frame.Context.ActivityID == nil || frame.Context.AttemptID != nil {
+			return false
+		}
+	default:
+		return false
+	}
+	if session.State == tutoring.StateFreeQuestion || session.State == tutoring.StateFreeAnswer {
+		return !session.AttachedQuiz && focusContextEqual(session.Context, frame.Context)
+	}
+	if !session.AttachedQuiz {
+		return false
+	}
+	switch session.State {
+	case tutoring.StateActivityIssued, tutoring.StateAwaitingResponse, tutoring.StateEvaluating, tutoring.StateFeedback:
+		return session.Context.ActivityID != nil
+	default:
+		return false
+	}
+}
+
+func currentFreeQuestionMatchesSession(session tutoring.Session, question tutoring.FreeQuestion) bool {
+	if !validActiveFocusFrame(session) || question.ID == "" || question.SessionID != session.ID || question.FocusFrameID != session.ActiveFrame.ID || question.KnowledgeRevisionID != session.ActiveFrame.Context.KnowledgeRevisionID || question.SessionAggregateVer <= session.ActiveFrame.SavedAggregateVersion || question.SessionAggregateVer > session.AggregateVer {
+		return false
+	}
+	return session.State != tutoring.StateFreeQuestion || question.SessionAggregateVer == session.AggregateVer
+}
+
+func sameStableFocusContext(left, right tutoring.FocusContext) bool {
+	return left.GoalRevisionID == right.GoalRevisionID &&
+		left.RouteRevisionID == right.RouteRevisionID &&
+		left.RouteStepID == right.RouteStepID &&
+		left.KnowledgeRevisionID == right.KnowledgeRevisionID &&
+		left.FocusNodeRevisionID == right.FocusNodeRevisionID
+}
+
+func focusContextEqual(left, right tutoring.FocusContext) bool {
+	return sameStableFocusContext(left, right) && optionalStringEqual(left.ActivityID, right.ActivityID) && optionalStringEqual(left.AttemptID, right.AttemptID)
+}
+
+func optionalStringEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func freezeField(target *string, current string) error {

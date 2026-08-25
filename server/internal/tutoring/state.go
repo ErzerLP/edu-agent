@@ -174,6 +174,7 @@ func Apply(input Session, command Command) (Transition, error) {
 		transition.Intermediate = []State{StateAdvanceOrReview}
 		if input.AttachedQuiz && input.ActiveFrame != nil && !input.ActiveFrame.Invalidated {
 			transition.Session.AttachedQuiz = false
+			transition.Session.Context = cloneContext(input.ActiveFrame.Context)
 			return set(StateFreeAnswer, "TutoringStateChanged", "TutoringStateChanged")
 		}
 		if command.Complete || input.CompletedRoute {

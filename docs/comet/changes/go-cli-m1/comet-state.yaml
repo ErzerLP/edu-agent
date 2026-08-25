@@ -3,7 +3,7 @@ name: go-cli-m1
 language: zh-CN
 phase: archive
 status: active
-state_version: 9
+state_version: 10
 brief: brief.md
 spec_changes:
   - capability: go-cli-m1
@@ -13,7 +13,7 @@ workspace:
   isolation: worktree
   change_branch: comet/go-cli-m1
   target_branch: comet/teaching-interview-agent
-  finish: null
+  finish: merge
 loop:
   stage: archive-ready
   goal_cycle: 1

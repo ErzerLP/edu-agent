@@ -168,6 +168,7 @@ func commandMaintenanceProposal(status, decision string) api.KnowledgeMaintenanc
 		if status == "applied" {
 			outcome = "applied"
 			value.AppliedRevisionID = "77000000-0000-4000-8000-000000000001"
+			value.CurrentRevisionID = value.AppliedRevisionID
 			value.Origin = &api.KnowledgeMaintenanceRevisionOrigin{Version: "knowledge-revision-origin-v1", Kind: value.Kind, ProposalID: value.ProposalID, BaseRevisionID: value.BaseRevisionID, BasisHash: value.BasisHash}
 		}
 		value.Decision = &api.KnowledgeMaintenanceDecision{DecisionID: "78000000-0000-4000-8000-000000000001", OperationID: commandMaintenanceOperationID, RequestedDecision: decision, Outcome: outcome, Reason: decision + " reason", ActorDeviceID: commandMaintenanceDeviceID, CreatedAt: now}

@@ -13,8 +13,14 @@ import (
 )
 
 func (a *App) runKnowledge(ctx context.Context, args []string) error {
-	if len(args) == 0 || args[0] != "import" {
-		return commandError("usage", "knowledge requires import", "run edu-agent knowledge import <file-or-directory>", ExitInput)
+	if len(args) == 0 {
+		return commandError("usage", "knowledge requires import or notesync", "run edu-agent knowledge import <file-or-directory> or edu-agent knowledge notesync status", ExitInput)
+	}
+	if args[0] == "notesync" {
+		return a.RunKnowledgeNotesync(ctx, args[1:])
+	}
+	if args[0] != "import" {
+		return commandError("usage", "knowledge requires import or notesync", "run edu-agent knowledge import <file-or-directory> or edu-agent knowledge notesync status", ExitInput)
 	}
 	set := newFlagSet("knowledge import")
 	var flags onlineFlags

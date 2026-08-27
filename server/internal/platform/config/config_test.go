@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +29,11 @@ func TestLoadDefaultsToLoopback(t *testing.T) {
 	if cfg.ListenAddr != "127.0.0.1:8080" || cfg.PublicBaseURL.String() != "http://127.0.0.1:8080" || cfg.InsecureNonLoopbackWarning {
 		t.Fatalf("unexpected listening policy: %+v", cfg)
 	}
-	if cfg.Model.Enabled || cfg.Nocturne.Enabled {
+	if cfg.Model.Enabled || cfg.Nocturne.Enabled || cfg.Notesync.Enabled {
 		t.Fatal("optional integrations should be disabled when no profile is configured")
+	}
+	if cfg.Notesync.PathPrefix != "edu-agent" || cfg.Notesync.HTTPTimeout != 10*time.Second || cfg.Notesync.ScanPageSize != 100 {
+		t.Fatalf("unexpected NoteSync defaults: %+v", cfg.Notesync)
 	}
 	if cfg.Nocturne.CandidateSweepInterval != 5*time.Minute || cfg.Nocturne.DeliverySweepInterval != 5*time.Minute || cfg.Nocturne.BackupControllerInterval != 24*time.Hour || cfg.Nocturne.BackupRetention != 30*24*time.Hour || cfg.Nocturne.WorkerLeaseDuration != 2*time.Minute {
 		t.Fatalf("unexpected Nocturne defaults: %+v", cfg.Nocturne)
@@ -279,6 +283,88 @@ func TestNocturneImageLockRequiresCanonicalDigestAndLeaseRatio(t *testing.T) {
 	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "12 times") {
 		t.Fatalf("unsafe timeout/lease ratio accepted: %v", err)
 	}
+}
+
+func TestNotesyncConfigurationIsServerOnlyAndFailClosed(t *testing.T) {
+	values := baseEnv()
+	values["NOTESYNC_BASE_URL"] = "https://notes.example.test"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "NOTESYNC_ENABLED") {
+		t.Fatalf("disabled partial profile accepted: %v", err)
+	}
+
+	values = validNotesyncEnv()
+	cfg, err := load(env(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Notesync.Enabled || cfg.Notesync.BaseURL.String() != values["NOTESYNC_BASE_URL"] || cfg.Notesync.Vault != "Knowledge" || cfg.Notesync.PathPrefix != "edu-agent" {
+		t.Fatalf("unexpected NoteSync profile: %+v", cfg.Notesync)
+	}
+	serialized := fmt.Sprintf("%v %+v", cfg.Notesync, cfg.Notesync)
+	if strings.Contains(serialized, values["NOTESYNC_API_TOKEN"]) {
+		t.Fatalf("NoteSync configuration leaked API token: %s", serialized)
+	}
+
+	for name, value := range map[string]string{
+		"NOTESYNC_BASE_URL":        "https://user:password@notes.example.test",
+		"NOTESYNC_API_TOKEN":       "short-secret",
+		"NOTESYNC_VAULT":           "bad\nvault",
+		"NOTESYNC_PATH_PREFIX":     "../escape",
+		"NOTESYNC_HTTP_TIMEOUT":    "61s",
+		"NOTESYNC_WORKER_INTERVAL": "61m",
+		"NOTESYNC_WORKER_BATCH":    "1001",
+		"NOTESYNC_SCAN_PAGE_SIZE":  "101",
+		"NOTESYNC_SCAN_MAX_PAGES":  "1001",
+	} {
+		invalid := validNotesyncEnv()
+		invalid[name] = value
+		_, err := load(env(invalid))
+		if err == nil || strings.Contains(err.Error(), invalid["NOTESYNC_API_TOKEN"]) {
+			t.Fatalf("invalid %s leaked or was accepted: %v", name, err)
+		}
+	}
+	for _, override := range []struct {
+		name  string
+		value string
+	}{
+		{name: "NOTESYNC_BASE_URL", value: "https://notes.example.test/%2e%2e"},
+		{name: "NOTESYNC_API_TOKEN", value: strings.Repeat("界", 32)},
+		{name: "NOTESYNC_PATH_PREFIX", value: "ｅdu-agent"},
+	} {
+		invalid := validNotesyncEnv()
+		invalid[override.name] = override.value
+		_, err := load(env(invalid))
+		if err == nil || strings.Contains(err.Error(), invalid["NOTESYNC_API_TOKEN"]) {
+			t.Fatalf("non-canonical %s leaked or was accepted: %v", override.name, err)
+		}
+	}
+}
+
+func TestNotesyncRejectsNonLoopbackPlainHTTPWithoutExistingOverride(t *testing.T) {
+	values := validNotesyncEnv()
+	values["NOTESYNC_BASE_URL"] = "http://notes.internal:8080"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "non-loopback") {
+		t.Fatalf("insecure remote NoteSync URL accepted: %v", err)
+	}
+	values["ALLOW_INSECURE_NON_LOOPBACK"] = "true"
+	if _, err := load(env(values)); err != nil {
+		t.Fatalf("explicit insecure override was not reused: %v", err)
+	}
+	values["NOTESYNC_BASE_URL"] = "http://127.0.0.1:8080"
+	delete(values, "ALLOW_INSECURE_NON_LOOPBACK")
+	if _, err := load(env(values)); err != nil {
+		t.Fatalf("loopback HTTP should be accepted: %v", err)
+	}
+}
+
+func validNotesyncEnv() map[string]string {
+	values := baseEnv()
+	values["NOTESYNC_ENABLED"] = "true"
+	values["NOTESYNC_BASE_URL"] = "https://notes.example.test"
+	values["NOTESYNC_API_TOKEN"] = strings.Repeat("n", 32)
+	values["NOTESYNC_VAULT"] = "Knowledge"
+	values["NOTESYNC_PATH_PREFIX"] = "edu-agent"
+	return values
 }
 
 func validNocturneEnv() map[string]string {

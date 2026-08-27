@@ -17,6 +17,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
@@ -56,6 +57,14 @@ type KnowledgeService interface {
 	Tree(context.Context, string) (knowledge.TreeResult, error)
 	Export(context.Context, string) (knowledge.ExportResult, error)
 	Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
+}
+
+type NotesyncReviewService interface {
+	Status(context.Context) notesync.ReviewStatus
+	Preview(context.Context, notesync.PreviewCommand) (notesync.PreviewResult, error)
+	ListReviews(context.Context, notesync.ReviewListCommand) (notesync.ReviewPage, error)
+	Review(context.Context, string) (notesync.Review, error)
+	Resolve(context.Context, notesync.ResolutionCommand) (notesync.ResolutionResult, error)
 }
 
 type LearningService interface {
@@ -120,6 +129,7 @@ type Options struct {
 	Identity                IdentityService
 	Model                   ModelProber
 	Knowledge               KnowledgeService
+	Notesync                NotesyncReviewService
 	Learning                LearningService
 	Offline                 OfflineLearningService
 	Memory                  MemoryService
@@ -146,6 +156,7 @@ type API struct {
 	identity                IdentityService
 	model                   ModelProber
 	knowledge               KnowledgeService
+	notesync                NotesyncReviewService
 	learning                LearningService
 	offline                 OfflineLearningService
 	memory                  MemoryService
@@ -210,7 +221,7 @@ func New(options Options) (http.Handler, error) {
 		options.MaxOfflineRequestBody = 8 << 20
 	}
 	api := &API{
-		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, learning: options.Learning,
+		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
 		offline: options.Offline, memory: options.Memory, memoryExporter: options.MemoryExporter,
 		privacy: options.Privacy, migrationLeases: options.MigrationLeases,
 		maintenanceToken: options.MaintenanceToken, readPermits: options.ReadPermits,
@@ -238,6 +249,11 @@ func New(options Options) (http.Handler, error) {
 		protected.With(api.requireScope("devices:read")).Get("/v1/devices", api.listDevices)
 		protected.With(api.requireScope("devices:manage")).Delete("/v1/devices/{deviceID}", api.revokeDevice)
 		protected.With(api.requireScope("model:probe")).Get("/v1/model/capabilities", api.modelCapabilities)
+		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/notesync/status", api.notesyncStatus)
+		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/v1/knowledge/notesync/previews", api.notesyncPreview)
+		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/notesync/reviews", api.notesyncReviews)
+		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/notesync/reviews/{reviewID}", api.notesyncReview)
+		protected.With(api.requireScope("knowledge:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/notesync/reviews/{reviewID}/resolutions", api.notesyncResolution)
 		if api.knowledge != nil {
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/head", api.knowledgeHead)
 			protected.With(api.requireScope("knowledge:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/imports", api.knowledgeImport)

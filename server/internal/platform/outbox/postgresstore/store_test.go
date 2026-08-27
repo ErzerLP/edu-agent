@@ -3,6 +3,7 @@ package postgresstore
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,87 @@ func TestEnqueueWithDistinguishesInsertReplayAndConflict(t *testing.T) {
 	if inserted || !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("conflict result inserted=%v err=%v", inserted, err)
 	}
+}
+
+func TestCallerOwnedFinalizationRequiresCurrentLease(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	applied := &transitionTestDB{affected: true}
+	if err := MarkAppliedWith(context.Background(), applied, "message-1", "lease-1", now); err != nil {
+		t.Fatalf("mark applied with current lease: %v", err)
+	}
+	if !strings.Contains(applied.query, "status='processing' AND lease_token=$2") {
+		t.Fatalf("applied CAS query=%q", applied.query)
+	}
+	if err := MarkAppliedWith(context.Background(), &transitionTestDB{}, "message-1", "lost", now); !errors.Is(err, outbox.ErrLeaseLost) {
+		t.Fatalf("mark applied with lost lease err=%v", err)
+	}
+
+	availableAt := now.Add(5 * time.Minute)
+	deferred := &transitionTestDB{affected: true}
+	if err := MarkDeferredWith(
+		context.Background(), deferred, "message-2", "lease-2", "dependency_unavailable", now, availableAt,
+	); err != nil {
+		t.Fatalf("mark deferred with current lease: %v", err)
+	}
+	for _, required := range []string{
+		"status='pending'", "attempts=GREATEST(attempts-1,0)",
+		"status='processing' AND lease_token=$2", "lease_expires_at=NULL", "lease_token=NULL",
+	} {
+		if !strings.Contains(deferred.query, required) {
+			t.Fatalf("deferred CAS query missing %q: %s", required, deferred.query)
+		}
+	}
+	if got := deferred.arguments[2]; got != "dependency_unavailable" {
+		t.Fatalf("deferred category=%v", got)
+	}
+	if got := deferred.arguments[3]; got != availableAt {
+		t.Fatalf("deferred available_at=%v", got)
+	}
+	if err := MarkDeferredWith(
+		context.Background(), &transitionTestDB{}, "message-2", "lost", "dependency_unavailable", now, availableAt,
+	); !errors.Is(err, outbox.ErrLeaseLost) {
+		t.Fatalf("mark deferred with lost lease err=%v", err)
+	}
+	for _, test := range []struct {
+		name        string
+		category    string
+		deferredAt  time.Time
+		availableAt time.Time
+	}{
+		{name: "empty category", deferredAt: now, availableAt: availableAt},
+		{name: "zero deferred time", category: "dependency_unavailable", availableAt: availableAt},
+		{name: "zero available time", category: "dependency_unavailable", deferredAt: now},
+		{name: "available equal to deferred", category: "dependency_unavailable", deferredAt: now, availableAt: now},
+		{name: "available before deferred", category: "dependency_unavailable", deferredAt: availableAt, availableAt: now},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := &transitionTestDB{affected: true}
+			if err := MarkDeferredWith(
+				context.Background(), db, "message-2", "lease-2", test.category, test.deferredAt, test.availableAt,
+			); err == nil || db.query != "" {
+				t.Fatalf("invalid defer err=%v query=%q", err, db.query)
+			}
+		})
+	}
+}
+
+type transitionTestDB struct {
+	affected  bool
+	query     string
+	arguments []any
+}
+
+func (db *transitionTestDB) Exec(_ context.Context, query string, arguments ...any) (pgconn.CommandTag, error) {
+	db.query = query
+	db.arguments = append([]any(nil), arguments...)
+	if db.affected {
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	}
+	return pgconn.NewCommandTag("UPDATE 0"), nil
+}
+
+func (*transitionTestDB) QueryRow(context.Context, string, ...any) pgx.Row {
+	panic("unexpected QueryRow")
 }
 
 type requeueTestDB struct {

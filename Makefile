@@ -1,6 +1,7 @@
 .PHONY: fmt server-fmt cli-fmt test server-test cli-test test-race server-test-race cli-test-race \
 	vet server-vet cli-vet build server-build cli-build cli-check cli-cross-build cli-platform-evidence cli-release \
-	cli-m1-blackbox cli-m1-blackbox-run postgres-candidate postgres-candidate-resume postgres-candidate-shard check
+	cli-m1-blackbox cli-m1-blackbox-run postgres-candidate postgres-candidate-resume postgres-candidate-shard \
+	notesync-candidate check
 
 fmt: server-fmt cli-fmt
 
@@ -67,6 +68,9 @@ postgres-candidate-resume:
 postgres-candidate-shard:
 	@test -n "$$POSTGRES_SHARD" || { echo "postgres-candidate-shard requires POSTGRES_SHARD" >&2; exit 2; }
 	scripts/test-postgres-candidate.sh --resume --shard "$$POSTGRES_SHARD"
+
+notesync-candidate:
+	scripts/test-notesync-candidate.sh
 
 cli-platform-evidence:
 	pwsh -NoProfile -File clients/cli-go/scripts/cli-platform-evidence.ps1

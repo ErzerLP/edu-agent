@@ -192,6 +192,105 @@ func TestPostgreSQLOutboxProcessingCancelReclaimAndConcurrency(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLOutboxCallerOwnedFinalizeAndDefer(t *testing.T) {
+	pool := outboxIntegrationPool(t)
+	store := postgresstore.New(pool)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	message, err := outbox.NewMessage(outbox.NewMessageInput{
+		BusinessType: "knowledge.notesync.publish", AggregateID: "document-1",
+		IdempotencyKey: "notesync-defer-finalize", Revision: 1, Generation: 1,
+		Payload: json.RawMessage(`{"schema_version":1}`), MaxAttempts: 3,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted, err := store.Enqueue(ctx, message); err != nil || !inserted {
+		t.Fatalf("enqueue inserted=%v err=%v", inserted, err)
+	}
+	claimed, err := store.Claim(ctx, now, time.Minute, 1)
+	if err != nil || len(claimed) != 1 || claimed[0].Attempts != 1 {
+		t.Fatalf("claim=%+v err=%v", claimed, err)
+	}
+	availableAt := now.Add(5 * time.Minute)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := postgresstore.MarkDeferredWith(
+		ctx, tx, message.ID, claimed[0].LeaseToken, "dependency_unavailable", now.Add(time.Second), availableAt,
+	); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	var status string
+	var attempts int
+	if err := tx.QueryRow(ctx, `SELECT status,attempts FROM outbox_messages WHERE id=$1`, message.ID).Scan(&status, &attempts); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if status != "pending" || attempts != 0 {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("deferred in transaction status=%s attempts=%d", status, attempts)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status,attempts FROM outbox_messages WHERE id=$1`, message.ID).Scan(&status, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "processing" || attempts != 1 {
+		t.Fatalf("rolled back defer status=%s attempts=%d", status, attempts)
+	}
+
+	if err := store.MarkDeferred(
+		ctx, message.ID, claimed[0].LeaseToken, "dependency_unavailable", now.Add(2*time.Second), availableAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var errorCategory string
+	var leaseCleared bool
+	if err := pool.QueryRow(ctx, `
+		SELECT status,attempts,last_error_category,lease_token IS NULL AND lease_expires_at IS NULL
+		FROM outbox_messages WHERE id=$1`, message.ID).Scan(&status, &attempts, &errorCategory, &leaseCleared); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || attempts != 0 || errorCategory != "dependency_unavailable" || !leaseCleared {
+		t.Fatalf("committed defer status=%s attempts=%d category=%s lease_cleared=%v", status, attempts, errorCategory, leaseCleared)
+	}
+	if err := store.MarkDeferred(
+		ctx, message.ID, claimed[0].LeaseToken, "dependency_unavailable", now.Add(3*time.Second), availableAt,
+	); !errors.Is(err, outbox.ErrLeaseLost) {
+		t.Fatalf("stale defer lease err=%v", err)
+	}
+
+	reclaimed, err := store.Claim(ctx, availableAt, time.Minute, 1)
+	if err != nil || len(reclaimed) != 1 || reclaimed[0].Attempts != 1 {
+		t.Fatalf("reclaim after defer=%+v err=%v", reclaimed, err)
+	}
+	tx, err = pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := postgresstore.MarkAppliedWith(ctx, tx, message.ID, reclaimed[0].LeaseToken, availableAt.Add(time.Second)); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT status FROM outbox_messages WHERE id=$1`, message.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "processing" {
+		t.Fatalf("rolled back applied status=%s", status)
+	}
+	if err := store.MarkApplied(ctx, message.ID, reclaimed[0].LeaseToken, availableAt.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func outboxIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	databaseURL := os.Getenv("TEST_DATABASE_URL")

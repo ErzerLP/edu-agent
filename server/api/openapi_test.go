@@ -1199,3 +1199,250 @@ func TestMemoryPrivacyOpenAPIValidatesRepresentativeResponses(t *testing.T) {
 	}
 	validate("/v1/privacy/erasures/{erasureID}/offline-device-purge/ack", "post", "200", purgeAck)
 }
+
+func TestNotesyncOpenAPIContractsAreClosedScopedAndMatchDomain(t *testing.T) {
+	data, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	paths, ok := raw["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("OpenAPI paths are missing: %#v", raw["paths"])
+	}
+	contracts := map[string]struct {
+		method string
+		scope  string
+		codes  []string
+	}{
+		"/v1/knowledge/notesync/status":                         {"get", "knowledge:read", []string{"200", "400", "401", "403", "429", "500", "503"}},
+		"/v1/knowledge/notesync/previews":                       {"post", "knowledge:read", []string{"200", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
+		"/v1/knowledge/notesync/reviews":                        {"get", "knowledge:read", []string{"200", "400", "401", "403", "409", "429", "500", "503"}},
+		"/v1/knowledge/notesync/reviews/{reviewID}":             {"get", "knowledge:read", []string{"200", "400", "401", "403", "404", "409", "429", "500", "503"}},
+		"/v1/knowledge/notesync/reviews/{reviewID}/resolutions": {"post", "knowledge:write", []string{"200", "201", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
+	}
+	for route, contract := range contracts {
+		item, ok := paths[route].(map[string]any)
+		if !ok {
+			t.Fatalf("NoteSync route %s is missing", route)
+		}
+		operation, ok := item[contract.method].(map[string]any)
+		if !ok {
+			t.Fatalf("NoteSync route %s %s operation is missing", contract.method, route)
+		}
+		if operation["x-required-scope"] != contract.scope {
+			t.Fatalf("NoteSync route %s scope=%v want=%s", route, operation["x-required-scope"], contract.scope)
+		}
+		if operation["security"] == nil {
+			t.Fatalf("NoteSync route %s has no device authentication contract", route)
+		}
+		responses, ok := operation["responses"].(map[string]any)
+		if !ok {
+			t.Fatalf("NoteSync route %s responses are missing", route)
+		}
+		for _, code := range contract.codes {
+			if responses[code] == nil {
+				t.Errorf("NoteSync route %s is missing response %s", route, code)
+			}
+		}
+		if route == "/v1/knowledge/notesync/previews" || route == "/v1/knowledge/notesync/reviews/{reviewID}/resolutions" {
+			if operation["x-max-body-bytes"] != 16777216 {
+				t.Errorf("NoteSync route %s body limit=%v want=16777216", route, operation["x-max-body-bytes"])
+			}
+			requestBody, ok := operation["requestBody"].(map[string]any)
+			if !ok || requestBody["required"] != true {
+				t.Errorf("NoteSync route %s does not require a JSON request body", route)
+			}
+		}
+	}
+
+	components, ok := raw["components"].(map[string]any)
+	if !ok {
+		t.Fatal("OpenAPI components are missing")
+	}
+	schemas, ok := components["schemas"].(map[string]any)
+	if !ok {
+		t.Fatal("OpenAPI schemas are missing")
+	}
+	for name, value := range schemas {
+		if !strings.HasPrefix(name, "Notesync") {
+			continue
+		}
+		schema, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("NoteSync schema %s is not an object", name)
+		}
+		if schema["type"] == "object" && schema["additionalProperties"] != false {
+			t.Errorf("NoteSync schema %s is not closed", name)
+		}
+	}
+
+	propertyEnums := func(schemaName, propertyName string) map[string]bool {
+		t.Helper()
+		schema, ok := schemas[schemaName].(map[string]any)
+		if !ok {
+			t.Fatalf("schema %s is missing", schemaName)
+		}
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("schema %s properties are missing", schemaName)
+		}
+		property, ok := properties[propertyName].(map[string]any)
+		if !ok {
+			t.Fatalf("schema %s property %s is missing", schemaName, propertyName)
+		}
+		values, ok := property["enum"].([]any)
+		if !ok {
+			t.Fatalf("schema %s property %s enum is missing", schemaName, propertyName)
+		}
+		result := make(map[string]bool, len(values))
+		for _, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				t.Fatalf("schema %s property %s has non-string enum value %#v", schemaName, propertyName, value)
+			}
+			result[text] = true
+		}
+		return result
+	}
+	assertExactEnum := func(schemaName, propertyName string, expected []string) {
+		t.Helper()
+		actual := propertyEnums(schemaName, propertyName)
+		want := make(map[string]bool, len(expected))
+		for _, value := range expected {
+			want[value] = true
+		}
+		if len(actual) != len(want) {
+			t.Fatalf("schema %s property %s enum=%v want=%v", schemaName, propertyName, actual, want)
+		}
+		for value := range want {
+			if !actual[value] {
+				t.Fatalf("schema %s property %s is missing enum %q: got=%v", schemaName, propertyName, value, actual)
+			}
+		}
+	}
+	assertExactEnum("NotesyncPreviewItem", "category", []string{"in_sync", "remote_unchanged", "local_changed", "remote_changed", "both_changed", "remote_missing", "remote_moved", "unbased_remote", "path_occupied", "invalid_remote_markdown"})
+	assertExactEnum("NotesyncPreviewItem", "reason_code", []string{"in_sync", "local_revision_changed", "both_sides_changed", "remote_identity_moved", "unmanaged_remote_note", "remote_markdown_invalid", "remote_content_changed", "remote_note_missing", "remote_path_occupied", "publication_preflight_changed", "publication_readback_changed"})
+	assertExactEnum("NotesyncResolutionRequest", "kind", []string{"accept_remote", "keep_canonical", "merged"})
+	assertExactEnum("NotesyncReview", "resolution_kind", []string{"accept_remote", "keep_canonical", "merged", "superseded", "privacy_redaction"})
+	assertExactEnum("NotesyncReviewSummary", "resolution_kind", []string{"accept_remote", "keep_canonical", "merged", "superseded", "privacy_redaction"})
+	assertExactEnum("NotesyncReview", "status", []string{"open", "resolved", "closed"})
+
+	resolutionSchema := schemas["NotesyncResolutionRequest"].(map[string]any)
+	resolutionProperties := resolutionSchema["properties"].(map[string]any)
+	for _, name := range []string{
+		"basis_hash", "operation_id", "kind", "merged_markdown",
+		"identity_review_basis_hash", "identity_review_operation_id", "identity_review_receipt",
+		"document_resolutions", "node_resolutions",
+	} {
+		if resolutionProperties[name] == nil {
+			t.Errorf("resolution request is missing property %s", name)
+		}
+	}
+	if resolutionProperties["device_id"] != nil {
+		t.Fatal("resolution request exposes server-owned device_id")
+	}
+	required, ok := resolutionSchema["required"].([]any)
+	if !ok {
+		t.Fatal("resolution request required fields are missing")
+	}
+	requiredSet := make(map[string]bool, len(required))
+	for _, value := range required {
+		if name, ok := value.(string); ok {
+			requiredSet[name] = true
+		}
+	}
+	for _, name := range []string{"basis_hash", "operation_id", "kind"} {
+		if !requiredSet[name] {
+			t.Errorf("resolution request does not require %s", name)
+		}
+	}
+
+	summarySchema := schemas["NotesyncReviewSummary"].(map[string]any)
+	summaryProperties := summarySchema["properties"].(map[string]any)
+	if _, exists := summaryProperties["diff"]; exists || summaryProperties["markdown"] != nil {
+		t.Fatal("review summary exposes diff or Markdown content")
+	}
+	summarySnapshotSchema := schemas["NotesyncReviewSnapshotSummary"].(map[string]any)
+	if summarySnapshotSchema["properties"].(map[string]any)["markdown"] != nil {
+		t.Fatal("review summary snapshot exposes Markdown content")
+	}
+	detailSchema := schemas["NotesyncReview"].(map[string]any)
+	if _, exists := detailSchema["properties"].(map[string]any)["diff"]; !exists {
+		t.Fatal("review detail does not expose diff")
+	}
+	snapshotSchema := schemas["NotesyncReviewSnapshot"].(map[string]any)
+	snapshotProperties := snapshotSchema["properties"].(map[string]any)
+	if _, exists := snapshotProperties["markdown"]; !exists {
+		t.Fatal("review detail snapshot does not expose Markdown")
+	}
+	if !strings.Contains(string(mustJSON(snapshotSchema["required"])), "markdown") {
+		t.Fatal("review detail snapshot does not require present Markdown field")
+	}
+
+	errorSchema := schemas["NotesyncErrorEnvelope"].(map[string]any)
+	errorProperties := errorSchema["properties"].(map[string]any)
+	errorObject := errorProperties["error"].(map[string]any)
+	errorCodes := make(map[string]bool)
+	for _, value := range errorObject["properties"].(map[string]any)["code"].(map[string]any)["enum"].([]any) {
+		if code, ok := value.(string); ok {
+			errorCodes[code] = true
+		}
+	}
+	for _, code := range []string{"notesync_not_configured", "invalid_request", "not_found", "stale_notesync_review", "idempotency_conflict", "content_redacted", "privacy_clear_in_progress", "notesync_unavailable", "payload_too_large", "path_occupied", "identity_review_required", "stale_identity_review", "revision_conflict"} {
+		if !errorCodes[code] {
+			t.Errorf("NoteSync error enum is missing %q", code)
+		}
+	}
+	if errorCodes["stale_review"] {
+		t.Fatal("NoteSync error enum uses non-domain stale_review code")
+	}
+
+	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(value any) any {
+		t.Helper()
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded any
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	snapshot := document.Components.Schemas["NotesyncReviewSnapshot"].Value
+	for _, missing := range []bool{true, false} {
+		value := map[string]any{"missing": missing, "markdown": "", "remote_version": 0, "remote_last_time": 0}
+		if err := snapshot.VisitJSON(decode(value), openapi3.EnableJSONSchema2020()); err != nil {
+			t.Fatalf("present-empty snapshot missing=%t failed schema validation: %v", missing, err)
+		}
+	}
+	previewResult := document.Components.Schemas["NotesyncPreviewResult"].Value
+	if err := previewResult.VisitJSON(decode(map[string]any{"items": []any{}, "page": 1, "page_size": 25, "total_rows": 0}), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("empty preview result failed schema validation: %v", err)
+	}
+
+	responses := components["responses"].(map[string]any)
+	for _, responseName := range []string{"NotesyncBadRequest", "NotesyncUnauthorized", "NotesyncForbidden", "NotesyncNotFound", "NotesyncPayloadTooLarge", "NotesyncRateLimited", "NotesyncInternalError", "NotesyncUnavailable"} {
+		response := responses[responseName].(map[string]any)
+		content := response["content"].(map[string]any)["application/json"].(map[string]any)
+		if content["schema"].(map[string]any)["$ref"] != "#/components/schemas/NotesyncErrorEnvelope" {
+			t.Errorf("response %s does not use NotesyncErrorEnvelope", responseName)
+		}
+	}
+}
+
+func mustJSON(value any) []byte {
+	encoded, _ := json.Marshal(value)
+	return encoded
+}

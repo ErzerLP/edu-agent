@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/server/internal/integrations/nocturne"
+	"golang.org/x/text/unicode/norm"
 )
 
 const DefaultMinimumContextWindow = 4096
@@ -40,6 +42,7 @@ type Config struct {
 	Model                      ModelConfig
 	Offline                    OfflineConfig
 	Nocturne                   NocturneConfig
+	Notesync                   NotesyncConfig
 	Privacy                    PrivacyConfig
 }
 
@@ -90,6 +93,28 @@ type NocturneConfig struct {
 	ImageLockReference       string
 }
 
+type NotesyncConfig struct {
+	Enabled        bool
+	BaseURL        *url.URL
+	APIToken       string
+	Vault          string
+	PathPrefix     string
+	HTTPTimeout    time.Duration
+	WorkerInterval time.Duration
+	WorkerBatch    int
+	ScanPageSize   int
+	ScanMaxPages   int
+}
+
+func (c NotesyncConfig) String() string {
+	baseURL := ""
+	if c.BaseURL != nil {
+		baseURL = c.BaseURL.String()
+	}
+	return fmt.Sprintf("{Enabled:%t BaseURL:%s APIToken:<redacted> Vault:%s PathPrefix:%s HTTPTimeout:%s WorkerInterval:%s WorkerBatch:%d ScanPageSize:%d ScanMaxPages:%d}",
+		c.Enabled, baseURL, c.Vault, c.PathPrefix, c.HTTPTimeout, c.WorkerInterval, c.WorkerBatch, c.ScanPageSize, c.ScanMaxPages)
+}
+
 type PrivacyConfig struct {
 	ErasureGrantTTL         time.Duration
 	ErasureGrantMaxAttempts int
@@ -129,6 +154,10 @@ func load(lookup envReader) (Config, error) {
 			DeliverySweepInterval:    5 * time.Minute,
 			BackupControllerInterval: 24 * time.Hour,
 			BackupRetention:          30 * 24 * time.Hour,
+		},
+		Notesync: NotesyncConfig{
+			PathPrefix: "edu-agent", HTTPTimeout: 10 * time.Second, WorkerInterval: 3 * time.Second,
+			WorkerBatch: 20, ScanPageSize: 100, ScanMaxPages: 20,
 		},
 		Privacy: PrivacyConfig{ErasureGrantTTL: 10 * time.Minute, ErasureGrantMaxAttempts: 5},
 	}
@@ -231,6 +260,9 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if err := loadNocturne(lookup, &cfg.Nocturne); err != nil {
+		return Config{}, err
+	}
+	if err := loadNotesync(lookup, &cfg.Notesync, cfg.AllowInsecureNonLoopback); err != nil {
 		return Config{}, err
 	}
 	if cfg.Privacy.ErasureGrantTTL, err = durationValue(lookup, "PRIVACY_ERASURE_GRANT_TTL", cfg.Privacy.ErasureGrantTTL); err != nil {
@@ -460,6 +492,113 @@ func loadNocturne(lookup envReader, cfg *NocturneConfig) error {
 		return err
 	}
 	return validateNocturneIntervals(*cfg)
+}
+
+func loadNotesync(lookup envReader, cfg *NotesyncConfig, allowInsecureNonLoopback bool) error {
+	var err error
+	if cfg.Enabled, err = boolValue(lookup, "NOTESYNC_ENABLED", false); err != nil {
+		return err
+	}
+	if cfg.HTTPTimeout, err = durationValue(lookup, "NOTESYNC_HTTP_TIMEOUT", cfg.HTTPTimeout); err != nil {
+		return err
+	}
+	if cfg.WorkerInterval, err = durationValue(lookup, "NOTESYNC_WORKER_INTERVAL", cfg.WorkerInterval); err != nil {
+		return err
+	}
+	if cfg.WorkerBatch, err = intValue(lookup, "NOTESYNC_WORKER_BATCH", cfg.WorkerBatch); err != nil {
+		return err
+	}
+	if cfg.ScanPageSize, err = intValue(lookup, "NOTESYNC_SCAN_PAGE_SIZE", cfg.ScanPageSize); err != nil {
+		return err
+	}
+	if cfg.ScanMaxPages, err = intValue(lookup, "NOTESYNC_SCAN_MAX_PAGES", cfg.ScanMaxPages); err != nil {
+		return err
+	}
+	baseRaw := optionalTrimmed(lookup, "NOTESYNC_BASE_URL")
+	cfg.Vault = optionalTrimmed(lookup, "NOTESYNC_VAULT")
+	if prefix, ok := lookup("NOTESYNC_PATH_PREFIX"); ok {
+		cfg.PathPrefix = strings.TrimSpace(prefix)
+	}
+	if cfg.APIToken, err = optionalSecret(lookup, "NOTESYNC_API_TOKEN"); err != nil {
+		return err
+	}
+	configured := baseRaw != "" || cfg.APIToken != "" || cfg.Vault != ""
+	if !cfg.Enabled {
+		if configured {
+			return errors.New("NOTESYNC_ENABLED must be true when NoteSync connection settings are configured")
+		}
+		return validateNotesyncLimits(*cfg)
+	}
+	if baseRaw == "" || cfg.APIToken == "" || cfg.Vault == "" || cfg.PathPrefix == "" {
+		return errors.New("NoteSync enabled configuration requires base URL, API token, vault, and managed path prefix")
+	}
+	cfg.BaseURL, err = parseHTTPURL("NOTESYNC_BASE_URL", baseRaw)
+	if err != nil {
+		return err
+	}
+	if cfg.BaseURL.RawPath != "" {
+		return errors.New("NOTESYNC_BASE_URL must not contain percent-encoded path segments")
+	}
+	if cfg.BaseURL.Scheme == "http" && !isLoopbackHost(cfg.BaseURL.Hostname()) && !allowInsecureNonLoopback {
+		return errors.New("non-loopback NOTESYNC_BASE_URL requires HTTPS or ALLOW_INSECURE_NON_LOOPBACK=true")
+	}
+	if !validNotesyncToken(cfg.APIToken) {
+		return errors.New("NOTESYNC_API_TOKEN must contain at least 32 visible ASCII characters")
+	}
+	if !validNotesyncName(cfg.Vault, 255) {
+		return errors.New("NOTESYNC_VAULT is invalid")
+	}
+	if !validManagedPrefix(cfg.PathPrefix) {
+		return errors.New("NOTESYNC_PATH_PREFIX must be a canonical relative path")
+	}
+	return validateNotesyncLimits(*cfg)
+}
+
+func validateNotesyncLimits(cfg NotesyncConfig) error {
+	if cfg.HTTPTimeout <= 0 || cfg.HTTPTimeout > time.Minute || cfg.WorkerInterval <= 0 || cfg.WorkerInterval > time.Hour {
+		return errors.New("NoteSync timing settings are outside supported bounds")
+	}
+	if cfg.WorkerBatch <= 0 || cfg.WorkerBatch > 1000 || cfg.ScanPageSize <= 0 || cfg.ScanPageSize > 100 || cfg.ScanMaxPages <= 0 || cfg.ScanMaxPages > 1000 {
+		return errors.New("NoteSync batch and scan limits are outside supported bounds")
+	}
+	return nil
+}
+
+func validNotesyncToken(value string) bool {
+	if !utf8.ValidString(value) || len(value) < 32 {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x21 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validNotesyncName(value string, max int) bool {
+	if value == "" || len(value) > max || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validManagedPrefix(value string) bool {
+	if !validNotesyncName(value, 512) || !norm.NFKC.IsNormalString(value) || strings.Contains(value, "\\") || strings.HasPrefix(value, "/") ||
+		strings.HasSuffix(value, "/") || path.Clean(value) != value || value == "." {
+		return false
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "." || segment == ".." || segment == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func validateNocturneIntervals(cfg NocturneConfig) error {

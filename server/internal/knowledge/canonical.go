@@ -39,14 +39,15 @@ type DraftNode struct {
 }
 
 type InspectedDocument struct {
-	Normalized          string
-	Body                string
-	UserFrontMatter     string
-	UserFrontMatterFlow bool
-	ExplicitDocumentID  string
-	ExplicitRootNodeID  string
-	SemanticHash        string
-	DraftNodes          []DraftNode
+	Normalized               string
+	Body                     string
+	UserFrontMatter          string
+	UserFrontMatterFlow      bool
+	ExplicitDocumentID       string
+	ExplicitRootNodeID       string
+	ExplicitSourceRevisionID string
+	SemanticHash             string
+	DraftNodes               []DraftNode
 }
 
 type Canonicalizer struct {
@@ -83,7 +84,8 @@ func (c *Canonicalizer) Inspect(markdown string) (InspectedDocument, error) {
 	return InspectedDocument{
 		Normalized: string(normalized), Body: string(cleanBody), UserFrontMatter: front.user,
 		UserFrontMatterFlow: front.flow, ExplicitDocumentID: front.documentID, ExplicitRootNodeID: front.rootNodeID,
-		SemanticHash: sha256Hex(semantic), DraftNodes: drafts,
+		ExplicitSourceRevisionID: front.sourceRevisionID,
+		SemanticHash:             sha256Hex(semantic), DraftNodes: drafts,
 	}, nil
 }
 
@@ -107,7 +109,7 @@ func (c *Canonicalizer) Materialize(inspected InspectedDocument, documentID, roo
 		return DocumentRevision{}, &Error{Code: CodeInvalidMarkdown}
 	}
 	for i := len(headings) - 1; i >= 0; i-- {
-		marker := []byte(fmt.Sprintf("<!-- edu-agent-node:v1 {\"id\":\"%s\"} -->\n", nodeIDs[i]))
+		marker := fmt.Appendf(nil, "<!-- edu-agent-node:v1 {\"id\":\"%s\"} -->\n", nodeIDs[i])
 		position := headings[i].start
 		body = append(body[:position], append(marker, body[position:]...)...)
 	}
@@ -256,10 +258,11 @@ func writeIdentityFrontMatter(builder *strings.Builder, documentID, rootNodeID, 
 }
 
 type frontMatter struct {
-	user       string
-	flow       bool
-	documentID string
-	rootNodeID string
+	user             string
+	flow             bool
+	documentID       string
+	rootNodeID       string
+	sourceRevisionID string
 }
 
 func normalizeMarkdown(markdown string) ([]byte, error) {
@@ -362,6 +365,7 @@ func parseFrontMatter(markdown []byte) (frontMatter, string, error) {
 				if !validUUID(value.Value) {
 					return frontMatter{}, "", &Error{Code: CodeInvalidMarkdown, Cause: fmt.Errorf("invalid source revision identity")}
 				}
+				result.sourceRevisionID = strings.ToLower(value.Value)
 			}
 		}
 		if flow {

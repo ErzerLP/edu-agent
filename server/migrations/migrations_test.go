@@ -29,8 +29,8 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 9 || latest.name != "000009_offline_device_purge_ack.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("offline device purge acknowledgment migration was not embedded with checksum: %+v", latest)
+	if latest.version != 10 || latest.name != "000010_notesync_bridge.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("notesync bridge migration was not embedded with checksum: %+v", latest)
 	}
 }
 
@@ -228,6 +228,80 @@ func TestMemoryBridgeMigrationDeclaresDurabilityAndPrivacyBoundaries(t *testing.
 	}
 	if !strings.Contains(body, "terminal_disposition IS NOT NULL") || !strings.Contains(body, "'deleted'") {
 		t.Fatal("canceled outbox rows require an explicit complete terminal disposition")
+	}
+}
+
+func TestNoteSyncBridgeMigrationDeclaresPersistenceAndPrivacyBoundaries(t *testing.T) {
+	items, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := migrationBody(t, items, 10)
+	for _, required := range []string{
+		"'review_required'",
+		"knowledge_revision_id_number_unique",
+		"knowledge_snapshot_revision_document_revision_unique",
+		"CREATE TABLE knowledge_notesync_publications",
+		"knowledge_notesync_publication_remote_current",
+		"protect_knowledge_notesync_publication_progress",
+		"knowledge notesync publication cannot move backward",
+		"published_knowledge_revision_id",
+		"published_document_revision_id",
+		"published_revision_no BIGINT NOT NULL CHECK (published_revision_no >= 1)",
+		"base_markdown TEXT NOT NULL CHECK (octet_length(base_markdown) <= 4194304)",
+		"base_sha256 BYTEA NOT NULL CHECK (octet_length(base_sha256) = 32)",
+		"remote_version BIGINT",
+		"remote_last_time BIGINT",
+		"generation BIGINT NOT NULL CHECK (generation >= 1)",
+		"CREATE TABLE knowledge_notesync_publication_attempts",
+		"outbox_id UUID NOT NULL UNIQUE REFERENCES outbox_messages(id)",
+		"'prepared','unknown','retryable','applied','review_required','superseded','redacted'",
+		"knowledge_notesync_attempt_idempotency_shape",
+		"document_revision_id::text || ':' || knowledge_revision_no::text || ':'",
+		"knowledge_notesync_attempt_base_shape",
+		"protect_knowledge_notesync_attempt_identity",
+		"knowledge notesync publication attempt identity is immutable",
+		"CREATE TABLE knowledge_notesync_reviews",
+		"knowledge_notesync_review_single_open_basis",
+		"knowledge_notesync_review_status_shape",
+		"knowledge_notesync_review_base_shape",
+		"knowledge_notesync_review_local_shape",
+		"knowledge_notesync_review_remote_shape",
+		"remote_version IS NOT NULL AND remote_last_time IS NOT NULL",
+		"base_remote_path TEXT",
+		"base_remote_version BIGINT",
+		"base_remote_last_time BIGINT",
+		"base_to_local_diff TEXT NOT NULL",
+		"base_to_remote_diff TEXT NOT NULL",
+		"knowledge_notesync_resolution_review_operation_unique",
+		"UNIQUE(review_id,device_id,operation_id)",
+		"FOREIGN KEY(review_id,resolved_by_device_id,resolution_operation_id)",
+		"REFERENCES knowledge_notesync_resolution_operations(review_id,device_id,operation_id)",
+		"knowledge notesync review must leave open exactly once",
+		"knowledge notesync review terminal resolution is immutable",
+		"knowledge notesync resolution operation is immutable",
+		"resolved_document_id IS NULL",
+		"protect_knowledge_notesync_review_snapshot",
+		"knowledge notesync review snapshots are immutable",
+		"privacy_enforce_owner_write",
+		"'knowledge_notesync_publications'",
+		"'knowledge_notesync_publication_attempts'",
+		"'knowledge_notesync_reviews'",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("000010 is missing %q", required)
+		}
+	}
+	if strings.Contains(body, "FOREIGN KEY(resolved_by_device_id,resolution_operation_id)") {
+		t.Fatal("000010 resolution operation ownership FK omits review_id")
+	}
+	operationGuard := body[strings.Index(body, "CREATE FUNCTION protect_knowledge_notesync_resolution_operation"):]
+	if !strings.Contains(operationGuard, "TG_OP='DELETE' OR NEW IS DISTINCT FROM OLD") ||
+		!strings.Contains(operationGuard, "privacy_owner_scrub_permitted('knowledge')") {
+		t.Fatal("000010 resolution operations are not fully immutable outside privacy scrub")
+	}
+	if strings.Contains(strings.ToLower(body), "api_token") || strings.Contains(strings.ToLower(body), "authorization") {
+		t.Fatal("000010 must not persist Fast Note Sync credentials")
 	}
 }
 

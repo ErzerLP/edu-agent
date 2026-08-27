@@ -320,6 +320,156 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
+  /v1/knowledge/notesync/status:
+    get:
+      operationId: getKnowledgeNotesyncStatus
+      summary: Read the Fast Note Sync bridge capability status
+      description: Reports the configured bridge and its compatibility probe. This contract does not claim that Fast Note Sync provides an atomic compare-and-swap write.
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      responses:
+        "200":
+          description: Current bridge configuration and compatibility status, including an explicit not-configured state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncStatus" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/knowledge/notesync/previews:
+    post:
+      operationId: previewKnowledgeNotesync
+      summary: Preview managed Fast Note Sync notes without importing them
+      description: Reads bounded remote notes and returns deterministic base/local/remote comparisons. A remote change is reviewed locally; this endpoint does not claim an upstream CAS capability.
+      x-required-scope: knowledge:read
+      x-max-body-bytes: 16777216
+      security:
+        - deviceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotesyncPreviewRequest" }
+      responses:
+        "200":
+          description: Bounded preview results. An empty result is encoded as an empty items array.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncPreviewResult" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "404": { $ref: "#/components/responses/NotesyncNotFound" }
+        "409": { $ref: "#/components/responses/NotesyncConflict" }
+        "413": { $ref: "#/components/responses/NotesyncPayloadTooLarge" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/knowledge/notesync/reviews:
+    get:
+      operationId: listKnowledgeNotesyncReviews
+      summary: List explicit Fast Note Sync reviews
+      description: Lists review metadata and hashes only; Markdown and diff bodies are available from the detail endpoint.
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, open, resolved, closed]
+            default: open
+        - name: cursor
+          in: query
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 4096
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+            default: 25
+      responses:
+        "200":
+          description: Review summaries with an optional generation-bound cursor.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncReviewPage" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "409": { $ref: "#/components/responses/NotesyncConflict" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/knowledge/notesync/reviews/{reviewID}:
+    get:
+      operationId: getKnowledgeNotesyncReview
+      summary: Read one complete Fast Note Sync review
+      description: Returns full snapshots and bounded diff content. A snapshot always carries Markdown, including an empty string when present content is empty; missing is a separate boolean.
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+      parameters:
+        - $ref: "#/components/parameters/NotesyncReviewID"
+      responses:
+        "200":
+          description: Complete review detail with base, local, remote and diff data.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncReview" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "404": { $ref: "#/components/responses/NotesyncNotFound" }
+        "409": { $ref: "#/components/responses/NotesyncConflict" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/knowledge/notesync/reviews/{reviewID}/resolutions:
+    post:
+      operationId: resolveKnowledgeNotesyncReview
+      summary: Resolve one Fast Note Sync review through the canonical knowledge importer
+      description: Resolution is bound to the review basis and authenticated device. The external Fast Note Sync service is not treated as providing an atomic CAS.
+      x-required-scope: knowledge:write
+      x-max-body-bytes: 16777216
+      security:
+        - deviceBearer: []
+      parameters:
+        - $ref: "#/components/parameters/NotesyncReviewID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotesyncResolutionRequest" }
+      responses:
+        "200":
+          description: Idempotent replay, unchanged keep-canonical resolution, or an already committed result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncResolutionResult" }
+        "201":
+          description: A new canonical knowledge revision was committed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncResolutionResult" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "404": { $ref: "#/components/responses/NotesyncNotFound" }
+        "409": { $ref: "#/components/responses/NotesyncConflict" }
+        "413": { $ref: "#/components/responses/NotesyncPayloadTooLarge" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/learning/goals:
     post:
       operationId: createLearningGoal
@@ -926,23 +1076,31 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionRequest" }
+            schema:
+              { $ref: "#/components/schemas/OfflineAssessmentDecisionRequest" }
       responses:
         "200":
           description: Stable replay of the original decision receipt.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionReceipt" }
+              schema:
+                {
+                  $ref: "#/components/schemas/OfflineAssessmentDecisionReceipt",
+                }
         "201":
           description: Decision and resulting projection facts appended.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionReceipt" }
+              schema:
+                {
+                  $ref: "#/components/schemas/OfflineAssessmentDecisionReceipt",
+                }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/OfflineAssessmentDecisionConflict" }
+        "409":
+          { $ref: "#/components/responses/OfflineAssessmentDecisionConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1424,6 +1582,11 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/LearningUUID" }
+    NotesyncReviewID:
+      name: reviewID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
     Cursor:
       name: cursor
       in: query
@@ -1553,6 +1716,56 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/LearningCursorConflict" }
+    NotesyncConflict:
+      description: Review-state or canonical Knowledge import conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncConflict" }
+    NotesyncBadRequest:
+      description: NoteSync request validation failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncUnauthorized:
+      description: Device authentication failed.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncForbidden:
+      description: The device lacks the required knowledge scope.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncNotFound:
+      description: The requested NoteSync review was not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncPayloadTooLarge:
+      description: The preview or resolution request exceeds the configured knowledge request limit.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncRateLimited:
+      description: The authenticated request exceeded a rate limit.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncInternalError:
+      description: The NoteSync request failed because of an internal service error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncUnavailable:
+      description: NoteSync is unconfigured, redacted, clearing, or its dependency is unavailable.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
+    NotesyncError:
+      description: NoteSync request failed with a stable error code.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NotesyncErrorEnvelope" }
     DependencyUnavailable:
       description: Model, projection, memory, privacy, or response read permit is unavailable.
       content:
@@ -1568,7 +1781,8 @@ components:
       description: Offline attempt version, assessment disposition, or decision idempotency conflict.
       content:
         application/json:
-          schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionConflict" }
+          schema:
+            { $ref: "#/components/schemas/OfflineAssessmentDecisionConflict" }
     MemoryConflict:
       description: Idempotency, candidate revision, record generation, delivery state, or cursor conflict.
       content:
@@ -2483,8 +2697,7 @@ components:
         evidence_eligibility: { type: boolean }
         evidence_ineligible_reason:
           { $ref: "#/components/schemas/EvidenceIneligibleReason" }
-        archive_disposition:
-          { type: string, enum: [online, offline_succeeded] }
+        archive_disposition: { type: string, enum: [online, offline_succeeded] }
         offline_submission_id: { $ref: "#/components/schemas/LearningUUID" }
     FrozenReference:
       type: object
@@ -3779,14 +3992,22 @@ components:
       type: object
       additionalProperties: false
       required:
-        [operation_id, payload_schema_version, attempt_id, expected_version, kind, expected_disposition_version]
+        [
+          operation_id,
+          payload_schema_version,
+          attempt_id,
+          expected_version,
+          kind,
+          expected_disposition_version,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { const: 1 }
         attempt_id: { $ref: "#/components/schemas/LearningUUID" }
         expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
         kind: { const: confirm }
-        expected_disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        expected_disposition_version:
+          { $ref: "#/components/schemas/Uint63Decimal" }
     OfflineAssessmentOverrideItem:
       type: object
       additionalProperties: false
@@ -3799,14 +4020,24 @@ components:
       type: object
       additionalProperties: false
       required:
-        [operation_id, payload_schema_version, attempt_id, expected_version, kind, expected_disposition_version, reason, items]
+        [
+          operation_id,
+          payload_schema_version,
+          attempt_id,
+          expected_version,
+          kind,
+          expected_disposition_version,
+          reason,
+          items,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { const: 1 }
         attempt_id: { $ref: "#/components/schemas/LearningUUID" }
         expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
         kind: { const: override }
-        expected_disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        expected_disposition_version:
+          { $ref: "#/components/schemas/Uint63Decimal" }
         reason: { type: string, minLength: 1, maxLength: 4000 }
         items:
           type: array
@@ -3817,14 +4048,23 @@ components:
       type: object
       additionalProperties: false
       required:
-        [operation_id, payload_schema_version, attempt_id, expected_version, kind, expected_disposition_version, reason]
+        [
+          operation_id,
+          payload_schema_version,
+          attempt_id,
+          expected_version,
+          kind,
+          expected_disposition_version,
+          reason,
+        ]
       properties:
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { const: 1 }
         attempt_id: { $ref: "#/components/schemas/LearningUUID" }
         expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
         kind: { const: void }
-        expected_disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        expected_disposition_version:
+          { $ref: "#/components/schemas/Uint63Decimal" }
         reason: { type: string, minLength: 1, maxLength: 4000 }
     OfflineAssessmentDecisionReceipt:
       type: object
@@ -3851,7 +4091,8 @@ components:
         aggregate_version: { $ref: "#/components/schemas/Uint63Decimal" }
         first_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
         last_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
-        projection_as_of_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        projection_as_of_event_seq:
+          { $ref: "#/components/schemas/Uint63Decimal" }
         decision: { $ref: "#/components/schemas/AssessmentDecision" }
     OfflineAssessmentDecisionConflict:
       oneOf:
@@ -3874,7 +4115,14 @@ components:
         conflict:
           type: object
           additionalProperties: false
-          required: [aggregate_type, aggregate_id, expected_version, current_version, as_of_event_seq]
+          required:
+            [
+              aggregate_type,
+              aggregate_id,
+              expected_version,
+              current_version,
+              as_of_event_seq,
+            ]
           properties:
             aggregate_type: { const: offline_attempt }
             aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
@@ -4875,6 +5123,499 @@ components:
           minimum: 0
         provenance:
           const: canonical_markdown
+    NotesyncStatus:
+      type: object
+      additionalProperties: false
+      required: [configured, compatible, reason, external_cleanup_required]
+      properties:
+        configured: { type: boolean }
+        compatible: { type: boolean }
+        reason:
+          type: string
+          enum:
+            [
+              "",
+              not_configured,
+              version_unavailable,
+              version_unsupported,
+              version_untested,
+              capability_unavailable,
+            ]
+        version: { type: string, minLength: 1 }
+        vault: { type: string, minLength: 1 }
+        path_prefix: { type: string, minLength: 1 }
+        external_cleanup_required: { type: boolean }
+    NotesyncPreviewRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          maxLength: 1024
+          x-max-utf8-bytes: 1024
+        page:
+          type: integer
+          minimum: 0
+        page_size:
+          type: integer
+          minimum: 0
+          maximum: 25
+    NotesyncReviewSnapshotSummary:
+      type: object
+      additionalProperties: false
+      required: [missing]
+      properties:
+        missing: { type: boolean }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        knowledge_revision_no: { type: integer, minimum: 0 }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        path: { type: string, maxLength: 1024, x-max-utf8-bytes: 1024 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        remote_version: { type: integer, minimum: 0 }
+        remote_last_time: { type: integer, minimum: 0 }
+    NotesyncReviewSnapshot:
+      type: object
+      additionalProperties: false
+      required: [missing, markdown]
+      properties:
+        missing: { type: boolean }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        knowledge_revision_no: { type: integer, minimum: 0 }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        path: { type: string, maxLength: 1024, x-max-utf8-bytes: 1024 }
+        markdown:
+          type: string
+          minLength: 0
+          maxLength: 4194304
+          x-max-utf8-bytes: 4194304
+          description: Present even when empty. Use missing to distinguish an absent remote/local/base snapshot.
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        remote_version: { type: integer, minimum: 0 }
+        remote_last_time: { type: integer, minimum: 0 }
+    NotesyncThreeWayDiff:
+      type: object
+      additionalProperties: false
+      required:
+        [base_to_local, base_to_remote, local_truncated, remote_truncated]
+      properties:
+        base_to_local:
+          { type: string, maxLength: 262144, x-max-utf8-bytes: 262144 }
+        base_to_remote:
+          { type: string, maxLength: 262144, x-max-utf8-bytes: 262144 }
+        local_truncated: { type: boolean }
+        remote_truncated: { type: boolean }
+    NotesyncPreviewItem:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          category,
+          reason_code,
+          basis_hash,
+          remote_path,
+          base,
+          local,
+          remote,
+          diff,
+        ]
+      properties:
+        category:
+          type: string
+          enum:
+            [
+              in_sync,
+              remote_unchanged,
+              local_changed,
+              remote_changed,
+              both_changed,
+              remote_missing,
+              remote_moved,
+              unbased_remote,
+              path_occupied,
+              invalid_remote_markdown,
+            ]
+        reason_code:
+          type: string
+          enum:
+            [
+              in_sync,
+              local_revision_changed,
+              both_sides_changed,
+              remote_identity_moved,
+              unmanaged_remote_note,
+              remote_markdown_invalid,
+              remote_content_changed,
+              remote_note_missing,
+              remote_path_occupied,
+              publication_preflight_changed,
+              publication_readback_changed,
+            ]
+        review_id: { $ref: "#/components/schemas/LearningUUID" }
+        basis_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        document_id: { $ref: "#/components/schemas/LearningUUID" }
+        remote_path:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        base: { $ref: "#/components/schemas/NotesyncReviewSnapshotSummary" }
+        local: { $ref: "#/components/schemas/NotesyncReviewSnapshotSummary" }
+        remote: { $ref: "#/components/schemas/NotesyncReviewSnapshotSummary" }
+        diff: { $ref: "#/components/schemas/NotesyncThreeWayDiff" }
+    NotesyncPreviewResult:
+      type: object
+      additionalProperties: false
+      required: [items, page, page_size, total_rows]
+      properties:
+        items:
+          type: array
+          minItems: 0
+          maxItems: 25
+          items: { $ref: "#/components/schemas/NotesyncPreviewItem" }
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 25 }
+        next_page: { type: integer, minimum: 1 }
+        total_rows: { type: integer, minimum: 0 }
+    NotesyncReview:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          review_id,
+          category,
+          reason_code,
+          status,
+          basis_hash,
+          generation,
+          head_revision_id,
+          head_revision_no,
+          canonical_path,
+          remote_vault,
+          remote_path,
+          base,
+          local,
+          remote,
+          diff,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        review_id: { $ref: "#/components/schemas/LearningUUID" }
+        category:
+          type: string
+          enum:
+            [
+              in_sync,
+              remote_unchanged,
+              local_changed,
+              remote_changed,
+              both_changed,
+              remote_missing,
+              remote_moved,
+              unbased_remote,
+              path_occupied,
+              invalid_remote_markdown,
+            ]
+        reason_code:
+          type: string
+          enum:
+            [
+              local_revision_changed,
+              both_sides_changed,
+              remote_identity_moved,
+              unmanaged_remote_note,
+              remote_markdown_invalid,
+              remote_content_changed,
+              remote_note_missing,
+              remote_path_occupied,
+              publication_preflight_changed,
+              publication_readback_changed,
+            ]
+        status: { type: string, enum: [open, resolved, closed] }
+        basis_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        generation: { type: integer, minimum: 1 }
+        head_revision_id: { type: string }
+        head_revision_no: { type: integer, minimum: 0 }
+        document_id: { $ref: "#/components/schemas/LearningUUID" }
+        remote_document_id: { $ref: "#/components/schemas/LearningUUID" }
+        canonical_path:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        remote_vault:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        remote_path:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        base: { $ref: "#/components/schemas/NotesyncReviewSnapshot" }
+        local: { $ref: "#/components/schemas/NotesyncReviewSnapshot" }
+        remote: { $ref: "#/components/schemas/NotesyncReviewSnapshot" }
+        diff: { $ref: "#/components/schemas/NotesyncThreeWayDiff" }
+        resolution_kind:
+          {
+            type: string,
+            enum:
+              [
+                accept_remote,
+                keep_canonical,
+                merged,
+                superseded,
+                privacy_redaction,
+              ],
+          }
+        resolution_operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolved_by_device_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolved_knowledge_revision_id:
+          { $ref: "#/components/schemas/LearningUUID" }
+        resolved_document_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolved_document_revision_id:
+          { $ref: "#/components/schemas/LearningUUID" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+    NotesyncReviewSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          review_id,
+          category,
+          reason_code,
+          status,
+          basis_hash,
+          generation,
+          head_revision_id,
+          head_revision_no,
+          canonical_path,
+          remote_vault,
+          remote_path,
+          base,
+          local,
+          remote,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        review_id: { $ref: "#/components/schemas/LearningUUID" }
+        category:
+          type: string
+          enum:
+            [
+              in_sync,
+              remote_unchanged,
+              local_changed,
+              remote_changed,
+              both_changed,
+              remote_missing,
+              remote_moved,
+              unbased_remote,
+              path_occupied,
+              invalid_remote_markdown,
+            ]
+        reason_code:
+          type: string
+          enum:
+            [
+              local_revision_changed,
+              both_sides_changed,
+              remote_identity_moved,
+              unmanaged_remote_note,
+              remote_markdown_invalid,
+              remote_content_changed,
+              remote_note_missing,
+              remote_path_occupied,
+              publication_preflight_changed,
+              publication_readback_changed,
+            ]
+        status: { type: string, enum: [open, resolved, closed] }
+        basis_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        generation: { type: integer, minimum: 1 }
+        head_revision_id: { type: string }
+        head_revision_no: { type: integer, minimum: 0 }
+        document_id: { $ref: "#/components/schemas/LearningUUID" }
+        remote_document_id: { $ref: "#/components/schemas/LearningUUID" }
+        canonical_path:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        remote_vault:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        remote_path:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 1024,
+            x-max-utf8-bytes: 1024,
+          }
+        base: { $ref: "#/components/schemas/NotesyncReviewSnapshotSummary" }
+        local: { $ref: "#/components/schemas/NotesyncReviewSnapshotSummary" }
+        remote: { $ref: "#/components/schemas/NotesyncReviewSnapshotSummary" }
+        resolution_kind:
+          {
+            type: string,
+            enum:
+              [
+                accept_remote,
+                keep_canonical,
+                merged,
+                superseded,
+                privacy_redaction,
+              ],
+          }
+        resolution_operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolved_by_device_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolved_knowledge_revision_id:
+          { $ref: "#/components/schemas/LearningUUID" }
+        resolved_document_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolved_document_revision_id:
+          { $ref: "#/components/schemas/LearningUUID" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+    NotesyncReviewPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 0
+          maxItems: 25
+          items: { $ref: "#/components/schemas/NotesyncReviewSummary" }
+        next_cursor: { type: string, minLength: 1, maxLength: 4096 }
+    NotesyncDocumentResolution:
+      type: object
+      additionalProperties: false
+      required: [locator, action, reason]
+      properties:
+        locator: { type: string, pattern: "^[0-9a-f]{64}$" }
+        action: { type: string, enum: [new, preserve] }
+        document_id: { $ref: "#/components/schemas/LearningUUID" }
+        reason: { type: string, minLength: 1 }
+    NotesyncNodeResolution:
+      type: object
+      additionalProperties: false
+      required: [locator, action, reason]
+      properties:
+        locator: { type: string, pattern: "^[0-9a-f]{64}$" }
+        action: { type: string, enum: [new, preserve, rewrite, split, merge] }
+        source_node_revision_ids:
+          type: array
+          items: { $ref: "#/components/schemas/LearningUUID" }
+        reason: { type: string, minLength: 1 }
+    NotesyncResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [basis_hash, operation_id, kind]
+      properties:
+        basis_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        kind: { type: string, enum: [accept_remote, keep_canonical, merged] }
+        merged_markdown:
+          type: string
+          minLength: 0
+          maxLength: 4194304
+          x-max-utf8-bytes: 4194304
+          description: Required for merged and absent for other non-empty resolution kinds; Markdown is carried in the body, never in the URL or device identity.
+        identity_review_basis_hash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        identity_review_operation_id:
+          $ref: "#/components/schemas/LearningUUID"
+        identity_review_receipt:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        document_resolutions:
+          type: array
+          items: { $ref: "#/components/schemas/NotesyncDocumentResolution" }
+        node_resolutions:
+          type: array
+          items: { $ref: "#/components/schemas/NotesyncNodeResolution" }
+      oneOf:
+        - properties: { kind: { const: accept_remote } }
+        - properties: { kind: { const: keep_canonical } }
+        - properties:
+            kind: { const: merged }
+          required: [merged_markdown]
+    NotesyncResolutionResult:
+      type: object
+      additionalProperties: false
+      required: [review_id, resolution_kind, unchanged]
+      properties:
+        review_id: { $ref: "#/components/schemas/LearningUUID" }
+        resolution_kind:
+          { type: string, enum: [accept_remote, keep_canonical, merged] }
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        unchanged: { type: boolean }
+        replayed: { type: boolean }
+    NotesyncErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              enum:
+                [
+                  notesync_not_configured,
+                  invalid_request,
+                  not_found,
+                  stale_notesync_review,
+                  idempotency_conflict,
+                  content_redacted,
+                  privacy_clear_in_progress,
+                  notesync_unavailable,
+                  payload_too_large,
+                  authentication_failed,
+                  forbidden,
+                  rate_limited,
+                  internal_error,
+                  invalid_path,
+                  invalid_markdown,
+                  invalid_identity_marker,
+                  duplicate_document_identity,
+                  path_occupied,
+                  identity_review_required,
+                  stale_identity_review,
+                  revision_conflict,
+                ]
+            message: { type: string }
+            request_id: { type: string }
+    NotesyncConflict:
+      oneOf:
+        - $ref: "#/components/schemas/NotesyncErrorEnvelope"
+        - $ref: "#/components/schemas/KnowledgeConflict"
     MemoryUUID:
       type: string
       format: uuid
@@ -5463,7 +6204,16 @@ components:
       type: object
       additionalProperties: false
       required:
-        [erasure_id, device_id, old_generation, current_generation, challenge_revision, challenge, issued_at, status]
+        [
+          erasure_id,
+          device_id,
+          old_generation,
+          current_generation,
+          challenge_revision,
+          challenge,
+          issued_at,
+          status,
+        ]
       properties:
         erasure_id: { $ref: "#/components/schemas/MemoryUUID" }
         device_id: { $ref: "#/components/schemas/MemoryUUID" }
@@ -5482,7 +6232,17 @@ components:
         challenge: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
         outcome: { type: string, enum: [succeeded, failed] }
         managed_objects_absent: { type: boolean }
-        failure_code: { type: string, enum: [profile_busy, key_delete_failed, path_delete_failed, verification_failed] }
+        failure_code:
+          {
+            type: string,
+            enum:
+              [
+                profile_busy,
+                key_delete_failed,
+                path_delete_failed,
+                verification_failed,
+              ],
+          }
       oneOf:
         - required: [managed_objects_absent]
           properties:
@@ -5497,7 +6257,16 @@ components:
       type: object
       additionalProperties: false
       required:
-        [erasure_id, device_id, source_generation, current_generation, challenge_revision, status, updated_at, stable_reason]
+        [
+          erasure_id,
+          device_id,
+          source_generation,
+          current_generation,
+          challenge_revision,
+          status,
+          updated_at,
+          stable_reason,
+        ]
       properties:
         erasure_id: { $ref: "#/components/schemas/MemoryUUID" }
         device_id: { $ref: "#/components/schemas/MemoryUUID" }

@@ -145,18 +145,36 @@ type NodeResolution struct {
 	Reason                string   `json:"reason"`
 }
 
+type NotesyncImportResolution struct {
+	ReviewID               string
+	BasisHash              string
+	DeviceID               string
+	OperationID            string
+	RequestHash            string
+	Kind                   string
+	ObservedRemoteMissing  bool
+	ObservedRemoteMarkdown string
+	ObservedRemoteSHA256   string
+	ObservedRemoteVersion  int64
+	ObservedRemoteLastTime int64
+	CanonicalPath          string
+	ExpectedDocumentID     string
+	ResolvedAt             time.Time
+}
+
 type ImportCommand struct {
-	OperationID               string               `json:"operation_id"`
-	ExpectedParentRevisionID  *string              `json:"expected_parent_revision_id"`
-	ExpectedParentProvided    bool                 `json:"-"`
-	Source                    string               `json:"source"`
-	Documents                 []ImportDocument     `json:"documents"`
-	IdentityReviewBasisHash   string               `json:"identity_review_basis_hash,omitempty"`
-	IdentityReviewOperationID string               `json:"identity_review_operation_id,omitempty"`
-	IdentityReviewReceipt     string               `json:"identity_review_receipt,omitempty"`
-	DocumentResolutions       []DocumentResolution `json:"document_resolutions,omitempty"`
-	NodeResolutions           []NodeResolution     `json:"node_resolutions,omitempty"`
-	ActorDeviceID             string               `json:"-"`
+	OperationID               string                    `json:"operation_id"`
+	ExpectedParentRevisionID  *string                   `json:"expected_parent_revision_id"`
+	ExpectedParentProvided    bool                      `json:"-"`
+	Source                    string                    `json:"source"`
+	Documents                 []ImportDocument          `json:"documents"`
+	IdentityReviewBasisHash   string                    `json:"identity_review_basis_hash,omitempty"`
+	IdentityReviewOperationID string                    `json:"identity_review_operation_id,omitempty"`
+	IdentityReviewReceipt     string                    `json:"identity_review_receipt,omitempty"`
+	DocumentResolutions       []DocumentResolution      `json:"document_resolutions,omitempty"`
+	NodeResolutions           []NodeResolution          `json:"node_resolutions,omitempty"`
+	ActorDeviceID             string                    `json:"-"`
+	NotesyncResolution        *NotesyncImportResolution `json:"-"`
 }
 
 func (c *ImportCommand) UnmarshalJSON(data []byte) error {

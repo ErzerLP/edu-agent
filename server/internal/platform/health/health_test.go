@@ -15,7 +15,7 @@ func TestReadinessDistinguishesRequiredAndOptionalDependencies(t *testing.T) {
 		return false, "rate_limited"
 	}, InsecureWarning: true})
 	report := checker.Ready(context.Background())
-	if report.Status != StatusDegraded || report.Components["postgresql"].Status != StatusHealthy || report.Components["open_evaluation_worker"].Reason != "not_configured" || report.Components["offline_signer"].Reason != "not_configured" || report.Components["offline_protocol"].Reason != "unavailable" || report.Components["nocturne"].Reason != "not_configured" || len(report.Warnings) != 1 {
+	if report.Status != StatusDegraded || report.Components["postgresql"].Status != StatusHealthy || report.Components["open_evaluation_worker"].Reason != "not_configured" || report.Components["offline_signer"].Reason != "not_configured" || report.Components["offline_protocol"].Reason != "unavailable" || report.Components["nocturne"].Reason != "not_configured" || report.Components["notesync"].Reason != "not_configured" || len(report.Warnings) != 1 {
 		t.Fatalf("unexpected optional model report: %+v", report)
 	}
 
@@ -33,6 +33,7 @@ func TestOfflineReadinessComponentsDistinguishHealthyDegradedAndFatal(t *testing
 		OpenEvaluationWorkerProbe: func(context.Context) error { return nil },
 		OfflineSignerAvailable:    true, OfflineProtocolAvailable: true,
 		NocturneEnabled: true, NocturneProbe: func(context.Context) error { return nil },
+		NotesyncEnabled: true, NotesyncProbe: func(context.Context) (bool, string) { return true, "" },
 	}
 	report := New(healthyOptions).Ready(context.Background())
 	if report.Status != StatusHealthy || report.Components["open_evaluation_worker"] != (Component{Status: StatusHealthy}) || report.Components["offline_protocol"] != (Component{Status: StatusHealthy}) {
@@ -72,6 +73,30 @@ func TestOfflineSignerReadinessIsReportedWithoutMakingOnlineTeachingNotReady(t *
 	report = checker.Ready(context.Background())
 	if report.Components["offline_signer"] != (Component{Status: StatusDegraded, Reason: "not_configured"}) || report.Status != StatusDegraded {
 		t.Fatalf("unexpected absent signer report: %+v", report)
+	}
+}
+
+func TestNotesyncReadinessIsIndependentAndReasoned(t *testing.T) {
+	base := Options{Database: fakePinger{}, ModelEnabled: true, ModelProbe: func(context.Context) (bool, string) { return true, "" }, NotesyncEnabled: true}
+	base.NotesyncProbe = func(context.Context) (bool, string) { return true, "" }
+	report := New(base).Ready(context.Background())
+	if report.Components["notesync"] != (Component{Status: StatusHealthy}) {
+		t.Fatalf("compatible NoteSync was not healthy: %+v", report)
+	}
+
+	for _, reason := range []string{"version_unsupported", "version_untested", "version_unavailable", "capability_unavailable"} {
+		options := base
+		options.NotesyncProbe = func(context.Context) (bool, string) { return false, reason }
+		report = New(options).Ready(context.Background())
+		if report.Status != StatusDegraded || report.Components["postgresql"].Status != StatusHealthy || report.Components["notesync"] != (Component{Status: StatusDegraded, Reason: reason}) {
+			t.Fatalf("NoteSync failure escaped optional component for %s: %+v", reason, report)
+		}
+	}
+
+	base.NotesyncProbe = nil
+	report = New(base).Ready(context.Background())
+	if report.Components["notesync"] != (Component{Status: StatusDegraded, Reason: "probe_unavailable"}) {
+		t.Fatalf("missing NoteSync probe was not explicit: %+v", report)
 	}
 }
 

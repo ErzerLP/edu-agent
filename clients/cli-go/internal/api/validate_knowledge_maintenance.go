@@ -210,7 +210,7 @@ func validateMaintenanceState(value KnowledgeMaintenanceProposal) error {
 	}
 	switch value.Status {
 	case "applied":
-		if value.Decision.Outcome != "applied" || value.AppliedRevisionID == "" || value.Origin == nil || value.CurrentRevisionID != "" || value.Decision.RequestedDecision == "auto" != value.Risk.AutoApply || value.Decision.RequestedDecision == "auto" && value.Risk.Level != "low" || value.Decision.RequestedDecision == "approve" && value.Risk.Level == "low" {
+		if value.Decision.Outcome != "applied" || value.AppliedRevisionID == "" || value.CurrentRevisionID != value.AppliedRevisionID || value.Origin == nil || value.Decision.RequestedDecision == "auto" != value.Risk.AutoApply || value.Decision.RequestedDecision == "auto" && value.Risk.Level != "low" || value.Decision.RequestedDecision == "approve" && value.Risk.Level == "low" {
 			return errors.New("applied knowledge maintenance proposal is inconsistent")
 		}
 		return validateMaintenanceOrigin(*value.Origin, value)

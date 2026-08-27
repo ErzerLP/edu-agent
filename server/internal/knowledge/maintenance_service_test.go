@@ -408,14 +408,30 @@ func TestMaintenancePolicyFailsClosedForStructureAndEvidence(t *testing.T) {
 	if withEvidence.Status != ProposalOpen || withEvidence.EvidenceImpact.Count != 1 || withEvidence.Risk.AutoApply || !containsString(withEvidence.Risk.Reasons, "accepted_evidence_affected") {
 		t.Fatalf("accepted evidence did not force review: %+v", withEvidence)
 	}
+	if !maintenanceCollectionsPresent(withEvidence) {
+		t.Fatalf("created proposal returned null public collections: %+v", withEvidence)
+	}
 	page, err := service.List(t.Context(), ProposalListCommand{Status: "open", Limit: 10})
-	if err != nil || len(page.Items) != 1 || page.Items[0].ID != withEvidence.ID {
+	if err != nil || len(page.Items) != 1 || page.Items[0].ID != withEvidence.ID || !maintenanceCollectionsPresent(page.Items[0]) {
 		t.Fatalf("open proposal list=%+v err=%v", page, err)
 	}
 	detail, err := service.Get(t.Context(), withEvidence.ID)
-	if err != nil || detail.ID != withEvidence.ID || detail.EvidenceImpact.Count != 1 {
+	if err != nil || detail.ID != withEvidence.ID || detail.EvidenceImpact.Count != 1 || !maintenanceCollectionsPresent(detail) {
 		t.Fatalf("proposal detail=%+v err=%v", detail, err)
 	}
+}
+
+func maintenanceCollectionsPresent(proposal Proposal) bool {
+	return proposal.IdentityImpact.PreservedDocumentIDs != nil &&
+		proposal.IdentityImpact.AddedDocumentIDs != nil &&
+		proposal.IdentityImpact.RemovedDocumentIDs != nil &&
+		proposal.IdentityImpact.MovedDocumentIDs != nil &&
+		proposal.IdentityImpact.PreservedNodeIDs != nil &&
+		proposal.IdentityImpact.AddedNodeIDs != nil &&
+		proposal.IdentityImpact.RemovedNodeIDs != nil &&
+		proposal.LineageImpact.Lineages != nil &&
+		proposal.EvidenceImpact.References != nil &&
+		proposal.Risk.Reasons != nil
 }
 
 func TestMaintenanceConcurrentBaseBecomesStaleAndRollbackAppends(t *testing.T) {

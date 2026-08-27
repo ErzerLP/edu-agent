@@ -198,6 +198,7 @@ func maintenanceDecidedProposal(decision string) KnowledgeMaintenanceProposal {
 	value.Decision = &KnowledgeMaintenanceDecision{DecisionID: "67000000-0000-4000-8000-000000000001", OperationID: maintenanceOperationID, RequestedDecision: decision, Reason: decision + " reason", ActorDeviceID: maintenanceDeviceID, CreatedAt: value.CreatedAt}
 	if decision == "approve" {
 		value.Status, value.Decision.Outcome, value.AppliedRevisionID = "applied", "applied", "68000000-0000-4000-8000-000000000001"
+		value.CurrentRevisionID = value.AppliedRevisionID
 		value.Origin = &KnowledgeMaintenanceRevisionOrigin{Version: "knowledge-revision-origin-v1", Kind: value.Kind, ProposalID: value.ProposalID, BaseRevisionID: value.BaseRevisionID, BasisHash: value.BasisHash}
 	} else {
 		value.Status, value.Decision.Outcome = "rejected", "rejected"

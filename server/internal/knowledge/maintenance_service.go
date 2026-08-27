@@ -48,7 +48,7 @@ func (s *Service) Create(ctx context.Context, command CreateProposalCommand) (Pr
 		return Proposal{}, err
 	}
 	if replay, ok, err := s.lookupMaintenanceReplay(ctx, normalized.RequestID, requestHash); err != nil || ok {
-		return replay, err
+		return normalizeMaintenanceProposal(replay), err
 	}
 	baseSnapshot, err := s.maintenanceStore.MaintenanceBase(ctx, normalized.BaseRevisionID)
 	if err != nil {
@@ -113,7 +113,8 @@ func (s *Service) Create(ctx context.Context, command CreateProposalCommand) (Pr
 			Reason: MaintenanceAutoPolicy, ActorDeviceID: normalized.ActorDeviceID, CreatedAt: createdAt,
 		}
 	}
-	return s.maintenanceStore.SaveProposal(ctx, PreparedProposal{Proposal: proposal, Commit: commit})
+	saved, err := s.maintenanceStore.SaveProposal(ctx, PreparedProposal{Proposal: proposal, Commit: commit})
+	return normalizeMaintenanceProposal(saved), err
 }
 
 func (s *Service) CreateRollback(ctx context.Context, command CreateRollbackCommand) (Proposal, error) {
@@ -125,7 +126,7 @@ func (s *Service) CreateRollback(ctx context.Context, command CreateRollbackComm
 		return Proposal{}, err
 	}
 	if replay, ok, err := s.lookupMaintenanceReplay(ctx, normalized.RequestID, requestHash); err != nil || ok {
-		return replay, err
+		return normalizeMaintenanceProposal(replay), err
 	}
 	baseSnapshot, err := s.maintenanceStore.MaintenanceBase(ctx, normalized.BaseRevisionID)
 	if err != nil {
@@ -191,7 +192,8 @@ func (s *Service) CreateRollback(ctx context.Context, command CreateRollbackComm
 		CreatedAt:           createdAt, UpdatedAt: createdAt, PlannedRevisionID: revision.ID,
 		PlannedRevisionNo: revision.RevisionNo, PlannedManifestHash: revision.ManifestHash,
 	}
-	return s.maintenanceStore.SaveProposal(ctx, PreparedProposal{Proposal: proposal, Commit: commit})
+	saved, err := s.maintenanceStore.SaveProposal(ctx, PreparedProposal{Proposal: proposal, Commit: commit})
+	return normalizeMaintenanceProposal(saved), err
 }
 
 func optionalRevisionPointer(value string) *string {
@@ -229,14 +231,25 @@ func (s *Service) List(ctx context.Context, command ProposalListCommand) (Propos
 	command.ExpectedGeneration = generation
 	command.AfterCreatedAt = afterAt
 	command.AfterProposalID = afterID
-	return s.maintenanceStore.ListProposals(ctx, command)
+	page, err := s.maintenanceStore.ListProposals(ctx, command)
+	if err != nil {
+		return ProposalPage{}, err
+	}
+	for index := range page.Items {
+		page.Items[index] = normalizeMaintenanceProposal(page.Items[index])
+	}
+	if page.Items == nil {
+		page.Items = []Proposal{}
+	}
+	return page, nil
 }
 
 func (s *Service) Get(ctx context.Context, proposalID string) (Proposal, error) {
 	if s.maintenanceStore == nil || !validUUID(strings.ToLower(strings.TrimSpace(proposalID))) {
 		return Proposal{}, &Error{Code: CodeInvalidRequest}
 	}
-	return s.maintenanceStore.Proposal(ctx, strings.ToLower(strings.TrimSpace(proposalID)))
+	proposal, err := s.maintenanceStore.Proposal(ctx, strings.ToLower(strings.TrimSpace(proposalID)))
+	return normalizeMaintenanceProposal(proposal), err
 }
 
 func (s *Service) Decide(ctx context.Context, command ProposalDecisionCommand) (Proposal, error) {
@@ -248,7 +261,7 @@ func (s *Service) Decide(ctx context.Context, command ProposalDecisionCommand) (
 		return Proposal{}, err
 	}
 	if replay, ok, err := s.lookupMaintenanceReplay(ctx, normalized.OperationID, requestHash); err != nil || ok {
-		return replay, err
+		return normalizeMaintenanceProposal(replay), err
 	}
 	proposal, err := s.maintenanceStore.Proposal(ctx, normalized.ProposalID)
 	if err != nil {
@@ -262,7 +275,7 @@ func (s *Service) Decide(ctx context.Context, command ProposalDecisionCommand) (
 	if !validUUID(decisionID) {
 		return Proposal{}, fmt.Errorf("UUID generator returned invalid proposal decision ID")
 	}
-	return s.maintenanceStore.DecideProposal(ctx, PreparedProposalDecision{
+	decided, err := s.maintenanceStore.DecideProposal(ctx, PreparedProposalDecision{
 		OperationID: normalized.OperationID, RequestHash: requestHash, ProposalID: normalized.ProposalID,
 		RequestedDecision: normalized.Decision, Reason: normalized.Reason, ActorDeviceID: normalized.ActorDeviceID,
 		DecisionID: decisionID, DecidedAt: s.now().UTC().Truncate(time.Microsecond),
@@ -271,6 +284,35 @@ func (s *Service) Decide(ctx context.Context, command ProposalDecisionCommand) (
 		DiffVersion: MaintenanceDiffVersion, RiskVersion: MaintenanceRiskVersion,
 		AutoPolicyVersion: MaintenanceAutoPolicy,
 	})
+	return normalizeMaintenanceProposal(decided), err
+}
+
+func normalizeMaintenanceProposal(proposal Proposal) Proposal {
+	if proposal.Redacted {
+		return proposal
+	}
+	collections := []*[]string{
+		&proposal.IdentityImpact.PreservedDocumentIDs,
+		&proposal.IdentityImpact.AddedDocumentIDs,
+		&proposal.IdentityImpact.RemovedDocumentIDs,
+		&proposal.IdentityImpact.MovedDocumentIDs,
+		&proposal.IdentityImpact.PreservedNodeIDs,
+		&proposal.IdentityImpact.AddedNodeIDs,
+		&proposal.IdentityImpact.RemovedNodeIDs,
+		&proposal.Risk.Reasons,
+	}
+	for _, collection := range collections {
+		if *collection == nil {
+			*collection = []string{}
+		}
+	}
+	if proposal.LineageImpact.Lineages == nil {
+		proposal.LineageImpact.Lineages = []Lineage{}
+	}
+	if proposal.EvidenceImpact.References == nil {
+		proposal.EvidenceImpact.References = []AcceptedEvidenceReference{}
+	}
+	return proposal
 }
 
 func (s *Service) lookupMaintenanceReplay(ctx context.Context, operationID, requestHash string) (Proposal, bool, error) {

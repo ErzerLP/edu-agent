@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -149,13 +148,14 @@ func (a *API) handleResponseReadPermit(closedCode string, owners ...privacy.Owne
 			buffered := newBufferedHTTPResponse()
 			request := r.WithContext(permit.Context())
 			next.ServeHTTP(buffered, request)
-			if cause := context.Cause(permit.Context()); cause != nil {
-				if privacy.ErrorCode(cause) == privacy.CodeContentRedacted {
+			if err := permit.CommitResponse(func() { buffered.flush(w) }); err != nil {
+				if privacy.ErrorCode(err) == privacy.CodeContentRedacted {
 					writeError(w, r, http.StatusServiceUnavailable, memory.CodeContentRedacted, "Content was redacted before the response completed")
+					return
 				}
+				a.logger.WarnContext(r.Context(), "response write canceled", "request_id", middleware.GetReqID(r.Context()), "error_category", "privacy_permit")
 				return
 			}
-			buffered.flush(w)
 		})
 	}
 }

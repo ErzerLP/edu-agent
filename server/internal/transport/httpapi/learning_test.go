@@ -209,7 +209,11 @@ func TestLearningHTTPEnforcesScopeBodyLimitAndActor(t *testing.T) {
 		"/v1/learning/assessments/" + testAssessment + "/decisions",
 	} {
 		service = &fakeLearning{}
-		handler = newLearningTestAPI(t, []string{"learning:write"}, service, &logs)
+		scopes := []string{"learning:write"}
+		if strings.Contains(path, "/assessments/") {
+			scopes = append(scopes, "learning:approve")
+		}
+		handler = newLearningTestAPI(t, scopes, service, &logs)
 		response = learningRequest(t, handler, http.MethodPost, path, oversized)
 		if response.Code != http.StatusRequestEntityTooLarge || !strings.Contains(response.Body.String(), "payload_too_large") || service.calls != 0 {
 			t.Fatalf("body limit %s = %d calls=%d %s", path, response.Code, service.calls, response.Body.String())
@@ -300,7 +304,11 @@ func TestLearningHTTPRouteMethodScopeAndActorMatrix(t *testing.T) {
 		t.Run(contract.name, func(t *testing.T) {
 			var logs bytes.Buffer
 			service := &fakeLearning{}
-			handler := newLearningTestAPI(t, []string{contract.scope}, service, &logs)
+			authorizedScopes := []string{contract.scope}
+			if contract.name == "decision" {
+				authorizedScopes = append(authorizedScopes, "learning:approve")
+			}
+			handler := newLearningTestAPI(t, authorizedScopes, service, &logs)
 			response := learningRequest(t, handler, contract.method, contract.path, contract.body)
 			if response.Code != contract.status || service.calls != 1 || service.method != contract.name {
 				t.Fatalf("authorized route=%d calls=%d method=%q body=%s", response.Code, service.calls, service.method, response.Body.String())
@@ -321,7 +329,7 @@ func TestLearningHTTPRouteMethodScopeAndActorMatrix(t *testing.T) {
 			}
 
 			service = &fakeLearning{}
-			handler = newLearningTestAPI(t, []string{contract.scope}, service, &logs)
+			handler = newLearningTestAPI(t, authorizedScopes, service, &logs)
 			wrongMethod := http.MethodGet
 			if contract.method == http.MethodGet {
 				wrongMethod = http.MethodDelete
@@ -331,6 +339,25 @@ func TestLearningHTTPRouteMethodScopeAndActorMatrix(t *testing.T) {
 				t.Fatalf("wrong method=%d calls=%d", response.Code, service.calls)
 			}
 		})
+	}
+}
+
+func TestLearningHTTPRestrictedAgentCannotDecideAssessment(t *testing.T) {
+	bodies := validLearningBodies()
+	var logs bytes.Buffer
+	service := &fakeLearning{}
+	agentScopes := []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read"}
+	handler := newLearningTestAPI(t, agentScopes, service, &logs)
+	response := learningRequest(t, handler, http.MethodPost, "/v1/learning/assessments/"+testAssessment+"/decisions", bodies["decision"])
+	if response.Code != http.StatusForbidden || service.calls != 0 {
+		t.Fatalf("restricted Agent assessment decision status=%d calls=%d body=%s", response.Code, service.calls, response.Body.String())
+	}
+
+	service = &fakeLearning{}
+	handler = newLearningTestAPI(t, []string{"learning:write", "learning:approve"}, service, &logs)
+	response = learningRequest(t, handler, http.MethodPost, "/v1/learning/assessments/"+testAssessment+"/decisions", bodies["decision"])
+	if response.Code != http.StatusCreated || service.calls != 1 || service.method != "decision" {
+		t.Fatalf("user assessment decision status=%d calls=%d method=%q body=%s", response.Code, service.calls, service.method, response.Body.String())
 	}
 }
 
@@ -371,7 +398,11 @@ func TestLearningHTTPStrictActionAndWriteDecoding(t *testing.T) {
 	for _, item := range closedWrites {
 		var logs bytes.Buffer
 		service := &fakeLearning{}
-		handler := newLearningTestAPI(t, []string{"learning:write"}, service, &logs)
+		scopes := []string{"learning:write"}
+		if strings.Contains(item.path, "/assessments/") {
+			scopes = append(scopes, "learning:approve")
+		}
+		handler := newLearningTestAPI(t, scopes, service, &logs)
 		response := learningRequest(t, handler, http.MethodPost, item.path, item.body)
 		if response.Code != http.StatusBadRequest || service.calls != 0 {
 			t.Fatalf("closed write %s=%d calls=%d body=%s", item.path, response.Code, service.calls, response.Body.String())
@@ -407,7 +438,11 @@ func TestLearningHTTPRejectsOptionalNullsBeforeService(t *testing.T) {
 		t.Run(item.name+" absent", func(t *testing.T) {
 			var logs bytes.Buffer
 			service := &fakeLearning{}
-			handler := newLearningTestAPI(t, []string{"learning:write"}, service, &logs)
+			scopes := []string{"learning:write"}
+			if strings.Contains(item.path, "/assessments/") {
+				scopes = append(scopes, "learning:approve")
+			}
+			handler := newLearningTestAPI(t, scopes, service, &logs)
 			response := learningRequest(t, handler, http.MethodPost, item.path, item.absent)
 			if response.Code != http.StatusCreated || service.calls != 1 {
 				t.Fatalf("absent optional field=%d calls=%d body=%s", response.Code, service.calls, response.Body.String())
@@ -416,7 +451,11 @@ func TestLearningHTTPRejectsOptionalNullsBeforeService(t *testing.T) {
 		t.Run(item.name+" null", func(t *testing.T) {
 			var logs bytes.Buffer
 			service := &fakeLearning{}
-			handler := newLearningTestAPI(t, []string{"learning:write"}, service, &logs)
+			scopes := []string{"learning:write"}
+			if strings.Contains(item.path, "/assessments/") {
+				scopes = append(scopes, "learning:approve")
+			}
+			handler := newLearningTestAPI(t, scopes, service, &logs)
 			response := learningRequest(t, handler, http.MethodPost, item.path, item.explicitNull)
 			if response.Code != http.StatusBadRequest || service.calls != 0 {
 				t.Fatalf("explicit null=%d calls=%d body=%s", response.Code, service.calls, response.Body.String())
@@ -509,7 +548,7 @@ func TestLearningHTTPRejectsIdentifiersSourceAndQueriesBeforeService(t *testing.
 	for _, item := range cases {
 		var logs bytes.Buffer
 		service := &fakeLearning{}
-		handler := newLearningTestAPI(t, []string{"learning:read", "learning:write"}, service, &logs)
+		handler := newLearningTestAPI(t, []string{"learning:read", "learning:write", "learning:approve"}, service, &logs)
 		response := learningRequest(t, handler, item.method, item.path, item.body)
 		if response.Code != http.StatusBadRequest || service.calls != 0 {
 			t.Fatalf("pre-service validation %s %s=%d calls=%d body=%s", item.method, item.path, response.Code, service.calls, response.Body.String())
@@ -685,7 +724,7 @@ func TestLearningHTTPValidatesSHA256AndCollectionLimitsBeforeService(t *testing.
 		invalidItem := strings.Replace(validAssessmentItemJSON(), `"`+field+`":"`+validSHA+`"`, `"`+field+`":""`, 1)
 		var logs bytes.Buffer
 		service := &fakeLearning{}
-		handler := newLearningTestAPI(t, []string{"learning:write"}, service, &logs)
+		handler := newLearningTestAPI(t, []string{"learning:write", "learning:approve"}, service, &logs)
 		response := learningRequest(t, handler, http.MethodPost, "/v1/learning/assessments/"+testAssessment+"/decisions", override(invalidItem))
 		if response.Code != http.StatusBadRequest || service.calls != 0 {
 			t.Fatalf("invalid %s = %d calls=%d body=%s", field, response.Code, service.calls, response.Body.String())
@@ -696,7 +735,7 @@ func TestLearningHTTPValidatesSHA256AndCollectionLimitsBeforeService(t *testing.
 		items := strings.TrimSuffix(strings.Repeat(validAssessmentItemJSON()+",", count), ",")
 		var logs bytes.Buffer
 		service := &fakeLearning{}
-		handler := newLearningTestAPI(t, []string{"learning:write"}, service, &logs)
+		handler := newLearningTestAPI(t, []string{"learning:write", "learning:approve"}, service, &logs)
 		response := learningRequest(t, handler, http.MethodPost, "/v1/learning/assessments/"+testAssessment+"/decisions", override(items))
 		wantCalls := 1
 		if wantStatus != http.StatusCreated {

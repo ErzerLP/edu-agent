@@ -157,7 +157,7 @@ func TestOfflineAssessmentHTTPContractsAreIndependentClosedAndReplayable(t *test
 			Decision: learning.AssessmentDecision{ID: decisionID, AssessmentID: assessmentID, Version: 2, Disposition: learning.DispositionVoided, Items: []learning.AssessmentItem{}, ActorDeviceID: deviceID, CreatedAt: time.Now().UTC()},
 		},
 	}
-	handler := newOfflineHTTPTestAPI(t, []string{"learning:read", "learning:write"}, service, 1<<20)
+	handler := newOfflineHTTPTestAPI(t, []string{"learning:read", "learning:write", "learning:approve"}, service, 1<<20)
 
 	request := httptest.NewRequest(http.MethodGet, "/v1/learning/offline/assessments?status=provisional&limit=1", nil)
 	request.Header.Set("Authorization", "Bearer token")
@@ -240,6 +240,16 @@ func TestOfflineAssessmentHTTPContractsAreIndependentClosedAndReplayable(t *test
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("offline assessment decision write scope status=%d body=%s", response.Code, response.Body.String())
 	}
+
+	calls = service.calls
+	restrictedAgent := newOfflineHTTPTestAPI(t, []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read"}, service, 1<<20)
+	request = httptest.NewRequest(http.MethodPost, "/v1/learning/offline/assessments/"+assessmentID+"/decisions", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer token")
+	response = httptest.NewRecorder()
+	restrictedAgent.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || service.calls != calls {
+		t.Fatalf("restricted Agent offline assessment decision status=%d calls=%d body=%s", response.Code, service.calls, response.Body.String())
+	}
 }
 
 func TestOfflineAssessmentHTTPEnforcesUnicodeStringLimitsBeforeService(t *testing.T) {
@@ -249,7 +259,7 @@ func TestOfflineAssessmentHTTPEnforcesUnicodeStringLimitsBeforeService(t *testin
 		decisionID   = "84000000-0000-4000-8000-000000000001"
 	)
 	service := &fakeOfflineLearning{}
-	handler := newOfflineHTTPTestAPI(t, []string{"learning:write"}, service, 1<<20)
+	handler := newOfflineHTTPTestAPI(t, []string{"learning:write", "learning:approve"}, service, 1<<20)
 	post := func(body string) int {
 		t.Helper()
 		request := httptest.NewRequest(http.MethodPost, "/v1/learning/offline/assessments/"+assessmentID+"/decisions", strings.NewReader(body))

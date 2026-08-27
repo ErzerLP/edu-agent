@@ -15,7 +15,11 @@ import (
 	internaldiff "github.com/rogpeppe/go-internal/diff"
 )
 
-const maintenanceSource = "knowledge_maintenance"
+const (
+	maintenanceSource                  = "knowledge_maintenance"
+	maintenanceUncertainIdentityReason = "maintenance identity requires human review"
+	maxMaintenanceIdentityReviewRounds = 2
+)
 
 type maintenancePlanningStore struct {
 	CatalogStore
@@ -63,11 +67,12 @@ func (s *Service) Create(ctx context.Context, command CreateProposalCommand) (Pr
 	if base.Redacted {
 		return Proposal{}, &Error{Code: CodeContentRedacted}
 	}
-	commit, err := s.planCandidate(ctx, normalized, base)
+	commit, identityUncertain, err := s.planCandidate(ctx, normalized, base)
 	if err != nil {
 		return Proposal{}, err
 	}
 	analysis := analyzeMaintenanceRevision(base, commit.Revision)
+	analysis.identity.Uncertain = identityUncertain
 	for _, documentID := range analysis.identity.AddedDocumentIDs {
 		exists, lookupErr := s.store.DocumentIdentityExists(ctx, documentID)
 		if lookupErr != nil {
@@ -334,12 +339,12 @@ func (s *Service) lookupMaintenanceReplay(ctx context.Context, operationID, requ
 	return proposal, true, nil
 }
 
-func (s *Service) planCandidate(ctx context.Context, command CreateProposalCommand, base KnowledgeRevision) (PreparedCommit, error) {
+func (s *Service) planCandidate(ctx context.Context, command CreateProposalCommand, base KnowledgeRevision) (PreparedCommit, bool, error) {
 	if len(command.CandidateSnapshot) == 0 {
 		createdAt := s.now().UTC().Truncate(time.Microsecond)
 		revisionID := s.newUUID()
 		if !validUUID(revisionID) {
-			return PreparedCommit{}, fmt.Errorf("UUID generator returned invalid knowledge revision ID")
+			return PreparedCommit{}, false, fmt.Errorf("UUID generator returned invalid knowledge revision ID")
 		}
 		parentID := base.ID
 		return PreparedCommit{
@@ -352,7 +357,7 @@ func (s *Service) planCandidate(ctx context.Context, command CreateProposalComma
 				IndexerVersion: IndexerVersion, IdentityPolicyVersion: IdentityPolicyVersion,
 				Documents: []SnapshotDocument{},
 			},
-		}, nil
+		}, false, nil
 	}
 	planningStore := &maintenancePlanningStore{CatalogStore: s.store}
 	planner := &Service{
@@ -360,8 +365,9 @@ func (s *Service) planCandidate(ctx context.Context, command CreateProposalComma
 		newUUID: s.newUUID, now: s.now, reviews: s.copyIdentityReviews(),
 		maintenanceReplaceSnapshot: true, maintenanceAllowHistorical: true,
 	}
+	defer func() { s.mergeIdentityReviews(planner.copyIdentityReviews()) }()
 	parentID := base.ID
-	_, err := planner.Import(ctx, ImportCommand{
+	planningCommand := ImportCommand{
 		OperationID: command.RequestID, ExpectedParentRevisionID: &parentID, ExpectedParentProvided: true,
 		Source: maintenanceSource, Documents: command.CandidateSnapshot,
 		IdentityReviewBasisHash:   command.IdentityReviewBasisHash,
@@ -369,18 +375,55 @@ func (s *Service) planCandidate(ctx context.Context, command CreateProposalComma
 		IdentityReviewReceipt:     command.IdentityReviewReceipt,
 		DocumentResolutions:       command.DocumentResolutions, NodeResolutions: command.NodeResolutions,
 		ActorDeviceID: command.ActorDeviceID,
-	})
-	s.mergeIdentityReviews(planner.copyIdentityReviews())
-	if err != nil {
-		return PreparedCommit{}, err
+	}
+	identityUncertain := false
+	for reviewRound := 0; ; reviewRound++ {
+		_, err := planner.Import(ctx, planningCommand)
+		if err == nil {
+			break
+		}
+		var domainErr *Error
+		if !errors.As(err, &domainErr) || domainErr.Code != CodeIdentityReviewRequired || domainErr.Review == nil {
+			return PreparedCommit{}, false, err
+		}
+		if reviewRound >= maxMaintenanceIdentityReviewRounds {
+			return PreparedCommit{}, false, errors.New("knowledge maintenance planning exceeded identity review rounds")
+		}
+		identityUncertain = true
+		planningCommand, err = planner.resolveMaintenanceIdentityUncertainty(planningCommand, domainErr.Review)
+		if err != nil {
+			return PreparedCommit{}, false, err
+		}
 	}
 	if planningStore.prepared == nil {
-		return PreparedCommit{}, errors.New("knowledge maintenance planner produced no commit")
+		return PreparedCommit{}, false, errors.New("knowledge maintenance planner produced no commit")
 	}
 	prepared := *planningStore.prepared
 	prepared.OperationID = ""
 	prepared.RequestHash = ""
-	return prepared, nil
+	return prepared, identityUncertain, nil
+}
+
+func (s *Service) resolveMaintenanceIdentityUncertainty(command ImportCommand, review *IdentityReview) (ImportCommand, error) {
+	operationID := s.newUUID()
+	if !validUUID(operationID) || operationID == review.OperationID {
+		return ImportCommand{}, errors.New("UUID generator returned invalid maintenance identity review operation ID")
+	}
+	command.OperationID = operationID
+	command.IdentityReviewBasisHash = review.BasisHash
+	command.IdentityReviewOperationID = review.OperationID
+	command.IdentityReviewReceipt = review.Receipt
+	for _, document := range review.Documents {
+		command.DocumentResolutions = append(command.DocumentResolutions, DocumentResolution{
+			Locator: document.Locator, Action: "new", Reason: maintenanceUncertainIdentityReason,
+		})
+	}
+	for _, node := range review.Nodes {
+		command.NodeResolutions = append(command.NodeResolutions, NodeResolution{
+			Locator: node.Locator, Action: "new", Reason: maintenanceUncertainIdentityReason,
+		})
+	}
+	return command, nil
 }
 
 func (s *Service) copyIdentityReviews() map[string]identityReviewRecord {

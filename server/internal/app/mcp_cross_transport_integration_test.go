@@ -34,7 +34,7 @@ func (crossTransportIdentity) Authenticate(_ context.Context, token, _ string) (
 	}
 	return identity.Credential{
 		Device: identity.Device{ID: crossTransportDeviceID},
-		Scopes: []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read"},
+		Scopes: []string{"knowledge:read", "knowledge:write", "knowledge:approve", "learning:read", "learning:write", "memory:read"},
 	}, nil
 }
 func (crossTransportIdentity) ExchangePairingCode(context.Context, string, string) (identity.IssuedCredential, error) {

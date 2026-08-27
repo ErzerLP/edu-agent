@@ -49,9 +49,9 @@ var descriptorCatalog = []Descriptor{
 	{Kind: DescriptorResource, Name: "memory.export", URI: "edu-agent://memory/export", Description: "First page of the composed memory export", RequiredScope: "memory:read", PrivacyOwners: []privacy.OwnerKind{privacy.OwnerMemory}, ReadOnly: true, OutputLimit: exportOutputLimit, AuditName: "memory_export", HTTPOperationID: "exportMemoryRecords"},
 
 	toolDescriptor("knowledge.retrieve", "Retrieve canonical knowledge with frozen revision provenance", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_retrieve", "retrieveKnowledge", knowledgeRetrieveSchema(), nil),
-	toolDescriptor("knowledge.maintenance.propose", "Submit a sourced knowledge maintenance proposal", "knowledge:write", []privacy.OwnerKind{privacy.OwnerKnowledge}, false, exportOutputLimit, exportOutputLimit, "knowledge_maintenance_propose", "createKnowledgeMaintenanceProposal", knowledgeMaintenanceProposalSchema(), knowledgeMaintenanceProposalOutputSchema()),
-	toolDescriptor("knowledge.maintenance.list", "List knowledge maintenance proposals", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_list", "listKnowledgeMaintenanceProposals", knowledgeMaintenanceListSchema(), knowledgeMaintenancePageOutputSchema()),
-	toolDescriptor("knowledge.maintenance.get", "Read one knowledge maintenance proposal", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_get", "getKnowledgeMaintenanceProposal", knowledgeMaintenanceGetSchema(), knowledgeMaintenanceProposalOutputSchema()),
+	toolDescriptor("knowledge.maintenance.propose", "Submit a sourced knowledge maintenance proposal", "knowledge:write", knowledgeProposalOwners(), false, exportOutputLimit, exportOutputLimit, "knowledge_maintenance_propose", "createKnowledgeMaintenanceProposal", knowledgeMaintenanceProposalSchema(), knowledgeMaintenanceProposalOutputSchema()),
+	toolDescriptor("knowledge.maintenance.list", "List knowledge maintenance proposals", "knowledge:read", knowledgeProposalOwners(), true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_list", "listKnowledgeMaintenanceProposals", knowledgeMaintenanceListSchema(), knowledgeMaintenancePageOutputSchema()),
+	toolDescriptor("knowledge.maintenance.get", "Read one knowledge maintenance proposal", "knowledge:read", knowledgeProposalOwners(), true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_get", "getKnowledgeMaintenanceProposal", knowledgeMaintenanceGetSchema(), knowledgeMaintenanceProposalOutputSchema()),
 	toolDescriptor("learning.evidence_carryover.list", "List evidence carryover proposals", "learning:read", evidenceCarryoverOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_evidence_carryover_list", "listEvidenceCarryovers", evidenceCarryoverListSchema(), evidenceCarryoverPageOutputSchema()),
 	toolDescriptor("learning.evidence_carryover.get", "Read one evidence carryover proposal", "learning:read", evidenceCarryoverOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_evidence_carryover_get", "getEvidenceCarryover", evidenceCarryoverGetSchema(), evidenceCarryoverProposalOutputSchema()),
 	toolDescriptor("learning.list_timeline", "List learning timeline projection entries", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_timeline", "listLearningTimeline", timelineSchema(), nil),
@@ -71,6 +71,10 @@ func toolDescriptor(name, description, scope string, owners []privacy.OwnerKind,
 
 func learningOwners() []privacy.OwnerKind {
 	return []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}
+}
+
+func knowledgeProposalOwners() []privacy.OwnerKind {
+	return []privacy.OwnerKind{privacy.OwnerKnowledge, privacy.OwnerLearning}
 }
 
 func evidenceCarryoverOwners() []privacy.OwnerKind {

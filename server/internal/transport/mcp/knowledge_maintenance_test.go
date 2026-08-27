@@ -1,13 +1,16 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -31,6 +34,12 @@ func mcpMaintenanceProposal() knowledge.Proposal {
 }
 
 func TestKnowledgeMaintenanceMCPInjectsActorSupportsExactSurface(t *testing.T) {
+	for _, name := range []string{"knowledge.maintenance.propose", "knowledge.maintenance.list", "knowledge.maintenance.get"} {
+		descriptor, ok := descriptorByToolName(name)
+		if !ok || len(descriptor.PrivacyOwners) != 2 || descriptor.PrivacyOwners[0] != privacy.OwnerKnowledge || descriptor.PrivacyOwners[1] != privacy.OwnerLearning {
+			t.Fatalf("proposal descriptor %s owners=%v", name, descriptor.PrivacyOwners)
+		}
+	}
 	handler, _, service, _, _, _ := newProtocolFixture(t, []string{"knowledge:read", "knowledge:write"})
 	service.proposal = mcpMaintenanceProposal()
 	service.page = knowledge.ProposalPage{Items: []knowledge.Proposal{service.proposal}}
@@ -64,6 +73,75 @@ func TestKnowledgeMaintenanceMCPInjectsActorSupportsExactSurface(t *testing.T) {
 	getResult, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: "knowledge.maintenance.get", Arguments: map[string]any{"proposal_id": maintenanceProposalID}})
 	if err != nil || getResult.IsError || service.getID != maintenanceProposalID {
 		t.Fatalf("get result=%+v err=%v id=%q", getResult, err, service.getID)
+	}
+}
+
+func TestKnowledgeMaintenanceMCPProposalResponsesRequireKnowledgeAndLearningPermits(t *testing.T) {
+	const secret = "private MCP proposal candidate"
+	for _, owner := range []privacy.OwnerKind{privacy.OwnerKnowledge, privacy.OwnerLearning} {
+		t.Run(string(owner), func(t *testing.T) {
+			handler, _, service, _, _, _ := newProtocolFixture(t, []string{"knowledge:read"})
+			service.proposal = mcpMaintenanceProposal()
+			service.proposal.CandidateSnapshot = []knowledge.ImportDocument{{Path: "private.md", Markdown: secret}}
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			responses := &responseRecordingTransport{}
+			session := connectSDKClientWithTransport(t, server.URL, bearerTransport{token: testToken, base: responses})
+
+			generated := make(chan struct{})
+			release := make(chan struct{})
+			var generatedOnce sync.Once
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			defer unblock()
+			handler.beforeResponseWrite = func(ctx context.Context) {
+				invocation, ok := invocationFromContext(ctx)
+				if !ok || invocation.Descriptor.Name != "knowledge.maintenance.get" {
+					return
+				}
+				generatedOnce.Do(func() { close(generated) })
+				select {
+				case <-ctx.Done():
+				case <-release:
+				}
+			}
+			callResult := make(chan error, 1)
+			go func() {
+				_, err := session.CallTool(context.Background(), &sdkmcp.CallToolParams{Name: "knowledge.maintenance.get", Arguments: map[string]any{"proposal_id": maintenanceProposalID}})
+				callResult <- err
+			}()
+			select {
+			case <-generated:
+			case <-time.After(time.Second):
+				t.Fatal("proposal result was not buffered before response write")
+			}
+			drainResult := make(chan error, 1)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				drainResult <- handler.readPermits.CloseAndDrain(ctx, 2, owner)
+			}()
+
+			timedOut := false
+			var callErr error
+			select {
+			case callErr = <-callResult:
+			case <-time.After(200 * time.Millisecond):
+				timedOut = true
+				unblock()
+				callErr = <-callResult
+			}
+			if err := <-drainResult; err != nil {
+				t.Fatal(err)
+			}
+			body := responses.lastBody()
+			if timedOut {
+				t.Fatalf("closing %s did not cancel the MCP proposal response; err=%v body=%s", owner, callErr, body)
+			}
+			if callErr == nil || !bytes.Contains(body, []byte("content_redacted")) || bytes.Contains(body, []byte(secret)) {
+				t.Fatalf("closing %s MCP response err=%v body=%s", owner, callErr, body)
+			}
+		})
 	}
 }
 

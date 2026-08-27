@@ -312,6 +312,148 @@ func TestMaintenanceDeterministicAutoApplyAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestMaintenanceIdentityReviewCreatesOpenUncertainProposalWithoutCanonicalWrites(t *testing.T) {
+	service, catalog, maintenance, _ := maintenanceServiceForTest(t)
+	actor := "90000000-0000-4000-8000-000000000001"
+	base := importMaintenanceBase(t, service, actor, "# Topic\noriginal words one two three four five six seven eight\n")
+	candidate := "# Topic\nquartz nickel tungsten cobalt radon xenon boron neon\n"
+
+	proposal, err := service.Create(t.Context(), CreateProposalCommand{
+		RequestID: "20000000-0000-4000-8000-000000000031", BaseRevisionID: base.ID, ActorDeviceID: actor,
+		Sources:           []ProposalSource{maintenanceSourceFixture("note", "agent/uncertain", "ambiguous identity edit")},
+		CandidateSnapshot: []ImportDocument{{Path: "topic.md", Markdown: candidate}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.Status != ProposalOpen || !proposal.IdentityImpact.Uncertain || proposal.Risk.AutoApply ||
+		!containsString(proposal.Risk.Reasons, "identity_uncertain") || proposal.Decision != nil || proposal.AppliedRevisionID != "" {
+		t.Fatalf("identity-uncertain proposal did not remain open: %+v", proposal)
+	}
+	if len(proposal.IdentityImpact.AddedDocumentIDs) != 1 || len(proposal.IdentityImpact.RemovedDocumentIDs) != 1 ||
+		len(proposal.Diff) == 0 {
+		t.Fatalf("identity-uncertain proposal lacks bounded server analysis: %+v", proposal)
+	}
+	totalDiffBytes := 0
+	for _, item := range proposal.Diff {
+		totalDiffBytes += len(item.Unified)
+	}
+	if totalDiffBytes > MaxMaintenanceDiffBytes {
+		t.Fatalf("identity-uncertain proposal diff is not bounded: %d", totalDiffBytes)
+	}
+	head, err := catalog.Head(t.Context())
+	if err != nil || head == nil || head.ID != base.ID {
+		t.Fatalf("identity-uncertain proposal changed head: head=%+v err=%v", head, err)
+	}
+	catalog.mu.Lock()
+	revisionCount, importOperationCount := len(catalog.revisions), len(catalog.operations)
+	catalog.mu.Unlock()
+	maintenance.mu.Lock()
+	proposalCount, preparedCount := len(maintenance.proposals), len(maintenance.commits)
+	maintenance.mu.Unlock()
+	if revisionCount != 1 || importOperationCount != 1 || proposalCount != 1 || preparedCount != 1 {
+		t.Fatalf("unexpected writes after uncertain planning: revisions=%d imports=%d proposals=%d commits=%d", revisionCount, importOperationCount, proposalCount, preparedCount)
+	}
+}
+
+func TestMaintenanceIdentityUncertainProposalAppliesOnlyAfterExplicitDecision(t *testing.T) {
+	service, catalog, _, _ := maintenanceServiceForTest(t)
+	actor := "90000000-0000-4000-8000-000000000001"
+	base := importMaintenanceBase(t, service, actor, "# Topic\noriginal words one two three four five six seven eight\n")
+
+	proposal, err := service.Create(t.Context(), CreateProposalCommand{
+		RequestID: "20000000-0000-4000-8000-000000000033", BaseRevisionID: base.ID, ActorDeviceID: actor,
+		Sources:           []ProposalSource{maintenanceSourceFixture("note", "agent/uncertain-approval", "ambiguous identity edit")},
+		CandidateSnapshot: []ImportDocument{{Path: "topic.md", Markdown: "# Topic\nquartz nickel tungsten cobalt radon xenon boron neon\n"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proposal.Status != ProposalOpen || !proposal.IdentityImpact.Uncertain || proposal.Risk.AutoApply {
+		t.Fatalf("identity-uncertain proposal did not wait for review: %+v", proposal)
+	}
+
+	decided, err := service.Decide(t.Context(), ProposalDecisionCommand{
+		OperationID: "30000000-0000-4000-8000-000000000033", ProposalID: proposal.ID,
+		Decision: "approve", Reason: "accept the frozen conservative identity plan", ActorDeviceID: actor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decided.Status != ProposalApplied || decided.AppliedRevisionID == "" || decided.AppliedRevisionID != decided.CurrentRevisionID {
+		t.Fatalf("explicit approval did not apply the frozen uncertain plan: %+v", decided)
+	}
+	head, err := catalog.Head(t.Context())
+	if err != nil || head == nil || head.ID != decided.AppliedRevisionID || head.ID == base.ID {
+		t.Fatalf("explicit uncertain-plan approval did not advance the canonical head: head=%+v err=%v", head, err)
+	}
+}
+
+func TestMaintenanceIdentityResolutionStillUsesCanonicalImportRules(t *testing.T) {
+	service, catalog, _, _ := maintenanceServiceForTest(t)
+	actor := "90000000-0000-4000-8000-000000000001"
+	base := importMaintenanceBase(t, service, actor, "# Topic\noriginal words one two three four five six seven eight\n")
+	candidate := "# Topic\nquartz nickel tungsten cobalt radon xenon boron neon\n"
+	parentID := base.ID
+	command := ImportCommand{
+		OperationID: "10000000-0000-4000-8000-000000000031", ExpectedParentRevisionID: &parentID,
+		ExpectedParentProvided: true, Source: "ordinary ambiguous import", ActorDeviceID: actor,
+		Documents: []ImportDocument{{Path: "topic.md", Markdown: candidate}},
+	}
+	_, err := service.Import(t.Context(), command)
+	var documentReviewErr *Error
+	if !asKnowledgeError(err, &documentReviewErr) || documentReviewErr.Code != CodeIdentityReviewRequired ||
+		documentReviewErr.Review == nil || len(documentReviewErr.Review.Documents) != 1 {
+		t.Fatalf("ordinary import did not retain identity review failure: %v", err)
+	}
+	head, err := catalog.Head(t.Context())
+	if err != nil || head == nil || head.ID != base.ID {
+		t.Fatalf("ordinary identity review changed head: head=%+v err=%v", head, err)
+	}
+
+	documentReview := documentReviewErr.Review.Documents[0]
+	command.OperationID = "10000000-0000-4000-8000-000000000032"
+	command.IdentityReviewBasisHash = documentReviewErr.Review.BasisHash
+	command.IdentityReviewOperationID = documentReviewErr.Review.OperationID
+	command.IdentityReviewReceipt = documentReviewErr.Review.Receipt
+	command.DocumentResolutions = []DocumentResolution{{
+		Locator: documentReview.Locator, Action: "preserve", DocumentID: documentReview.Candidates[0].StableID,
+		Reason: "same canonical topic",
+	}}
+	_, err = service.Import(t.Context(), command)
+	var nodeReviewErr *Error
+	if !asKnowledgeError(err, &nodeReviewErr) || nodeReviewErr.Code != CodeIdentityReviewRequired ||
+		nodeReviewErr.Review == nil || len(nodeReviewErr.Review.Nodes) != 1 || len(nodeReviewErr.Review.Nodes[0].Candidates) != 1 {
+		t.Fatalf("canonical document resolution did not continue to node review: %v", err)
+	}
+
+	nodeReview := nodeReviewErr.Review.Nodes[0]
+	resolved, err := service.Create(t.Context(), CreateProposalCommand{
+		RequestID: "20000000-0000-4000-8000-000000000032", BaseRevisionID: base.ID, ActorDeviceID: actor,
+		Sources:                   []ProposalSource{maintenanceSourceFixture("note", "human/resolved", "approved identity rewrite")},
+		CandidateSnapshot:         []ImportDocument{{Path: "topic.md", Markdown: candidate}},
+		IdentityReviewBasisHash:   nodeReviewErr.Review.BasisHash,
+		IdentityReviewOperationID: nodeReviewErr.Review.OperationID,
+		IdentityReviewReceipt:     nodeReviewErr.Review.Receipt,
+		DocumentResolutions:       command.DocumentResolutions,
+		NodeResolutions: []NodeResolution{{
+			Locator: nodeReview.Locator, Action: "rewrite",
+			SourceNodeRevisionIDs: []string{nodeReview.Candidates[0].RevisionID}, Reason: "topic semantics replaced",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Status != ProposalOpen || resolved.IdentityImpact.Uncertain || resolved.Risk.AutoApply ||
+		len(resolved.LineageImpact.Lineages) != 1 || resolved.LineageImpact.Lineages[0].Action != "rewrite" {
+		t.Fatalf("resolved maintenance proposal bypassed canonical identity/lineage rules: %+v", resolved)
+	}
+	head, err = catalog.Head(t.Context())
+	if err != nil || head == nil || head.ID != base.ID {
+		t.Fatalf("resolved review-required proposal changed head before approval: head=%+v err=%v", head, err)
+	}
+}
+
 func TestMaintenanceProposalDiffIsAggregateBounded(t *testing.T) {
 	diffs := []DocumentDiff{
 		{Unified: strings.Repeat("a", MaxMaintenanceDiffBytes-8)},

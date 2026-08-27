@@ -89,6 +89,7 @@ type fakeKnowledge struct {
 	listCommand     knowledge.ProposalListCommand
 	getProposalID   string
 	decisionCommand knowledge.ProposalDecisionCommand
+	maintenanceFn   func(context.Context)
 }
 
 func (f *fakeKnowledge) Head(context.Context) (*knowledge.KnowledgeRevision, error) {
@@ -107,24 +108,39 @@ func (f *fakeKnowledge) Export(context.Context, string) (knowledge.ExportResult,
 func (f *fakeKnowledge) Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error) {
 	return f.retrieval, f.retrievalErr
 }
-func (f *fakeKnowledge) Create(_ context.Context, command knowledge.CreateProposalCommand) (knowledge.Proposal, error) {
+func (f *fakeKnowledge) Create(ctx context.Context, command knowledge.CreateProposalCommand) (knowledge.Proposal, error) {
 	f.createCommand = command
+	if f.maintenanceFn != nil {
+		f.maintenanceFn(ctx)
+	}
 	return f.proposal, f.maintenanceErr
 }
-func (f *fakeKnowledge) CreateRollback(_ context.Context, command knowledge.CreateRollbackCommand) (knowledge.Proposal, error) {
+func (f *fakeKnowledge) CreateRollback(ctx context.Context, command knowledge.CreateRollbackCommand) (knowledge.Proposal, error) {
 	f.rollbackCommand = command
+	if f.maintenanceFn != nil {
+		f.maintenanceFn(ctx)
+	}
 	return f.proposal, f.maintenanceErr
 }
-func (f *fakeKnowledge) List(_ context.Context, command knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
+func (f *fakeKnowledge) List(ctx context.Context, command knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
 	f.listCommand = command
+	if f.maintenanceFn != nil {
+		f.maintenanceFn(ctx)
+	}
 	return f.proposalPage, f.maintenanceErr
 }
-func (f *fakeKnowledge) Get(_ context.Context, proposalID string) (knowledge.Proposal, error) {
+func (f *fakeKnowledge) Get(ctx context.Context, proposalID string) (knowledge.Proposal, error) {
 	f.getProposalID = proposalID
+	if f.maintenanceFn != nil {
+		f.maintenanceFn(ctx)
+	}
 	return f.proposal, f.maintenanceErr
 }
-func (f *fakeKnowledge) Decide(_ context.Context, command knowledge.ProposalDecisionCommand) (knowledge.Proposal, error) {
+func (f *fakeKnowledge) Decide(ctx context.Context, command knowledge.ProposalDecisionCommand) (knowledge.Proposal, error) {
 	f.decisionCommand = command
+	if f.maintenanceFn != nil {
+		f.maintenanceFn(ctx)
+	}
 	return f.proposal, f.maintenanceErr
 }
 
@@ -444,7 +460,7 @@ func TestKnowledgeRoutesScopesStrictJSONAndRedactedLogs(t *testing.T) {
 	knowledgeService := &fakeKnowledge{head: &revision, importResult: knowledge.ImportResult{Revision: revision}}
 	id := &fakeIdentity{auth: identity.Credential{
 		Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"},
-		Scopes: []string{"knowledge:read", "knowledge:write"},
+		Scopes: []string{"knowledge:read", "knowledge:write", "knowledge:approve"},
 	}}
 	handler, err := New(Options{
 		Identity: id, Knowledge: knowledgeService,
@@ -482,6 +498,17 @@ func TestKnowledgeRoutesScopesStrictJSONAndRedactedLogs(t *testing.T) {
 	if strings.Contains(logs.String(), markdownSecret) {
 		t.Fatalf("knowledge audit log leaked Markdown: %s", logs.String())
 	}
+
+	knowledgeService.importCommand = knowledge.ImportCommand{}
+	id.auth.Scopes = []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read"}
+	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(body))
+	request.Header.Set("Authorization", "Bearer valid")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || knowledgeService.importCommand.OperationID != "" {
+		t.Fatalf("restricted Agent raw import status=%d command=%+v body=%s", response.Code, knowledgeService.importCommand, response.Body.String())
+	}
+	id.auth.Scopes = []string{"knowledge:read", "knowledge:write", "knowledge:approve"}
 
 	request = httptest.NewRequest(http.MethodPost, "/v1/knowledge/imports", strings.NewReader(`{"operation_id":"20000000-0000-4000-8000-000000000002","source":"test","documents":[],"unknown":true}`))
 	request.Header.Set("Authorization", "Bearer valid")
@@ -559,7 +586,7 @@ func TestKnowledgeReviewAndBodyLimitHTTPMapping(t *testing.T) {
 		Documents: []knowledge.DocumentIdentityReview{{Path: "note.md", Locator: strings.Repeat("b", 64)}}, Nodes: []knowledge.NodeIdentityReview{},
 	}
 	knowledgeService := &fakeKnowledge{importErr: &knowledge.Error{Code: knowledge.CodeIdentityReviewRequired, Review: review}}
-	id := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"}, Scopes: []string{"knowledge:write"}}}
+	id := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: "90000000-0000-4000-8000-000000000001"}, Scopes: []string{"knowledge:write", "knowledge:approve"}}}
 	handler, err := New(Options{
 		Identity: id, Knowledge: knowledgeService,
 		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},

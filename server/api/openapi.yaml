@@ -176,6 +176,7 @@ paths:
       operationId: importKnowledgeDocuments
       summary: Atomically upsert Markdown documents into a new complete snapshot
       x-required-scope: knowledge:write
+      x-required-scopes: [knowledge:write, knowledge:approve]
       security:
         - deviceBearer: []
       requestBody:
@@ -919,6 +920,7 @@ paths:
       operationId: decideLearningAssessment
       summary: Compensate an assessment disposition and its evidence
       x-required-scope: learning:write
+      x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/AssessmentID" }]
@@ -1311,6 +1313,7 @@ paths:
       summary: Append an independent confirm, override, or void decision
       description: The decision is fenced by the offline attempt aggregate and disposition versions. It does not read or mutate current tutoring Session state.
       x-required-scope: learning:write
+      x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
       security: [{ deviceBearer: [] }]
       parameters:

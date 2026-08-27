@@ -51,6 +51,12 @@ func TestOpenAPIParsesAndDeclaresKnowledgeRoutes(t *testing.T) {
 		if operation == nil || operation["x-required-scope"] != expected.scope {
 			t.Fatalf("route %s scope = %#v, want %s", route, operation["x-required-scope"], expected.scope)
 		}
+		if route == "/v1/knowledge/imports" {
+			encoded, _ := json.Marshal(operation["x-required-scopes"])
+			if string(encoded) != `["knowledge:write","knowledge:approve"]` {
+				t.Fatalf("route %s combined scopes = %s", route, encoded)
+			}
+		}
 		responses, ok := operation["responses"].(map[string]any)
 		if !ok {
 			t.Fatalf("route %s responses are missing", route)
@@ -205,6 +211,12 @@ func TestOpenAPIDeclaresLearningRoutesAndContracts(t *testing.T) {
 		if !ok || op["x-required-scope"] != contract.scope {
 			t.Fatalf("route %s scope/method mismatch: %#v", route, op)
 		}
+		if route == "/v1/learning/assessments/{assessmentID}/decisions" {
+			encoded, _ := json.Marshal(op["x-required-scopes"])
+			if string(encoded) != `["learning:write","learning:approve"]` {
+				t.Fatalf("route %s combined scopes = %s", route, encoded)
+			}
+		}
 		if contract.write && (op["x-max-body-bytes"] != 1048576 || op["requestBody"] == nil) {
 			t.Errorf("write route %s lacks frozen 1MiB body contract", route)
 		}
@@ -253,6 +265,12 @@ func TestOfflineOpenAPIContractsAreClosedScopedAndMatchWireResults(t *testing.T)
 		operation := paths[route].(map[string]any)[expected.method].(map[string]any)
 		if operation["x-required-scope"] != expected.scope {
 			t.Fatalf("offline route %s scope=%v", route, operation["x-required-scope"])
+		}
+		if route == "/v1/learning/offline/assessments/{assessmentID}/decisions" {
+			encoded, _ := json.Marshal(operation["x-required-scopes"])
+			if string(encoded) != `["learning:write","learning:approve"]` {
+				t.Fatalf("offline route %s combined scopes = %s", route, encoded)
+			}
 		}
 		if expected.limit > 0 && operation["x-max-body-bytes"] != expected.limit {
 			t.Fatalf("offline route %s body limit=%v", route, operation["x-max-body-bytes"])

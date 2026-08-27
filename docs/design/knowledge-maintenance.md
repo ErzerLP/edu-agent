@@ -53,6 +53,8 @@ A proposal freezes the resulting prepared revision, canonical Markdown, stable i
 
 An empty candidate is planned directly as a complete empty snapshot because raw import requires at least one document. It remains destructive and can never auto-apply.
 
+If ordinary planning returns `identity_review_required` and the proposal request does not contain a matching receipt and complete resolutions, the maintenance-only planner performs bounded server-internal review rounds with conservative `new` resolutions. The resulting exact plan is marked `IdentityImpact.Uncertain`, remains open, and cannot auto-apply. Human approval explicitly accepts that frozen delete/add identity outcome; a reviewer who wants preserve, rewrite, split, or merge semantics submits a new proposal with the returned review receipt and explicit resolutions. The ordinary raw-import path remains unchanged and continues to return identity review instead of applying a conservative plan.
+
 ## Deterministic analysis
 
 `knowledge-diff-v1` compares the base and candidate by stable document ID, then stable node ID. Ordering is path then stable ID. It reports:
@@ -213,7 +215,7 @@ Knowledge content scrub removes or overwrites:
 
 Open proposals become redacted. Applied/rejected/stale outcomes, stable IDs, timestamps, origin relation, and minimal terminal audit metadata remain. Reads of a redacted proposal return no candidate, source, diff, evidence IDs, reason, or basis hash. `VerifyRedacted` includes all maintenance payloads.
 
-Knowledge and learning generation gates fail closed before proposal reads, creation, decision, or evidence impact reads.
+Knowledge and learning generation gates fail closed before proposal reads, creation, decision, or evidence impact reads. Proposal and carryover HTTP routes acquire every owner represented in the response, buffer the complete response, and call `ReadPermit.CommitResponse` before writing the first byte. If privacy close wins, the private buffer is discarded and the route emits only the generic `503 content_redacted` envelope. MCP proposal and carryover descriptors use the same owner set and commit gate before returning JSON-RPC content.
 
 ## Evidence carryover
 
@@ -225,9 +227,9 @@ Knowledge maintenance planning recognizes accepted source evidence either at its
 
 ## Authorization and transports
 
-The `user` pairing profile freezes both `knowledge:approve` and `learning:approve`; migration `000011` adds `knowledge:approve` to active legacy user tokens while leaving revoked credentials unchanged. The restricted `agent` profile contains neither approval scope and fails closed if either is introduced. Knowledge proposal approve/reject and rollback require `knowledge:approve`. Evidence carryover approve/reject require the independent `learning:approve` scope; neither scope authorizes the other owner's decision path.
+The `user` pairing profile freezes both `knowledge:approve` and `learning:approve`; migration `000011` adds `knowledge:approve` to active legacy user tokens while leaving revoked credentials unchanged. The restricted `agent` profile contains neither approval scope nor `memory:write`, and profile construction fails closed if any is introduced. Knowledge proposal approve/reject and rollback require `knowledge:approve`. Raw knowledge import requires both `knowledge:write` and `knowledge:approve`. Evidence carryover approve/reject require the independent `learning:approve` scope; online and offline Assessment decisions require both `learning:write` and `learning:approve`. Neither approval scope authorizes the other owner's decision path, and Memory admission/deletion remains guarded by `memory:write`.
 
-HTTP exposes proposal create/read/decision operations and carryover read/decision operations according to those scopes. MCP exposes proposal submit/read and carryover read descriptors only, with no proposal decision, rollback, carryover decision, raw import, Assessment decision, or Memory admission capability in either its catalog or service interface. The CLI uses the same HTTP DTOs and derives decision actors exclusively from the authenticated credential.
+HTTP exposes proposal create/read/decision operations and carryover read/decision operations according to those scopes; OpenAPI records combination gates in `x-required-scopes`. MCP exposes proposal submit/read and carryover read descriptors only, with no proposal decision, rollback, carryover decision, raw import, Assessment decision, or Memory admission capability in either its catalog or service interface. The CLI uses the same HTTP DTOs and derives decision actors exclusively from the authenticated credential.
 
 ## Focused verification
 

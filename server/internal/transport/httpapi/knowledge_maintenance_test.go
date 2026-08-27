@@ -2,16 +2,19 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
@@ -24,8 +27,13 @@ const (
 
 func newKnowledgeMaintenanceHTTP(t *testing.T, id *fakeIdentity, service *fakeKnowledge, maxBody int64) http.Handler {
 	t.Helper()
+	return newKnowledgeMaintenanceHTTPWithPermits(t, id, service, maxBody, privacy.NewReadPermitManager())
+}
+
+func newKnowledgeMaintenanceHTTPWithPermits(t *testing.T, id *fakeIdentity, service *fakeKnowledge, maxBody int64, permits *privacy.ReadPermitManager) http.Handler {
+	t.Helper()
 	handler, err := New(Options{
-		Identity: id, Knowledge: service, ReadPermits: privacy.NewReadPermitManager(),
+		Identity: id, Knowledge: service, ReadPermits: permits,
 		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
 		Logger:    slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)), PairLimiter: NewFixedWindowLimiter(100, time.Minute),
 		AuthLimiter: NewFixedWindowLimiter(100, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute),
@@ -98,6 +106,86 @@ func TestKnowledgeMaintenanceHTTPScopesAndDecisions(t *testing.T) {
 	decisionBody = `{"operation_id":"a0000000-0000-4000-8000-000000000006","reason":"not acceptable"}`
 	if response := maintenanceRequest(handler, http.MethodPost, "/v1/knowledge/maintenance/proposals/"+maintenanceProposalID+"/reject", decisionBody); response.Code != http.StatusOK || service.decisionCommand.Decision != "reject" {
 		t.Fatalf("knowledge approver reject=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
+	}
+}
+
+func TestKnowledgeMaintenanceHTTPProposalResponsesRequireKnowledgeAndLearningPermits(t *testing.T) {
+	const secret = "private proposal candidate must not escape"
+	proposalBody := `{"request_id":"a0000000-0000-4000-8000-000000000004","base_revision_id":"` + maintenanceBaseID + `","sources":[{"kind":"url","locator":"https://example.test/source","sha256":"` + strings.Repeat("a", 64) + `"}],"candidate_snapshot":[]}`
+	rollbackBody := `{"request_id":"a0000000-0000-4000-8000-000000000007","base_revision_id":"` + maintenanceBaseID + `","target_revision_id":"a0000000-0000-4000-8000-000000000008","sources":[{"kind":"note","locator":"review","sha256":"` + strings.Repeat("b", 64) + `"}]}`
+	decisionBody := `{"operation_id":"a0000000-0000-4000-8000-000000000005","reason":"reviewed"}`
+	routes := []struct {
+		name, method, path, body string
+		replayed                 bool
+	}{
+		{name: "create", method: http.MethodPost, path: "/v1/knowledge/maintenance/proposals", body: proposalBody},
+		{name: "replay", method: http.MethodPost, path: "/v1/knowledge/maintenance/proposals", body: proposalBody, replayed: true},
+		{name: "list", method: http.MethodGet, path: "/v1/knowledge/maintenance/proposals?status=open&limit=10"},
+		{name: "get", method: http.MethodGet, path: "/v1/knowledge/maintenance/proposals/" + maintenanceProposalID},
+		{name: "approve", method: http.MethodPost, path: "/v1/knowledge/maintenance/proposals/" + maintenanceProposalID + "/approve", body: decisionBody},
+		{name: "reject", method: http.MethodPost, path: "/v1/knowledge/maintenance/proposals/" + maintenanceProposalID + "/reject", body: decisionBody},
+		{name: "rollback", method: http.MethodPost, path: "/v1/knowledge/maintenance/rollbacks", body: rollbackBody},
+	}
+	for _, owner := range []privacy.OwnerKind{privacy.OwnerKnowledge, privacy.OwnerLearning} {
+		for _, route := range routes {
+			t.Run(string(owner)+"/"+route.name, func(t *testing.T) {
+				manager := privacy.NewReadPermitManager()
+				started := make(chan struct{})
+				release := make(chan struct{})
+				var releaseOnce sync.Once
+				unblock := func() { releaseOnce.Do(func() { close(release) }) }
+				defer unblock()
+				proposal := knowledge.Proposal{
+					ID:                maintenanceProposalID,
+					Replayed:          route.replayed,
+					CandidateSnapshot: []knowledge.ImportDocument{{Path: "private.md", Markdown: secret}},
+				}
+				service := &fakeKnowledge{proposal: proposal, proposalPage: knowledge.ProposalPage{Items: []knowledge.Proposal{proposal}}}
+				service.maintenanceFn = func(ctx context.Context) {
+					close(started)
+					select {
+					case <-ctx.Done():
+					case <-release:
+					}
+				}
+				id := &fakeIdentity{auth: identity.Credential{
+					Device: identity.Device{ID: maintenanceDeviceID},
+					Scopes: []string{"knowledge:read", "knowledge:write", "knowledge:approve"},
+				}}
+				handler := newKnowledgeMaintenanceHTTPWithPermits(t, id, service, 4096, manager)
+				responseCh := make(chan *httptest.ResponseRecorder, 1)
+				go func() {
+					responseCh <- maintenanceRequest(handler, route.method, route.path, route.body)
+				}()
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					t.Fatalf("%s did not reach the service", route.name)
+				}
+				drainCh := make(chan error, 1)
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+					defer cancel()
+					drainCh <- manager.CloseAndDrain(ctx, 2, owner)
+				}()
+
+				var response *httptest.ResponseRecorder
+				select {
+				case response = <-responseCh:
+				case <-time.After(200 * time.Millisecond):
+					unblock()
+					response = <-responseCh
+					t.Fatalf("closing %s did not cancel %s; body=%s", owner, route.name, response.Body.String())
+				}
+				if err := <-drainCh; err != nil {
+					t.Fatal(err)
+				}
+				if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), memory.CodeContentRedacted) ||
+					strings.Contains(response.Body.String(), secret) {
+					t.Fatalf("closing %s leaked %s response: status=%d body=%q", owner, route.name, response.Code, response.Body.String())
+				}
+			})
+		}
 	}
 }
 

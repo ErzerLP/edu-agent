@@ -260,7 +260,7 @@ func TestPairingProfilesFreezeScopesIntoCode(t *testing.T) {
 			t.Fatalf("stored agent profile missing %s: %v", required, stored.Scopes)
 		}
 	}
-	for _, forbidden := range []string{"knowledge:approve", "learning:approve", "devices:manage", "privacy:device"} {
+	for _, forbidden := range []string{"knowledge:approve", "learning:approve", "memory:write", "devices:manage", "privacy:device"} {
 		if hasScope(stored.Scopes, forbidden) {
 			t.Fatalf("stored agent profile includes forbidden %s: %v", forbidden, stored.Scopes)
 		}
@@ -268,7 +268,7 @@ func TestPairingProfilesFreezeScopesIntoCode(t *testing.T) {
 
 	originalAgentScopes := append([]string(nil), agentPairingScopes...)
 	t.Cleanup(func() { agentPairingScopes = originalAgentScopes })
-	for _, forbidden := range []string{"knowledge:approve", "learning:approve"} {
+	for _, forbidden := range []string{"knowledge:approve", "learning:approve", "memory:write"} {
 		agentPairingScopes = append(append([]string(nil), originalAgentScopes...), forbidden)
 		if _, _, err := service.CreatePairingCodeForProfile(context.Background(), PairingProfileAgent); err == nil {
 			t.Fatalf("agent profile containing %s must fail closed", forbidden)
@@ -284,7 +284,7 @@ func TestPairingProfilesFreezeScopesIntoCode(t *testing.T) {
 			t.Fatalf("agent token must include %s: %v", required, err)
 		}
 	}
-	for _, forbidden := range []string{"knowledge:approve", "learning:approve"} {
+	for _, forbidden := range []string{"knowledge:approve", "learning:approve", "memory:write"} {
 		if _, err := service.Authenticate(context.Background(), agentIssued.Token, forbidden); !errors.Is(err, ErrForbidden) {
 			t.Fatalf("stored agent code must not gain %s at exchange: %v", forbidden, err)
 		}

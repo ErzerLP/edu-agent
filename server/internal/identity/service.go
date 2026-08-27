@@ -46,7 +46,7 @@ func pairingProfileScopes(profile PairingProfile) ([]string, error) {
 		}
 	case PairingProfileAgent:
 		scopes = append([]string(nil), agentPairingScopes...)
-		for _, forbidden := range []string{"knowledge:approve", "learning:approve", "devices:manage", "privacy:device"} {
+		for _, forbidden := range []string{"knowledge:approve", "learning:approve", "memory:write", "devices:manage", "privacy:device"} {
 			if hasScope(scopes, forbidden) {
 				return nil, fmt.Errorf("agent pairing profile contains forbidden scope %q", forbidden)
 			}

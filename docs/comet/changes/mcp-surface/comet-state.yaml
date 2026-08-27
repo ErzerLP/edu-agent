@@ -1,0 +1,118 @@
+schema: comet.native.v4
+name: mcp-surface
+language: zh-CN
+phase: build
+status: active
+state_version: 2
+brief: brief.md
+spec_changes: []
+workspace:
+  isolation: worktree
+  change_branch: comet/mcp-surface
+  target_branch: comet/teaching-interview-agent
+  finish: null
+loop:
+  stage: building
+  goal_cycle: 1
+  iteration: 1
+  attempt: 0
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: submit-builder-candidate
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1：使用有效 device token 调用 `/mcp` 可以发现且只能发现本 brief 列出的
+      resources/tools；`knowledge.import`、Assessment decision、Memory
+      admission/delete、privacy、device、NoteSync、offline 管理和直接 Nocturne 能力不出现在
+      surface 中，未知名称 fail closed。
+    result: pending
+    reason: null
+  - id: A2
+    source: brief.md
+    text: A2：缺失、错误、过期或已吊销 token 在进入应用 handler 前失败；scope 不足返回稳定的权限错误；连续认证失败和连续
+      invocation 分别触发既有 IP/device 限流语义。
+    result: pending
+    reason: null
+  - id: A3
+    source: brief.md
+    text: A3：MCP 写入参数无法指定
+      actor/device/principal/namespace。`learning.create_goal`、`tutoring.create_session`
+      与 `tutoring.apply_action` 收到的操作者恒来自认证 credential，并与同一 device 的 HTTP
+      审计身份一致。
+    result: pending
+    reason: null
+  - id: A4
+    source: brief.md
+    text: A4：真实 PostgreSQL 跨 transport 测试中，HTTP 导入或创建的知识/学习状态可立即由 MCP 读取；MCP 创建
+      goal/session 并执行 action 后，HTTP 查询返回同一 revision、event sequence 和
+      projection，不产生第二份业务状态。
+    result: pending
+    reason: null
+  - id: A5
+    source: brief.md
+    text: A5：通过 MCP 记录低置信、结构不完整或带风险标志的 Assessment 时，现有确定性策略仍使其保持 provisional；MCP
+      surface 不提供确认、覆盖或作废 Assessment 的工具，也不能通过通用 action 绕过该门禁。
+    result: pending
+    reason: null
+  - id: A6
+    source: brief.md
+    text: A6：MCP memory resource 与 list tool 使用 app 已 composition 的同一
+      `memoryService`/exporter 和同一 Nocturne namespace；不存在第二个 Nocturne client。MCP
+      不能创建伪装成用户陈述的 Candidate，也不能直接 admit、delete 或 replay memory。
+    result: pending
+    reason: null
+  - id: A7
+    source: brief.md
+    text: A7：在 knowledge、learning/tutoring 或 memory 结果生成后、HTTP 响应写出前关闭相应 privacy
+      permit 时，响应不得泄露已序列化业务内容，并返回稳定的 privacy barrier 错误；permit 生命周期覆盖 SDK 写出阶段。
+    result: pending
+    reason: null
+  - id: A8
+    source: brief.md
+    text: A8：同一代表性 domain/auth/conflict/privacy 错误经 HTTP 与 MCP 返回相同稳定 `code` 和必要
+      detail；MCP 审计包含 request ID、transport、descriptor、device ID、结果、耗时和 peer，但不包含
+      token、参数正文、答案、Markdown 或 Memory 内容。
+    result: pending
+    reason: null
+  - id: A9
+    source: brief.md
+    text: A9：`/mcp` 采用 SDK `v1.7.0` 的 stateless Streamable
+      HTTP，启用请求取消传播、有限请求体、localhost DNS rebinding 防护和明确的 cross-origin
+      拒绝策略；不接受未授权 GET/DELETE 或无限请求体。
+    result: pending
+    reason: null
+  - id: A10
+    source: brief.md
+    text: A10：composition 测试证明 HTTP 与 MCP 持有同一批 application service 实例，MCP 包不导入
+      PostgreSQL adapter 或 Nocturne remote；完整 surface 清单、scope
+      对照、错误对照与敏感日志测试均可重复通过。
+    result: pending
+    reason: null
+  - id: A11
+    source: brief.md
+    text: A11：受影响 Go package、`go vet`、定向 race、全 server 测试和 server build 通过；真实
+      PostgreSQL 跨 transport 测试覆盖至少一个知识读、一个学习读和一个学习写垂直路径。
+    result: pending
+    reason: null
+builder_handoff: null
+blockers: []
+verification: null
+history: []
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pending
+verification_report: null
+archived: false
+created_at: 2026-08-27T13:10:12.239Z

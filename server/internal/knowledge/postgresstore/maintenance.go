@@ -107,6 +107,15 @@ func (s *Store) SaveProposal(ctx context.Context, prepared knowledge.PreparedPro
 		proposal.Replayed = true
 		return proposal, nil
 	}
+	// Lock the catalog before learning tables so an apply cannot deadlock while
+	// upgrading its carryover tables behind another same-base proposal.
+	var headID *string
+	if err := tx.QueryRow(ctx, `SELECT head_revision_id::text FROM knowledge_catalog WHERE singleton_id=1 FOR UPDATE`).Scan(&headID); err != nil {
+		return knowledge.Proposal{}, fmt.Errorf("lock knowledge head for maintenance proposal: %w", err)
+	}
+	if headID == nil || *headID != prepared.Proposal.BaseRevisionID || !sameOptional(headID, prepared.Commit.ExpectedParentRevisionID) {
+		return knowledge.Proposal{}, &knowledge.Error{Code: knowledge.CodeRevisionConflict, CurrentRevisionID: headID, CurrentRevisionKnown: true}
+	}
 	currentEvidence, err := lockAcceptedEvidenceImpact(ctx, tx, prepared.Proposal.AffectedNodeRevisionIDs)
 	if err != nil {
 		return knowledge.Proposal{}, err
@@ -114,13 +123,6 @@ func (s *Store) SaveProposal(ctx context.Context, prepared knowledge.PreparedPro
 	if currentEvidence.Generation != prepared.Proposal.EvidenceImpact.Generation ||
 		currentEvidence.Fingerprint != prepared.Proposal.EvidenceImpact.Fingerprint {
 		return knowledge.Proposal{}, &knowledge.Error{Code: knowledge.CodeProposalStale}
-	}
-	var headID *string
-	if err := tx.QueryRow(ctx, `SELECT head_revision_id::text FROM knowledge_catalog WHERE singleton_id=1 FOR UPDATE`).Scan(&headID); err != nil {
-		return knowledge.Proposal{}, fmt.Errorf("lock knowledge head for maintenance proposal: %w", err)
-	}
-	if headID == nil || *headID != prepared.Proposal.BaseRevisionID || !sameOptional(headID, prepared.Commit.ExpectedParentRevisionID) {
-		return knowledge.Proposal{}, &knowledge.Error{Code: knowledge.CodeRevisionConflict, CurrentRevisionID: headID, CurrentRevisionKnown: true}
 	}
 	proposal := prepared.Proposal
 	proposal.PlannedRevisionID = prepared.Commit.Revision.ID
@@ -307,13 +309,15 @@ func (s *Store) DecideProposal(ctx context.Context, command knowledge.PreparedPr
 	if proposal.Status != knowledge.ProposalOpen || proposal.Redacted {
 		return knowledge.Proposal{}, &knowledge.Error{Code: knowledge.CodeProposalClosed}
 	}
-	currentEvidence, err := lockAcceptedEvidenceImpact(ctx, tx, proposal.AffectedNodeRevisionIDs)
-	if err != nil {
-		return knowledge.Proposal{}, err
-	}
+	// Keep the cross-owner lock order aligned with proposal creation and
+	// carryover approval: knowledge catalog before learning tables.
 	var headID *string
 	if err := tx.QueryRow(ctx, `SELECT head_revision_id::text FROM knowledge_catalog WHERE singleton_id=1 FOR UPDATE`).Scan(&headID); err != nil {
 		return knowledge.Proposal{}, fmt.Errorf("lock knowledge head for proposal decision: %w", err)
+	}
+	currentEvidence, err := lockAcceptedEvidenceImpact(ctx, tx, proposal.AffectedNodeRevisionIDs)
+	if err != nil {
+		return knowledge.Proposal{}, err
 	}
 	stale := headID == nil || *headID != proposal.BaseRevisionID || proposal.KnowledgeGeneration != generation ||
 		proposal.EvidenceImpact.Generation != command.EvidenceGeneration || proposal.EvidenceImpact.Fingerprint != command.EvidenceFingerprint ||

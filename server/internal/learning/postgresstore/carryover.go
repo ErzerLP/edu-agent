@@ -162,19 +162,16 @@ func (s *Store) DecideEvidenceCarryover(ctx context.Context, command learning.Pr
 	if command.RequestedDecision == "approve" && len(proposal.Candidates) == 0 {
 		return learning.EvidenceCarryoverProposal{}, &learning.Error{Code: learning.CodeEvidenceCarryoverNoCandidates}
 	}
-	if command.RequestedDecision == "approve" {
-		if _, err := tx.Exec(ctx, `
-			LOCK TABLE learning_evidence_carryover_proposals,learning_evidence_carryover_links
-			IN ROW EXCLUSIVE MODE`); err != nil {
-			return learning.EvidenceCarryoverProposal{}, fmt.Errorf("lock evidence carryover approval writes: %w", err)
-		}
-	}
-
 	stale := false
 	if command.RequestedDecision == "approve" {
 		stale, err = s.evidenceCarryoverIsStale(ctx, tx, proposal, knowledgeGeneration, learningGeneration)
 		if err != nil {
 			return learning.EvidenceCarryoverProposal{}, err
+		}
+		if _, err := tx.Exec(ctx, `
+			LOCK TABLE learning_evidence_carryover_proposals,learning_evidence_carryover_links
+			IN ROW EXCLUSIVE MODE`); err != nil {
+			return learning.EvidenceCarryoverProposal{}, fmt.Errorf("lock evidence carryover approval writes: %w", err)
 		}
 	}
 	outcome := string(learning.EvidenceCarryoverRejected)
@@ -203,11 +200,27 @@ func (s *Store) evidenceCarryoverIsStale(ctx context.Context, tx pgx.Tx, proposa
 		proposal.BasisFingerprint != learning.ComputeEvidenceCarryoverBasis(proposal) {
 		return true, nil
 	}
+	// The knowledge catalog is the cross-owner serialization point. Acquire it
+	// before any learning table locks to match knowledge maintenance apply.
+	validator, ok := s.knowledge.(carryoverKnowledgeValidator)
+	if !ok {
+		return false, fmt.Errorf("knowledge evidence carryover validator is not configured")
+	}
+	valid, err := validator.ValidateEvidenceCarryoverTargetLockedWith(
+		ctx, tx, proposal.TargetKnowledgeRevisionID, proposal.KnowledgeProposalID,
+		proposal.KnowledgeBasisHash, proposal.Candidates,
+	)
+	if err != nil {
+		return false, err
+	}
+	if !valid {
+		return true, nil
+	}
 	if _, err := tx.Exec(ctx, `LOCK TABLE learning_evidence,learning_evidence_invalidations IN SHARE MODE`); err != nil {
 		return false, fmt.Errorf("lock evidence carryover source validity: %w", err)
 	}
 	var sourceReferenceValid bool
-	err := tx.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT EXISTS(
 		  SELECT 1
 		  FROM learning_evidence evidence
@@ -249,18 +262,7 @@ func (s *Store) evidenceCarryoverIsStale(ctx context.Context, tx pgx.Tx, proposa
 			return true, nil
 		}
 	}
-	validator, ok := s.knowledge.(carryoverKnowledgeValidator)
-	if !ok {
-		return false, fmt.Errorf("knowledge evidence carryover validator is not configured")
-	}
-	valid, err := validator.ValidateEvidenceCarryoverTargetLockedWith(
-		ctx, tx, proposal.TargetKnowledgeRevisionID, proposal.KnowledgeProposalID,
-		proposal.KnowledgeBasisHash, candidates,
-	)
-	if err != nil {
-		return false, err
-	}
-	return !valid, nil
+	return false, nil
 }
 
 func validatedEvidenceCarryoverCandidates(ctx context.Context, db carryoverDB, proposalID, targetRevisionID string) ([]learning.EvidenceCarryoverCandidate, string, error) {

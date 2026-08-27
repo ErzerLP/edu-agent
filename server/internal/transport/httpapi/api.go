@@ -87,6 +87,9 @@ type LearningService interface {
 	Evidence(context.Context, learning.EvidenceQuery) (learning.EvidencePage, error)
 	Reviews(context.Context, learning.ReviewQuery) (learning.ReviewsPage, error)
 	ProjectionStatus(context.Context) (learning.ProjectionStatus, error)
+	ListEvidenceCarryovers(context.Context, learning.EvidenceCarryoverListCommand) (learning.EvidenceCarryoverPage, error)
+	GetEvidenceCarryover(context.Context, string) (learning.EvidenceCarryoverProposal, error)
+	DecideEvidenceCarryover(context.Context, string, learning.EvidenceCarryoverDecisionCommand) (learning.EvidenceCarryoverProposal, error)
 }
 
 type OfflineLearningService interface {
@@ -290,6 +293,10 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/nodes/{nodeRevisionID}", api.learningNode)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/evidence", api.learningEvidence)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/reviews", api.learningReviews)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge, privacy.OwnerLearning)).Get("/v1/learning/evidence-carryovers", api.learningEvidenceCarryoverList)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge, privacy.OwnerLearning)).Get("/v1/learning/evidence-carryovers/{proposalID}", api.learningEvidenceCarryoverGet)
+			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge, privacy.OwnerLearning)).Post("/v1/learning/evidence-carryovers/{proposalID}/approve", api.learningEvidenceCarryoverApprove)
+			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge, privacy.OwnerLearning)).Post("/v1/learning/evidence-carryovers/{proposalID}/reject", api.learningEvidenceCarryoverReject)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/projections/status", api.learningProjectionStatus)
 		}
 		if api.offline != nil {

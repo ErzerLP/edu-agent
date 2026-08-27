@@ -113,6 +113,15 @@ func (s *compositionLearning) Reviews(context.Context, learning.ReviewQuery) (le
 func (s *compositionLearning) ProjectionStatus(context.Context) (learning.ProjectionStatus, error) {
 	return learning.ProjectionStatus{Metadata: s.metadata(), HighWater: s.highWater}, nil
 }
+func (s *compositionLearning) ListEvidenceCarryovers(context.Context, learning.EvidenceCarryoverListCommand) (learning.EvidenceCarryoverPage, error) {
+	return learning.EvidenceCarryoverPage{Items: []learning.EvidenceCarryoverProposal{}}, nil
+}
+func (s *compositionLearning) GetEvidenceCarryover(context.Context, string) (learning.EvidenceCarryoverProposal, error) {
+	return learning.EvidenceCarryoverProposal{}, nil
+}
+func (s *compositionLearning) DecideEvidenceCarryover(context.Context, string, learning.EvidenceCarryoverDecisionCommand) (learning.EvidenceCarryoverProposal, error) {
+	return learning.EvidenceCarryoverProposal{}, nil
+}
 func (s *compositionLearning) metadata() learning.ProjectionMetadata {
 	return learning.ProjectionMetadata{AsOfEventSequence: s.highWater, ReasonCodes: []string{}}
 }

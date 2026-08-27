@@ -44,6 +44,37 @@ type knowledgeMaintenanceGetInput struct {
 	ProposalID string `json:"proposal_id"`
 }
 
+type evidenceCarryoverListInput struct {
+	Status string `json:"status,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+func (value evidenceCarryoverListInput) command() (learning.EvidenceCarryoverListCommand, error) {
+	status := strings.TrimSpace(value.Status)
+	switch learning.EvidenceCarryoverStatus(status) {
+	case "", "all", learning.EvidenceCarryoverOpen, learning.EvidenceCarryoverApproved,
+		learning.EvidenceCarryoverRejected, learning.EvidenceCarryoverStale, learning.EvidenceCarryoverRedacted:
+	default:
+		return learning.EvidenceCarryoverListCommand{}, invalidLearningInput()
+	}
+	if status == "all" {
+		status = ""
+	}
+	limit := value.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 1 || limit > 100 || len(value.Cursor) > 4096 {
+		return learning.EvidenceCarryoverListCommand{}, invalidLearningInput()
+	}
+	return learning.EvidenceCarryoverListCommand{Status: status, Cursor: value.Cursor, Limit: limit}, nil
+}
+
+type evidenceCarryoverGetInput struct {
+	ProposalID string `json:"proposal_id"`
+}
+
 type knowledgeRetrieveInput struct {
 	Query                     string                    `json:"query"`
 	KnowledgeRevisionID       *string                   `json:"knowledge_revision_id,omitempty"`

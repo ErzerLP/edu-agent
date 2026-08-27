@@ -20,30 +20,37 @@ import (
 )
 
 type fakeLearning struct {
-	actor            string
-	actors           []string
-	method           string
-	calls            int
-	goal             learning.GoalCommand
-	session          learning.SessionCommand
-	proposal         learning.ProposalRequest
-	action           learning.ActionCommand
-	decision         learning.AssessmentDecisionCommand
-	timeline         learning.TimelineQuery
-	page             learning.CursorPageRequest
-	evidence         learning.EvidenceQuery
-	review           learning.ReviewQuery
-	err              error
-	operation        learning.OperationResult
-	proposalResult   learning.ProposalArtifact
-	sessionView      learning.SessionView
-	timelinePage     learning.TimelinePage
-	routesPage       learning.RoutesPage
-	nodeView         learning.NodeView
-	evidencePage     learning.EvidencePage
-	reviewsPage      learning.ReviewsPage
-	status           learning.ProjectionStatus
-	currentSessionFn func(context.Context) (learning.SessionView, error)
+	actor             string
+	actors            []string
+	method            string
+	calls             int
+	goal              learning.GoalCommand
+	session           learning.SessionCommand
+	proposal          learning.ProposalRequest
+	action            learning.ActionCommand
+	decision          learning.AssessmentDecisionCommand
+	timeline          learning.TimelineQuery
+	page              learning.CursorPageRequest
+	evidence          learning.EvidenceQuery
+	review            learning.ReviewQuery
+	err               error
+	operation         learning.OperationResult
+	proposalResult    learning.ProposalArtifact
+	sessionView       learning.SessionView
+	timelinePage      learning.TimelinePage
+	routesPage        learning.RoutesPage
+	nodeView          learning.NodeView
+	evidencePage      learning.EvidencePage
+	reviewsPage       learning.ReviewsPage
+	status            learning.ProjectionStatus
+	carryover         learning.EvidenceCarryoverProposal
+	carryoverPage     learning.EvidenceCarryoverPage
+	carryoverList     learning.EvidenceCarryoverListCommand
+	carryoverGetID    string
+	carryoverActor    string
+	carryoverDecision learning.EvidenceCarryoverDecisionCommand
+	carryoverGetFn    func(context.Context, string) (learning.EvidenceCarryoverProposal, error)
+	currentSessionFn  func(context.Context) (learning.SessionView, error)
 }
 
 func (f *fakeLearning) called(method, actor string) {
@@ -132,6 +139,25 @@ func (f *fakeLearning) Reviews(_ context.Context, query learning.ReviewQuery) (l
 func (f *fakeLearning) ProjectionStatus(context.Context) (learning.ProjectionStatus, error) {
 	f.called("projection_status", "")
 	return f.status, f.err
+}
+func (f *fakeLearning) ListEvidenceCarryovers(_ context.Context, command learning.EvidenceCarryoverListCommand) (learning.EvidenceCarryoverPage, error) {
+	f.called("list_evidence_carryovers", "")
+	f.carryoverList = command
+	return f.carryoverPage, f.err
+}
+func (f *fakeLearning) GetEvidenceCarryover(ctx context.Context, proposalID string) (learning.EvidenceCarryoverProposal, error) {
+	f.called("get_evidence_carryover", "")
+	f.carryoverGetID = proposalID
+	if f.carryoverGetFn != nil {
+		return f.carryoverGetFn(ctx, proposalID)
+	}
+	return f.carryover, f.err
+}
+func (f *fakeLearning) DecideEvidenceCarryover(_ context.Context, actor string, command learning.EvidenceCarryoverDecisionCommand) (learning.EvidenceCarryoverProposal, error) {
+	f.called("decide_evidence_carryover", actor)
+	f.carryoverActor = actor
+	f.carryoverDecision = command
+	return f.carryover, f.err
 }
 
 func newLearningTestAPI(t *testing.T, scopes []string, service *fakeLearning, logs *bytes.Buffer) http.Handler {

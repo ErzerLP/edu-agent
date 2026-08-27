@@ -617,6 +617,102 @@ paths:
         "429": { $ref: "#/components/responses/NotesyncRateLimited" }
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/learning/evidence-carryovers:
+    get:
+      operationId: listEvidenceCarryovers
+      summary: List evidence carryover proposals with a generation-bound cursor
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, open, approved, rejected, stale, redacted]
+            default: all
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Deterministically ordered evidence carryover page.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverPage" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/EvidenceCarryoverConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence-carryovers/{proposalID}:
+    get:
+      operationId: getEvidenceCarryover
+      summary: Read one frozen evidence carryover proposal
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
+      responses:
+        "200":
+          description: Current status, frozen candidates, decision, provisional links, redaction state, and replay state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence-carryovers/{proposalID}/approve:
+    post:
+      operationId: approveEvidenceCarryover
+      summary: Approve one open carryover as replayable provisional learning state
+      x-required-scope: learning:approve
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverDecisionRequest" } } }
+      responses:
+        "200":
+          description: Approved, stale, or exactly replayed terminal carryover proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/EvidenceCarryoverConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/EvidenceCarryoverNoCandidates" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence-carryovers/{proposalID}/reject:
+    post:
+      operationId: rejectEvidenceCarryover
+      summary: Reject one open carryover without creating projection effects
+      x-required-scope: learning:approve
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverDecisionRequest" } } }
+      responses:
+        "200":
+          description: Rejected, stale, or exactly replayed terminal carryover proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/EvidenceCarryoverConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/EvidenceCarryoverNoCandidates" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/goals:
     post:
       operationId: createLearningGoal
@@ -1721,6 +1817,11 @@ components:
       schema:
         type: string
         format: uuid
+    EvidenceCarryoverProposalID:
+      name: proposalID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
     SessionID:
       name: sessionID
       in: path
@@ -1845,6 +1946,16 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/KnowledgeMaintenanceError" }
+    EvidenceCarryoverConflict:
+      description: The list cursor is stale or the requested carryover decision conflicts with current state.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/EvidenceCarryoverConflict" }
+    EvidenceCarryoverNoCandidates:
+      description: The carryover has no candidates that can be provisionally approved.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/EvidenceCarryoverNoCandidates" }
     LearningGoalConflict:
       description: Goal idempotency or expected-version conflict.
       content:
@@ -4624,6 +4735,124 @@ components:
           type: array
           items:
             type: string
+    EvidenceCarryoverDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, decision, reason]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        decision: { type: string, enum: [approve, reject] }
+        reason: { type: string, minLength: 1, maxLength: 4000 }
+    EvidenceCarryoverPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceCarryoverProposal" }
+        next_cursor: { type: string, minLength: 1, maxLength: 4096 }
+    EvidenceCarryoverProposal:
+      type: object
+      additionalProperties: false
+      required:
+        [proposal_id, knowledge_proposal_id, status, knowledge_generation, learning_generation,
+         policy_version, created_at, updated_at, redacted]
+      properties:
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        knowledge_proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        status: { type: string, enum: [open, approved, rejected, stale, redacted] }
+        source_evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        candidates:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceCarryoverCandidate" }
+        knowledge_basis_hash: { $ref: "#/components/schemas/SHA256" }
+        accepted_evidence_fingerprint: { $ref: "#/components/schemas/SHA256" }
+        candidate_fingerprint: { $ref: "#/components/schemas/SHA256" }
+        basis_fingerprint: { $ref: "#/components/schemas/SHA256" }
+        knowledge_generation: { type: integer, minimum: 1 }
+        learning_generation: { type: integer, minimum: 1 }
+        policy_version: { const: evidence-carryover-v1 }
+        decision: { $ref: "#/components/schemas/EvidenceCarryoverDecision" }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceCarryoverLink" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        redacted:
+          type: boolean
+          description: True when privacy clearing removed all sensitive carryover payload fields.
+        replayed:
+          type: boolean
+          description: True when a decision response is an exact idempotent replay.
+    EvidenceCarryoverCandidate:
+      type: object
+      additionalProperties: false
+      required: [knowledge_revision_id, node_id, node_revision_id, document_revision_id]
+      properties:
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+    EvidenceCarryoverDecision:
+      type: object
+      additionalProperties: false
+      required: [decision_id, operation_id, requested_decision, outcome, actor_device_id, event_id, event_seq, created_at]
+      properties:
+        decision_id: { $ref: "#/components/schemas/LearningUUID" }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        requested_decision: { type: string, enum: [approve, reject] }
+        outcome: { type: string, enum: [approved, rejected, stale] }
+        reason: { type: string, maxLength: 4000 }
+        actor_device_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_seq: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    EvidenceCarryoverLink:
+      type: object
+      additionalProperties: false
+      required: [link_id, proposal_id, decision_id, event_id, event_seq, created_at]
+      properties:
+        link_id: { $ref: "#/components/schemas/LearningUUID" }
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_node_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        decision_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_seq: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    EvidenceCarryoverConflict:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, enum: [stale_cursor, operation_conflict, evidence_carryover_closed] }
+            message: { type: string }
+            request_id: { type: string }
+    EvidenceCarryoverNoCandidates:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: evidence_carryover_no_candidates }
+            message: { type: string }
+            request_id: { type: string }
     KnowledgeMaintenanceProposalRequest:
       type: object
       additionalProperties: false

@@ -56,6 +56,8 @@ type LearningService interface {
 	Evidence(context.Context, learning.EvidenceQuery) (learning.EvidencePage, error)
 	Reviews(context.Context, learning.ReviewQuery) (learning.ReviewsPage, error)
 	ProjectionStatus(context.Context) (learning.ProjectionStatus, error)
+	ListEvidenceCarryovers(context.Context, learning.EvidenceCarryoverListCommand) (learning.EvidenceCarryoverPage, error)
+	GetEvidenceCarryover(context.Context, string) (learning.EvidenceCarryoverProposal, error)
 }
 
 type MemoryService interface {

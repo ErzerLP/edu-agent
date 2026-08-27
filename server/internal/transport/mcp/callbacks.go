@@ -69,6 +69,30 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 			break
 		}
 		value, err = r.knowledge.Get(ctx, input.ProposalID)
+	case "learning.evidence_carryover.list":
+		var input evidenceCarryoverListInput
+		if decodeArguments(request.Params.Arguments, &input) != nil {
+			err = invalidLearningInput()
+			break
+		}
+		var command learning.EvidenceCarryoverListCommand
+		command, err = input.command()
+		if err == nil {
+			value, err = r.learning.ListEvidenceCarryovers(ctx, command)
+			if page, ok := value.(learning.EvidenceCarryoverPage); ok {
+				if page.Items == nil {
+					page.Items = []learning.EvidenceCarryoverProposal{}
+				}
+				value = page
+			}
+		}
+	case "learning.evidence_carryover.get":
+		var input evidenceCarryoverGetInput
+		if decodeArguments(request.Params.Arguments, &input) != nil || !canonicalUUID(input.ProposalID) {
+			err = invalidLearningInput()
+			break
+		}
+		value, err = r.learning.GetEvidenceCarryover(ctx, input.ProposalID)
 	case "learning.list_timeline":
 		var input timelineInput
 		if decodeArguments(request.Params.Arguments, &input) != nil || input.SessionID != "" && !canonicalUUID(input.SessionID) {
@@ -196,6 +220,8 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		mapped := mapApplicationProblem(err)
 		if strings.HasPrefix(descriptor.Name, "knowledge.maintenance.") {
 			mapped = mapKnowledgeMaintenanceProblem(err)
+		} else if strings.HasPrefix(descriptor.Name, "learning.evidence_carryover.") {
+			mapped = mapEvidenceCarryoverProblem(err)
 		}
 		return r.toolFailure(ctx, descriptor, mapped), nil
 	}
@@ -372,6 +398,17 @@ func mapKnowledgeMaintenanceProblem(err error) problem.Problem {
 		return problem.Knowledge(err)
 	default:
 		return problem.Internal()
+	}
+}
+
+func mapEvidenceCarryoverProblem(err error) problem.Problem {
+	switch learning.ErrorCode(err) {
+	case learning.CodeOperationConflict, learning.CodeEvidenceCarryoverClosed:
+		return problem.Problem{Status: http.StatusConflict, Code: learning.ErrorCode(err), Message: "Evidence carryover decision conflicts with current state"}
+	case learning.CodeEvidenceCarryoverNoCandidates:
+		return problem.Problem{Status: http.StatusUnprocessableEntity, Code: learning.CodeEvidenceCarryoverNoCandidates, Message: "Evidence carryover has no approvable candidates"}
+	default:
+		return problem.Learning(err)
 	}
 }
 

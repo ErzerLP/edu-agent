@@ -52,6 +52,8 @@ var descriptorCatalog = []Descriptor{
 	toolDescriptor("knowledge.maintenance.propose", "Submit a sourced knowledge maintenance proposal", "knowledge:write", []privacy.OwnerKind{privacy.OwnerKnowledge}, false, exportOutputLimit, exportOutputLimit, "knowledge_maintenance_propose", "createKnowledgeMaintenanceProposal", knowledgeMaintenanceProposalSchema(), knowledgeMaintenanceProposalOutputSchema()),
 	toolDescriptor("knowledge.maintenance.list", "List knowledge maintenance proposals", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_list", "listKnowledgeMaintenanceProposals", knowledgeMaintenanceListSchema(), knowledgeMaintenancePageOutputSchema()),
 	toolDescriptor("knowledge.maintenance.get", "Read one knowledge maintenance proposal", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_get", "getKnowledgeMaintenanceProposal", knowledgeMaintenanceGetSchema(), knowledgeMaintenanceProposalOutputSchema()),
+	toolDescriptor("learning.evidence_carryover.list", "List evidence carryover proposals", "learning:read", evidenceCarryoverOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_evidence_carryover_list", "listEvidenceCarryovers", evidenceCarryoverListSchema(), evidenceCarryoverPageOutputSchema()),
+	toolDescriptor("learning.evidence_carryover.get", "Read one evidence carryover proposal", "learning:read", evidenceCarryoverOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_evidence_carryover_get", "getEvidenceCarryover", evidenceCarryoverGetSchema(), evidenceCarryoverProposalOutputSchema()),
 	toolDescriptor("learning.list_timeline", "List learning timeline projection entries", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_timeline", "listLearningTimeline", timelineSchema(), nil),
 	toolDescriptor("learning.list_routes", "List current or historical learning routes", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_routes", "listLearningRoutes", routesSchema(), nil),
 	toolDescriptor("learning.list_evidence", "List accepted learning evidence", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_evidence", "listLearningEvidence", evidenceSchema(), nil),
@@ -69,6 +71,10 @@ func toolDescriptor(name, description, scope string, owners []privacy.OwnerKind,
 
 func learningOwners() []privacy.OwnerKind {
 	return []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}
+}
+
+func evidenceCarryoverOwners() []privacy.OwnerKind {
+	return []privacy.OwnerKind{privacy.OwnerKnowledge, privacy.OwnerLearning}
 }
 
 func Catalog() []Descriptor {
@@ -203,6 +209,63 @@ func knowledgeMaintenancePageOutputSchema() any {
 	return objectSchema(map[string]any{
 		"items":       map[string]any{"type": "array", "items": knowledgeMaintenanceProposalOutputSchema()},
 		"next_cursor": stringProperty(),
+	}, "items")
+}
+
+func evidenceCarryoverListSchema() any {
+	return objectSchema(map[string]any{
+		"status": map[string]any{"type": "string", "enum": []string{"all", "open", "approved", "rejected", "stale", "redacted"}},
+		"cursor": map[string]any{"type": "string", "maxLength": 4096}, "limit": integerProperty(1, 100),
+	})
+}
+
+func evidenceCarryoverGetSchema() any {
+	return objectSchema(map[string]any{"proposal_id": uuidProperty()}, "proposal_id")
+}
+
+func evidenceCarryoverProposalOutputSchema() any {
+	hash := map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}
+	dateTime := map[string]any{"type": "string", "format": "date-time"}
+	candidate := objectSchema(map[string]any{
+		"knowledge_revision_id": uuidProperty(), "node_id": uuidProperty(),
+		"node_revision_id": uuidProperty(), "document_revision_id": uuidProperty(),
+	}, "knowledge_revision_id", "node_id", "node_revision_id", "document_revision_id")
+	decision := objectSchema(map[string]any{
+		"decision_id": uuidProperty(), "operation_id": uuidProperty(),
+		"requested_decision": map[string]any{"type": "string", "enum": []string{"approve", "reject"}},
+		"outcome":            map[string]any{"type": "string", "enum": []string{"approved", "rejected", "stale"}},
+		"reason":             map[string]any{"type": "string", "maxLength": 4000}, "actor_device_id": uuidProperty(),
+		"event_id": uuidProperty(), "event_seq": map[string]any{"type": "integer", "minimum": 1}, "created_at": dateTime,
+	}, "decision_id", "operation_id", "requested_decision", "outcome", "actor_device_id", "event_id", "event_seq", "created_at")
+	link := objectSchema(map[string]any{
+		"link_id": uuidProperty(), "proposal_id": uuidProperty(), "source_evidence_id": uuidProperty(),
+		"target_knowledge_revision_id": uuidProperty(), "target_node_id": uuidProperty(),
+		"target_node_revision_id": uuidProperty(), "target_document_revision_id": uuidProperty(),
+		"decision_id": uuidProperty(), "event_id": uuidProperty(),
+		"event_seq": map[string]any{"type": "integer", "minimum": 1}, "created_at": dateTime,
+	}, "link_id", "proposal_id", "decision_id", "event_id", "event_seq", "created_at")
+	return objectSchema(map[string]any{
+		"proposal_id": uuidProperty(), "knowledge_proposal_id": uuidProperty(),
+		"status":             map[string]any{"type": "string", "enum": []string{"open", "approved", "rejected", "stale", "redacted"}},
+		"source_evidence_id": uuidProperty(), "source_knowledge_revision_id": uuidProperty(),
+		"source_node_revision_id": uuidProperty(), "target_knowledge_revision_id": uuidProperty(),
+		"candidates":           map[string]any{"type": "array", "items": candidate},
+		"knowledge_basis_hash": hash, "accepted_evidence_fingerprint": hash,
+		"candidate_fingerprint": hash, "basis_fingerprint": hash,
+		"knowledge_generation": map[string]any{"type": "integer", "minimum": 1},
+		"learning_generation":  map[string]any{"type": "integer", "minimum": 1},
+		"policy_version":       map[string]any{"type": "string", "const": "evidence-carryover-v1"},
+		"decision":             decision, "links": map[string]any{"type": "array", "items": link},
+		"created_at": dateTime, "updated_at": dateTime,
+		"redacted": map[string]any{"type": "boolean"}, "replayed": map[string]any{"type": "boolean"},
+	}, "proposal_id", "knowledge_proposal_id", "status", "knowledge_generation", "learning_generation",
+		"policy_version", "created_at", "updated_at", "redacted")
+}
+
+func evidenceCarryoverPageOutputSchema() any {
+	return objectSchema(map[string]any{
+		"items":       map[string]any{"type": "array", "items": evidenceCarryoverProposalOutputSchema()},
+		"next_cursor": map[string]any{"type": "string", "minLength": 1, "maxLength": 4096},
 	}, "items")
 }
 

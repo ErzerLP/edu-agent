@@ -3,7 +3,7 @@ name: offline-sync
 language: zh-CN
 phase: archive
 status: active
-state_version: 32
+state_version: 33
 brief: brief.md
 spec_changes:
   - capability: offline-sync

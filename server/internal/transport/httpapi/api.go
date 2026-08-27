@@ -33,6 +33,15 @@ type IdentityService interface {
 	RevokeDevice(context.Context, string) error
 }
 
+type offlinePairingBootstrapService interface {
+	PairingBootstrap(context.Context) (learning.OfflinePairingBootstrap, error)
+}
+
+type pairingExchangeResponse struct {
+	identity.IssuedCredential
+	Offline *learning.OfflinePairingBootstrap `json:"offline,omitempty"`
+}
+
 type ModelProber interface {
 	Probe(context.Context) llm.Capabilities
 }
@@ -65,6 +74,15 @@ type LearningService interface {
 	ProjectionStatus(context.Context) (learning.ProjectionStatus, error)
 }
 
+type OfflineLearningService interface {
+	Prepare(context.Context, string, learning.OfflinePrepareRequest) (learning.OfflinePrepareResponse, error)
+	Sync(context.Context, string, learning.OfflineSyncRequest) (learning.OfflineSyncResponse, error)
+	Status(context.Context, string, string) (learning.OfflineOperationStatus, error)
+	ListOfflineAssessments(context.Context, string, learning.OfflineAssessmentQuery) (learning.OfflineAssessmentPage, error)
+	OfflineAssessment(context.Context, string, string) (learning.OfflineAssessmentView, error)
+	DecideOfflineAssessment(context.Context, string, string, learning.OfflineAssessmentDecisionCommand) (learning.OfflineAssessmentDecisionReceipt, error)
+}
+
 type MemoryService interface {
 	CreateCandidate(context.Context, memory.DevicePrincipal, memory.CreateCandidateCommand) (memory.OperationResult, error)
 	CreateCorrectionCandidate(context.Context, memory.DevicePrincipal, memory.CreateCorrectionCandidateCommand) (memory.OperationResult, error)
@@ -89,6 +107,8 @@ type PrivacyService interface {
 	Receipt(context.Context, string) (privacy.ErasureReceipt, error)
 	RunLocal(context.Context, string) (privacy.ErasureReceipt, error)
 	RunNocturne(context.Context, string) (privacy.ErasureReceipt, error)
+	CurrentOfflineDevicePurge(context.Context, string) (privacy.OfflinePurgeChallenge, bool, error)
+	AcknowledgeOfflineDevicePurge(context.Context, string, string, privacy.OfflineDevicePurgeAcknowledgment) (privacy.OfflineDeviceChildReceipt, error)
 }
 
 type PrivacyMigrationLeaseService interface {
@@ -101,6 +121,7 @@ type Options struct {
 	Model                   ModelProber
 	Knowledge               KnowledgeService
 	Learning                LearningService
+	Offline                 OfflineLearningService
 	Memory                  MemoryService
 	MemoryExporter          MemoryExporter
 	Privacy                 PrivacyService
@@ -118,6 +139,7 @@ type Options struct {
 	MaxRequestBody          int64
 	MaxKnowledgeRequestBody int64
 	MaxLearningRequestBody  int64
+	MaxOfflineRequestBody   int64
 }
 
 type API struct {
@@ -125,6 +147,7 @@ type API struct {
 	model                   ModelProber
 	knowledge               KnowledgeService
 	learning                LearningService
+	offline                 OfflineLearningService
 	memory                  MemoryService
 	memoryExporter          MemoryExporter
 	privacy                 PrivacyService
@@ -142,6 +165,7 @@ type API struct {
 	maxRequestBody          int64
 	maxKnowledgeRequestBody int64
 	maxLearningRequestBody  int64
+	maxOfflineRequestBody   int64
 }
 
 type credentialContextKey struct{}
@@ -182,9 +206,12 @@ func New(options Options) (http.Handler, error) {
 	if options.MaxLearningRequestBody <= 0 {
 		options.MaxLearningRequestBody = 1 << 20
 	}
+	if options.MaxOfflineRequestBody <= 0 {
+		options.MaxOfflineRequestBody = 8 << 20
+	}
 	api := &API{
 		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, learning: options.Learning,
-		memory: options.Memory, memoryExporter: options.MemoryExporter,
+		offline: options.Offline, memory: options.Memory, memoryExporter: options.MemoryExporter,
 		privacy: options.Privacy, migrationLeases: options.MigrationLeases,
 		maintenanceToken: options.MaintenanceToken, readPermits: options.ReadPermits,
 		readiness: options.Readiness, logger: options.Logger,
@@ -193,6 +220,7 @@ func New(options Options) (http.Handler, error) {
 		now: options.Now, privacyBackupDeadline: options.PrivacyBackupDeadline,
 		maxRequestBody: options.MaxRequestBody, maxKnowledgeRequestBody: options.MaxKnowledgeRequestBody,
 		maxLearningRequestBody: options.MaxLearningRequestBody,
+		maxOfflineRequestBody:  options.MaxOfflineRequestBody,
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -233,6 +261,15 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/reviews", api.learningReviews)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/projections/status", api.learningProjectionStatus)
 		}
+		if api.offline != nil {
+			offlineOwners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring, privacy.OwnerKnowledge}
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, offlineOwners...)).Post("/v1/learning/offline/packs", api.offlinePrepare)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, offlineOwners...)).Post("/v1/learning/offline/sync", api.offlineSync)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, offlineOwners...)).Get("/v1/learning/offline/operations/{operationID}", api.offlineStatus)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, offlineOwners...)).Get("/v1/learning/offline/assessments", api.offlineAssessments)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, offlineOwners...)).Get("/v1/learning/offline/assessments/{assessmentID}", api.offlineAssessment)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, offlineOwners...)).Post("/v1/learning/offline/assessments/{assessmentID}/decisions", api.offlineAssessmentDecision)
+		}
 		if api.memory != nil {
 			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Post("/v1/memory/candidates", api.memoryCreateCandidate)
 			protected.With(api.requireScope("memory:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/v1/memory/candidates", api.memoryListCandidates)
@@ -248,6 +285,8 @@ func New(options Options) (http.Handler, error) {
 		if api.privacy != nil {
 			protected.With(api.limitPrivacyErasure).Post("/v1/privacy/erasures", api.privacyCreateErasure)
 			protected.With(api.requireScope("privacy:read")).Get("/v1/privacy/erasures/{erasureID}", api.privacyErasureReceipt)
+			protected.With(api.requireScope("privacy:device")).Get("/v1/privacy/erasures/{erasureID}/offline-device-purge", api.privacyOfflineDevicePurge)
+			protected.With(api.requireScope("privacy:device")).Post("/v1/privacy/erasures/{erasureID}/offline-device-purge/ack", api.privacyOfflineDeviceAck)
 		}
 	})
 	return router, nil
@@ -294,6 +333,30 @@ func (a *API) privacyCreateErasure(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) privacyErasureReceipt(w http.ResponseWriter, r *http.Request) {
 	a.handlePrivacyErasureReceipt(w, r)
+}
+func (a *API) privacyOfflineDevicePurge(w http.ResponseWriter, r *http.Request) {
+	a.handlePrivacyOfflinePurgeTask(w, r)
+}
+
+func (a *API) privacyOfflineDeviceAck(w http.ResponseWriter, r *http.Request) {
+	a.handlePrivacyOfflineDeviceAck(w, r)
+}
+
+func (a *API) offlinePrepare(w http.ResponseWriter, r *http.Request) {
+	a.handleOfflinePrepare(w, r)
+}
+func (a *API) offlineSync(w http.ResponseWriter, r *http.Request) { a.handleOfflineSync(w, r) }
+func (a *API) offlineStatus(w http.ResponseWriter, r *http.Request) {
+	a.handleOfflineStatus(w, r)
+}
+func (a *API) offlineAssessments(w http.ResponseWriter, r *http.Request) {
+	a.handleOfflineAssessments(w, r)
+}
+func (a *API) offlineAssessment(w http.ResponseWriter, r *http.Request) {
+	a.handleOfflineAssessment(w, r)
+}
+func (a *API) offlineAssessmentDecision(w http.ResponseWriter, r *http.Request) {
+	a.handleOfflineAssessmentDecision(w, r)
 }
 
 func (a *API) learningCreateGoal(w http.ResponseWriter, r *http.Request) {
@@ -365,7 +428,16 @@ func (a *API) exchangePairingCode(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, credential)
+	response := pairingExchangeResponse{IssuedCredential: credential}
+	if bootstrapper, ok := a.offline.(offlinePairingBootstrapService); ok {
+		bootstrap, bootstrapErr := bootstrapper.PairingBootstrap(r.Context())
+		if bootstrapErr != nil {
+			a.logger.WarnContext(r.Context(), "offline pairing bootstrap unavailable", "request_id", middleware.GetReqID(r.Context()), "error", bootstrapErr)
+		} else {
+			response.Offline = &bootstrap
+		}
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (a *API) authenticate(next http.Handler) http.Handler {

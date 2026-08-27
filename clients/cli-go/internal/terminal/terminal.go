@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -39,6 +40,15 @@ func New(in io.Reader, out, errOut io.Writer) *IO {
 }
 
 func (t *IO) ReadSecret(prompt string) (string, error) {
+	data, err := t.ReadSecretBytes(prompt)
+	if err != nil {
+		return "", err
+	}
+	defer clear(data)
+	return string(data), nil
+}
+
+func (t *IO) ReadSecretBytes(prompt string) ([]byte, error) {
 	if prompt != "" {
 		_, _ = fmt.Fprint(t.errOut, prompt)
 	}
@@ -46,12 +56,14 @@ func (t *IO) ReadSecret(prompt string) (string, error) {
 		data, err := xterm.ReadPassword(t.inputFD)
 		_, _ = fmt.Fprintln(t.errOut)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		defer clear(data)
-		return strings.TrimSpace(string(data)), nil
+		trimmed := bytes.TrimSuffix(bytes.TrimSuffix(data, []byte{'\n'}), []byte{'\r'})
+		result := append([]byte(nil), trimmed...)
+		clear(data)
+		return result, nil
 	}
-	return t.readLineRaw()
+	return t.readLineRawBytes()
 }
 
 func (t *IO) ReadLine(prompt string) (string, error) {
@@ -111,6 +123,19 @@ func EscapeText(value string) string {
 		}
 	}
 	return escaped.String()
+}
+
+func (t *IO) readLineRawBytes() ([]byte, error) {
+	line, err := t.reader.ReadBytes('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if errors.Is(err, io.EOF) && len(line) == 0 {
+		return nil, io.EOF
+	}
+	line = bytes.TrimSuffix(line, []byte{'\n'})
+	line = bytes.TrimSuffix(line, []byte{'\r'})
+	return line, nil
 }
 
 func (t *IO) readLineRaw() (string, error) {

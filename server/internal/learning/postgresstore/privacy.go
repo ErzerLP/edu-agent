@@ -194,6 +194,12 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"learning evidence invalidations", `UPDATE learning_evidence_invalidations SET reason='privacy_erasure'`},
 		{"learning exposures", `UPDATE learning_exposures SET content='',references_snapshot='[]'::jsonb`},
 		{"learning misconceptions", `UPDATE learning_misconception_revisions SET rubric_item_id='[redacted]',candidate_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex'),candidate_text='',status='resolved',source_evidence_ids='{}'::uuid[],counter_evidence_ids='{}'::uuid[]`},
+		{"offline prepare claims", `UPDATE offline_prepare_claims SET request_body='{"redacted":true}'::jsonb,model_artifact=NULL,result_body=CASE WHEN result_body IS NULL THEN NULL ELSE '{"redacted":true}'::jsonb END`},
+		{"offline activities", `UPDATE offline_activities SET prompt='[redacted]',rubric_revision='[redacted]',rubric='{"redacted":true}'::jsonb,payload_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex')`},
+		{"offline activity references", `UPDATE offline_activity_references SET source_start=0,source_end=1,slice_text='',slice_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex')`},
+		{"offline packs", `UPDATE offline_packs SET response_body='{"redacted":true}'::jsonb,response_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex'),signer_key_id='[redacted]',signature=decode(repeat('00',64),'hex')`},
+		{"offline submission authorizations", `UPDATE offline_submission_authorizations SET authorization_payload='{"redacted":true}'::jsonb,authorization_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex'),signer_key_id='[redacted]',signature=decode(repeat('00',64),'hex')`},
+		{"offline evaluation jobs", `UPDATE offline_evaluation_jobs SET frozen_request='{"redacted":true}'::jsonb,last_error_category=CASE WHEN last_error_category IS NULL THEN NULL ELSE 'privacy_erasure' END`},
 	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(ctx, statement.sql); err != nil {
@@ -374,6 +380,12 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			UNION ALL SELECT count(*) FROM learning_evidence_invalidations WHERE reason<>'privacy_erasure'
 			UNION ALL SELECT count(*) FROM learning_exposures WHERE content<>'' OR references_snapshot<>'[]'::jsonb
 			UNION ALL SELECT count(*) FROM learning_misconception_revisions WHERE rubric_item_id<>'[redacted]' OR candidate_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex') OR candidate_text<>'' OR status<>'resolved' OR source_evidence_ids<>'{}'::uuid[] OR counter_evidence_ids<>'{}'::uuid[]
+			UNION ALL SELECT count(*) FROM offline_prepare_claims WHERE request_body<>'{"redacted":true}'::jsonb OR model_artifact IS NOT NULL OR (result_body IS NOT NULL AND result_body<>'{"redacted":true}'::jsonb)
+			UNION ALL SELECT count(*) FROM offline_activities WHERE prompt<>'[redacted]' OR rubric_revision<>'[redacted]' OR rubric<>'{"redacted":true}'::jsonb OR payload_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex')
+			UNION ALL SELECT count(*) FROM offline_activity_references WHERE source_start<>0 OR source_end<>1 OR slice_text<>'' OR slice_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex')
+			UNION ALL SELECT count(*) FROM offline_packs WHERE response_body<>'{"redacted":true}'::jsonb OR response_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex') OR signer_key_id<>'[redacted]' OR signature<>decode(repeat('00',64),'hex')
+			UNION ALL SELECT count(*) FROM offline_submission_authorizations WHERE authorization_payload<>'{"redacted":true}'::jsonb OR authorization_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex') OR signer_key_id<>'[redacted]' OR signature<>decode(repeat('00',64),'hex')
+			UNION ALL SELECT count(*) FROM offline_evaluation_jobs WHERE frozen_request<>'{"redacted":true}'::jsonb OR (last_error_category IS NOT NULL AND last_error_category<>'privacy_erasure')
 		) residuals`).Scan(&remaining)
 	if err != nil {
 		return 0, fmt.Errorf("verify learning typed payload redaction: %w", err)

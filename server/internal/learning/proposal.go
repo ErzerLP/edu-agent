@@ -645,7 +645,7 @@ func (s *Service) decodeProposal(ctx context.Context, request ProposalRequest, i
 		artifact.Activity = &output.Activity
 	case ProposalAssessment:
 		var output struct {
-			Assessment struct {
+			Assessment *struct {
 				Items          []AssessmentItem `json:"items"`
 				RubricComplete bool             `json:"rubric_complete"`
 				Confidence     int              `json:"confidence"`
@@ -654,6 +654,9 @@ func (s *Service) decodeProposal(ctx context.Context, request ProposalRequest, i
 		}
 		if err := decodeOne(decoder, &output); err != nil {
 			return artifact, &Error{Code: CodeProposalRejected, Reason: "schema_mismatch", Cause: err}
+		}
+		if output.Assessment == nil {
+			return artifact, &Error{Code: CodeProposalRejected, Reason: "schema_mismatch"}
 		}
 		if request.AttemptID == "" || request.ActivityID == "" {
 			return artifact, &Error{Code: CodeInvalidRequest}

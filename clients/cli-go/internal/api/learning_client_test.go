@@ -151,6 +151,7 @@ func learningSessionView(state string) SessionView {
 		AttemptID: learningAttemptID, SessionID: learningSessionID, ActivityID: learningActivityID, ActivityRevision: 1,
 		AnswerPayloadID: "70000000-0000-4000-8000-000000000011", Answer: "The central idea", AnswerSHA256: strings.Repeat("b", 64),
 		Help: "none", ActorDeviceID: "10000000-0000-4000-8000-000000000001", ReceivedAt: now,
+		EvidenceEligibility: true, ArchiveDisposition: "online",
 	}
 	assessmentItem := AssessmentItem{
 		RubricItemID: "criterion-1", Conclusion: "pass", AnswerQuote: "central idea", AnswerRange: LearningSourceRange{Start: 4, End: 16},
@@ -161,7 +162,7 @@ func learningSessionView(state string) SessionView {
 		AssessmentID: learningAssessmentID, SessionID: learningSessionID, AttemptID: learningAttemptID, ActivityID: learningActivityID,
 		ActivityRevision: 1, Items: []AssessmentItem{assessmentItem}, RubricComplete: true, Confidence: 900, RiskFlags: []string{},
 		ModelID: "fake-model", ModelParameters: map[string]any{}, PromptRevision: "assessment-prompt-v1", ProposalInputHash: strings.Repeat("e", 64),
-		Attempts: 1, AttemptCategories: []string{"initial"}, CreatedAt: now,
+		Attempts: 1, AttemptCategories: []string{"initial"}, CreatedAt: now, EvidenceEligibility: true,
 	}
 	decision := AssessmentDecision{
 		DecisionID: "90000000-0000-4000-8000-000000000010", AssessmentID: learningAssessmentID, Version: 1,

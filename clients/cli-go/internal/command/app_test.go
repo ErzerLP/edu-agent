@@ -123,6 +123,7 @@ func (s *memoryCredentialStore) Delete() error {
 
 type fakeTerminal struct {
 	secret       string
+	secretCalls  int
 	lines        []string
 	confirmed    bool
 	confirmCalls int
@@ -130,7 +131,10 @@ type fakeTerminal struct {
 	clearCalls   int
 }
 
-func (t *fakeTerminal) ReadSecret(string) (string, error) { return t.secret, nil }
+func (t *fakeTerminal) ReadSecret(string) (string, error) {
+	t.secretCalls++
+	return t.secret, nil
+}
 func (t *fakeTerminal) ReadLine(string) (string, error) {
 	if len(t.lines) == 0 {
 		return "", io.EOF

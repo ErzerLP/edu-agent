@@ -30,6 +30,36 @@ type workerGroup struct {
 	done   chan struct{}
 }
 
+type workerHealth struct {
+	mu            sync.RWMutex
+	lastRunFailed bool
+}
+
+func (h *workerHealth) track(runOnce func(context.Context) (int, error)) func(context.Context) (int, error) {
+	return func(ctx context.Context) (int, error) {
+		count, err := runOnce(ctx)
+		if ctx.Err() == nil {
+			h.mu.Lock()
+			h.lastRunFailed = err != nil
+			h.mu.Unlock()
+		}
+		return count, err
+	}
+}
+
+func (h *workerHealth) Probe(context.Context) error {
+	if h == nil {
+		return errors.New("worker loop is not configured")
+	}
+	h.mu.RLock()
+	failed := h.lastRunFailed
+	h.mu.RUnlock()
+	if failed {
+		return errors.New("worker loop is unavailable")
+	}
+	return nil
+}
+
 func startWorkerGroup(parent context.Context, logger *slog.Logger, specs []workerSpec) *workerGroup {
 	ctx, cancel := context.WithCancel(parent)
 	group := &workerGroup{cancel: cancel, done: make(chan struct{})}

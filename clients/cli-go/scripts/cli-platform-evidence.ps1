@@ -118,24 +118,33 @@ switch ($env:RUNNER_OS_NAME) {
         $rootConfinementMethod = "root-handle+openat-o_nofollow"
         $hiddenInputMethod = "linux-pty+xterm-readpassword+termios-echo-check+input-echo-probe+final-fragment-rejection"
         $clearMethod = "production-clearscreen+csi-output"
+        $systemKeyMethod = "session-dbus+secret-service+libsecret"
     }
     "macOS" {
         $rootConfinementMethod = "root-handle+openat-o_nofollow"
         $hiddenInputMethod = "darwin-pty+xterm-readpassword+termios-echo-check+input-echo-probe+final-fragment-rejection"
         $clearMethod = "production-clearscreen+csi-output"
+        $systemKeyMethod = "keychain-generic-password+stdin-secret"
     }
     "Windows" {
         $rootConfinementMethod = "resolved-root+reparse-rejection+final-handle-boundary"
         $hiddenInputMethod = "windows-conpty+xterm-readpassword+input-echo-probe+final-fragment-rejection"
         $clearMethod = "windows-conpty+production-clearscreen+vt-clear+forced-vt-unavailable+fillconsole-cursor-fallback"
+        $systemKeyMethod = "dpapi-current-user+user-only-acl"
     }
     default {
         throw "unsupported native evidence runner: $env:RUNNER_OS_NAME"
     }
 }
 
+$env:EDU_AGENT_NATIVE_KEYBACKEND_TEST = "1"
+
 $checks = @(
     @{ Name = "importer-root-confinement"; Package = "./internal/importer"; Pattern = "^TestReadDocumentRejectsDeterministicIntermediateDirectorySwap$"; Method = $rootConfinementMethod },
+    @{ Name = "offline-root-confinement"; Package = "./internal/offline"; Pattern = "^TestSymlinkAndRootEscapeAreRejected$"; Method = $rootConfinementMethod },
+    @{ Name = "offline-lease-contention"; Package = "./internal/offline"; Pattern = "^TestLeaseContentionAndSharedReaders$"; Method = "native-filesystem-lock+shared-exclusive-lease" },
+    @{ Name = "offline-atomic-rewrap"; Package = "./internal/offline"; Pattern = "^TestRewrapPassphrasePreservesSealedObjects$"; Method = "native-filesystem-atomic-replace+sealed-object-preservation" },
+    @{ Name = "offline-system-key-migrate-purge"; Package = "./internal/offline"; Pattern = "^TestNativeSystemKeyMigrationAndPurgeCleanup$"; Method = $systemKeyMethod },
     @{ Name = "credential-round-trip-cleanup"; Package = "./internal/credentials"; Pattern = "^TestPlatformCredentialRoundTripCleanup$"; Method = "native-platform-credential-store" },
     @{ Name = "pair-hidden-input"; Package = "./internal/terminal"; Pattern = "^TestPlatformPairSecretInput$"; Method = $hiddenInputMethod },
     @{ Name = "pair-line-input"; Package = "./internal/terminal"; Pattern = "^TestPlatformPairLineInput$"; Method = "production-readsecret-non-tty-line" },

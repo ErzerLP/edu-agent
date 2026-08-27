@@ -364,9 +364,14 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 			}
 			artifact = *proposal.Assessment
 		}
+		artifact.EvidenceEligibility = attempt.EvidenceEligibility || attempt.EvidenceIneligibleReason == ""
+		artifact.EvidenceIneligibleReason = attempt.EvidenceIneligibleReason
 		acceptance, err := EvaluateAssessment(activity, attempt, artifact)
 		if err != nil {
 			return OperationResult{}, err
+		}
+		if attempt.EvidenceIneligibleReason != "" {
+			acceptance = Acceptance{Disposition: DispositionProvisional, Reasons: []string{attempt.EvidenceIneligibleReason}}
 		}
 		assessmentOwners, err := assessmentAuthority(activity, artifact)
 		if err != nil {
@@ -602,6 +607,9 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 	effect, err := DecideAssessment(current, artifact, DecisionCommand{Kind: command.Kind, ExpectedVersion: command.ExpectedDispositionVersion, Reason: command.Reason, Items: command.Items}, ConfirmableAssessment(activity, attempt, artifact))
 	if err != nil {
 		return OperationResult{}, err
+	}
+	if effect.CreateEvidence && attempt.EvidenceIneligibleReason != "" {
+		return OperationResult{}, &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(current.Disposition), Reason: attempt.EvidenceIneligibleReason}
 	}
 	if effect.CreateEvidence && attempt.Help == HelpAnswerRevealed {
 		return OperationResult{}, &Error{Code: CodeAssessmentDispositionConflict, CurrentDisposition: string(current.Disposition), Reason: "answer_revealed"}

@@ -560,7 +560,7 @@ func commandSessionView(state, activityType, disposition string, confirmable, at
 	if attached {
 		activity.AttachedFreeQuestionID, activity.AttachedFreeAnswerID = commandQuestionID, commandAnswerID
 	}
-	attempt := api.Attempt{AttemptID: commandAttemptID, SessionID: commandSessionID, ActivityID: commandActivityID, ActivityRevision: 1, AnswerPayloadID: "77000000-0000-4000-8000-000000000002", Answer: "quiz answer", AnswerSHA256: strings.Repeat("b", 64), Help: "none", ActorDeviceID: testDeviceID, ReceivedAt: now}
+	attempt := api.Attempt{AttemptID: commandAttemptID, SessionID: commandSessionID, ActivityID: commandActivityID, ActivityRevision: 1, AnswerPayloadID: "77000000-0000-4000-8000-000000000002", Answer: "quiz answer", AnswerSHA256: strings.Repeat("b", 64), Help: "none", ActorDeviceID: testDeviceID, ReceivedAt: now, EvidenceEligibility: true, ArchiveDisposition: "online"}
 	assessment := commandAssessment()
 	decision := api.AssessmentDecision{DecisionID: "99000000-0000-4000-8000-000000000001", AssessmentID: commandAssessmentID, Version: 1, Disposition: disposition, Items: assessment.Items, ActorDeviceID: testDeviceID, CreatedAt: now}
 	if disposition == "accepted" {
@@ -634,7 +634,7 @@ func commandFocus(withAttempt bool) api.FocusContext {
 func commandAssessment() api.AssessmentArtifact {
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	item := api.AssessmentItem{RubricItemID: "criterion-1", Conclusion: "pass", AnswerQuote: "quiz answer", AnswerRange: api.LearningSourceRange{Start: 0, End: 11}, AnswerQuoteSHA256: strings.Repeat("c", 64), KnowledgeReferenceID: commandNodeRevision, KnowledgeQuote: "canonical note", KnowledgeRange: api.LearningSourceRange{Start: 0, End: 14}, KnowledgeQuoteSHA256: strings.Repeat("d", 64)}
-	return api.AssessmentArtifact{AssessmentID: commandAssessmentID, SessionID: commandSessionID, AttemptID: commandAttemptID, ActivityID: commandActivityID, ActivityRevision: 1, Items: []api.AssessmentItem{item}, RubricComplete: true, Confidence: 900, RiskFlags: []string{}, ModelID: "fake-model", ModelParameters: map[string]any{}, PromptRevision: "assessment-v1", ProposalInputHash: strings.Repeat("e", 64), Attempts: 1, AttemptCategories: []string{"initial"}, CreatedAt: now}
+	return api.AssessmentArtifact{AssessmentID: commandAssessmentID, SessionID: commandSessionID, AttemptID: commandAttemptID, ActivityID: commandActivityID, ActivityRevision: 1, Items: []api.AssessmentItem{item}, RubricComplete: true, Confidence: 900, RiskFlags: []string{}, ModelID: "fake-model", ModelParameters: map[string]any{}, PromptRevision: "assessment-v1", ProposalInputHash: strings.Repeat("e", 64), Attempts: 1, AttemptCategories: []string{"initial"}, CreatedAt: now, EvidenceEligibility: true}
 }
 
 func commandMetadata() api.ProjectionMetadata {

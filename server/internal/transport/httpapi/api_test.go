@@ -15,6 +15,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
@@ -112,6 +113,69 @@ func newTestAPI(t *testing.T, id *fakeIdentity, pairLimit, authLimit int, logs *
 		t.Fatal(err)
 	}
 	return handler
+}
+
+type pairingBootstrapOffline struct {
+	bootstrap learning.OfflinePairingBootstrap
+}
+
+func (f pairingBootstrapOffline) PairingBootstrap(context.Context) (learning.OfflinePairingBootstrap, error) {
+	return f.bootstrap, nil
+}
+func (pairingBootstrapOffline) Prepare(context.Context, string, learning.OfflinePrepareRequest) (learning.OfflinePrepareResponse, error) {
+	return learning.OfflinePrepareResponse{}, nil
+}
+func (pairingBootstrapOffline) Sync(context.Context, string, learning.OfflineSyncRequest) (learning.OfflineSyncResponse, error) {
+	return learning.OfflineSyncResponse{}, nil
+}
+func (pairingBootstrapOffline) Status(context.Context, string, string) (learning.OfflineOperationStatus, error) {
+	return learning.OfflineOperationStatus{}, nil
+}
+func (pairingBootstrapOffline) ListOfflineAssessments(context.Context, string, learning.OfflineAssessmentQuery) (learning.OfflineAssessmentPage, error) {
+	return learning.OfflineAssessmentPage{}, nil
+}
+func (pairingBootstrapOffline) OfflineAssessment(context.Context, string, string) (learning.OfflineAssessmentView, error) {
+	return learning.OfflineAssessmentView{}, nil
+}
+func (pairingBootstrapOffline) DecideOfflineAssessment(context.Context, string, string, learning.OfflineAssessmentDecisionCommand) (learning.OfflineAssessmentDecisionReceipt, error) {
+	return learning.OfflineAssessmentDecisionReceipt{}, nil
+}
+
+func TestPairingReturnsOfflineSignerTrustBootstrapWhenAvailable(t *testing.T) {
+	t.Parallel()
+	id := &fakeIdentity{exchange: identity.IssuedCredential{Device: identity.Device{ID: "30000000-0000-4000-8000-000000000001", DisplayName: "Laptop"}, Token: "one-time-device-token"}}
+	bootstrap := learning.OfflinePairingBootstrap{
+		ProtocolVersion:   1,
+		LearnerGeneration: "7",
+		ServerBaseURL:     "https://example.test/api",
+		SignerManifest: learning.OfflineSignedEnvelope{
+			Payload:     json.RawMessage(`{"protocol_version":1}`),
+			SignerKeyID: "offline-key-1",
+			Signature:   strings.Repeat("A", 86),
+		},
+	}
+	handler, err := New(Options{
+		Identity: id, Model: fakeModel{result: llm.Capabilities{Compatible: true}}, Offline: pairingBootstrapOffline{bootstrap: bootstrap},
+		Readiness: fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger:    slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), PairLimiter: NewFixedWindowLimiter(2, time.Minute),
+		AuthLimiter: NewFixedWindowLimiter(2, time.Minute), DeviceLimiter: NewFixedWindowLimiter(2, time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/pairings/exchange", strings.NewReader(`{"code":"pair-secret","display_name":"Laptop"}`))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("pairing status=%d body=%s", response.Code, response.Body.String())
+	}
+	var result pairingExchangeResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Offline == nil || result.Offline.LearnerGeneration != "7" || result.Offline.ServerBaseURL != bootstrap.ServerBaseURL || result.Offline.SignerManifest.SignerKeyID != "offline-key-1" {
+		t.Fatalf("pairing offline bootstrap=%+v", result.Offline)
+	}
 }
 
 func TestHealthAndPairingHTTPContract(t *testing.T) {

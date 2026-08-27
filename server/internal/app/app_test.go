@@ -15,6 +15,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
+	outboxpostgres "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 )
 
 type compositionTreeReader struct{}
@@ -109,6 +110,33 @@ func TestShutdownClosesListenerAndUsesIndependentWorkerAndHTTPBudgets(t *testing
 	case <-serveResult:
 	case <-time.After(time.Second):
 		t.Fatal("HTTP server did not stop")
+	}
+}
+
+func TestOfflineEvaluationWorkerIsComposedWithoutModel(t *testing.T) {
+	cfg := config.Config{Model: config.ModelConfig{Name: "test-model", ContextWindow: 8192}}
+	composition, err := composeLearning(nil, compositionTreeReader{}, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, workerHealth, err := newOfflineEvaluationWorkerSpec(composition.service, composition.learningStore, outboxpostgres.New(nil), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.name != "offline_evaluation" || spec.runOnce == nil || workerHealth == nil || workerHealth.Probe(context.Background()) != nil {
+		t.Fatalf("offline evaluation worker was not composed: spec=%+v health=%v", spec, workerHealth)
+	}
+}
+
+func TestWorkerHealthTracksFailureAndRecovery(t *testing.T) {
+	workerHealth := &workerHealth{}
+	trackedFailure := workerHealth.track(func(context.Context) (int, error) { return 0, errors.New("private failure") })
+	if _, err := trackedFailure(context.Background()); err == nil || workerHealth.Probe(context.Background()) == nil {
+		t.Fatalf("worker failure was not tracked: err=%v probe=%v", err, workerHealth.Probe(context.Background()))
+	}
+	trackedSuccess := workerHealth.track(func(context.Context) (int, error) { return 1, nil })
+	if count, err := trackedSuccess(context.Background()); err != nil || count != 1 || workerHealth.Probe(context.Background()) != nil {
+		t.Fatalf("worker recovery was not tracked: count=%d err=%v probe=%v", count, err, workerHealth.Probe(context.Background()))
 	}
 }
 

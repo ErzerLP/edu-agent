@@ -186,6 +186,66 @@ func TestOpenAPIContainsFoundationClientContract(t *testing.T) {
 	}
 }
 
+func TestOfflineAssessmentOpenAPIContract(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../../../server/api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	paths := childMap(t, document, "paths")
+	assertOperation(t, paths, "/v1/learning/offline/assessments", "get", "listOfflineLearningAssessments", "learning:read")
+	assertOperation(t, paths, "/v1/learning/offline/assessments/{assessmentID}", "get", "getOfflineLearningAssessment", "learning:read")
+	assertOperation(t, paths, "/v1/learning/offline/assessments/{assessmentID}/decisions", "post", "decideOfflineLearningAssessment", "learning:write")
+	assertResponses(t, paths, "/v1/learning/offline/assessments", "get", "200", "400", "401", "403", "409", "429", "500", "503")
+	assertResponses(t, paths, "/v1/learning/offline/assessments/{assessmentID}", "get", "200", "400", "401", "403", "404", "429", "500", "503")
+	assertResponses(t, paths, "/v1/learning/offline/assessments/{assessmentID}/decisions", "post", "200", "201", "400", "401", "403", "404", "409", "413", "429", "500", "503")
+	assertResponseSchemaRef(t, paths, "/v1/learning/offline/assessments", "get", "200", "#/components/schemas/OfflineAssessmentPage")
+	assertResponseSchemaRef(t, paths, "/v1/learning/offline/assessments/{assessmentID}", "get", "200", "#/components/schemas/OfflineAssessmentView")
+	assertRequestSchemaRef(t, paths, "/v1/learning/offline/assessments/{assessmentID}/decisions", "post", "#/components/schemas/OfflineAssessmentDecisionRequest")
+	assertResponseSchemaRef(t, paths, "/v1/learning/offline/assessments/{assessmentID}/decisions", "post", "200", "#/components/schemas/OfflineAssessmentDecisionReceipt")
+	assertResponseSchemaRef(t, paths, "/v1/learning/offline/assessments/{assessmentID}/decisions", "post", "201", "#/components/schemas/OfflineAssessmentDecisionReceipt")
+	assertParameterList(t, paths, "/v1/learning/offline/assessments/{assessmentID}", "get", "#/components/parameters/AssessmentID")
+	assertParameterList(t, paths, "/v1/learning/offline/assessments/{assessmentID}/decisions", "post", "#/components/parameters/AssessmentID")
+
+	schemas := childMap(t, childMap(t, document, "components"), "schemas")
+	for _, name := range []string{
+		"OfflineAssessmentSummary", "OfflineAssessmentPage", "OfflineAssessmentView",
+		"OfflineAssessmentConfirmRequest", "OfflineAssessmentOverrideItem", "OfflineAssessmentOverrideRequest",
+		"OfflineAssessmentVoidRequest", "OfflineAssessmentDecisionReceipt",
+	} {
+		assertClosedRequired(t, schemas, name)
+	}
+	overrideItemProperties := childMap(t, childMap(t, schemas, "OfflineAssessmentOverrideItem"), "properties")
+	if childMap(t, overrideItemProperties, "rubric_item_id")["maxLength"] != 200 || childMap(t, overrideItemProperties, "misconception_candidate")["maxLength"] != 32000 {
+		t.Fatalf("offline assessment override item length limits drifted: %+v", overrideItemProperties)
+	}
+	assertEnum(t, overrideItemProperties, "conclusion", "pass", "partial", "fail")
+	for _, name := range []string{"OfflineAssessmentOverrideRequest", "OfflineAssessmentVoidRequest"} {
+		properties := childMap(t, childMap(t, schemas, name), "properties")
+		if childMap(t, properties, "reason")["maxLength"] != 4000 {
+			t.Fatalf("%s reason maxLength drifted: %+v", name, properties["reason"])
+		}
+	}
+	request := childMap(t, schemas, "OfflineAssessmentDecisionRequest")
+	assertDiscriminator(t, request, "kind")
+	assertDiscriminatorMappings(t, request, "confirm", "override", "void")
+	assertDiscriminatorMappingRefs(t, request, map[string]string{
+		"confirm":  "#/components/schemas/OfflineAssessmentConfirmRequest",
+		"override": "#/components/schemas/OfflineAssessmentOverrideRequest",
+		"void":     "#/components/schemas/OfflineAssessmentVoidRequest",
+	})
+	summaryProperties := childMap(t, childMap(t, schemas, "OfflineAssessmentSummary"), "properties")
+	for _, forbidden := range []string{"prompt", "answer", "answer_quote", "knowledge_quote", "signature"} {
+		if _, exists := summaryProperties[forbidden]; exists {
+			t.Fatalf("OfflineAssessmentSummary leaks %s", forbidden)
+		}
+	}
+}
+
 func assertOperation(t *testing.T, paths map[string]any, path, method, operationID, scope string) {
 	t.Helper()
 	operation := childMap(t, childMap(t, paths, path), method)

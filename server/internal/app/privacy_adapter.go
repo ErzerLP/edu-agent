@@ -16,6 +16,8 @@ type privacyOrchestratorStore interface {
 	RunLocalScrub(context.Context, string) (privacy.ErasureReceipt, error)
 	RunNocturneErase(context.Context, string, privacy.RemoteEraser) (privacy.ErasureReceipt, error)
 	RunManagedBackupVerification(context.Context, string, privacy.ManagedBackupVerifier) (privacy.ErasureReceipt, error)
+	CurrentOfflineDevicePurge(context.Context, string) (privacy.OfflinePurgeChallenge, bool, error)
+	AcknowledgeOfflineDevicePurge(context.Context, string, string, privacy.OfflineDevicePurgeAcknowledgment) (privacy.OfflineDeviceChildReceipt, error)
 }
 
 // privacyHTTPAdapter maps the transport's small orchestration port to the
@@ -30,6 +32,14 @@ type privacyHTTPAdapter struct {
 
 func (a *privacyHTTPAdapter) AuthorizeAndCommitBarrier(ctx context.Context, request privacy.ErasureRequest, authorization privacy.ErasureGrantAuthorization) (privacy.ErasureReceipt, error) {
 	return a.store.CommitBarrierAuthorized(ctx, request, authorization)
+}
+
+func (a *privacyHTTPAdapter) CurrentOfflineDevicePurge(ctx context.Context, deviceID string) (privacy.OfflinePurgeChallenge, bool, error) {
+	return a.store.CurrentOfflineDevicePurge(ctx, deviceID)
+}
+
+func (a *privacyHTTPAdapter) AcknowledgeOfflineDevicePurge(ctx context.Context, erasureID, deviceID string, acknowledgment privacy.OfflineDevicePurgeAcknowledgment) (privacy.OfflineDeviceChildReceipt, error) {
+	return a.store.AcknowledgeOfflineDevicePurge(ctx, erasureID, deviceID, acknowledgment)
 }
 
 func (a *privacyHTTPAdapter) Receipt(ctx context.Context, erasureID string) (privacy.ErasureReceipt, error) {

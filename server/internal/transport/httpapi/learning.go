@@ -980,13 +980,13 @@ func (a *API) writeLearningFailure(w http.ResponseWriter, r *http.Request, opera
 	switch code {
 	case learning.CodeInvalidRequest:
 		status, message = http.StatusBadRequest, "Learning request is invalid"
-	case learning.CodeNotFound:
+	case learning.CodeNotFound, learning.CodeOfflineOperationNotFound:
 		status, message = http.StatusNotFound, "Learning resource was not found"
 	case learning.CodeKnowledgeReferenceInvalid, learning.CodeProposalRejected:
 		status, message = http.StatusUnprocessableEntity, "Learning proposal is invalid"
-	case learning.CodeModelUnavailable:
-		status, message = http.StatusServiceUnavailable, "Model is unavailable"
-	case learning.CodeIdempotencyConflict, learning.CodeVersionConflict, learning.CodeInvalidTransition, learning.CodeActivityStateConflict, learning.CodeStaleProposal, learning.CodeAssessmentDispositionConflict, learning.CodeFocusFrameInvalidated, learning.CodeStaleCursor:
+	case learning.CodeModelUnavailable, learning.CodeOfflineSignerUnavailable:
+		status, message = http.StatusServiceUnavailable, "Learning dependency is unavailable"
+	case learning.CodeIdempotencyConflict, learning.CodeVersionConflict, learning.CodeInvalidTransition, learning.CodeActivityStateConflict, learning.CodeStaleProposal, learning.CodeAssessmentDispositionConflict, learning.CodeFocusFrameInvalidated, learning.CodeStaleCursor, learning.CodeOfflinePrepareUnavailable:
 		status, message = http.StatusConflict, "Learning request conflicts with current state"
 	case learning.CodeContentRedacted:
 		status, message = http.StatusServiceUnavailable, "Learning content is unavailable"

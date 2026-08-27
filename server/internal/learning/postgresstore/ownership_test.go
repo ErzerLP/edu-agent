@@ -17,7 +17,7 @@ func TestProductionSourceDoesNotOwnTutoringOrReadKnowledgeTables(t *testing.T) {
 	}
 	forbidden := []string{
 		"tutoring_sessions", "tutoring_focus_frames", "tutoring_free_questions", "tutoring_free_answers",
-		"knowledge_node_revisions", "knowledge_snapshot_documents",
+		"knowledge_node_revisions", "knowledge_snapshot_documents", "knowledge_revisions", "knowledge_catalog",
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {

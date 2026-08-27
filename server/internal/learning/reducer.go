@@ -168,13 +168,14 @@ func reduceReview(node string, values []AcceptedEvidence) *ReviewSchedule {
 
 func reduceMisconceptions(node string, values []AcceptedEvidence) []MisconceptionHypothesis {
 	type collected struct {
-		candidate string
-		rubric    string
-		failures  []AcceptedEvidence
-		counters  []AcceptedEvidence
+		candidate        string
+		rubric           string
+		failures         []AcceptedEvidence
+		counters         []AcceptedEvidence
+		lastFailureIndex int
 	}
 	groups := map[string]*collected{}
-	for _, evidence := range values {
+	for evidenceIndex, evidence := range values {
 		if evidence.Outcome == OutcomeFail || evidence.Outcome == OutcomePartial {
 			for _, candidate := range evidence.Misconceptions {
 				normalized := normalizeCandidate(candidate.Text)
@@ -186,13 +187,13 @@ func reduceMisconceptions(node string, values []AcceptedEvidence) []Misconceptio
 					groups[key] = &collected{candidate: normalized, rubric: candidate.RubricItemID}
 				}
 				groups[key].failures = append(groups[key].failures, evidence)
+				groups[key].lastFailureIndex = evidenceIndex
 			}
 		}
 	}
 	for _, group := range groups {
-		lastFailure := group.failures[len(group.failures)-1].ReceivedAt
-		for _, evidence := range values {
-			if evidence.ReceivedAt.Before(lastFailure) || evidence.ReceivedAt.Equal(lastFailure) {
+		for evidenceIndex, evidence := range values {
+			if evidenceIndex <= group.lastFailureIndex {
 				continue
 			}
 			for _, outcome := range evidence.RubricOutcomes {

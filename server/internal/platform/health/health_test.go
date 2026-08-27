@@ -15,7 +15,7 @@ func TestReadinessDistinguishesRequiredAndOptionalDependencies(t *testing.T) {
 		return false, "rate_limited"
 	}, InsecureWarning: true})
 	report := checker.Ready(context.Background())
-	if report.Status != StatusDegraded || report.Components["postgresql"].Status != StatusHealthy || report.Components["nocturne"].Reason != "not_configured" || len(report.Warnings) != 1 {
+	if report.Status != StatusDegraded || report.Components["postgresql"].Status != StatusHealthy || report.Components["open_evaluation_worker"].Reason != "not_configured" || report.Components["offline_signer"].Reason != "not_configured" || report.Components["offline_protocol"].Reason != "unavailable" || report.Components["nocturne"].Reason != "not_configured" || len(report.Warnings) != 1 {
 		t.Fatalf("unexpected optional model report: %+v", report)
 	}
 
@@ -23,6 +23,55 @@ func TestReadinessDistinguishesRequiredAndOptionalDependencies(t *testing.T) {
 	report = checker.Ready(context.Background())
 	if report.Status != StatusNotReady || report.Components["postgresql"].Reason != "unavailable" || report.Components["model"].Reason != "not_configured" {
 		t.Fatalf("unexpected required report: %+v", report)
+	}
+}
+
+func TestOfflineReadinessComponentsDistinguishHealthyDegradedAndFatal(t *testing.T) {
+	healthyOptions := Options{
+		Database: fakePinger{}, ModelEnabled: true,
+		ModelProbe:                func(context.Context) (bool, string) { return true, "" },
+		OpenEvaluationWorkerProbe: func(context.Context) error { return nil },
+		OfflineSignerAvailable:    true, OfflineProtocolAvailable: true,
+		NocturneEnabled: true, NocturneProbe: func(context.Context) error { return nil },
+	}
+	report := New(healthyOptions).Ready(context.Background())
+	if report.Status != StatusHealthy || report.Components["open_evaluation_worker"] != (Component{Status: StatusHealthy}) || report.Components["offline_protocol"] != (Component{Status: StatusHealthy}) {
+		t.Fatalf("unexpected healthy offline readiness: %+v", report)
+	}
+
+	degradedOptions := healthyOptions
+	degradedOptions.ModelEnabled = false
+	degradedOptions.ModelProbe = nil
+	report = New(degradedOptions).Ready(context.Background())
+	if report.Status != StatusDegraded || report.Components["open_evaluation_worker"] != (Component{Status: StatusDegraded, Reason: "model_unavailable"}) || report.Components["offline_protocol"] != (Component{Status: StatusHealthy}) {
+		t.Fatalf("unexpected no-model degradation: %+v", report)
+	}
+
+	degradedOptions = healthyOptions
+	degradedOptions.OpenEvaluationWorkerProbe = func(context.Context) error { return errors.New("private worker detail") }
+	report = New(degradedOptions).Ready(context.Background())
+	if report.Status != StatusDegraded || report.Components["open_evaluation_worker"] != (Component{Status: StatusDegraded, Reason: "unavailable"}) {
+		t.Fatalf("unexpected worker-loop degradation: %+v", report)
+	}
+
+	fatalOptions := healthyOptions
+	fatalOptions.Database = fakePinger{err: errors.New("private database detail")}
+	report = New(fatalOptions).Ready(context.Background())
+	if report.Status != StatusNotReady || report.Components["postgresql"] != (Component{Status: StatusNotReady, Reason: "unavailable"}) || report.Components["open_evaluation_worker"].Status != StatusHealthy || report.Components["offline_protocol"].Status != StatusHealthy {
+		t.Fatalf("unexpected fatal readiness: %+v", report)
+	}
+}
+
+func TestOfflineSignerReadinessIsReportedWithoutMakingOnlineTeachingNotReady(t *testing.T) {
+	checker := New(Options{Database: fakePinger{}, OfflineSignerAvailable: true})
+	report := checker.Ready(context.Background())
+	if report.Components["offline_signer"] != (Component{Status: StatusHealthy}) || report.Status != StatusDegraded {
+		t.Fatalf("unexpected configured signer report: %+v", report)
+	}
+	checker = New(Options{Database: fakePinger{}})
+	report = checker.Ready(context.Background())
+	if report.Components["offline_signer"] != (Component{Status: StatusDegraded, Reason: "not_configured"}) || report.Status != StatusDegraded {
+		t.Fatalf("unexpected absent signer report: %+v", report)
 	}
 }
 

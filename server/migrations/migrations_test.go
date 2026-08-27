@@ -29,27 +29,45 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 6 || latest.name != "000006_go_cli_m1.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("Go CLI M1 migration was not embedded with checksum: %+v", latest)
+	if latest.version != 9 || latest.name != "000009_offline_device_purge_ack.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("offline device purge acknowledgment migration was not embedded with checksum: %+v", latest)
 	}
 }
 
-func TestLearningCoreMigrationSeedsCurrentEmptyProjectionFingerprint(t *testing.T) {
+func TestProjectionMigrationsPreserveV1SeedAndRequireV2Rebuild(t *testing.T) {
+	const projectionV1EmptyFingerprint = "2b2fe0642e3c18f6c9a9adb8fc4e8195acf5d426c906a13db6ff1434086fe831"
+
 	items, err := load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	fingerprint, err := learning.ProjectionFingerprint(learning.EmptyProjection("migration-generation"))
+	currentFingerprint, err := learning.ProjectionFingerprint(learning.EmptyProjection("migration-generation"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := migrationBody(t, items, 3)
-	seed := "decode('" + fingerprint + "', 'hex')"
-	if count := strings.Count(body, seed); count != 2 {
-		t.Fatalf("000003 must seed generation and checkpoint with empty projection fingerprint %s; occurrences=%d", fingerprint, count)
+	if currentFingerprint == projectionV1EmptyFingerprint {
+		t.Fatal("projection v2 must not reuse the projection v1 semantic fingerprint")
 	}
-	if strings.Contains(body, "decode(repeat('00', 32), 'hex')") {
+	legacyBody := migrationBody(t, items, 3)
+	legacySeed := "decode('" + projectionV1EmptyFingerprint + "', 'hex')"
+	if count := strings.Count(legacyBody, legacySeed); count != 2 {
+		t.Fatalf("000003 must preserve the versioned v1 generation and checkpoint fingerprint; occurrences=%d", count)
+	}
+	if !strings.Contains(legacyBody, "'learning-projection-v1'") {
+		t.Fatal("000003 no longer declares the projection version for its historical fingerprint")
+	}
+	if strings.Contains(legacyBody, "decode(repeat('00', 32), 'hex')") {
 		t.Fatal("000003 uses the obsolete all-zero projection fingerprint sentinel")
+	}
+
+	upgradeBody := migrationBody(t, items, 7)
+	for _, required := range []string{
+		"projection_version_upgrade_required",
+		"projection_version<>'learning-projection-v2'",
+	} {
+		if !strings.Contains(upgradeBody, required) {
+			t.Fatalf("000007 does not require a versioned projection rebuild: missing %q", required)
+		}
 	}
 }
 
@@ -242,6 +260,190 @@ func TestMemoryContractRepairMigrationDeclaresRevisionAndErasureBoundaries(t *te
 		if !strings.Contains(body, required) {
 			t.Errorf("000005 is missing %q", required)
 		}
+	}
+}
+
+func TestOfflineSyncCoreMigrationDeclaresAuthorityAndPrivacyBoundaries(t *testing.T) {
+	items, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := migrationBody(t, items, 7)
+	for _, required := range []string{
+		"CREATE TABLE offline_prepare_claims",
+		"CREATE TABLE offline_activities",
+		"CREATE TABLE offline_activity_references",
+		"CREATE TABLE offline_packs",
+		"CREATE TABLE offline_submission_authorizations",
+		"CREATE TABLE offline_device_sequence_heads",
+		"CREATE TABLE offline_device_sequence_reservations",
+		"CREATE TABLE offline_device_sequence_claims",
+		"CREATE TABLE offline_attempt_heads",
+		"CREATE TABLE learning_activity_evidence_claims",
+		"CREATE TABLE offline_operation_statuses",
+		"CREATE TABLE offline_operation_status_revisions",
+		"CREATE TABLE offline_evaluation_jobs",
+		"CREATE TABLE offline_device_possessions",
+		"CREATE TABLE privacy_offline_device_children",
+		"CREATE TABLE privacy_offline_device_child_revisions",
+		"accepted_event_seq BIGINT",
+		"parent_session_id UUID",
+		"'offline_attempt'",
+		"multiple active evidence rows exist for one activity revision",
+		"learning_evidence_winning_attempt",
+		"privacy_enforce_owner_write",
+		"reject_learning_history_mutation",
+		"ARRAY['privacy:device']",
+		"sha256(convert_to(",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("000007 is missing %q", required)
+		}
+	}
+	if strings.Contains(body, "digest(") {
+		t.Fatal("offline sync migration must not require the optional pgcrypto extension")
+	}
+	if strings.Contains(body, "CREATE SEQUENCE") {
+		t.Fatal("offline sync must reserve device sequences and use the learning event clock, not PostgreSQL sequences")
+	}
+}
+
+func TestOfflineEvaluationAndPrivacyPurgeMigrationsUpgrade000007(t *testing.T) {
+	pool := migrationPoolThrough(t, 7)
+	ctx := context.Background()
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade 000007 schema through 000009: %v", err)
+	}
+	if err := Check(ctx, pool); err != nil {
+		t.Fatalf("check upgraded offline evaluation migration: %v", err)
+	}
+	for _, column := range []string{
+		"frozen_request_hash", "model_artifact", "model_artifact_hash", "last_error_at",
+		"result_assessment_id", "result_decision_id", "result_evidence_id",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS(
+			  SELECT 1 FROM information_schema.columns
+			  WHERE table_schema=current_schema() AND table_name='offline_evaluation_jobs' AND column_name=$1
+			)`, column).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("000008 column %s was not created", column)
+		}
+	}
+	var statusConstraint string
+	if err := pool.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE connamespace=current_schema()::regnamespace
+		  AND conname='offline_operation_status_combination'`).Scan(&statusConstraint); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(statusConstraint, "pending_retry") || !strings.Contains(statusConstraint, "failed") {
+		t.Fatalf("000008 status constraint=%q", statusConstraint)
+	}
+	for _, table := range []string{"privacy_offline_device_children", "privacy_offline_device_child_revisions", "privacy_offline_device_child_heads"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass(current_schema()||'.'||$1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("offline privacy table %s is missing after upgrade", table)
+		}
+	}
+	for _, column := range []string{"challenge_revision", "issued_at", "acknowledged_at"} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `
+			SELECT EXISTS(
+			  SELECT 1 FROM information_schema.columns
+			  WHERE table_schema=current_schema() AND table_name='privacy_offline_device_child_revisions' AND column_name=$1
+			)`, column).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("000009 column %s was not created", column)
+		}
+	}
+	var acknowledgmentShape string
+	if err := pool.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE connamespace=current_schema()::regnamespace
+		  AND conname='privacy_offline_device_child_ack_shape'`).Scan(&acknowledgmentShape); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(acknowledgmentShape, "acknowledged_at IS NOT NULL") || !strings.Contains(acknowledgmentShape, "acknowledged_at IS NULL") {
+		t.Fatalf("000009 acknowledgment shape=%q", acknowledgmentShape)
+	}
+	var offlineReceiptSlots int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM privacy_erasure_step_receipts WHERE store_kind='offline_device_cache'`).Scan(&offlineReceiptSlots); err != nil {
+		t.Fatal(err)
+	}
+	if offlineReceiptSlots != 0 {
+		t.Fatalf("fresh 000007 upgrade unexpectedly backfilled offline receipt slots=%d", offlineReceiptSlots)
+	}
+}
+
+func TestOfflineSyncCoreMigrationUpgrades000006(t *testing.T) {
+	pool := migrationPoolThrough(t, 6)
+	ctx := context.Background()
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade 000006 schema through 000007: %v", err)
+	}
+	if err := Check(ctx, pool); err != nil {
+		t.Fatalf("check upgraded offline sync migration: %v", err)
+	}
+	for _, table := range []string{
+		"offline_prepare_claims", "offline_activities", "offline_submission_authorizations",
+		"offline_device_sequence_reservations", "offline_device_sequence_claims",
+		"offline_attempt_heads", "learning_activity_evidence_claims",
+		"offline_operation_status_revisions", "offline_evaluation_jobs",
+		"offline_device_possessions", "privacy_offline_device_children",
+	} {
+		var exists bool
+		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("000007 table %s was not created", table)
+		}
+	}
+	var aggregateAllowed bool
+	if err := pool.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid) LIKE '%offline_attempt%'
+		FROM pg_constraint
+		WHERE connamespace=current_schema()::regnamespace
+		  AND conname='learning_events_aggregate_type_check'`).Scan(&aggregateAllowed); err != nil || !aggregateAllowed {
+		t.Fatalf("offline aggregate constraint allowed=%v err=%v", aggregateAllowed, err)
+	}
+	var projectionVersion string
+	var projectionIncomplete bool
+	var projectionReasons []string
+	if err := pool.QueryRow(ctx, `
+		SELECT generation.projection_version,generation.incomplete,generation.reason_codes
+		FROM learning_projection_head head
+		JOIN learning_projection_generations generation ON generation.id=head.active_generation_id
+		WHERE head.singleton_id=1`).Scan(&projectionVersion, &projectionIncomplete, &projectionReasons); err != nil {
+		t.Fatal(err)
+	}
+	if projectionVersion != "learning-projection-v1" || !projectionIncomplete || !containsScope(projectionReasons, "projection_version_upgrade_required") {
+		t.Fatalf("legacy projection upgrade state version=%q incomplete=%v reasons=%v", projectionVersion, projectionIncomplete, projectionReasons)
+	}
+	deviceID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'offline-migration',clock_timestamp())`, deviceID); err != nil {
+		t.Fatal(err)
+	}
+	var credentialRows, sequenceRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM offline_device_credentials WHERE device_id=$1`, deviceID).Scan(&credentialRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM offline_device_sequence_heads WHERE device_id=$1`, deviceID).Scan(&sequenceRows); err != nil {
+		t.Fatal(err)
+	}
+	if credentialRows != 1 || sequenceRows != 1 {
+		t.Fatalf("new device offline state credential=%d sequence=%d", credentialRows, sequenceRows)
 	}
 }
 

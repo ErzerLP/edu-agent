@@ -152,7 +152,7 @@ func (s *Store) LoadAttempt(ctx context.Context, id string) (learning.Attempt, e
 	return withLearningLoaderRead(ctx, s, func(db learningLoaderDB) (learning.Attempt, error) {
 		var value learning.Attempt
 		var hash []byte
-		err := db.QueryRow(ctx, `SELECT a.id,a.session_id,a.activity_id,a.activity_revision,a.answer_payload_id,p.answer_text,a.help_level,a.actor_device_id,a.occurred_at,a.received_at,a.payload_hash FROM learning_attempts a JOIN learning_attempt_payloads p ON p.id=a.answer_payload_id WHERE a.id=$1`, id).Scan(&value.ID, &value.SessionID, &value.ActivityID, &value.ActivityRevision, &value.AnswerPayloadID, &value.Answer, &value.Help, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt, &hash)
+		err := db.QueryRow(ctx, `SELECT a.id,a.session_id,a.activity_id,a.activity_revision,a.answer_payload_id,p.answer_text,a.help_level,a.actor_device_id,a.occurred_at,a.received_at,a.payload_hash,a.evidence_eligibility,COALESCE(a.evidence_ineligible_reason,''),a.archive_disposition,COALESCE(a.offline_submission_id::text,'') FROM learning_attempts a JOIN learning_attempt_payloads p ON p.id=a.answer_payload_id WHERE a.id=$1`, id).Scan(&value.ID, &value.SessionID, &value.ActivityID, &value.ActivityRevision, &value.AnswerPayloadID, &value.Answer, &value.Help, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt, &hash, &value.EvidenceEligibility, &value.EvidenceIneligibleReason, &value.ArchiveDisposition, &value.OfflineSubmissionID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return learning.Attempt{}, &learning.Error{Code: learning.CodeNotFound}
 		}
@@ -223,11 +223,11 @@ func loadAssessmentWith(ctx context.Context, db learningLoaderDB, key string, by
 	var params []byte
 	var inputHash []byte
 	var risks []string
-	query := `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at FROM learning_assessments WHERE id=$1`
+	query := `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at,evidence_eligibility,COALESCE(evidence_ineligible_reason,'') FROM learning_assessments WHERE id=$1`
 	if byAttempt {
-		query = `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at FROM learning_assessments WHERE attempt_id=$1`
+		query = `SELECT id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at,evidence_eligibility,COALESCE(evidence_ineligible_reason,'') FROM learning_assessments WHERE attempt_id=$1`
 	}
-	err := db.QueryRow(ctx, query, key).Scan(&result.artifact.ID, &result.artifact.SessionID, &result.artifact.AttemptID, &result.artifact.ActivityID, &result.artifact.ActivityRevision, &result.artifact.RubricComplete, &result.artifact.Confidence, &risks, &result.artifact.ModelID, &params, &result.artifact.PromptRevision, &inputHash, &result.artifact.Attempts, &result.artifact.AttemptCategories, &result.artifact.CreatedAt)
+	err := db.QueryRow(ctx, query, key).Scan(&result.artifact.ID, &result.artifact.SessionID, &result.artifact.AttemptID, &result.artifact.ActivityID, &result.artifact.ActivityRevision, &result.artifact.RubricComplete, &result.artifact.Confidence, &risks, &result.artifact.ModelID, &params, &result.artifact.PromptRevision, &inputHash, &result.artifact.Attempts, &result.artifact.AttemptCategories, &result.artifact.CreatedAt, &result.artifact.EvidenceEligibility, &result.artifact.EvidenceIneligibleReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, &learning.Error{Code: learning.CodeNotFound}
 	}
@@ -334,7 +334,7 @@ func (s *Store) LoadFreeAnswer(ctx context.Context, id string) (tutoring.FreeAns
 
 func (s *Store) LoadValidEvidence(ctx context.Context, nodeRevisionID string) ([]learning.AcceptedEvidence, error) {
 	return withLearningLoaderRead(ctx, s, func(db learningLoaderDB) ([]learning.AcceptedEvidence, error) {
-		rows, err := db.Query(ctx, `SELECT e.id,e.decision_id,e.assessment_id,e.attempt_id,e.activity_id,e.activity_revision,e.goal_revision_id,e.route_revision_id,e.knowledge_revision_id,e.node_revision_id,e.rubric_revision,e.evidence_kind,e.activity_type,e.outcome,e.help_level,e.received_at,e.acceptance_policy_version,e.reducer_policy_version,e.review_policy_version,e.misconception_candidates,e.rubric_outcomes FROM learning_evidence e LEFT JOIN learning_evidence_invalidations i ON i.evidence_id=e.id WHERE e.node_revision_id=$1 AND i.id IS NULL ORDER BY e.received_at,e.id`, nodeRevisionID)
+		rows, err := db.Query(ctx, `SELECT e.id,e.decision_id,e.assessment_id,e.attempt_id,e.activity_id,e.activity_revision,e.goal_revision_id,e.route_revision_id,e.knowledge_revision_id,e.node_revision_id,e.rubric_revision,e.evidence_kind,e.activity_type,e.outcome,e.help_level,e.received_at,e.accepted_event_seq,e.acceptance_policy_version,e.reducer_policy_version,e.review_policy_version,e.misconception_candidates,e.rubric_outcomes FROM learning_evidence e LEFT JOIN learning_evidence_invalidations i ON i.evidence_id=e.id WHERE e.node_revision_id=$1 AND e.accepted_event_seq IS NOT NULL AND i.id IS NULL ORDER BY e.accepted_event_seq,e.id`, nodeRevisionID)
 		if err != nil {
 			return nil, err
 		}
@@ -343,7 +343,7 @@ func (s *Store) LoadValidEvidence(ctx context.Context, nodeRevisionID string) ([
 		for rows.Next() {
 			var value learning.AcceptedEvidence
 			var misconceptions, outcomes []byte
-			if err := rows.Scan(&value.ID, &value.DispositionDecisionID, &value.AssessmentID, &value.AttemptID, &value.ActivityID, &value.ActivityRevision, &value.GoalRevisionID, &value.RouteRevisionID, &value.KnowledgeRevisionID, &value.NodeRevisionID, &value.RubricRevision, &value.Kind, &value.ActivityType, &value.Outcome, &value.Help, &value.ReceivedAt, &value.AcceptancePolicyVersion, &value.ReducerPolicyVersion, &value.ReviewPolicyVersion, &misconceptions, &outcomes); err != nil {
+			if err := rows.Scan(&value.ID, &value.DispositionDecisionID, &value.AssessmentID, &value.AttemptID, &value.ActivityID, &value.ActivityRevision, &value.GoalRevisionID, &value.RouteRevisionID, &value.KnowledgeRevisionID, &value.NodeRevisionID, &value.RubricRevision, &value.Kind, &value.ActivityType, &value.Outcome, &value.Help, &value.ReceivedAt, &value.AcceptedEventSequence, &value.AcceptancePolicyVersion, &value.ReducerPolicyVersion, &value.ReviewPolicyVersion, &misconceptions, &outcomes); err != nil {
 				return nil, err
 			}
 			if err := json.Unmarshal(misconceptions, &value.Misconceptions); err != nil {

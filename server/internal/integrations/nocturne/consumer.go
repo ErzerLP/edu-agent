@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const attemptBookkeepingTimeout = 2 * time.Second
+
 type ConsumerOptions struct {
 	Lease      time.Duration
 	Namespace  string
@@ -111,6 +113,15 @@ func (c *Consumer) Apply(ctx context.Context, message outbox.Message) error {
 	}
 	capabilities, err := c.remote.Capabilities(ctx)
 	if err != nil {
+		releaseCtx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), attemptBookkeepingTimeout)
+		defer cancelRelease()
+		releaseErr := c.store.ReleasePreparedAttempt(releaseCtx, memory.PreparedAttemptRelease{
+			AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken,
+			LeaseToken: attempt.LeaseToken, ErrorCategory: string(Category(err)),
+		})
+		if releaseErr != nil {
+			return errors.Join(err, fmt.Errorf("release unsent Nocturne attempt: %w", releaseErr))
+		}
 		return err
 	}
 	attempt, err = c.store.TransitionAttempt(ctx, memory.AttemptTransition{
@@ -263,12 +274,14 @@ func (c *Consumer) afterMutationError(ctx context.Context, attempt memory.Attemp
 	if category == CategoryAuth || category == CategoryValidation {
 		return c.finalizePermanent(ctx, attempt, "remote_"+string(category), category)
 	}
-	_, err := c.store.TransitionAttempt(ctx, memory.AttemptTransition{
+	transitionCtx, cancelTransition := context.WithTimeout(context.WithoutCancel(ctx), attemptBookkeepingTimeout)
+	defer cancelTransition()
+	_, err := c.store.TransitionAttempt(transitionCtx, memory.AttemptTransition{
 		AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken, LeaseToken: attempt.LeaseToken,
 		From: attempt.State, To: memory.AttemptUnknown, ErrorCategory: string(category), At: c.now().UTC(),
 	})
 	if err != nil {
-		return err
+		return errors.Join(remoteErr, fmt.Errorf("mark Nocturne attempt unknown: %w", err))
 	}
 	return remoteErr
 }
@@ -541,14 +554,14 @@ func (p *Purger) purge(
 		}
 	}
 	active, err := p.remote.OrphanDetail(ctx, plan.ActiveMemoryID)
-	if err != nil && (!IsNotFound(err) || maintenanceSave == nil) {
+	if err != nil && !IsNotFound(err) {
 		return err
 	}
 	if err == nil && (active.NodeID != plan.NodeID || !active.Deprecated || active.MigratedTo != 0) {
 		return &protocolError{category: "active_orphan_not_observed"}
 	}
 	refs, err := p.remote.References(ctx, plan.NodeID)
-	if err != nil && (!IsNotFound(err) || maintenanceSave == nil) {
+	if err != nil && !IsNotFound(err) {
 		return err
 	}
 	if err == nil && !refs.Complete {

@@ -329,6 +329,14 @@ class Rollback:
         database = quote(self.values["NOCTURNE_POSTGRES_DB"], safe="")
         async_dsn = f"postgresql+asyncpg://{user}:{password}@nocturne-rollback-postgres:5432/{database}?ssl=disable"
         restore_dsn = f"postgres://{user}:{password}@nocturne-rollback-postgres:5432/{database}?sslmode=disable"
+        server_image = self.values.get("SERVER_IMAGE", "").strip()
+        server_image_override = ""
+        if server_image:
+            server_image_override = (
+                f"    image: {json_string(server_image)}\n"
+                "    pull_policy: never\n"
+                "    build: !reset null\n"
+            )
         content = f"""services:
   nocturne-rollback-postgres:
     image: {POSTGRES_IMAGE}
@@ -356,7 +364,7 @@ class Rollback:
       - nocturne-backups:/app/backups:ro
       - nocturne-rollback-snapshots:/app/snapshots
   server:
-    environment:
+{server_image_override}    environment:
       NOCTURNE_ROLLBACK_DATABASE_URL: {json_string(restore_dsn)}
 volumes:
   nocturne-rollback-database:
@@ -461,9 +469,9 @@ volumes:
             self._assert_new_volume(self.args.target_snapshot_volume)
             self._inspect_old_image()
             self._stop_writers()
+            self._write_override()
             self._preflight_restore()
             self._create_volumes()
-            self._write_override()
             self._start_empty_target()
             self._import_backup()
             self._start_and_probe_old_image()

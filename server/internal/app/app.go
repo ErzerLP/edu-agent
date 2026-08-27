@@ -21,6 +21,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
+	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
 	learningtutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
@@ -84,6 +85,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	learningService := learningComposition.service
+	offlineService := learningComposition.offline
 	bridge, err := composeMemoryBridge(pool, stores, cfg, memoryBridgeDependencies{})
 	if err != nil {
 		return err
@@ -91,14 +93,22 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err := verifyNocturneStartupPreflightForRuntime(ctx, pool, bridge.preflight); err != nil {
 		return err
 	}
+	runtimeWorkers := append([]workerSpec(nil), bridge.workers...)
+	evaluationWorkerSpec, evaluationWorkerHealth, err := newOfflineEvaluationWorkerSpec(learningService, stores.learning, stores.outbox, cfg.Model.Timeout)
+	if err != nil {
+		return err
+	}
+	runtimeWorkers = append(runtimeWorkers, evaluationWorkerSpec)
 	var modelProber httpapi.ModelProber
 	if modelClient != nil {
 		modelProber = modelClient
 	}
 	readiness := health.New(health.Options{
 		Database: pool, ModelEnabled: cfg.Model.Enabled, ModelRequired: cfg.Model.Required,
-		ModelProbe: modelHealthProbe(modelClient), NocturneEnabled: cfg.Nocturne.Enabled,
-		NocturneProbe: optionalNocturneHealthProbe(bridge.remote), InsecureWarning: cfg.InsecureNonLoopbackWarning,
+		ModelProbe: modelHealthProbe(modelClient), OpenEvaluationWorkerProbe: evaluationWorkerHealth.Probe,
+		OfflineSignerAvailable: offlineService.SignerAvailable(), OfflineProtocolAvailable: offlineService.Available(),
+		NocturneEnabled: cfg.Nocturne.Enabled,
+		NocturneProbe:   optionalNocturneHealthProbe(bridge.remote), InsecureWarning: cfg.InsecureNonLoopbackWarning,
 		Timeout: minDuration(minDuration(cfg.Model.Timeout, cfg.Nocturne.HTTPTimeout), 5*time.Second),
 	})
 	var migrationLeases httpapi.PrivacyMigrationLeaseService
@@ -109,7 +119,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	handler, err := httpapi.New(httpapi.Options{
 		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Learning: learningService,
-		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,
+		Offline: offlineService,
+		Memory:  bridge.memoryService, MemoryExporter: bridge.memoryExporter,
 		Privacy: bridge.privacyService, MigrationLeases: migrationLeases,
 		MaintenanceToken: maintenanceToken, ReadPermits: bridge.readPermits,
 		Readiness: readiness, Logger: logger,
@@ -140,7 +151,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if cfg.Nocturne.Enabled {
 		logger.Warn("Nocturne workers use fixed claim leases; one remote operation must complete within the lease", "warning", "fixed_worker_lease_limit", "worker_lease", cfg.Nocturne.WorkerLeaseDuration)
 	}
-	workers := startWorkerGroup(ctx, logger, bridge.workers)
+	workers := startWorkerGroup(ctx, logger, runtimeWorkers)
 	logger.Info("service listening", "listen_addr", cfg.ListenAddr, "public_base_url", cfg.PublicBaseURL.String())
 	serveResult := make(chan error, 1)
 	go func() { serveResult <- server.Serve(listener) }()
@@ -236,6 +247,7 @@ type learningComposition struct {
 	resolver      *learningknowledge.Adapter
 	model         learning.TutorModel
 	service       *learning.Service
+	offline       *learning.OfflineService
 }
 
 func composeLearning(pool *pgxpool.Pool, reader learningknowledge.TreeReader, modelClient *llm.Client, cfg config.Config) (learningComposition, error) {
@@ -256,7 +268,45 @@ func composeLearningWithStores(learningStore *learningpostgres.Store, tutoringSt
 		return learningComposition{}, fmt.Errorf("initialize learning service: %w", err)
 	}
 	composition.service = service
+	var signer learning.OfflineSigner
+	origin := "http://127.0.0.1:8080/"
+	if cfg.PublicBaseURL != nil {
+		origin = cfg.PublicBaseURL.String()
+	}
+	if cfg.Offline.SignerEnabled() {
+		signer, err = learning.NewEd25519OfflineSignerWithManifestChain(
+			cfg.Offline.SignerKeyID, cfg.Offline.SignerPrivateKey, origin,
+			cfg.Offline.SignerIssuedAt, cfg.Offline.SignerNotAfter,
+			cfg.Offline.SignerManifestChain,
+		)
+		if err != nil {
+			return learningComposition{}, fmt.Errorf("initialize offline signer: %w", err)
+		}
+	}
+	composition.offline, err = learning.NewOfflineServiceWithGenerator(composition.learningStore, composition.service, signer, origin, time.Now)
+	if err != nil {
+		return learningComposition{}, fmt.Errorf("initialize offline service: %w", err)
+	}
 	return composition, nil
+}
+
+func newOfflineEvaluationWorkerSpec(service *learning.Service, evaluationStore learning.OfflineEvaluationStore, messageStore outbox.Store, modelTimeout time.Duration) (workerSpec, *workerHealth, error) {
+	consumer, err := learning.NewOfflineEvaluationConsumer(service, evaluationStore)
+	if err != nil {
+		return workerSpec{}, nil, fmt.Errorf("initialize offline evaluation consumer: %w", err)
+	}
+	lease := 3 * modelTimeout
+	if lease < time.Minute {
+		lease = time.Minute
+	}
+	worker, err := outbox.NewWorker(messageStore, map[string]outbox.Consumer{
+		"learning.offline-evaluation": consumer,
+	}, outbox.WorkerOptions{BatchSize: 10, Lease: lease, BaseBackoff: time.Second, MaxBackoff: time.Minute})
+	if err != nil {
+		return workerSpec{}, nil, fmt.Errorf("initialize offline evaluation worker: %w", err)
+	}
+	health := &workerHealth{}
+	return periodicWorker("offline_evaluation", time.Second, 10, health.track(worker.RunOnce)), health, nil
 }
 
 func CreatePairingCode(ctx context.Context, cfg config.Config) (string, time.Time, error) {

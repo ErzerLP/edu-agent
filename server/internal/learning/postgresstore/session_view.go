@@ -387,7 +387,7 @@ func loadActivityForView(ctx context.Context, db learningLoaderDB, id string) (l
 func loadAttemptForView(ctx context.Context, db learningLoaderDB, id string) (learning.Attempt, error) {
 	var value learning.Attempt
 	var hash []byte
-	err := db.QueryRow(ctx, `SELECT a.id,a.session_id,a.activity_id,a.activity_revision,a.answer_payload_id,p.answer_text,a.help_level,a.actor_device_id,a.occurred_at,a.received_at,a.payload_hash FROM learning_attempts a JOIN learning_attempt_payloads p ON p.id=a.answer_payload_id WHERE a.id=$1`, id).Scan(&value.ID, &value.SessionID, &value.ActivityID, &value.ActivityRevision, &value.AnswerPayloadID, &value.Answer, &value.Help, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt, &hash)
+	err := db.QueryRow(ctx, `SELECT a.id,a.session_id,a.activity_id,a.activity_revision,a.answer_payload_id,p.answer_text,a.help_level,a.actor_device_id,a.occurred_at,a.received_at,a.payload_hash,a.evidence_eligibility,COALESCE(a.evidence_ineligible_reason,''),a.archive_disposition,COALESCE(a.offline_submission_id::text,'') FROM learning_attempts a JOIN learning_attempt_payloads p ON p.id=a.answer_payload_id WHERE a.id=$1`, id).Scan(&value.ID, &value.SessionID, &value.ActivityID, &value.ActivityRevision, &value.AnswerPayloadID, &value.Answer, &value.Help, &value.ActorDeviceID, &value.OccurredAt, &value.ReceivedAt, &hash, &value.EvidenceEligibility, &value.EvidenceIneligibleReason, &value.ArchiveDisposition, &value.OfflineSubmissionID)
 	value.AnswerSHA256 = hex.EncodeToString(hash)
 	return value, err
 }

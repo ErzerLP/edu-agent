@@ -41,6 +41,8 @@ def test_compose_gate_has_secret_safe_cleanup_and_verified_oci_entrypoint():
     assert "edu-agent.nocturne.rollback.project=$PROJECT" in shell
     assert "com.docker.compose.project=$PROJECT" in shell
     assert "tool.py\" verify-oci" in shell and "skopeo copy --preserve-digests" in shell
+    assert "NOCTURNE_E2E_SERVER_IMAGE" in shell and 'docker image inspect "$SERVER_IMAGE_SOURCE"' in shell
+    assert "build: !reset null" in shell and "pull_policy: never" in shell
     assert "failed_forward.Dockerfile" in shell and "FAILED_FORWARD_IMAGE_REF" in shell and "docker push" in shell
     assert "mktemp -d" in shell and "rm -rf \"$TMP_DIR\"" in shell
     assert "set -x" not in shell and "eval " not in shell and "source " not in shell
@@ -55,7 +57,8 @@ def test_compose_gate_covers_real_runtime_phases_without_printing_secrets():
         "check_real_nocturne_crud_and_absence",
         "check_real_delivery_expiry_reconciliation",
         "check_database_account_isolation",
-        "check_down_queue_and_replay",
+        "check_down_queue_auto_recovery",
+        "check_dead_delivery_replay",
         "check_real_rollback_rehearsal",
         "apply_failed_forward_upgrade",
         "restore_original_nocturne_database",
@@ -82,6 +85,9 @@ def test_compose_gate_covers_real_runtime_phases_without_printing_secrets():
     ]
     for marker in required:
         assert marker in driver
+    assert driver.index('if self.scenario in {"rollback", "backup"}:') < driver.index(
+        'initial = self.create_memory("I prefer concise compose responses")'
+    )
     assert "print(self.env" not in driver and "print(self.token" not in driver and "print(grant" not in driver
     subprocess.run(["python3", "-m", "py_compile", str(DRIVER), str(FAILED_FORWARD)], check=True)
 

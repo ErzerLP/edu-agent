@@ -77,6 +77,13 @@ type AttemptRetryAuthorization struct {
 	At                  time.Time
 }
 
+type PreparedAttemptRelease struct {
+	AttemptID     string
+	AttemptToken  string
+	LeaseToken    string
+	ErrorCategory string
+}
+
 type RemoteNode struct {
 	NodeID     string
 	Path       string
@@ -284,6 +291,7 @@ type DeliveryProtocolPersistence interface {
 	LoadDeliveryWork(context.Context, OutboxIntent) (DeliveryWork, outbox.ApplyDecision, error)
 	ClaimAttempt(context.Context, string, time.Time, time.Duration) (Attempt, error)
 	ClaimUnknownAttempt(context.Context, time.Time, time.Duration) (Attempt, error)
+	ReleasePreparedAttempt(context.Context, PreparedAttemptRelease) error
 	TransitionAttempt(context.Context, AttemptTransition) (Attempt, error)
 	AuthorizeAttemptRetry(context.Context, AttemptRetryAuthorization) (Attempt, error)
 	PermanentlyRejectDelivery(context.Context, PolicyRejection) error

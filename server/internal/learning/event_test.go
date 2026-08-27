@@ -211,7 +211,7 @@ func TestExplicitUpcasterRegistry(t *testing.T) {
 }
 
 func TestProjectionFingerprintExcludesRuntimeGenerationMetadata(t *testing.T) {
-	const migrationEmptyProjectionFingerprint = "2b2fe0642e3c18f6c9a9adb8fc4e8195acf5d426c906a13db6ff1434086fe831"
+	const projectionV2EmptyFingerprint = "019fa79a6db0d9b36c5127a8adf1bfe42b84551bcfa29542c7601f8d511e0924"
 
 	left := EmptyProjection("generation-left")
 	left.Metadata.Rebuilding = true
@@ -230,8 +230,25 @@ func TestProjectionFingerprintExcludesRuntimeGenerationMetadata(t *testing.T) {
 	if leftHash != rightHash {
 		t.Fatalf("runtime metadata changed fingerprint: %s != %s", leftHash, rightHash)
 	}
-	if rightHash != migrationEmptyProjectionFingerprint {
-		t.Fatalf("versioned empty projection fingerprint changed: got %s want migration seed %s", rightHash, migrationEmptyProjectionFingerprint)
+	if rightHash != projectionV2EmptyFingerprint {
+		t.Fatalf("versioned empty projection fingerprint changed: got %s want %s", rightHash, projectionV2EmptyFingerprint)
+	}
+}
+
+func TestLegacyEvidenceAcceptedUsesEnvelopeSequence(t *testing.T) {
+	evidence := AcceptedEvidence{ID: "evidence-1", NodeRevisionID: "node-1", ReceivedAt: time.Now().UTC()}
+	event := eventFixture(17, EventEvidenceAccepted, evidence)
+	projection := EmptyProjection("generation")
+	if err := ApplyEvent(&projection, NewEventRegistry(), event); err != nil {
+		t.Fatal(err)
+	}
+	if got := projection.Evidence[evidence.ID].AcceptedEventSequence; got != event.EventSequence {
+		t.Fatalf("legacy accepted event sequence=%d want=%d", got, event.EventSequence)
+	}
+	evidence.AcceptedEventSequence = event.EventSequence + 2
+	event = eventFixture(18, EventEvidenceAccepted, evidence)
+	if err := ApplyEvent(&projection, NewEventRegistry(), event); err == nil {
+		t.Fatal("mismatched accepted evidence sequence was accepted")
 	}
 }
 

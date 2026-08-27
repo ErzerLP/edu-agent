@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,16 +18,20 @@ const (
 	PolicyVersion              = "privacy-erasure-v1"
 	ManagedBackupPolicyVersion = "managed-backup-key-destruction-v1"
 
-	CodeInvalidRequest          = "invalid_request"
-	CodeNotFound                = "not_found"
-	CodeIdempotencyConflict     = "idempotency_conflict"
-	CodeErasureInProgress       = "erasure_in_progress"
-	CodeContentRedacted         = "content_redacted"
-	CodePrivacyClearInProgress  = "privacy_clear_in_progress"
-	CodeReceiptNotCurrent       = "receipt_not_current"
-	CodeVerificationFailed      = "verification_failed"
-	CodeUnsupportedReceiptStore = "unsupported_receipt_store"
-	CodeMigrationLeaseConflict  = "migration_lease_conflict"
+	CodeInvalidRequest              = "invalid_request"
+	CodeNotFound                    = "not_found"
+	CodeIdempotencyConflict         = "idempotency_conflict"
+	CodeErasureInProgress           = "erasure_in_progress"
+	CodeContentRedacted             = "content_redacted"
+	CodePrivacyClearInProgress      = "privacy_clear_in_progress"
+	CodeReceiptNotCurrent           = "receipt_not_current"
+	CodeVerificationFailed          = "verification_failed"
+	CodeUnsupportedReceiptStore     = "unsupported_receipt_store"
+	CodeMigrationLeaseConflict      = "migration_lease_conflict"
+	CodeOfflineChallengeInvalid     = "purge_challenge_invalid"
+	CodeOfflineChallengeUnavailable = "offline_challenge_unavailable"
+	CodeOfflinePurgeNotCurrent       = "purge_not_current"
+	CodeOfflinePurgeAckConflict      = "purge_ack_conflict"
 )
 
 type Error struct {
@@ -151,6 +156,7 @@ const (
 	StoreNocturneSnapshotChangeset StoreKind = "nocturne_snapshot_changeset"
 	StoreManagedBackup             StoreKind = "managed_backup"
 	StoreExternalProvider          StoreKind = "external_provider"
+	StoreOfflineDeviceCache        StoreKind = "offline_device_cache"
 )
 
 var ReceiptSlots = []StoreKind{
@@ -158,6 +164,7 @@ var ReceiptSlots = []StoreKind{
 	StoreLearningEventPayload, StoreLearningTypedPayload, StoreTutoringPayload, StoreInboxOutbox,
 	StoreProjectionGenerations, StoreMemoryCandidateDelivery, StoreProcessCache, StoreNocturnePaths,
 	StoreNocturneOrphanHistory, StoreNocturneSnapshotChangeset, StoreManagedBackup, StoreExternalProvider,
+	StoreOfflineDeviceCache,
 }
 
 var LocalManagedSlots = []StoreKind{
@@ -310,6 +317,117 @@ type MigrationLease struct {
 	Replayed    bool      `json:"replayed"`
 }
 
+type OfflineDeviceChildStatus string
+
+const (
+	OfflineDeviceChildPending   OfflineDeviceChildStatus = "pending"
+	OfflineDeviceChildSucceeded OfflineDeviceChildStatus = "succeeded"
+	OfflineDeviceChildUnknown   OfflineDeviceChildStatus = "unknown"
+	OfflineDeviceChildFailed    OfflineDeviceChildStatus = "failed"
+)
+
+func CanTransitionOfflineDeviceChild(from, to OfflineDeviceChildStatus) bool {
+	switch from {
+	case OfflineDeviceChildPending:
+		return to == OfflineDeviceChildSucceeded || to == OfflineDeviceChildUnknown || to == OfflineDeviceChildFailed
+	case OfflineDeviceChildUnknown, OfflineDeviceChildFailed:
+		return to == OfflineDeviceChildPending
+	default:
+		return false
+	}
+}
+
+type OfflinePurgeChallenge struct {
+	ErasureID           string                   `json:"erasure_id"`
+	DeviceID            string                   `json:"device_id"`
+	OldGeneration       int64                    `json:"old_generation"`
+	CurrentGeneration   int64                    `json:"current_generation"`
+	ChallengeRevision   int64                    `json:"challenge_revision"`
+	Challenge            string                   `json:"challenge"`
+	IssuedAt             time.Time                `json:"issued_at"`
+	Status               OfflineDeviceChildStatus `json:"status"`
+}
+
+type OfflinePurgeOutcome string
+
+const (
+	OfflinePurgeOutcomeSucceeded OfflinePurgeOutcome = "succeeded"
+	OfflinePurgeOutcomeFailed    OfflinePurgeOutcome = "failed"
+)
+
+type OfflinePurgeFailureCode string
+
+const (
+	OfflinePurgeFailureProfileBusy        OfflinePurgeFailureCode = "profile_busy"
+	OfflinePurgeFailureKeyDelete          OfflinePurgeFailureCode = "key_delete_failed"
+	OfflinePurgeFailurePathDelete         OfflinePurgeFailureCode = "path_delete_failed"
+	OfflinePurgeFailureVerification       OfflinePurgeFailureCode = "verification_failed"
+)
+
+func (c OfflinePurgeFailureCode) Valid() bool {
+	switch c {
+	case OfflinePurgeFailureProfileBusy, OfflinePurgeFailureKeyDelete, OfflinePurgeFailurePathDelete, OfflinePurgeFailureVerification:
+		return true
+	default:
+		return false
+	}
+}
+
+type OfflineDevicePurgeAcknowledgment struct {
+	ChallengeRevision   int64                   `json:"challenge_revision"`
+	Challenge           string                  `json:"challenge"`
+	Outcome             OfflinePurgeOutcome     `json:"outcome"`
+	ManagedObjectsAbsent *bool                    `json:"managed_objects_absent,omitempty"`
+	FailureCode         OfflinePurgeFailureCode `json:"failure_code,omitempty"`
+}
+
+func (a OfflineDevicePurgeAcknowledgment) Validate() error {
+	if a.ChallengeRevision <= 0 || len(a.Challenge) != 43 {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_device_purge_acknowledgment"}
+	}
+	if decoded, err := base64.RawURLEncoding.DecodeString(a.Challenge); err != nil || len(decoded) != sha256.Size || base64.RawURLEncoding.EncodeToString(decoded) != a.Challenge {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_device_purge_challenge"}
+	}
+	switch a.Outcome {
+	case OfflinePurgeOutcomeSucceeded:
+		if a.ManagedObjectsAbsent == nil || !*a.ManagedObjectsAbsent || a.FailureCode != "" {
+			return &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_device_purge_success"}
+		}
+	case OfflinePurgeOutcomeFailed:
+		if a.ManagedObjectsAbsent != nil || !a.FailureCode.Valid() {
+			return &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_device_purge_failure"}
+		}
+	default:
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_device_purge_outcome"}
+	}
+	return nil
+}
+
+type OfflineDeviceChildReceipt struct {
+	ErasureID         string                   `json:"erasure_id"`
+	DeviceID          string                   `json:"device_id"`
+	SourceGeneration  int64                    `json:"source_generation"`
+	CurrentGeneration int64                    `json:"current_generation"`
+	ChallengeRevision int64                    `json:"challenge_revision"`
+	Status             OfflineDeviceChildStatus `json:"status"`
+	UpdatedAt          time.Time                `json:"updated_at"`
+	StableReason       string                   `json:"stable_reason"`
+}
+
+type OfflineDeviceCounts struct {
+	Pending   int `json:"pending"`
+	Succeeded int `json:"succeeded"`
+	Unknown   int `json:"unknown"`
+	Failed    int `json:"failed"`
+}
+
+type OfflineDeviceReceiptPage struct {
+	ErasureID       string                      `json:"erasure_id"`
+	ReceiptRevision int64                       `json:"receipt_revision"`
+	Items           []OfflineDeviceChildReceipt `json:"items"`
+	NextCursor      string                      `json:"next_cursor,omitempty"`
+}
+
 type StepReceipt struct {
 	ID                 string     `json:"receipt_id"`
 	Store              StoreKind  `json:"store"`
@@ -319,19 +437,22 @@ type StepReceipt struct {
 	VerificationMethod string     `json:"verification_method"`
 	StartedAt          time.Time  `json:"started_at"`
 	CompletedAt        *time.Time `json:"completed_at,omitempty"`
-	EvidenceDigest     string     `json:"evidence_digest,omitempty"`
+	EvidenceDigest     string               `json:"evidence_digest,omitempty"`
+	DeviceCounts       *OfflineDeviceCounts `json:"device_counts,omitempty"`
+	ChildrenTruncated  *bool                `json:"children_truncated,omitempty"`
+	NextCursor         string               `json:"next_cursor,omitempty"`
 }
 
 type ErasureReceipt struct {
-	ErasureID               string        `json:"erasure_id"`
-	Status                  ErasureStatus `json:"status"`
-	SummaryVersion          int64         `json:"summary_version"`
-	LearnerGeneration       int64         `json:"learner_generation"`
-	RedactedThroughEventSeq int64         `json:"redacted_through_event_seq"`
-	PolicyVersion           string        `json:"policy_version"`
-	ReasonCode              string        `json:"reason_code"`
-	RequestedAt             time.Time     `json:"requested_at"`
-	UpdatedAt               time.Time     `json:"updated_at"`
+	ErasureID               string                      `json:"erasure_id"`
+	Status                  ErasureStatus               `json:"status"`
+	SummaryVersion          int64                       `json:"summary_version"`
+	LearnerGeneration       int64                       `json:"learner_generation"`
+	RedactedThroughEventSeq int64                       `json:"redacted_through_event_seq"`
+	PolicyVersion           string                      `json:"policy_version"`
+	ReasonCode              string                      `json:"reason_code"`
+	RequestedAt             time.Time                   `json:"requested_at"`
+	UpdatedAt               time.Time                   `json:"updated_at"`
 	Steps                   []StepReceipt `json:"steps"`
 }
 

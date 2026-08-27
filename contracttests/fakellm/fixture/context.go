@@ -98,36 +98,41 @@ type contextActivity struct {
 }
 
 type contextAttempt struct {
-	AttemptID        string  `json:"attempt_id"`
-	SessionID        string  `json:"session_id"`
-	ActivityID       string  `json:"activity_id"`
-	ActivityRevision int64   `json:"activity_revision"`
-	AnswerPayloadID  string  `json:"answer_payload_id"`
-	Answer           string  `json:"answer"`
-	AnswerSHA256     string  `json:"answer_sha256"`
-	Help             string  `json:"help"`
-	ActorDeviceID    string  `json:"actor_device_id"`
-	OccurredAt       *string `json:"occurred_at,omitempty"`
-	ReceivedAt       string  `json:"received_at"`
+	AttemptID                 string  `json:"attempt_id"`
+	SessionID                 string  `json:"session_id"`
+	ActivityID                string  `json:"activity_id"`
+	ActivityRevision          int64   `json:"activity_revision"`
+	AnswerPayloadID           string  `json:"answer_payload_id"`
+	Answer                    string  `json:"answer"`
+	AnswerSHA256              string  `json:"answer_sha256"`
+	Help                      string  `json:"help"`
+	ActorDeviceID             string  `json:"actor_device_id"`
+	OccurredAt                *string `json:"occurred_at,omitempty"`
+	ReceivedAt                string  `json:"received_at"`
+	EvidenceEligibility       bool    `json:"evidence_eligibility"`
+	EvidenceIneligibleReason  string  `json:"evidence_ineligible_reason,omitempty"`
+	ArchiveDisposition        string  `json:"archive_disposition"`
 }
 
 type contextAssessment struct {
-	AssessmentID      string           `json:"assessment_id"`
-	SessionID         string           `json:"session_id"`
-	AttemptID         string           `json:"attempt_id"`
-	ActivityID        string           `json:"activity_id"`
-	ActivityRevision  int64            `json:"activity_revision"`
-	Items             []assessmentItem `json:"items"`
-	RubricComplete    bool             `json:"rubric_complete"`
-	Confidence        int              `json:"confidence"`
-	RiskFlags         []string         `json:"risk_flags"`
-	ModelID           string           `json:"model_id"`
-	ModelParameters   map[string]any   `json:"model_parameters"`
-	PromptRevision    string           `json:"prompt_revision"`
-	ProposalInputHash string           `json:"proposal_input_hash"`
-	Attempts          int              `json:"attempts"`
-	AttemptCategories []string         `json:"attempt_categories"`
-	CreatedAt         string           `json:"created_at"`
+	AssessmentID              string           `json:"assessment_id"`
+	SessionID                 string           `json:"session_id"`
+	AttemptID                 string           `json:"attempt_id"`
+	ActivityID                string           `json:"activity_id"`
+	ActivityRevision          int64            `json:"activity_revision"`
+	Items                     []assessmentItem `json:"items"`
+	RubricComplete            bool             `json:"rubric_complete"`
+	Confidence                int              `json:"confidence"`
+	RiskFlags                 []string         `json:"risk_flags"`
+	ModelID                   string           `json:"model_id"`
+	ModelParameters           map[string]any   `json:"model_parameters"`
+	PromptRevision            string           `json:"prompt_revision"`
+	ProposalInputHash         string           `json:"proposal_input_hash"`
+	Attempts                  int              `json:"attempts"`
+	AttemptCategories         []string         `json:"attempt_categories"`
+	CreatedAt                 string           `json:"created_at"`
+	EvidenceEligibility       bool             `json:"evidence_eligibility"`
+	EvidenceIneligibleReason  string           `json:"evidence_ineligible_reason,omitempty"`
 }
 
 type contextAssessmentDecision struct {

@@ -95,7 +95,7 @@ func TestReadPermitCloseCancelsDrainsAndReopens(t *testing.T) {
 }
 
 func TestReceiptSlotsAreFixedAndOwned(t *testing.T) {
-	if len(ReceiptSlots) != 16 || len(LocalManagedSlots) != 11 {
+	if len(ReceiptSlots) != 17 || len(LocalManagedSlots) != 11 {
 		t.Fatalf("receipt slots=%d local=%d", len(ReceiptSlots), len(LocalManagedSlots))
 	}
 	for _, store := range LocalManagedSlots {
@@ -105,6 +105,22 @@ func TestReceiptSlotsAreFixedAndOwned(t *testing.T) {
 		owner, ok := OwnerForStore(store)
 		if !ok || !owner.Valid() {
 			t.Fatalf("local store %q has no owner", store)
+		}
+	}
+}
+
+func TestOfflineDeviceChildTransitionsAreClosed(t *testing.T) {
+	statuses := []OfflineDeviceChildStatus{
+		OfflineDeviceChildPending, OfflineDeviceChildSucceeded,
+		OfflineDeviceChildUnknown, OfflineDeviceChildFailed,
+	}
+	for _, from := range statuses {
+		for _, to := range statuses {
+			want := from == OfflineDeviceChildPending && (to == OfflineDeviceChildSucceeded || to == OfflineDeviceChildUnknown || to == OfflineDeviceChildFailed) ||
+				(from == OfflineDeviceChildUnknown || from == OfflineDeviceChildFailed) && to == OfflineDeviceChildPending
+			if got := CanTransitionOfflineDeviceChild(from, to); got != want {
+				t.Fatalf("offline device child transition %s -> %s=%v want=%v", from, to, got, want)
+			}
 		}
 	}
 }

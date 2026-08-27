@@ -16,10 +16,19 @@ type AggregateExpectation struct {
 }
 
 type EventDraft struct {
-	Type          EventType       `json:"event_type"`
-	AggregateType string          `json:"aggregate_type"`
-	AggregateID   string          `json:"aggregate_id"`
-	Payload       json.RawMessage `json:"payload"`
+	Type                EventType       `json:"event_type"`
+	AggregateType       string          `json:"aggregate_type"`
+	AggregateID         string          `json:"aggregate_id"`
+	Payload             json.RawMessage `json:"payload"`
+	ParentSessionID     string          `json:"parent_session_id,omitempty"`
+	Source              string          `json:"source,omitempty"`
+	ArchiveDisposition  string          `json:"archive_disposition,omitempty"`
+	EvidenceDisposition string          `json:"evidence_disposition,omitempty"`
+	GoalRevisionID      string          `json:"goal_revision_id,omitempty"`
+	RouteRevisionID     string          `json:"route_revision_id,omitempty"`
+	KnowledgeRevisionID string          `json:"knowledge_revision_id,omitempty"`
+	ActivityID          string          `json:"activity_id,omitempty"`
+	ActivityRevision    int64           `json:"activity_revision,omitempty"`
 }
 
 type EvidenceInvalidation struct {
@@ -50,29 +59,32 @@ type AuthorityProvenance struct {
 }
 
 type CommandBatch struct {
-	GoalRevision    *GoalRevision
-	RouteRevision   *RouteRevision
-	Session         *tutoring.Session
-	FocusFrame      *tutoring.FocusFrame
-	InvalidateFrame bool
-	ResumeFrame     bool
-	FreeQuestion    *tutoring.FreeQuestion
-	FreeAnswer      *tutoring.FreeAnswer
-	Activity        *Activity
-	Attempt         *Attempt
-	Assessment      *AssessmentArtifact
-	Decisions       []AssessmentDecision
-	Evidence        []AcceptedEvidence
-	Invalidations   []EvidenceInvalidation
-	Exposures       []Exposure
-	Misconceptions  []MisconceptionHypothesis
-	Outbox          []outbox.Message
-	Events          []EventDraft
-	TypedResult     json.RawMessage
-	ResultSession   bool
-	TutoringState   string
-	Disposition     Disposition
-	Authority       AuthorityProvenance
+	GoalRevision          *GoalRevision
+	RouteRevision         *RouteRevision
+	Session               *tutoring.Session
+	FocusFrame            *tutoring.FocusFrame
+	InvalidateFrame       bool
+	ResumeFrame           bool
+	FreeQuestion          *tutoring.FreeQuestion
+	FreeAnswer            *tutoring.FreeAnswer
+	Activity              *Activity
+	Attempt               *Attempt
+	Assessment            *AssessmentArtifact
+	Decisions             []AssessmentDecision
+	Evidence              []AcceptedEvidence
+	Invalidations         []EvidenceInvalidation
+	Exposures             []Exposure
+	Misconceptions        []MisconceptionHypothesis
+	Outbox                []outbox.Message
+	Events                []EventDraft
+	TypedResult           json.RawMessage
+	ResultSession         bool
+	TutoringState         string
+	Disposition           Disposition
+	Authority             AuthorityProvenance
+	EvidenceClaimSource   string
+	EvidenceClaimEventSeq int64
+	OfflineStatusUpdate   *OfflineStatusProjectionUpdate
 }
 
 type CommitRequest struct {

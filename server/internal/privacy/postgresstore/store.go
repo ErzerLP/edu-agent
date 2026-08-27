@@ -15,11 +15,12 @@ import (
 )
 
 type Store struct {
-	pool       *pgxpool.Pool
-	permits    *privacy.ReadPermitManager
-	owners     map[privacy.OwnerKind]privacy.LocalOwnerPort
-	backupKeys privacy.BackupKeyDestroyer
-	beforeStep func(privacy.StoreKind) error
+	pool          *pgxpool.Pool
+	permits       *privacy.ReadPermitManager
+	owners        map[privacy.OwnerKind]privacy.LocalOwnerPort
+	backupKeys    privacy.BackupKeyDestroyer
+	challengeKeys *privacy.OfflineChallengeKeyring
+	beforeStep    func(privacy.StoreKind) error
 }
 
 type Option func(*Store)
@@ -39,6 +40,9 @@ func WithLocalOwner(port privacy.LocalOwnerPort) Option {
 }
 func WithBackupKeyDestroyer(destroyer privacy.BackupKeyDestroyer) Option {
 	return func(store *Store) { store.backupKeys = destroyer }
+}
+func WithOfflineChallengeKeyring(keyring *privacy.OfflineChallengeKeyring) Option {
+	return func(store *Store) { store.challengeKeys = keyring }
 }
 func New(pool *pgxpool.Pool, options ...Option) *Store {
 	store := &Store{
@@ -307,6 +311,10 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 			return privacy.ErasureReceipt{}, err
 		}
 	}
+	offlineChildren, err := offlineDeviceChildrenForBarrier(ctx, tx, target)
+	if err != nil {
+		return privacy.ErasureReceipt{}, err
+	}
 	for _, store := range privacy.ReceiptSlots {
 		status := privacy.StepPending
 		completed := any(nil)
@@ -316,6 +324,14 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 			status, completed, reason, method = privacy.StepSucceeded, now, "in_process_reads_drained", "read_permit_manager"
 		} else if store == privacy.StoreExternalProvider {
 			status, completed, reason, method = privacy.StepUnsupported, now, "no_external_provider_configured", "unsupported_by_local_core"
+		} else if store == privacy.StoreOfflineDeviceCache {
+			if len(offlineChildren) == 0 {
+				status, completed, reason, method = privacy.StepSucceeded, now, "no_offline_device_possession", "possession_ledger_empty"
+			} else if s.challengeKeys == nil {
+				status, completed, reason, method = privacy.StepUnknown, now, "offline_purge_challenge_keyring_unavailable", "device_child_receipts"
+			} else {
+				status, reason, method = privacy.StepPending, "offline_device_ack_pending", "device_child_receipts"
+			}
 		}
 		receiptID := uuid.NewString()
 		scope := sha256.Sum256([]byte(fmt.Sprintf("%s\n%s\n%d", erasureID, store, target)))
@@ -326,12 +342,84 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 			return privacy.ErasureReceipt{}, err
 		}
 	}
+	if err := s.insertOfflineDeviceChildrenTx(ctx, tx, erasureID, target, now, offlineChildren); err != nil {
+		return privacy.ErasureReceipt{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return privacy.ErasureReceipt{}, err
 	}
 	committed = true
 	releaseConnection()
 	return s.Receipt(ctx, erasureID)
+}
+
+type offlineBarrierChild struct {
+	deviceID         string
+	sourceGeneration int64
+}
+
+func offlineDeviceChildrenForBarrier(ctx context.Context, tx pgx.Tx, targetGeneration int64) ([]offlineBarrierChild, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT device_id::text,max(learner_generation)
+		FROM offline_device_possessions
+		WHERE learner_generation<$1
+		GROUP BY device_id
+		ORDER BY device_id`, targetGeneration)
+	if err != nil {
+		return nil, fmt.Errorf("load offline device possessions for privacy barrier: %w", err)
+	}
+	defer rows.Close()
+	var children []offlineBarrierChild
+	for rows.Next() {
+		var child offlineBarrierChild
+		if err := rows.Scan(&child.deviceID, &child.sourceGeneration); err != nil {
+			return nil, err
+		}
+		children = append(children, child)
+	}
+	return children, rows.Err()
+}
+
+func (s *Store) insertOfflineDeviceChildrenTx(ctx context.Context, tx pgx.Tx, erasureID string, targetGeneration int64, now time.Time, children []offlineBarrierChild) error {
+	for _, child := range children {
+		childID := uuid.NewString()
+		revisionID := uuid.NewString()
+		challengeKeyVersion := 1
+		challengeHash := [32]byte{}
+		status := privacy.OfflineDeviceChildUnknown
+		stableReason := "offline_purge_challenge_keyring_unavailable"
+		if s.challengeKeys != nil {
+			challengeKeyVersion = s.challengeKeys.CurrentVersion()
+			challenge, err := s.challengeKeys.Challenge(challengeKeyVersion, erasureID, child.deviceID, child.sourceGeneration, targetGeneration, 1)
+			if err != nil {
+				return fmt.Errorf("derive privacy offline device challenge: %w", err)
+			}
+			challengeHash = privacy.OfflineChallengeDigest(challenge)
+			status = privacy.OfflineDeviceChildPending
+			stableReason = "awaiting_authenticated_device_purge_ack"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO privacy_offline_device_children(
+				id,erasure_id,device_id,source_generation,created_at)
+			VALUES($1,$2,$3,$4,$5)`, childID, erasureID, child.deviceID,
+			child.sourceGeneration, now); err != nil {
+			return fmt.Errorf("insert privacy offline device child: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO privacy_offline_device_child_revisions(
+				id,child_id,revision,challenge_revision,status,challenge_key_version,challenge_hash,issued_at,stable_reason,updated_at)
+			VALUES($1,$2,1,1,$3,$4,$5,$6,$7,$6)`,
+			revisionID, childID, status, challengeKeyVersion, challengeHash[:], now, stableReason); err != nil {
+			return fmt.Errorf("insert privacy offline device child revision: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO privacy_offline_device_child_heads(
+				child_id,current_revision_id,current_revision,status,updated_at)
+			VALUES($1,$2,1,$3,$4)`, childID, revisionID, status, now); err != nil {
+			return fmt.Errorf("insert privacy offline device child head: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) replayOperation(ctx context.Context, deviceID, operationID, hash string) (privacy.ErasureReceipt, bool, error) {
@@ -388,18 +476,42 @@ func (s *Store) Receipt(ctx context.Context, erasureID string) (privacy.ErasureR
 	if err != nil {
 		return value, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var step privacy.StepReceipt
 		var digest []byte
 		if err := rows.Scan(&step.ID, &step.Store, &step.Version, &step.Status, &step.StableReason, &step.VerificationMethod, &step.StartedAt, &step.CompletedAt, &digest); err != nil {
+			rows.Close()
 			return value, err
 		}
 		step.EvidenceDigest = hex.EncodeToString(digest)
 		value.Steps = append(value.Steps, step)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return value, err
+	}
+	rows.Close()
+	var counts privacy.OfflineDeviceCounts
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE h.status='pending'),
+		       count(*) FILTER (WHERE h.status='succeeded'),
+		       count(*) FILTER (WHERE h.status='unknown'),
+		       count(*) FILTER (WHERE h.status='failed')
+		FROM privacy_offline_device_children c
+		JOIN privacy_offline_device_child_heads h ON h.child_id=c.id
+		WHERE c.erasure_id=$1`, erasureID).Scan(&counts.Pending, &counts.Succeeded, &counts.Unknown, &counts.Failed); err != nil {
+		return value, err
+	}
+	for index := range value.Steps {
+		if value.Steps[index].Store == privacy.StoreOfflineDeviceCache {
+			truncated := false
+			value.Steps[index].DeviceCounts = &counts
+			value.Steps[index].ChildrenTruncated = &truncated
+			break
+		}
+	}
 	value.SortSteps()
-	return value, rows.Err()
+	return value, nil
 }
 
 func (s *Store) RunLocalScrub(ctx context.Context, erasureID string) (privacy.ErasureReceipt, error) {

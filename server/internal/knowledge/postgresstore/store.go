@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
@@ -20,6 +21,26 @@ type Store struct {
 
 func New(pool *pgxpool.Pool) *Store {
 	return &Store{pool: pool}
+}
+
+func (s *Store) LockReadWith(ctx context.Context, tx pgx.Tx) (int64, error) {
+	return privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
+}
+
+func (s *Store) RevisionHeadLockedWith(ctx context.Context, tx pgx.Tx, revisionID string) (bool, string, error) {
+	var redactedAt *time.Time
+	var headRevisionID *string
+	if err := tx.QueryRow(ctx, `
+		SELECT revision.redacted_at,catalog.head_revision_id::text
+		FROM knowledge_revisions revision
+		CROSS JOIN knowledge_catalog catalog
+		WHERE revision.id=$1 AND catalog.singleton_id=1`, revisionID).Scan(&redactedAt, &headRevisionID); err != nil {
+		return false, "", fmt.Errorf("read knowledge revision status and head: %w", err)
+	}
+	if headRevisionID == nil {
+		return redactedAt != nil, "", nil
+	}
+	return redactedAt != nil, *headRevisionID, nil
 }
 
 func (s *Store) beginPrivacyRead(ctx context.Context) (pgx.Tx, error) {

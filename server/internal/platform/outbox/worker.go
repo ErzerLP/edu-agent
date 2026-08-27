@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -22,9 +23,14 @@ type WorkerOptions struct {
 	Now         func() time.Time
 }
 
+type businessTypeClaimStore interface {
+	ClaimBusinessTypes(context.Context, time.Time, time.Duration, int, []string) ([]Message, error)
+}
+
 type Worker struct {
-	store       Store
-	consumers   map[string]Consumer
+	store         Store
+	consumers     map[string]Consumer
+	businessTypes []string
 	batchSize   int
 	lease       time.Duration
 	baseBackoff time.Duration
@@ -46,8 +52,19 @@ func NewWorker(store Store, consumers map[string]Consumer, options WorkerOptions
 			return time.Duration(time.Now().UnixNano() % int64(delay/4+1))
 		}
 	}
+	businessTypes := make([]string, 0, len(consumers))
+	for businessType, consumer := range consumers {
+		if businessType == "" || consumer == nil {
+			return nil, errors.New("outbox business types and consumers are required")
+		}
+		businessTypes = append(businessTypes, businessType)
+	}
+	if len(businessTypes) == 0 {
+		return nil, errors.New("at least one outbox consumer is required")
+	}
+	sort.Strings(businessTypes)
 	return &Worker{
-		store: store, consumers: consumers, batchSize: options.BatchSize, lease: options.Lease,
+		store: store, consumers: consumers, businessTypes: businessTypes, batchSize: options.BatchSize, lease: options.Lease,
 		baseBackoff: options.BaseBackoff, maxBackoff: options.MaxBackoff,
 		jitter: options.Jitter, now: options.Now,
 	}, nil
@@ -55,7 +72,13 @@ func NewWorker(store Store, consumers map[string]Consumer, options WorkerOptions
 
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	now := w.now().UTC()
-	messages, err := w.store.Claim(ctx, now, w.lease, w.batchSize)
+	var messages []Message
+	var err error
+	if filtered, ok := w.store.(businessTypeClaimStore); ok {
+		messages, err = filtered.ClaimBusinessTypes(ctx, now, w.lease, w.batchSize, w.businessTypes)
+	} else {
+		messages, err = w.store.Claim(ctx, now, w.lease, w.batchSize)
+	}
 	if err != nil {
 		return 0, fmt.Errorf("claim outbox messages: %w", err)
 	}

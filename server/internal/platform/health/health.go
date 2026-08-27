@@ -33,25 +33,31 @@ type ModelProbe func(context.Context) (compatible bool, reason string)
 type OptionalProbe func(context.Context) error
 
 type Checker struct {
-	database        Pinger
-	modelEnabled    bool
-	modelRequired   bool
-	modelProbe      ModelProbe
-	nocturneEnabled bool
-	nocturneProbe   OptionalProbe
-	insecureWarning bool
-	timeout         time.Duration
+	database                  Pinger
+	modelEnabled              bool
+	modelRequired             bool
+	modelProbe                ModelProbe
+	openEvaluationWorkerProbe OptionalProbe
+	offlineSignerAvailable    bool
+	offlineProtocolAvailable  bool
+	nocturneEnabled           bool
+	nocturneProbe             OptionalProbe
+	insecureWarning           bool
+	timeout                   time.Duration
 }
 
 type Options struct {
-	Database        Pinger
-	ModelEnabled    bool
-	ModelRequired   bool
-	ModelProbe      ModelProbe
-	NocturneEnabled bool
-	NocturneProbe   OptionalProbe
-	InsecureWarning bool
-	Timeout         time.Duration
+	Database                  Pinger
+	ModelEnabled              bool
+	ModelRequired             bool
+	ModelProbe                ModelProbe
+	OpenEvaluationWorkerProbe OptionalProbe
+	OfflineSignerAvailable    bool
+	OfflineProtocolAvailable  bool
+	NocturneEnabled           bool
+	NocturneProbe             OptionalProbe
+	InsecureWarning           bool
+	Timeout                   time.Duration
 }
 
 func New(options Options) *Checker {
@@ -60,8 +66,10 @@ func New(options Options) *Checker {
 	}
 	return &Checker{
 		database: options.Database, modelEnabled: options.ModelEnabled, modelRequired: options.ModelRequired,
-		modelProbe: options.ModelProbe, nocturneEnabled: options.NocturneEnabled,
-		nocturneProbe: options.NocturneProbe, insecureWarning: options.InsecureWarning, timeout: options.Timeout,
+		modelProbe: options.ModelProbe, openEvaluationWorkerProbe: options.OpenEvaluationWorkerProbe,
+		offlineSignerAvailable: options.OfflineSignerAvailable, offlineProtocolAvailable: options.OfflineProtocolAvailable,
+		nocturneEnabled: options.NocturneEnabled,
+		nocturneProbe:   options.NocturneProbe, insecureWarning: options.InsecureWarning, timeout: options.Timeout,
 	}
 }
 
@@ -87,23 +95,51 @@ func (c *Checker) Ready(ctx context.Context) Report {
 	if c.modelRequired {
 		modelStatus = StatusNotReady
 	}
+	modelCompatible := false
+	modelReason := "not_configured"
 	switch {
 	case !c.modelEnabled:
-		setComponent(&report, "model", modelStatus, "not_configured")
 	case c.modelProbe == nil:
-		setComponent(&report, "model", modelStatus, "probe_unavailable")
+		modelReason = "probe_unavailable"
 	default:
 		checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
-		compatible, reason := c.modelProbe(checkCtx)
+		modelCompatible, modelReason = c.modelProbe(checkCtx)
 		cancel()
-		if compatible {
-			setComponent(&report, "model", StatusHealthy, "")
-		} else {
-			if strings.TrimSpace(reason) == "" {
-				reason = "incompatible"
-			}
-			setComponent(&report, "model", modelStatus, reason)
+		if !modelCompatible && strings.TrimSpace(modelReason) == "" {
+			modelReason = "incompatible"
 		}
+	}
+	if modelCompatible {
+		setComponent(&report, "model", StatusHealthy, "")
+	} else {
+		setComponent(&report, "model", modelStatus, modelReason)
+	}
+
+	switch {
+	case c.openEvaluationWorkerProbe == nil:
+		setComponent(&report, "open_evaluation_worker", StatusDegraded, "not_configured")
+	default:
+		checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
+		err := c.openEvaluationWorkerProbe(checkCtx)
+		cancel()
+		if err != nil {
+			setComponent(&report, "open_evaluation_worker", StatusDegraded, "unavailable")
+		} else if !modelCompatible {
+			setComponent(&report, "open_evaluation_worker", StatusDegraded, "model_unavailable")
+		} else {
+			setComponent(&report, "open_evaluation_worker", StatusHealthy, "")
+		}
+	}
+
+	if c.offlineSignerAvailable {
+		setComponent(&report, "offline_signer", StatusHealthy, "")
+	} else {
+		setComponent(&report, "offline_signer", StatusDegraded, "not_configured")
+	}
+	if c.offlineProtocolAvailable {
+		setComponent(&report, "offline_protocol", StatusHealthy, "")
+	} else {
+		setComponent(&report, "offline_protocol", StatusDegraded, "unavailable")
 	}
 
 	switch {

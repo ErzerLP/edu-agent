@@ -219,6 +219,47 @@ const (
 	privacyFaultBeforeVerify   privacyFaultPhase = "after_scrub_commit_before_verify_receipt"
 )
 
+func TestPrivacyBarrierCommitsWhenOfflineChallengeKeyringIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	pool := privacyIntegrationPool(t)
+	fixture := seedPrivacyMarkerFixture(t, pool)
+	now := time.Now().UTC()
+	packID := uuid.NewString()
+	mustExecPrivacyPool(t, pool, `
+		INSERT INTO offline_packs(
+			id,revision,prepare_device_id,prepare_operation_id,learner_generation,parent_session_id,
+			response_body,response_hash,signer_key_id,signature,issued_at,eligible_until,archive_until,created_at)
+		VALUES($1,1,$2,$3,1,$4,'{}'::jsonb,$5,'fixture-signer',$6,$7,$8,$9,$7)`,
+		packID, fixture.deviceID, uuid.NewString(), fixture.sessionID, make([]byte, 32), make([]byte, 64), now, now.Add(time.Hour), now.Add(24*time.Hour))
+	mustExecPrivacyPool(t, pool, `
+		INSERT INTO offline_device_possessions(id,device_id,learner_generation,first_pack_id,first_seen_at)
+		VALUES($1,$2,1,$3,$4)`, uuid.NewString(), fixture.deviceID, packID, now)
+
+	store := newPrivacyFixtureStore(pool, privacy.NewReadPermitManager(), "", "")
+	barrier, err := store.CommitBarrier(ctx, privacy.ErasureRequest{
+		DeviceID: fixture.deviceID, OperationID: uuid.NewString(), ActorDeviceID: fixture.deviceID,
+		ReasonCode: string(privacy.ReasonLearnerRequest), RequestedAt: now,
+		ManagedBackupUnrecoverableAfter: now.Add(24 * time.Hour), ExpectedCurrentLearnerGeneration: 1,
+	})
+	if err != nil {
+		t.Fatalf("privacy barrier was blocked by unavailable device challenge keys: %v", err)
+	}
+	var stepStatus privacy.StepStatus
+	var childStatus privacy.OfflineDeviceChildStatus
+	if err := pool.QueryRow(ctx, `
+		SELECT r.status,h.status
+		FROM privacy_erasure_receipt_heads rh
+		JOIN privacy_erasure_step_receipts r ON r.id=rh.current_receipt_id
+		JOIN privacy_offline_device_children c ON c.erasure_id=rh.erasure_id
+		JOIN privacy_offline_device_child_heads h ON h.child_id=c.id
+		WHERE rh.erasure_id=$1 AND rh.store_kind='offline_device_cache'`, barrier.ErasureID).Scan(&stepStatus, &childStatus); err != nil {
+		t.Fatal(err)
+	}
+	if stepStatus != privacy.StepUnknown || childStatus != privacy.OfflineDeviceChildUnknown {
+		t.Fatalf("offline challenge outage evidence step=%q child=%q", stepStatus, childStatus)
+	}
+}
+
 func TestPostgreSQLLocalPrivacyScrubFaultMatrix(t *testing.T) {
 	stores := []privacy.StoreKind{
 		privacy.StoreIdentityMetadata,
@@ -531,6 +572,10 @@ func seedLearningTutoringMarkerFixture(t *testing.T, pool *pgxpool.Pool, fixture
 		VALUES($1,$2,$3,1,$4,'none',$5,$6,$7)`, fixture.attemptID, fixture.sessionID, fixture.activityID,
 		fixture.attemptPayloadID, fixture.deviceID, now, markerHash)
 	mustExecPrivacyFixture(t, tx, `
+		INSERT INTO learning_activity_evidence_claims(
+			activity_id,activity_revision,winning_attempt_id,claim_source,claimed_event_seq,claimed_at)
+		VALUES($1,1,$2,'online',2,$3)`, fixture.activityID, fixture.attemptID, now)
+	mustExecPrivacyFixture(t, tx, `
 		INSERT INTO learning_assessments(
 			id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,
 			trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at)
@@ -553,9 +598,9 @@ func seedLearningTutoringMarkerFixture(t *testing.T, pool *pgxpool.Pool, fixture
 		INSERT INTO learning_evidence(
 			id,decision_id,assessment_id,session_id,attempt_id,activity_id,activity_revision,goal_revision_id,
 			route_revision_id,knowledge_revision_id,node_revision_id,node_id,document_revision_id,rubric_revision,
-			evidence_kind,activity_type,outcome,help_level,received_at,acceptance_policy_version,reducer_policy_version,
+			evidence_kind,activity_type,outcome,help_level,received_at,accepted_event_seq,acceptance_policy_version,reducer_policy_version,
 			review_policy_version,misconception_candidates,rubric_outcomes)
-		VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,'practice_recall','objective','pass','none',$14,$15,$16,$17,$18,$18)`,
+		VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,'practice_recall','objective','pass','none',$14,2,$15,$16,$17,$18,$18)`,
 		fixture.evidenceID, fixture.assessmentDecisionID, fixture.assessmentID, fixture.sessionID, fixture.attemptID,
 		fixture.activityID, fixture.goalRevisionID, fixture.routeRevisionID, fixture.knowledgeRevisionID,
 		fixture.nodeRevisionID, fixture.nodeID, fixture.documentRevisionID, fixture.marker, now,
@@ -630,7 +675,7 @@ func seedProjectionMarkerFixture(t *testing.T, pool *pgxpool.Pool, fixture *priv
 		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_routes(generation_id,route_revision_id,route_id,revision,event_seq,is_current,item) VALUES($1,$2,$3,1,$4,TRUE,$5)`, generationID, fixture.routeRevisionID, fixture.routeID, sequence, item)
 		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_sessions(generation_id,session_id,updated_event_seq,item) VALUES($1,$2,$3,$4)`, generationID, fixture.sessionID, sequence, item)
 		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_nodes(generation_id,node_revision_id,updated_event_seq,item) VALUES($1,$2,$3,$4)`, generationID, fixture.nodeRevisionID, sequence, item)
-		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_evidence(generation_id,evidence_id,node_revision_id,received_at,item) VALUES($1,$2,$3,$4,$5)`, generationID, fixture.evidenceID, fixture.nodeRevisionID, now, item)
+		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_evidence(generation_id,evidence_id,node_revision_id,received_at,accepted_event_seq,item) VALUES($1,$2,$3,$4,2,$5)`, generationID, fixture.evidenceID, fixture.nodeRevisionID, now, item)
 		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_reviews(generation_id,node_revision_id,due_at,stable_id,item) VALUES($1,$2,$3,$4,$5)`, generationID, fixture.nodeRevisionID, now, uuid.NewString(), item)
 		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_misconceptions(generation_id,misconception_id,node_revision_id,item) VALUES($1,$2,$3,$4)`, generationID, fixture.misconceptionID, fixture.nodeRevisionID, item)
 		mustExecPrivacyPool(t, pool, `INSERT INTO learning_projection_stats(generation_id,session_id,item) VALUES($1,$2,$3)`, generationID, fixture.sessionID, item)

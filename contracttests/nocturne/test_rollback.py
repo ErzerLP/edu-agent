@@ -54,9 +54,11 @@ class RollbackValidationTests(unittest.TestCase):
             "source == self.original_volume", 'compose("stop", "nocturne-postgres"',
             'compose("up", "-d", "--no-deps", "nocturne"', "expected_schema_version",
             "rollback_probe.py", "failed-isolated", "bridge writer remains stopped",
+            'self.values.get("SERVER_IMAGE", "")', "build: !reset null", "pull_policy: never",
         ]
         for marker in required:
             self.assertIn(marker, source)
+        self.assertLess(source.index("self._write_override()"), source.index("self._preflight_restore()"))
         self.assertNotIn("docker volume rm", source)
         self.assertNotIn("down --volumes", source)
         self.assertIn("set -eu", shell)

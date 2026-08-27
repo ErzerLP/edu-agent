@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -23,8 +24,9 @@ type eventDB interface {
 }
 
 const (
-	rebuildLeaseDuration     = 2 * time.Minute
-	rebuildHeartbeatInterval = 30 * time.Second
+	rebuildLeaseDuration           = 2 * time.Minute
+	rebuildHeartbeatInterval       = 30 * time.Second
+	projectionVersionUpgradeReason = "projection_version_upgrade_required"
 )
 
 type rebuildLease struct {
@@ -39,7 +41,7 @@ type rebuildHeartbeat struct {
 }
 
 func loadEvents(ctx context.Context, db eventDB, after, through int64) ([]learning.LearningEvent, error) {
-	rows, err := db.Query(ctx, `SELECT e.event_seq,e.id,e.event_type,e.event_schema_version,e.aggregate_type,e.aggregate_id,e.aggregate_version,e.device_id,e.operation_id,e.operation_ordinal,e.received_at,e.occurred_at,e.payload_id,e.payload_hash,p.payload_hash,p.payload,p.redacted_at,(SELECT COALESCE(max(redacted_through_event_seq),0) FROM privacy_redaction_barriers) FROM learning_events e JOIN learning_event_payloads p ON p.id=e.payload_id WHERE e.event_seq>$1 AND e.event_seq<=$2 ORDER BY e.event_seq`, after, through)
+	rows, err := db.Query(ctx, `SELECT e.event_seq,e.id,e.event_type,e.event_schema_version,e.aggregate_type,e.aggregate_id,e.aggregate_version,e.device_id,e.operation_id,e.operation_ordinal,e.received_at,e.occurred_at,e.payload_id,e.payload_hash,p.payload_hash,p.payload,p.redacted_at,(SELECT COALESCE(max(redacted_through_event_seq),0) FROM privacy_redaction_barriers),COALESCE(e.parent_session_id::text,''),e.event_source,COALESCE(e.archive_disposition,''),COALESCE(e.evidence_disposition,''),COALESCE(e.goal_revision_id::text,''),COALESCE(e.route_revision_id::text,''),COALESCE(e.knowledge_revision_id::text,''),COALESCE(e.activity_id::text,''),COALESCE(e.activity_revision,0) FROM learning_events e JOIN learning_event_payloads p ON p.id=e.payload_id WHERE e.event_seq>$1 AND e.event_seq<=$2 ORDER BY e.event_seq`, after, through)
 	if err != nil {
 		return nil, fmt.Errorf("read learning events: %w", err)
 	}
@@ -50,7 +52,7 @@ func loadEvents(ctx context.Context, db eventDB, after, through int64) ([]learni
 		var eventHash, payloadHash []byte
 		var redactedAt *time.Time
 		var redactedThrough int64
-		if err := rows.Scan(&event.EventSequence, &event.ID, &event.Type, &event.SchemaVersion, &event.AggregateType, &event.AggregateID, &event.AggregateVersion, &event.DeviceID, &event.OperationID, &event.OperationOrdinal, &event.ReceivedAt, &event.OccurredAt, &event.PayloadID, &eventHash, &payloadHash, &event.Payload, &redactedAt, &redactedThrough); err != nil {
+		if err := rows.Scan(&event.EventSequence, &event.ID, &event.Type, &event.SchemaVersion, &event.AggregateType, &event.AggregateID, &event.AggregateVersion, &event.DeviceID, &event.OperationID, &event.OperationOrdinal, &event.ReceivedAt, &event.OccurredAt, &event.PayloadID, &eventHash, &payloadHash, &event.Payload, &redactedAt, &redactedThrough, &event.ParentSessionID, &event.Source, &event.ArchiveDisposition, &event.EvidenceDisposition, &event.GoalRevisionID, &event.RouteRevisionID, &event.KnowledgeRevisionID, &event.ActivityID, &event.ActivityRevision); err != nil {
 			return nil, fmt.Errorf("scan learning event: %w", err)
 		}
 		if !bytes.Equal(eventHash, payloadHash) {
@@ -148,7 +150,7 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 	}
 	for id, item := range projection.Evidence {
 		encoded, _ := json.Marshal(item)
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_evidence(generation_id,evidence_id,node_revision_id,received_at,item) VALUES($1,$2,$3,$4,$5)`, generationID, id, item.NodeRevisionID, item.ReceivedAt, encoded); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_evidence(generation_id,evidence_id,node_revision_id,received_at,accepted_event_seq,item) VALUES($1,$2,$3,$4,$5,$6)`, generationID, id, item.NodeRevisionID, item.ReceivedAt, item.AcceptedEventSequence, encoded); err != nil {
 			return fmt.Errorf("project evidence: %w", err)
 		}
 	}
@@ -160,12 +162,14 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 	incomplete := projection.Metadata.Incomplete
 	reasons := normalizeTextArray(projection.Metadata.ReasonCodes)
 	if generationStatus == "active" && existingIncomplete {
-		incomplete = true
 		for _, reason := range existingReasons {
-			reasons = appendUnique(reasons, reason)
+			if reason != projectionVersionUpgradeReason {
+				reasons = appendUnique(reasons, reason)
+			}
 		}
+		incomplete = incomplete || len(reasons) > 0
 	}
-	if _, err := tx.Exec(ctx, `UPDATE learning_projection_generations SET target_high_water=$2,checkpoint_event_seq=$2,fingerprint=$3,incomplete=$4,reason_codes=$5,completed_at=$6,knowledge_revision_id=$7 WHERE id=$1`, generationID, highWater, fingerprintBytes, incomplete, reasons, now, optionalUUIDFilter(projection.Metadata.KnowledgeRevisionID)); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE learning_projection_generations SET projection_version=$2,reducer_version=$3,assessment_policy_version=$4,review_policy_version=$5,target_high_water=$6,checkpoint_event_seq=$6,fingerprint=$7,incomplete=$8,reason_codes=$9,completed_at=$10,knowledge_revision_id=$11 WHERE id=$1`, generationID, learning.ProjectionVersion, learning.MasteryReducerVersion, learning.AssessmentPolicyVersion, learning.ReviewPolicyVersion, highWater, fingerprintBytes, incomplete, reasons, now, optionalUUIDFilter(projection.Metadata.KnowledgeRevisionID)); err != nil {
 		return fmt.Errorf("update learning projection generation: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_checkpoints(generation_id,event_seq,fingerprint,updated_at) VALUES($1,$2,$3,$4) ON CONFLICT(generation_id) DO UPDATE SET event_seq=EXCLUDED.event_seq,fingerprint=EXCLUDED.fingerprint,updated_at=EXCLUDED.updated_at`, generationID, highWater, fingerprintBytes, now); err != nil {
@@ -385,15 +389,18 @@ func (s *Store) finishRebuild(ctx context.Context, lease rebuildLease, projectio
 }
 
 type projectionSeal struct {
+	ProjectionVersion     string
 	GenerationCheckpoint  int64
 	Checkpoint            int64
 	GenerationFingerprint []byte
 	CheckpointFingerprint []byte
+	Incomplete            bool
+	ReasonCodes           []string
 }
 
 func loadProjectionSeal(ctx context.Context, db rowQuerier, generationID string) (projectionSeal, error) {
 	var seal projectionSeal
-	err := db.QueryRow(ctx, `SELECT g.checkpoint_event_seq,c.event_seq,g.fingerprint,c.fingerprint FROM learning_projection_generations g JOIN learning_projection_checkpoints c ON c.generation_id=g.id WHERE g.id=$1`, generationID).Scan(&seal.GenerationCheckpoint, &seal.Checkpoint, &seal.GenerationFingerprint, &seal.CheckpointFingerprint)
+	err := db.QueryRow(ctx, `SELECT g.projection_version,g.checkpoint_event_seq,c.event_seq,g.fingerprint,c.fingerprint,g.incomplete,g.reason_codes FROM learning_projection_generations g JOIN learning_projection_checkpoints c ON c.generation_id=g.id WHERE g.id=$1`, generationID).Scan(&seal.ProjectionVersion, &seal.GenerationCheckpoint, &seal.Checkpoint, &seal.GenerationFingerprint, &seal.CheckpointFingerprint, &seal.Incomplete, &seal.ReasonCodes)
 	if err != nil {
 		return seal, fmt.Errorf("read projection generation seal: %w", err)
 	}
@@ -406,11 +413,17 @@ func validateProjectionSwitch(highWater int64, active, rebuild projectionSeal) e
 	}
 	if len(active.GenerationFingerprint) == 0 || len(rebuild.GenerationFingerprint) == 0 ||
 		!bytes.Equal(active.GenerationFingerprint, active.CheckpointFingerprint) ||
-		!bytes.Equal(rebuild.GenerationFingerprint, rebuild.CheckpointFingerprint) ||
-		!bytes.Equal(active.GenerationFingerprint, rebuild.GenerationFingerprint) {
+		!bytes.Equal(rebuild.GenerationFingerprint, rebuild.CheckpointFingerprint) {
 		return &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "projection_fingerprint_mismatch"}
 	}
-	return nil
+	if bytes.Equal(active.GenerationFingerprint, rebuild.GenerationFingerprint) {
+		return nil
+	}
+	if active.ProjectionVersion != learning.ProjectionVersion && rebuild.ProjectionVersion == learning.ProjectionVersion &&
+		active.Incomplete && slices.Contains(active.ReasonCodes, projectionVersionUpgradeReason) {
+		return nil
+	}
+	return &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "projection_fingerprint_mismatch"}
 }
 
 func (s *Store) failRebuild(lease rebuildLease, cause error) {
@@ -568,7 +581,7 @@ func (s *Store) Timeline(ctx context.Context, query learning.TimelineQuery) (lea
 			}
 		}
 		limit := normalizeLimit(query.Page.Limit)
-		rows, err := tx.Query(ctx, `SELECT event_seq,item FROM learning_projection_timeline WHERE generation_id=$1 AND event_seq>$2 AND ($3='' OR item->>'aggregate_id'=$3) ORDER BY event_seq LIMIT $4`, metadata.GenerationID, after, query.SessionID, limit+1)
+		rows, err := tx.Query(ctx, `SELECT event_seq,item FROM learning_projection_timeline WHERE generation_id=$1 AND event_seq>$2 AND ($3='' OR item->>'aggregate_id'=$3 OR item->>'parent_session_id'=$3) ORDER BY event_seq LIMIT $4`, metadata.GenerationID, after, query.SessionID, limit+1)
 		if err != nil {
 			return learning.TimelinePage{}, fmt.Errorf("query timeline: %w", err)
 		}
@@ -667,7 +680,7 @@ func (s *Store) Node(ctx context.Context, node string) (learning.NodeView, error
 		if err := json.Unmarshal(raw, &reduction); err != nil {
 			return learning.NodeView{}, err
 		}
-		rows, err := tx.Query(ctx, `SELECT item FROM learning_projection_evidence WHERE generation_id=$1 AND node_revision_id=$2 ORDER BY received_at,evidence_id`, metadata.GenerationID, node)
+		rows, err := tx.Query(ctx, `SELECT item FROM learning_projection_evidence WHERE generation_id=$1 AND node_revision_id=$2 ORDER BY accepted_event_seq,evidence_id`, metadata.GenerationID, node)
 		if err != nil {
 			return learning.NodeView{}, err
 		}

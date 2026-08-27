@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -51,6 +52,7 @@ type faultMatrixFixture int
 
 const (
 	faultMatrixMaximal faultMatrixFixture = iota
+	faultMatrixGoalRevision
 	faultMatrixSessionUpsert
 	faultMatrixFrameInvalidate
 	faultMatrixFrameResume
@@ -93,7 +95,13 @@ func TestPostgreSQLTypedRecordWriteFaultMatrixRollsBack(t *testing.T) {
 			installTypedRecordFault(t, pool, test, marker)
 
 			if _, err := store.Commit(ctx, request); err == nil || !strings.Contains(err.Error(), marker) {
-				t.Fatalf("%s commit error=%v, want injected marker %q", test.writePoint, err, marker)
+				var domainErr *learning.Error
+				_ = errors.As(err, &domainErr)
+				reason := ""
+				if domainErr != nil {
+					reason = domainErr.Reason
+				}
+				t.Fatalf("%s commit error=%v reason=%q, want injected marker %q", test.writePoint, err, reason, marker)
 			}
 			after := captureFaultMatrixSnapshot(t, pool)
 			assertFaultMatrixSnapshotEqual(t, before, after)
@@ -123,7 +131,7 @@ func TestPostgreSQLTypedRecordWriteFaultMatrixRollsBack(t *testing.T) {
 
 func typedRecordFaultCases() []typedRecordFaultCase {
 	return []typedRecordFaultCase{
-		{writePoint: "learning_goal_revisions/insert", table: "learning_goal_revisions", operation: "INSERT", keyColumn: "id", keyValue: faultMatrixGoalRevisionID, fixture: faultMatrixMaximal},
+		{writePoint: "learning_goal_revisions/insert", table: "learning_goal_revisions", operation: "INSERT", keyColumn: "id", keyValue: faultMatrixGoalRevisionID, fixture: faultMatrixGoalRevision},
 		{writePoint: "learning_route_revisions/insert", table: "learning_route_revisions", operation: "INSERT", keyColumn: "id", keyValue: faultMatrixRouteRevisionID, fixture: faultMatrixMaximal},
 		{writePoint: "learning_route_steps/insert", table: "learning_route_steps", operation: "INSERT", keyColumn: "id", keyValue: faultMatrixRouteStepID, fixture: faultMatrixMaximal},
 		{writePoint: "tutoring_sessions/insert", table: "tutoring_sessions", operation: "INSERT", keyColumn: "id", keyValue: faultMatrixSessionID, fixture: faultMatrixMaximal},
@@ -207,7 +215,10 @@ func faultMatrixRequest(t *testing.T, store *postgresstore.Store, fixture faultM
 	t.Helper()
 	switch fixture {
 	case faultMatrixMaximal:
+		seedFaultMatrixGoal(t, store)
 		return maximalFaultMatrixRequest(t)
+	case faultMatrixGoalRevision:
+		return goalFaultMatrixRequest(t, faultMatrixOperationID)
 	case faultMatrixSessionUpsert:
 		seedFaultMatrixSession(t, store, false)
 		return updateFaultMatrixSessionRequest(t, false, false)
@@ -220,6 +231,44 @@ func faultMatrixRequest(t *testing.T, store *postgresstore.Store, fixture faultM
 	default:
 		t.Fatalf("unknown fault matrix fixture %d", fixture)
 		return learning.CommitRequest{}
+	}
+}
+
+func seedFaultMatrixGoal(t *testing.T, store *postgresstore.Store) {
+	t.Helper()
+	request := goalFaultMatrixRequest(t, "70000000-0000-4000-8000-000000000020")
+	if _, err := store.Commit(context.Background(), request); err != nil {
+		t.Fatalf("seed fault matrix goal: %v", err)
+	}
+}
+
+func goalFaultMatrixRequest(t *testing.T, operationID string) learning.CommitRequest {
+	t.Helper()
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	goal := learning.GoalRevision{
+		ID: faultMatrixGoalRevisionID, GoalID: faultMatrixGoalID, Revision: 1,
+		Text: "fault matrix goal", Source: "integration", ActorDeviceID: learningDeviceOne, CreatedAt: now,
+	}
+	payload, err := json.Marshal(goal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return learning.CommitRequest{
+		DeviceID: learningDeviceOne,
+		Operation: learning.OperationEnvelope{
+			OperationID: operationID, PayloadSchemaVersion: 1,
+			AggregateType: "goal", AggregateID: faultMatrixGoalID, ExpectedVersion: 0,
+			Payload: json.RawMessage(`{"command":"typed_record_fault_matrix_goal"}`),
+		},
+		RequestHash:  learning.SHA256([]byte(operationID)),
+		Expectations: []learning.AggregateExpectation{{Type: "goal", ID: faultMatrixGoalID, ExpectedVersion: 0}},
+		Batch: learning.CommandBatch{
+			GoalRevision: &goal,
+			Events: []learning.EventDraft{{
+				Type: learning.EventGoalRevisionCreated, AggregateType: "goal", AggregateID: faultMatrixGoalID, Payload: payload,
+			}},
+		},
+		ReceivedAt: now,
 	}
 }
 
@@ -245,10 +294,6 @@ func maximalFaultMatrixRequest(t *testing.T) learning.CommitRequest {
 	session := tutoring.Session{
 		ID: faultMatrixSessionID, State: tutoring.StateFreeAnswer, AggregateVer: 1,
 		Context: contextValue, ActiveFrame: &frame,
-	}
-	goal := learning.GoalRevision{
-		ID: faultMatrixGoalRevisionID, GoalID: faultMatrixGoalID, Revision: 1,
-		Text: "fault matrix goal", Source: "integration", ActorDeviceID: learningDeviceOne, CreatedAt: now,
 	}
 	route := learning.RouteRevision{
 		ID: faultMatrixRouteRevisionID, RouteID: faultMatrixRouteID, Revision: 1,
@@ -359,29 +404,27 @@ func maximalFaultMatrixRequest(t *testing.T) learning.CommitRequest {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goalPayload, err := json.Marshal(goal)
-	if err != nil {
-		t.Fatal(err)
-	}
 	return learning.CommitRequest{
 		DeviceID: learningDeviceOne,
 		Operation: learning.OperationEnvelope{
 			OperationID: faultMatrixOperationID, PayloadSchemaVersion: 1,
-			AggregateType: "goal", AggregateID: faultMatrixGoalID, ExpectedVersion: 0,
+			AggregateType: "session", AggregateID: faultMatrixSessionID, ExpectedVersion: 0,
 			Payload: json.RawMessage(`{"command":"typed_record_fault_matrix"}`),
 		},
 		RequestHash:  learning.SHA256([]byte(faultMatrixOperationID)),
-		Expectations: []learning.AggregateExpectation{{Type: "goal", ID: faultMatrixGoalID, ExpectedVersion: 0}},
+		Expectations: []learning.AggregateExpectation{{Type: "session", ID: faultMatrixSessionID, ExpectedVersion: 0}},
 		Batch: learning.CommandBatch{
-			GoalRevision: &goal, RouteRevision: &route, Session: &session, FocusFrame: &frame,
+			RouteRevision: &route, Session: &session, FocusFrame: &frame,
 			FreeQuestion: &freeQuestion, FreeAnswer: &freeAnswer, Activity: &activity, Attempt: &attempt,
 			Assessment: &assessment, Decisions: []learning.AssessmentDecision{decision},
 			Evidence: []learning.AcceptedEvidence{evidence}, Invalidations: []learning.EvidenceInvalidation{invalidation},
 			Exposures: []learning.Exposure{exposure}, Misconceptions: []learning.MisconceptionHypothesis{misconception},
 			Outbox: []outbox.Message{message},
-			Events: []learning.EventDraft{{
-				Type: learning.EventGoalRevisionCreated, AggregateType: "goal", AggregateID: faultMatrixGoalID, Payload: goalPayload,
-			}},
+			Events: []learning.EventDraft{
+				eventDraft(learning.EventFreeQuestionAsked, faultMatrixSessionID, freeQuestion),
+				eventDraft(learning.EventAttemptSubmitted, faultMatrixSessionID, attempt),
+				eventDraft(learning.EventEvidenceAccepted, faultMatrixSessionID, evidence),
+			},
 			Authority: learning.AuthorityProvenance{
 				RouteSteps: map[string]learning.KnowledgeOwner{faultMatrixRouteStepID: {
 					KnowledgeRevisionID: learningKnowledgeRevision, NodeID: learningNodeID,

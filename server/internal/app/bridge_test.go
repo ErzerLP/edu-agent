@@ -417,6 +417,12 @@ func (s *appPrivacyRouteStore) RunManagedBackupVerification(context.Context, str
 	s.backupCalls++
 	return s.backupResult, nil
 }
+func (s *appPrivacyRouteStore) CurrentOfflineDevicePurge(context.Context, string) (privacy.OfflinePurgeChallenge, bool, error) {
+	return privacy.OfflinePurgeChallenge{}, false, nil
+}
+func (s *appPrivacyRouteStore) AcknowledgeOfflineDevicePurge(context.Context, string, string, privacy.OfflineDevicePurgeAcknowledgment) (privacy.OfflineDeviceChildReceipt, error) {
+	return privacy.OfflineDeviceChildReceipt{}, nil
+}
 
 func appErasureReceipt(status privacy.ErasureStatus, remoteStatus, backupStatus privacy.StepStatus) privacy.ErasureReceipt {
 	return privacy.ErasureReceipt{

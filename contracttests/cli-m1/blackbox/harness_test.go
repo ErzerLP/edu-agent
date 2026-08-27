@@ -3,13 +3,16 @@ package blackbox
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
@@ -62,6 +65,7 @@ type harness struct {
 	serverURL     string
 	fakeURL       string
 	serverEnv     []string
+	serverLogPath string
 	primaryHome   string
 	secondaryHome string
 	primaryDevice string
@@ -167,6 +171,10 @@ func TestMain(m *testing.M) {
 }
 
 func newHarness(t *testing.T) *harness {
+	return newHarnessWithOfflineSigner(t, true)
+}
+
+func newHarnessWithOfflineSigner(t *testing.T, offlineSigner bool) *harness {
 	t.Helper()
 	baseDSN := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if baseDSN == "" {
@@ -212,13 +220,52 @@ func newHarness(t *testing.T) *harness {
 		"MODEL_PROBE_CACHE_TTL=100ms",
 		"NOCTURNE_ENABLED=false",
 	)
+	if offlineSigner {
+		_, offlinePrivateKey, signerErr := ed25519.GenerateKey(rand.Reader)
+		if signerErr != nil {
+			t.Fatalf("offline signer generation failed")
+		}
+		signerNow := time.Now().UTC().Truncate(time.Second)
+		serverEnv = append(serverEnv,
+			"OFFLINE_SIGNER_KEY_ID=blackbox-offline-signer",
+			"OFFLINE_SIGNER_PRIVATE_KEY="+base64.RawURLEncoding.EncodeToString(offlinePrivateKey),
+			"OFFLINE_SIGNER_ISSUED_AT="+signerNow.Add(-time.Hour).Format(time.RFC3339),
+			"OFFLINE_SIGNER_NOT_AFTER="+signerNow.Add(24*time.Hour).Format(time.RFC3339),
+		)
+	}
 	serverLog := openProcessLog(t, "edu-agentd")
 	startProcess(t, "edu-agentd", serverBin, []string{"serve"}, serverEnv, serverLog)
 	waitHTTPStatus(t, serverURL+"/livez", http.StatusOK, nil)
 
-	harness := &harness{t: t, schema: schema, runtimeDSN: runtimeDSN, serverURL: serverURL, fakeURL: fakeURL, serverEnv: serverEnv}
+	harness := &harness{t: t, schema: schema, runtimeDSN: runtimeDSN, serverURL: serverURL, fakeURL: fakeURL, serverEnv: serverEnv, serverLogPath: serverLog.Name()}
 	harness.configureFake("route", fakeScenario{Kind: "accepted", RouteStepLimit: 1})
 	return harness
+}
+
+func (h *harness) ServerOffersOfflineBootstrap() bool {
+	h.t.Helper()
+	code := h.createPairingCode()
+	body, err := json.Marshal(map[string]string{"code": code, "display_name": "offline-bootstrap-probe"})
+	if err != nil {
+		h.t.Fatalf("offline bootstrap probe request failed")
+	}
+	request, err := http.NewRequest(http.MethodPost, h.serverURL+"/v1/pairings/exchange", bytes.NewReader(body))
+	if err != nil {
+		h.t.Fatalf("offline bootstrap probe request failed")
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		h.t.Fatalf("offline bootstrap probe failed")
+	}
+	defer response.Body.Close()
+	var result struct {
+		Offline json.RawMessage `json:"offline"`
+	}
+	if response.StatusCode != http.StatusCreated || json.NewDecoder(response.Body).Decode(&result) != nil {
+		h.t.Fatalf("offline bootstrap probe returned an invalid response")
+	}
+	return len(result.Offline) > 0 && string(result.Offline) != "null"
 }
 
 func (h *harness) pairBoth(serverURL string) {
@@ -298,6 +345,31 @@ func (h *harness) runCLI(home, stdin string, args ...string) commandResult {
 		}
 	}
 	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), exit: exit}
+}
+
+func (h *harness) assertHomeFilesExclude(home string, values ...string) {
+	h.t.Helper()
+	err := filepath.WalkDir(home, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, value := range values {
+			if strings.Contains(string(content), value) {
+				h.t.Fatalf("CLI home plaintext exclusion failed for %s", filepath.Base(path))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		h.t.Fatalf("CLI home plaintext scan failed")
+	}
 }
 
 func (h *harness) configureFake(kind string, scenarios ...fakeScenario) {
@@ -582,7 +654,7 @@ func requireExit(t *testing.T, result commandResult, want int, label string) {
 		if code == "" {
 			code = "none"
 		}
-		t.Fatalf("%s failed: exit=%d want=%d error_code=%s", label, result.exit, want, code)
+		t.Fatalf("%s failed: exit=%d want=%d error_code=%s stderr=%q", label, result.exit, want, code, result.stderr)
 	}
 }
 

@@ -85,6 +85,26 @@ git diff --check
 
 涉及 PostgreSQL、外部依赖、CLI 平台行为或部署时，补充真实数据库矩阵、黑盒、契约、Compose、供应链或原生平台证据。Runtime 即将对同一候选执行相同检查时，Builder 不连续重复运行。
 
+PostgreSQL 候选矩阵不得依赖一个覆盖全部 package 的 Go 进程和单一累计超时。在 Linux/HexHub 候选环境中使用固定镜像、单容器、严格串行的稳定分片：
+
+```bash
+# 完整矩阵；每个分片有独立超时和证据文件。
+make postgres-candidate
+
+# 中断或某个分片失败后，只复用同一 evidence key 下已经通过的分片。
+make postgres-candidate-resume
+
+# 只补一个失效分片。
+POSTGRES_SHARD=privacy-fault make postgres-candidate-shard
+
+# 修复 fixture 后先运行一个精确回归；该 regex 会进入 evidence key。
+POSTGRES_SHARD=memory \
+POSTGRES_TEST_RUN='^TestPostgreSQLExactBehavior$' \
+  make postgres-candidate-shard
+```
+
+正式 archive 不带 `.git` 元数据时必须设置稳定的 `CANDIDATE_ID`；源码 worktree 会自动计算 server 输入摘要。默认分片为 `db-core`、`learning-core`、`learning-offline`、`learning-fault`、`memory`、`privacy-core` 和 `privacy-fault`。证据 key 绑定 server 输入摘要、runner 摘要、Go 版本、固定 PostgreSQL digest 和分片名；任一输入变化后旧 marker 不会被复用。
+
 ## 检查选择矩阵
 
 | 改动 | L1/L2 | L3/L4 | L5 才运行 |
@@ -105,11 +125,15 @@ git diff --check
 
 ## PostgreSQL 纪律
 
+- 多个 package 或场景不得同时占用同一候选主机的 PostgreSQL 资源；即使使用不同容器，也必须严格串行，避免短 TTL、lease 和数据库时钟夹具因资源竞争产生假失败。
 - 多个 package 共用 `TEST_DATABASE_URL` 时使用 `-p=1`，禁止并发重建同一 schema。
+- 候选矩阵使用固定 digest 的单个 PostgreSQL 容器，并按稳定行为边界拆成独立 Go 进程；超时预算属于分片，不属于整个矩阵。
 - 新测试优先使用随机隔离 schema、模板数据库 clone 或独立临时数据库。
 - 没有 `TEST_DATABASE_URL` 时明确 skip，并在交接中记录数据库检查未运行。
 - migration 只追加，不修改 checksum-protected 历史文件；兼容变化使用新 migration、版本化 fingerprint 或 upcaster。
 - 全量故障注入只在稳定持久化批次或候选运行一次。
+- 一个分片超时但仍在数据库中推进时，先确认活动查询和失败栈，再只隔离该分片；不得从头重跑已经产生匹配 pass evidence 的前序分片。
+- 时间敏感 fixture 在独占串行环境仍失败才视为候选缺陷；并行资源竞争下的 TTL/lease 失败不能直接形成产品结论。
 
 ## 证据复用
 

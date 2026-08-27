@@ -785,6 +785,168 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/offline/packs:
+    post:
+      operationId: prepareOfflineLearningPack
+      summary: Sign and reserve the current Objective activity for offline use
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflinePrepareRequest" }
+      responses:
+        "200":
+          description: Idempotent replay of a previously published pack.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflinePrepareResponse" }
+        "201":
+          description: Offline Objective pack published.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflinePrepareResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/OfflineConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/offline/sync:
+    post:
+      operationId: syncOfflineLearningOperations
+      summary: Archive independently committed offline learning operations
+      x-required-scope: learning:write
+      x-max-body-bytes: 8388608
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflineSyncRequest" }
+      responses:
+        "200":
+          description: Request-level validation succeeded; inspect each item result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflineSyncResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/offline/operations/{operationID}:
+    get:
+      operationId: getOfflineLearningOperationStatus
+      summary: Read one device-owned immutable ingest receipt and current status
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - name: operationID
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/LearningUUID" }
+      responses:
+        "200":
+          description: Current operation status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflineOperationStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/offline/assessments:
+    get:
+      operationId: listOfflineLearningAssessments
+      summary: List device-owned provisional Open assessments
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [provisional], default: provisional }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageLimit"
+      responses:
+        "200":
+          description: Closed projection-bound page without prompt, answer, quote, or signature fields.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflineAssessmentPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/offline/assessments/{assessmentID}:
+    get:
+      operationId: getOfflineLearningAssessment
+      summary: Read one device-owned frozen offline assessment chain
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AssessmentID"
+      responses:
+        "200":
+          description: Frozen Activity, Attempt, Assessment, current Decision, and projection metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflineAssessmentView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/offline/assessments/{assessmentID}/decisions:
+    post:
+      operationId: decideOfflineLearningAssessment
+      summary: Append an independent confirm, override, or void decision
+      description: The decision is fenced by the offline attempt aggregate and disposition versions. It does not read or mutate current tutoring Session state.
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AssessmentID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionRequest" }
+      responses:
+        "200":
+          description: Stable replay of the original decision receipt.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionReceipt" }
+        "201":
+          description: Decision and resulting projection facts appended.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionReceipt" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/OfflineAssessmentDecisionConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/candidates:
     post:
       operationId: createMemoryCandidate
@@ -1183,6 +1345,61 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/privacy/erasures/{erasureID}/offline-device-purge:
+    get:
+      operationId: getOfflineDevicePurge
+      summary: Read the current offline purge challenge for the authenticated device
+      description: Returns only the current generation-bound purge task for the authenticated paired device. A device with no pending purge receives 204 and cannot inspect another device's child receipt.
+      x-required-scope: privacy:device
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PrivacyErasureID"
+      responses:
+        "200":
+          description: Current purge challenge.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflinePurgeTask" }
+        "204": { description: No pending purge exists for this device. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/PrivacyConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/privacy/erasures/{erasureID}/offline-device-purge/ack:
+    post:
+      operationId: acknowledgeOfflineDevicePurge
+      summary: Acknowledge local purge outcome for the authenticated device
+      description: The server validates the authenticated device, erasure, current challenge revision, and HMAC challenge before appending the child state revision. Failed acknowledgments carry a closed machine-readable failure code.
+      x-required-scope: privacy:device
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PrivacyErasureID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflinePurgeAckRequest" }
+      responses:
+        "200":
+          description: Current child acknowledgment after an exact or newly applied request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OfflinePurgeAckResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/PrivacyConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
     KnowledgeRevisionID:
@@ -1342,6 +1559,16 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
+    OfflineConflict:
+      description: Offline idempotency, session version, signer manifest, or prepare-state conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    OfflineAssessmentDecisionConflict:
+      description: Offline attempt version, assessment disposition, or decision idempotency conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/OfflineAssessmentDecisionConflict" }
     MemoryConflict:
       description: Idempotency, candidate revision, record generation, delivery state, or cursor conflict.
       content:
@@ -2212,6 +2439,17 @@ components:
         assessment_decision: { $ref: "#/components/schemas/AssessmentDecision" }
         free_question: { $ref: "#/components/schemas/FreeQuestion" }
         free_answer: { $ref: "#/components/schemas/FreeAnswer" }
+    EvidenceIneligibleReason:
+      type: string
+      enum:
+        [
+          duplicate_activity_submission,
+          stale_knowledge_head,
+          expired_activity,
+          stale_context,
+          stale_policy,
+          answer_revealed,
+        ]
     Attempt:
       type: object
       additionalProperties: false
@@ -2227,6 +2465,8 @@ components:
           help,
           actor_device_id,
           received_at,
+          evidence_eligibility,
+          archive_disposition,
         ]
       properties:
         attempt_id: { $ref: "#/components/schemas/LearningUUID" }
@@ -2240,6 +2480,12 @@ components:
         actor_device_id: { $ref: "#/components/schemas/LearningUUID" }
         occurred_at: { type: string, format: date-time }
         received_at: { type: string, format: date-time }
+        evidence_eligibility: { type: boolean }
+        evidence_ineligible_reason:
+          { $ref: "#/components/schemas/EvidenceIneligibleReason" }
+        archive_disposition:
+          { type: string, enum: [online, offline_succeeded] }
+        offline_submission_id: { $ref: "#/components/schemas/LearningUUID" }
     FrozenReference:
       type: object
       additionalProperties: false
@@ -2326,6 +2572,8 @@ components:
           event_id,
           event_type,
           aggregate_id,
+          source,
+          actor_device_id,
           received_at,
           occurred_at_trusted,
         ]
@@ -2334,6 +2582,23 @@ components:
         event_id: { type: string, format: uuid }
         event_type: { type: string }
         aggregate_id: { type: string, format: uuid }
+        parent_session_id: { type: string, format: uuid }
+        source: { type: string, enum: [online, offline] }
+        archive_disposition: { type: string, enum: [succeeded, rejected] }
+        evidence_disposition:
+          {
+            type: string,
+            enum:
+              [
+                accepted,
+                provisional,
+                pending_evaluation,
+                not_eligible,
+                not_applicable,
+                unchanged,
+              ],
+          }
+        actor_device_id: { type: string, format: uuid }
         received_at: { type: string, format: date-time }
         occurred_at: { type: string, format: date-time }
         occurred_at_trusted: { type: boolean }
@@ -2448,6 +2713,7 @@ components:
           outcome,
           help,
           received_at,
+          accepted_event_seq,
           acceptance_policy_version,
           reducer_policy_version,
           review_policy_version,
@@ -2469,6 +2735,7 @@ components:
         outcome: { type: string, enum: [pass, partial, fail] }
         help: { $ref: "#/components/schemas/HelpLevel" }
         received_at: { type: string, format: date-time }
+        accepted_event_seq: { type: integer, format: int64, minimum: 0 }
         acceptance_policy_version: { type: string }
         reducer_policy_version: { type: string }
         review_policy_version: { type: string }
@@ -2661,6 +2928,7 @@ components:
           attempts,
           attempt_categories,
           created_at,
+          evidence_eligibility,
         ]
       properties:
         assessment_id: { type: string, format: uuid }
@@ -2710,6 +2978,9 @@ components:
           maxItems: 2
           items: { type: string }
         created_at: { type: string, format: date-time }
+        evidence_eligibility: { type: boolean }
+        evidence_ineligible_reason:
+          { $ref: "#/components/schemas/EvidenceIneligibleReason" }
     AssessmentDecision:
       type: object
       additionalProperties: false
@@ -2870,6 +3141,746 @@ components:
           minItems: 1
           maxItems: 100
           items: { $ref: "#/components/schemas/KnowledgeReference" }
+    Uint63Decimal:
+      type: string
+      pattern: "^(0|[1-9][0-9]{0,18})$"
+      maxLength: 19
+    Base64URLSHA256:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{43}$"
+    Base64URLEd25519Signature:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{86}$"
+    OfflinePrepareRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          payload_schema_version,
+          expected_session_version,
+          trusted_manifest_revision,
+          trusted_manifest_digest,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { const: 1 }
+        expected_session_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        trusted_manifest_revision:
+          { $ref: "#/components/schemas/Uint63Decimal" }
+        trusted_manifest_digest:
+          { $ref: "#/components/schemas/Base64URLSHA256" }
+        requested_count: { type: integer, minimum: 1, maximum: 20 }
+        requested_ttl_seconds: { type: integer, minimum: 900, maximum: 604800 }
+    OfflineSignerKey:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          key_id,
+          public_key,
+          fingerprint,
+          not_before,
+          not_after,
+          status_effective_at,
+          status,
+        ]
+      properties:
+        key_id: { type: string, minLength: 1, maxLength: 128 }
+        public_key: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+        fingerprint: { $ref: "#/components/schemas/Base64URLSHA256" }
+        not_before: { type: string, format: date-time }
+        not_after: { type: string, format: date-time }
+        status_effective_at: { type: string, format: date-time }
+        status: { type: string, enum: [active, verify_only, retired] }
+    OfflineSignerManifestPayload:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          protocol_version,
+          manifest_revision,
+          issuer,
+          server_base_url,
+          previous_manifest_digest,
+          issued_at,
+          keys,
+        ]
+      properties:
+        protocol_version: { const: 1 }
+        manifest_revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        issuer: { const: edu-agent }
+        server_base_url: { type: string, format: uri }
+        previous_manifest_digest:
+          { $ref: "#/components/schemas/Base64URLSHA256" }
+        issued_at: { type: string, format: date-time }
+        keys:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/OfflineSignerKey" }
+    OfflineSignerManifestEnvelope:
+      type: object
+      additionalProperties: false
+      required: [payload, signer_key_id, signature]
+      properties:
+        payload: { $ref: "#/components/schemas/OfflineSignerManifestPayload" }
+        signer_key_id: { type: string, minLength: 1, maxLength: 128 }
+        signature: { $ref: "#/components/schemas/Base64URLEd25519Signature" }
+    OfflinePairingBootstrap:
+      type: object
+      additionalProperties: false
+      required:
+        [protocol_version, learner_generation, server_base_url, signer_manifest]
+      properties:
+        protocol_version: { const: 1 }
+        learner_generation: { $ref: "#/components/schemas/Uint63Decimal" }
+        server_base_url: { type: string, format: uri }
+        signer_manifest:
+          { $ref: "#/components/schemas/OfflineSignerManifestEnvelope" }
+    OfflineAuthorizationPayload:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          protocol_version,
+          format,
+          issuer,
+          signer_key_id,
+          pack_id,
+          device_id,
+          credential_epoch,
+          learner_generation,
+          server_origin_digest,
+          offline_activity_id,
+          activity_revision,
+          submission_id,
+          operation_id,
+          device_seq,
+          expected_version,
+          activity_payload_digest,
+          eligible_until,
+          archive_until,
+        ]
+      properties:
+        protocol_version: { const: 1 }
+        format: { const: offline-authorization-v1 }
+        issuer: { const: edu-agent }
+        signer_key_id: { type: string, minLength: 1, maxLength: 128 }
+        pack_id: { $ref: "#/components/schemas/LearningUUID" }
+        device_id: { $ref: "#/components/schemas/LearningUUID" }
+        credential_epoch: { $ref: "#/components/schemas/Uint63Decimal" }
+        learner_generation: { $ref: "#/components/schemas/Uint63Decimal" }
+        server_origin_digest: { $ref: "#/components/schemas/Base64URLSHA256" }
+        offline_activity_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        device_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        activity_payload_digest:
+          { $ref: "#/components/schemas/Base64URLSHA256" }
+        eligible_until: { type: string, format: date-time }
+        archive_until: { type: string, format: date-time }
+    OfflineAuthorizationEnvelope:
+      type: object
+      additionalProperties: false
+      required: [payload, signer_key_id, signature]
+      properties:
+        payload: { $ref: "#/components/schemas/OfflineAuthorizationPayload" }
+        signer_key_id: { type: string, minLength: 1, maxLength: 128 }
+        signature: { $ref: "#/components/schemas/Base64URLEd25519Signature" }
+    OfflinePackItem:
+      type: object
+      additionalProperties: false
+      required: [activity, activity_payload_digest, authorization]
+      properties:
+        activity: { $ref: "#/components/schemas/Activity" }
+        activity_payload_digest:
+          { $ref: "#/components/schemas/Base64URLSHA256" }
+        authorization:
+          { $ref: "#/components/schemas/OfflineAuthorizationEnvelope" }
+    OfflinePackPayload:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          protocol_version,
+          pack_id,
+          revision,
+          device_id,
+          learner_generation,
+          parent_session_id,
+          issued_at,
+          eligible_until,
+          archive_until,
+          truncated,
+          items,
+        ]
+      properties:
+        protocol_version: { const: 1 }
+        pack_id: { $ref: "#/components/schemas/LearningUUID" }
+        revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        device_id: { $ref: "#/components/schemas/LearningUUID" }
+        learner_generation: { $ref: "#/components/schemas/Uint63Decimal" }
+        parent_session_id: { $ref: "#/components/schemas/LearningUUID" }
+        issued_at: { type: string, format: date-time }
+        eligible_until: { type: string, format: date-time }
+        archive_until: { type: string, format: date-time }
+        truncated: { type: boolean }
+        truncated_reason:
+          {
+            type: string,
+            enum:
+              [
+                current_activity_only,
+                requested_count_limited,
+                activity_size_limited,
+                pack_size_limited,
+                model_partial,
+                route_exhausted,
+                review_exhausted,
+              ],
+          }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: "#/components/schemas/OfflinePackItem" }
+    OfflinePackEnvelope:
+      type: object
+      additionalProperties: false
+      required: [payload, signer_key_id, signature]
+      properties:
+        payload: { $ref: "#/components/schemas/OfflinePackPayload" }
+        signer_key_id: { type: string, minLength: 1, maxLength: 128 }
+        signature: { $ref: "#/components/schemas/Base64URLEd25519Signature" }
+    OfflinePrepareResponseSignaturePayload:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          protocol_version,
+          operation_id,
+          request_hash,
+          replayed,
+          pack_digest,
+          manifest_revision,
+          manifest_digest,
+          response_at,
+        ]
+      properties:
+        protocol_version: { const: 1 }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        request_hash: { $ref: "#/components/schemas/Base64URLSHA256" }
+        replayed: { type: boolean }
+        pack_digest: { $ref: "#/components/schemas/Base64URLSHA256" }
+        manifest_revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        manifest_digest: { $ref: "#/components/schemas/Base64URLSHA256" }
+        response_at: { type: string, format: date-time }
+    OfflinePrepareResponseSignatureEnvelope:
+      type: object
+      additionalProperties: false
+      required: [payload, signer_key_id, signature]
+      properties:
+        payload:
+          {
+            $ref: "#/components/schemas/OfflinePrepareResponseSignaturePayload",
+          }
+        signer_key_id: { type: string, minLength: 1, maxLength: 128 }
+        signature: { $ref: "#/components/schemas/Base64URLEd25519Signature" }
+    OfflinePrepareResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [operation_id, replayed, pack, manifest_chain, response_signature]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        replayed: { type: boolean }
+        pack: { $ref: "#/components/schemas/OfflinePackEnvelope" }
+        manifest_chain:
+          type: array
+          maxItems: 16
+          items: { $ref: "#/components/schemas/OfflineSignerManifestEnvelope" }
+        response_signature:
+          {
+            $ref: "#/components/schemas/OfflinePrepareResponseSignatureEnvelope",
+          }
+    OfflineObservation:
+      type: object
+      additionalProperties: false
+      required: [kind, occurred_at]
+      properties:
+        kind: { type: string, enum: [activity_presented, answer_recorded] }
+        occurred_at:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+    OfflineAttemptPayload:
+      type: object
+      additionalProperties: false
+      required: [answer, answer_sha256, help, observations]
+      properties:
+        answer: { type: string, minLength: 1, maxLength: 262144 }
+        answer_sha256: { $ref: "#/components/schemas/SHA256" }
+        help: { $ref: "#/components/schemas/HelpLevel" }
+        observations:
+          type: array
+          maxItems: 64
+          items: { $ref: "#/components/schemas/OfflineObservation" }
+    OfflineSkipPayload:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          {
+            type: string,
+            enum: [user_skipped, expired_locally, unreadable_local_item],
+          }
+    OfflineOperation:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          device_id,
+          device_seq,
+          submission_id,
+          payload_schema_version,
+          aggregate_type,
+          aggregate_id,
+          expected_version,
+          offline_activity_id,
+          activity_revision,
+          authorization,
+          signature,
+          occurred_at,
+          operation_type,
+          payload,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        device_id: { $ref: "#/components/schemas/LearningUUID" }
+        device_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { const: 1 }
+        aggregate_type: { const: offline_attempt }
+        aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        offline_activity_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        authorization:
+          { $ref: "#/components/schemas/OfflineAuthorizationPayload" }
+        signature: { $ref: "#/components/schemas/Base64URLEd25519Signature" }
+        occurred_at:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+        operation_type:
+          {
+            type: string,
+            enum: [offline_attempt_completed, offline_activity_skipped],
+          }
+        payload:
+          oneOf:
+            - { $ref: "#/components/schemas/OfflineAttemptPayload" }
+            - { $ref: "#/components/schemas/OfflineSkipPayload" }
+    OfflineSyncRequest:
+      type: object
+      additionalProperties: false
+      required: [sync_request_id, payload_schema_version, operations]
+      properties:
+        sync_request_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { const: 1 }
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: "#/components/schemas/OfflineOperation" }
+    OfflineIngestReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          receipt_id,
+          archived_at,
+          aggregate_version,
+          first_event_seq,
+          last_event_seq,
+          projection_as_of_event_seq,
+          archive_status,
+        ]
+      properties:
+        receipt_id: { $ref: "#/components/schemas/LearningUUID" }
+        archived_at: { type: string, format: date-time }
+        aggregate_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        first_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        last_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        projection_as_of_event_seq:
+          { $ref: "#/components/schemas/Uint63Decimal" }
+        archive_status:
+          { type: string, enum: [archived_succeeded, archived_rejected] }
+    OfflineStatusTicket:
+      type: object
+      additionalProperties: false
+      required: [ticket_id, operation_id, revision, updated_at]
+      properties:
+        ticket_id: { $ref: "#/components/schemas/LearningUUID" }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        updated_at: { type: string, format: date-time }
+    OfflineSyncItemResult:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          result_kind,
+          operation_id,
+          device_seq,
+          submission_id,
+          archive_status,
+          reason_codes,
+          replayed,
+        ]
+      properties:
+        result_kind:
+          {
+            type: string,
+            enum: [archived, retryable, blocked, conflict, not_processed],
+          }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        device_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        archive_status:
+          type: string
+          enum:
+            [
+              archived_succeeded,
+              archived_rejected,
+              not_archived_retryable,
+              not_archived_blocked,
+              idempotency_conflict,
+              device_sequence_conflict,
+              not_processed,
+            ]
+        assessment_status:
+          {
+            type: string,
+            enum:
+              [
+                not_requested,
+                queued,
+                processing,
+                pending_retry,
+                completed,
+                failed,
+              ],
+          }
+        evidence_status:
+          {
+            type: string,
+            enum:
+              [
+                accepted,
+                provisional,
+                pending_evaluation,
+                not_eligible,
+                not_applicable,
+                unchanged,
+              ],
+          }
+        reason_codes:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            enum:
+              [
+                duplicate_activity_submission,
+                stale_knowledge_head,
+                expired_activity,
+                stale_context,
+                stale_policy,
+                answer_revealed,
+                model_unavailable,
+                evaluation_invalid,
+                offline_activity_invalid,
+                content_redacted,
+                privacy_clear_in_progress,
+                device_revoked,
+                authorization_expired,
+                authorization_invalid,
+                version_conflict,
+                idempotency_conflict,
+                device_sequence_conflict,
+                not_processed,
+                internal_error,
+              ]
+        replayed: { type: boolean }
+        ingest_receipt: { $ref: "#/components/schemas/OfflineIngestReceipt" }
+        status_ticket: { $ref: "#/components/schemas/OfflineStatusTicket" }
+        assessment_id: { $ref: "#/components/schemas/LearningUUID" }
+        evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+    OfflineSyncResponse:
+      type: object
+      additionalProperties: false
+      required: [sync_request_id, results]
+      properties:
+        sync_request_id: { $ref: "#/components/schemas/LearningUUID" }
+        results:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: "#/components/schemas/OfflineSyncItemResult" }
+    OfflineOperationStatus:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          submission_id,
+          archive_status,
+          assessment_status,
+          evidence_status,
+          reason_codes,
+          ingest_receipt,
+          status_ticket,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        archive_status:
+          { type: string, enum: [archived_succeeded, archived_rejected] }
+        assessment_status:
+          {
+            type: string,
+            enum:
+              [
+                not_requested,
+                queued,
+                processing,
+                pending_retry,
+                completed,
+                failed,
+              ],
+          }
+        evidence_status:
+          {
+            type: string,
+            enum:
+              [
+                accepted,
+                provisional,
+                pending_evaluation,
+                not_eligible,
+                not_applicable,
+                unchanged,
+              ],
+          }
+        reason_codes:
+          type: array
+          maxItems: 16
+          items: { type: string }
+        ingest_receipt: { $ref: "#/components/schemas/OfflineIngestReceipt" }
+        status_ticket: { $ref: "#/components/schemas/OfflineStatusTicket" }
+        assessment_id: { $ref: "#/components/schemas/LearningUUID" }
+        evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+    OfflineAssessmentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          assessment_id,
+          attempt_id,
+          activity_id,
+          activity_revision,
+          submission_id,
+          aggregate_version,
+          disposition_version,
+          disposition,
+          confidence,
+          confirmable,
+          allowed_decisions,
+          attempt_received_at,
+          assessment_created_at,
+        ]
+      properties:
+        assessment_id: { $ref: "#/components/schemas/LearningUUID" }
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_id: { $ref: "#/components/schemas/LearningUUID" }
+        activity_revision: { $ref: "#/components/schemas/Uint63Decimal" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        aggregate_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        disposition: { type: string, enum: [provisional] }
+        confidence: { type: integer, minimum: 0, maximum: 1000 }
+        confirmable: { type: boolean }
+        allowed_decisions:
+          type: array
+          minItems: 2
+          maxItems: 3
+          uniqueItems: true
+          items: { type: string, enum: [confirm, override, void] }
+        attempt_received_at: { type: string, format: date-time }
+        assessment_created_at: { type: string, format: date-time }
+    OfflineAssessmentPage:
+      type: object
+      additionalProperties: false
+      required: [metadata, items]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        items:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/OfflineAssessmentSummary" }
+        next_cursor: { type: string, minLength: 1, maxLength: 4096 }
+    OfflineAssessmentView:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          metadata,
+          submission_id,
+          aggregate_version,
+          activity,
+          attempt,
+          assessment,
+          decision,
+          confirmable,
+          allowed_decisions,
+        ]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        aggregate_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        activity: { $ref: "#/components/schemas/Activity" }
+        attempt: { $ref: "#/components/schemas/Attempt" }
+        assessment: { $ref: "#/components/schemas/AssessmentArtifact" }
+        decision: { $ref: "#/components/schemas/AssessmentDecision" }
+        confirmable: { type: boolean }
+        allowed_decisions:
+          type: array
+          maxItems: 3
+          uniqueItems: true
+          items: { type: string, enum: [confirm, override, void] }
+    OfflineAssessmentDecisionRequest:
+      oneOf:
+        - $ref: "#/components/schemas/OfflineAssessmentConfirmRequest"
+        - $ref: "#/components/schemas/OfflineAssessmentOverrideRequest"
+        - $ref: "#/components/schemas/OfflineAssessmentVoidRequest"
+      discriminator:
+        propertyName: kind
+        mapping:
+          confirm: "#/components/schemas/OfflineAssessmentConfirmRequest"
+          override: "#/components/schemas/OfflineAssessmentOverrideRequest"
+          void: "#/components/schemas/OfflineAssessmentVoidRequest"
+    OfflineAssessmentConfirmRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [operation_id, payload_schema_version, attempt_id, expected_version, kind, expected_disposition_version]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { const: 1 }
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        kind: { const: confirm }
+        expected_disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+    OfflineAssessmentOverrideItem:
+      type: object
+      additionalProperties: false
+      required: [rubric_item_id, conclusion]
+      properties:
+        rubric_item_id: { type: string, minLength: 1, maxLength: 200 }
+        conclusion: { type: string, enum: [pass, partial, fail] }
+        misconception_candidate: { type: string, maxLength: 32000 }
+    OfflineAssessmentOverrideRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [operation_id, payload_schema_version, attempt_id, expected_version, kind, expected_disposition_version, reason, items]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { const: 1 }
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        kind: { const: override }
+        expected_disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        reason: { type: string, minLength: 1, maxLength: 4000 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { $ref: "#/components/schemas/OfflineAssessmentOverrideItem" }
+    OfflineAssessmentVoidRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [operation_id, payload_schema_version, attempt_id, expected_version, kind, expected_disposition_version, reason]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        payload_schema_version: { const: 1 }
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        kind: { const: void }
+        expected_disposition_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        reason: { type: string, minLength: 1, maxLength: 4000 }
+    OfflineAssessmentDecisionReceipt:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          operation_id,
+          assessment_id,
+          attempt_id,
+          submission_id,
+          replayed,
+          aggregate_version,
+          first_event_seq,
+          last_event_seq,
+          projection_as_of_event_seq,
+          decision,
+        ]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        assessment_id: { $ref: "#/components/schemas/LearningUUID" }
+        attempt_id: { $ref: "#/components/schemas/LearningUUID" }
+        submission_id: { $ref: "#/components/schemas/LearningUUID" }
+        replayed: { type: boolean }
+        aggregate_version: { $ref: "#/components/schemas/Uint63Decimal" }
+        first_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        last_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        projection_as_of_event_seq: { $ref: "#/components/schemas/Uint63Decimal" }
+        decision: { $ref: "#/components/schemas/AssessmentDecision" }
+    OfflineAssessmentDecisionConflict:
+      oneOf:
+        - $ref: "#/components/schemas/OfflineAttemptVersionConflictEnvelope"
+        - $ref: "#/components/schemas/AssessmentDispositionConflictEnvelope"
+        - $ref: "#/components/schemas/LearningIdempotencyConflictEnvelope"
+    OfflineAttemptVersionConflictEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, conflict]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: version_conflict }
+            message: { type: string }
+            request_id: { type: string }
+        conflict:
+          type: object
+          additionalProperties: false
+          required: [aggregate_type, aggregate_id, expected_version, current_version, as_of_event_seq]
+          properties:
+            aggregate_type: { const: offline_attempt }
+            aggregate_id: { $ref: "#/components/schemas/LearningUUID" }
+            expected_version: { type: integer, minimum: 0 }
+            current_version: { type: integer, minimum: 0 }
+            as_of_event_seq: { type: integer, minimum: 0 }
     ProjectionStatus:
       type: object
       additionalProperties: false
@@ -3137,6 +4148,8 @@ components:
           type: string
           writeOnly: true
           description: At least 256 bits of random entropy; returned once and never queryable later.
+        offline:
+          $ref: "#/components/schemas/OfflinePairingBootstrap"
     Device:
       type: object
       additionalProperties: false
@@ -4418,6 +5431,7 @@ components:
               inbox_outbox,
               projection_generations,
               memory_candidate_delivery,
+              offline_device_cache,
               process_cache,
               nocturne_paths,
               nocturne_orphan_history,
@@ -4445,6 +5459,54 @@ components:
         started_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
         evidence_digest: { $ref: "#/components/schemas/MemorySHA256" }
+    OfflinePurgeTask:
+      type: object
+      additionalProperties: false
+      required:
+        [erasure_id, device_id, old_generation, current_generation, challenge_revision, challenge, issued_at, status]
+      properties:
+        erasure_id: { $ref: "#/components/schemas/MemoryUUID" }
+        device_id: { $ref: "#/components/schemas/MemoryUUID" }
+        old_generation: { type: integer, minimum: 1 }
+        current_generation: { type: integer, minimum: 2 }
+        challenge_revision: { type: integer, minimum: 1 }
+        challenge: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+        issued_at: { type: string, format: date-time }
+        status: { type: string, enum: [pending] }
+    OfflinePurgeAckRequest:
+      type: object
+      additionalProperties: false
+      required: [challenge_revision, challenge, outcome]
+      properties:
+        challenge_revision: { type: integer, minimum: 1 }
+        challenge: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+        outcome: { type: string, enum: [succeeded, failed] }
+        managed_objects_absent: { type: boolean }
+        failure_code: { type: string, enum: [profile_busy, key_delete_failed, path_delete_failed, verification_failed] }
+      oneOf:
+        - required: [managed_objects_absent]
+          properties:
+            outcome: { type: string, enum: [succeeded] }
+            managed_objects_absent: { type: boolean, enum: [true] }
+          not: { required: [failure_code] }
+        - required: [failure_code]
+          properties:
+            outcome: { type: string, enum: [failed] }
+          not: { required: [managed_objects_absent] }
+    OfflinePurgeAckResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [erasure_id, device_id, source_generation, current_generation, challenge_revision, status, updated_at, stable_reason]
+      properties:
+        erasure_id: { $ref: "#/components/schemas/MemoryUUID" }
+        device_id: { $ref: "#/components/schemas/MemoryUUID" }
+        source_generation: { type: integer, minimum: 1 }
+        current_generation: { type: integer, minimum: 2 }
+        challenge_revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [succeeded, failed] }
+        updated_at: { type: string, format: date-time }
+        stable_reason: { type: string, minLength: 1, maxLength: 1000 }
     PrivacyErasureReceipt:
       type: object
       additionalProperties: false

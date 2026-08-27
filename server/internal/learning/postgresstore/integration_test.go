@@ -792,7 +792,7 @@ func assertProjectionKnowledgeAndStats(t *testing.T, store *postgresstore.Store,
 	if storedKnowledgeRevision != learningKnowledgeRevision || view.Metadata.KnowledgeRevisionID != learningKnowledgeRevision || current.Metadata.KnowledgeRevisionID != learningKnowledgeRevision {
 		t.Fatalf("knowledge revision round-trip stored=%q session=%q current=%q", storedKnowledgeRevision, view.Metadata.KnowledgeRevisionID, current.Metadata.KnowledgeRevisionID)
 	}
-	if !stat.Estimated || stat.AlgorithmVersion != learning.ActiveTimePolicyVersion || stat.SampleCount != 1 || !reflect.DeepEqual(view.Estimate, stat) || !reflect.DeepEqual(current.Estimate, stat) {
+	if !stat.Estimated || stat.AlgorithmVersion != learning.ActiveTimePolicyVersion || stat.SampleCount != 2 || !reflect.DeepEqual(view.Estimate, stat) || !reflect.DeepEqual(current.Estimate, stat) {
 		t.Fatalf("generation stats stored=%+v session=%+v current=%+v", stat, view.Estimate, current.Estimate)
 	}
 }

@@ -436,17 +436,21 @@ type SessionWorkItem struct {
 }
 
 type Attempt struct {
-	AttemptID        string     `json:"attempt_id"`
-	SessionID        string     `json:"session_id"`
-	ActivityID       string     `json:"activity_id"`
-	ActivityRevision int64      `json:"activity_revision"`
-	AnswerPayloadID  string     `json:"answer_payload_id"`
-	Answer           string     `json:"answer"`
-	AnswerSHA256     string     `json:"answer_sha256"`
-	Help             string     `json:"help"`
-	ActorDeviceID    string     `json:"actor_device_id"`
-	OccurredAt       *time.Time `json:"occurred_at,omitempty"`
-	ReceivedAt       time.Time  `json:"received_at"`
+	AttemptID                string     `json:"attempt_id"`
+	SessionID                string     `json:"session_id"`
+	ActivityID               string     `json:"activity_id"`
+	ActivityRevision         int64      `json:"activity_revision"`
+	AnswerPayloadID          string     `json:"answer_payload_id"`
+	Answer                   string     `json:"answer"`
+	AnswerSHA256             string     `json:"answer_sha256"`
+	Help                     string     `json:"help"`
+	ActorDeviceID            string     `json:"actor_device_id"`
+	OccurredAt               *time.Time `json:"occurred_at,omitempty"`
+	ReceivedAt               time.Time  `json:"received_at"`
+	EvidenceEligibility      bool       `json:"evidence_eligibility"`
+	EvidenceIneligibleReason string     `json:"evidence_ineligible_reason,omitempty"`
+	ArchiveDisposition       string     `json:"archive_disposition"`
+	OfflineSubmissionID      string     `json:"offline_submission_id,omitempty"`
 }
 
 type FrozenReference struct {
@@ -561,6 +565,7 @@ type AcceptedEvidence struct {
 	Outcome                 string                   `json:"outcome"`
 	Help                    string                   `json:"help"`
 	ReceivedAt              time.Time                `json:"received_at"`
+	AcceptedEventSeq        int64                    `json:"accepted_event_seq"`
 	AcceptancePolicyVersion string                   `json:"acceptance_policy_version"`
 	ReducerPolicyVersion    string                   `json:"reducer_policy_version"`
 	ReviewPolicyVersion     string                   `json:"review_policy_version"`
@@ -659,22 +664,24 @@ type AssessmentItem struct {
 }
 
 type AssessmentArtifact struct {
-	AssessmentID      string           `json:"assessment_id"`
-	SessionID         string           `json:"session_id"`
-	AttemptID         string           `json:"attempt_id"`
-	ActivityID        string           `json:"activity_id"`
-	ActivityRevision  int64            `json:"activity_revision"`
-	Items             []AssessmentItem `json:"items"`
-	RubricComplete    bool             `json:"rubric_complete"`
-	Confidence        int              `json:"confidence"`
-	RiskFlags         []string         `json:"risk_flags"`
-	ModelID           string           `json:"model_id"`
-	ModelParameters   map[string]any   `json:"model_parameters"`
-	PromptRevision    string           `json:"prompt_revision"`
-	ProposalInputHash string           `json:"proposal_input_hash"`
-	Attempts          int              `json:"attempts"`
-	AttemptCategories []string         `json:"attempt_categories"`
-	CreatedAt         time.Time        `json:"created_at"`
+	AssessmentID             string           `json:"assessment_id"`
+	SessionID                string           `json:"session_id"`
+	AttemptID                string           `json:"attempt_id"`
+	ActivityID               string           `json:"activity_id"`
+	ActivityRevision         int64            `json:"activity_revision"`
+	Items                    []AssessmentItem `json:"items"`
+	RubricComplete           bool             `json:"rubric_complete"`
+	Confidence               int              `json:"confidence"`
+	RiskFlags                []string         `json:"risk_flags"`
+	ModelID                  string           `json:"model_id"`
+	ModelParameters          map[string]any   `json:"model_parameters"`
+	PromptRevision           string           `json:"prompt_revision"`
+	ProposalInputHash        string           `json:"proposal_input_hash"`
+	Attempts                 int              `json:"attempts"`
+	AttemptCategories        []string         `json:"attempt_categories"`
+	CreatedAt                time.Time        `json:"created_at"`
+	EvidenceEligibility      bool             `json:"evidence_eligibility"`
+	EvidenceIneligibleReason string           `json:"evidence_ineligible_reason,omitempty"`
 }
 
 type AssessmentDecision struct {

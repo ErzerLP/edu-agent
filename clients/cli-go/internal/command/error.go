@@ -138,7 +138,7 @@ func mapAPIError(err error) *Error {
 	}
 	var protocolErr *api.ProtocolError
 	if errors.As(err, &protocolErr) {
-		return commandError("protocol_error", "the server response did not match the public API contract", "check the server version and endpoint", ExitInternal)
+		return commandError("protocol_error", "the server response did not match the public API contract ("+protocolErr.Category+")", "check the server version and endpoint", ExitInternal)
 	}
 	var transportErr *api.TransportError
 	if errors.As(err, &transportErr) {

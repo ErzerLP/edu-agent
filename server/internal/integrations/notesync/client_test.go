@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const testToken = "0123456789abcdef0123456789abcdef"
+const testToken = "0123456789abcdef0123456789abcdef" //gitleaks:allow
 
 func TestClientUsesPinnedRoutesBearerAndClientIdentity(t *testing.T) {
 	requests := 0

@@ -2,7 +2,6 @@ package privacy
 
 import (
 	"context"
-	"sort"
 	"sync"
 )
 
@@ -41,20 +40,33 @@ type activePermit struct {
 	cancel context.CancelCauseFunc
 }
 
+// ResponseCommitGate holds persistent owner read gates while a complete
+// buffered response is emitted.
+type ResponseCommitGate interface {
+	WithReadGates(context.Context, []OwnerKind, func() error) error
+}
+
+type ReadPermitManagerOption func(*ReadPermitManager)
+
+func WithResponseCommitGate(gate ResponseCommitGate) ReadPermitManagerOption {
+	return func(manager *ReadPermitManager) { manager.responseGate = gate }
+}
+
 // ReadPermitManager cancels and drains reads whose response body is currently
 // being assembled in this process. Persistent owner gates remain authoritative
 // across process restarts.
 type ReadPermitManager struct {
-	mu         sync.Mutex
-	nextID     uint64
-	closed     map[OwnerKind]bool
-	generation map[OwnerKind]int64
-	active     map[uint64]activePermit
-	writeGates map[OwnerKind]chan struct{}
-	changed    chan struct{}
+	mu           sync.Mutex
+	nextID       uint64
+	closed       map[OwnerKind]bool
+	generation   map[OwnerKind]int64
+	active       map[uint64]activePermit
+	writeGates   map[OwnerKind]chan struct{}
+	changed      chan struct{}
+	responseGate ResponseCommitGate
 }
 
-func NewReadPermitManager() *ReadPermitManager {
+func NewReadPermitManager(options ...ReadPermitManagerOption) *ReadPermitManager {
 	generations := make(map[OwnerKind]int64, len(AllOwners))
 	writeGates := make(map[OwnerKind]chan struct{}, len(AllOwners))
 	for _, owner := range AllOwners {
@@ -63,11 +75,17 @@ func NewReadPermitManager() *ReadPermitManager {
 		gate <- struct{}{}
 		writeGates[owner] = gate
 	}
-	return &ReadPermitManager{
+	manager := &ReadPermitManager{
 		closed: make(map[OwnerKind]bool), generation: generations,
 		active: make(map[uint64]activePermit), writeGates: writeGates,
 		changed: make(chan struct{}),
 	}
+	for _, option := range options {
+		if option != nil {
+			option(manager)
+		}
+	}
+	return manager
 }
 
 var DefaultReadPermits = NewReadPermitManager()
@@ -203,37 +221,49 @@ func (m *ReadPermitManager) commitResponse(id uint64, permitContext context.Cont
 	owners := cloneOwners(permit.owners)
 	m.mu.Unlock()
 
-	unlockWrites, err := m.lockWriteGates(permitContext, owners)
-	if err != nil {
+	commit := func() error {
+		unlockWrites, err := m.lockWriteGates(permitContext, owners)
+		if err != nil {
+			if cause := context.Cause(permitContext); cause != nil {
+				return cause
+			}
+			return err
+		}
+		defer unlockWrites()
+
+		m.mu.Lock()
+		permit, ok = m.active[id]
+		if !ok {
+			m.mu.Unlock()
+			if cause := context.Cause(permitContext); cause != nil {
+				return cause
+			}
+			return &Error{Code: CodeContentRedacted, Reason: "read_permit_inactive"}
+		}
+		if cause := context.Cause(permitContext); cause != nil {
+			m.mu.Unlock()
+			return cause
+		}
+		for owner := range permit.owners {
+			if m.closed[owner] {
+				m.mu.Unlock()
+				return &Error{Code: CodeContentRedacted, Reason: string(owner) + "_read_gate_closed"}
+			}
+		}
+		m.mu.Unlock()
+
+		write()
+		return nil
+	}
+	if m.responseGate == nil {
+		return commit()
+	}
+	if err := m.responseGate.WithReadGates(permitContext, orderedOwnerKinds(owners), commit); err != nil {
 		if cause := context.Cause(permitContext); cause != nil {
 			return cause
 		}
 		return err
 	}
-	defer unlockWrites()
-
-	m.mu.Lock()
-	permit, ok = m.active[id]
-	if !ok {
-		m.mu.Unlock()
-		if cause := context.Cause(permitContext); cause != nil {
-			return cause
-		}
-		return &Error{Code: CodeContentRedacted, Reason: "read_permit_inactive"}
-	}
-	if cause := context.Cause(permitContext); cause != nil {
-		m.mu.Unlock()
-		return cause
-	}
-	for owner := range permit.owners {
-		if m.closed[owner] {
-			m.mu.Unlock()
-			return &Error{Code: CodeContentRedacted, Reason: string(owner) + "_read_gate_closed"}
-		}
-	}
-	m.mu.Unlock()
-
-	write()
 	return nil
 }
 
@@ -241,11 +271,7 @@ func (m *ReadPermitManager) lockWriteGates(ctx context.Context, owners map[Owner
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ordered := make([]OwnerKind, 0, len(owners))
-	for owner := range owners {
-		ordered = append(ordered, owner)
-	}
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	ordered := orderedOwnerKinds(owners)
 	acquired := make([]chan struct{}, 0, len(ordered))
 	for _, owner := range ordered {
 		select {
@@ -263,6 +289,16 @@ func (m *ReadPermitManager) lockWriteGates(ctx context.Context, owners map[Owner
 			acquired[index] <- struct{}{}
 		}
 	}, nil
+}
+
+func orderedOwnerKinds(owners map[OwnerKind]struct{}) []OwnerKind {
+	ordered := make([]OwnerKind, 0, len(owners))
+	for _, owner := range AllOwners {
+		if _, ok := owners[owner]; ok {
+			ordered = append(ordered, owner)
+		}
+	}
+	return ordered
 }
 
 func cloneOwners(owners map[OwnerKind]struct{}) map[OwnerKind]struct{} {

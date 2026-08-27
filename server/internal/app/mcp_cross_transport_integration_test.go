@@ -16,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -58,6 +59,66 @@ func (t crossTransportBearer) RoundTrip(request *http.Request) (*http.Response, 
 	clone.Header = request.Header.Clone()
 	clone.Header.Set("Authorization", "Bearer "+t.token)
 	return http.DefaultTransport.RoundTrip(clone)
+}
+
+func TestPostgreSQLComposeMemoryBridgeBindsPersistentResponseCommitGate(t *testing.T) {
+	pool := appIntegrationPool(t)
+	stores := newApplicationStores(pool)
+	bridge, err := composeMemoryBridge(pool, stores, bridgeTestConfig(t, false), memoryBridgeDependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	permit, err := bridge.readPermits.Acquire(ctx, privacy.OwnerKnowledge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		permit.Release()
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	const closeDeviceID = "99000000-0000-4000-8000-000000000010"
+	const closeErasureID = "99000000-0000-4000-8000-000000000011"
+	const closeOperationID = "99000000-0000-4000-8000-000000000012"
+	if _, err := tx.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'response gate close',clock_timestamp())`, closeDeviceID); err != nil {
+		permit.Release()
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO privacy_erasures(
+			id,device_id,operation_id,request_hash,reason_code,actor_device_id,requested_at,
+			target_learner_generation,managed_backup_scheduled_unrecoverable_after
+		) VALUES($1,$2,$3,decode(repeat('ab',32),'hex'),'learner_request',$2,clock_timestamp(),2,clock_timestamp()+interval '1 hour')`, closeErasureID, closeDeviceID, closeOperationID); err != nil {
+		permit.Release()
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('privacy-owner:'||'knowledge',0))`); err != nil {
+		permit.Release()
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE privacy_owner_generation_gates
+		SET learner_generation=learner_generation+1,
+			read_open=FALSE,
+			write_open=FALSE,
+			active_erasure_id=$1,
+			updated_at=clock_timestamp()
+		WHERE owner_kind='knowledge'`, closeErasureID); err != nil {
+		permit.Release()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		permit.Release()
+		t.Fatal(err)
+	}
+	wrote := false
+	err = permit.CommitResponse(func() { wrote = true })
+	permit.Release()
+	if privacy.ErrorCode(err) != privacy.CodeContentRedacted || wrote {
+		t.Fatalf("composed response gate did not honor remote close: err=%v wrote=%v", err, wrote)
+	}
 }
 
 func TestPostgreSQLHTTPAndMCPShareKnowledgeLearningAndTutoringState(t *testing.T) {

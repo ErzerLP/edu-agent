@@ -28,7 +28,7 @@ func TestNotesyncCompositionBuildsPublicationPathOnlyWhenEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{Notesync: config.NotesyncConfig{
-		Enabled: true, BaseURL: baseURL, APIToken: "0123456789abcdef0123456789abcdef",
+		Enabled: true, BaseURL: baseURL, APIToken: "0123456789abcdef0123456789abcdef", //gitleaks:allow
 		Vault: "Knowledge", PathPrefix: "edu-agent", HTTPTimeout: time.Second,
 		WorkerInterval: 3 * time.Second, WorkerBatch: 20, ScanPageSize: 7, ScanMaxPages: 2,
 	}}

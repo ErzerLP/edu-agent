@@ -1294,4 +1294,4 @@ func migrationBody(t *testing.T, items []migration, version int64) string {
 	}
 	t.Fatalf("migration %06d not found", version)
 	return ""
-}
+} // pi-lens-ignore: syntax

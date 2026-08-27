@@ -158,10 +158,10 @@ Create order:
 
 ```text
 knowledge privacy gate
+learning privacy gate
 create operation advisory lock
 idempotency replay check
 knowledge catalog FOR UPDATE
-learning privacy gate
 SHARE lock learning_evidence, invalidations, and approved carryover links when affected IDs exist
 current accepted-evidence fingerprint check
 optional outbox generation and affected NoteSync document locks
@@ -173,11 +173,11 @@ Decision order:
 
 ```text
 knowledge privacy gate
+learning privacy gate
 decision operation advisory lock
 idempotency replay check
 proposal FOR UPDATE
 knowledge catalog FOR UPDATE
-learning privacy gate
 SHARE lock learning_evidence, invalidations, and approved carryover links when affected IDs exist
 current accepted-evidence fingerprint check
 stale decision, or optional outbox locks and exact prepared apply
@@ -215,7 +215,7 @@ Knowledge content scrub removes or overwrites:
 
 Open proposals become redacted. Applied/rejected/stale outcomes, stable IDs, timestamps, origin relation, and minimal terminal audit metadata remain. Reads of a redacted proposal return no candidate, source, diff, evidence IDs, reason, or basis hash. `VerifyRedacted` includes all maintenance payloads.
 
-Knowledge and learning generation gates fail closed before proposal reads, creation, decision, or evidence impact reads. PostgreSQL proposal create, replay, list, get, and decision transactions acquire persistent owner gates in the common `knowledge -> learning -> operation -> catalog -> learning tables` order, so a close in another process cannot race planning, persistence, or readback. Ordinary knowledge-only reads retain their knowledge-only gate. Proposal and carryover HTTP routes acquire every owner represented in the response, buffer the complete response, and call `ReadPermit.CommitResponse` before writing the first byte. If privacy close wins, the private buffer is discarded and the route emits only the generic `503 content_redacted` envelope. MCP proposal and carryover descriptors use the same owner set and commit gate before returning JSON-RPC content.
+Knowledge and learning generation gates fail closed before proposal reads, creation, decision, or evidence impact reads. PostgreSQL proposal create, replay, list, get, and decision transactions acquire persistent owner gates in the common `knowledge -> learning -> operation -> catalog -> learning tables` order, so a close in another process cannot race planning, persistence, or readback. Ordinary knowledge-only reads retain their knowledge-only gate. Final HTTP and MCP response commit first acquires persistent owner gates in the canonical `identity -> knowledge -> learning -> tutoring -> memory -> outbox` order, then the process-local response-write gates in that same order, and holds both through the complete buffered flush. This matches barrier commit's persistent-exclusive-gate-before-local-drain sequence and avoids cross-process leakage or same-process deadlock. If privacy close wins, the private buffer is discarded and the route emits only the generic `503 content_redacted` envelope.
 
 ## Evidence carryover
 

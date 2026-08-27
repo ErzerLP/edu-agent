@@ -273,11 +273,11 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/{revisionID}/export", api.knowledgeExport)
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/v1/knowledge/retrievals", api.knowledgeRetrieval)
 			protected.With(api.requireScope("knowledge:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals", api.knowledgeMaintenanceCreate)
-			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/rollbacks", api.knowledgeMaintenanceRollback)
+			protected.With(api.requireScope("knowledge:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/rollbacks", api.knowledgeMaintenanceRollback)
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/maintenance/proposals", api.knowledgeMaintenanceList)
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/maintenance/proposals/{proposalID}", api.knowledgeMaintenanceGet)
-			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals/{proposalID}/approve", api.knowledgeMaintenanceApprove)
-			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals/{proposalID}/reject", api.knowledgeMaintenanceReject)
+			protected.With(api.requireScope("knowledge:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals/{proposalID}/approve", api.knowledgeMaintenanceApprove)
+			protected.With(api.requireScope("knowledge:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals/{proposalID}/reject", api.knowledgeMaintenanceReject)
 		}
 		if api.learning != nil {
 			learningOwners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}

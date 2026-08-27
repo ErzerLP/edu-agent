@@ -74,6 +74,12 @@ func TestEvidenceCarryoverHTTPScopesStrictInputAndCredentialActor(t *testing.T) 
 		t.Fatalf("unauthorized decision status=%d calls=%d body=%s", response.Code, service.calls, response.Body.String())
 	}
 
+	handler = newLearningTestAPI(t, []string{"knowledge:approve"}, service, &logs)
+	response = learningRequest(t, handler, http.MethodPost, "/v1/learning/evidence-carryovers/"+carryoverProposalID+"/approve", decisionBody)
+	if response.Code != http.StatusForbidden || service.calls != 0 {
+		t.Fatalf("knowledge approval crossed into carryover decision status=%d calls=%d body=%s", response.Code, service.calls, response.Body.String())
+	}
+
 	handler = newLearningTestAPI(t, []string{"learning:approve"}, service, &logs)
 	response = learningRequest(t, handler, http.MethodPost, "/v1/learning/evidence-carryovers/"+carryoverProposalID+"/approve", decisionBody)
 	if response.Code != http.StatusOK || service.carryoverActor != carryoverDeviceID || service.carryoverDecision.ProposalID != carryoverProposalID || service.carryoverDecision.Decision != "approve" {

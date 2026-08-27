@@ -15,7 +15,7 @@ import (
 )
 
 var userPairingScopes = []string{
-	"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write",
+	"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write", "knowledge:approve",
 	"learning:read", "learning:write", "learning:approve", "memory:read", "memory:write",
 	"privacy:read", "privacy:device",
 }
@@ -39,12 +39,14 @@ func pairingProfileScopes(profile PairingProfile) ([]string, error) {
 	switch profile {
 	case PairingProfileUser:
 		scopes = append([]string(nil), userPairingScopes...)
-		if !hasScope(scopes, "learning:approve") {
-			return nil, fmt.Errorf("user pairing profile must include learning:approve")
+		for _, required := range []string{"knowledge:approve", "learning:approve"} {
+			if !hasScope(scopes, required) {
+				return nil, fmt.Errorf("user pairing profile must include %s", required)
+			}
 		}
 	case PairingProfileAgent:
 		scopes = append([]string(nil), agentPairingScopes...)
-		for _, forbidden := range []string{"learning:approve", "devices:manage", "privacy:device"} {
+		for _, forbidden := range []string{"knowledge:approve", "learning:approve", "devices:manage", "privacy:device"} {
 			if hasScope(scopes, forbidden) {
 				return nil, fmt.Errorf("agent pairing profile contains forbidden scope %q", forbidden)
 			}

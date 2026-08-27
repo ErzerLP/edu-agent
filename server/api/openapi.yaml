@@ -277,7 +277,7 @@ paths:
     post:
       operationId: createKnowledgeMaintenanceRollback
       summary: Submit a destructive proposal restoring an unredacted ancestor snapshot
-      x-required-scope: learning:approve
+      x-required-scope: knowledge:approve
       x-max-body-bytes: 16777216
       security: [{ deviceBearer: [] }]
       requestBody:
@@ -322,7 +322,7 @@ paths:
     post:
       operationId: approveKnowledgeMaintenanceProposal
       summary: Approve and atomically apply the exact frozen proposal when it is still current
-      x-required-scope: learning:approve
+      x-required-scope: knowledge:approve
       x-max-body-bytes: 16777216
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
@@ -346,7 +346,7 @@ paths:
     post:
       operationId: rejectKnowledgeMaintenanceProposal
       summary: Reject one open knowledge maintenance proposal atomically
-      x-required-scope: learning:approve
+      x-required-scope: knowledge:approve
       x-max-body-bytes: 16777216
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]

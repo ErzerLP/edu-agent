@@ -25,10 +25,10 @@ func TestKnowledgeMaintenanceOpenAPIContracts(t *testing.T) {
 	}{
 		{"/v1/knowledge/maintenance/proposals", "post", "knowledge:write", []string{"200", "201", "400", "401", "403", "409", "413", "429", "500", "503"}},
 		{"/v1/knowledge/maintenance/proposals", "get", "knowledge:read", []string{"200", "400", "401", "403", "409", "429", "500", "503"}},
-		{"/v1/knowledge/maintenance/rollbacks", "post", "learning:approve", []string{"200", "201", "400", "401", "403", "409", "413", "429", "500", "503"}},
+		{"/v1/knowledge/maintenance/rollbacks", "post", "knowledge:approve", []string{"200", "201", "400", "401", "403", "409", "413", "429", "500", "503"}},
 		{"/v1/knowledge/maintenance/proposals/{proposalID}", "get", "knowledge:read", []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
-		{"/v1/knowledge/maintenance/proposals/{proposalID}/approve", "post", "learning:approve", []string{"200", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
-		{"/v1/knowledge/maintenance/proposals/{proposalID}/reject", "post", "learning:approve", []string{"200", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
+		{"/v1/knowledge/maintenance/proposals/{proposalID}/approve", "post", "knowledge:approve", []string{"200", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
+		{"/v1/knowledge/maintenance/proposals/{proposalID}/reject", "post", "knowledge:approve", []string{"200", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
 	}
 	for _, contract := range contracts {
 		operation := document.Paths.Find(contract.path).Get

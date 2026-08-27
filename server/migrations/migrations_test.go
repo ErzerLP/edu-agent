@@ -42,7 +42,9 @@ func TestKnowledgeMaintenanceMigrationDeclaresPairingScopeProfiles(t *testing.T)
 	body := migrationBody(t, items, 11)
 	for _, required := range []string{
 		"ALTER TABLE pairing_codes ADD COLUMN scopes TEXT[]",
+		"'knowledge:approve'",
 		"'learning:approve'",
+		"UPDATE device_tokens",
 		"ALTER TABLE pairing_codes ALTER COLUMN scopes SET NOT NULL",
 		"cardinality(scopes)>0",
 		"array_position(scopes,NULL) IS NULL",
@@ -62,6 +64,13 @@ func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
 		VALUES('legacy-user-code',decode(repeat('11',32),'hex'),now(),now()+interval '10 minutes',5)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO devices(id,display_name,created_at)
+		VALUES('11111111-1111-4111-8111-111111111111','legacy-user',now());
+		INSERT INTO device_tokens(id,device_id,token_hash,scopes,created_at)
+		VALUES('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode(repeat('22',32),'hex'),ARRAY['knowledge:read','knowledge:write','learning:approve'],now())`); err != nil {
+		t.Fatal(err)
+	}
 	if err := Run(ctx, pool); err != nil {
 		t.Fatalf("upgrade pairing code scopes through 000011: %v", err)
 	}
@@ -70,10 +79,16 @@ func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT scopes FROM pairing_codes WHERE lookup_id='legacy-user-code'`).Scan(&scopes); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"devices:manage", "knowledge:read", "knowledge:write", "learning:read", "learning:write", "learning:approve", "privacy:device"} {
+	for _, required := range []string{"devices:manage", "knowledge:read", "knowledge:write", "knowledge:approve", "learning:read", "learning:write", "learning:approve", "privacy:device"} {
 		if !containsScope(scopes, required) {
 			t.Fatalf("upgraded user pairing code missing %s: %v", required, scopes)
 		}
+	}
+	if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id='22222222-2222-4222-8222-222222222222'`).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	if !containsScope(scopes, "knowledge:approve") || !containsScope(scopes, "learning:approve") {
+		t.Fatalf("legacy user token approval scopes were not preserved and separated: %v", scopes)
 	}
 
 	invalidScopes := []struct {

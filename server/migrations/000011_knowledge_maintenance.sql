@@ -1,9 +1,9 @@
 -- Pairing profiles are frozen into each one-time code so exchange cannot choose or
 -- upgrade the scopes issued to the resulting token. Existing codes retain the
--- historical user behavior and gain explicit learning approval authority.
+-- historical user behavior and gain distinct knowledge and learning approval authority.
 ALTER TABLE pairing_codes ADD COLUMN scopes TEXT[];
 UPDATE pairing_codes SET scopes=ARRAY[
-    'devices:read','devices:manage','model:probe','knowledge:read','knowledge:write',
+    'devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','knowledge:approve',
     'learning:read','learning:write','learning:approve','memory:read','memory:write',
     'privacy:read','privacy:device'
 ];
@@ -13,6 +13,9 @@ ALTER TABLE pairing_codes ADD CONSTRAINT pairing_codes_scopes_nonempty CHECK (
     AND array_position(scopes,NULL) IS NULL
     AND array_position(scopes,'') IS NULL
 );
+UPDATE device_tokens
+SET scopes=array_append(scopes,'knowledge:approve')
+WHERE NOT ('knowledge:approve'=ANY(scopes));
 
 -- Knowledge maintenance proposals freeze server-computed analysis and a prepared canonical
 -- revision. The maintenance path does not write evidence, events, mastery, or review projections;

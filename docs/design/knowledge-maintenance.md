@@ -1,10 +1,10 @@
 # Knowledge maintenance technical reference
 
-## Batch boundary
+## Change boundary
 
-This batch provides the Go application service and PostgreSQL production path for knowledge proposals. A caller can create, list, inspect, approve, reject, and create rollback proposals without using raw knowledge import. The batch deliberately does not add HTTP, OpenAPI, MCP, CLI, restricted pairing profiles, or learning carryover application.
+This change provides the complete knowledge-maintenance surface: the Go application services and PostgreSQL production paths for knowledge proposals and learning-owned evidence carryover, authenticated HTTP and CLI review flows, read/propose-only MCP descriptors, and restricted `user` / `agent` pairing profiles. Callers cannot use maintenance endpoints to bypass raw-import identity rules or directly mutate learning evidence.
 
-Knowledge maintenance owns only knowledge state. It reads valid accepted learning evidence through a learning-owned read port and persists the resulting frozen impact. It never inserts, updates, invalidates, copies, or projects learning evidence.
+Knowledge maintenance owns canonical proposal planning and application. It reads valid accepted learning evidence through a learning-owned port and freezes that impact. An affected apply may atomically create a separate learning-owned carryover proposal through the narrow transactional store port, but it never rewrites, copies, invalidates, or projects source evidence. Carryover approve/reject, event append, and provisional links remain owned by the learning service.
 
 ## Application API
 
@@ -158,10 +158,10 @@ Create order:
 knowledge privacy gate
 create operation advisory lock
 idempotency replay check
-learning privacy gate
-SHARE lock learning_evidence and learning_evidence_invalidations when affected IDs exist
-current accepted-evidence fingerprint check
 knowledge catalog FOR UPDATE
+learning privacy gate
+SHARE lock learning_evidence, invalidations, and approved carryover links when affected IDs exist
+current accepted-evidence fingerprint check
 optional outbox generation and affected NoteSync document locks
 proposal / revision / lineage / origin / head / outbox / decision / operation writes
 commit
@@ -174,16 +174,16 @@ knowledge privacy gate
 decision operation advisory lock
 idempotency replay check
 proposal FOR UPDATE
-learning privacy gate
-SHARE lock learning_evidence and learning_evidence_invalidations when affected IDs exist
-current accepted-evidence fingerprint check
 knowledge catalog FOR UPDATE
+learning privacy gate
+SHARE lock learning_evidence, invalidations, and approved carryover links when affected IDs exist
+current accepted-evidence fingerprint check
 stale decision, or optional outbox locks and exact prepared apply
 proposal / revision / lineage / origin / head / outbox / decision / operation writes
 commit
 ```
 
-The learning table SHARE locks conflict with learning evidence and invalidation writes, closing the race between evidence impact calculation and commit. The transaction performs no learning write.
+The knowledge catalog is the cross-owner serialization point and is always locked before learning evidence or carryover tables. The learning table locks conflict with evidence acceptance, invalidation, and carryover-link writes, closing the race between impact calculation and commit. An affected apply may insert only the separate learning-owned carryover proposal in this transaction; it does not append learning events, add provisional links, or alter learning projections.
 
 Two proposals with one base can both remain open, but catalog row serialization and the linear parent constraint allow at most one to apply. The loser records stale with the winner's head.
 
@@ -215,19 +215,19 @@ Open proposals become redacted. Applied/rejected/stale outcomes, stable IDs, tim
 
 Knowledge and learning generation gates fail closed before proposal reads, creation, decision, or evidence impact reads.
 
-## Deferred carryover contract
+## Evidence carryover
 
-This batch persists enough information for a later learning-owned carryover batch:
+An applied rewrite, split, or merge that affects valid accepted evidence creates one learning-owned carryover proposal per source evidence binding. The proposal freezes the source binding, target knowledge revision, candidate target node revisions, privacy generations, policy version, and basis fingerprints. Existing source evidence remains unchanged.
 
-```text
-applied proposal ID
-base and applied revision IDs
-lineage/move/delete/restore/rollback impact
-accepted evidence references and fingerprint
-policy versions and immutable revision origin
-```
+Carryover approval revalidates the knowledge target under the catalog lock, revalidates source evidence and any earlier approved-link binding under learning table locks, then appends one `EvidenceCarryoverApproved` event and provisional links. Rejection appends `EvidenceCarryoverRejected` and creates no links. Exact operation replay returns the first terminal result; conflicting replay fails. Incremental and full replay derive the same provisional carryover projection without changing accepted-evidence counts, retained state, mastery, or review scheduling.
 
-The later batch may independently create one carryover proposal keyed by the applied knowledge proposal and frozen evidence fingerprint. It must use `learning:approve`, append replayable provisional learning state, and preserve source evidence. Knowledge approval must not create, approve, or reject carryover. No carryover table, event, reducer, or projection behavior is implemented here.
+Knowledge maintenance planning recognizes accepted source evidence either at its original node revision or through an approved carryover link. Invalidated source evidence is excluded in both cases, so consecutive maintenance revisions preserve approved carryover semantics without reviving invalid evidence.
+
+## Authorization and transports
+
+The `user` pairing profile freezes both `knowledge:approve` and `learning:approve`; migration `000011` adds `knowledge:approve` to legacy user tokens. The restricted `agent` profile contains neither approval scope and fails closed if either is introduced. Knowledge proposal approve/reject and rollback require `knowledge:approve`. Evidence carryover approve/reject require the independent `learning:approve` scope; neither scope authorizes the other owner's decision path.
+
+HTTP exposes proposal create/read/decision operations and carryover read/decision operations according to those scopes. MCP exposes proposal submit/read and carryover read descriptors only, with no proposal decision, rollback, carryover decision, raw import, Assessment decision, or Memory admission capability in either its catalog or service interface. The CLI uses the same HTTP DTOs and derives decision actors exclusively from the authenticated credential.
 
 ## Focused verification
 

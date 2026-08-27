@@ -82,15 +82,22 @@ func TestKnowledgeMaintenanceHTTPScopesAndDecisions(t *testing.T) {
 		t.Fatalf("agent approve=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
 	}
 	id.auth.Scopes = append(id.auth.Scopes, "learning:approve")
+	if response := maintenanceRequest(handler, http.MethodPost, "/v1/knowledge/maintenance/rollbacks", rollbackBody); response.Code != http.StatusForbidden || service.rollbackCommand.RequestID != "" {
+		t.Fatalf("learning approval crossed into knowledge rollback status=%d command=%+v body=%s", response.Code, service.rollbackCommand, response.Body.String())
+	}
+	if response := maintenanceRequest(handler, http.MethodPost, "/v1/knowledge/maintenance/proposals/"+maintenanceProposalID+"/approve", decisionBody); response.Code != http.StatusForbidden || service.decisionCommand.OperationID != "" {
+		t.Fatalf("learning approval crossed into knowledge decision status=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
+	}
+	id.auth.Scopes = append(id.auth.Scopes, "knowledge:approve")
 	if response := maintenanceRequest(handler, http.MethodPost, "/v1/knowledge/maintenance/rollbacks", rollbackBody); response.Code != http.StatusCreated || service.rollbackCommand.ActorDeviceID != maintenanceDeviceID {
-		t.Fatalf("user rollback=%d command=%+v body=%s", response.Code, service.rollbackCommand, response.Body.String())
+		t.Fatalf("knowledge approver rollback=%d command=%+v body=%s", response.Code, service.rollbackCommand, response.Body.String())
 	}
 	if response := maintenanceRequest(handler, http.MethodPost, "/v1/knowledge/maintenance/proposals/"+maintenanceProposalID+"/approve", decisionBody); response.Code != http.StatusOK || service.decisionCommand.Decision != "approve" || service.decisionCommand.ActorDeviceID != maintenanceDeviceID {
-		t.Fatalf("user approve=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
+		t.Fatalf("knowledge approver approve=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
 	}
 	decisionBody = `{"operation_id":"a0000000-0000-4000-8000-000000000006","reason":"not acceptable"}`
 	if response := maintenanceRequest(handler, http.MethodPost, "/v1/knowledge/maintenance/proposals/"+maintenanceProposalID+"/reject", decisionBody); response.Code != http.StatusOK || service.decisionCommand.Decision != "reject" {
-		t.Fatalf("user reject=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
+		t.Fatalf("knowledge approver reject=%d command=%+v body=%s", response.Code, service.decisionCommand, response.Body.String())
 	}
 }
 

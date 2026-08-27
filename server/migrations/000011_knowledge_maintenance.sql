@@ -14,9 +14,12 @@ ALTER TABLE pairing_codes ADD CONSTRAINT pairing_codes_scopes_nonempty CHECK (
     AND array_position(scopes,'') IS NULL
 );
 UPDATE device_tokens AS token
-SET scopes=array_append(token.scopes,'knowledge:approve')
+SET scopes = ARRAY(
+    SELECT DISTINCT scope
+    FROM unnest(token.scopes || ARRAY['knowledge:approve','learning:approve']::TEXT[]) AS scope
+    ORDER BY scope
+)
 WHERE token.revoked_at IS NULL
-  AND NOT ('knowledge:approve'=ANY(token.scopes))
   AND EXISTS (
     SELECT 1 FROM devices AS device
     WHERE device.id=token.device_id AND device.revoked_at IS NULL

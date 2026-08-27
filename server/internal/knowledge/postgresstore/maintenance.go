@@ -62,8 +62,27 @@ func (s *Store) MaintenanceBase(ctx context.Context, revisionID string) (knowled
 	}, nil
 }
 
+func (s *Store) beginMaintenanceProposalRead(ctx context.Context) (pgx.Tx, int64, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin knowledge maintenance proposal privacy read: %w", err)
+	}
+	// Proposal payloads include learning-owned evidence impact. Match the
+	// carryover knowledge-before-learning owner order.
+	knowledgeGeneration, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
+	if err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, 0, err
+	}
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerLearning); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, 0, err
+	}
+	return tx, knowledgeGeneration, nil
+}
+
 func (s *Store) LookupMaintenanceOperation(ctx context.Context, operationID string) (knowledge.MaintenanceOperationRecord, bool, error) {
-	tx, err := s.beginPrivacyRead(ctx)
+	tx, _, err := s.beginMaintenanceProposalRead(ctx)
 	if err != nil {
 		return knowledge.MaintenanceOperationRecord{}, false, err
 	}
@@ -86,6 +105,9 @@ func (s *Store) SaveProposal(ctx context.Context, prepared knowledge.PreparedPro
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
 	if err != nil {
+		return knowledge.Proposal{}, err
+	}
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerLearning); err != nil {
 		return knowledge.Proposal{}, err
 	}
 	if prepared.Proposal.KnowledgeGeneration != generation {
@@ -199,15 +221,11 @@ func (s *Store) SaveProposal(ctx context.Context, prepared knowledge.PreparedPro
 }
 
 func (s *Store) ListProposals(ctx context.Context, command knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-	if err != nil {
-		return knowledge.ProposalPage{}, fmt.Errorf("begin knowledge maintenance proposal list: %w", err)
-	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
+	tx, generation, err := s.beginMaintenanceProposalRead(ctx)
 	if err != nil {
 		return knowledge.ProposalPage{}, err
 	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	if command.ExpectedGeneration != 0 && command.ExpectedGeneration != generation {
 		return knowledge.ProposalPage{}, &knowledge.Error{Code: knowledge.CodeProposalStale}
 	}
@@ -261,7 +279,7 @@ func (s *Store) ListProposals(ctx context.Context, command knowledge.ProposalLis
 }
 
 func (s *Store) Proposal(ctx context.Context, proposalID string) (knowledge.Proposal, error) {
-	tx, err := s.beginPrivacyRead(ctx)
+	tx, _, err := s.beginMaintenanceProposalRead(ctx)
 	if err != nil {
 		return knowledge.Proposal{}, err
 	}
@@ -284,6 +302,9 @@ func (s *Store) DecideProposal(ctx context.Context, command knowledge.PreparedPr
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
 	if err != nil {
+		return knowledge.Proposal{}, err
+	}
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerLearning); err != nil {
 		return knowledge.Proposal{}, err
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('knowledge-maintenance-operation:'||$1,0))`, command.OperationID); err != nil {

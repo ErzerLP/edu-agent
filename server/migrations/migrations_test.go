@@ -45,6 +45,7 @@ func TestKnowledgeMaintenanceMigrationDeclaresPairingScopeProfiles(t *testing.T)
 		"'knowledge:approve'",
 		"'learning:approve'",
 		"UPDATE device_tokens",
+		"SELECT DISTINCT scope",
 		"token.revoked_at IS NULL",
 		"device.revoked_at IS NULL",
 		"ALTER TABLE pairing_codes ALTER COLUMN scopes SET NOT NULL",
@@ -61,18 +62,25 @@ func TestKnowledgeMaintenanceMigrationDeclaresPairingScopeProfiles(t *testing.T)
 func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
 	pool := migrationPoolThrough(t, 10)
 	ctx := context.Background()
+	legacyUserScopes := []string{
+		"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write",
+		"learning:read", "learning:write", "memory:read", "memory:write", "privacy:read", "privacy:device",
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO pairing_codes(lookup_id,code_hash,created_at,expires_at,max_attempts)
 		VALUES('legacy-user-code',decode(repeat('11',32),'hex'),now(),now()+interval '10 minutes',5)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO devices(id,display_name,created_at)
-		VALUES('11111111-1111-4111-8111-111111111111','legacy-user',now());
+		INSERT INTO devices(id,display_name,created_at,revoked_at)
+		VALUES
+		  ('11111111-1111-4111-8111-111111111111','legacy-user',now(),NULL),
+		  ('11111111-1111-4111-8111-111111111112','revoked-device',now(),now());
 		INSERT INTO device_tokens(id,device_id,token_hash,scopes,created_at,revoked_at)
 		VALUES
-		  ('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode(repeat('22',32),'hex'),ARRAY['knowledge:read','knowledge:write','learning:approve'],now(),NULL),
-		  ('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',decode(repeat('33',32),'hex'),ARRAY['knowledge:read'],now(),now())`); err != nil {
+		  ('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode(repeat('22',32),'hex'),ARRAY['devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','learning:read','learning:write','memory:read','memory:write','privacy:read','privacy:device'],now(),NULL),
+		  ('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',decode(repeat('33',32),'hex'),ARRAY['devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','learning:read','learning:write','memory:read','memory:write','privacy:read','privacy:device'],now(),now()),
+		  ('44444444-4444-4444-8444-444444444444','11111111-1111-4111-8111-111111111112',decode(repeat('44',32),'hex'),ARRAY['devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','learning:read','learning:write','memory:read','memory:write','privacy:read','privacy:device'],now(),NULL)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := Run(ctx, pool); err != nil {
@@ -91,14 +99,31 @@ func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id='22222222-2222-4222-8222-222222222222'`).Scan(&scopes); err != nil {
 		t.Fatal(err)
 	}
-	if !containsScope(scopes, "knowledge:approve") || !containsScope(scopes, "learning:approve") {
-		t.Fatalf("legacy active user token approval scopes were not preserved and separated: %v", scopes)
+	if scopeCount(scopes, "knowledge:approve") != 1 || scopeCount(scopes, "learning:approve") != 1 || hasDuplicateScopes(scopes) {
+		t.Fatalf("legacy active user token approvals are not distinct: %v", scopes)
 	}
-	if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id='33333333-3333-4333-8333-333333333333'`).Scan(&scopes); err != nil {
-		t.Fatal(err)
+	for _, required := range legacyUserScopes {
+		if !containsScope(scopes, required) {
+			t.Fatalf("legacy active user token lost %s: %v", required, scopes)
+		}
 	}
-	if containsScope(scopes, "knowledge:approve") {
-		t.Fatalf("legacy revoked token gained knowledge approval: %v", scopes)
+
+	for _, test := range []struct {
+		name string
+		id   string
+		want []string
+	}{
+		{name: "revoked token", id: "33333333-3333-4333-8333-333333333333", want: legacyUserScopes},
+		{name: "revoked device token", id: "44444444-4444-4444-8444-444444444444", want: legacyUserScopes},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id=$1`, test.id).Scan(&scopes); err != nil {
+				t.Fatal(err)
+			}
+			if !sameScopes(scopes, test.want) {
+				t.Fatalf("inactive token scopes changed: got=%v want=%v", scopes, test.want)
+			}
+		})
 	}
 
 	invalidScopes := []struct {
@@ -1164,6 +1189,39 @@ func containsScope(scopes []string, expected string) bool {
 		}
 	}
 	return false
+}
+
+func scopeCount(scopes []string, expected string) int {
+	count := 0
+	for _, scope := range scopes {
+		if scope == expected {
+			count++
+		}
+	}
+	return count
+}
+
+func hasDuplicateScopes(scopes []string) bool {
+	seen := make(map[string]struct{}, len(scopes))
+	for _, scope := range scopes {
+		if _, exists := seen[scope]; exists {
+			return true
+		}
+		seen[scope] = struct{}{}
+	}
+	return false
+}
+
+func sameScopes(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func legacyMigrationPool(t *testing.T) *pgxpool.Pool {

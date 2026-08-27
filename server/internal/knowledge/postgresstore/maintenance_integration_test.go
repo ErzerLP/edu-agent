@@ -330,6 +330,297 @@ func TestPostgreSQLKnowledgeMaintenanceProposalLifecycle(t *testing.T) {
 	}
 }
 
+type forcedMaintenanceReplayStore struct {
+	*postgresstore.Store
+	beforeSave   func()
+	beforeDecide func()
+}
+
+func (*forcedMaintenanceReplayStore) LookupMaintenanceOperation(context.Context, string) (knowledge.MaintenanceOperationRecord, bool, error) {
+	return knowledge.MaintenanceOperationRecord{}, false, nil
+}
+
+func (s *forcedMaintenanceReplayStore) SaveProposal(ctx context.Context, prepared knowledge.PreparedProposal) (knowledge.Proposal, error) {
+	if s.beforeSave != nil {
+		s.beforeSave()
+	}
+	return s.Store.SaveProposal(ctx, prepared)
+}
+
+func (s *forcedMaintenanceReplayStore) DecideProposal(ctx context.Context, command knowledge.PreparedProposalDecision) (knowledge.Proposal, error) {
+	if s.beforeDecide != nil {
+		s.beforeDecide()
+	}
+	return s.Store.DecideProposal(ctx, command)
+}
+
+func TestPostgreSQLKnowledgeMaintenanceInternalReplayUsesLearningOwnerGate(t *testing.T) {
+	t.Run("fresh create", func(t *testing.T) {
+		fixture := newKnowledgeMaintenanceCarryoverFixture(t)
+		base := importKnowledgeMaintenanceCarryoverBase(t, fixture.knowledge)
+		seedAcceptedEvidenceForMaintenance(t, fixture.pool, base.Revision)
+		command := knowledgeMaintenancePrivacyCommand(t, fixture.knowledge, base.Revision.ID)
+		closed := false
+		service := newForcedMaintenanceReplayService(t, fixture, func() {
+			closeKnowledgeMaintenanceProposalOwner(t, fixture, privacy.OwnerLearning)
+			closed = true
+		}, nil)
+		created, err := service.Create(t.Context(), command)
+		if !closed || privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+			t.Fatalf("fresh create closed=%v proposal=%+v err=%v code=%q", closed, created, err, privacy.ErrorCode(err))
+		}
+		assertEmptyMaintenanceProposal(t, created, "fresh create")
+	})
+
+	t.Run("create replay", func(t *testing.T) {
+		fixture := newKnowledgeMaintenanceCarryoverFixture(t)
+		base := importKnowledgeMaintenanceCarryoverBase(t, fixture.knowledge)
+		seedAcceptedEvidenceForMaintenance(t, fixture.pool, base.Revision)
+		command := knowledgeMaintenancePrivacyCommand(t, fixture.knowledge, base.Revision.ID)
+		created, err := fixture.knowledge.Create(t.Context(), command)
+		if err != nil || created.Status != knowledge.ProposalOpen {
+			t.Fatalf("create replay fixture=%+v err=%v", created, err)
+		}
+		closed := false
+		replayService := newForcedMaintenanceReplayService(t, fixture, func() {
+			closeKnowledgeMaintenanceProposalOwner(t, fixture, privacy.OwnerLearning)
+			closed = true
+		}, nil)
+		replayed, err := replayService.Create(t.Context(), command)
+		if !closed || privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+			t.Fatalf("internal create replay closed=%v proposal=%+v err=%v code=%q", closed, replayed, err, privacy.ErrorCode(err))
+		}
+		assertEmptyMaintenanceProposal(t, replayed, "internal create replay")
+	})
+
+	t.Run("fresh decision", func(t *testing.T) {
+		fixture := newKnowledgeMaintenanceCarryoverFixture(t)
+		base := importKnowledgeMaintenanceCarryoverBase(t, fixture.knowledge)
+		seedAcceptedEvidenceForMaintenance(t, fixture.pool, base.Revision)
+		proposal, err := fixture.knowledge.Create(t.Context(), knowledgeMaintenancePrivacyCommand(t, fixture.knowledge, base.Revision.ID))
+		if err != nil || proposal.Status != knowledge.ProposalOpen {
+			t.Fatalf("fresh decision fixture=%+v err=%v", proposal, err)
+		}
+		command := knowledge.ProposalDecisionCommand{
+			OperationID: "6d000000-0000-4000-8000-000000000011", ProposalID: proposal.ID,
+			Decision: "reject", Reason: "secret fresh decision", ActorDeviceID: integrationActorID,
+		}
+		closed := false
+		service := newForcedMaintenanceReplayService(t, fixture, nil, func() {
+			closeKnowledgeMaintenanceProposalOwner(t, fixture, privacy.OwnerLearning)
+			closed = true
+		})
+		decided, err := service.Decide(t.Context(), command)
+		if !closed || privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+			t.Fatalf("fresh decision closed=%v proposal=%+v err=%v code=%q", closed, decided, err, privacy.ErrorCode(err))
+		}
+		assertEmptyMaintenanceProposal(t, decided, "fresh decision")
+	})
+
+	t.Run("decision replay", func(t *testing.T) {
+		fixture := newKnowledgeMaintenanceCarryoverFixture(t)
+		base := importKnowledgeMaintenanceCarryoverBase(t, fixture.knowledge)
+		seedAcceptedEvidenceForMaintenance(t, fixture.pool, base.Revision)
+		proposal, err := fixture.knowledge.Create(t.Context(), knowledgeMaintenancePrivacyCommand(t, fixture.knowledge, base.Revision.ID))
+		if err != nil || proposal.Status != knowledge.ProposalOpen {
+			t.Fatalf("decision replay fixture=%+v err=%v", proposal, err)
+		}
+		command := knowledge.ProposalDecisionCommand{
+			OperationID: "6d000000-0000-4000-8000-000000000001", ProposalID: proposal.ID,
+			Decision: "reject", Reason: "secret replay decision", ActorDeviceID: integrationActorID,
+		}
+		decided, err := fixture.knowledge.Decide(t.Context(), command)
+		if err != nil || decided.Status != knowledge.ProposalRejected {
+			t.Fatalf("decision replay terminal=%+v err=%v", decided, err)
+		}
+		closed := false
+		replayService := newForcedMaintenanceReplayService(t, fixture, nil, func() {
+			closeKnowledgeMaintenanceProposalOwner(t, fixture, privacy.OwnerLearning)
+			closed = true
+		})
+		replayed, err := replayService.Decide(t.Context(), command)
+		if !closed || privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+			t.Fatalf("internal decision replay closed=%v proposal=%+v err=%v code=%q", closed, replayed, err, privacy.ErrorCode(err))
+		}
+		assertEmptyMaintenanceProposal(t, replayed, "internal decision replay")
+	})
+}
+
+func newForcedMaintenanceReplayService(
+	t *testing.T,
+	fixture knowledgeMaintenanceCarryoverFixture,
+	beforeSave func(),
+	beforeDecide func(),
+) *knowledge.Service {
+	t.Helper()
+	pool, err := pgxpool.NewWithConfig(t.Context(), fixture.pool.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	store := postgresstore.New(pool)
+	replayStore := &forcedMaintenanceReplayStore{Store: store, beforeSave: beforeSave, beforeDecide: beforeDecide}
+	learningStore := learningpostgres.New(pool, tutoringpostgres.New(pool), store)
+	service, err := knowledge.NewService(replayStore, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{
+		MaintenanceStore: replayStore, EvidenceImpactReader: learningStore,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+func knowledgeMaintenancePrivacyCommand(t *testing.T, service *knowledge.Service, baseRevisionID string) knowledge.CreateProposalCommand {
+	t.Helper()
+	exported, err := service.Export(t.Context(), baseRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := maintenanceImportDocuments(exported.Documents)
+	for index := range candidate {
+		if candidate[index].Path == "topic.md" {
+			candidate[index].Markdown = strings.Replace(candidate[index].Markdown, "# Topic", "# Privacy Protected", 1)
+		}
+	}
+	return knowledge.CreateProposalCommand{
+		RequestID: "6a000000-0000-4000-8000-000000000001", BaseRevisionID: baseRevisionID,
+		ActorDeviceID: integrationActorID,
+		Sources: []knowledge.ProposalSource{
+			maintenancePostgresSource("note", "agent/privacy", "secret-cross-process-source"),
+		},
+		CandidateSnapshot: candidate,
+	}
+}
+
+func TestPostgreSQLKnowledgeMaintenanceProposalReadsUseBothOwnerGatesAcrossStores(t *testing.T) {
+	for _, owner := range []privacy.OwnerKind{privacy.OwnerKnowledge, privacy.OwnerLearning} {
+		t.Run(string(owner), func(t *testing.T) {
+			fixture := newKnowledgeMaintenanceCarryoverFixture(t)
+			ctx := t.Context()
+			base := importKnowledgeMaintenanceCarryoverBase(t, fixture.knowledge)
+			seedAcceptedEvidenceForMaintenance(t, fixture.pool, base.Revision)
+			command := knowledgeMaintenancePrivacyCommand(t, fixture.knowledge, base.Revision.ID)
+			created, err := fixture.knowledge.Create(ctx, command)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if created.Status != knowledge.ProposalOpen || created.EvidenceImpact.Count != 1 || len(created.CandidateSnapshot) == 0 {
+				t.Fatalf("privacy proposal fixture=%+v", created)
+			}
+
+			readerPool, err := pgxpool.NewWithConfig(ctx, fixture.pool.Config())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(readerPool.Close)
+			readerKnowledgeStore := postgresstore.New(readerPool)
+			readerLearningStore := learningpostgres.New(readerPool, tutoringpostgres.New(readerPool), readerKnowledgeStore)
+			readerService, err := knowledge.NewService(readerKnowledgeStore, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{
+				MaintenanceStore: readerKnowledgeStore, EvidenceImpactReader: readerLearningStore,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			replayed, err := readerService.Create(ctx, command)
+			if err != nil || !replayed.Replayed || replayed.ID != created.ID || replayed.EvidenceImpact.Count != 1 {
+				t.Fatalf("open-gate replay=%+v err=%v", replayed, err)
+			}
+			page, err := readerService.List(ctx, knowledge.ProposalListCommand{Status: "all", Limit: 10})
+			if err != nil || len(page.Items) != 1 || page.Items[0].ID != created.ID || page.Items[0].EvidenceImpact.Count != 1 || len(page.Items[0].Sources) != 1 {
+				t.Fatalf("open-gate list=%+v err=%v", page, err)
+			}
+			detail, err := readerService.Get(ctx, created.ID)
+			if err != nil || detail.ID != created.ID || detail.EvidenceImpact.Count != 1 || len(detail.CandidateSnapshot) == 0 || len(detail.Sources) != 1 {
+				t.Fatalf("open-gate get=%+v err=%v", detail, err)
+			}
+
+			closeKnowledgeMaintenanceProposalOwner(t, fixture, owner)
+			if owner == privacy.OwnerLearning {
+				head, headErr := readerKnowledgeStore.Head(ctx)
+				if headErr != nil || head == nil || head.ID != base.Revision.ID {
+					t.Fatalf("learning close expanded ordinary knowledge read head=%+v err=%v", head, headErr)
+				}
+			}
+
+			replayed, err = readerService.Create(ctx, command)
+			if privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+				t.Fatalf("closed %s replay err=%v code=%q", owner, err, privacy.ErrorCode(err))
+			}
+			assertEmptyMaintenanceProposal(t, replayed, "replay")
+			page, err = readerService.List(ctx, knowledge.ProposalListCommand{Status: "all", Limit: 10})
+			if privacy.ErrorCode(err) != privacy.CodeContentRedacted || len(page.Items) != 0 || page.NextCursor != "" {
+				t.Fatalf("closed %s list=%+v err=%v code=%q", owner, page, err, privacy.ErrorCode(err))
+			}
+			detail, err = readerService.Get(ctx, created.ID)
+			if privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+				t.Fatalf("closed %s get err=%v code=%q", owner, err, privacy.ErrorCode(err))
+			}
+			assertEmptyMaintenanceProposal(t, detail, "get")
+		})
+	}
+}
+
+func closeKnowledgeMaintenanceProposalOwner(t *testing.T, fixture knowledgeMaintenanceCarryoverFixture, owner privacy.OwnerKind) {
+	t.Helper()
+	ctx := t.Context()
+	var generation int64
+	if err := fixture.pool.QueryRow(ctx, `
+		SELECT learner_generation
+		FROM privacy_owner_generation_gates
+		WHERE owner_kind=$1`, owner).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	erasureID := "6b000000-0000-4000-8000-000000000001"
+	operationID := "6b000000-0000-4000-8000-000000000002"
+	if owner == privacy.OwnerLearning {
+		erasureID = "6c000000-0000-4000-8000-000000000001"
+		operationID = "6c000000-0000-4000-8000-000000000002"
+	}
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('privacy-owner:'||$1,0))`, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO privacy_erasures(
+		  id,device_id,operation_id,request_hash,reason_code,actor_device_id,requested_at,
+		  target_learner_generation,managed_backup_scheduled_unrecoverable_after)
+		VALUES($1,$2,$3,decode(repeat('6b',32),'hex'),'learner_request',$2,
+		       clock_timestamp(),$4,clock_timestamp()+interval '1 day')`,
+		erasureID, integrationActorID, operationID, generation+1); err != nil {
+		t.Fatal(err)
+	}
+	transition := privacy.GenerationTransition{
+		ErasureID: erasureID, FromGeneration: generation, TargetGeneration: generation + 1, At: time.Now().UTC(),
+	}
+	switch owner {
+	case privacy.OwnerKnowledge:
+		err = postgresstore.New(fixture.pool).CloseGenerationTx(ctx, tx, transition)
+	case privacy.OwnerLearning:
+		err = fixture.learningStore.CloseGenerationTx(ctx, tx, transition)
+	default:
+		t.Fatalf("unsupported proposal privacy owner %q", owner)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertEmptyMaintenanceProposal(t *testing.T, proposal knowledge.Proposal, operation string) {
+	t.Helper()
+	if proposal.ID != "" || proposal.RequestID != "" || len(proposal.CandidateSnapshot) != 0 ||
+		len(proposal.Sources) != 0 || len(proposal.Diff) != 0 || len(proposal.EvidenceImpact.References) != 0 {
+		t.Fatalf("%s returned proposal payload behind closed owner gate: %+v", operation, proposal)
+	}
+}
+
 func TestPostgreSQLKnowledgeMaintenanceEvidenceCarryoverChain(t *testing.T) {
 	fixture := newKnowledgeMaintenanceCarryoverFixture(t)
 	ctx := t.Context()

@@ -20,6 +20,9 @@ type knowledgeMaintenanceAPIClient interface {
 	KnowledgeMaintenanceProposals(context.Context, string, string, int) (api.KnowledgeMaintenanceProposalPage, error)
 	KnowledgeMaintenanceProposal(context.Context, string) (api.KnowledgeMaintenanceProposal, error)
 	DecideKnowledgeMaintenanceProposal(context.Context, string, string, api.KnowledgeMaintenanceDecisionRequest) (api.KnowledgeMaintenanceProposal, error)
+	EvidenceCarryovers(context.Context, string, string, int) (api.EvidenceCarryoverPage, error)
+	EvidenceCarryover(context.Context, string) (api.EvidenceCarryoverProposal, error)
+	DecideEvidenceCarryover(context.Context, string, string, api.EvidenceCarryoverDecisionRequest) (api.EvidenceCarryoverProposal, error)
 }
 
 func asKnowledgeMaintenanceClient(value APIClient) (knowledgeMaintenanceAPIClient, error) {
@@ -32,7 +35,7 @@ func asKnowledgeMaintenanceClient(value APIClient) (knowledgeMaintenanceAPIClien
 
 func (a *App) RunKnowledgeMaintenance(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return knowledgeMaintenanceUsage("knowledge maintenance requires propose, rollback, proposals, proposal, approve, or reject")
+		return knowledgeMaintenanceUsage("knowledge maintenance requires propose, rollback, proposals, proposal, approve, reject, or carryovers")
 	}
 	switch args[0] {
 	case "propose":
@@ -45,6 +48,8 @@ func (a *App) RunKnowledgeMaintenance(ctx context.Context, args []string) error 
 		return a.runKnowledgeMaintenanceProposal(ctx, args[1:])
 	case "approve", "reject":
 		return a.runKnowledgeMaintenanceDecision(ctx, args[0], args[1:])
+	case "carryovers":
+		return a.runEvidenceCarryovers(ctx, args[1:])
 	default:
 		return knowledgeMaintenanceUsage("unknown knowledge maintenance command " + args[0])
 	}
@@ -214,7 +219,7 @@ func (a *App) runKnowledgeMaintenanceDecision(ctx context.Context, decision stri
 }
 
 func knowledgeMaintenanceUsage(detail string) error {
-	return commandError("usage", detail, "run edu-agent knowledge maintenance propose, rollback, proposals, proposal, approve, or reject", ExitInput)
+	return commandError("usage", detail, "run edu-agent knowledge maintenance propose, rollback, proposals, proposal, approve, reject, or carryovers", ExitInput)
 }
 
 func readKnowledgeMaintenanceRequestFile(path string) ([]byte, error) {

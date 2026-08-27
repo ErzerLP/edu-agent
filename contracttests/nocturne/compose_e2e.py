@@ -237,15 +237,16 @@ except urllib.error.HTTPError as exc:
             "valid_until": (datetime.now(timezone.utc) + valid_for).isoformat().replace("+00:00", "Z"),
         }
         result: Any = None
+        status: int | None = None
         for attempt in range(3):
             status, result = self.http("POST", "/v1/memory/candidates", request, token=self.token)
             if status in (200, 201):
                 break
             if status != 500 or attempt == 2:
-                raise GateError("memory candidate was not durably admitted")
+                raise GateError(f"memory candidate was not durably admitted: status={status} body={result}")
             time.sleep(1)
         if not isinstance(result, dict) or not result.get("record") or not result.get("delivery"):
-            raise GateError("memory candidate was not durably admitted")
+            raise GateError(f"memory candidate was not durably admitted: status={status} body={result}")
         return result
 
     def wait_memory_applied(self, logical_id: str, timeout: float = 60.0) -> dict[str, Any]:
@@ -548,7 +549,8 @@ SELECT json_build_object(
         self.wait_service_health("server")
         self.wait_ready_status("degraded")
 
-        deadline = time.monotonic() + 75
+        # Cover one expired claim plus one complete remote reconciliation under the fixed 120s lease.
+        deadline = time.monotonic() + 270
         terminal: dict[str, Any] = {}
         while time.monotonic() < deadline:
             state_sql = f"""
@@ -640,7 +642,17 @@ SELECT
             if completed.returncode == 0:
                 raise GateError("database accounts can read the other authority")
 
-    def check_down_queue_and_replay(self) -> None:
+    def delivery_runtime_state(self, delivery_id: str) -> str:
+        return self.main_sql(
+            "SELECT concat_ws(':',o.status,o.attempts::text,COALESCE(o.last_error_category,'none'),"
+            "COALESCE(h.state,'none'),COALESCE((h.sent_at IS NOT NULL)::text,'none'),"
+            "COALESCE((h.lease_expires_at<=clock_timestamp())::text,'none')) "
+            "FROM memory_deliveries d JOIN outbox_messages o ON o.id=d.outbox_id "
+            "LEFT JOIN memory_delivery_attempt_heads h ON h.delivery_id=d.id "
+            f"WHERE d.id='{delivery_id}'::uuid ORDER BY h.updated_at DESC LIMIT 1"
+        )
+
+    def check_down_queue_auto_recovery(self) -> None:
         self.compose("stop", "nocturne")
         self.wait_ready_status("degraded")
         goal = {
@@ -651,43 +663,90 @@ SELECT
         status, _ = self.http("POST", "/v1/learning/goals", goal, token=self.token)
         if status not in (200, 201):
             raise GateError("teaching write failed while Nocturne was down")
-        queued = self.create_memory("I prefer concise summaries when services are unavailable")
+        queued = self.create_memory("I prefer concise summaries after automatic recovery")
         if queued["delivery"].get("public_status") != "queued":
             raise GateError("Nocturne outage did not preserve a queued delivery")
         logical_id = queued["record"]["logical_memory_id"]
+        delivery_id = queued["delivery"]["delivery_id"]
         self.compose("start", "nocturne")
         self.wait_service_health("nocturne")
         ready = self.wait_ready_status("degraded")
         if ready.get("components", {}).get("nocturne", {}).get("status") != "healthy":
             raise GateError("Nocturne component did not recover to healthy")
         try:
-            self.wait_memory_applied(logical_id, timeout=10)
-        except GateError:
+            self.wait_memory_applied(logical_id, timeout=60)
+        except GateError as exc:
+            raise GateError(
+                f"memory delivery did not recover automatically: {self.delivery_runtime_state(delivery_id)}"
+            ) from exc
+
+    def check_dead_delivery_replay(self) -> None:
+        self.sql("nocturne-postgres", "ALTER TABLE public.nodes RENAME TO nodes_dead_letter_gate")
+        fault_injected = True
+        failure: Exception | None = None
+        logical_id = ""
+        delivery_id = ""
+        try:
+            self.wait_service_health("nocturne")
+            queued = self.create_memory("I prefer concise retry explanations")
+            if queued["delivery"].get("public_status") != "queued":
+                raise GateError("Nocturne mutation failure did not preserve the replay candidate")
+            logical_id = queued["record"]["logical_memory_id"]
             delivery_id = queued["delivery"]["delivery_id"]
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
-                status, _ = self.http(
-                    "POST", f"/v1/memory/deliveries/{delivery_id}/replays",
-                    {"operation_id": str(uuid.uuid4()), "payload_schema_version": 1}, token=self.token,
-                )
-                if status in (200, 202):
-                    break
-                if status != 409:
-                    raise GateError("dead memory delivery replay failed")
+            status, response = self.http(
+                "POST", f"/v1/memory/deliveries/{delivery_id}/replays",
+                {"operation_id": str(uuid.uuid4()), "payload_schema_version": 1}, token=self.token,
+            )
+            if status != 409:
+                raise GateError(f"pending memory delivery replay status={status}, want 409: {response}")
+            deadline = time.monotonic() + 90
+            state = self.delivery_runtime_state(delivery_id)
+            while time.monotonic() < deadline and not state.startswith("dead:"):
                 time.sleep(2)
-            else:
-                raise GateError("memory delivery did not become replayable")
+                state = self.delivery_runtime_state(delivery_id)
+            parts = state.split(":")
+            if (
+                len(parts) < 6
+                or parts[0] != "dead"
+                or parts[1] != "5"
+                or parts[2] != "consumer_error"
+                or parts[3] not in ("unknown", "reconciling")
+                or parts[4] != "true"
+            ):
+                raise GateError(f"memory delivery did not exhaust transient retries: {state}")
+
+            status, response = self.http(
+                "POST", f"/v1/memory/deliveries/{delivery_id}/replays",
+                {"operation_id": str(uuid.uuid4()), "payload_schema_version": 1}, token=self.token,
+            )
+            if status != 202:
+                raise GateError(f"dead memory delivery replay status={status}, want 202: {response}")
+
+            self.sql("nocturne-postgres", "ALTER TABLE public.nodes_dead_letter_gate RENAME TO nodes")
+            fault_injected = False
+            self.compose("restart", "nocturne")
+            self.wait_service_health("nocturne")
+            ready = self.wait_ready_status("degraded")
+            if ready.get("components", {}).get("nocturne", {}).get("status") != "healthy":
+                raise GateError("Nocturne component did not restart after replay")
             try:
-                self.wait_memory_applied(logical_id)
+                self.wait_memory_applied(logical_id, timeout=60)
             except GateError as exc:
-                state = self.main_sql(
-                    "SELECT o.status||':'||o.attempts::text||':'||h.state||':'||"
-                    "(h.lease_expires_at<=clock_timestamp())::text "
-                    "FROM memory_deliveries d JOIN outbox_messages o ON o.id=d.outbox_id "
-                    "LEFT JOIN memory_delivery_attempt_heads h ON h.delivery_id=d.id "
-                    f"WHERE d.id='{delivery_id}'::uuid ORDER BY h.updated_at DESC LIMIT 1"
-                )
-                raise GateError(f"memory delivery replay did not converge: {state}") from exc
+                raise GateError(
+                    f"memory delivery replay did not converge: {self.delivery_runtime_state(delivery_id)}"
+                ) from exc
+        except Exception as exc:
+            failure = exc
+        finally:
+            if fault_injected:
+                try:
+                    self.sql("nocturne-postgres", "ALTER TABLE public.nodes_dead_letter_gate RENAME TO nodes")
+                except Exception as restore_exc:
+                    if failure is not None:
+                        raise GateError(f"{failure}; failed to restore Nocturne nodes table: {restore_exc}") from failure
+                    raise
+        if failure is not None:
+            raise failure
 
     def original_nocturne_volume(self) -> str:
         container = self.compose("ps", "-q", "nocturne-postgres")
@@ -850,15 +909,31 @@ SELECT
         if status != 200 or not isinstance(inventory, dict):
             raise GateError("rollback pre-seed backup inventory is unavailable")
         previous_paths = {item["path"] for item in inventory.get("artifacts", [])}
+        parent_query = urllib.parse.urlencode({"domain": "core", "path": "edu-agent"})
+        parent_status, parent_response = self.internal(
+            "GET", "/api/browse/node?" + parent_query, token_mode="api",
+        )
+        if parent_status == 404:
+            parent_status, parent_response = self.internal(
+                "POST", "/api/browse/node", token_mode="api", body={
+                    "parent_path": "", "content": "edu-agent rollback rehearsal root",
+                    "priority": 0, "disclosure": "rollback rehearsal root",
+                    "title": "edu-agent", "domain": "core",
+                },
+            )
+        if parent_status != 200:
+            raise GateError(
+                f"rollback seed parent preparation failed ({parent_status}): {parent_response}"
+            )
         title = str(uuid.uuid4())
         seed_path = "edu-agent/" + title
         seed_content = "same-digest rollback seed " + str(uuid.uuid4())
-        status, _ = self.internal("POST", "/api/browse/node", token_mode="api", body={
+        status, response = self.internal("POST", "/api/browse/node", token_mode="api", body={
             "parent_path": "edu-agent", "content": seed_content, "priority": 0,
             "disclosure": "rollback rehearsal seed", "title": title, "domain": "core",
         })
         if status != 200:
-            raise GateError("rollback seed creation failed")
+            raise GateError(f"rollback seed creation failed ({status}): {response}")
         self.wait_nocturne_search("rollback seed", seed_path)
         artifact = self.wait_new_backup(previous_paths)
         self.rollback_evidence = {
@@ -1139,17 +1214,31 @@ SELECT
             raise GateError("initial readiness component state is invalid")
         self.pair()
         self.check_auth_and_allowlist()
-        initial = self.create_memory("I prefer concise compose responses")
-        self.wait_memory_applied(initial["record"]["logical_memory_id"])
         if self.scenario in {"rollback", "backup"}:
             self.check_real_rollback_rehearsal()
             if self.scenario == "backup":
                 self.check_backup_encryption_key_destruction_and_prune()
             return
+        initial = self.create_memory("I prefer concise compose responses")
+        try:
+            self.wait_memory_applied(initial["record"]["logical_memory_id"], timeout=120)
+        except GateError as exc:
+            delivery_id = initial["delivery"]["delivery_id"]
+            raise GateError(
+                f"initial memory delivery did not converge: {self.delivery_runtime_state(delivery_id)}"
+            ) from exc
+        if self.scenario == "expiry":
+            self.check_real_delivery_expiry_reconciliation()
+            return
+        if self.scenario == "replay":
+            self.check_down_queue_auto_recovery()
+            self.check_dead_delivery_replay()
+            return
         self.check_real_nocturne_crud_and_absence()
         self.check_real_delivery_expiry_reconciliation()
         self.check_database_account_isolation()
-        self.check_down_queue_and_replay()
+        self.check_down_queue_auto_recovery()
+        self.check_dead_delivery_replay()
         self.check_real_rollback_rehearsal()
         self.check_backup_encryption_key_destruction_and_prune()
         self.check_sigterm_shutdown()
@@ -1161,7 +1250,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--override-file", required=True)
     parser.add_argument("--env-file", required=True)
     parser.add_argument("--project", required=True)
-    parser.add_argument("--scenario", choices=("full", "rollback", "backup"), default="full")
+    parser.add_argument("--scenario", choices=("full", "rollback", "backup", "expiry", "replay"), default="full")
     return parser.parse_args()
 
 

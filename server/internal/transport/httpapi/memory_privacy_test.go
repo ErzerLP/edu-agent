@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -117,18 +118,25 @@ func (f *fakeMemoryExporter) Export(context.Context, memory.PageRequest) (memory
 }
 
 type fakePrivacyHTTP struct {
-	commitRequest privacy.ErasureRequest
-	receipt       privacy.ErasureReceipt
-	validToken    string
-	grantUsed     bool
-	operationID   string
-	operationHash string
-	httpNow       time.Time
-	commitErr     error
-	receiptErr    error
-	localErr      error
-	remoteErr     error
-	calls         []string
+	commitRequest  privacy.ErasureRequest
+	receipt        privacy.ErasureReceipt
+	purgeChallenge privacy.OfflinePurgeChallenge
+	purgeFound     bool
+	childReceipt   privacy.OfflineDeviceChildReceipt
+	validToken     string
+	grantUsed      bool
+	operationID    string
+	operationHash  string
+	httpNow        time.Time
+	commitErr      error
+	receiptErr     error
+	localErr       error
+	remoteErr      error
+	ackErr         error
+	ackErasureID   string
+	ackDeviceID    string
+	acknowledged   privacy.OfflineDevicePurgeAcknowledgment
+	calls          []string
 }
 
 func (f *fakePrivacyHTTP) AuthorizeAndCommitBarrier(_ context.Context, request privacy.ErasureRequest, authorization privacy.ErasureGrantAuthorization) (privacy.ErasureReceipt, error) {
@@ -166,6 +174,18 @@ func (f *fakePrivacyHTTP) RunLocal(context.Context, string) (privacy.ErasureRece
 func (f *fakePrivacyHTTP) RunNocturne(context.Context, string) (privacy.ErasureReceipt, error) {
 	f.calls = append(f.calls, "nocturne")
 	return f.receipt, f.remoteErr
+}
+func (f *fakePrivacyHTTP) CurrentOfflineDevicePurge(_ context.Context, deviceID string) (privacy.OfflinePurgeChallenge, bool, error) {
+	f.calls = append(f.calls, "offline_get")
+	if f.purgeChallenge.DeviceID != "" && f.purgeChallenge.DeviceID != deviceID {
+		return privacy.OfflinePurgeChallenge{}, false, nil
+	}
+	return f.purgeChallenge, f.purgeFound, f.ackErr
+}
+func (f *fakePrivacyHTTP) AcknowledgeOfflineDevicePurge(_ context.Context, erasureID, deviceID string, acknowledgment privacy.OfflineDevicePurgeAcknowledgment) (privacy.OfflineDeviceChildReceipt, error) {
+	f.calls = append(f.calls, "offline_ack")
+	f.ackErasureID, f.ackDeviceID, f.acknowledged = erasureID, deviceID, acknowledgment
+	return f.childReceipt, f.ackErr
 }
 
 type singleUseGrant struct {
@@ -477,6 +497,56 @@ func TestPrivacyVerifiedReplayReturnsOriginalReceiptWithoutRerunningErasure(t *t
 	}
 	if replayed.Status != privacy.StatusVerified || replayed.SummaryVersion != 7 || !replayed.RequestedAt.Equal(requestedAt) || !replayed.UpdatedAt.Equal(verifiedAt) {
 		t.Fatalf("verified replay receipt=%+v", replayed)
+	}
+}
+
+func TestPrivacyOfflineDevicePurgeBindsAuthenticatedDeviceAndClosedRequest(t *testing.T) {
+	now := time.Date(2026, time.August, 25, 16, 0, 0, 0, time.UTC)
+	challenge := canonicalGrantToken(0x63)
+	service := &fakePrivacyHTTP{
+		purgeFound: true,
+		purgeChallenge: privacy.OfflinePurgeChallenge{
+			ErasureID: testErasureID, DeviceID: testDeviceID, OldGeneration: 1, CurrentGeneration: 2,
+			ChallengeRevision: 1, Challenge: challenge, IssuedAt: now, Status: privacy.OfflineDeviceChildPending,
+		},
+		childReceipt: privacy.OfflineDeviceChildReceipt{
+			ErasureID: testErasureID, DeviceID: testDeviceID, SourceGeneration: 1, CurrentGeneration: 2,
+			ChallengeRevision: 1, Status: privacy.OfflineDeviceChildSucceeded, UpdatedAt: now, StableReason: "device_acknowledged",
+		},
+	}
+	var logs bytes.Buffer
+	handler := newMemoryPrivacyAPI(t, []string{"privacy:device"}, nil, nil, service, nil, privacy.NewReadPermitManager(), &logs)
+	response := authenticatedRequest(handler, http.MethodGet, "/v1/privacy/erasures/"+testErasureID+"/offline-device-purge", "")
+	if response.Code != http.StatusOK || strings.Join(service.calls, ",") != "offline_get" || !strings.Contains(response.Body.String(), `"device_id":"`+testDeviceID+`"`) {
+		t.Fatalf("purge challenge = %d calls=%v body=%s", response.Code, service.calls, response.Body.String())
+	}
+
+	managedAbsent := true
+	body := fmt.Sprintf(`{"challenge_revision":1,"challenge":%q,"outcome":"succeeded","managed_objects_absent":%t}`, challenge, managedAbsent)
+	response = authenticatedRequest(handler, http.MethodPost, "/v1/privacy/erasures/"+testErasureID+"/offline-device-purge/ack", body)
+	if response.Code != http.StatusOK || strings.Join(service.calls, ",") != "offline_get,offline_ack" {
+		t.Fatalf("ack = %d calls=%v body=%s", response.Code, service.calls, response.Body.String())
+	}
+	if service.ackErasureID != testErasureID || service.ackDeviceID != testDeviceID || service.acknowledged.ChallengeRevision != 1 || service.acknowledged.Challenge != challenge || service.acknowledged.Outcome != privacy.OfflinePurgeOutcomeSucceeded || service.acknowledged.ManagedObjectsAbsent == nil || !*service.acknowledged.ManagedObjectsAbsent {
+		t.Fatalf("ack binding=%+v erasure=%s device=%s", service.acknowledged, service.ackErasureID, service.ackDeviceID)
+	}
+
+	service.calls = nil
+	response = authenticatedRequest(handler, http.MethodPost, "/v1/privacy/erasures/"+testErasureID+"/offline-device-purge/ack", strings.TrimSuffix(body, "}")+`,"unexpected":true}`)
+	if response.Code != http.StatusBadRequest || len(service.calls) != 0 {
+		t.Fatalf("unknown field = %d calls=%v body=%s", response.Code, service.calls, response.Body.String())
+	}
+
+	withoutScope := newMemoryPrivacyAPI(t, []string{"privacy:read"}, nil, nil, service, nil, privacy.NewReadPermitManager(), &logs)
+	response = authenticatedRequest(withoutScope, http.MethodGet, "/v1/privacy/erasures/"+testErasureID+"/offline-device-purge", "")
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("missing privacy:device = %d body=%s", response.Code, response.Body.String())
+	}
+
+	service.purgeFound = false
+	response = authenticatedRequest(handler, http.MethodGet, "/v1/privacy/erasures/"+testErasureID+"/offline-device-purge", "")
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("no purge task = %d body=%s", response.Code, response.Body.String())
 	}
 }
 

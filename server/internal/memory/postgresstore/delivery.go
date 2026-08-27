@@ -429,6 +429,46 @@ func (s *Store) ClaimAttempt(ctx context.Context, deliveryID string, _ time.Time
 	return attempt, nil
 }
 
+func (s *Store) ReleasePreparedAttempt(ctx context.Context, input memory.PreparedAttemptRelease) error {
+	if uuid.Validate(input.AttemptID) != nil || uuid.Validate(input.AttemptToken) != nil || uuid.Validate(input.LeaseToken) != nil {
+		return invalid("invalid prepared attempt release")
+	}
+	deliveryID, err := s.attemptDeliveryID(ctx, input.AttemptID)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	locked, err := lockDelivery(ctx, tx, deliveryID)
+	if err != nil {
+		return err
+	}
+	attempt, err := lockAttempt(ctx, tx, input.AttemptID)
+	if err != nil {
+		return err
+	}
+	if locked.currentAttemptID == nil || *locked.currentAttemptID != attempt.ID ||
+		attempt.AttemptToken != input.AttemptToken || attempt.LeaseToken != input.LeaseToken ||
+		attempt.State != memory.AttemptPrepared || attempt.SentAt != nil {
+		return outbox.ErrLeaseLost
+	}
+	tag, err := tx.Exec(ctx, `
+UPDATE memory_delivery_attempt_heads
+SET lease_expires_at=$2,error_category=NULLIF($3,''),updated_at=$2
+WHERE attempt_id=$1 AND delivery_id=$4 AND state='prepared' AND lease_token=$5 AND sent_at IS NULL`,
+		attempt.ID, locked.dbNow, input.ErrorCategory, deliveryID, input.LeaseToken)
+	if err != nil {
+		return fmt.Errorf("release prepared delivery attempt: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return outbox.ErrLeaseLost
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) TransitionAttempt(ctx context.Context, input memory.AttemptTransition) (memory.Attempt, error) {
 	if !canonicalUUID(input.AttemptID) || !canonicalUUID(input.AttemptToken) || !canonicalUUID(input.LeaseToken) || input.At.IsZero() ||
 		!((input.From == memory.AttemptPrepared && input.To == memory.AttemptSent) ||

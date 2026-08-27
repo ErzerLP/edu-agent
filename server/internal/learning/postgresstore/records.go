@@ -76,8 +76,13 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		if _, err := tx.Exec(ctx, `INSERT INTO learning_attempt_payloads(id,answer_text,payload_hash,created_at) VALUES($1,$2,$3,$4)`, value.AnswerPayloadID, value.Answer, hash, value.ReceivedAt); err != nil {
 			return fmt.Errorf("insert attempt payload: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_attempts(id,session_id,activity_id,activity_revision,answer_payload_id,help_level,actor_device_id,occurred_at,received_at,payload_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, value.ID, value.SessionID, value.ActivityID, value.ActivityRevision, value.AnswerPayloadID, value.Help, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt, hash); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_attempts(id,session_id,activity_id,activity_revision,answer_payload_id,help_level,actor_device_id,occurred_at,received_at,payload_hash,evidence_eligibility,evidence_ineligible_reason,archive_disposition,offline_submission_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,NULLIF($14,'')::uuid)`, value.ID, value.SessionID, value.ActivityID, value.ActivityRevision, value.AnswerPayloadID, value.Help, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt, hash, value.EvidenceEligibility, value.EvidenceIneligibleReason, defaultArchiveDisposition(value.ArchiveDisposition), value.OfflineSubmissionID); err != nil {
 			return fmt.Errorf("insert attempt: %w", err)
+		}
+		if batch.EvidenceClaimSource != "" {
+			if _, err := tx.Exec(ctx, `INSERT INTO learning_activity_evidence_claims(activity_id,activity_revision,winning_attempt_id,claim_source,claimed_event_seq,claimed_at) VALUES($1,$2,$3,$4,$5,$6)`, value.ActivityID, value.ActivityRevision, value.ID, batch.EvidenceClaimSource, nullableInt64(batch.EvidenceClaimEventSeq), value.ReceivedAt); err != nil {
+				return fmt.Errorf("insert activity evidence claim: %w", err)
+			}
 		}
 	}
 	if value := batch.Assessment; value != nil {
@@ -90,7 +95,7 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		for index := range value.RiskFlags {
 			risks[index] = string(value.RiskFlags[index])
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_assessments(id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, value.ID, value.SessionID, value.AttemptID, value.ActivityID, value.ActivityRevision, value.RubricComplete, value.Confidence, risks, value.ModelID, parameters, value.PromptRevision, inputHash, value.Attempts, value.AttemptCategories, value.CreatedAt); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_assessments(id,session_id,attempt_id,activity_id,activity_revision,rubric_complete,confidence,risk_flags,trusted_model_id,model_parameters,prompt_revision,proposal_input_hash,model_attempts,attempt_categories,created_at,evidence_eligibility,evidence_ineligible_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULLIF($17,''))`, value.ID, value.SessionID, value.AttemptID, value.ActivityID, value.ActivityRevision, value.RubricComplete, value.Confidence, risks, value.ModelID, parameters, value.PromptRevision, inputHash, value.Attempts, value.AttemptCategories, value.CreatedAt, value.EvidenceEligibility, value.EvidenceIneligibleReason); err != nil {
 			return fmt.Errorf("insert assessment: %w", err)
 		}
 		for index, item := range value.Items {
@@ -140,7 +145,10 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		if !ok || owner.SessionID == "" || owner.KnowledgeRevisionID != value.KnowledgeRevisionID || owner.NodeRevisionID != value.NodeRevisionID || owner.NodeID == "" || owner.DocumentRevisionID == "" {
 			return &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid, Reason: "evidence_owner_missing"}
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_evidence(id,decision_id,assessment_id,session_id,attempt_id,activity_id,activity_revision,goal_revision_id,route_revision_id,knowledge_revision_id,node_revision_id,node_id,document_revision_id,rubric_revision,evidence_kind,activity_type,outcome,help_level,received_at,acceptance_policy_version,reducer_policy_version,review_policy_version,misconception_candidates,rubric_outcomes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`, value.ID, value.DispositionDecisionID, value.AssessmentID, owner.SessionID, value.AttemptID, value.ActivityID, value.ActivityRevision, value.GoalRevisionID, value.RouteRevisionID, owner.KnowledgeRevisionID, owner.NodeRevisionID, owner.NodeID, owner.DocumentRevisionID, value.RubricRevision, value.Kind, value.ActivityType, value.Outcome, value.Help, value.ReceivedAt, value.AcceptancePolicyVersion, value.ReducerPolicyVersion, value.ReviewPolicyVersion, candidates, outcomes); err != nil {
+		if value.AcceptedEventSequence < 1 {
+			return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "evidence_accepted_event_seq_missing"}
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_evidence(id,decision_id,assessment_id,session_id,attempt_id,activity_id,activity_revision,goal_revision_id,route_revision_id,knowledge_revision_id,node_revision_id,node_id,document_revision_id,rubric_revision,evidence_kind,activity_type,outcome,help_level,received_at,accepted_event_seq,acceptance_policy_version,reducer_policy_version,review_policy_version,misconception_candidates,rubric_outcomes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`, value.ID, value.DispositionDecisionID, value.AssessmentID, owner.SessionID, value.AttemptID, value.ActivityID, value.ActivityRevision, value.GoalRevisionID, value.RouteRevisionID, owner.KnowledgeRevisionID, owner.NodeRevisionID, owner.NodeID, owner.DocumentRevisionID, value.RubricRevision, value.Kind, value.ActivityType, value.Outcome, value.Help, value.ReceivedAt, value.AcceptedEventSequence, value.AcceptancePolicyVersion, value.ReducerPolicyVersion, value.ReviewPolicyVersion, candidates, outcomes); err != nil {
 			return fmt.Errorf("insert accepted evidence: %w", err)
 		}
 	}
@@ -166,6 +174,13 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		}
 	}
 	return nil
+}
+
+func defaultArchiveDisposition(value string) string {
+	if value == "" {
+		return "online"
+	}
+	return value
 }
 
 func nullable(value string) any {

@@ -55,7 +55,7 @@ func EstimateActiveTime(sessionID string, samples []InteractionSample) ActiveTim
 
 func isActiveTimeEvent(eventType EventType) bool {
 	switch eventType {
-	case EventAttemptSubmitted, EventFreeQuestionAsked, EventReviewPresented:
+	case EventAttemptSubmitted, EventOfflineAttemptSubmitted, EventFreeQuestionAsked, EventReviewPresented:
 		return true
 	default:
 		return false
@@ -65,7 +65,11 @@ func isActiveTimeEvent(eventType EventType) bool {
 func estimateActiveTimeFromTimeline(sessionID string, timeline []TimelineItem) ActiveTimeEstimate {
 	samples := make([]InteractionSample, 0)
 	for _, item := range timeline {
-		if item.AggregateID == sessionID && isActiveTimeEvent(item.Type) {
+		itemSessionID := item.AggregateID
+		if item.Source == "offline" {
+			itemSessionID = item.ParentSessionID
+		}
+		if itemSessionID == sessionID && isActiveTimeEvent(item.Type) {
 			samples = append(samples, InteractionSample{
 				EventSequence: item.EventSequence,
 				SessionID:     sessionID,

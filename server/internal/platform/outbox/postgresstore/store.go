@@ -81,6 +81,57 @@ func EnqueueWith(ctx context.Context, db DBTX, message outbox.Message) (bool, er
 	return false, nil
 }
 
+func (s *Store) ClaimBusinessTypes(ctx context.Context, now time.Time, lease time.Duration, limit int, businessTypes []string) ([]outbox.Message, error) {
+	if len(businessTypes) == 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH candidates AS (
+			SELECT id FROM outbox_messages
+			WHERE business_type = ANY($4::text[])
+			  AND ((status='pending' AND available_at <= $1)
+			       OR (status='processing' AND lease_expires_at <= $1))
+			ORDER BY available_at,created_at,id
+			FOR UPDATE SKIP LOCKED
+			LIMIT $2
+		)
+		UPDATE outbox_messages o
+		SET status='processing',attempts=o.attempts+1,
+		    lease_expires_at=$1 + ($3 * interval '1 microsecond'),lease_token=gen_random_uuid(),updated_at=$1
+		FROM candidates c WHERE o.id=c.id
+		RETURNING o.id,o.business_type,o.aggregate_id,o.idempotency_key,o.revision,o.generation,
+		          o.payload,o.audit_metadata,o.status,o.available_at,o.attempts,o.max_attempts,
+		          COALESCE(o.last_error_category,''),o.last_error_at,COALESCE(o.terminal_disposition,''),
+		          o.lease_expires_at,o.lease_token::text,o.created_at,o.updated_at`,
+		now, limit, lease.Microseconds(), businessTypes)
+	if err != nil {
+		return nil, fmt.Errorf("claim filtered outbox messages: %w", err)
+	}
+	return scanClaimedMessages(rows)
+}
+
+func scanClaimedMessages(rows pgx.Rows) ([]outbox.Message, error) {
+	defer rows.Close()
+	var messages []outbox.Message
+	for rows.Next() {
+		var message outbox.Message
+		if err := rows.Scan(
+			&message.ID, &message.BusinessType, &message.AggregateID, &message.IdempotencyKey,
+			&message.Revision, &message.Generation, &message.Payload, &message.AuditMetadata,
+			&message.Status, &message.AvailableAt, &message.Attempts, &message.MaxAttempts,
+			&message.LastErrorCategory, &message.LastErrorAt, &message.TerminalDisposition,
+			&message.LeaseExpiresAt, &message.LeaseToken, &message.CreatedAt, &message.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan outbox message: %w", err)
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate outbox messages: %w", err)
+	}
+	return messages, nil
+}
+
 func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, limit int) ([]outbox.Message, error) {
 	rows, err := s.pool.Query(ctx, `
 		WITH candidates AS (
@@ -103,25 +154,7 @@ func (s *Store) Claim(ctx context.Context, now time.Time, lease time.Duration, l
 	if err != nil {
 		return nil, fmt.Errorf("claim outbox messages: %w", err)
 	}
-	defer rows.Close()
-	var messages []outbox.Message
-	for rows.Next() {
-		var message outbox.Message
-		if err := rows.Scan(
-			&message.ID, &message.BusinessType, &message.AggregateID, &message.IdempotencyKey,
-			&message.Revision, &message.Generation, &message.Payload, &message.AuditMetadata,
-			&message.Status, &message.AvailableAt, &message.Attempts, &message.MaxAttempts,
-			&message.LastErrorCategory, &message.LastErrorAt, &message.TerminalDisposition,
-			&message.LeaseExpiresAt, &message.LeaseToken, &message.CreatedAt, &message.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("scan outbox message: %w", err)
-		}
-		messages = append(messages, message)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate outbox messages: %w", err)
-	}
-	return messages, nil
+	return scanClaimedMessages(rows)
 }
 
 func (s *Store) RequeueDead(ctx context.Context, request outbox.RequeueRequest) error {

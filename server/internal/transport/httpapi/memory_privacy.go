@@ -455,6 +455,59 @@ func (a *API) handlePrivacyCreateErasure(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusAccepted, remote)
 }
 
+func (a *API) handlePrivacyOfflinePurgeTask(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictMemoryQuery(w, r); !ok {
+		return
+	}
+	erasureID := chi.URLParam(r, "erasureID")
+	if !privacy.CanonicalUUID(erasureID) {
+		writeMemoryInvalid(w, r)
+		return
+	}
+	credential, ok := credentialFromContext(r.Context())
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "authentication_failed", "Device credentials are invalid")
+		return
+	}
+	challenge, found, err := a.privacy.CurrentOfflineDevicePurge(r.Context(), credential.Device.ID)
+	if err != nil {
+		a.writePrivacyFailure(w, r, "offline_device_purge", err)
+		return
+	}
+	if !found || challenge.ErasureID != erasureID {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, challenge)
+}
+
+func (a *API) handlePrivacyOfflineDeviceAck(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictMemoryQuery(w, r); !ok {
+		return
+	}
+	erasureID := chi.URLParam(r, "erasureID")
+	if !privacy.CanonicalUUID(erasureID) {
+		writeMemoryInvalid(w, r)
+		return
+	}
+	var acknowledgment privacy.OfflineDevicePurgeAcknowledgment
+	if !decodeMemoryJSON(w, r, &acknowledgment) || acknowledgment.Validate() != nil {
+		writeMemoryInvalid(w, r)
+		return
+	}
+	credential, ok := credentialFromContext(r.Context())
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "authentication_failed", "Device credentials are invalid")
+		return
+	}
+	receipt, err := a.privacy.AcknowledgeOfflineDevicePurge(r.Context(), erasureID, credential.Device.ID, acknowledgment)
+	if err != nil {
+		a.writePrivacyFailure(w, r, "offline_device_ack", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, receipt)
+}
+
 func (a *API) handlePrivacyErasureReceipt(w http.ResponseWriter, r *http.Request) {
 	if _, ok := strictMemoryQuery(w, r); !ok {
 		return
@@ -670,10 +723,13 @@ func (a *API) writePrivacyFailure(w http.ResponseWriter, r *http.Request, operat
 	switch code {
 	case privacy.CodeInvalidRequest:
 		status, message = http.StatusBadRequest, "Privacy erasure request is invalid"
-	case privacy.CodeIdempotencyConflict, privacy.CodeErasureInProgress, privacy.CodeReceiptNotCurrent:
+	case privacy.CodeIdempotencyConflict, privacy.CodeErasureInProgress, privacy.CodeReceiptNotCurrent,
+		privacy.CodeOfflinePurgeNotCurrent, privacy.CodeOfflinePurgeAckConflict:
 		code, status, message = "erasure_conflict", http.StatusConflict, "Privacy erasure conflicts with current state"
+	case privacy.CodeOfflineChallengeInvalid:
+		status, message = http.StatusForbidden, "Offline purge acknowledgment is invalid"
 	case privacy.CodeContentRedacted, privacy.CodePrivacyClearInProgress,
-		privacy.CodeVerificationFailed, privacy.CodeUnsupportedReceiptStore:
+		privacy.CodeVerificationFailed, privacy.CodeUnsupportedReceiptStore, privacy.CodeOfflineChallengeUnavailable:
 		status, message = http.StatusServiceUnavailable, "Privacy erasure is not currently available"
 	case privacy.CodeNotFound:
 		status, message = http.StatusNotFound, "Privacy erasure receipt was not found"

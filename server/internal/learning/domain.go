@@ -17,7 +17,7 @@ const (
 	EventSchemaVersion         = 1
 	EventRedactedSchemaVersion = 2
 	EventEnvelopeVersion       = "learning-event-v1"
-	ProjectionVersion          = "learning-projection-v1"
+	ProjectionVersion          = "learning-projection-v2"
 	MasteryReducerVersion      = "mastery-reducer-v1"
 	AssessmentPolicyVersion    = "assessment-acceptance-v1"
 	ReviewPolicyVersion        = "fixed-interval-v1"
@@ -50,6 +50,9 @@ const (
 	CodeContentRedacted               = "content_redacted"
 	CodeStaleCursor                   = "stale_cursor"
 	CodeModelUnavailable              = "model_unavailable"
+	CodeOfflinePrepareUnavailable     = "offline_prepare_unavailable"
+	CodeOfflineSignerUnavailable      = "offline_signer_unavailable"
+	CodeOfflineOperationNotFound      = "operation_not_found"
 )
 
 type Error struct {
@@ -195,17 +198,21 @@ type Activity struct {
 }
 
 type Attempt struct {
-	ID               string     `json:"attempt_id"`
-	SessionID        string     `json:"session_id"`
-	ActivityID       string     `json:"activity_id"`
-	ActivityRevision int64      `json:"activity_revision"`
-	AnswerPayloadID  string     `json:"answer_payload_id"`
-	Answer           string     `json:"answer"`
-	AnswerSHA256     string     `json:"answer_sha256"`
-	Help             HelpLevel  `json:"help"`
-	ActorDeviceID    string     `json:"actor_device_id"`
-	OccurredAt       *time.Time `json:"occurred_at,omitempty"`
-	ReceivedAt       time.Time  `json:"received_at"`
+	ID                       string     `json:"attempt_id"`
+	SessionID                string     `json:"session_id"`
+	ActivityID               string     `json:"activity_id"`
+	ActivityRevision         int64      `json:"activity_revision"`
+	AnswerPayloadID          string     `json:"answer_payload_id"`
+	Answer                   string     `json:"answer"`
+	AnswerSHA256             string     `json:"answer_sha256"`
+	Help                     HelpLevel  `json:"help"`
+	ActorDeviceID            string     `json:"actor_device_id"`
+	OccurredAt               *time.Time `json:"occurred_at,omitempty"`
+	ReceivedAt               time.Time  `json:"received_at"`
+	EvidenceEligibility      bool       `json:"evidence_eligibility"`
+	EvidenceIneligibleReason string     `json:"evidence_ineligible_reason,omitempty"`
+	ArchiveDisposition       string     `json:"archive_disposition,omitempty"`
+	OfflineSubmissionID      string     `json:"offline_submission_id,omitempty"`
 }
 
 type Conclusion string
@@ -245,22 +252,24 @@ const (
 )
 
 type AssessmentArtifact struct {
-	ID                string           `json:"assessment_id"`
-	SessionID         string           `json:"session_id"`
-	AttemptID         string           `json:"attempt_id"`
-	ActivityID        string           `json:"activity_id"`
-	ActivityRevision  int64            `json:"activity_revision"`
-	Items             []AssessmentItem `json:"items"`
-	RubricComplete    bool             `json:"rubric_complete"`
-	Confidence        int              `json:"confidence"`
-	RiskFlags         []RiskFlag       `json:"risk_flags"`
-	ModelID           string           `json:"model_id"`
-	ModelParameters   map[string]any   `json:"model_parameters"`
-	PromptRevision    string           `json:"prompt_revision"`
-	ProposalInputHash string           `json:"proposal_input_hash"`
-	Attempts          int              `json:"attempts"`
-	AttemptCategories []string         `json:"attempt_categories"`
-	CreatedAt         time.Time        `json:"created_at"`
+	ID                       string           `json:"assessment_id"`
+	SessionID                string           `json:"session_id"`
+	AttemptID                string           `json:"attempt_id"`
+	ActivityID               string           `json:"activity_id"`
+	ActivityRevision         int64            `json:"activity_revision"`
+	Items                    []AssessmentItem `json:"items"`
+	RubricComplete           bool             `json:"rubric_complete"`
+	Confidence               int              `json:"confidence"`
+	RiskFlags                []RiskFlag       `json:"risk_flags"`
+	ModelID                  string           `json:"model_id"`
+	ModelParameters          map[string]any   `json:"model_parameters"`
+	PromptRevision           string           `json:"prompt_revision"`
+	ProposalInputHash        string           `json:"proposal_input_hash"`
+	Attempts                 int              `json:"attempts"`
+	AttemptCategories        []string         `json:"attempt_categories"`
+	CreatedAt                time.Time        `json:"created_at"`
+	EvidenceEligibility      bool             `json:"evidence_eligibility"`
+	EvidenceIneligibleReason string           `json:"evidence_ineligible_reason,omitempty"`
 }
 
 type Disposition string
@@ -327,6 +336,7 @@ type AcceptedEvidence struct {
 	Outcome                 Outcome                  `json:"outcome"`
 	Help                    HelpLevel                `json:"help"`
 	ReceivedAt              time.Time                `json:"received_at"`
+	AcceptedEventSequence   int64                    `json:"accepted_event_seq"`
 	AcceptancePolicyVersion string                   `json:"acceptance_policy_version"`
 	ReducerPolicyVersion    string                   `json:"reducer_policy_version"`
 	ReviewPolicyVersion     string                   `json:"review_policy_version"`
@@ -511,9 +521,19 @@ func StableRouteSteps(steps []RouteStep) bool {
 
 func SortEvidence(values []AcceptedEvidence) {
 	sort.SliceStable(values, func(i, j int) bool {
-		if values[i].ReceivedAt.Equal(values[j].ReceivedAt) {
-			return values[i].ID < values[j].ID
+		left, right := values[i], values[j]
+		if left.AcceptedEventSequence != right.AcceptedEventSequence {
+			if left.AcceptedEventSequence == 0 {
+				return false
+			}
+			if right.AcceptedEventSequence == 0 {
+				return true
+			}
+			return left.AcceptedEventSequence < right.AcceptedEventSequence
 		}
-		return values[i].ReceivedAt.Before(values[j].ReceivedAt)
+		if left.AcceptedEventSequence == 0 && !left.ReceivedAt.Equal(right.ReceivedAt) {
+			return left.ReceivedAt.Before(right.ReceivedAt)
+		}
+		return left.ID < right.ID
 	})
 }

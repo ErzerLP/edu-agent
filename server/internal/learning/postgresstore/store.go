@@ -37,15 +37,25 @@ type tutoringOwner interface {
 	LoadFreeAnswerForQuestionLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeAnswer, bool, error)
 }
 
-// Store is the PostgreSQL transaction authority for learning commands and projections.
-type Store struct {
-	pool     *pgxpool.Pool
-	registry *learning.EventRegistry
-	tutoring tutoringOwner
+type knowledgeOwner interface {
+	LockReadWith(context.Context, pgx.Tx) (int64, error)
+	RevisionHeadLockedWith(context.Context, pgx.Tx, string) (bool, string, error)
 }
 
-func New(pool *pgxpool.Pool, tutoringStore tutoringOwner) *Store {
-	return &Store{pool: pool, registry: learning.NewEventRegistry(), tutoring: tutoringStore}
+// Store is the PostgreSQL transaction authority for learning commands and projections.
+type Store struct {
+	pool      *pgxpool.Pool
+	registry  *learning.EventRegistry
+	tutoring  tutoringOwner
+	knowledge knowledgeOwner
+}
+
+func New(pool *pgxpool.Pool, tutoringStore tutoringOwner, knowledgeStores ...knowledgeOwner) *Store {
+	var knowledgeStore knowledgeOwner
+	if len(knowledgeStores) > 0 {
+		knowledgeStore = knowledgeStores[0]
+	}
+	return &Store{pool: pool, registry: learning.NewEventRegistry(), tutoring: tutoringStore, knowledge: knowledgeStore}
 }
 
 type aggregateKey struct{ kind, id string }
@@ -239,6 +249,9 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		versions[key] = current
 	}
 
+	if err := prepareOnlineEvidenceEligibility(ctx, tx, &request.Batch); err != nil {
+		return learning.OperationResult{}, err
+	}
 	if len(request.Batch.Events) == 0 {
 		return learning.OperationResult{}, &learning.Error{Code: learning.CodeInvalidRequest, Reason: "empty_event_batch"}
 	}
@@ -259,6 +272,9 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 	}
 	if request.Batch.FocusFrame != nil && request.Batch.FocusFrame.CreatedEventSequence == 0 {
 		request.Batch.FocusFrame.CreatedEventSequence = focusCreatedSequence
+	}
+	if err := stampAcceptedEventSequences(&request.Batch, firstSequence); err != nil {
+		return learning.OperationResult{}, err
 	}
 	events := make([]learning.LearningEvent, 0, len(request.Batch.Events))
 	for ordinal, draft := range request.Batch.Events {
@@ -296,12 +312,21 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		payloadHash := learning.SHA256(payload)
 		eventID := uuid.NewSHA1(eventNamespace, []byte(request.DeviceID+"\n"+request.Operation.OperationID+fmt.Sprintf("\n%d", ordinal))).String()
 		payloadID := uuid.NewSHA1(eventNamespace, []byte("payload\n"+eventID)).String()
+		source := draft.Source
+		if source == "" {
+			source = "online"
+		}
 		events = append(events, learning.LearningEvent{
 			EventSequence: sequence, ID: eventID, Type: draft.Type, SchemaVersion: learning.EventSchemaVersion,
 			AggregateType: key.kind, AggregateID: key.id, AggregateVersion: current,
 			DeviceID: request.DeviceID, OperationID: request.Operation.OperationID, OperationOrdinal: ordinal,
 			ReceivedAt: request.ReceivedAt, OccurredAt: request.Operation.OccurredAt,
 			PayloadID: payloadID, PayloadHash: payloadHash, Payload: payload,
+			ParentSessionID: draft.ParentSessionID, Source: source,
+			ArchiveDisposition: draft.ArchiveDisposition, EvidenceDisposition: draft.EvidenceDisposition,
+			GoalRevisionID: draft.GoalRevisionID, RouteRevisionID: draft.RouteRevisionID,
+			KnowledgeRevisionID: draft.KnowledgeRevisionID, ActivityID: draft.ActivityID,
+			ActivityRevision: draft.ActivityRevision,
 		})
 	}
 	lastSequence := events[len(events)-1].EventSequence
@@ -331,7 +356,7 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		if _, err := tx.Exec(ctx, `INSERT INTO learning_event_payloads(id,payload,payload_hash,created_at) VALUES($1,$2,$3,$4)`, event.PayloadID, event.Payload, payloadHash, event.ReceivedAt); err != nil {
 			return learning.OperationResult{}, fmt.Errorf("insert learning event payload: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_events(event_seq,id,event_type,event_schema_version,aggregate_type,aggregate_id,aggregate_version,device_id,operation_id,operation_ordinal,received_at,occurred_at,payload_id,payload_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, event.EventSequence, event.ID, event.Type, event.SchemaVersion, event.AggregateType, event.AggregateID, event.AggregateVersion, event.DeviceID, event.OperationID, event.OperationOrdinal, event.ReceivedAt, event.OccurredAt, event.PayloadID, payloadHash); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_events(event_seq,id,event_type,event_schema_version,aggregate_type,aggregate_id,aggregate_version,device_id,operation_id,operation_ordinal,received_at,occurred_at,payload_id,payload_hash,parent_session_id,event_source,archive_disposition,evidence_disposition,goal_revision_id,route_revision_id,knowledge_revision_id,activity_id,activity_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, event.EventSequence, event.ID, event.Type, event.SchemaVersion, event.AggregateType, event.AggregateID, event.AggregateVersion, event.DeviceID, event.OperationID, event.OperationOrdinal, event.ReceivedAt, event.OccurredAt, event.PayloadID, payloadHash, nullable(event.ParentSessionID), event.Source, nullable(event.ArchiveDisposition), nullable(event.EvidenceDisposition), nullable(event.GoalRevisionID), nullable(event.RouteRevisionID), nullable(event.KnowledgeRevisionID), nullable(event.ActivityID), nullableInt64(event.ActivityRevision)); err != nil {
 			return learning.OperationResult{}, fmt.Errorf("insert learning event: %w", err)
 		}
 	}
@@ -376,6 +401,11 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 	if len(result.Result) == 0 {
 		result.Result = json.RawMessage(`{}`)
 	}
+	if update := request.Batch.OfflineStatusUpdate; update != nil {
+		if err := appendOfflineEvaluationStatus(ctx, tx, update.SubmissionID, update.Assessment, update.Evidence, update.ReasonCodes, update.AssessmentID, update.EvidenceID, &result, request.ReceivedAt); err != nil {
+			return learning.OperationResult{}, err
+		}
+	}
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		return learning.OperationResult{}, fmt.Errorf("encode learning operation result: %w", err)
@@ -391,6 +421,118 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		return learning.OperationResult{}, fmt.Errorf("commit learning command: %w", err)
 	}
 	return result, nil
+}
+
+func prepareOnlineEvidenceEligibility(ctx context.Context, tx pgx.Tx, batch *learning.CommandBatch) error {
+	if batch.Attempt != nil {
+		attempt := batch.Attempt
+		attempt.ArchiveDisposition = "online"
+		if attempt.Help == learning.HelpAnswerRevealed {
+			attempt.EvidenceEligibility = false
+			attempt.EvidenceIneligibleReason = learning.OfflineReasonAnswerRevealed
+		} else {
+			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "learning-activity-evidence:"+attempt.ActivityID+fmt.Sprintf(":%d", attempt.ActivityRevision)); err != nil {
+				return fmt.Errorf("lock online activity evidence claim: %w", err)
+			}
+			var winner string
+			err := tx.QueryRow(ctx, `SELECT winning_attempt_id::text FROM learning_activity_evidence_claims WHERE activity_id=$1 AND activity_revision=$2 FOR UPDATE`, attempt.ActivityID, attempt.ActivityRevision).Scan(&winner)
+			switch {
+			case errors.Is(err, pgx.ErrNoRows):
+				attempt.EvidenceEligibility = true
+				attempt.EvidenceIneligibleReason = ""
+				batch.EvidenceClaimSource = "online"
+			case err != nil:
+				return fmt.Errorf("read online activity evidence claim: %w", err)
+			case winner == attempt.ID:
+				attempt.EvidenceEligibility = true
+				attempt.EvidenceIneligibleReason = ""
+			default:
+				attempt.EvidenceEligibility = false
+				attempt.EvidenceIneligibleReason = learning.OfflineReasonDuplicateActivity
+			}
+		}
+		for index := range batch.Events {
+			if batch.Events[index].Type == learning.EventAttemptSubmitted {
+				batch.Events[index].Payload = mustMarshalStore(attempt)
+			}
+		}
+	}
+
+	if batch.Assessment != nil {
+		eligibility := true
+		reason := ""
+		if batch.Attempt != nil && batch.Assessment.AttemptID == batch.Attempt.ID {
+			eligibility = batch.Attempt.EvidenceEligibility
+			reason = batch.Attempt.EvidenceIneligibleReason
+		} else {
+			if err := tx.QueryRow(ctx, `SELECT evidence_eligibility,COALESCE(evidence_ineligible_reason,'') FROM learning_attempts WHERE id=$1`, batch.Assessment.AttemptID).Scan(&eligibility, &reason); err != nil {
+				return fmt.Errorf("load assessment attempt evidence eligibility: %w", err)
+			}
+		}
+		batch.Assessment.EvidenceEligibility = eligibility
+		batch.Assessment.EvidenceIneligibleReason = reason
+		for index := range batch.Events {
+			if batch.Events[index].Type == learning.EventAssessmentRecorded {
+				batch.Events[index].Payload = mustMarshalStore(batch.Assessment)
+			}
+		}
+	}
+
+	for _, evidence := range batch.Evidence {
+		if batch.Attempt != nil && evidence.AttemptID == batch.Attempt.ID {
+			if !batch.Attempt.EvidenceEligibility {
+				return &learning.Error{Code: learning.CodeAssessmentDispositionConflict, Reason: batch.Attempt.EvidenceIneligibleReason}
+			}
+			continue
+		}
+		var winner string
+		if err := tx.QueryRow(ctx, `SELECT winning_attempt_id::text FROM learning_activity_evidence_claims WHERE activity_id=$1 AND activity_revision=$2 FOR UPDATE`, evidence.ActivityID, evidence.ActivityRevision).Scan(&winner); err != nil {
+			return fmt.Errorf("load evidence winning attempt: %w", err)
+		}
+		if winner != evidence.AttemptID {
+			return &learning.Error{Code: learning.CodeAssessmentDispositionConflict, Reason: learning.OfflineReasonDuplicateActivity}
+		}
+	}
+	return nil
+}
+
+func stampAcceptedEventSequences(batch *learning.CommandBatch, firstSequence int64) error {
+	for ordinal := range batch.Events {
+		event := &batch.Events[ordinal]
+		sequence := firstSequence + int64(ordinal)
+		if event.Type == learning.EventAttemptSubmitted && batch.EvidenceClaimSource != "" {
+			batch.EvidenceClaimEventSeq = sequence
+		}
+		if event.Type != learning.EventEvidenceAccepted {
+			continue
+		}
+		var projected learning.AcceptedEvidence
+		if err := json.Unmarshal(event.Payload, &projected); err != nil {
+			return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_evidence_event_payload", Cause: err}
+		}
+		found := false
+		for index := range batch.Evidence {
+			if batch.Evidence[index].ID == projected.ID {
+				batch.Evidence[index].AcceptedEventSequence = sequence
+				projected = batch.Evidence[index]
+				found = true
+				break
+			}
+		}
+		if !found {
+			return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "evidence_event_not_in_batch"}
+		}
+		event.Payload = mustMarshalStore(projected)
+	}
+	return nil
+}
+
+func mustMarshalStore(value any) json.RawMessage {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
 }
 
 func payloadWithAuthority(eventType learning.EventType, payload json.RawMessage, provenance learning.AuthorityProvenance) (json.RawMessage, error) {
@@ -503,12 +645,50 @@ func validateCommitRequest(request learning.CommitRequest) error {
 	if _, err := uuid.Parse(request.DeviceID); err != nil || request.RequestHash == "" || request.ReceivedAt.IsZero() || len(request.Expectations) == 0 {
 		return &learning.Error{Code: learning.CodeInvalidRequest}
 	}
-	if request.Operation.AggregateType != "goal" && request.Operation.AggregateType != "session" {
+	if request.Operation.AggregateType != "goal" && request.Operation.AggregateType != "session" && request.Operation.AggregateType != "offline_attempt" {
 		return &learning.Error{Code: learning.CodeInvalidRequest}
 	}
 	for _, expected := range request.Expectations {
-		if (expected.Type != "goal" && expected.Type != "session") || expected.ID == "" || expected.ExpectedVersion < 0 {
+		if (expected.Type != "goal" && expected.Type != "session" && expected.Type != "offline_attempt") || expected.ID == "" || expected.ExpectedVersion < 0 {
 			return &learning.Error{Code: learning.CodeInvalidRequest}
+		}
+	}
+	if request.Operation.AggregateType == "offline_attempt" {
+		if len(request.Expectations) != 1 || request.Expectations[0].Type != "offline_attempt" ||
+			request.Expectations[0].ID != request.Operation.AggregateID ||
+			request.Expectations[0].ExpectedVersion != request.Operation.ExpectedVersion ||
+			len(request.Batch.Decisions) != 1 || request.Batch.GoalRevision != nil ||
+			request.Batch.RouteRevision != nil || request.Batch.Session != nil ||
+			request.Batch.Activity != nil || request.Batch.Attempt != nil {
+			return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_offline_assessment_commit"}
+		}
+		workerCommit := request.Batch.Assessment != nil
+		decisionCommit := request.Batch.Assessment == nil && request.Batch.OfflineStatusUpdate != nil &&
+			request.Batch.OfflineStatusUpdate.SubmissionID == request.Operation.AggregateID
+		if !workerCommit && !decisionCommit {
+			return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_offline_assessment_commit_kind"}
+		}
+		for _, event := range request.Batch.Events {
+			if event.AggregateType != "offline_attempt" || event.AggregateID != request.Operation.AggregateID {
+				return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_offline_assessment_event"}
+			}
+			if workerCommit {
+				switch event.Type {
+				case learning.EventAssessmentRecorded, learning.EventAssessmentMarkedProvisional,
+					learning.EventAssessmentAccepted, learning.EventEvidenceAccepted,
+					learning.EventMisconceptionHypothesisRevised:
+				default:
+					return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_offline_evaluation_event"}
+				}
+				continue
+			}
+			switch event.Type {
+			case learning.EventAssessmentAccepted, learning.EventAssessmentOverridden,
+				learning.EventAssessmentVoided, learning.EventEvidenceAccepted,
+				learning.EventMisconceptionHypothesisRevised:
+			default:
+				return &learning.Error{Code: learning.CodeInvalidRequest, Reason: "invalid_offline_decision_event"}
+			}
 		}
 	}
 	if goal := request.Batch.GoalRevision; goal != nil {
@@ -649,6 +829,13 @@ func normalizeLimit(value int) int {
 	}
 	if value > 200 {
 		return 200
+	}
+	return value
+}
+
+func nullableInt64(value int64) any {
+	if value == 0 {
+		return nil
 	}
 	return value
 }

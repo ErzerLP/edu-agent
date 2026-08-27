@@ -227,6 +227,193 @@ func TestOpenAPIDeclaresLearningRoutesAndContracts(t *testing.T) {
 	}
 }
 
+func TestOfflineOpenAPIContractsAreClosedScopedAndMatchWireResults(t *testing.T) {
+	data, err := os.ReadFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	paths := raw["paths"].(map[string]any)
+	for route, expected := range map[string]struct {
+		method string
+		scope  string
+		limit  int
+		codes  []string
+	}{
+		"/v1/learning/offline/packs":                                {"post", "learning:write", 1048576, []string{"200", "201", "400", "401", "403", "409", "413", "429", "500", "503"}},
+		"/v1/learning/offline/sync":                                 {"post", "learning:write", 8388608, []string{"200", "400", "401", "403", "413", "429", "500", "503"}},
+		"/v1/learning/offline/operations/{operationID}":             {"get", "learning:read", 0, []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
+		"/v1/learning/offline/assessments":                          {"get", "learning:read", 0, []string{"200", "400", "401", "403", "409", "429", "500", "503"}},
+		"/v1/learning/offline/assessments/{assessmentID}":           {"get", "learning:read", 0, []string{"200", "400", "401", "403", "404", "429", "500", "503"}},
+		"/v1/learning/offline/assessments/{assessmentID}/decisions": {"post", "learning:write", 1048576, []string{"200", "201", "400", "401", "403", "404", "409", "413", "429", "500", "503"}},
+	} {
+		operation := paths[route].(map[string]any)[expected.method].(map[string]any)
+		if operation["x-required-scope"] != expected.scope {
+			t.Fatalf("offline route %s scope=%v", route, operation["x-required-scope"])
+		}
+		if expected.limit > 0 && operation["x-max-body-bytes"] != expected.limit {
+			t.Fatalf("offline route %s body limit=%v", route, operation["x-max-body-bytes"])
+		}
+		responses := operation["responses"].(map[string]any)
+		for _, code := range expected.codes {
+			if responses[code] == nil {
+				t.Errorf("offline route %s is missing response %s", route, code)
+			}
+		}
+	}
+	schemas := raw["components"].(map[string]any)["schemas"].(map[string]any)
+	for _, name := range []string{
+		"OfflinePrepareRequest", "OfflineSignerManifestPayload", "OfflineSignerManifestEnvelope",
+		"OfflineAuthorizationPayload", "OfflineAuthorizationEnvelope", "OfflinePackItem",
+		"OfflinePackPayload", "OfflinePackEnvelope", "OfflinePrepareResponseSignaturePayload",
+		"OfflinePrepareResponseSignatureEnvelope", "OfflinePrepareResponse", "OfflineObservation",
+		"OfflineAttemptPayload", "OfflineSkipPayload", "OfflineOperation", "OfflineSyncRequest",
+		"OfflineIngestReceipt", "OfflineStatusTicket", "OfflineSyncItemResult", "OfflineSyncResponse",
+		"OfflineOperationStatus", "OfflineAssessmentSummary", "OfflineAssessmentPage", "OfflineAssessmentView",
+		"OfflineAssessmentConfirmRequest", "OfflineAssessmentOverrideItem", "OfflineAssessmentOverrideRequest",
+		"OfflineAssessmentVoidRequest", "OfflineAssessmentDecisionReceipt",
+	} {
+		schema := schemas[name].(map[string]any)
+		if schema["type"] == "object" && schema["additionalProperties"] != false {
+			t.Fatalf("offline schema %s is not closed", name)
+		}
+	}
+
+	document, err := openapi3.NewLoader().LoadFromFile("openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Validate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(value any) any {
+		t.Helper()
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result any
+		if err := json.Unmarshal(encoded, &result); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	operationID := "10000000-0000-4000-8000-000000000001"
+	status := learning.OfflineOperationStatus{
+		OperationID:      operationID,
+		SubmissionID:     "20000000-0000-4000-8000-000000000001",
+		ArchiveStatus:    learning.OfflineArchivedSucceeded,
+		AssessmentStatus: learning.OfflineAssessmentCompleted,
+		EvidenceStatus:   learning.OfflineEvidenceAccepted,
+		ReasonCodes:      []string{},
+		Receipt:          learning.OfflineIngestReceipt{ReceiptID: "30000000-0000-4000-8000-000000000001", ArchivedAt: now, AggregateVersion: "4", FirstEventSequence: "10", LastEventSequence: "13", ProjectionAsOf: "13", ArchiveStatus: learning.OfflineArchivedSucceeded},
+		StatusTicket:     learning.OfflineStatusTicket{TicketID: "40000000-0000-4000-8000-000000000001", OperationID: operationID, Revision: "1", UpdatedAt: now},
+	}
+	statusSchema := document.Paths.Find("/v1/learning/offline/operations/{operationID}").Get.Responses.Value("200").Value.Content.Get("application/json").Schema.Value
+	if err := statusSchema.VisitJSON(decode(status), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline status response failed schema validation: %v", err)
+	}
+	sync := learning.OfflineSyncResponse{SyncRequestID: "50000000-0000-4000-8000-000000000001", Results: []learning.OfflineIngestResult{{
+		ResultKind:     learning.OfflineResultConflict,
+		OperationID:    operationID,
+		DeviceSequence: "9007199254740992",
+		SubmissionID:   status.SubmissionID,
+		ArchiveStatus:  learning.OfflineIdempotencyConflict,
+		ReasonCodes:    []string{learning.OfflineReasonIdempotencyConflict},
+	}}}
+	syncSchema := document.Paths.Find("/v1/learning/offline/sync").Post.Responses.Value("200").Value.Content.Get("application/json").Schema.Value
+	if err := syncSchema.VisitJSON(decode(sync), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline sync response failed schema validation: %v", err)
+	}
+	invalidPrepare := map[string]any{
+		"operation_id": operationID, "payload_schema_version": 1, "expected_session_version": "7",
+		"trusted_manifest_revision": "0", "trusted_manifest_digest": learning.OfflineZeroDigest,
+		"unknown": true,
+	}
+	if err := document.Components.Schemas["OfflinePrepareRequest"].Value.VisitJSON(invalidPrepare, openapi3.EnableJSONSchema2020()); err == nil {
+		t.Fatal("offline prepare schema accepted an unknown field")
+	}
+	decisionRequest := map[string]any{
+		"operation_id": operationID, "payload_schema_version": 1,
+		"attempt_id": status.SubmissionID, "expected_version": "2", "kind": "void",
+		"expected_disposition_version": "1", "reason": "invalid assessment",
+	}
+	if err := document.Components.Schemas["OfflineAssessmentDecisionRequest"].Value.VisitJSON(decode(decisionRequest), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline assessment decision request failed schema validation: %v", err)
+	}
+	decisionRequest["unknown"] = true
+	if err := document.Components.Schemas["OfflineAssessmentDecisionRequest"].Value.VisitJSON(decode(decisionRequest), openapi3.EnableJSONSchema2020()); err == nil {
+		t.Fatal("offline assessment decision schema accepted an unknown field")
+	}
+	decisionSchema := document.Components.Schemas["OfflineAssessmentDecisionRequest"].Value
+	overrideRequest := func(reason, rubricItemID, misconception string) map[string]any {
+		return map[string]any{
+			"operation_id": operationID, "payload_schema_version": 1,
+			"attempt_id": status.SubmissionID, "expected_version": "2", "kind": "override",
+			"expected_disposition_version": "1", "reason": reason,
+			"items": []any{map[string]any{
+				"rubric_item_id": rubricItemID, "conclusion": "partial", "misconception_candidate": misconception,
+			}},
+		}
+	}
+	boundaryOverride := overrideRequest(
+		strings.Repeat("由", learning.MaxOfflineAssessmentDecisionReasonRunes),
+		strings.Repeat("项", learning.MaxOfflineAssessmentRubricItemIDRunes),
+		strings.Repeat("误", learning.MaxOfflineAssessmentMisconceptionRunes),
+	)
+	if err := decisionSchema.VisitJSON(decode(boundaryOverride), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline assessment Unicode boundary failed schema validation: %v", err)
+	}
+	for name, request := range map[string]map[string]any{
+		"reason":                  overrideRequest(strings.Repeat("由", learning.MaxOfflineAssessmentDecisionReasonRunes+1), "item-1", ""),
+		"rubric_item_id":          overrideRequest("valid", strings.Repeat("项", learning.MaxOfflineAssessmentRubricItemIDRunes+1), ""),
+		"misconception_candidate": overrideRequest("valid", "item-1", strings.Repeat("误", learning.MaxOfflineAssessmentMisconceptionRunes+1)),
+	} {
+		if err := decisionSchema.VisitJSON(decode(request), openapi3.EnableJSONSchema2020()); err == nil {
+			t.Fatalf("offline assessment schema accepted overlong %s", name)
+		}
+	}
+	metadata := learning.ProjectionMetadata{
+		AsOfEventSequence: 20, ProjectionVersion: learning.ProjectionVersion,
+		MasteryReducerVersion: learning.MasteryReducerVersion, AssessmentPolicy: learning.AssessmentPolicyVersion,
+		ReviewPolicy: learning.ReviewPolicyVersion, KnowledgeRevisionID: "60000000-0000-4000-8000-000000000001",
+		GenerationID: "70000000-0000-4000-8000-000000000001", ReasonCodes: []string{},
+	}
+	page := learning.OfflineAssessmentPage{Metadata: metadata, Items: []learning.OfflineAssessmentSummary{{
+		AssessmentID: "80000000-0000-4000-8000-000000000001", AttemptID: status.SubmissionID,
+		ActivityID: "90000000-0000-4000-8000-000000000001", ActivityRevision: "1",
+		SubmissionID: status.SubmissionID, AggregateVersion: "2", DispositionVersion: "1",
+		Disposition: learning.DispositionProvisional, Confidence: 849, Confirmable: true,
+		AllowedDecisions: []string{"confirm", "override", "void"}, AttemptReceivedAt: now, AssessmentCreatedAt: now,
+	}}}
+	pageSchema := document.Paths.Find("/v1/learning/offline/assessments").Get.Responses.Value("200").Value.Content.Get("application/json").Schema.Value
+	if err := pageSchema.VisitJSON(decode(page), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline assessment page failed schema validation: %v", err)
+	}
+	conflictSchema := document.Paths.Find("/v1/learning/offline/assessments/{assessmentID}/decisions").Post.Responses.Value("409").Value.Content.Get("application/json").Schema.Value
+	versionConflict := map[string]any{
+		"error": map[string]any{"code": "version_conflict", "message": "conflict", "request_id": "request-1"},
+		"conflict": map[string]any{
+			"aggregate_type": "offline_attempt", "aggregate_id": status.SubmissionID,
+			"expected_version": 2, "current_version": 3, "as_of_event_seq": 20,
+		},
+	}
+	if err := conflictSchema.VisitJSON(decode(versionConflict), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline assessment version conflict failed schema validation: %v", err)
+	}
+	dispositionConflict := map[string]any{
+		"error":               map[string]any{"code": "assessment_disposition_conflict", "message": "conflict", "request_id": "request-2"},
+		"current_disposition": "provisional",
+	}
+	if err := conflictSchema.VisitJSON(decode(dispositionConflict), openapi3.EnableJSONSchema2020()); err != nil {
+		t.Fatalf("offline assessment disposition conflict failed schema validation: %v", err)
+	}
+}
+
 func TestGoCLIM1OpenAPIReadContractsAreClosedAndScoped(t *testing.T) {
 	data, err := os.ReadFile("openapi.yaml")
 	if err != nil {
@@ -722,7 +909,7 @@ func TestLearningOpenAPIValidatesWireShapes(t *testing.T) {
 
 	routeRevision := learning.RouteRevision{ID: id5, RouteID: id4, Revision: 1, GoalRevisionID: id3, KnowledgeRevisionID: id2, PolicyVersion: learning.RoutePolicyVersion, SourceProposalID: id1, Steps: []learning.RouteStep{{ID: id6, Ordinal: 0, NodeID: id7, NodeRevisionID: id8, TeachingIntent: "Explain", CompletionCondition: "Recall"}}, CreatedAt: now}
 	sessionView := learning.SessionView{Metadata: metadata, Session: session, Estimate: learning.ActiveTimeEstimate{DurationSeconds: 30, Estimated: true, AlgorithmVersion: learning.ActiveTimePolicyVersion, SampleCount: 2, FirstReceivedAt: &now, LastReceivedAt: &now}, WorkItem: &learning.SessionWorkItem{AllowedActions: []tutoring.Action{tutoring.ActionIssueActivity}, AllowedAssessmentDecisions: []string{}, GoalRevision: &goal, RouteRevision: &routeRevision}}
-	timeline := learning.TimelinePage{Metadata: metadata, Items: []learning.TimelineItem{{EventSequence: 17, EventID: id8, Type: learning.EventTutoringStateChanged, AggregateID: id2, ReceivedAt: now, OccurredAt: &now, OccurredAtTrusted: false}}, NextCursor: "opaque"}
+	timeline := learning.TimelinePage{Metadata: metadata, Items: []learning.TimelineItem{{EventSequence: 17, EventID: id8, Type: learning.EventTutoringStateChanged, AggregateID: id2, Source: "online", ActorDeviceID: id1, ReceivedAt: now, OccurredAt: &now, OccurredAtTrusted: false}}, NextCursor: "opaque"}
 	routes := learning.RoutesPage{Metadata: metadata, Items: []learning.RouteProjection{{Route: routeRevision, EventSequence: 12, Current: true}}, NextCursor: "opaque"}
 	node := learning.NodeView{Metadata: metadata, Node: learning.NodeReduction{Mastery: mastery, Review: &review, Misconceptions: []learning.MisconceptionHypothesis{misconception}}, Evidence: []learning.AcceptedEvidence{evidence}}
 	evidencePage := learning.EvidencePage{Metadata: metadata, Items: []learning.AcceptedEvidence{evidence}, NextCursor: "opaque"}
@@ -767,6 +954,8 @@ func TestOpenAPIDeclaresMemoryPrivacyRoutesAndContracts(t *testing.T) {
 		{"/v1/memory/deliveries/{deliveryID}/replays", "post", "memory:write", true, []string{"200", "202", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503"}},
 		{"/v1/privacy/erasures", "post", "privacy:erase", true, []string{"202", "400", "401", "403", "409", "413", "422", "429", "500", "503"}},
 		{"/v1/privacy/erasures/{erasureID}", "get", "privacy:read", false, []string{"200", "400", "401", "403", "404", "409", "429", "500", "503"}},
+		{"/v1/privacy/erasures/{erasureID}/offline-device-purge", "get", "privacy:device", false, []string{"200", "204", "400", "401", "403", "404", "409", "429", "500", "503"}},
+		{"/v1/privacy/erasures/{erasureID}/offline-device-purge/ack", "post", "privacy:device", true, []string{"200", "400", "401", "403", "404", "409", "413", "422", "429", "500", "503"}},
 	}
 	for _, expected := range contracts {
 		item, ok := paths[expected.path].(map[string]any)
@@ -845,7 +1034,7 @@ func TestMemoryPrivacyOpenAPISchemasAreClosedAndRejectClientOwnedFields(t *testi
 		}
 	}
 	for name, schema := range schemas {
-		if strings.HasPrefix(name, "Memory") || strings.HasPrefix(name, "Privacy") {
+		if strings.HasPrefix(name, "Memory") || strings.HasPrefix(name, "Privacy") || strings.HasPrefix(name, "OfflinePurge") {
 			assertClosed(name, schema)
 		}
 	}
@@ -892,6 +1081,25 @@ func TestMemoryPrivacyOpenAPISchemasAreClosedAndRejectClientOwnedFields(t *testi
 	} {
 		if err := erasureSchema.VisitJSON(decode(invalid), openapi3.EnableJSONSchema2020()); err == nil {
 			t.Fatalf("erasure schema accepted server-owned or unconfirmed input: %s", invalid)
+		}
+	}
+	ackSchema := document.Components.Schemas["OfflinePurgeAckRequest"].Value
+	challenge := strings.Repeat("A", 43)
+	for _, valid := range []string{
+		`{"challenge_revision":1,"challenge":"` + challenge + `","outcome":"succeeded","managed_objects_absent":true}`,
+		`{"challenge_revision":1,"challenge":"` + challenge + `","outcome":"failed","failure_code":"profile_busy"}`,
+	} {
+		if err := ackSchema.VisitJSON(decode(valid), openapi3.EnableJSONSchema2020()); err != nil {
+			t.Fatalf("valid offline purge acknowledgment failed schema: %v", err)
+		}
+	}
+	for _, invalid := range []string{
+		`{"challenge_revision":1,"challenge":"` + challenge + `","outcome":"succeeded"}`,
+		`{"challenge_revision":1,"challenge":"` + challenge + `","outcome":"succeeded","managed_objects_absent":true,"failure_code":"profile_busy"}`,
+		`{"challenge_revision":1,"challenge":"` + challenge + `","outcome":"failed","managed_objects_absent":false,"failure_code":"profile_busy"}`,
+	} {
+		if err := ackSchema.VisitJSON(decode(invalid), openapi3.EnableJSONSchema2020()); err == nil {
+			t.Fatalf("offline purge acknowledgment accepted invalid shape: %s", invalid)
 		}
 	}
 }
@@ -978,4 +1186,16 @@ func TestMemoryPrivacyOpenAPIValidatesRepresentativeResponses(t *testing.T) {
 	}
 	validate("/v1/privacy/erasures", "post", "202", privacyReceipt)
 	validate("/v1/privacy/erasures/{erasureID}", "get", "200", privacyReceipt)
+	purgeTask := privacy.OfflinePurgeChallenge{
+		ErasureID: privacyReceipt.ErasureID, DeviceID: "90000000-0000-4000-8000-000000000004",
+		OldGeneration: 1, CurrentGeneration: 2, ChallengeRevision: 1,
+		Challenge: strings.Repeat("A", 43), IssuedAt: now, Status: privacy.OfflineDeviceChildPending,
+	}
+	validate("/v1/privacy/erasures/{erasureID}/offline-device-purge", "get", "200", purgeTask)
+	purgeAck := privacy.OfflineDeviceChildReceipt{
+		ErasureID: privacyReceipt.ErasureID, DeviceID: purgeTask.DeviceID,
+		SourceGeneration: 1, CurrentGeneration: 2, ChallengeRevision: 1,
+		Status: privacy.OfflineDeviceChildSucceeded, UpdatedAt: now, StableReason: "device_acknowledged",
+	}
+	validate("/v1/privacy/erasures/{erasureID}/offline-device-purge/ack", "post", "200", purgeAck)
 }

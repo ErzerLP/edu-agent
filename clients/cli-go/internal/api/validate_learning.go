@@ -209,7 +209,7 @@ func validateTutoringProposal(value TutoringProposal) error {
 			return errors.New("activity proposal union is invalid")
 		}
 	case "assessment":
-		if len(value.Route) != 0 || value.Activity != nil || value.Assessment == nil || value.Text != nil || !validAssessmentArtifact(*value.Assessment) || value.Assessment.SessionID != value.AggregateID || value.Assessment.ActivityID != value.ActivityID || value.Assessment.AttemptID != value.AttemptID || value.Assessment.ProposalInputHash != value.InputHash {
+		if len(value.Route) != 0 || value.Activity != nil || value.Assessment == nil || value.Text != nil || !validAssessmentProposalArtifact(*value.Assessment) || value.Assessment.SessionID != value.AggregateID || value.Assessment.ActivityID != value.ActivityID || value.Assessment.AttemptID != value.AttemptID || value.Assessment.ProposalInputHash != value.InputHash {
 			return errors.New("assessment proposal union is invalid")
 		}
 	case "free_answer", "explanation":
@@ -462,7 +462,25 @@ func validActivity(value Activity) bool {
 }
 
 func validAttempt(value Attempt) bool {
-	return validLearningUUID(value.AttemptID) && validLearningUUID(value.SessionID) && validLearningUUID(value.ActivityID) && value.ActivityRevision >= 1 && validLearningUUID(value.AnswerPayloadID) && utf8.ValidString(value.Answer) && validSHA256(value.AnswerSHA256) && validHelp(value.Help) && validLearningUUID(value.ActorDeviceID) && !value.ReceivedAt.IsZero()
+	if !validLearningUUID(value.AttemptID) || !validLearningUUID(value.SessionID) || !validLearningUUID(value.ActivityID) || value.ActivityRevision < 1 || !validLearningUUID(value.AnswerPayloadID) || !utf8.ValidString(value.Answer) || !validSHA256(value.AnswerSHA256) || !validHelp(value.Help) || !validLearningUUID(value.ActorDeviceID) || value.ReceivedAt.IsZero() {
+		return false
+	}
+	if value.EvidenceEligibility != (value.EvidenceIneligibleReason == "") || (value.EvidenceIneligibleReason != "" && !validEvidenceIneligibleReason(value.EvidenceIneligibleReason)) {
+		return false
+	}
+	if value.ArchiveDisposition != "online" && value.ArchiveDisposition != "offline_succeeded" {
+		return false
+	}
+	return value.OfflineSubmissionID == "" || validLearningUUID(value.OfflineSubmissionID)
+}
+
+func validEvidenceIneligibleReason(value string) bool {
+	switch OfflineReasonCode(value) {
+	case OfflineReasonDuplicateActivity, OfflineReasonStaleKnowledge, OfflineReasonExpiredActivity, OfflineReasonStaleContext, OfflineReasonStalePolicy, OfflineReasonAnswerRevealed:
+		return true
+	default:
+		return false
+	}
 }
 
 func validFrozenReferences(values []FrozenReference, knowledgeRevisionID string) bool {
@@ -485,8 +503,22 @@ func validFreeAnswer(value FreeAnswer) bool {
 	return validLearningUUID(value.FreeAnswerID) && validLearningUUID(value.SessionID) && validLearningUUID(value.FocusFrameID) && validLearningUUID(value.FreeQuestionID) && strings.TrimSpace(value.Text) != "" && utf8.ValidString(value.Text) && validLearningUUID(value.KnowledgeRevisionID) && validFrozenReferences(value.References, value.KnowledgeRevisionID) && (value.SourceProposalID == "" || validLearningUUID(value.SourceProposalID)) && !value.ReceivedAt.IsZero()
 }
 
+func validAssessmentProposalArtifact(value AssessmentArtifact) bool {
+	// The proposal is created before the store arbitrates the activity evidence
+	// claim. Preserve strict validation of every other field while accepting that
+	// single unresolved eligibility state; committed session views must still
+	// carry either eligibility=true or a stable ineligibility reason.
+	if !value.EvidenceEligibility && value.EvidenceIneligibleReason == "" {
+		value.EvidenceEligibility = true
+	}
+	return validAssessmentArtifact(value)
+}
+
 func validAssessmentArtifact(value AssessmentArtifact) bool {
 	if !validLearningUUID(value.AssessmentID) || !validLearningUUID(value.SessionID) || !validLearningUUID(value.AttemptID) || !validLearningUUID(value.ActivityID) || value.ActivityRevision < 1 || value.Items == nil || value.Confidence < 0 || value.Confidence > 1000 || value.RiskFlags == nil || value.ModelID == "" || value.ModelParameters == nil || value.PromptRevision == "" || !validSHA256(value.ProposalInputHash) || value.Attempts < 1 || len(value.AttemptCategories) < 1 || len(value.AttemptCategories) > 2 || value.CreatedAt.IsZero() {
+		return false
+	}
+	if value.EvidenceEligibility != (value.EvidenceIneligibleReason == "") || (value.EvidenceIneligibleReason != "" && !validEvidenceIneligibleReason(value.EvidenceIneligibleReason)) {
 		return false
 	}
 	for _, item := range value.Items {

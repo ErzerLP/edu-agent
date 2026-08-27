@@ -232,6 +232,59 @@ func TestConsumerResponseLostReconcilesWithoutSecondMutation(t *testing.T) {
 	}
 }
 
+func TestConsumerMutationCancellationUsesDetachedUnknownTransitionContext(t *testing.T) {
+	store := newProtocolStore()
+	ctx, cancel := context.WithCancel(context.Background())
+	remote := &scriptedRemote{boot: "boot-1", createApplyThenLose: true, createCancel: cancel, activeMemoryID: 7}
+	consumer := testConsumer(t, store, remote)
+	if err := consumer.Apply(ctx, testMessage(t, store.work)); Category(err) != CategoryTransport {
+		t.Fatalf("apply err=%v", err)
+	}
+	if store.transitionContextErr != nil {
+		t.Fatalf("unknown transition context err=%v", store.transitionContextErr)
+	}
+	if store.attempt.State != memory.AttemptUnknown || remote.createCalls != 1 {
+		t.Fatalf("attempt=%+v creates=%d", store.attempt, remote.createCalls)
+	}
+}
+
+func TestConsumerCapabilitiesFailureReleasesOnlyUnsentAttempt(t *testing.T) {
+	store := newProtocolStore()
+	remoteErr := errors.New("Nocturne unavailable before mutation")
+	remote := &scriptedRemote{boot: "boot-1", capabilitiesErr: remoteErr}
+	consumer := testConsumer(t, store, remote)
+	if err := consumer.Apply(context.Background(), testMessage(t, store.work)); !errors.Is(err, remoteErr) {
+		t.Fatalf("apply err=%v", err)
+	}
+	want := memory.PreparedAttemptRelease{
+		AttemptID: testAttemptID, AttemptToken: testAttemptToken,
+		LeaseToken: testLeaseToken, ErrorCategory: string(Category(remoteErr)),
+	}
+	if store.released != want {
+		t.Fatalf("released=%+v want=%+v", store.released, want)
+	}
+	if store.attempt.State != memory.AttemptPrepared || remote.createCalls != 0 || !reflect.DeepEqual(remote.calls, []string{"capabilities"}) {
+		t.Fatalf("attempt=%+v creates=%d calls=%v", store.attempt, remote.createCalls, remote.calls)
+	}
+}
+
+func TestConsumerCapabilitiesCancellationUsesDetachedReleaseContext(t *testing.T) {
+	store := newProtocolStore()
+	remote := &scriptedRemote{boot: "boot-1", capabilitiesErr: context.Canceled}
+	consumer := testConsumer(t, store, remote)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := consumer.Apply(ctx, testMessage(t, store.work)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("apply err=%v", err)
+	}
+	if store.releaseContextErr != nil {
+		t.Fatalf("release context err=%v", store.releaseContextErr)
+	}
+	if store.released.AttemptID != testAttemptID || store.released.LeaseToken != testLeaseToken {
+		t.Fatalf("released=%+v", store.released)
+	}
+}
+
 func TestCorrectionResponseLostResolvesNewActiveMemoryIDFromReferences(t *testing.T) {
 	store := newProtocolStore()
 	content := "Prefer detailed examples"
@@ -329,6 +382,25 @@ func TestPurgerPersistsEnumerationBeforeMutationAndActive409StaysPartial(t *test
 	}
 	if remote.permanentCalls != 2 || remote.globalClearCalls != 0 {
 		t.Fatalf("permanent=%d globalClear=%d", remote.permanentCalls, remote.globalClearCalls)
+	}
+}
+
+func TestPurgerAcceptsAbsenceAfterDurableUnlink(t *testing.T) {
+	store := newProtocolStore()
+	remote := &scriptedRemote{
+		nodeContent: store.work.Content, activeMemoryID: 2, deletePathRemovesActive: true,
+		references: memory.RemoteReferences{NodeID: testNodeID, Complete: true, ActiveMemoryID: 2, MemoryIDs: []int64{1, 2}, Paths: []memory.RemotePathReference{{Namespace: testNamespace, Domain: testDomain, Path: testParent + "/" + testLogicalID, URI: testDomain + "://" + testParent + "/" + testLogicalID}}},
+	}
+	store.remote = remote
+	purger, err := NewPurger(store, remote, testNamespace, testDomain, testParent, func() time.Time { return time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := purger.Purge(context.Background(), testDeliveryID, testLogicalID, store.work.Delivery.PayloadHash); err != nil {
+		t.Fatal(err)
+	}
+	if store.savedPlan.ID == "" || !remote.deletedMemoryIDs[1] || !remote.deletedMemoryIDs[2] {
+		t.Fatalf("plan=%+v deleted=%v calls=%v", store.savedPlan, remote.deletedMemoryIDs, remote.calls)
 	}
 }
 
@@ -878,6 +950,9 @@ type protocolStore struct {
 	maintenanceSaveCount         int
 	maintenanceClaimCount        int
 	maintenanceHistoricalPending int64
+	released                     memory.PreparedAttemptRelease
+	releaseContextErr            error
+	transitionContextErr         error
 }
 
 func newProtocolStore() *protocolStore {
@@ -912,7 +987,15 @@ func (s *protocolStore) ClaimAttempt(context.Context, string, time.Time, time.Du
 func (s *protocolStore) ClaimUnknownAttempt(context.Context, time.Time, time.Duration) (memory.Attempt, error) {
 	return s.attempt, nil
 }
-func (s *protocolStore) TransitionAttempt(_ context.Context, v memory.AttemptTransition) (memory.Attempt, error) {
+func (s *protocolStore) ReleasePreparedAttempt(ctx context.Context, v memory.PreparedAttemptRelease) error {
+	s.releaseContextErr = ctx.Err()
+	s.released = v
+	return nil
+}
+func (s *protocolStore) TransitionAttempt(ctx context.Context, v memory.AttemptTransition) (memory.Attempt, error) {
+	if v.To == memory.AttemptUnknown {
+		s.transitionContextErr = ctx.Err()
+	}
 	s.attempt.State = v.To
 	s.attempt.BootEpoch = v.BootEpoch
 	return s.attempt, nil
@@ -1027,16 +1110,21 @@ func (*scriptedRemote) EnsureParent(context.Context) error { return nil }
 type scriptedRemote struct {
 	calls                                                           []string
 	boot, nodeContent                                               string
+	capabilitiesErr                                                 error
 	createApplyThenLose, createContractDrift, readbackContractDrift bool
+	createCancel                                                    context.CancelFunc
 	createCalls, activeMemoryID, permanentCalls, globalClearCalls   int64
 	references                                                      memory.RemoteReferences
-	activeDelete409, pathDeleted                                    bool
+	activeDelete409, pathDeleted, deletePathRemovesActive           bool
 	deletedMemoryIDs                                                map[int64]bool
 }
 
 func (r *scriptedRemote) Health(context.Context) error { return nil }
 func (r *scriptedRemote) Capabilities(context.Context) (memory.NocturneCapabilities, error) {
 	r.calls = append(r.calls, "capabilities")
+	if r.capabilitiesErr != nil {
+		return memory.NocturneCapabilities{}, r.capabilitiesErr
+	}
 	return memory.NocturneCapabilities{UpstreamCommit: memory.NocturneUpstreamCommit, CompatRevision: memory.NocturneCompatRevision, BootEpoch: r.boot}, nil
 }
 func (r *scriptedRemote) GetNode(_ context.Context, _ string) (memory.RemoteNode, error) {
@@ -1053,6 +1141,9 @@ func (r *scriptedRemote) CreateNode(_ context.Context, _ string, content string)
 	r.calls = append(r.calls, "create")
 	r.createCalls++
 	r.nodeContent = content
+	if r.createCancel != nil {
+		r.createCancel()
+	}
 	if r.createContractDrift {
 		return memory.RemoteMutation{}, &Error{category: CategoryContractMismatch, operation: "create", mutationDispatched: true}
 	}
@@ -1069,6 +1160,12 @@ func (r *scriptedRemote) DeletePath(context.Context, string) error {
 	r.calls = append(r.calls, "delete_path")
 	r.nodeContent = ""
 	r.pathDeleted = true
+	if r.deletePathRemovesActive {
+		if r.deletedMemoryIDs == nil {
+			r.deletedMemoryIDs = make(map[int64]bool)
+		}
+		r.deletedMemoryIDs[r.activeMemoryID] = true
+	}
 	return nil
 }
 func (r *scriptedRemote) Search(context.Context, string) ([]memory.RemoteSearchResult, error) {

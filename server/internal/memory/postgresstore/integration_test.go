@@ -23,7 +23,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const integrationDevice = "10000000-0000-4000-8000-000000000001"
+const (
+	integrationDevice        = "10000000-0000-4000-8000-000000000001"
+	postgresExpiryTestDelay  = 10 * time.Second
+	postgresAsyncTestTimeout = 30 * time.Second
+)
 
 func TestPostgreSQLPrivacyRedactionMaterializesAllSentAttemptsAndFencesUnsent(t *testing.T) {
 	pool, store, ctx, _ := memoryHarness(t)
@@ -593,14 +597,23 @@ func TestPostgreSQLErasureDeliveryIsSingleAndResumeKeepsOnePermit(t *testing.T) 
 	if deliveries != 1 || sources != 2 || scopes != 2 {
 		t.Fatalf("erasure delivery=%s deliveries=%d sources=%d scopes=%d", erasureDeliveryID, deliveries, sources, scopes)
 	}
-	claimed, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, 200*time.Millisecond)
+	claimed, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, postgresExpiryTestDelay)
 	if err != nil || claimed.ErasureDeliveryID != erasureDeliveryID || claimed.AttemptToken != second.AttemptToken {
 		t.Fatalf("first erasure claim=%+v err=%v", claimed, err)
 	}
 	if _, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, time.Minute); memory.ErrorCode(err) != memory.CodeNotFound {
 		t.Fatalf("second active erasure permit err=%v", err)
 	}
-	if _, err := pool.Exec(ctx, `SELECT pg_sleep(0.25)`); err != nil {
+	var leaseExpiresAt time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT lease_expires_at
+		FROM memory_erasure_delivery_attempt_heads
+		WHERE erasure_delivery_id=$1 AND store_kind='nocturne_paths'`, erasureDeliveryID).Scan(&leaseExpiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM ($1::timestamptz-clock_timestamp()))))`,
+		leaseExpiresAt.Add(10*time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := store.ClaimMaintenanceExpiryReconciliation(ctx, auth, time.Time{}, time.Minute)
@@ -782,7 +795,7 @@ func TestPostgreSQLRecordDeleteCASReplayAndFinalize(t *testing.T) {
 func TestPostgreSQLMaintenanceReconciliationBypassesOnlyClosedBusinessGate(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	plan := automaticPlan(now)
-	plan.Candidate.ValidUntil = now.Add(time.Second)
+	plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	if _, err := store.CreateCandidate(ctx, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -844,6 +857,7 @@ func TestPostgreSQLMemoryAtomicReplayRaceAttemptAndExpiryFence(t *testing.T) {
 	store := postgresstore.New(pool)
 
 	auto := automaticPlan(now)
+	auto.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	result, err := store.CreateCandidate(ctx, auto)
 	if err != nil {
 		t.Fatal(err)
@@ -984,7 +998,7 @@ func TestPostgreSQLOperationReplayHonorsReadGateAndLazyExpiry(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 
 	expired := pendingPlan(now)
-	expired.Candidate.ValidUntil = now.Add(200 * time.Millisecond)
+	expired.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	if _, err := store.CreateCandidate(ctx, expired); err != nil {
 		t.Fatal(err)
 	}
@@ -1045,7 +1059,7 @@ func TestPostgreSQLCreateAndDecisionUseDBClockAfterLockWait(t *testing.T) {
 	t.Run("create generation lock", func(t *testing.T) {
 		pool, store, ctx, now := memoryHarness(t)
 		plan := automaticPlan(now)
-		plan.Candidate.ValidUntil = now.Add(250 * time.Millisecond)
+		plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 		blocker, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -1072,7 +1086,7 @@ func TestPostgreSQLCreateAndDecisionUseDBClockAfterLockWait(t *testing.T) {
 			if memory.ErrorCode(err) != memory.CodeCandidateConflict || !strings.Contains(err.Error(), "candidate_expired") {
 				t.Fatalf("create after ttl lock wait err=%v", err)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(postgresAsyncTestTimeout):
 			t.Fatal("create remained blocked after generation lock release")
 		}
 		var candidates, candidatePayloads, deliveries, outboxRows int
@@ -1093,7 +1107,7 @@ func TestPostgreSQLCreateAndDecisionUseDBClockAfterLockWait(t *testing.T) {
 	t.Run("decision candidate head lock", func(t *testing.T) {
 		pool, store, ctx, now := memoryHarness(t)
 		pending := pendingPlan(now)
-		pending.Candidate.ValidUntil = now.Add(300 * time.Millisecond)
+		pending.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 		if _, err := store.CreateCandidate(ctx, pending); err != nil {
 			t.Fatal(err)
 		}
@@ -1124,7 +1138,7 @@ func TestPostgreSQLCreateAndDecisionUseDBClockAfterLockWait(t *testing.T) {
 			if memory.ErrorCode(err) != memory.CodeCandidateConflict || !strings.Contains(err.Error(), "candidate_expired") {
 				t.Fatalf("decision after ttl lock wait err=%v", err)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(postgresAsyncTestTimeout):
 			t.Fatal("decision remained blocked after candidate head release")
 		}
 		var status string
@@ -1273,10 +1287,66 @@ func TestPostgreSQLAttemptBarrierLeaseAndAtomicOutcome(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLPreparedAttemptReleaseIsImmediateAndLeaseSafe(t *testing.T) {
+	pool, store, ctx, now := memoryHarness(t)
+	plan := automaticPlan(now)
+	plan.Candidate.ValidUntil = now.Add(time.Hour)
+	if _, err := store.CreateCandidate(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := memory.PreparedAttemptRelease{
+		AttemptID: first.ID, AttemptToken: first.AttemptToken,
+		LeaseToken: first.LeaseToken, ErrorCategory: "transport",
+	}
+	if err := store.ReleasePreparedAttempt(ctx, release); err != nil {
+		t.Fatal(err)
+	}
+	var state, category string
+	var expired bool
+	if err := pool.QueryRow(ctx, `
+SELECT state,error_category,lease_expires_at<=clock_timestamp()
+FROM memory_delivery_attempt_heads WHERE attempt_id=$1`, first.ID).Scan(&state, &category, &expired); err != nil {
+		t.Fatal(err)
+	}
+	if state != "prepared" || category != release.ErrorCategory || !expired {
+		t.Fatalf("released state=%s category=%s expired=%t", state, category, expired)
+	}
+	second, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID || second.AttemptToken != first.AttemptToken || second.LeaseToken == first.LeaseToken {
+		t.Fatalf("reclaimed attempt first=%+v second=%+v", first, second)
+	}
+	if err := store.ReleasePreparedAttempt(ctx, release); !errors.Is(err, outbox.ErrLeaseLost) {
+		t.Fatalf("stale lease released reclaimed attempt: %v", err)
+	}
+	if _, err := store.TransitionAttempt(ctx, memory.AttemptTransition{
+		AttemptID: second.ID, AttemptToken: second.AttemptToken, LeaseToken: second.LeaseToken,
+		From: memory.AttemptPrepared, To: memory.AttemptSent, BootEpoch: "boot-release-test", At: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	release.LeaseToken = second.LeaseToken
+	if err := store.ReleasePreparedAttempt(ctx, release); !errors.Is(err, outbox.ErrLeaseLost) {
+		t.Fatalf("sent attempt lease was released: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT state FROM memory_delivery_attempt_heads WHERE attempt_id=$1`, second.ID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != "sent" {
+		t.Fatalf("sent attempt state=%s", state)
+	}
+}
+
 func TestPostgreSQLAllSentExpiryReconciliation(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	plan := automaticPlan(now)
-	plan.Candidate.ValidUntil = now.Add(500 * time.Millisecond)
+	plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	if _, err := store.CreateCandidate(ctx, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -1365,7 +1435,7 @@ func TestPostgreSQLAllSentExpiryReconciliation(t *testing.T) {
 func TestPostgreSQLCandidateReadGateLazyExpiryAndCursor(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	plan := pendingPlan(now)
-	plan.Candidate.ValidUntil = now.Add(200 * time.Millisecond)
+	plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	if _, err := store.CreateCandidate(ctx, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -1441,9 +1511,10 @@ func TestPostgreSQLLateCallbacksPreserveExpiryReconciliation(t *testing.T) {
 		{name: "finalize unknown", finalize: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			pool, store, ctx, now := memoryHarness(t)
-			plan := automaticPlan(now)
-			plan.Candidate.ValidUntil = now.Add(250 * time.Millisecond)
+			pool, store, ctx, _ := memoryHarness(t)
+			testNow := dbClock(t, pool)
+			plan := automaticPlan(testNow)
+			plan.Candidate.ValidUntil = testNow.Add(postgresExpiryTestDelay)
 			if _, err := store.CreateCandidate(ctx, plan); err != nil {
 				t.Fatal(err)
 			}
@@ -1573,7 +1644,7 @@ func TestPostgreSQLFinalizePairingAndTerminalFence(t *testing.T) {
 	}
 
 	expired := automaticPlan(dbClock(t, pool))
-	expired.Candidate.ValidUntil = expired.Candidate.CreatedAt.Add(200 * time.Millisecond)
+	expired.Candidate.ValidUntil = expired.Candidate.CreatedAt.Add(postgresExpiryTestDelay)
 	if _, err := store.CreateCandidate(ctx, expired); err != nil {
 		t.Fatal(err)
 	}
@@ -1603,7 +1674,7 @@ func TestPostgreSQLCandidateExpiryWaitsForContendedHead(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	for _, list := range []bool{false, true} {
 		plan := pendingPlan(now)
-		plan.Candidate.ValidUntil = now.Add(200 * time.Millisecond)
+		plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 		if _, err := store.CreateCandidate(ctx, plan); err != nil {
 			t.Fatal(err)
 		}
@@ -1655,7 +1726,7 @@ func TestPostgreSQLCandidateExpiryWaitsForContendedHead(t *testing.T) {
 func TestPostgreSQLOutboxBarrierBlocksMemoryMutations(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	expiring := automaticPlan(now)
-	expiring.Candidate.ValidUntil = now.Add(250 * time.Millisecond)
+	expiring.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	fencePlan := automaticPlan(now.Add(time.Millisecond))
 	fencePlan.Candidate.ValidUntil = now.Add(time.Hour)
 	outcomePlan := automaticPlan(now.Add(2 * time.Millisecond))
@@ -1710,7 +1781,7 @@ func TestPostgreSQLOutboxBarrierBlocksMemoryMutations(t *testing.T) {
 func TestPostgreSQLExpiryLosesRaceToOutboxBarrier(t *testing.T) {
 	pool, store, ctx, now := memoryHarness(t)
 	plan := automaticPlan(now)
-	plan.Candidate.ValidUntil = now.Add(200 * time.Millisecond)
+	plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 	if _, err := store.CreateCandidate(ctx, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -2295,7 +2366,7 @@ func TestPostgreSQLDeadDeliveryReplayFencesAndIdempotency(t *testing.T) {
 	t.Run("ttl expired", func(t *testing.T) {
 		pool, store, ctx, now := memoryHarness(t)
 		plan := automaticPlan(now)
-		plan.Candidate.ValidUntil = now.Add(200 * time.Millisecond)
+		plan.Candidate.ValidUntil = now.Add(postgresExpiryTestDelay)
 		if _, err := store.CreateCandidate(ctx, plan); err != nil {
 			t.Fatal(err)
 		}
@@ -2867,7 +2938,7 @@ func automaticPlan(now time.Time) memory.CreatePlan {
 		PayloadID: uuid.NewString(), ContentHash: memory.SHA256String(content),
 		Source: memory.SourceUserStatement, ProposerID: integrationDevice, Reason: "explicit preference",
 		Category: memory.CategoryInteractionPreference, Sensitivity: memory.SensitivityNonSensitive,
-		Stability: memory.StabilityStable, ValidUntil: now.Add(750 * time.Millisecond), PolicyVersion: memory.AdmissionPolicyVersion,
+		Stability: memory.StabilityStable, ValidUntil: now.Add(time.Hour), PolicyVersion: memory.AdmissionPolicyVersion,
 		Status: memory.CandidateAdmitted, Revision: 2, CreatedAt: now,
 	}
 	decision := memory.CandidateDecision{

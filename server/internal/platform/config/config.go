@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -35,6 +38,7 @@ type Config struct {
 	AuthFailureLimitPerMinute  int
 	DeviceRateLimitPerMinute   int
 	Model                      ModelConfig
+	Offline                    OfflineConfig
 	Nocturne                   NocturneConfig
 	Privacy                    PrivacyConfig
 }
@@ -49,6 +53,18 @@ type ModelConfig struct {
 	MinimumContext int
 	Timeout        time.Duration
 	ProbeCacheTTL  time.Duration
+}
+
+type OfflineConfig struct {
+	SignerKeyID         string
+	SignerPrivateKey    ed25519.PrivateKey
+	SignerIssuedAt      time.Time
+	SignerNotAfter      time.Time
+	SignerManifestChain []json.RawMessage
+}
+
+func (c OfflineConfig) SignerEnabled() bool {
+	return c.SignerKeyID != "" && len(c.SignerPrivateKey) == ed25519.PrivateKeySize
 }
 
 type NocturneConfig struct {
@@ -77,6 +93,7 @@ type NocturneConfig struct {
 type PrivacyConfig struct {
 	ErasureGrantTTL         time.Duration
 	ErasureGrantMaxAttempts int
+	OfflineChallengeKeys    map[int][]byte
 }
 
 type envReader func(string) (string, bool)
@@ -210,6 +227,9 @@ func load(lookup envReader) (Config, error) {
 		}
 	}
 
+	if err := loadOffline(lookup, &cfg.Offline); err != nil {
+		return Config{}, err
+	}
 	if err := loadNocturne(lookup, &cfg.Nocturne); err != nil {
 		return Config{}, err
 	}
@@ -217,6 +237,9 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.Privacy.ErasureGrantMaxAttempts, err = intValue(lookup, "PRIVACY_ERASURE_GRANT_MAX_ATTEMPTS", cfg.Privacy.ErasureGrantMaxAttempts); err != nil {
+		return Config{}, err
+	}
+	if cfg.Privacy.OfflineChallengeKeys, err = offlineChallengeKeys(lookup); err != nil {
 		return Config{}, err
 	}
 
@@ -227,6 +250,109 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, errors.New("numeric limits must be positive")
 	}
 	return cfg, nil
+}
+
+func offlineChallengeKeys(lookup envReader) (map[int][]byte, error) {
+	raw, err := optionalSecret(lookup, "PRIVACY_OFFLINE_CHALLENGE_KEYS")
+	if err != nil || raw == "" {
+		return nil, err
+	}
+	keys := make(map[int][]byte)
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) != 2 {
+			return nil, errors.New("PRIVACY_OFFLINE_CHALLENGE_KEYS must use version:base64url entries")
+		}
+		version, parseErr := strconv.Atoi(parts[0])
+		if parseErr != nil || version < 2 {
+			return nil, errors.New("PRIVACY_OFFLINE_CHALLENGE_KEYS versions must be integers greater than or equal to 2")
+		}
+		key, decodeErr := base64.RawURLEncoding.DecodeString(parts[1])
+		if decodeErr != nil || len(key) != sha256.Size || base64.RawURLEncoding.EncodeToString(key) != parts[1] {
+			return nil, errors.New("PRIVACY_OFFLINE_CHALLENGE_KEYS values must be canonical unpadded Base64url containing 32 bytes")
+		}
+		if _, exists := keys[version]; exists {
+			return nil, errors.New("PRIVACY_OFFLINE_CHALLENGE_KEYS versions must be unique")
+		}
+		keys[version] = key
+	}
+	return keys, nil
+}
+
+func loadOffline(lookup envReader, cfg *OfflineConfig) error {
+	keyID := optionalTrimmed(lookup, "OFFLINE_SIGNER_KEY_ID")
+	privateKeyRaw, err := optionalSecret(lookup, "OFFLINE_SIGNER_PRIVATE_KEY")
+	if err != nil {
+		return err
+	}
+	issuedAtRaw := optionalTrimmed(lookup, "OFFLINE_SIGNER_ISSUED_AT")
+	notAfterRaw := optionalTrimmed(lookup, "OFFLINE_SIGNER_NOT_AFTER")
+	manifestChainRaw, err := optionalSecret(lookup, "OFFLINE_SIGNER_MANIFEST_CHAIN")
+	if err != nil {
+		return err
+	}
+	values := []string{keyID, privateKeyRaw, issuedAtRaw, notAfterRaw}
+	present := 0
+	for _, value := range values {
+		if value != "" {
+			present++
+		}
+	}
+	if present == 0 {
+		if manifestChainRaw != "" {
+			return errors.New("OFFLINE_SIGNER_MANIFEST_CHAIN requires the signer key profile")
+		}
+		return nil
+	}
+	if present != len(values) {
+		return errors.New("offline signer configuration requires key ID, private key, issued-at, and not-after")
+	}
+	if len(keyID) > 128 || strings.TrimSpace(keyID) != keyID {
+		return errors.New("OFFLINE_SIGNER_KEY_ID is invalid")
+	}
+	privateKey, err := base64.RawURLEncoding.DecodeString(privateKeyRaw)
+	if err != nil || len(privateKey) != ed25519.PrivateKeySize || base64.RawURLEncoding.EncodeToString(privateKey) != privateKeyRaw {
+		return errors.New("OFFLINE_SIGNER_PRIVATE_KEY must be unpadded Base64url containing 64 bytes")
+	}
+	expectedKey := ed25519.NewKeyFromSeed(privateKey[:ed25519.SeedSize])
+	if subtle.ConstantTimeCompare(privateKey, expectedKey) != 1 {
+		return errors.New("OFFLINE_SIGNER_PRIVATE_KEY is not a canonical Ed25519 private key")
+	}
+	issuedAt, err := time.Parse(time.RFC3339, issuedAtRaw)
+	if err != nil {
+		return errors.New("OFFLINE_SIGNER_ISSUED_AT must be RFC3339")
+	}
+	notAfter, err := time.Parse(time.RFC3339, notAfterRaw)
+	if err != nil {
+		return errors.New("OFFLINE_SIGNER_NOT_AFTER must be RFC3339")
+	}
+	if _, offset := issuedAt.Zone(); offset != 0 {
+		return errors.New("OFFLINE_SIGNER_ISSUED_AT must use UTC")
+	}
+	if _, offset := notAfter.Zone(); offset != 0 {
+		return errors.New("OFFLINE_SIGNER_NOT_AFTER must use UTC")
+	}
+	if !notAfter.After(issuedAt) {
+		return errors.New("OFFLINE_SIGNER_NOT_AFTER must be after OFFLINE_SIGNER_ISSUED_AT")
+	}
+	cfg.SignerKeyID = keyID
+	cfg.SignerPrivateKey = append(ed25519.PrivateKey(nil), privateKey...)
+	cfg.SignerIssuedAt = issuedAt.UTC()
+	cfg.SignerNotAfter = notAfter.UTC()
+	if manifestChainRaw != "" {
+		decoder := json.NewDecoder(bytes.NewBufferString(manifestChainRaw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&cfg.SignerManifestChain); err != nil || len(cfg.SignerManifestChain) == 0 || len(cfg.SignerManifestChain) > 16 {
+			return errors.New("OFFLINE_SIGNER_MANIFEST_CHAIN must be a JSON array containing 1 to 16 manifest envelopes")
+		}
+		for _, manifest := range cfg.SignerManifestChain {
+			trimmed := bytes.TrimSpace(manifest)
+			if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' || !json.Valid(trimmed) {
+				return errors.New("OFFLINE_SIGNER_MANIFEST_CHAIN contains an invalid manifest envelope")
+			}
+		}
+	}
+	return nil
 }
 
 func loadNocturne(lookup envReader, cfg *NocturneConfig) error {

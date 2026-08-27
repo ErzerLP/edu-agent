@@ -12,6 +12,8 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/keybackend"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/offline"
 )
 
 type binding struct {
@@ -67,6 +69,18 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 	}
 	resolved.DeviceID = issued.Device.ID
 	resolved.DisplayName = issued.Device.DisplayName
+	if issued.Offline != nil {
+		manifest, err := canonicalJSON(issued.Offline.SignerManifest)
+		if err != nil {
+			return commandError("protocol_error", "the offline signer trust root could not be encoded", "check the server version", ExitInternal)
+		}
+		resolved.Offline = &config.OfflineBinding{
+			ProtocolVersion:   issued.Offline.ProtocolVersion,
+			LearnerGeneration: string(issued.Offline.LearnerGeneration),
+			ServerBaseURL:     issued.Offline.ServerBaseURL,
+			SignerManifest:    manifest,
+		}
+	}
 	record := credentials.Record{ServerURL: resolved.ServerURL, DeviceID: issued.Device.ID, Token: issued.Token}
 	if err := persistPairing(a.Config, a.Credentials, resolved, record); err != nil {
 		return err
@@ -221,6 +235,27 @@ func (a *App) runLogout(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	var offlineStore *offline.Store
+	root, rootErr := a.offlineRoot()
+	if rootErr != nil {
+		return offlineStoreError(rootErr)
+	}
+	if exists, existsErr := offline.Exists(root); existsErr != nil {
+		return offlineStoreError(existsErr)
+	} else if exists {
+		offlineStore, _, err = a.openOfflineStore(ctx, bound.Config, false)
+		if err != nil {
+			return err
+		}
+		defer offlineStore.Close()
+		preflight, preflightErr := offlineStore.PreflightLogout(ctx)
+		if preflightErr != nil {
+			return offlineStoreError(preflightErr)
+		}
+		if preflight.Nonterminal || preflight.PendingJournals {
+			return commandError("offline_state_nonterminal", "logout is blocked by queued, pending, conflicted, or journaled offline state", "sync it to terminal state or run edu-agent offline discard --all explicitly", ExitConflict)
+		}
+	}
 	a.printInsecureWarning(bound.Config)
 	err = a.NewClient(bound.Config.ServerURL, bound.Token, timeout).RevokeDevice(ctx, bound.Config.DeviceID)
 	if err != nil {
@@ -228,6 +263,12 @@ func (a *App) runLogout(ctx context.Context, args []string) error {
 		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
 			return mapAPIError(err)
 		}
+	}
+	if offlineStore != nil {
+		if err := offlineStore.DiscardAll(ctx); err != nil {
+			return commandError("local_cleanup_failed", "the remote device is revoked but encrypted offline state could not be discarded", "retry logout or explicitly discard the offline profile", ExitInternal)
+		}
+		_ = keybackend.Delete(keybackend.Account(bound.Config.ServerURL, bound.Config.DeviceID))
 	}
 	credentialErr := a.Credentials.Delete()
 	configErr := a.Config.Delete()
@@ -239,6 +280,15 @@ func (a *App) runLogout(ctx context.Context, args []string) error {
 }
 
 func (a *App) runForgetLocal() error {
+	root, rootErr := a.offlineRoot()
+	if rootErr != nil {
+		return offlineStoreError(rootErr)
+	}
+	if exists, existsErr := offline.Exists(root); existsErr != nil {
+		return offlineStoreError(existsErr)
+	} else if exists {
+		return commandError("offline_state_present", "encrypted offline state must be explicitly discarded before forgetting the paired binding", "run edu-agent offline discard --all, then retry device forget-local", ExitConflict)
+	}
 	value, configErr := a.Config.Load()
 	record, credentialErr := a.Credentials.Load()
 	journal, journalErr := a.Config.LoadPairingJournal()
@@ -278,6 +328,9 @@ func (a *App) runForgetLocal() error {
 	}
 	credentialDeleteErr := a.Credentials.Delete()
 	configDeleteErr := a.Config.Delete()
+	if configErr == nil {
+		_ = keybackend.Delete(keybackend.Account(value.ServerURL, value.DeviceID))
+	}
 	if credentialDeleteErr != nil || configDeleteErr != nil {
 		return pendingPairingError("some local state could not be removed")
 	}

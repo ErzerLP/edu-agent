@@ -109,6 +109,10 @@ services:
       MODEL_MIN_CONTEXT_WINDOW: "4096"
       MODEL_TIMEOUT: 30s
       MODEL_PROBE_CACHE_TTL: 15m
+      OFFLINE_SIGNER_KEY_ID: ${OFFLINE_SIGNER_KEY_ID:?set OFFLINE_SIGNER_KEY_ID in .env}
+      OFFLINE_SIGNER_PRIVATE_KEY: ${OFFLINE_SIGNER_PRIVATE_KEY:?set a canonical 64-byte Ed25519 private key in .env}
+      OFFLINE_SIGNER_ISSUED_AT: ${OFFLINE_SIGNER_ISSUED_AT:?set a UTC RFC3339 issue time in .env}
+      OFFLINE_SIGNER_NOT_AFTER: ${OFFLINE_SIGNER_NOT_AFTER:?set a later UTC RFC3339 expiry in .env}
       NOCTURNE_ENABLED: "true"
       NOCTURNE_BASE_URL: http://nocturne:8233
       NOCTURNE_API_TOKEN: ${NOCTURNE_BRIDGE_API_TOKEN:?set NOCTURNE_BRIDGE_API_TOKEN in .env}
@@ -131,6 +135,7 @@ services:
       NOCTURNE_IMAGE_LOCK_REFERENCE: ${NOCTURNE_IMAGE:?set NOCTURNE_IMAGE to repository@sha256 digest in .env}
       PRIVACY_ERASURE_GRANT_TTL: 10m
       PRIVACY_ERASURE_GRANT_MAX_ATTEMPTS: "5"
+      PRIVACY_OFFLINE_CHALLENGE_KEYS: ${PRIVACY_OFFLINE_CHALLENGE_KEYS:?set versioned canonical 32-byte base64url privacy challenge keys in .env}
     volumes:
       - nocturne-backups:/var/lib/edu-agent/nocturne-backups
     healthcheck:

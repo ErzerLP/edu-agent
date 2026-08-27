@@ -44,6 +44,18 @@ func TestProposalResponseStrictlyBindsFrozenRequest(t *testing.T) {
 	}
 }
 
+func TestAssessmentProposalAllowsPendingEvidenceArbitration(t *testing.T) {
+	artifact := *learningSessionView("Feedback").WorkItem.Assessment
+	artifact.EvidenceEligibility = false
+	artifact.EvidenceIneligibleReason = ""
+	if validAssessmentArtifact(artifact) {
+		t.Fatal("committed assessment unexpectedly accepted unresolved evidence eligibility")
+	}
+	if !validAssessmentProposalArtifact(artifact) {
+		t.Fatal("proposal assessment rejected unresolved evidence arbitration")
+	}
+}
+
 func TestMutationResultUsesEndpointSpecificUnionAndOwnership(t *testing.T) {
 	t.Parallel()
 	otherSessionID := "10000000-0000-4000-8000-000000000099"

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -111,6 +112,67 @@ func TestRejectsMalformedValues(t *testing.T) {
 		values[name] = value
 		if _, err := load(env(values)); err == nil {
 			t.Fatalf("expected %s=%q to fail", name, value)
+		}
+	}
+}
+
+func TestOfflineSignerProfileIsStrictAndDoesNotEchoSecrets(t *testing.T) {
+	seed := bytes.Repeat([]byte{0x42}, ed25519.SeedSize)
+	privateKey := ed25519.NewKeyFromSeed(seed)
+	encodedKey := base64.RawURLEncoding.EncodeToString(privateKey)
+	values := baseEnv()
+	values["OFFLINE_SIGNER_KEY_ID"] = "offline-key-1"
+	values["OFFLINE_SIGNER_PRIVATE_KEY"] = encodedKey
+	values["OFFLINE_SIGNER_ISSUED_AT"] = "2026-01-01T00:00:00Z"
+	values["OFFLINE_SIGNER_NOT_AFTER"] = "2030-01-01T00:00:00Z"
+	cfg, err := load(env(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Offline.SignerEnabled() || cfg.Offline.SignerKeyID != "offline-key-1" || !bytes.Equal(cfg.Offline.SignerPrivateKey, privateKey) {
+		t.Fatalf("unexpected offline signer profile: %+v", cfg.Offline)
+	}
+
+	partial := baseEnv()
+	partial["OFFLINE_SIGNER_KEY_ID"] = "offline-key-1"
+	if _, err := load(env(partial)); err == nil || !strings.Contains(err.Error(), "requires") {
+		t.Fatalf("partial offline signer profile accepted: %v", err)
+	}
+	for name, value := range map[string]string{
+		"OFFLINE_SIGNER_PRIVATE_KEY": base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x11}, ed25519.PrivateKeySize)),
+		"OFFLINE_SIGNER_ISSUED_AT":   "2026-01-01T01:00:00+01:00",
+		"OFFLINE_SIGNER_NOT_AFTER":   "2025-01-01T00:00:00Z",
+	} {
+		invalid := make(map[string]string, len(values))
+		for key, original := range values {
+			invalid[key] = original
+		}
+		invalid[name] = value
+		_, err := load(env(invalid))
+		if err == nil || strings.Contains(err.Error(), value) || strings.Contains(err.Error(), encodedKey) {
+			t.Fatalf("invalid %s leaked or accepted signer material: %v", name, err)
+		}
+	}
+}
+
+func TestOfflineChallengeKeyringIsStrictAndDoesNotEchoSecrets(t *testing.T) {
+	key1 := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x51}, 32))
+	key2 := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x52}, 32))
+	values := baseEnv()
+	values["PRIVACY_OFFLINE_CHALLENGE_KEYS"] = "2:" + key1 + ",3:" + key2
+	cfg, err := load(env(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Privacy.OfflineChallengeKeys) != 2 || !bytes.Equal(cfg.Privacy.OfflineChallengeKeys[2], bytes.Repeat([]byte{0x51}, 32)) || !bytes.Equal(cfg.Privacy.OfflineChallengeKeys[3], bytes.Repeat([]byte{0x52}, 32)) {
+		t.Fatalf("unexpected challenge keyring versions=%v", cfg.Privacy.OfflineChallengeKeys)
+	}
+	for _, raw := range []string{"2:" + key1 + ",2:" + key2, "1:" + key1, "2:not-base64", "2:" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x53}, 31))} {
+		invalid := baseEnv()
+		invalid["PRIVACY_OFFLINE_CHALLENGE_KEYS"] = raw
+		_, err := load(env(invalid))
+		if err == nil || strings.Contains(err.Error(), key1) || strings.Contains(err.Error(), key2) {
+			t.Fatalf("invalid challenge keyring leaked or accepted secret: %v", err)
 		}
 	}
 }
@@ -230,7 +292,7 @@ func validNocturneEnv() map[string]string {
 	values["NOCTURNE_BACKUP_ROOT"] = "/var/lib/edu-agent/nocturne-backups"
 	values["NOCTURNE_BACKUP_MASTER_WRAPPING_KEY"] = encodedSecret32(0x33)
 	values["NOCTURNE_PG_DUMP_DSN"] = "postgres://nocturne:secret@database:5432/nocturne?sslmode=require"
-	values["NOCTURNE_IMAGE_LOCK_REFERENCE"] = "registry.example/edu-agent/nocturne@sha256:908eb9533589633857daf0792f376c6e94d76803da58c2afd4b314f970291f3a"
+	values["NOCTURNE_IMAGE_LOCK_REFERENCE"] = "registry.example/edu-agent/nocturne@sha256:4c7b8dbaab7e1b906b079873f7dc1dadd8abca92f0be0eb3343b1bb81e160f35"
 	return values
 }
 

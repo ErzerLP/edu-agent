@@ -34,8 +34,9 @@ type Device struct {
 }
 
 type IssuedCredential struct {
-	Device Device `json:"device"`
-	Token  string `json:"token"`
+	Device  Device                   `json:"device"`
+	Token   string                   `json:"token"`
+	Offline *OfflinePairingBootstrap `json:"offline,omitempty"`
 }
 
 type DevicesResponse struct {

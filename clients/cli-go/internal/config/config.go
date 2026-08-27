@@ -29,12 +29,20 @@ var (
 )
 
 type Config struct {
-	ServerURL         string `json:"server_url"`
-	DeviceID          string `json:"device_id"`
-	DisplayName       string `json:"display_name"`
-	Timeout           string `json:"timeout"`
-	Color             string `json:"color"`
-	AllowInsecureHTTP bool   `json:"allow_insecure_http"`
+	ServerURL         string          `json:"server_url"`
+	DeviceID          string          `json:"device_id"`
+	DisplayName       string          `json:"display_name"`
+	Timeout           string          `json:"timeout"`
+	Color             string          `json:"color"`
+	AllowInsecureHTTP bool            `json:"allow_insecure_http"`
+	Offline           *OfflineBinding `json:"offline,omitempty"`
+}
+
+type OfflineBinding struct {
+	ProtocolVersion   int             `json:"protocol_version"`
+	LearnerGeneration string          `json:"learner_generation"`
+	ServerBaseURL     string          `json:"server_base_url"`
+	SignerManifest    json.RawMessage `json:"signer_manifest"`
 }
 
 type PairingJournal struct {
@@ -161,6 +169,37 @@ func (c *Config) Validate() error {
 	}
 	if !validColor(c.Color) {
 		return errors.New("color must be never, auto, or always")
+	}
+	if c.Offline != nil {
+		if err := c.Offline.Validate(c.ServerURL); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *OfflineBinding) Validate(serverURL string) error {
+	if b.ProtocolVersion != 1 {
+		return errors.New("offline binding protocol version is unsupported")
+	}
+	if b.LearnerGeneration == "" || (len(b.LearnerGeneration) > 1 && b.LearnerGeneration[0] == '0') {
+		return errors.New("offline learner generation is invalid")
+	}
+	generation, err := strconv.ParseUint(b.LearnerGeneration, 10, 63)
+	if err != nil || generation == 0 {
+		return errors.New("offline learner generation is invalid")
+	}
+	normalizedOrigin, err := ValidateServerURL(b.ServerBaseURL, strings.HasPrefix(serverURL, "http://"))
+	if err != nil || normalizedOrigin != serverURL {
+		return errors.New("offline server origin does not match the paired server")
+	}
+	b.ServerBaseURL = normalizedOrigin
+	if len(b.SignerManifest) == 0 || !json.Valid(b.SignerManifest) {
+		return errors.New("offline signer manifest is invalid")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(b.SignerManifest, &object); err != nil || len(object) == 0 {
+		return errors.New("offline signer manifest is invalid")
 	}
 	return nil
 }

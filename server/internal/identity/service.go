@@ -16,7 +16,7 @@ import (
 
 var defaultScopes = []string{
 	"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write",
-	"learning:read", "learning:write", "memory:read", "memory:write", "privacy:read",
+	"learning:read", "learning:write", "memory:read", "memory:write", "privacy:read", "privacy:device",
 }
 
 type Options struct {

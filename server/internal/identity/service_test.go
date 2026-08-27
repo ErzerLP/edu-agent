@@ -216,7 +216,7 @@ func TestPairingCodeExpiresAndScopeIsEnforced(t *testing.T) {
 	if _, err := service.Authenticate(context.Background(), issued.Token, "learning:write"); err != nil {
 		t.Fatalf("issued token should include learning:write: %v", err)
 	}
-	for _, scope := range []string{"memory:read", "memory:write", "privacy:read"} {
+	for _, scope := range []string{"memory:read", "memory:write", "privacy:read", "privacy:device"} {
 		if _, err := service.Authenticate(context.Background(), issued.Token, scope); err != nil {
 			t.Fatalf("issued token should include %s: %v", scope, err)
 		}

@@ -37,26 +37,40 @@ const (
 	EventRouteAdvanced                  EventType = "RouteAdvanced"
 	EventLearningCompleted              EventType = "LearningCompleted"
 	EventMisconceptionHypothesisRevised EventType = "MisconceptionHypothesisRevised"
+	EventOfflineActivityMaterialized    EventType = "OfflineActivityMaterialized"
+	EventOfflineAttemptSubmitted        EventType = "OfflineAttemptSubmitted"
+	EventOfflineActivitySkipped         EventType = "OfflineActivitySkipped"
+	EventOfflineAssessmentQueued        EventType = "OfflineAssessmentQueued"
+	EventOfflineOperationRejected       EventType = "OfflineOperationRejected"
 	EventRedacted                       EventType = "EventRedacted"
 )
 
 type LearningEvent struct {
-	EventSequence    int64           `json:"event_seq"`
-	ID               string          `json:"event_id"`
-	Type             EventType       `json:"event_type"`
-	SchemaVersion    int             `json:"event_schema_version"`
-	AggregateType    string          `json:"aggregate_type"`
-	AggregateID      string          `json:"aggregate_id"`
-	AggregateVersion int64           `json:"aggregate_version"`
-	DeviceID         string          `json:"device_id"`
-	OperationID      string          `json:"operation_id"`
-	OperationOrdinal int             `json:"operation_ordinal"`
-	ReceivedAt       time.Time       `json:"received_at"`
-	OccurredAt       *time.Time      `json:"occurred_at,omitempty"`
-	PayloadID        string          `json:"payload_id"`
-	PayloadHash      string          `json:"payload_hash"`
-	Payload          json.RawMessage `json:"payload,omitempty"`
-	Redacted         bool            `json:"-"`
+	EventSequence       int64           `json:"event_seq"`
+	ID                  string          `json:"event_id"`
+	Type                EventType       `json:"event_type"`
+	SchemaVersion       int             `json:"event_schema_version"`
+	AggregateType       string          `json:"aggregate_type"`
+	AggregateID         string          `json:"aggregate_id"`
+	AggregateVersion    int64           `json:"aggregate_version"`
+	DeviceID            string          `json:"device_id"`
+	OperationID         string          `json:"operation_id"`
+	OperationOrdinal    int             `json:"operation_ordinal"`
+	ReceivedAt          time.Time       `json:"received_at"`
+	OccurredAt          *time.Time      `json:"occurred_at,omitempty"`
+	PayloadID           string          `json:"payload_id"`
+	PayloadHash         string          `json:"payload_hash"`
+	Payload             json.RawMessage `json:"payload,omitempty"`
+	ParentSessionID     string          `json:"parent_session_id,omitempty"`
+	Source              string          `json:"source"`
+	ArchiveDisposition  string          `json:"archive_disposition,omitempty"`
+	EvidenceDisposition string          `json:"evidence_disposition,omitempty"`
+	GoalRevisionID      string          `json:"goal_revision_id,omitempty"`
+	RouteRevisionID     string          `json:"route_revision_id,omitempty"`
+	KnowledgeRevisionID string          `json:"knowledge_revision_id,omitempty"`
+	ActivityID          string          `json:"activity_id,omitempty"`
+	ActivityRevision    int64           `json:"activity_revision,omitempty"`
+	Redacted            bool            `json:"-"`
 }
 
 type Decoder func(json.RawMessage) (json.RawMessage, error)
@@ -171,13 +185,18 @@ type ProjectionMetadata struct {
 }
 
 type TimelineItem struct {
-	EventSequence     int64      `json:"event_seq"`
-	EventID           string     `json:"event_id"`
-	Type              EventType  `json:"event_type"`
-	AggregateID       string     `json:"aggregate_id"`
-	ReceivedAt        time.Time  `json:"received_at"`
-	OccurredAt        *time.Time `json:"occurred_at,omitempty"`
-	OccurredAtTrusted bool       `json:"occurred_at_trusted"`
+	EventSequence       int64      `json:"event_seq"`
+	EventID             string     `json:"event_id"`
+	Type                EventType  `json:"event_type"`
+	AggregateID         string     `json:"aggregate_id"`
+	ParentSessionID     string     `json:"parent_session_id,omitempty"`
+	Source              string     `json:"source"`
+	ArchiveDisposition  string     `json:"archive_disposition,omitempty"`
+	EvidenceDisposition string     `json:"evidence_disposition,omitempty"`
+	ActorDeviceID       string     `json:"actor_device_id"`
+	ReceivedAt          time.Time  `json:"received_at"`
+	OccurredAt          *time.Time `json:"occurred_at,omitempty"`
+	OccurredAtTrusted   bool       `json:"occurred_at_trusted"`
 }
 type RouteProjection struct {
 	Route         RouteRevision `json:"route"`
@@ -257,10 +276,10 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		*projection = EmptyProjection(generationID)
 		projection.Metadata.AsOfEventSequence = decoded.EventSequence
 		projection.RedactedEvents[decoded.ID] = true
-		projection.Timeline = append(projection.Timeline, TimelineItem{EventSequence: decoded.EventSequence, EventID: decoded.ID, Type: decoded.Type, AggregateID: decoded.AggregateID, ReceivedAt: decoded.ReceivedAt, OccurredAt: decoded.OccurredAt, OccurredAtTrusted: false})
+		projection.Timeline = append(projection.Timeline, timelineItem(decoded))
 		return nil
 	}
-	projection.Timeline = append(projection.Timeline, TimelineItem{EventSequence: decoded.EventSequence, EventID: decoded.ID, Type: decoded.Type, AggregateID: decoded.AggregateID, ReceivedAt: decoded.ReceivedAt, OccurredAt: decoded.OccurredAt, OccurredAtTrusted: false})
+	projection.Timeline = append(projection.Timeline, timelineItem(decoded))
 	switch decoded.Type {
 	case EventRouteRevisionCreated:
 		var route RouteRevision
@@ -294,6 +313,11 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		var evidence AcceptedEvidence
 		if err := json.Unmarshal(decoded.Payload, &evidence); err != nil {
 			return err
+		}
+		if evidence.AcceptedEventSequence == 0 {
+			evidence.AcceptedEventSequence = decoded.EventSequence
+		} else if evidence.AcceptedEventSequence != decoded.EventSequence {
+			return fmt.Errorf("accepted evidence event sequence does not match envelope")
 		}
 		projection.Evidence[evidence.ID] = evidence
 		recomputeNode(projection, evidence.NodeRevisionID)
@@ -334,6 +358,20 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 			recomputeNode(projection, pending.NodeRevisionID)
 		}
 		recomputeNode(projection, payload.NodeRevisionID)
+	case EventOfflineAssessmentQueued:
+		var payload struct {
+			AssessmentID   string   `json:"assessment_id"`
+			NodeRevisionID string   `json:"node_revision_id"`
+			Reasons        []string `json:"reasons"`
+		}
+		if err := json.Unmarshal(decoded.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.AssessmentID == "" || payload.NodeRevisionID == "" {
+			return fmt.Errorf("offline assessment queue payload is incomplete")
+		}
+		projection.Pending[payload.AssessmentID] = PendingAssessment{AssessmentID: payload.AssessmentID, NodeRevisionID: payload.NodeRevisionID, Reasons: append([]string(nil), payload.Reasons...)}
+		recomputeNode(projection, payload.NodeRevisionID)
 	case EventExposureRecorded:
 		var exposure Exposure
 		if err := json.Unmarshal(decoded.Payload, &exposure); err != nil {
@@ -356,8 +394,14 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 			}
 		}
 	}
-	if isActiveTimeEvent(decoded.Type) && decoded.AggregateType == "session" {
-		projection.Stats[decoded.AggregateID] = estimateActiveTimeFromTimeline(decoded.AggregateID, projection.Timeline)
+	activeSessionID := ""
+	if decoded.AggregateType == "session" {
+		activeSessionID = decoded.AggregateID
+	} else if decoded.Source == "offline" {
+		activeSessionID = decoded.ParentSessionID
+	}
+	if activeSessionID != "" && isActiveTimeEvent(decoded.Type) {
+		projection.Stats[activeSessionID] = estimateActiveTimeFromTimeline(activeSessionID, projection.Timeline)
 	}
 	if decoded.AggregateType == "session" {
 		if session, ok := projection.Sessions[decoded.AggregateID]; ok {
@@ -367,6 +411,20 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		}
 	}
 	return nil
+}
+
+func timelineItem(event LearningEvent) TimelineItem {
+	source := event.Source
+	if source == "" {
+		source = "online"
+	}
+	return TimelineItem{
+		EventSequence: event.EventSequence, EventID: event.ID, Type: event.Type,
+		AggregateID: event.AggregateID, ParentSessionID: event.ParentSessionID,
+		Source: source, ArchiveDisposition: event.ArchiveDisposition,
+		EvidenceDisposition: event.EvidenceDisposition, ActorDeviceID: event.DeviceID,
+		ReceivedAt: event.ReceivedAt, OccurredAt: event.OccurredAt, OccurredAtTrusted: false,
+	}
 }
 
 func Replay(events []LearningEvent, registry *EventRegistry, generationID string) (Projection, error) {

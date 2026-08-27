@@ -300,14 +300,32 @@ func withQuery(path string, values url.Values) string {
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, authenticated bool, requestValue any, success map[int]bool, retry bool, target any) error {
+	_, err := c.doJSONStatus(ctx, method, path, authenticated, requestValue, success, retry, target)
+	return err
+}
+
+func (c *Client) doJSONStatus(ctx context.Context, method, path string, authenticated bool, requestValue any, success map[int]bool, retry bool, target any) (int, error) {
 	var body []byte
 	var err error
 	if requestValue != nil {
 		body, err = json.Marshal(requestValue)
 		if err != nil {
-			return &ProtocolError{Category: "request_encoding_failed"}
+			return 0, &ProtocolError{Category: "request_encoding_failed"}
 		}
 	}
+	return c.doJSONBody(ctx, method, path, authenticated, body, requestValue != nil, success, retry, target)
+}
+
+// doCanonicalJSON sends the caller-provided JSON bytes without marshaling or
+// otherwise rewriting them. The same immutable slice is read on every retry.
+func (c *Client) doCanonicalJSON(ctx context.Context, method, path string, authenticated bool, body []byte, success map[int]bool, retry bool, target any) (int, error) {
+	if len(body) == 0 {
+		return 0, &ProtocolError{Category: "request_encoding_failed"}
+	}
+	return c.doJSONBody(ctx, method, path, authenticated, body, true, success, retry, target)
+}
+
+func (c *Client) doJSONBody(ctx context.Context, method, path string, authenticated bool, body []byte, hasBody bool, success map[int]bool, retry bool, target any) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	attempts := 1
@@ -315,26 +333,26 @@ func (c *Client) doJSON(ctx context.Context, method, path string, authenticated 
 		attempts = 2
 	}
 	for attempt := 1; attempt <= attempts; attempt++ {
-		result, retryDelay, err := c.attempt(ctx, method, path, authenticated, body, requestValue != nil, success, target)
+		result, status, retryDelay, err := c.attempt(ctx, method, path, authenticated, body, hasBody, success, target)
 		if result {
-			return nil
+			return status, nil
 		}
 		if attempt == attempts || !shouldRetryError(err) {
-			return err
+			return status, err
 		}
 		if retryDelay > 0 {
 			if deadline, ok := ctx.Deadline(); ok && !c.now().Add(retryDelay).Before(deadline) {
-				return err
+				return status, err
 			}
 			if sleepErr := c.sleep(ctx, retryDelay); sleepErr != nil {
-				return &TransportError{Category: "deadline_exceeded"}
+				return status, &TransportError{Category: "deadline_exceeded"}
 			}
 		}
 	}
-	return &TransportError{Category: "retry_exhausted"}
+	return 0, &TransportError{Category: "retry_exhausted"}
 }
 
-func (c *Client) attempt(ctx context.Context, method, path string, authenticated bool, body []byte, hasBody bool, success map[int]bool, target any) (bool, time.Duration, error) {
+func (c *Client) attempt(ctx context.Context, method, path string, authenticated bool, body []byte, hasBody bool, success map[int]bool, target any) (bool, int, time.Duration, error) {
 	endpoint := strings.TrimSuffix(c.baseURL, "/") + path
 	var reader io.Reader
 	if hasBody {
@@ -342,7 +360,7 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 	}
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
-		return false, 0, &ProtocolError{Category: "request_creation_failed"}
+		return false, 0, 0, &ProtocolError{Category: "request_creation_failed"}
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", userAgent)
@@ -354,46 +372,62 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 	}
 	response, err := c.http.Do(request)
 	if err != nil {
-		return false, 0, classifyTransport(err)
+		return false, 0, 0, classifyTransport(err)
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, c.maxBody+1))
 	if err != nil {
-		return false, 0, classifyTransport(err)
+		return false, response.StatusCode, 0, classifyTransport(err)
 	}
 	if int64(len(data)) > c.maxBody {
-		return false, 0, &ProtocolError{Category: "response_too_large"}
+		return false, response.StatusCode, 0, &ProtocolError{Category: "response_too_large"}
 	}
 	if success[response.StatusCode] {
 		if response.StatusCode == http.StatusNoContent {
 			if len(bytes.TrimSpace(data)) != 0 {
-				return false, 0, &ProtocolError{Category: "unexpected_response_body"}
+				return false, response.StatusCode, 0, &ProtocolError{Category: "unexpected_response_body"}
 			}
-			return true, 0, nil
+			return true, response.StatusCode, 0, nil
 		}
 		if err := requireJSON(response.Header.Get("Content-Type")); err != nil {
-			return false, 0, err
+			return false, response.StatusCode, 0, err
 		}
 		if err := decodeStrict(data, target); err != nil {
-			return false, 0, &ProtocolError{Category: "malformed_success_response"}
+			switch target.(type) {
+			case *OfflinePrepareResponse:
+				return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_offline_prepare_response: " + err.Error()}
+			case *OfflineSyncResponse:
+				return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_offline_sync_response: " + err.Error()}
+			case *OfflineOperationStatus:
+				return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_offline_status_response: " + err.Error()}
+			}
+			return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_success_response"}
 		}
 		if err := validateDecoded(target); err != nil {
-			return false, 0, &ProtocolError{Category: "invalid_success_response"}
+			switch target.(type) {
+			case *OfflinePrepareResponse:
+				return false, response.StatusCode, 0, &ProtocolError{Category: "invalid_offline_prepare_response: " + err.Error()}
+			case *OfflineSyncResponse:
+				return false, response.StatusCode, 0, &ProtocolError{Category: "invalid_offline_sync_response: " + err.Error()}
+			case *OfflineOperationStatus:
+				return false, response.StatusCode, 0, &ProtocolError{Category: "invalid_offline_status_response: " + err.Error()}
+			}
+			return false, response.StatusCode, 0, &ProtocolError{Category: "invalid_success_response"}
 		}
-		return true, 0, nil
+		return true, response.StatusCode, 0, nil
 	}
 	if response.StatusCode >= 300 && response.StatusCode < 400 {
-		return false, 0, &ProtocolError{Category: "redirect_refused"}
+		return false, response.StatusCode, 0, &ProtocolError{Category: "redirect_refused"}
 	}
 	if response.StatusCode == http.StatusBadGateway || response.StatusCode == http.StatusGatewayTimeout {
-		return false, 0, &APIError{Code: "dependency_unavailable", Status: response.StatusCode}
+		return false, response.StatusCode, 0, &APIError{Code: "dependency_unavailable", Status: response.StatusCode}
 	}
 	if err := requireJSON(response.Header.Get("Content-Type")); err != nil {
-		return false, 0, err
+		return false, response.StatusCode, 0, err
 	}
 	var envelope ErrorResponse
-	if err := decodeStrict(data, &envelope); err != nil || validateErrorResponse(method, path, response.StatusCode, envelope) != nil || validateErrorBinding(envelope, body, hasBody) != nil {
-		return false, 0, &ProtocolError{Category: "malformed_error_response"}
+	if err := decodeStrict(data, &envelope); err != nil || validateErrorResponse(method, path, response.StatusCode, envelope) != nil || validateErrorBinding(method, path, envelope, body, hasBody) != nil {
+		return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_error_response"}
 	}
 	apiErr := &APIError{
 		Code: envelope.Error.Code, RequestID: envelope.Error.RequestID, Status: response.StatusCode,
@@ -403,13 +437,13 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 	if response.StatusCode == http.StatusTooManyRequests {
 		delay, ok := parseRetryAfter(response.Header.Get("Retry-After"), c.now())
 		if ok {
-			return false, delay, apiErr
+			return false, response.StatusCode, delay, apiErr
 		}
 	}
 	if response.StatusCode == http.StatusServiceUnavailable && transient503[apiErr.Code] {
-		return false, 0, apiErr
+		return false, response.StatusCode, 0, apiErr
 	}
-	return false, 0, nonRetryable{err: apiErr}
+	return false, response.StatusCode, 0, nonRetryable{err: apiErr}
 }
 
 type nonRetryable struct{ err error }
@@ -455,6 +489,9 @@ func requireJSON(value string) error {
 }
 
 func decodeStrict(data []byte, target any) error {
+	if err := rejectDuplicateJSONFields(data); err != nil {
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	decoder.UseNumber()
@@ -471,11 +508,75 @@ func decodeStrict(data []byte, target any) error {
 	return validateRequiredJSONFields(data, target)
 }
 
+func rejectDuplicateJSONFields(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := scanJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, exists := seen[key]; exists {
+				return fmt.Errorf("duplicate JSON field %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := scanJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+	return nil
+}
+
 // validateDecoded applies semantic checks after strict JSON shape validation.
 func validateDecoded(target any) error {
 	switch value := target.(type) {
 	case *IssuedCredential:
-		if value.Token == "" || validateDevice(value.Device) != nil {
+		if value.Token == "" || validateDevice(value.Device) != nil || (value.Offline != nil && validateOfflinePairingBootstrap(*value.Offline) != nil) {
 			return errors.New("issued credential is incomplete")
 		}
 	case *DevicesResponse:
@@ -533,6 +634,12 @@ func validateDecoded(target any) error {
 		if value.ActiveGenerationID == "" || len(value.Fingerprint) != 64 {
 			return errors.New("projection status is incomplete")
 		}
+	case *OfflinePrepareResponse:
+		return validateOfflinePrepareResponse(*value)
+	case *OfflineSyncResponse:
+		return validateOfflineSyncResponse(*value)
+	case *OfflineOperationStatus:
+		return validateOfflineOperationStatus(*value)
 	}
 	return nil
 }
@@ -657,12 +764,25 @@ func validIdentityCandidates(values []IdentityCandidate) bool {
 	return true
 }
 
-func validateErrorBinding(value ErrorResponse, body []byte, hasBody bool) error {
+func validateErrorBinding(method, path string, value ErrorResponse, body []byte, hasBody bool) error {
 	if value.Conflict == nil {
 		return nil
 	}
 	if !hasBody {
 		return errors.New("learning conflict has no request body to bind")
+	}
+	if method == http.MethodPost && path == "/v1/learning/offline/packs" {
+		var request struct {
+			ExpectedSessionVersion string `json:"expected_session_version"`
+		}
+		if err := json.Unmarshal(body, &request); err != nil || request.ExpectedSessionVersion == "" || value.Conflict.AggregateType != "session" {
+			return errors.New("offline prepare conflict request binding is unavailable")
+		}
+		expected, err := strconv.ParseInt(request.ExpectedSessionVersion, 10, 64)
+		if err != nil || expected != value.Conflict.ExpectedVersion {
+			return errors.New("offline prepare conflict does not belong to the request")
+		}
+		return nil
 	}
 	var request struct {
 		AggregateType   string `json:"aggregate_type"`

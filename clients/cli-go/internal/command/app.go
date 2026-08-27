@@ -16,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/id"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/offline"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
 )
 
@@ -26,6 +27,14 @@ type ConfigStore interface {
 	LoadPairingJournal() (config.PairingJournal, error)
 	SavePairingJournal(config.PairingJournal) error
 	DeletePairingJournal() error
+}
+
+type OfflineKeyStore interface {
+	Available(string) bool
+	Generate() ([]byte, error)
+	Load(string) ([]byte, error)
+	Store(string, []byte) error
+	Delete(string) error
 }
 
 type CredentialStore interface {
@@ -63,6 +72,12 @@ type APIClient interface {
 	Evidence(context.Context, string, int, string) (api.EvidencePage, error)
 	Reviews(context.Context, string, int, *time.Time) (api.ReviewsPage, error)
 	ProjectionStatus(context.Context) (api.ProjectionStatus, error)
+	PrepareOffline(context.Context, api.OfflinePrepareRequest) (api.OfflinePrepareResponse, int, error)
+	SyncOfflineCanonical(context.Context, []byte) (api.OfflineSyncResponse, error)
+	OfflineOperationStatus(context.Context, string) (api.OfflineOperationStatus, error)
+	OfflineAssessments(context.Context, string, int, string) (api.OfflineAssessmentPage, error)
+	OfflineAssessment(context.Context, string) (api.OfflineAssessmentView, error)
+	DecideOfflineAssessment(context.Context, string, api.OfflineAssessmentDecisionRequest) (api.OfflineAssessmentDecisionReceipt, error)
 }
 
 type BuildInfo struct {
@@ -79,6 +94,8 @@ type App struct {
 	Getenv      func(string) string
 	NewClient   func(string, string, time.Duration) APIClient
 	NewUUID     func() (string, error)
+	OfflineRoot func() (string, error)
+	OfflineKeys OfflineKeyStore
 	Build       BuildInfo
 }
 
@@ -93,7 +110,7 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 	}
 	return &App{
 		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), Terminal: terminal.New(in, out, errOut),
-		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, Build: build,
+		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{}, Build: build,
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
 			client := api.NewClient(serverURL, token, timeout, http.DefaultClient)
 			return client
@@ -149,6 +166,8 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		return a.runEvidence(ctx, args[1:])
 	case "reviews":
 		return a.runReviews(ctx, args[1:])
+	case "offline":
+		return a.runOffline(ctx, args[1:])
 	case "clear":
 		if len(args) != 1 {
 			return commandError("usage", "clear accepts no arguments", "run edu-agent clear", ExitInput)

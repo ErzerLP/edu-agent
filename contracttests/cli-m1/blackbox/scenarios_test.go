@@ -1,11 +1,89 @@
 package blackbox
 
 import (
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
+
+func (h *harness) offlineBootstrapWarning() string {
+	content, err := os.ReadFile(h.serverLogPath)
+	if err != nil {
+		return "server_log_unavailable"
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.Contains(line, "offline pairing bootstrap unavailable") {
+			return line
+		}
+	}
+	return "offline_bootstrap_warning_absent"
+}
+
+func (h *harness) localOfflineBinding(home string) bool {
+	content, err := os.ReadFile(filepath.Join(home, "config", "edu-agent", "config.json"))
+	if err != nil {
+		return false
+	}
+	var value struct {
+		Offline json.RawMessage `json:"offline"`
+	}
+	return json.Unmarshal(content, &value) == nil && len(value.Offline) > 0 && string(value.Offline) != "null"
+}
+
+func TestBlackBoxOfflineObjectivePrepareLearnSyncStatus(t *testing.T) {
+	h := newHarness(t)
+	h.configureFake("activity", fakeScenario{Kind: "accepted", ActivityType: "objective"})
+	if !h.ServerOffersOfflineBootstrap() {
+		t.Fatalf("server pairing response omitted offline bootstrap: %s", h.offlineBootstrapWarning())
+	}
+	h.pairBoth(h.serverURL)
+	if !h.localOfflineBinding(h.primaryHome) {
+		t.Fatalf("CLI pairing did not persist the server offline bootstrap")
+	}
+	h.importFixture(h.primaryHome)
+	sessionID := h.setGoal(h.primaryHome, "Practice the stable concept while disconnected")
+
+	materialize := h.runCLI(h.primaryHome, standardTeachingInput().String(), "learn")
+	requireNonZero(t, materialize, "materialize objective activity before offline preparation")
+	requireContains(t, materialize.stdout, "Question:", "materialized objective activity")
+
+	passphrase := "blackbox offline passphrase"
+	prepared := h.runCLI(h.primaryHome, passphrase+"\n"+passphrase+"\n", "offline", "prepare", "--count", "1")
+	if prepared.exit != 0 {
+		prepareClaims := h.scalarInt("offline prepare failure metadata", `SELECT count(*) FROM offline_prepare_claims`)
+		t.Fatalf("offline prepare failed: exit=%d code=%s claims=%d bootstrap=%s stderr=%q", prepared.exit, stableErrorCode(prepared.stderr), prepareClaims, h.offlineBootstrapWarning(), prepared.stderr)
+	}
+	requireContains(t, prepared.stdout, "Offline pack prepared", "offline prepared pack")
+
+	answered := h.runCLI(h.primaryHome, passphrase+"\nexpected\n", "offline", "learn")
+	requireExit(t, answered, 0, "offline learn")
+	requireContains(t, answered.stdout, "Offline answer queued", "offline queued operation")
+	h.assertHomeFilesExclude(h.primaryHome, "blackbox offline passphrase", `"answer":"expected"`)
+
+	blockedLogout := h.runCLI(h.primaryHome, passphrase+"\n", "logout")
+	if blockedLogout.exit != 4 || stableErrorCode(blockedLogout.stderr) != "offline_state_nonterminal" {
+		t.Fatalf("offline queued logout assertion failed: exit=%d code=%s", blockedLogout.exit, stableErrorCode(blockedLogout.stderr))
+	}
+
+	synced := h.runCLI(h.primaryHome, passphrase+"\n", "offline", "sync")
+	if synced.exit != 0 {
+		t.Fatalf("offline sync failed: exit=%d code=%s stderr=%q", synced.exit, stableErrorCode(synced.stderr), synced.stderr)
+	}
+	requireContains(t, synced.stdout, "terminal=1", "offline archived result")
+	status := h.runCLI(h.primaryHome, passphrase+"\n", "offline", "status")
+	requireExit(t, status, 0, "offline status")
+	requireContains(t, status.stdout, "Terminal: 1", "offline terminal status")
+
+	assertSessionCount(t, h, "offline pack", `SELECT count(*) FROM offline_packs WHERE parent_session_id=$1`, sessionID, 1)
+	assertSessionCount(t, h, "offline attempt", `SELECT count(*) FROM learning_attempts WHERE session_id=$1`, sessionID, 1)
+	assertSessionCount(t, h, "offline evidence", `SELECT count(*) FROM learning_evidence WHERE session_id=$1`, sessionID, 1)
+	assertSessionCount(t, h, "unchanged online tutoring authority", `SELECT count(*) FROM tutoring_sessions WHERE id=$1 AND state='AwaitingResponse'`, sessionID, 1)
+}
 
 func TestBlackBoxAcceptedTeachingFlow(t *testing.T) {
 	h := newHarness(t)
@@ -298,7 +376,7 @@ func TestBlackBoxModelFailurePreservesAuthoritativeStateAndCanRetry(t *testing.T
 }
 
 func TestBlackBoxResponseLossReplaysSameBodyWithoutDuplicateAuthority(t *testing.T) {
-	h := newHarness(t)
+	h := newHarnessWithOfflineSigner(t, false)
 	proxyURL := h.startProxy()
 	h.pairBoth(proxyURL)
 	h.importFixture(h.primaryHome)

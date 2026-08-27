@@ -40,9 +40,10 @@ type applicationStores struct {
 
 func newApplicationStores(pool *pgxpool.Pool) applicationStores {
 	tutoringStore := tutoringpostgres.New(pool)
+	knowledgeStore := knowledgepostgres.New(pool)
 	return applicationStores{
-		identity: identitypostgres.New(pool), knowledge: knowledgepostgres.New(pool),
-		tutoring: tutoringStore, learning: learningpostgres.New(pool, tutoringStore),
+		identity: identitypostgres.New(pool), knowledge: knowledgeStore,
+		tutoring: tutoringStore, learning: learningpostgres.New(pool, tutoringStore, knowledgeStore),
 		memory: memorypostgres.New(pool), outbox: outboxpostgres.New(pool),
 	}
 }
@@ -236,6 +237,13 @@ func composeMemoryBridge(pool *pgxpool.Pool, stores applicationStores, cfg confi
 	}
 
 	privacyOptions := []privacypostgres.Option{privacypostgres.WithReadPermits(permits)}
+	if len(cfg.Privacy.OfflineChallengeKeys) != 0 {
+		challengeKeys, challengeErr := privacy.NewOfflineChallengeKeyring(cfg.Privacy.OfflineChallengeKeys)
+		if challengeErr != nil {
+			return memoryBridgeComposition{}, fmt.Errorf("initialize offline purge challenge keyring: %w", challengeErr)
+		}
+		privacyOptions = append(privacyOptions, privacypostgres.WithOfflineChallengeKeyring(challengeKeys))
+	}
 	for _, owner := range stores.localOwnerPorts() {
 		if err := privacy.ValidateOwnerPort(owner); err != nil {
 			return memoryBridgeComposition{}, fmt.Errorf("initialize privacy owner port: %w", err)

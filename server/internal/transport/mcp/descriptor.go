@@ -27,6 +27,7 @@ type Descriptor struct {
 	AuditName       string
 	HTTPOperationID string
 	InputSchema     any
+	OutputSchema    any
 }
 
 const (
@@ -47,20 +48,23 @@ var descriptorCatalog = []Descriptor{
 	{Kind: DescriptorResourceTemplate, Name: "memory.record", URITemplate: "edu-agent://memory/records/{memory_id}", Description: "One admitted memory record loaded from the composed memory exporter", RequiredScope: "memory:read", PrivacyOwners: []privacy.OwnerKind{privacy.OwnerMemory}, ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "memory_record", HTTPOperationID: "getMemoryRecord"},
 	{Kind: DescriptorResource, Name: "memory.export", URI: "edu-agent://memory/export", Description: "First page of the composed memory export", RequiredScope: "memory:read", PrivacyOwners: []privacy.OwnerKind{privacy.OwnerMemory}, ReadOnly: true, OutputLimit: exportOutputLimit, AuditName: "memory_export", HTTPOperationID: "exportMemoryRecords"},
 
-	toolDescriptor("knowledge.retrieve", "Retrieve canonical knowledge with frozen revision provenance", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_retrieve", "retrieveKnowledge", knowledgeRetrieveSchema()),
-	toolDescriptor("learning.list_timeline", "List learning timeline projection entries", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_timeline", "listLearningTimeline", timelineSchema()),
-	toolDescriptor("learning.list_routes", "List current or historical learning routes", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_routes", "listLearningRoutes", routesSchema()),
-	toolDescriptor("learning.list_evidence", "List accepted learning evidence", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_evidence", "listLearningEvidence", evidenceSchema()),
-	toolDescriptor("learning.list_reviews", "List scheduled learning reviews", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_reviews", "listLearningReviews", reviewsSchema()),
-	toolDescriptor("memory.list_records", "List admitted memory record metadata", "memory:read", []privacy.OwnerKind{privacy.OwnerMemory}, true, defaultToolInputLimit, defaultOutputLimit, "memory_list_records", "listMemoryRecords", pageSchema()),
-	toolDescriptor("learning.create_goal", "Create a goal revision through the learning application service", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "learning_create_goal", "createLearningGoal", createGoalSchema()),
-	toolDescriptor("tutoring.create_session", "Create a tutoring session through the learning application service", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "tutoring_create_session", "createTutoringSession", createSessionSchema()),
-	toolDescriptor("tutoring.propose", "Request a tutoring proposal from the composed tutor model path", "learning:write", learningOwners(), false, learningToolInputLimit, exportOutputLimit, "tutoring_propose", "proposeTutoringArtifact", proposeSchema()),
-	toolDescriptor("tutoring.apply_action", "Apply one existing tutoring state-machine action", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "tutoring_apply_action", "applyTutoringAction", applyActionSchema()),
+	toolDescriptor("knowledge.retrieve", "Retrieve canonical knowledge with frozen revision provenance", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_retrieve", "retrieveKnowledge", knowledgeRetrieveSchema(), nil),
+	toolDescriptor("knowledge.maintenance.propose", "Submit a sourced knowledge maintenance proposal", "knowledge:write", []privacy.OwnerKind{privacy.OwnerKnowledge}, false, exportOutputLimit, exportOutputLimit, "knowledge_maintenance_propose", "createKnowledgeMaintenanceProposal", knowledgeMaintenanceProposalSchema(), knowledgeMaintenanceProposalOutputSchema()),
+	toolDescriptor("knowledge.maintenance.list", "List knowledge maintenance proposals", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_list", "listKnowledgeMaintenanceProposals", knowledgeMaintenanceListSchema(), knowledgeMaintenancePageOutputSchema()),
+	toolDescriptor("knowledge.maintenance.get", "Read one knowledge maintenance proposal", "knowledge:read", []privacy.OwnerKind{privacy.OwnerKnowledge}, true, defaultToolInputLimit, exportOutputLimit, "knowledge_maintenance_get", "getKnowledgeMaintenanceProposal", knowledgeMaintenanceGetSchema(), knowledgeMaintenanceProposalOutputSchema()),
+	toolDescriptor("learning.list_timeline", "List learning timeline projection entries", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_timeline", "listLearningTimeline", timelineSchema(), nil),
+	toolDescriptor("learning.list_routes", "List current or historical learning routes", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_routes", "listLearningRoutes", routesSchema(), nil),
+	toolDescriptor("learning.list_evidence", "List accepted learning evidence", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_evidence", "listLearningEvidence", evidenceSchema(), nil),
+	toolDescriptor("learning.list_reviews", "List scheduled learning reviews", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_reviews", "listLearningReviews", reviewsSchema(), nil),
+	toolDescriptor("memory.list_records", "List admitted memory record metadata", "memory:read", []privacy.OwnerKind{privacy.OwnerMemory}, true, defaultToolInputLimit, defaultOutputLimit, "memory_list_records", "listMemoryRecords", pageSchema(), nil),
+	toolDescriptor("learning.create_goal", "Create a goal revision through the learning application service", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "learning_create_goal", "createLearningGoal", createGoalSchema(), nil),
+	toolDescriptor("tutoring.create_session", "Create a tutoring session through the learning application service", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "tutoring_create_session", "createTutoringSession", createSessionSchema(), nil),
+	toolDescriptor("tutoring.propose", "Request a tutoring proposal from the composed tutor model path", "learning:write", learningOwners(), false, learningToolInputLimit, exportOutputLimit, "tutoring_propose", "proposeTutoringArtifact", proposeSchema(), nil),
+	toolDescriptor("tutoring.apply_action", "Apply one existing tutoring state-machine action", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "tutoring_apply_action", "applyTutoringAction", applyActionSchema(), nil),
 }
 
-func toolDescriptor(name, description, scope string, owners []privacy.OwnerKind, readOnly bool, inputLimit, outputLimit int64, auditName, operationID string, schema any) Descriptor {
-	return Descriptor{Kind: DescriptorTool, Name: name, Description: description, RequiredScope: scope, PrivacyOwners: owners, ReadOnly: readOnly, InputLimit: inputLimit, OutputLimit: outputLimit, AuditName: auditName, HTTPOperationID: operationID, InputSchema: schema}
+func toolDescriptor(name, description, scope string, owners []privacy.OwnerKind, readOnly bool, inputLimit, outputLimit int64, auditName, operationID string, inputSchema, outputSchema any) Descriptor {
+	return Descriptor{Kind: DescriptorTool, Name: name, Description: description, RequiredScope: scope, PrivacyOwners: owners, ReadOnly: readOnly, InputLimit: inputLimit, OutputLimit: outputLimit, AuditName: auditName, HTTPOperationID: operationID, InputSchema: inputSchema, OutputSchema: outputSchema}
 }
 
 func learningOwners() []privacy.OwnerKind {
@@ -81,6 +85,7 @@ func toolDefinition(descriptor Descriptor) *sdkmcp.Tool {
 	destructive := false
 	return &sdkmcp.Tool{
 		Name: descriptor.Name, Description: descriptor.Description, InputSchema: descriptor.InputSchema,
+		OutputSchema: descriptor.OutputSchema,
 		Annotations: &sdkmcp.ToolAnnotations{
 			ReadOnlyHint: descriptor.ReadOnly, IdempotentHint: true,
 			OpenWorldHint: &openWorld, DestructiveHint: &destructive,
@@ -132,6 +137,73 @@ func mergeProperties(left, right map[string]any) map[string]any {
 		result[key] = value
 	}
 	return result
+}
+
+func knowledgeMaintenanceProposalSchema() any {
+	source := objectSchema(map[string]any{
+		"kind": stringProperty(), "locator": stringProperty(), "title": stringProperty(),
+		"excerpt": stringProperty(), "sha256": map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+	}, "kind", "locator", "sha256")
+	document := objectSchema(map[string]any{"path": stringProperty(), "markdown": stringProperty()}, "path", "markdown")
+	documentResolution := objectSchema(map[string]any{
+		"locator": stringProperty(), "action": map[string]any{"type": "string", "enum": []string{"preserve", "new"}},
+		"document_id": uuidProperty(), "reason": stringProperty(),
+	}, "locator", "action", "reason")
+	nodeResolution := objectSchema(map[string]any{
+		"locator": stringProperty(), "action": map[string]any{"type": "string", "enum": []string{"preserve", "new", "rewrite", "split", "merge"}},
+		"source_node_revision_ids": map[string]any{"type": "array", "items": uuidProperty(), "uniqueItems": true},
+		"reason":                   stringProperty(),
+	}, "locator", "action", "reason")
+	return objectSchema(map[string]any{
+		"request_id": uuidProperty(), "base_revision_id": uuidProperty(),
+		"sources":                      map[string]any{"type": "array", "minItems": 1, "maxItems": 20, "items": source},
+		"candidate_snapshot":           map[string]any{"type": "array", "maxItems": 1000, "items": document},
+		"identity_review_basis_hash":   map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+		"identity_review_operation_id": uuidProperty(),
+		"identity_review_receipt":      map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"},
+		"document_resolutions":         map[string]any{"type": "array", "items": documentResolution},
+		"node_resolutions":             map[string]any{"type": "array", "items": nodeResolution},
+	}, "request_id", "base_revision_id", "sources", "candidate_snapshot")
+}
+
+func knowledgeMaintenanceListSchema() any {
+	return objectSchema(map[string]any{
+		"status": map[string]any{"type": "string", "enum": []string{"all", "open", "applied", "rejected", "stale", "redacted"}},
+		"cursor": stringProperty(), "limit": integerProperty(1, 100),
+	})
+}
+
+func knowledgeMaintenanceGetSchema() any {
+	return objectSchema(map[string]any{"proposal_id": uuidProperty()}, "proposal_id")
+}
+
+func knowledgeMaintenanceProposalOutputSchema() any {
+	object := map[string]any{"type": "object"}
+	array := map[string]any{"type": "array"}
+	return objectSchema(map[string]any{
+		"proposal_id": uuidProperty(), "request_id": uuidProperty(),
+		"kind":             map[string]any{"type": "string", "enum": []string{"candidate", "rollback"}},
+		"status":           map[string]any{"type": "string", "enum": []string{"open", "applied", "rejected", "stale", "redacted"}},
+		"base_revision_id": uuidProperty(), "current_revision_id": uuidProperty(), "rollback_target_revision_id": uuidProperty(),
+		"sources": array, "candidate_snapshot": array, "diff": array,
+		"identity_impact": object, "lineage_impact": object, "accepted_learning_evidence_impact": object,
+		"risk": object, "basis_hash": stringProperty(), "knowledge_generation": map[string]any{"type": "integer", "minimum": 1},
+		"canonicalizer_version": stringProperty(), "identity_policy_version": stringProperty(), "diff_version": stringProperty(),
+		"risk_version": stringProperty(), "auto_apply_policy_version": stringProperty(), "decision": object,
+		"applied_revision_id": uuidProperty(), "origin": object, "created_by_device_id": uuidProperty(),
+		"created_at": map[string]any{"type": "string", "format": "date-time"},
+		"updated_at": map[string]any{"type": "string", "format": "date-time"},
+		"redacted":   map[string]any{"type": "boolean"}, "replayed": map[string]any{"type": "boolean"},
+	}, "proposal_id", "request_id", "kind", "status", "base_revision_id", "identity_impact", "lineage_impact",
+		"accepted_learning_evidence_impact", "risk", "knowledge_generation", "canonicalizer_version", "identity_policy_version",
+		"diff_version", "risk_version", "auto_apply_policy_version", "created_by_device_id", "created_at", "updated_at", "redacted")
+}
+
+func knowledgeMaintenancePageOutputSchema() any {
+	return objectSchema(map[string]any{
+		"items":       map[string]any{"type": "array", "items": knowledgeMaintenanceProposalOutputSchema()},
+		"next_cursor": stringProperty(),
+	}, "items")
 }
 
 func knowledgeRetrieveSchema() any {

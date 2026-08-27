@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
@@ -40,6 +41,34 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 			QueryContextSchemaVersion: input.QueryContextSchemaVersion,
 			Context:                   input.Context, Limits: input.Limits,
 		})
+	case "knowledge.maintenance.propose":
+		var input knowledge.CreateProposalCommand
+		if decodeArguments(request.Params.Arguments, &input) != nil {
+			err = &knowledge.Error{Code: knowledge.CodeInvalidRequest}
+			break
+		}
+		input.ActorDeviceID = invocation.Credential.Device.ID
+		value, err = r.knowledge.Create(ctx, input)
+	case "knowledge.maintenance.list":
+		var input knowledge.ProposalListCommand
+		if decodeArguments(request.Params.Arguments, &input) != nil {
+			err = &knowledge.Error{Code: knowledge.CodeInvalidRequest}
+			break
+		}
+		value, err = r.knowledge.List(ctx, input)
+		if page, ok := value.(knowledge.ProposalPage); ok {
+			if page.Items == nil {
+				page.Items = []knowledge.Proposal{}
+			}
+			value = page
+		}
+	case "knowledge.maintenance.get":
+		var input knowledgeMaintenanceGetInput
+		if decodeArguments(request.Params.Arguments, &input) != nil || !canonicalUUID(input.ProposalID) {
+			err = &knowledge.Error{Code: knowledge.CodeInvalidRequest}
+			break
+		}
+		value, err = r.knowledge.Get(ctx, input.ProposalID)
 	case "learning.list_timeline":
 		var input timelineInput
 		if decodeArguments(request.Params.Arguments, &input) != nil || input.SessionID != "" && !canonicalUUID(input.SessionID) {
@@ -164,7 +193,11 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		return r.toolFailure(ctx, descriptor, problem.DescriptorNotFound()), nil
 	}
 	if err != nil {
-		return r.toolFailure(ctx, descriptor, mapApplicationProblem(err)), nil
+		mapped := mapApplicationProblem(err)
+		if strings.HasPrefix(descriptor.Name, "knowledge.maintenance.") {
+			mapped = mapKnowledgeMaintenanceProblem(err)
+		}
+		return r.toolFailure(ctx, descriptor, mapped), nil
 	}
 	return r.toolSuccess(ctx, descriptor, value), nil
 }
@@ -317,6 +350,29 @@ func resourceError(mapped problem.Problem, requestID string) error {
 		code = jsonrpc.CodeInternalError
 	}
 	return &jsonrpc.Error{Code: code, Message: mapped.Message, Data: json.RawMessage(encoded)}
+}
+
+func mapKnowledgeMaintenanceProblem(err error) problem.Problem {
+	code := knowledge.ErrorCode(err)
+	switch code {
+	case knowledge.CodeInvalidRequest, knowledge.CodeInvalidPath, knowledge.CodeInvalidMarkdown, knowledge.CodeInvalidIdentityMarker:
+		return problem.InvalidRequest("Knowledge maintenance request is invalid")
+	case knowledge.CodePayloadTooLarge:
+		return problem.PayloadTooLarge("Knowledge maintenance payload exceeds the configured limit")
+	case knowledge.CodeNotFound:
+		return problem.Problem{Status: http.StatusNotFound, Code: knowledge.CodeNotFound, Message: "Knowledge proposal was not found"}
+	case knowledge.CodeIdentityReviewRequired:
+		return problem.Knowledge(err)
+	case knowledge.CodeRevisionConflict, knowledge.CodeIdempotencyConflict, knowledge.CodeStaleIdentityReview,
+		knowledge.CodeProposalStale, knowledge.CodeProposalClosed, knowledge.CodeDuplicateDocumentIdentity, knowledge.CodePathOccupied:
+		mapped := problem.Problem{Status: http.StatusConflict, Code: "operation_conflict", Message: "Knowledge maintenance operation conflicts with current state"}
+		mapped.Detail = problem.Knowledge(err).Detail
+		return mapped
+	case knowledge.CodeContentRedacted:
+		return problem.Knowledge(err)
+	default:
+		return problem.Internal()
+	}
 }
 
 func mapApplicationProblem(err error) problem.Problem {

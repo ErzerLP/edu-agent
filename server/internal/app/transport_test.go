@@ -19,8 +19,9 @@ import (
 )
 
 type compositionKnowledge struct {
-	head        *knowledge.KnowledgeRevision
-	importActor string
+	head              *knowledge.KnowledgeRevision
+	importActor       string
+	maintenanceActors []string
 }
 
 func (s *compositionKnowledge) Head(context.Context) (*knowledge.KnowledgeRevision, error) {
@@ -39,6 +40,23 @@ func (s *compositionKnowledge) Export(context.Context, string) (knowledge.Export
 }
 func (s *compositionKnowledge) Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error) {
 	return knowledge.RetrievalResult{KnowledgeRevisionID: s.head.ID, Hits: []knowledge.RetrievalHit{}}, nil
+}
+func (s *compositionKnowledge) Create(_ context.Context, command knowledge.CreateProposalCommand) (knowledge.Proposal, error) {
+	s.maintenanceActors = append(s.maintenanceActors, command.ActorDeviceID)
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	return knowledge.Proposal{ID: command.RequestID, RequestID: command.RequestID, Kind: knowledge.ProposalCandidate, Status: knowledge.ProposalOpen, BaseRevisionID: command.BaseRevisionID, IdentityImpact: knowledge.IdentityImpact{PreservedDocumentIDs: []string{}, AddedDocumentIDs: []string{}, RemovedDocumentIDs: []string{}, MovedDocumentIDs: []string{}, PreservedNodeIDs: []string{}, AddedNodeIDs: []string{}, RemovedNodeIDs: []string{}}, LineageImpact: knowledge.LineageImpact{Lineages: []knowledge.Lineage{}}, EvidenceImpact: knowledge.AcceptedEvidenceImpact{References: []knowledge.AcceptedEvidenceReference{}, Fingerprint: strings.Repeat("a", 64), Generation: 1}, Risk: knowledge.ProposalRisk{Level: "medium", Reasons: []string{"review_required"}, PolicyVersion: knowledge.MaintenanceAutoPolicy}, KnowledgeGeneration: 1, CanonicalizerVersion: knowledge.CanonicalizerVersion, IdentityPolicyVersion: knowledge.IdentityPolicyVersion, DiffVersion: knowledge.MaintenanceDiffVersion, RiskVersion: knowledge.MaintenanceRiskVersion, AutoPolicyVersion: knowledge.MaintenanceAutoPolicy, CreatedByDeviceID: command.ActorDeviceID, CreatedAt: now, UpdatedAt: now}, nil
+}
+func (s *compositionKnowledge) CreateRollback(_ context.Context, command knowledge.CreateRollbackCommand) (knowledge.Proposal, error) {
+	return s.Create(context.Background(), knowledge.CreateProposalCommand{RequestID: command.RequestID, BaseRevisionID: command.BaseRevisionID, ActorDeviceID: command.ActorDeviceID})
+}
+func (s *compositionKnowledge) List(context.Context, knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
+	return knowledge.ProposalPage{Items: []knowledge.Proposal{}}, nil
+}
+func (s *compositionKnowledge) Get(_ context.Context, proposalID string) (knowledge.Proposal, error) {
+	return knowledge.Proposal{ID: proposalID}, nil
+}
+func (s *compositionKnowledge) Decide(_ context.Context, command knowledge.ProposalDecisionCommand) (knowledge.Proposal, error) {
+	return knowledge.Proposal{ID: command.ProposalID}, nil
 }
 
 type compositionLearning struct {
@@ -162,7 +180,29 @@ func TestComposeTransportHandlerSharesStateAcrossHTTPAndMCP(t *testing.T) {
 	if knowledgeService.importActor != crossTransportDeviceID {
 		t.Fatalf("HTTP import actor=%q", knowledgeService.importActor)
 	}
+	proposalInput := map[string]any{
+		"request_id": "83000000-0000-4000-8000-000000000010", "base_revision_id": imported.Revision.ID,
+		"sources":            []any{map[string]any{"kind": "note", "locator": "composition", "sha256": strings.Repeat("a", 64)}},
+		"candidate_snapshot": []any{},
+	}
+	var httpProposal knowledge.Proposal
+	postJSON(t, server.URL+"/v1/knowledge/maintenance/proposals", proposalInput, http.StatusCreated, &httpProposal)
 	session := connectCrossTransportSDK(t, server.URL+"/mcp")
+	mcpProposal := callOperationTool(t, session, "knowledge.maintenance.propose", proposalInput)
+	var httpProposalWire map[string]any
+	encodedProposal, err := json.Marshal(httpProposal)
+	if err != nil || json.Unmarshal(encodedProposal, &httpProposalWire) != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"proposal_id", "request_id", "kind", "status", "base_revision_id", "created_by_device_id", "diff_version", "risk_version", "auto_apply_policy_version"} {
+		if httpProposalWire[field] != mcpProposal[field] {
+			t.Fatalf("proposal field %s differs HTTP=%v MCP=%v", field, httpProposalWire[field], mcpProposal[field])
+		}
+	}
+	if len(knowledgeService.maintenanceActors) != 2 || knowledgeService.maintenanceActors[0] != crossTransportDeviceID || knowledgeService.maintenanceActors[1] != crossTransportDeviceID {
+		t.Fatalf("maintenance actors=%v", knowledgeService.maintenanceActors)
+	}
+
 	resource, err := session.ReadResource(context.Background(), &sdkmcp.ReadResourceParams{URI: "edu-agent://knowledge/head"})
 	if err != nil || len(resource.Contents) != 1 || !strings.Contains(resource.Contents[0].Text, imported.Revision.ID) {
 		t.Fatalf("MCP did not read HTTP-updated knowledge: result=%+v err=%v", resource, err)

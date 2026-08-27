@@ -58,6 +58,11 @@ type KnowledgeService interface {
 	Tree(context.Context, string) (knowledge.TreeResult, error)
 	Export(context.Context, string) (knowledge.ExportResult, error)
 	Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
+	Create(context.Context, knowledge.CreateProposalCommand) (knowledge.Proposal, error)
+	CreateRollback(context.Context, knowledge.CreateRollbackCommand) (knowledge.Proposal, error)
+	List(context.Context, knowledge.ProposalListCommand) (knowledge.ProposalPage, error)
+	Get(context.Context, string) (knowledge.Proposal, error)
+	Decide(context.Context, knowledge.ProposalDecisionCommand) (knowledge.Proposal, error)
 }
 
 type NotesyncReviewService interface {
@@ -264,6 +269,12 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/{revisionID}/tree", api.knowledgeTree)
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/revisions/{revisionID}/export", api.knowledgeExport)
 			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/v1/knowledge/retrievals", api.knowledgeRetrieval)
+			protected.With(api.requireScope("knowledge:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals", api.knowledgeMaintenanceCreate)
+			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/rollbacks", api.knowledgeMaintenanceRollback)
+			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/maintenance/proposals", api.knowledgeMaintenanceList)
+			protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/maintenance/proposals/{proposalID}", api.knowledgeMaintenanceGet)
+			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals/{proposalID}/approve", api.knowledgeMaintenanceApprove)
+			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/maintenance/proposals/{proposalID}/reject", api.knowledgeMaintenanceReject)
 		}
 		if api.learning != nil {
 			learningOwners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}

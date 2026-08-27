@@ -40,6 +40,10 @@ func (value operationInput) operation(payload any, aggregateType, aggregateID st
 	}, nil
 }
 
+type knowledgeMaintenanceGetInput struct {
+	ProposalID string `json:"proposal_id"`
+}
+
 type knowledgeRetrieveInput struct {
 	Query                     string                    `json:"query"`
 	KnowledgeRevisionID       *string                   `json:"knowledge_revision_id,omitempty"`

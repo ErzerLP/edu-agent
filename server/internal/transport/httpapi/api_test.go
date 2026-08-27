@@ -70,17 +70,25 @@ type fakeModel struct{ result llm.Capabilities }
 func (f fakeModel) Probe(context.Context) llm.Capabilities { return f.result }
 
 type fakeKnowledge struct {
-	head          *knowledge.KnowledgeRevision
-	headErr       error
-	importResult  knowledge.ImportResult
-	importErr     error
-	importCommand knowledge.ImportCommand
-	tree          knowledge.TreeResult
-	treeErr       error
-	export        knowledge.ExportResult
-	exportErr     error
-	retrieval     knowledge.RetrievalResult
-	retrievalErr  error
+	head            *knowledge.KnowledgeRevision
+	headErr         error
+	importResult    knowledge.ImportResult
+	importErr       error
+	importCommand   knowledge.ImportCommand
+	tree            knowledge.TreeResult
+	treeErr         error
+	export          knowledge.ExportResult
+	exportErr       error
+	retrieval       knowledge.RetrievalResult
+	retrievalErr    error
+	proposal        knowledge.Proposal
+	proposalPage    knowledge.ProposalPage
+	maintenanceErr  error
+	createCommand   knowledge.CreateProposalCommand
+	rollbackCommand knowledge.CreateRollbackCommand
+	listCommand     knowledge.ProposalListCommand
+	getProposalID   string
+	decisionCommand knowledge.ProposalDecisionCommand
 }
 
 func (f *fakeKnowledge) Head(context.Context) (*knowledge.KnowledgeRevision, error) {
@@ -98,6 +106,26 @@ func (f *fakeKnowledge) Export(context.Context, string) (knowledge.ExportResult,
 }
 func (f *fakeKnowledge) Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error) {
 	return f.retrieval, f.retrievalErr
+}
+func (f *fakeKnowledge) Create(_ context.Context, command knowledge.CreateProposalCommand) (knowledge.Proposal, error) {
+	f.createCommand = command
+	return f.proposal, f.maintenanceErr
+}
+func (f *fakeKnowledge) CreateRollback(_ context.Context, command knowledge.CreateRollbackCommand) (knowledge.Proposal, error) {
+	f.rollbackCommand = command
+	return f.proposal, f.maintenanceErr
+}
+func (f *fakeKnowledge) List(_ context.Context, command knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
+	f.listCommand = command
+	return f.proposalPage, f.maintenanceErr
+}
+func (f *fakeKnowledge) Get(_ context.Context, proposalID string) (knowledge.Proposal, error) {
+	f.getProposalID = proposalID
+	return f.proposal, f.maintenanceErr
+}
+func (f *fakeKnowledge) Decide(_ context.Context, command knowledge.ProposalDecisionCommand) (knowledge.Proposal, error) {
+	f.decisionCommand = command
+	return f.proposal, f.maintenanceErr
 }
 
 func newTestAPI(t *testing.T, id *fakeIdentity, pairLimit, authLimit int, logs *bytes.Buffer) http.Handler {

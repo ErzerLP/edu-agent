@@ -81,16 +81,21 @@ func TestCatalogIsUniqueExactAndMatchesOpenAPIScopes(t *testing.T) {
 		if descriptor.Kind == DescriptorTool && (descriptor.InputLimit <= 0 || descriptor.InputSchema == nil) {
 			t.Fatalf("tool limits/schema missing: %+v", descriptor)
 		}
+		if descriptor.Kind == DescriptorTool && strings.HasPrefix(descriptor.Name, "knowledge.maintenance.") && descriptor.OutputSchema == nil {
+			t.Fatalf("knowledge maintenance output schema missing: %+v", descriptor)
+		}
 		if scopesByOperation[descriptor.HTTPOperationID] != descriptor.RequiredScope {
 			t.Fatalf("descriptor %s scope=%q OpenAPI %s scope=%q", descriptor.Name, descriptor.RequiredScope, descriptor.HTTPOperationID, scopesByOperation[descriptor.HTTPOperationID])
 		}
 	}
-	if toolCount != 10 || resourceCount != 4 || templateCount != 5 {
+	if toolCount != 13 || resourceCount != 4 || templateCount != 5 {
 		t.Fatalf("catalog counts tools=%d resources=%d templates=%d", toolCount, resourceCount, templateCount)
 	}
 
 	for _, forbidden := range []string{
-		"knowledge.import", "assessment.confirm", "assessment.override", "assessment.invalidate",
+		"knowledge.import", "knowledge.maintenance.rollback", "knowledge.maintenance.approve", "knowledge.maintenance.reject",
+		"knowledge.maintenance.finalize", "knowledge.maintenance.adjudicate",
+		"assessment.confirm", "assessment.override", "assessment.invalidate",
 		"memory.create_candidate", "memory.admit", "memory.delete", "memory.replay",
 		"privacy.erase", "device.revoke", "notesync", "offline", "nocturne",
 	} {

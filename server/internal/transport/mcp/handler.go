@@ -38,6 +38,9 @@ type KnowledgeService interface {
 	Tree(context.Context, string) (knowledge.TreeResult, error)
 	Export(context.Context, string) (knowledge.ExportResult, error)
 	Retrieve(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
+	Create(context.Context, knowledge.CreateProposalCommand) (knowledge.Proposal, error)
+	List(context.Context, knowledge.ProposalListCommand) (knowledge.ProposalPage, error)
+	Get(context.Context, string) (knowledge.Proposal, error)
 }
 
 type LearningService interface {

@@ -84,6 +84,12 @@ type testKnowledge struct {
 	head       *knowledge.KnowledgeRevision
 	retrieve   knowledge.RetrievalResult
 	err        error
+	proposal   knowledge.Proposal
+	page       knowledge.ProposalPage
+	create     knowledge.CreateProposalCommand
+	rollback   knowledge.CreateRollbackCommand
+	list       knowledge.ProposalListCommand
+	getID      string
 	retrieveFn func(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
 }
 
@@ -101,6 +107,22 @@ func (f *testKnowledge) Retrieve(ctx context.Context, command knowledge.Retrieva
 		return f.retrieveFn(ctx, command)
 	}
 	return f.retrieve, f.err
+}
+func (f *testKnowledge) Create(_ context.Context, command knowledge.CreateProposalCommand) (knowledge.Proposal, error) {
+	f.create = command
+	return f.proposal, f.err
+}
+func (f *testKnowledge) CreateRollback(_ context.Context, command knowledge.CreateRollbackCommand) (knowledge.Proposal, error) {
+	f.rollback = command
+	return f.proposal, f.err
+}
+func (f *testKnowledge) List(_ context.Context, command knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
+	f.list = command
+	return f.page, f.err
+}
+func (f *testKnowledge) Get(_ context.Context, proposalID string) (knowledge.Proposal, error) {
+	f.getID = proposalID
+	return f.proposal, f.err
 }
 
 type testLearning struct {
@@ -332,6 +354,7 @@ func TestOfficialSDKDiscoversExactSurfaceAndInvokesCallbacks(t *testing.T) {
 	}
 	sort.Strings(toolNames)
 	wantTools := []string{
+		"knowledge.maintenance.get", "knowledge.maintenance.list", "knowledge.maintenance.propose",
 		"knowledge.retrieve", "learning.create_goal", "learning.list_evidence", "learning.list_reviews", "learning.list_routes",
 		"learning.list_timeline", "memory.list_records", "tutoring.apply_action", "tutoring.create_session", "tutoring.propose",
 	}

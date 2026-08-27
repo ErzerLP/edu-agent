@@ -80,6 +80,9 @@ func TestCanonicalizerMarkerBoundariesAndExportRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if reimported.ExplicitSourceRevisionID != "55555555-5555-4555-8555-555555555555" {
+		t.Fatalf("source revision identity=%q", reimported.ExplicitSourceRevisionID)
+	}
 	rebuilt, err := canonicalizer.Materialize(reimported, testDocumentID, testRootID, []string{testNodeOneID})
 	if err != nil {
 		t.Fatal(err)

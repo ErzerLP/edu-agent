@@ -42,6 +42,7 @@ func TestMessageValidationAndTransitions(t *testing.T) {
 	for _, disposition := range []TerminalDisposition{
 		DispositionFenced, DispositionSuperseded, DispositionPrivacyErasure,
 		DispositionExpired, DispositionPermanentlyRejected, DispositionDeleted,
+		DispositionReviewRequired,
 	} {
 		canceled.TerminalDisposition = disposition
 		if err := canceled.Validate(); err != nil {
@@ -60,6 +61,7 @@ func TestMessageValidationAndTransitions(t *testing.T) {
 		{TerminalDisposition: DispositionExpired},
 		{TerminalDisposition: DispositionPermanentlyRejected},
 		{TerminalDisposition: DispositionDeleted},
+		{TerminalDisposition: DispositionReviewRequired},
 	} {
 		if err := decision.Validate(); err != nil {
 			t.Fatalf("valid apply decision %+v: %v", decision, err)
@@ -98,6 +100,9 @@ func (s *memoryWorkerStore) Cancel(_ context.Context, request CancelRequest) err
 }
 func (s *memoryWorkerStore) MarkApplied(_ context.Context, id, leaseToken string, _ time.Time) error {
 	s.applied = append(s.applied, id+":"+leaseToken)
+	return nil
+}
+func (*memoryWorkerStore) MarkDeferred(context.Context, string, string, string, time.Time, time.Time) error {
 	return nil
 }
 func (s *memoryWorkerStore) MarkFailed(_ context.Context, id, leaseToken, category string, _ time.Time, next time.Time, dead bool) error {

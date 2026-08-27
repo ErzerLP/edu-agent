@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
@@ -262,11 +263,46 @@ func CancelWith(ctx context.Context, db DBTX, request outbox.CancelRequest) erro
 }
 
 func (s *Store) MarkApplied(ctx context.Context, id, leaseToken string, now time.Time) error {
-	command, err := s.pool.Exec(ctx, `
+	return MarkAppliedWith(ctx, s.pool, id, leaseToken, now)
+}
+
+// MarkAppliedWith finalizes only the processing message owned by the supplied lease.
+func MarkAppliedWith(ctx context.Context, db DBTX, id, leaseToken string, now time.Time) error {
+	command, err := db.Exec(ctx, `
 		UPDATE outbox_messages SET status='applied',lease_expires_at=NULL,lease_token=NULL,updated_at=$3
 		WHERE id=$1 AND status='processing' AND lease_token=$2`, id, leaseToken, now)
 	if err != nil {
 		return fmt.Errorf("mark outbox applied: %w", err)
+	}
+	if command.RowsAffected() != 1 {
+		return outbox.ErrLeaseLost
+	}
+	return nil
+}
+
+func (s *Store) MarkDeferred(ctx context.Context, id, leaseToken, category string, deferredAt, availableAt time.Time) error {
+	return MarkDeferredWith(ctx, s.pool, id, leaseToken, category, deferredAt, availableAt)
+}
+
+// MarkDeferredWith returns caller-owned processing work to pending without consuming the Claim attempt.
+func MarkDeferredWith(
+	ctx context.Context,
+	db DBTX,
+	id, leaseToken, category string,
+	deferredAt, availableAt time.Time,
+) error {
+	if strings.TrimSpace(category) == "" || deferredAt.IsZero() || availableAt.IsZero() || !availableAt.After(deferredAt) {
+		return fmt.Errorf("mark outbox deferred: non-empty category and ordered timestamps are required")
+	}
+	command, err := db.Exec(ctx, `
+		UPDATE outbox_messages
+		SET status='pending',available_at=$4,attempts=GREATEST(attempts-1,0),
+		    last_error_category=$3,last_error_at=$5,terminal_disposition=NULL,
+		    lease_expires_at=NULL,lease_token=NULL,updated_at=$5
+		WHERE id=$1 AND status='processing' AND lease_token=$2`,
+		id, leaseToken, category, availableAt, deferredAt)
+	if err != nil {
+		return fmt.Errorf("mark outbox deferred: %w", err)
 	}
 	if command.RowsAffected() != 1 {
 		return outbox.ErrLeaseLost

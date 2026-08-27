@@ -30,21 +30,23 @@ const (
 )
 
 type applicationStores struct {
-	identity  *identitypostgres.Store
-	knowledge *knowledgepostgres.Store
-	learning  *learningpostgres.Store
-	tutoring  *tutoringpostgres.Store
-	memory    *memorypostgres.Store
-	outbox    *outboxpostgres.Store
+	identity            *identitypostgres.Store
+	knowledge           *knowledgepostgres.Store
+	learning            *learningpostgres.Store
+	tutoring            *tutoringpostgres.Store
+	memory              *memorypostgres.Store
+	outbox              *outboxpostgres.Store
+	notesyncPublication bool
 }
 
-func newApplicationStores(pool *pgxpool.Pool) applicationStores {
+func newApplicationStores(pool *pgxpool.Pool, knowledgeOptions ...knowledgepostgres.Option) applicationStores {
 	tutoringStore := tutoringpostgres.New(pool)
-	knowledgeStore := knowledgepostgres.New(pool)
+	knowledgeStore := knowledgepostgres.New(pool, knowledgeOptions...)
 	return applicationStores{
 		identity: identitypostgres.New(pool), knowledge: knowledgeStore,
 		tutoring: tutoringStore, learning: learningpostgres.New(pool, tutoringStore, knowledgeStore),
 		memory: memorypostgres.New(pool), outbox: outboxpostgres.New(pool),
+		notesyncPublication: len(knowledgeOptions) != 0,
 	}
 }
 

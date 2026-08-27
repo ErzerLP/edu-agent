@@ -13,9 +13,11 @@ import (
 	identitypostgres "github.com/edu-agent/edu-agent/server/internal/identity/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/learningknowledge"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/tutormodel"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge/llmselector"
+	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
@@ -58,7 +60,13 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("check database migrations: %w", err)
 	}
 
-	stores := newApplicationStores(pool)
+	knowledgeOptions := []knowledgepostgres.Option(nil)
+	if cfg.Notesync.Enabled {
+		knowledgeOptions = append(knowledgeOptions, knowledgepostgres.WithNotesyncPublication(knowledgepostgres.NotesyncPublicationConfig{
+			Vault: cfg.Notesync.Vault, PathPrefix: cfg.Notesync.PathPrefix,
+		}))
+	}
+	stores := newApplicationStores(pool, knowledgeOptions...)
 	identityService, err := identity.NewService(stores.identity, identity.Options{
 		PairingCodeTTL: cfg.PairingCodeTTL, PairingCodeMaxAttempts: cfg.PairingCodeMaxAttempts,
 		LastUsedTouchInterval: cfg.TokenLastUsedTouchInterval,
@@ -74,8 +82,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if modelClient != nil {
 		selector = llmselector.New(modelClient)
 	}
+	canonicalizer := knowledge.NewCanonicalizer()
 	knowledgeService, err := knowledge.NewService(
-		stores.knowledge, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{Selector: selector},
+		stores.knowledge, canonicalizer, knowledge.ServiceOptions{Selector: selector},
 	)
 	if err != nil {
 		return fmt.Errorf("initialize knowledge service: %w", err)
@@ -93,7 +102,15 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err := verifyNocturneStartupPreflightForRuntime(ctx, pool, bridge.preflight); err != nil {
 		return err
 	}
+	notesyncBridge, err := composeNotesync(cfg, notesyncDependencies{
+		publicationStore: stores.knowledge, reviewStore: stores.knowledge, outboxStore: stores.outbox,
+		importer: knowledgeService, canonicalizer: canonicalizer,
+	})
+	if err != nil {
+		return err
+	}
 	runtimeWorkers := append([]workerSpec(nil), bridge.workers...)
+	runtimeWorkers = append(runtimeWorkers, notesyncBridge.workers...)
 	evaluationWorkerSpec, evaluationWorkerHealth, err := newOfflineEvaluationWorkerSpec(learningService, stores.learning, stores.outbox, cfg.Model.Timeout)
 	if err != nil {
 		return err
@@ -108,8 +125,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		ModelProbe: modelHealthProbe(modelClient), OpenEvaluationWorkerProbe: evaluationWorkerHealth.Probe,
 		OfflineSignerAvailable: offlineService.SignerAvailable(), OfflineProtocolAvailable: offlineService.Available(),
 		NocturneEnabled: cfg.Nocturne.Enabled,
-		NocturneProbe:   optionalNocturneHealthProbe(bridge.remote), InsecureWarning: cfg.InsecureNonLoopbackWarning,
-		Timeout: minDuration(minDuration(cfg.Model.Timeout, cfg.Nocturne.HTTPTimeout), 5*time.Second),
+		NocturneProbe:   optionalNocturneHealthProbe(bridge.remote),
+		NotesyncEnabled: cfg.Notesync.Enabled,
+		NotesyncProbe:   notesyncBridge.probe,
+		InsecureWarning: cfg.InsecureNonLoopbackWarning,
+		Timeout:         minDuration(minDuration(minDuration(cfg.Model.Timeout, cfg.Nocturne.HTTPTimeout), cfg.Notesync.HTTPTimeout), 5*time.Second),
 	})
 	var migrationLeases httpapi.PrivacyMigrationLeaseService
 	maintenanceToken := ""
@@ -118,9 +138,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		maintenanceToken = cfg.Nocturne.MaintenanceToken
 	}
 	handler, err := httpapi.New(httpapi.Options{
-		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Learning: learningService,
-		Offline: offlineService,
-		Memory:  bridge.memoryService, MemoryExporter: bridge.memoryExporter,
+		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
+		Learning: learningService, Offline: offlineService,
+		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,
 		Privacy: bridge.privacyService, MigrationLeases: migrationLeases,
 		MaintenanceToken: maintenanceToken, ReadPermits: bridge.readPermits,
 		Readiness: readiness, Logger: logger,
@@ -330,6 +350,128 @@ func CreatePairingCode(ctx context.Context, cfg config.Config) (string, time.Tim
 		return "", time.Time{}, err
 	}
 	return service.CreatePairingCode(ctx)
+}
+
+type notesyncBridgeRemote interface {
+	notesync.Remote
+	notesync.ReviewRemote
+}
+
+type notesyncComposition struct {
+	client  *notesync.Client
+	remote  notesyncBridgeRemote
+	review  *notesync.ReviewService
+	probe   health.NotesyncProbe
+	workers []workerSpec
+	lease   time.Duration
+}
+
+type notesyncDependencies struct {
+	publicationStore notesync.PublicationStore
+	reviewStore      notesync.ReviewStore
+	outboxStore      outbox.Store
+	importer         notesync.KnowledgeImporter
+	canonicalizer    *knowledge.Canonicalizer
+	remote           notesyncBridgeRemote
+}
+
+func composeNotesync(cfg config.Config, supplied ...notesyncDependencies) (notesyncComposition, error) {
+	if !cfg.Notesync.Enabled {
+		return notesyncComposition{}, nil
+	}
+	var dependencies notesyncDependencies
+	if len(supplied) == 1 {
+		dependencies = supplied[0]
+	} else if len(supplied) > 1 {
+		return notesyncComposition{}, fmt.Errorf("initialize NoteSync: duplicate dependency sets")
+	}
+	remote := dependencies.remote
+	var client *notesync.Client
+	if remote == nil {
+		var err error
+		client, err = notesync.New(notesync.Options{
+			BaseURL: cfg.Notesync.BaseURL, APIToken: cfg.Notesync.APIToken,
+			Timeout: cfg.Notesync.HTTPTimeout, BodyLimit: notesync.DefaultBodyLimit,
+		})
+		if err != nil {
+			return notesyncComposition{}, fmt.Errorf("initialize NoteSync client: %w", err)
+		}
+		remote = client
+	}
+	if dependencies.publicationStore == nil || dependencies.reviewStore == nil || dependencies.outboxStore == nil ||
+		dependencies.importer == nil || dependencies.canonicalizer == nil {
+		return notesyncComposition{}, fmt.Errorf("initialize NoteSync publication and review services: dependencies are required")
+	}
+	review, err := notesync.NewReviewService(notesync.ReviewServiceOptions{
+		Store: dependencies.reviewStore, Remote: remote, Importer: dependencies.importer,
+		Canonicalizer: dependencies.canonicalizer, Vault: cfg.Notesync.Vault, PathPrefix: cfg.Notesync.PathPrefix,
+		ScanPageSize: cfg.Notesync.ScanPageSize, ScanMaxPages: cfg.Notesync.ScanMaxPages,
+	})
+	if err != nil {
+		return notesyncComposition{}, fmt.Errorf("initialize NoteSync review service: %w", err)
+	}
+	consumer, err := notesync.NewConsumer(notesync.ConsumerOptions{
+		Store: dependencies.publicationStore, Remote: remote, Vault: cfg.Notesync.Vault,
+		PathPrefix: cfg.Notesync.PathPrefix, RetryBackoff: cfg.Notesync.WorkerInterval,
+	})
+	if err != nil {
+		return notesyncComposition{}, fmt.Errorf("initialize NoteSync publication consumer: %w", err)
+	}
+	lease := notesyncWorkerLease(cfg.Notesync.HTTPTimeout)
+	worker, err := outbox.NewWorker(dependencies.outboxStore, map[string]outbox.Consumer{
+		notesync.PublicationBusinessType: consumer,
+	}, outbox.WorkerOptions{
+		BatchSize: cfg.Notesync.WorkerBatch, Lease: lease,
+		BaseBackoff: cfg.Notesync.WorkerInterval, MaxBackoff: cfg.Notesync.WorkerInterval * 8,
+	})
+	if err != nil {
+		return notesyncComposition{}, fmt.Errorf("initialize NoteSync publication worker: %w", err)
+	}
+	bootstrapper, ok := dependencies.publicationStore.(interface {
+		BootstrapNotesyncPublications(context.Context) (int, error)
+	})
+	if !ok {
+		return notesyncComposition{}, fmt.Errorf("initialize NoteSync publication worker: bootstrap store is required")
+	}
+	probe := func(ctx context.Context) (bool, string) {
+		capability := remote.Probe(ctx, cfg.Notesync.Vault)
+		return capability.Compatible, capability.Reason
+	}
+	return notesyncComposition{
+		client: client, remote: remote, review: review, probe: probe, lease: lease,
+		workers: []workerSpec{periodicWorker(
+			"notesync_outbox", cfg.Notesync.WorkerInterval, cfg.Notesync.WorkerBatch,
+			runAfterNotesyncBootstrap(bootstrapper.BootstrapNotesyncPublications, worker.RunOnce),
+		)},
+	}, nil
+}
+
+func runAfterNotesyncBootstrap(
+	bootstrap func(context.Context) (int, error),
+	runOnce func(context.Context) (int, error),
+) func(context.Context) (int, error) {
+	bootstrapped := false
+	return func(ctx context.Context) (int, error) {
+		count := 0
+		if !bootstrapped {
+			inserted, err := bootstrap(ctx)
+			if err != nil {
+				return 0, fmt.Errorf("bootstrap NoteSync publications: %w", err)
+			}
+			count += inserted
+			bootstrapped = true
+		}
+		processed, err := runOnce(ctx)
+		return count + processed, err
+	}
+}
+
+func notesyncWorkerLease(httpTimeout time.Duration) time.Duration {
+	lease := 12 * httpTimeout
+	if lease < time.Minute {
+		return time.Minute
+	}
+	return lease
 }
 
 func buildModelClient(cfg config.Config) (*llm.Client, error) {

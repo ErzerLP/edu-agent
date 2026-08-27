@@ -72,6 +72,9 @@ func mapAPIError(err error) *Error {
 		case "identity_review_required", "stale_identity_review":
 			mapped.Detail = "knowledge identity requires explicit review"
 			mapped.Next = "review the candidates and submit new explicit decisions"
+		case "stale_notesync_review":
+			mapped.Detail = "the NoteSync review basis no longer matches current canonical or remote state"
+			mapped.Next = "run knowledge notesync review or preview again before resolving"
 		case "not_found":
 			mapped.Detail = "the requested authoritative record was not found"
 			mapped.Next = "refresh the current session or query without the missing identifier"
@@ -115,6 +118,10 @@ func mapAPIError(err error) *Error {
 			mapped.ExitCode = ExitUnavailable
 			mapped.Detail = "the authoritative projection is temporarily unavailable"
 			mapped.Next = "retry later; no local state was substituted"
+		case "notesync_not_configured", "notesync_unavailable":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "the NoteSync bridge is not configured or its dependency is unavailable"
+			mapped.Next = "inspect knowledge notesync status and retry after the bridge is ready"
 		case "dependency_unavailable", "model_unavailable", "unavailable", "service_unavailable", "temporarily_unavailable", "upstream_unavailable":
 			mapped.ExitCode = ExitUnavailable
 			mapped.Detail = "a required service or model is unavailable"

@@ -95,6 +95,57 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge lineage reasons: %w", err)
 		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_notesync_publications
+			SET remote_vault='redacted',remote_path='erased/'||document_id::text,
+				base_markdown='',base_sha256=decode(repeat('00',32),'hex'),
+				remote_version=NULL,remote_last_time=NULL,status='redacted',
+				updated_at=clock_timestamp(),redacted_at=clock_timestamp()
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge notesync publications: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_notesync_reviews
+			SET remote_vault='redacted',remote_path='erased/'||review_id::text,
+				canonical_path='erased/'||review_id::text,remote_document_id=NULL,
+				base_markdown=CASE WHEN base_missing THEN NULL ELSE '' END,
+				base_sha256=CASE WHEN base_missing THEN NULL ELSE decode(repeat('00',32),'hex') END,
+				base_remote_path=CASE WHEN base_missing THEN NULL ELSE 'erased/'||review_id::text END,
+				base_remote_version=CASE WHEN base_missing THEN NULL ELSE 0 END,
+				base_remote_last_time=CASE WHEN base_missing THEN NULL ELSE 0 END,
+				local_markdown=CASE WHEN local_missing THEN NULL ELSE '' END,
+				local_sha256=CASE WHEN local_missing THEN NULL ELSE decode(repeat('00',32),'hex') END,
+				remote_markdown=CASE WHEN remote_missing THEN NULL ELSE '' END,
+				remote_sha256=CASE WHEN remote_missing THEN NULL ELSE decode(repeat('00',32),'hex') END,
+				remote_version=CASE WHEN remote_missing THEN NULL ELSE 0 END,
+				remote_last_time=CASE WHEN remote_missing THEN NULL ELSE 0 END,
+				remote_source_revision_id=NULL,
+				base_to_local_diff='',base_to_remote_diff='',
+				local_diff_truncated=FALSE,remote_diff_truncated=FALSE,
+				basis_hash=decode(repeat('00',32),'hex'),
+				status='closed',resolution_kind='privacy_redaction',resolution_operation_id=NULL,
+				resolved_by_device_id=NULL,resolved_knowledge_revision_id=NULL,
+				resolved_document_id=NULL,resolved_document_revision_id=NULL,
+				updated_at=clock_timestamp(),resolved_at=clock_timestamp()
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge notesync reviews: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_notesync_resolution_operations
+			SET request_hash=decode(repeat('00',32),'hex'),resolution_kind='privacy_redaction',
+				result_knowledge_revision_id=NULL,result_document_id=NULL,
+				result_document_revision_id=NULL,unchanged=FALSE,status='redacted',
+				redacted_at=clock_timestamp()
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge notesync resolution operations: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_notesync_publication_attempts
+			SET status='redacted',base_missing=TRUE,base_markdown=NULL,base_sha256=NULL,
+				error_category='privacy_redaction',error_at=clock_timestamp(),updated_at=clock_timestamp()
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge notesync publication attempts: %w", err)
+		}
 	case privacy.StoreKnowledgeIndex:
 		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_node_revisions
@@ -134,7 +185,39 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 				(SELECT count(*) FROM knowledge_snapshot_documents WHERE folded_path NOT LIKE 'erased/%')+
 				(SELECT count(*) FROM knowledge_revisions
 				 WHERE source <> 'privacy_erasure' OR redacted_at IS NULL OR redacted_by_erasure_id <> $1)+
-				(SELECT count(*) FROM knowledge_lineages WHERE reason <> 'privacy_erasure')`
+				(SELECT count(*) FROM knowledge_lineages WHERE reason <> 'privacy_erasure')+
+				(SELECT count(*) FROM knowledge_notesync_publications
+				 WHERE status <> 'redacted' OR redacted_at IS NULL OR remote_vault <> 'redacted'
+				    OR remote_path NOT LIKE 'erased/%' OR base_markdown <> ''
+				    OR base_sha256 <> decode(repeat('00',32),'hex')
+				    OR remote_version IS NOT NULL OR remote_last_time IS NOT NULL)+
+				(SELECT count(*) FROM knowledge_notesync_reviews
+				 WHERE status <> 'closed' OR resolution_kind <> 'privacy_redaction'
+				    OR remote_vault <> 'redacted' OR remote_path NOT LIKE 'erased/%'
+				    OR canonical_path NOT LIKE 'erased/%' OR remote_document_id IS NOT NULL
+				    OR COALESCE(base_markdown,'') <> '' OR COALESCE(local_markdown,'') <> ''
+				    OR COALESCE(remote_markdown,'') <> '' OR base_to_local_diff <> '' OR base_to_remote_diff <> ''
+				    OR local_diff_truncated OR remote_diff_truncated
+				    OR (NOT base_missing AND (base_remote_path NOT LIKE 'erased/%'
+				        OR base_remote_version <> 0 OR base_remote_last_time <> 0))
+				    OR (base_sha256 IS NOT NULL AND base_sha256 <> decode(repeat('00',32),'hex'))
+				    OR (local_sha256 IS NOT NULL AND local_sha256 <> decode(repeat('00',32),'hex'))
+				    OR (remote_sha256 IS NOT NULL AND remote_sha256 <> decode(repeat('00',32),'hex'))
+				    OR basis_hash <> decode(repeat('00',32),'hex')
+				    OR (remote_missing AND (remote_version IS NOT NULL OR remote_last_time IS NOT NULL))
+				    OR (NOT remote_missing AND (remote_version IS DISTINCT FROM 0 OR remote_last_time IS DISTINCT FROM 0))
+				    OR remote_source_revision_id IS NOT NULL
+				    OR resolved_knowledge_revision_id IS NOT NULL OR resolved_document_id IS NOT NULL
+				    OR resolved_document_revision_id IS NOT NULL)+
+				(SELECT count(*) FROM knowledge_notesync_resolution_operations
+				 WHERE status <> 'redacted' OR resolution_kind <> 'privacy_redaction'
+				    OR request_hash <> decode(repeat('00',32),'hex') OR redacted_at IS NULL
+				    OR result_knowledge_revision_id IS NOT NULL OR result_document_id IS NOT NULL
+				    OR result_document_revision_id IS NOT NULL)+
+				(SELECT count(*) FROM knowledge_notesync_publication_attempts
+				 WHERE status <> 'redacted' OR NOT base_missing OR base_markdown IS NOT NULL
+				    OR base_sha256 IS NOT NULL OR error_category <> 'privacy_redaction'
+				    OR error_at IS NULL)`
 		arguments = append(arguments, request.ErasureID)
 	case privacy.StoreKnowledgeIndex:
 		query = `

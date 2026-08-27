@@ -29,6 +29,7 @@ type PreparedCommit struct {
 	Revision                 KnowledgeRevision
 	Unchanged                bool
 	Lineages                 []Lineage
+	NotesyncResolution       *NotesyncImportResolution
 }
 
 type CatalogReader interface {
@@ -240,6 +241,7 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 		preparedCommit := PreparedCommit{
 			OperationID: command.OperationID, RequestHash: requestHash,
 			ExpectedParentRevisionID: command.ExpectedParentRevisionID, Revision: *parent, Unchanged: true,
+			NotesyncResolution: command.NotesyncResolution,
 		}
 		return s.store.CommitImport(ctx, preparedCommit)
 	}
@@ -265,6 +267,7 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 	return s.store.CommitImport(ctx, PreparedCommit{
 		OperationID: command.OperationID, RequestHash: requestHash,
 		ExpectedParentRevisionID: command.ExpectedParentRevisionID, Revision: revision, Lineages: lineages,
+		NotesyncResolution: command.NotesyncResolution,
 	})
 }
 
@@ -841,15 +844,26 @@ func hashImportRequest(command ImportCommand, documents []preparedDocument) stri
 		Path        string `json:"path"`
 		Fingerprint string `json:"fingerprint"`
 	}
+	type hashNotesyncResolution struct {
+		ReviewID           string `json:"review_id"`
+		BasisHash          string `json:"basis_hash"`
+		DeviceID           string `json:"device_id"`
+		OperationID        string `json:"operation_id"`
+		RequestHash        string `json:"request_hash"`
+		Kind               string `json:"kind"`
+		CanonicalPath      string `json:"canonical_path"`
+		ExpectedDocumentID string `json:"expected_document_id"`
+	}
 	value := struct {
-		ExpectedParent  *string              `json:"expected_parent_revision_id"`
-		Source          string               `json:"source"`
-		Documents       []hashDocument       `json:"documents"`
-		Basis           string               `json:"identity_review_basis_hash,omitempty"`
-		ReviewOperation string               `json:"identity_review_operation_id,omitempty"`
-		ReviewReceipt   string               `json:"identity_review_receipt,omitempty"`
-		Document        []DocumentResolution `json:"document_resolutions,omitempty"`
-		Node            []NodeResolution     `json:"node_resolutions,omitempty"`
+		ExpectedParent     *string                 `json:"expected_parent_revision_id"`
+		Source             string                  `json:"source"`
+		Documents          []hashDocument          `json:"documents"`
+		Basis              string                  `json:"identity_review_basis_hash,omitempty"`
+		ReviewOperation    string                  `json:"identity_review_operation_id,omitempty"`
+		ReviewReceipt      string                  `json:"identity_review_receipt,omitempty"`
+		Document           []DocumentResolution    `json:"document_resolutions,omitempty"`
+		Node               []NodeResolution        `json:"node_resolutions,omitempty"`
+		NotesyncResolution *hashNotesyncResolution `json:"notesync_resolution,omitempty"`
 	}{
 		ExpectedParent: command.ExpectedParentRevisionID, Source: strings.TrimSpace(command.Source),
 		Basis:           command.IdentityReviewBasisHash,
@@ -857,6 +871,14 @@ func hashImportRequest(command ImportCommand, documents []preparedDocument) stri
 		ReviewReceipt:   command.IdentityReviewReceipt,
 		Document:        append([]DocumentResolution(nil), command.DocumentResolutions...),
 		Node:            append([]NodeResolution(nil), command.NodeResolutions...),
+	}
+	if resolution := command.NotesyncResolution; resolution != nil {
+		value.NotesyncResolution = &hashNotesyncResolution{
+			ReviewID: resolution.ReviewID, BasisHash: resolution.BasisHash,
+			DeviceID: resolution.DeviceID, OperationID: resolution.OperationID,
+			RequestHash: resolution.RequestHash, Kind: resolution.Kind,
+			CanonicalPath: resolution.CanonicalPath, ExpectedDocumentID: resolution.ExpectedDocumentID,
+		}
 	}
 	for _, document := range documents {
 		value.Documents = append(value.Documents, hashDocument{Path: document.path, Fingerprint: reviewDocumentFingerprint(document.inspected)})

@@ -30,6 +30,7 @@ const (
 	DispositionExpired             TerminalDisposition = "expired"
 	DispositionPermanentlyRejected TerminalDisposition = "permanently_rejected"
 	DispositionDeleted             TerminalDisposition = "deleted"
+	DispositionReviewRequired      TerminalDisposition = "review_required"
 )
 
 var (
@@ -167,12 +168,14 @@ type Store interface {
 	RequeueDead(context.Context, RequeueRequest) error
 	Cancel(context.Context, CancelRequest) error
 	MarkApplied(context.Context, string, string, time.Time) error
+	MarkDeferred(context.Context, string, string, string, time.Time, time.Time) error
 	MarkFailed(context.Context, string, string, string, time.Time, time.Time, bool) error
 }
 
 func validTerminalDisposition(value TerminalDisposition) bool {
 	return value == DispositionFenced || value == DispositionSuperseded || value == DispositionPrivacyErasure ||
-		value == DispositionExpired || value == DispositionPermanentlyRejected || value == DispositionDeleted
+		value == DispositionExpired || value == DispositionPermanentlyRejected || value == DispositionDeleted ||
+		value == DispositionReviewRequired
 }
 
 type ApplyDecision struct {

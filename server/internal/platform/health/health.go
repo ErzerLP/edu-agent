@@ -30,6 +30,7 @@ type Pinger interface {
 }
 
 type ModelProbe func(context.Context) (compatible bool, reason string)
+type NotesyncProbe func(context.Context) (compatible bool, reason string)
 type OptionalProbe func(context.Context) error
 
 type Checker struct {
@@ -42,6 +43,8 @@ type Checker struct {
 	offlineProtocolAvailable  bool
 	nocturneEnabled           bool
 	nocturneProbe             OptionalProbe
+	notesyncEnabled           bool
+	notesyncProbe             NotesyncProbe
 	insecureWarning           bool
 	timeout                   time.Duration
 }
@@ -56,6 +59,8 @@ type Options struct {
 	OfflineProtocolAvailable  bool
 	NocturneEnabled           bool
 	NocturneProbe             OptionalProbe
+	NotesyncEnabled           bool
+	NotesyncProbe             NotesyncProbe
 	InsecureWarning           bool
 	Timeout                   time.Duration
 }
@@ -68,8 +73,9 @@ func New(options Options) *Checker {
 		database: options.Database, modelEnabled: options.ModelEnabled, modelRequired: options.ModelRequired,
 		modelProbe: options.ModelProbe, openEvaluationWorkerProbe: options.OpenEvaluationWorkerProbe,
 		offlineSignerAvailable: options.OfflineSignerAvailable, offlineProtocolAvailable: options.OfflineProtocolAvailable,
-		nocturneEnabled: options.NocturneEnabled,
-		nocturneProbe:   options.NocturneProbe, insecureWarning: options.InsecureWarning, timeout: options.Timeout,
+		nocturneEnabled: options.NocturneEnabled, nocturneProbe: options.NocturneProbe,
+		notesyncEnabled: options.NotesyncEnabled, notesyncProbe: options.NotesyncProbe,
+		insecureWarning: options.InsecureWarning, timeout: options.Timeout,
 	}
 }
 
@@ -155,6 +161,24 @@ func (c *Checker) Ready(ctx context.Context) Report {
 			setComponent(&report, "nocturne", StatusDegraded, "unavailable")
 		} else {
 			setComponent(&report, "nocturne", StatusHealthy, "")
+		}
+	}
+	switch {
+	case !c.notesyncEnabled:
+		setComponent(&report, "notesync", StatusDegraded, "not_configured")
+	case c.notesyncProbe == nil:
+		setComponent(&report, "notesync", StatusDegraded, "probe_unavailable")
+	default:
+		checkCtx, cancel := context.WithTimeout(ctx, c.timeout)
+		compatible, reason := c.notesyncProbe(checkCtx)
+		cancel()
+		if compatible {
+			setComponent(&report, "notesync", StatusHealthy, "")
+		} else {
+			if strings.TrimSpace(reason) == "" {
+				reason = "capability_unavailable"
+			}
+			setComponent(&report, "notesync", StatusDegraded, reason)
 		}
 	}
 	return report

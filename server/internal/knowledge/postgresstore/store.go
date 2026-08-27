@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	notesyncintegration "github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5"
@@ -16,11 +17,20 @@ import (
 )
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool                *pgxpool.Pool
+	notesyncPublication bool
+	notesyncVault       string
+	notesyncPathPrefix  string
 }
 
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+func New(pool *pgxpool.Pool, options ...Option) *Store {
+	store := &Store{pool: pool}
+	for _, option := range options {
+		if option != nil {
+			option(store)
+		}
+	}
+	return store
 }
 
 func (s *Store) LockReadWith(ctx context.Context, tx pgx.Tx) (int64, error) {
@@ -202,7 +212,8 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		return knowledge.ImportResult{}, fmt.Errorf("begin knowledge import: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
+	knowledgeGeneration, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
+	if err != nil {
 		return knowledge.ImportResult{}, err
 	}
 
@@ -221,6 +232,9 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		if hex.EncodeToString(storedHash) != prepared.RequestHash {
 			return knowledge.ImportResult{}, &knowledge.Error{Code: knowledge.CodeIdempotencyConflict}
 		}
+		if err := validateCompletedNotesyncImportResolution(ctx, tx, prepared.NotesyncResolution); err != nil {
+			return knowledge.ImportResult{}, err
+		}
 		revision, err := loadRevision(ctx, tx, storedRevisionID)
 		if err != nil {
 			return knowledge.ImportResult{}, err
@@ -238,12 +252,49 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 	if !sameOptional(currentHead, prepared.ExpectedParentRevisionID) {
 		return knowledge.ImportResult{}, &knowledge.Error{Code: knowledge.CodeRevisionConflict, CurrentRevisionID: currentHead, CurrentRevisionKnown: true}
 	}
+	var lockedNotesyncReview notesyncintegration.Review
+	if prepared.NotesyncResolution != nil {
+		if prepared.Unchanged || prepared.Revision.Source != notesyncintegration.KnowledgeImportSource {
+			return knowledge.ImportResult{}, &notesyncintegration.ReviewError{Code: notesyncintegration.CodeReviewInvalidRequest}
+		}
+		lockedNotesyncReview, err = s.lockNotesyncImportResolution(ctx, tx, *prepared.NotesyncResolution, knowledgeGeneration, optionalString(currentHead))
+		if err != nil {
+			return knowledge.ImportResult{}, err
+		}
+	}
+	var parentDocumentRevisions map[string]notesyncParentDocument
+	if !prepared.Unchanged && s.notesyncPublication {
+		parentDocumentRevisions, err = loadParentDocumentRevisions(ctx, tx, prepared.Revision.ParentRevisionID)
+		if err != nil {
+			return knowledge.ImportResult{}, err
+		}
+		if err := lockNotesyncOutboxGeneration(ctx, tx, knowledgeGeneration); err != nil {
+			return knowledge.ImportResult{}, err
+		}
+		if err := lockNotesyncPublicationDocuments(ctx, tx, prepared.Revision, parentDocumentRevisions); err != nil {
+			return knowledge.ImportResult{}, err
+		}
+	}
 	if !prepared.Unchanged {
 		if err := insertRevision(ctx, tx, prepared.Revision, prepared.Lineages); err != nil {
 			return knowledge.ImportResult{}, err
 		}
+		if s.notesyncPublication {
+			var resolvedReview *notesyncintegration.Review
+			if prepared.NotesyncResolution != nil {
+				resolvedReview = &lockedNotesyncReview
+			}
+			if err := enqueueNotesyncPublicationIntents(ctx, tx, prepared.Revision, knowledgeGeneration, parentDocumentRevisions, prepared.NotesyncResolution, resolvedReview); err != nil {
+				return knowledge.ImportResult{}, err
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE knowledge_catalog SET head_revision_id=$1,updated_at=$2 WHERE singleton_id=1`, prepared.Revision.ID, prepared.Revision.CreatedAt); err != nil {
 			return knowledge.ImportResult{}, fmt.Errorf("advance knowledge head: %w", err)
+		}
+	}
+	if prepared.NotesyncResolution != nil {
+		if _, err := s.completeNotesyncImportResolution(ctx, tx, prepared, lockedNotesyncReview); err != nil {
+			return knowledge.ImportResult{}, err
 		}
 	}
 	requestHash, err := hex.DecodeString(prepared.RequestHash)

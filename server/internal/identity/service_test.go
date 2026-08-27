@@ -29,23 +29,24 @@ func (m *memoryStore) InsertPairingCode(_ context.Context, code PairingCodeRecor
 	return nil
 }
 
-func (m *memoryStore) ConsumePairingCode(_ context.Context, lookup string, hash [32]byte, device Device, token TokenRecord, now time.Time) error {
+func (m *memoryStore) ConsumePairingCode(_ context.Context, lookup string, hash [32]byte, device Device, token TokenRecord, now time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	code, ok := m.codes[lookup]
 	if !ok || code.ConsumedAt != nil || !now.Before(code.ExpiresAt) || code.Attempts >= code.MaxAttempts {
-		return ErrInvalidPairingCode
+		return nil, ErrInvalidPairingCode
 	}
 	if subtle.ConstantTimeCompare(code.CodeHash[:], hash[:]) != 1 {
 		code.Attempts++
 		m.codes[lookup] = code
-		return ErrInvalidPairingCode
+		return nil, ErrInvalidPairingCode
 	}
 	code.ConsumedAt = &now
 	m.codes[lookup] = code
+	token.Scopes = append([]string(nil), code.Scopes...)
 	m.devices[device.ID] = device
 	m.tokens[token.TokenHash] = token
-	return nil
+	return append([]string(nil), code.Scopes...), nil
 }
 
 func (m *memoryStore) FindCredentialByTokenHash(_ context.Context, hash [32]byte) (Credential, error) {
@@ -226,6 +227,84 @@ func TestPairingCodeExpiresAndScopeIsEnforced(t *testing.T) {
 	}
 	if _, err := service.Authenticate(context.Background(), issued.Token, "admin:unknown"); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("missing scope should fail: %v", err)
+	}
+}
+
+func TestPairingProfilesFreezeScopesIntoCode(t *testing.T) {
+	now := time.Now().UTC()
+	store := newMemoryStore()
+	service := testService(t, store, &now)
+
+	userCode, _, err := service.CreatePairingCode(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	userIssued, err := service.ExchangePairingCode(context.Background(), userCode, "User")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Authenticate(context.Background(), userIssued.Token, "learning:approve"); err != nil {
+		t.Fatalf("user profile must include learning:approve: %v", err)
+	}
+
+	agentCode, _, err := service.CreatePairingCodeForProfile(context.Background(), PairingProfileAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := splitCode(t, agentCode)
+	stored := store.codes[parts[0]]
+	for _, required := range []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read"} {
+		if !hasScope(stored.Scopes, required) {
+			t.Fatalf("stored agent profile missing %s: %v", required, stored.Scopes)
+		}
+	}
+	for _, forbidden := range []string{"learning:approve", "devices:manage", "privacy:device"} {
+		if hasScope(stored.Scopes, forbidden) {
+			t.Fatalf("stored agent profile includes forbidden %s: %v", forbidden, stored.Scopes)
+		}
+	}
+
+	originalAgentScopes := agentPairingScopes
+	agentPairingScopes = append(append([]string(nil), agentPairingScopes...), "learning:approve")
+	t.Cleanup(func() { agentPairingScopes = originalAgentScopes })
+	if _, _, err := service.CreatePairingCodeForProfile(context.Background(), PairingProfileAgent); err == nil {
+		t.Fatal("agent profile containing learning:approve must fail closed")
+	}
+	agentIssued, err := service.ExchangePairingCode(context.Background(), agentCode, "Agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write"} {
+		if _, err := service.Authenticate(context.Background(), agentIssued.Token, required); err != nil {
+			t.Fatalf("agent token must include %s: %v", required, err)
+		}
+	}
+	if _, err := service.Authenticate(context.Background(), agentIssued.Token, "learning:approve"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("stored agent code must not be upgraded at exchange: %v", err)
+	}
+}
+
+func TestPairingProfileParsingFailsClosed(t *testing.T) {
+	for _, value := range []string{"user", "agent"} {
+		profile, err := ParsePairingProfile(value)
+		if err != nil || string(profile) != value {
+			t.Fatalf("parse profile %q: profile=%q err=%v", value, profile, err)
+		}
+	}
+	for _, value := range []string{"", "admin", "User", "agent,user"} {
+		if _, err := ParsePairingProfile(value); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("profile %q should fail closed: %v", value, err)
+		}
+	}
+
+	now := time.Now().UTC()
+	store := newMemoryStore()
+	service := testService(t, store, &now)
+	if _, _, err := service.CreatePairingCodeForProfile(context.Background(), PairingProfile("admin")); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("unknown profile should not create a pairing code: %v", err)
+	}
+	if len(store.codes) != 0 {
+		t.Fatalf("unknown profile stored a pairing code: %v", store.codes)
 	}
 }
 

@@ -1,3 +1,19 @@
+-- Pairing profiles are frozen into each one-time code so exchange cannot choose or
+-- upgrade the scopes issued to the resulting token. Existing codes retain the
+-- historical user behavior and gain explicit learning approval authority.
+ALTER TABLE pairing_codes ADD COLUMN scopes TEXT[];
+UPDATE pairing_codes SET scopes=ARRAY[
+    'devices:read','devices:manage','model:probe','knowledge:read','knowledge:write',
+    'learning:read','learning:write','learning:approve','memory:read','memory:write',
+    'privacy:read','privacy:device'
+];
+ALTER TABLE pairing_codes ALTER COLUMN scopes SET NOT NULL;
+ALTER TABLE pairing_codes ADD CONSTRAINT pairing_codes_scopes_nonempty CHECK (
+    cardinality(scopes)>0
+    AND array_position(scopes,NULL) IS NULL
+    AND array_position(scopes,'') IS NULL
+);
+
 -- Knowledge maintenance proposals freeze server-computed analysis and a prepared canonical
 -- revision. No learning-owned row is written by this migration or its application path.
 CREATE TABLE knowledge_maintenance_proposals (

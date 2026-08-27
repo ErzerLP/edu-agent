@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 )
 
@@ -18,6 +19,52 @@ func TestRunRejectsUnknownCommandBeforeLoadingConfig(t *testing.T) {
 	err := run()
 	if err == nil || !strings.Contains(err.Error(), "usage: edu-agentd") {
 		t.Fatalf("expected usage error before configuration loading, got %v", err)
+	}
+}
+
+func TestPairingCodeProfileParsing(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		profile identity.PairingProfile
+		wantErr bool
+	}{
+		{name: "default user", args: []string{"pairing-code", "create"}, profile: identity.PairingProfileUser},
+		{name: "explicit user", args: []string{"pairing-code", "create", "--profile", "user"}, profile: identity.PairingProfileUser},
+		{name: "explicit agent", args: []string{"pairing-code", "create", "--profile", "agent"}, profile: identity.PairingProfileAgent},
+		{name: "equals agent", args: []string{"pairing-code", "create", "--profile=agent"}, profile: identity.PairingProfileAgent},
+		{name: "unknown", args: []string{"pairing-code", "create", "--profile", "admin"}, wantErr: true},
+		{name: "missing value", args: []string{"pairing-code", "create", "--profile"}, wantErr: true},
+		{name: "positional value", args: []string{"pairing-code", "create", "agent"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := parseCommand(test.args)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("parseCommand(%v) unexpectedly succeeded: %+v", test.args, parsed)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseCommand(%v): %v", test.args, err)
+			}
+			if parsed.kind != commandPairingCode || parsed.pairingProfile != test.profile {
+				t.Fatalf("parseCommand(%v)=%+v, want profile %q", test.args, parsed, test.profile)
+			}
+		})
+	}
+}
+
+func TestInvalidPairingProfileRejectedBeforeLoadingConfig(t *testing.T) {
+	originalArgs := os.Args
+	t.Cleanup(func() { os.Args = originalArgs })
+	t.Setenv("DATABASE_URL", "")
+	os.Args = []string{"edu-agentd", "pairing-code", "create", "--profile", "admin"}
+
+	err := run()
+	if err == nil || strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Fatalf("invalid pairing profile was not rejected before configuration: %v", err)
 	}
 }
 
@@ -44,6 +91,9 @@ func TestPrivacyGrantUsageRequiresCanonicalDeviceBeforeLoadingConfig(t *testing.
 }
 
 func TestUsageDocumentsLocalPrivacyGrantCommand(t *testing.T) {
+	if !strings.Contains(usage, "pairing-code create [--profile user|agent]") {
+		t.Fatalf("pairing profile command missing from usage: %s", usage)
+	}
 	if !strings.Contains(usage, "privacy-grant create --device <uuid>") {
 		t.Fatalf("privacy grant command missing from usage: %s", usage)
 	}

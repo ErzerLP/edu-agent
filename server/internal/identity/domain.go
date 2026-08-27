@@ -14,9 +14,17 @@ var (
 	ErrInvalidInput       = errors.New("invalid identity input")
 )
 
+type PairingProfile string
+
+const (
+	PairingProfileUser  PairingProfile = "user"
+	PairingProfileAgent PairingProfile = "agent"
+)
+
 type PairingCodeRecord struct {
 	LookupID    string
 	CodeHash    [32]byte
+	Scopes      []string
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
 	Attempts    int
@@ -60,7 +68,7 @@ type IssuedCredential struct {
 
 type Store interface {
 	InsertPairingCode(context.Context, PairingCodeRecord) error
-	ConsumePairingCode(context.Context, string, [32]byte, Device, TokenRecord, time.Time) error
+	ConsumePairingCode(context.Context, string, [32]byte, Device, TokenRecord, time.Time) ([]string, error)
 	FindCredentialByTokenHash(context.Context, [32]byte) (Credential, error)
 	TouchToken(context.Context, string, time.Time, time.Duration) error
 	ListDevices(context.Context) ([]Device, error)

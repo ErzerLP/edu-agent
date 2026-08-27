@@ -34,6 +34,69 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 	}
 }
 
+func TestKnowledgeMaintenanceMigrationDeclaresPairingScopeProfiles(t *testing.T) {
+	items, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := migrationBody(t, items, 11)
+	for _, required := range []string{
+		"ALTER TABLE pairing_codes ADD COLUMN scopes TEXT[]",
+		"'learning:approve'",
+		"ALTER TABLE pairing_codes ALTER COLUMN scopes SET NOT NULL",
+		"cardinality(scopes)>0",
+		"array_position(scopes,NULL) IS NULL",
+		"array_position(scopes,'') IS NULL",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("000011 pairing scope migration is missing %q", required)
+		}
+	}
+}
+
+func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
+	pool := migrationPoolThrough(t, 10)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO pairing_codes(lookup_id,code_hash,created_at,expires_at,max_attempts)
+		VALUES('legacy-user-code',decode(repeat('11',32),'hex'),now(),now()+interval '10 minutes',5)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade pairing code scopes through 000011: %v", err)
+	}
+
+	var scopes []string
+	if err := pool.QueryRow(ctx, `SELECT scopes FROM pairing_codes WHERE lookup_id='legacy-user-code'`).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"devices:manage", "knowledge:read", "knowledge:write", "learning:read", "learning:write", "learning:approve", "privacy:device"} {
+		if !containsScope(scopes, required) {
+			t.Fatalf("upgraded user pairing code missing %s: %v", required, scopes)
+		}
+	}
+
+	invalidScopes := []struct {
+		name  string
+		value string
+	}{
+		{name: "null", value: "NULL"},
+		{name: "empty array", value: "ARRAY[]::TEXT[]"},
+		{name: "null element", value: "ARRAY['knowledge:read',NULL]::TEXT[]"},
+		{name: "empty element", value: "ARRAY['']::TEXT[]"},
+	}
+	for index, test := range invalidScopes {
+		t.Run(test.name, func(t *testing.T) {
+			query := fmt.Sprintf(`
+				INSERT INTO pairing_codes(lookup_id,code_hash,scopes,created_at,expires_at,max_attempts)
+				VALUES($1,decode(repeat('22',32),'hex'),%s,now(),now()+interval '10 minutes',5)`, test.value)
+			if _, err := pool.Exec(ctx, query, fmt.Sprintf("invalid-scopes-%d", index)); err == nil {
+				t.Fatalf("pairing code accepted invalid scopes %s", test.value)
+			}
+		})
+	}
+}
+
 func TestProjectionMigrationsPreserveV1SeedAndRequireV2Rebuild(t *testing.T) {
 	const projectionV1EmptyFingerprint = "2b2fe0642e3c18f6c9a9adb8fc4e8195acf5d426c906a13db6ff1434086fe831"
 

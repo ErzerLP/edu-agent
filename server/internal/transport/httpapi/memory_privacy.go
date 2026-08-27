@@ -14,6 +14,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -678,35 +679,11 @@ func writeMemoryInvalid(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) writeMemoryFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
-	code := memory.ErrorCode(err)
-	status := http.StatusInternalServerError
-	message := "Request could not be completed"
-	switch code {
-	case memory.CodeInvalidRequest:
-		status, message = http.StatusBadRequest, "Memory request is invalid"
-	case memory.CodeNotFound:
-		status, message = http.StatusNotFound, "Memory resource was not found"
-	case memory.CodeIdempotencyConflict, memory.CodeCandidateConflict, memory.CodeMemoryConflict,
-		memory.CodeInvalidMemoryTransition, memory.CodeDeliveryConflict, memory.CodeStaleCursor:
-		status, message = http.StatusConflict, "Memory request conflicts with current state"
-	case memory.CodeMemoryPolicyRejected:
-		status, message = http.StatusUnprocessableEntity, "Memory content is not eligible for storage"
-	case memory.CodeMemoryUnavailable, memory.CodePrivacyClearInProgress, memory.CodeContentRedacted,
-		"upstream_contract_mismatch":
-		status, message = http.StatusServiceUnavailable, "Memory content is currently unavailable"
-	case "":
-		code = "internal_error"
+	mapped := problem.Memory(err)
+	if mapped.Code == "internal_error" {
 		a.logger.ErrorContext(r.Context(), "memory request failed", "request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")
 	}
-	response := map[string]any{"error": map[string]string{"code": code, "message": message, "request_id": middleware.GetReqID(r.Context())}}
-	var domain *memory.Error
-	if errors.As(err, &domain) && (domain.CandidateID != "" || domain.ExpectedRevision != 0 || domain.CurrentRevision != 0) {
-		response["candidate_conflict"] = map[string]any{
-			"candidate_id": domain.CandidateID, "expected_revision": domain.ExpectedRevision,
-			"current_revision": domain.CurrentRevision,
-		}
-	}
-	writeJSON(w, status, response)
+	writeProblem(w, r, mapped)
 }
 
 func privacyFailureCategory(err error) string {
@@ -717,27 +694,11 @@ func privacyFailureCategory(err error) string {
 }
 
 func (a *API) writePrivacyFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
-	code := privacy.ErrorCode(err)
-	status := http.StatusInternalServerError
-	message := "Request could not be completed"
-	switch code {
-	case privacy.CodeInvalidRequest:
-		status, message = http.StatusBadRequest, "Privacy erasure request is invalid"
-	case privacy.CodeIdempotencyConflict, privacy.CodeErasureInProgress, privacy.CodeReceiptNotCurrent,
-		privacy.CodeOfflinePurgeNotCurrent, privacy.CodeOfflinePurgeAckConflict:
-		code, status, message = "erasure_conflict", http.StatusConflict, "Privacy erasure conflicts with current state"
-	case privacy.CodeOfflineChallengeInvalid:
-		status, message = http.StatusForbidden, "Offline purge acknowledgment is invalid"
-	case privacy.CodeContentRedacted, privacy.CodePrivacyClearInProgress,
-		privacy.CodeVerificationFailed, privacy.CodeUnsupportedReceiptStore, privacy.CodeOfflineChallengeUnavailable:
-		status, message = http.StatusServiceUnavailable, "Privacy erasure is not currently available"
-	case privacy.CodeNotFound:
-		status, message = http.StatusNotFound, "Privacy erasure receipt was not found"
-	case "":
-		code = "internal_error"
+	mapped := problem.Privacy(err)
+	if mapped.Code == "internal_error" {
 		a.logger.ErrorContext(r.Context(), "privacy request failed", "request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")
 	}
-	writeError(w, r, status, code, message)
+	writeProblem(w, r, mapped)
 }
 
 func int64PointerValue(value *int64) int64 {

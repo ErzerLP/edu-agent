@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +22,8 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/edu-agent/edu-agent/server/internal/transport/access"
+	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -139,6 +140,7 @@ type Options struct {
 	MaintenanceToken        string
 	ReadPermits             *privacy.ReadPermitManager
 	Readiness               Readiness
+	MCP                     http.Handler
 	Logger                  *slog.Logger
 	PairLimiter             *FixedWindowLimiter
 	AuthLimiter             *FixedWindowLimiter
@@ -166,6 +168,7 @@ type API struct {
 	maintenanceToken        string
 	readPermits             *privacy.ReadPermitManager
 	readiness               Readiness
+	mcp                     http.Handler
 	logger                  *slog.Logger
 	pairLimiter             *FixedWindowLimiter
 	authLimiter             *FixedWindowLimiter
@@ -178,8 +181,6 @@ type API struct {
 	maxLearningRequestBody  int64
 	maxOfflineRequestBody   int64
 }
-
-type credentialContextKey struct{}
 
 func New(options Options) (http.Handler, error) {
 	if options.Identity == nil || options.Readiness == nil || options.Logger == nil || options.PairLimiter == nil || options.AuthLimiter == nil || options.DeviceLimiter == nil {
@@ -225,7 +226,7 @@ func New(options Options) (http.Handler, error) {
 		offline: options.Offline, memory: options.Memory, memoryExporter: options.MemoryExporter,
 		privacy: options.Privacy, migrationLeases: options.MigrationLeases,
 		maintenanceToken: options.MaintenanceToken, readPermits: options.ReadPermits,
-		readiness: options.Readiness, logger: options.Logger,
+		readiness: options.Readiness, mcp: options.MCP, logger: options.Logger,
 		pairLimiter: options.PairLimiter, authLimiter: options.AuthLimiter,
 		deviceLimiter: options.DeviceLimiter, privacyLimiter: options.PrivacyLimiter,
 		now: options.Now, privacyBackupDeadline: options.PrivacyBackupDeadline,
@@ -239,6 +240,9 @@ func New(options Options) (http.Handler, error) {
 	router.Use(api.audit)
 	router.Get("/livez", api.livez)
 	router.Get("/readyz", api.readyz)
+	if api.mcp != nil {
+		router.Handle("/mcp", api.mcp)
+	}
 	if api.migrationLeases != nil {
 		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/acquire", api.acquirePrivacyMigrationLease)
 		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/release", api.releasePrivacyMigrationLease)
@@ -482,7 +486,7 @@ func (a *API) authenticate(next http.Handler) http.Handler {
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Device request rate exceeded")
 			return
 		}
-		ctx := context.WithValue(r.Context(), credentialContextKey{}, credential)
+		ctx := access.WithCredential(r.Context(), credential)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -692,48 +696,12 @@ func (a *API) knowledgeRetrieval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) writeKnowledgeFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
-	code := knowledge.ErrorCode(err)
-	status := http.StatusInternalServerError
-	message := "Request could not be completed"
-	switch code {
-	case knowledge.CodePayloadTooLarge:
-		status, message = http.StatusRequestEntityTooLarge, "Knowledge payload exceeds the configured limit"
-	case knowledge.CodeInvalidRequest, knowledge.CodeInvalidPath:
-		status, message = http.StatusBadRequest, "Knowledge request is invalid"
-	case knowledge.CodeInvalidMarkdown, knowledge.CodeInvalidIdentityMarker:
-		status, message = http.StatusUnprocessableEntity, "Markdown identity or syntax is invalid"
-	case knowledge.CodeDuplicateDocumentIdentity, knowledge.CodePathOccupied,
-		knowledge.CodeIdentityReviewRequired, knowledge.CodeStaleIdentityReview,
-		knowledge.CodeRevisionConflict, knowledge.CodeIdempotencyConflict:
-		status, message = http.StatusConflict, "Knowledge import could not be committed"
-	case knowledge.CodeNotFound:
-		status, message = http.StatusNotFound, "Knowledge revision was not found"
-	case knowledge.CodeContentRedacted:
-		status, message = http.StatusServiceUnavailable, "Knowledge content was redacted"
-	case "":
+	mapped := problem.Knowledge(err)
+	if mapped.Code == "internal_error" {
 		a.logger.ErrorContext(r.Context(), "knowledge request failed",
 			"request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")
 	}
-	if code == "" {
-		code = "internal_error"
-	}
-	response := map[string]any{"error": map[string]string{
-		"code": code, "message": message, "request_id": middleware.GetReqID(r.Context()),
-	}}
-	var domainErr *knowledge.Error
-	if errors.As(err, &domainErr) {
-		if domainErr.CurrentRevisionKnown {
-			if domainErr.CurrentRevisionID == nil {
-				response["current_revision_id"] = nil
-			} else {
-				response["current_revision_id"] = *domainErr.CurrentRevisionID
-			}
-		}
-		if domainErr.Review != nil {
-			response["identity_review"] = domainErr.Review
-		}
-	}
-	writeJSON(w, status, response)
+	writeProblem(w, r, mapped)
 }
 
 func (a *API) audit(next http.Handler) http.Handler {
@@ -760,24 +728,15 @@ func (a *API) recoverer(next http.Handler) http.Handler {
 }
 
 func credentialFromContext(ctx context.Context) (identity.Credential, bool) {
-	credential, ok := ctx.Value(credentialContextKey{}).(identity.Credential)
-	return credential, ok
+	return access.CredentialFromContext(ctx)
 }
 
 func bearerToken(header string) (string, bool) {
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
-		return "", false
-	}
-	return parts[1], true
+	return access.BearerToken(header)
 }
 
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
+	return access.ClientIP(r)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, target any) error {
@@ -885,11 +844,10 @@ func writeError(w http.ResponseWriter, r *http.Request, status int, code, messag
 	}})
 }
 
+func writeProblem(w http.ResponseWriter, r *http.Request, mapped problem.Problem) {
+	writeJSON(w, mapped.Status, mapped.Envelope(middleware.GetReqID(r.Context())))
+}
+
 func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
+	return access.ContainsScope(values, target)
 }

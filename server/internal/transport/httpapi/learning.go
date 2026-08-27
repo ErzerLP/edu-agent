@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -974,39 +975,9 @@ func writeLearningResult(w http.ResponseWriter, result learning.OperationResult)
 	writeJSON(w, status, result)
 }
 func (a *API) writeLearningFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
-	code := learning.ErrorCode(err)
-	status := http.StatusInternalServerError
-	message := "Request could not be completed"
-	switch code {
-	case learning.CodeInvalidRequest:
-		status, message = http.StatusBadRequest, "Learning request is invalid"
-	case learning.CodeNotFound, learning.CodeOfflineOperationNotFound:
-		status, message = http.StatusNotFound, "Learning resource was not found"
-	case learning.CodeKnowledgeReferenceInvalid, learning.CodeProposalRejected:
-		status, message = http.StatusUnprocessableEntity, "Learning proposal is invalid"
-	case learning.CodeModelUnavailable, learning.CodeOfflineSignerUnavailable:
-		status, message = http.StatusServiceUnavailable, "Learning dependency is unavailable"
-	case learning.CodeIdempotencyConflict, learning.CodeVersionConflict, learning.CodeInvalidTransition, learning.CodeActivityStateConflict, learning.CodeStaleProposal, learning.CodeAssessmentDispositionConflict, learning.CodeFocusFrameInvalidated, learning.CodeStaleCursor, learning.CodeOfflinePrepareUnavailable:
-		status, message = http.StatusConflict, "Learning request conflicts with current state"
-	case learning.CodeContentRedacted:
-		status, message = http.StatusServiceUnavailable, "Learning content is unavailable"
-	case learning.CodeUnsupportedEventSchema, learning.CodeProjectionUnavailable:
-		status, message = http.StatusServiceUnavailable, "Learning projection is unavailable"
-	case "":
+	mapped := problem.Learning(err)
+	if mapped.Code == "internal_error" {
 		a.logger.ErrorContext(r.Context(), "learning request failed", "request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")
 	}
-	if code == "" {
-		code = "internal_error"
-	}
-	response := map[string]any{"error": map[string]string{"code": code, "message": message, "request_id": middleware.GetReqID(r.Context())}}
-	var domain *learning.Error
-	if errors.As(err, &domain) {
-		if domain.AggregateID != "" {
-			response["conflict"] = map[string]any{"aggregate_type": domain.AggregateType, "aggregate_id": domain.AggregateID, "expected_version": domain.ExpectedVersion, "current_version": domain.CurrentVersion, "as_of_event_seq": domain.AsOfEventSequence}
-		}
-		if domain.CurrentDisposition != "" {
-			response["current_disposition"] = domain.CurrentDisposition
-		}
-	}
-	writeJSON(w, status, response)
+	writeProblem(w, r, mapped)
 }

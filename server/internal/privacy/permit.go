@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"context"
+	"sort"
 	"sync"
 )
 
@@ -26,6 +27,15 @@ func (p *ReadPermit) Release() {
 	p.once.Do(func() { p.manager.release(p.id) })
 }
 
+// CommitResponse serializes the final response write with privacy closure for
+// every owner covered by this permit.
+func (p *ReadPermit) CommitResponse(write func()) error {
+	if p == nil || p.manager == nil || write == nil {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_read_commit"}
+	}
+	return p.manager.commitResponse(p.id, p.ctx, write)
+}
+
 type activePermit struct {
 	owners map[OwnerKind]struct{}
 	cancel context.CancelCauseFunc
@@ -40,17 +50,23 @@ type ReadPermitManager struct {
 	closed     map[OwnerKind]bool
 	generation map[OwnerKind]int64
 	active     map[uint64]activePermit
+	writeGates map[OwnerKind]chan struct{}
 	changed    chan struct{}
 }
 
 func NewReadPermitManager() *ReadPermitManager {
 	generations := make(map[OwnerKind]int64, len(AllOwners))
+	writeGates := make(map[OwnerKind]chan struct{}, len(AllOwners))
 	for _, owner := range AllOwners {
 		generations[owner] = 1
+		gate := make(chan struct{}, 1)
+		gate <- struct{}{}
+		writeGates[owner] = gate
 	}
 	return &ReadPermitManager{
 		closed: make(map[OwnerKind]bool), generation: generations,
-		active: make(map[uint64]activePermit), changed: make(chan struct{}),
+		active: make(map[uint64]activePermit), writeGates: writeGates,
+		changed: make(chan struct{}),
 	}
 }
 
@@ -98,6 +114,11 @@ func (m *ReadPermitManager) CloseAndDrain(ctx context.Context, generation int64,
 	if len(ownerSet) == 0 || generation < 2 {
 		return &Error{Code: CodeInvalidRequest, Reason: "invalid_read_drain"}
 	}
+
+	unlockWrites, err := m.lockWriteGates(ctx, ownerSet)
+	if err != nil {
+		return err
+	}
 	m.mu.Lock()
 	for owner := range ownerSet {
 		m.closed[owner] = true
@@ -108,6 +129,10 @@ func (m *ReadPermitManager) CloseAndDrain(ctx context.Context, generation int64,
 			permit.cancel(&Error{Code: CodeContentRedacted, Reason: "privacy_barrier_committing"})
 		}
 	}
+	m.mu.Unlock()
+	unlockWrites()
+
+	m.mu.Lock()
 	for hasActive(m.active, ownerSet) {
 		changed := m.changed
 		m.mu.Unlock()
@@ -126,9 +151,12 @@ func (m *ReadPermitManager) AbortClose(closedGeneration, restoreGeneration int64
 	if m == nil {
 		m = DefaultReadPermits
 	}
+	ownerSet := normalizeOwners(owners)
+	unlockWrites, _ := m.lockWriteGates(context.Background(), ownerSet)
+	defer unlockWrites()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for owner := range normalizeOwners(owners) {
+	for owner := range ownerSet {
 		if m.closed[owner] && m.generation[owner] == closedGeneration {
 			m.generation[owner] = restoreGeneration
 			delete(m.closed, owner)
@@ -140,9 +168,12 @@ func (m *ReadPermitManager) Open(generation int64, owners ...OwnerKind) {
 	if m == nil {
 		m = DefaultReadPermits
 	}
+	ownerSet := normalizeOwners(owners)
+	unlockWrites, _ := m.lockWriteGates(context.Background(), ownerSet)
+	defer unlockWrites()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for owner := range normalizeOwners(owners) {
+	for owner := range ownerSet {
 		if generation >= m.generation[owner] {
 			m.generation[owner] = generation
 			delete(m.closed, owner)
@@ -157,6 +188,89 @@ func (m *ReadPermitManager) Closed(owner OwnerKind) (bool, int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.closed[owner], m.generation[owner]
+}
+
+func (m *ReadPermitManager) commitResponse(id uint64, permitContext context.Context, write func()) error {
+	m.mu.Lock()
+	permit, ok := m.active[id]
+	if !ok {
+		m.mu.Unlock()
+		if cause := context.Cause(permitContext); cause != nil {
+			return cause
+		}
+		return &Error{Code: CodeContentRedacted, Reason: "read_permit_inactive"}
+	}
+	owners := cloneOwners(permit.owners)
+	m.mu.Unlock()
+
+	unlockWrites, err := m.lockWriteGates(permitContext, owners)
+	if err != nil {
+		if cause := context.Cause(permitContext); cause != nil {
+			return cause
+		}
+		return err
+	}
+	defer unlockWrites()
+
+	m.mu.Lock()
+	permit, ok = m.active[id]
+	if !ok {
+		m.mu.Unlock()
+		if cause := context.Cause(permitContext); cause != nil {
+			return cause
+		}
+		return &Error{Code: CodeContentRedacted, Reason: "read_permit_inactive"}
+	}
+	if cause := context.Cause(permitContext); cause != nil {
+		m.mu.Unlock()
+		return cause
+	}
+	for owner := range permit.owners {
+		if m.closed[owner] {
+			m.mu.Unlock()
+			return &Error{Code: CodeContentRedacted, Reason: string(owner) + "_read_gate_closed"}
+		}
+	}
+	m.mu.Unlock()
+
+	write()
+	return nil
+}
+
+func (m *ReadPermitManager) lockWriteGates(ctx context.Context, owners map[OwnerKind]struct{}) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ordered := make([]OwnerKind, 0, len(owners))
+	for owner := range owners {
+		ordered = append(ordered, owner)
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	acquired := make([]chan struct{}, 0, len(ordered))
+	for _, owner := range ordered {
+		select {
+		case <-ctx.Done():
+			for index := len(acquired) - 1; index >= 0; index-- {
+				acquired[index] <- struct{}{}
+			}
+			return nil, context.Cause(ctx)
+		case <-m.writeGates[owner]:
+			acquired = append(acquired, m.writeGates[owner])
+		}
+	}
+	return func() {
+		for index := len(acquired) - 1; index >= 0; index-- {
+			acquired[index] <- struct{}{}
+		}
+	}, nil
+}
+
+func cloneOwners(owners map[OwnerKind]struct{}) map[OwnerKind]struct{} {
+	cloned := make(map[OwnerKind]struct{}, len(owners))
+	for owner := range owners {
+		cloned[owner] = struct{}{}
+	}
+	return cloned
 }
 
 func (m *ReadPermitManager) release(id uint64) {

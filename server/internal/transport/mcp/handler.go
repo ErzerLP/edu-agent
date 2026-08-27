@@ -316,14 +316,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.beforeResponseWrite(requestContext)
 	}
 	if permit != nil {
-		if cause := context.Cause(permit.Context()); cause != nil {
-			mapped := problem.ContentRedacted()
-			result, errorCode = "error", mapped.Code
-			writeGatewayProblem(w, requestID, mapped)
+		if err := permit.CommitResponse(func() { buffered.flush(w) }); err != nil {
+			if privacy.ErrorCode(err) == privacy.CodeContentRedacted {
+				mapped := problem.ContentRedacted()
+				result, errorCode = "error", mapped.Code
+				writeGatewayProblem(w, requestID, mapped)
+			} else {
+				result, errorCode = "error", "request_cancelled"
+			}
 			return
 		}
+	} else {
+		buffered.flush(w)
 	}
-	buffered.flush(w)
 	stateResult, stateCode := state.values()
 	if stateResult != "" {
 		result, errorCode = stateResult, stateCode

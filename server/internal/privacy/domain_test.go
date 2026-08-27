@@ -79,6 +79,10 @@ func TestReadPermitCloseCancelsDrainsAndReopens(t *testing.T) {
 		t.Fatalf("drain returned before permit release: %v", err)
 	case <-time.After(20 * time.Millisecond):
 	}
+	wrote := false
+	if err := permit.CommitResponse(func() { wrote = true }); ErrorCode(err) != CodeContentRedacted || wrote {
+		t.Fatalf("canceled permit committed response: err=%v wrote=%v", err, wrote)
+	}
 	if _, err := manager.Acquire(context.Background(), OwnerLearning); ErrorCode(err) != CodeContentRedacted {
 		t.Fatalf("new permit while closed err=%v", err)
 	}
@@ -92,6 +96,95 @@ func TestReadPermitCloseCancelsDrainsAndReopens(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopened.Release()
+}
+
+func TestReadPermitCommitResponseSerializesPrivacyClosure(t *testing.T) {
+	manager := NewReadPermitManager()
+	permit, err := manager.Acquire(context.Background(), OwnerKnowledge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	committed := make(chan error, 1)
+	go func() {
+		committed <- permit.CommitResponse(func() {
+			close(writeStarted)
+			<-releaseWrite
+		})
+	}()
+	select {
+	case <-writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("response commit did not start")
+	}
+
+	drained := make(chan error, 1)
+	closeStarted := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		close(closeStarted)
+		drained <- manager.CloseAndDrain(ctx, 2, OwnerKnowledge)
+	}()
+	<-closeStarted
+	select {
+	case err := <-drained:
+		t.Fatalf("privacy closure overtook an active response commit: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if closed, _ := manager.Closed(OwnerKnowledge); closed {
+		t.Fatal("owner closed before the committed response finished")
+	}
+
+	close(releaseWrite)
+	if err := <-committed; err != nil {
+		t.Fatal(err)
+	}
+	permit.Release()
+	if err := <-drained; err != nil {
+		t.Fatal(err)
+	}
+	if closed, _ := manager.Closed(OwnerKnowledge); !closed {
+		t.Fatal("owner remained open after response commit and privacy closure")
+	}
+}
+
+func TestReadPermitCloseHonorsTimeoutWhileResponseCommitOwnsGate(t *testing.T) {
+	manager := NewReadPermitManager()
+	permit, err := manager.Acquire(context.Background(), OwnerMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStarted := make(chan struct{})
+	releaseWrite := make(chan struct{})
+	committed := make(chan error, 1)
+	go func() {
+		committed <- permit.CommitResponse(func() {
+			close(writeStarted)
+			<-releaseWrite
+		})
+	}()
+	select {
+	case <-writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("response commit did not start")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := manager.CloseAndDrain(ctx, 2, OwnerMemory); err != context.DeadlineExceeded {
+		t.Fatalf("CloseAndDrain timeout err=%v", err)
+	}
+	if closed, _ := manager.Closed(OwnerMemory); closed {
+		t.Fatal("timed out closure marked owner closed")
+	}
+
+	close(releaseWrite)
+	if err := <-committed; err != nil {
+		t.Fatal(err)
+	}
+	permit.Release()
 }
 
 func TestReceiptSlotsAreFixedAndOwned(t *testing.T) {

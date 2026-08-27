@@ -70,22 +70,22 @@ The outer handler performs these steps before the SDK can invoke an application 
 8. Apply the shared device invocation limiter using the credential-derived device ID.
 9. Resolve `tools/call` or `resources/read` through the catalog, enforce its input limit and required scope, and fail closed on a mismatch.
 10. Acquire one read permit covering every descriptor privacy owner and place only the credential-derived identity in context.
-11. Run the SDK into a buffered response, check permit cancellation, and write the buffered response while the permit is still held.
+11. Run the SDK into a buffered response, then commit the complete response through the permit's ordered owner gates. Privacy closure and actual response writing therefore have one atomic ordering boundary.
 
 Discovery and list methods are authenticated and rate limited but read only static SDK/catalog metadata, so they do not acquire a business privacy permit. Application callbacks never receive a token and never accept device ID, token ID, principal, actor, or namespace input fields.
 
 ## Privacy permit lifecycle
 
-The permit is acquired outside the SDK handler after descriptor resolution. Its context becomes the HTTP request context used by the stateless SDK session and application callback. The callback result, SDK JSON-RPC serialization, and buffered HTTP response all complete before release.
+The permit is acquired outside the SDK handler after descriptor resolution. Its context becomes the HTTP request context used by the stateless SDK session and application callback. The callback result and SDK JSON-RPC serialization complete in memory. Final response writing uses `ReadPermit.CommitResponse`, which locks the covered owner gates in stable order and revalidates the permit before writing any bytes. `CloseAndDrain` uses the same gates before marking owners closed and cancelling active permits. If response commit wins, closure begins only after the complete response write; if privacy closure wins, commit observes the closed/cancelled permit and writes no business bytes. Gates are owner-scoped, so a slow knowledge response does not serialize unrelated memory closure.
 
-If a privacy barrier closes any covered owner after application data was produced but before the actual response write:
+If a privacy barrier wins after application data was produced but before the response commit:
 
 1. `CloseAndDrain` marks the owner closed and cancels the permit context.
 2. The gateway discards the complete SDK response buffer.
 3. The gateway writes only the stable `content_redacted` problem.
 4. The deferred permit release lets `CloseAndDrain` complete.
 
-Tests exercise this boundary independently for knowledge, learning+tutoring, and memory. The recorded HTTP body contains the stable error code and none of the previously serialized owner content.
+Tests exercise the close-wins boundary independently for knowledge, learning+tutoring, and memory, and exercise the response-wins ordering at the permit layer. The recorded HTTP body contains the stable error code and none of the previously serialized owner content when privacy closure wins.
 
 ## Application callbacks and identity
 

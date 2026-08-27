@@ -3,7 +3,7 @@ name: notesync-bridge
 language: zh-CN
 phase: archive
 status: done
-state_version: 15
+state_version: 16
 brief: brief.md
 spec_changes:
   - capability: notesync-bridge
@@ -13,7 +13,7 @@ workspace:
   isolation: worktree
   change_branch: comet/notesync-bridge
   target_branch: comet/teaching-interview-agent
-  finish: keep
+  finish: merge
 loop:
   stage: done
   goal_cycle: 3

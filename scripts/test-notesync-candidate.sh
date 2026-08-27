@@ -138,15 +138,15 @@ printf '%s\n' 'NoteSync candidate scenarios: routes/auth/vault, create-only/read
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root/server"
 NOTESYNC_REAL_BASE_URL="$base_url" \
-NOTESYNC_REAL_API_TOKEN="$api_token" \
-NOTESYNC_REAL_VAULT="$vault" \
+	NOTESYNC_REAL_API_TOKEN="$api_token" \
+	NOTESYNC_REAL_VAULT="$vault" \
 	go test -count=1 -v \
 	-run '^(TestRealUpstreamCandidate|TestPublicationConsumerCapabilityDependencyAndStaleSuppression)$' \
 	./internal/integrations/notesync
 
 cd "$repo_root"
 NOTESYNC_REAL_BASE_URL="$base_url" \
-NOTESYNC_REAL_API_TOKEN="$api_token" \
-NOTESYNC_REAL_VAULT="$vault" \
+	NOTESYNC_REAL_API_TOKEN="$api_token" \
+	NOTESYNC_REAL_VAULT="$vault" \
 	scripts/test-postgres-candidate.sh --shard db-core \
 	--run '^TestPostgreSQLKnowledgeNotesyncRealUpstreamAcceptRemoteRepublishesWithoutLoop$'

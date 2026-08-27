@@ -2,8 +2,8 @@ schema: comet.native.v4
 name: notesync-bridge
 language: zh-CN
 phase: archive
-status: active
-state_version: 14
+status: done
+state_version: 15
 brief: brief.md
 spec_changes:
   - capability: notesync-bridge
@@ -15,7 +15,7 @@ workspace:
   target_branch: comet/teaching-interview-agent
   finish: keep
 loop:
-  stage: archive-ready
+  stage: done
   goal_cycle: 3
   iteration: 2
   attempt: 1
@@ -24,7 +24,7 @@ loop:
   no_progress_count: 0
   execution_failure_count: 0
   previous_unresolved_ids: []
-  next_action: archive
+  next_action: null
 acceptance:
   - id: A1
     source: brief.md
@@ -516,5 +516,5 @@ history_overflow:
     recovery: 0
 verification_result: pass
 verification_report: verification.md
-archived: false
+archived: true
 created_at: 2026-08-27T02:38:23.422Z

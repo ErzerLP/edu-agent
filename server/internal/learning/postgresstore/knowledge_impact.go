@@ -27,15 +27,29 @@ func (s *Store) AcceptedEvidenceImpact(ctx context.Context, nodeRevisionIDs []st
 	impact := knowledge.AcceptedEvidenceImpact{Generation: generation, References: []knowledge.AcceptedEvidenceReference{}}
 	if len(ids) != 0 {
 		rows, err := tx.Query(ctx, `
-			SELECT evidence.id::text,evidence.node_revision_id::text,evidence.knowledge_revision_id::text
-			FROM learning_evidence evidence
-			WHERE evidence.node_revision_id=ANY($1::uuid[])
-			  AND evidence.accepted_event_seq IS NOT NULL
-			  AND NOT EXISTS (
-			    SELECT 1 FROM learning_evidence_invalidations invalidation
-			    WHERE invalidation.evidence_id=evidence.id
-			  )
-			ORDER BY evidence.id`, ids)
+			WITH valid_source_evidence AS (
+			  SELECT evidence.id,evidence.node_revision_id,evidence.knowledge_revision_id
+			  FROM learning_evidence evidence
+			  WHERE evidence.accepted_event_seq IS NOT NULL
+			    AND NOT EXISTS (
+			      SELECT 1 FROM learning_evidence_invalidations invalidation
+			      WHERE invalidation.evidence_id=evidence.id
+			    )
+			), impact_references AS (
+			  SELECT evidence.id AS evidence_id,evidence.node_revision_id,evidence.knowledge_revision_id
+			  FROM valid_source_evidence evidence
+			  WHERE evidence.node_revision_id=ANY($1::uuid[])
+			  UNION
+			  SELECT evidence.id,link.target_node_revision_id,link.target_knowledge_revision_id
+			  FROM valid_source_evidence evidence
+			  JOIN learning_evidence_carryover_links link ON link.source_evidence_id=evidence.id
+			  JOIN learning_evidence_carryover_proposals proposal
+			    ON proposal.proposal_id=link.proposal_id AND proposal.status='approved'
+			  WHERE link.target_node_revision_id=ANY($1::uuid[])
+			)
+			SELECT evidence_id::text,node_revision_id::text,knowledge_revision_id::text
+			FROM impact_references
+			ORDER BY evidence_id,node_revision_id,knowledge_revision_id`, ids)
 		if err != nil {
 			return knowledge.AcceptedEvidenceImpact{}, fmt.Errorf("query accepted evidence impact: %w", err)
 		}

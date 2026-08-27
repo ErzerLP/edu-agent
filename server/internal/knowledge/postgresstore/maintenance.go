@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+var evidenceCarryoverProposalNamespace = uuid.MustParse("3fb62bc1-348d-4ace-9aa6-506262586c9d")
 
 const maintenanceProposalColumns = `
 	proposal_id::text,request_id::text,request_hash,kind,status,base_revision_id::text,
@@ -428,6 +432,9 @@ func (s *Store) applyMaintenanceRevision(
 		proposal.BaseRevisionID, nullableUUID(proposal.RollbackTargetRevisionID), basis, commit.Revision.CreatedAt.UTC()); err != nil {
 		return fmt.Errorf("insert knowledge revision origin: %w", err)
 	}
+	if err := insertEvidenceCarryoverProposals(ctx, tx, proposal, commit); err != nil {
+		return err
+	}
 	if s.notesyncPublication {
 		if err := enqueueNotesyncPublicationIntents(ctx, tx, commit.Revision, generation, parentDocuments, nil, nil); err != nil {
 			return err
@@ -435,6 +442,122 @@ func (s *Store) applyMaintenanceRevision(
 	}
 	if _, err := tx.Exec(ctx, `UPDATE knowledge_catalog SET head_revision_id=$1,updated_at=$2 WHERE singleton_id=1`, commit.Revision.ID, commit.Revision.CreatedAt.UTC()); err != nil {
 		return fmt.Errorf("advance knowledge head for maintenance proposal: %w", err)
+	}
+	return nil
+}
+
+func insertEvidenceCarryoverProposals(ctx context.Context, tx pgx.Tx, proposal knowledge.Proposal, commit knowledge.PreparedCommit) error {
+	if len(proposal.EvidenceImpact.References) == 0 {
+		return nil
+	}
+	targetsByNodeID := make(map[string]learning.EvidenceCarryoverCandidate)
+	targetsByRevisionID := make(map[string]learning.EvidenceCarryoverCandidate)
+	for _, document := range commit.Revision.Documents {
+		for _, node := range document.Revision.Nodes {
+			target := learning.EvidenceCarryoverCandidate{
+				KnowledgeRevisionID: commit.Revision.ID, NodeID: node.NodeID,
+				NodeRevisionID: node.ID, DocumentRevisionID: node.DocumentRevisionID,
+			}
+			targetsByNodeID[node.NodeID] = target
+			targetsByRevisionID[node.ID] = target
+		}
+	}
+	lineageTargets := make(map[string][]learning.EvidenceCarryoverCandidate)
+	for _, lineage := range commit.Lineages {
+		var sources []string
+		var targets []learning.EvidenceCarryoverCandidate
+		for _, member := range lineage.Members {
+			switch member.Role {
+			case "source":
+				sources = append(sources, member.NodeRevisionID)
+			case "target":
+				if target, ok := targetsByRevisionID[member.NodeRevisionID]; ok {
+					targets = append(targets, target)
+				}
+			}
+		}
+		for _, source := range sources {
+			lineageTargets[source] = append(lineageTargets[source], targets...)
+		}
+	}
+	for _, reference := range proposal.EvidenceImpact.References {
+		var sourceNodeID string
+		if err := tx.QueryRow(ctx, `SELECT node_id::text FROM knowledge_node_revisions WHERE id=$1`, reference.NodeRevisionID).Scan(&sourceNodeID); err != nil {
+			return fmt.Errorf("read evidence carryover source node identity: %w", err)
+		}
+		candidates, explicitLineage := lineageTargets[reference.NodeRevisionID]
+		if !explicitLineage {
+			if target, ok := targetsByNodeID[sourceNodeID]; ok {
+				candidates = append(candidates, target)
+			}
+		}
+		var err error
+		candidates, candidateFingerprint, err := learning.NormalizeEvidenceCarryoverCandidates(candidates)
+		if err != nil {
+			return err
+		}
+		carryoverID := uuid.NewSHA1(evidenceCarryoverProposalNamespace, []byte(proposal.ID+"\n"+reference.EvidenceID)).String()
+		carryoverKey, err := learning.HashJSON(struct {
+			Version, KnowledgeProposalID, EvidenceID string
+		}{learning.EvidenceCarryoverPolicyVersion, proposal.ID, reference.EvidenceID})
+		if err != nil {
+			return err
+		}
+		carryover := learning.EvidenceCarryoverProposal{
+			ID: carryoverID, KnowledgeProposalID: proposal.ID, Status: learning.EvidenceCarryoverOpen,
+			SourceEvidenceID: reference.EvidenceID, SourceKnowledgeRevisionID: reference.KnowledgeRevisionID,
+			SourceNodeRevisionID: reference.NodeRevisionID, TargetKnowledgeRevisionID: commit.Revision.ID,
+			Candidates: candidates, KnowledgeBasisHash: proposal.BasisHash,
+			EvidenceFingerprint: proposal.EvidenceImpact.Fingerprint, CandidateFingerprint: candidateFingerprint,
+			KnowledgeGeneration: proposal.KnowledgeGeneration, LearningGeneration: proposal.EvidenceImpact.Generation,
+			PolicyVersion: learning.EvidenceCarryoverPolicyVersion, CreatedAt: commit.Revision.CreatedAt.UTC(),
+			UpdatedAt: commit.Revision.CreatedAt.UTC(),
+		}
+		carryover.BasisFingerprint = learning.ComputeEvidenceCarryoverBasis(carryover)
+		keyBytes, err := decodeHash(carryoverKey)
+		if err != nil {
+			return err
+		}
+		knowledgeBasis, err := decodeHash(carryover.KnowledgeBasisHash)
+		if err != nil {
+			return err
+		}
+		evidenceFingerprint, err := decodeHash(carryover.EvidenceFingerprint)
+		if err != nil {
+			return err
+		}
+		candidateFingerprintBytes, err := decodeHash(carryover.CandidateFingerprint)
+		if err != nil {
+			return err
+		}
+		basisFingerprint, err := decodeHash(carryover.BasisFingerprint)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO learning_evidence_carryover_proposals(
+			  proposal_id,carryover_key,knowledge_proposal_id,status,source_evidence_id,
+			  source_knowledge_revision_id,source_node_revision_id,target_knowledge_revision_id,
+			  knowledge_basis_hash,evidence_fingerprint,candidate_fingerprint,basis_fingerprint,
+			  knowledge_generation,learning_generation,policy_version,created_at,updated_at)
+			VALUES($1,$2,$3,'open',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)`,
+			carryover.ID, keyBytes, carryover.KnowledgeProposalID, carryover.SourceEvidenceID,
+			carryover.SourceKnowledgeRevisionID, carryover.SourceNodeRevisionID,
+			carryover.TargetKnowledgeRevisionID, knowledgeBasis, evidenceFingerprint,
+			candidateFingerprintBytes, basisFingerprint, carryover.KnowledgeGeneration,
+			carryover.LearningGeneration, carryover.PolicyVersion, carryover.CreatedAt); err != nil {
+			return fmt.Errorf("insert evidence carryover proposal: %w", err)
+		}
+		for index, candidate := range candidates {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO learning_evidence_carryover_candidates(
+				  proposal_id,ordinal,target_knowledge_revision_id,target_node_id,
+				  target_node_revision_id,target_document_revision_id)
+				VALUES($1,$2,$3,$4,$5,$6)`, carryover.ID, index, candidate.KnowledgeRevisionID,
+				candidate.NodeID, candidate.NodeRevisionID, candidate.DocumentRevisionID); err != nil {
+				return fmt.Errorf("insert evidence carryover candidate: %w", err)
+			}
+		}
 	}
 	return nil
 }
@@ -450,21 +573,38 @@ func lockAcceptedEvidenceImpact(ctx context.Context, tx pgx.Tx, nodeRevisionIDs 
 	if len(nodeRevisionIDs) == 0 {
 		return knowledge.NormalizeAcceptedEvidenceImpact(impact)
 	}
-	if _, err := tx.Exec(ctx, `LOCK TABLE learning_evidence,learning_evidence_invalidations IN SHARE MODE`); err != nil {
+	if _, err := tx.Exec(ctx, `
+		LOCK TABLE learning_evidence,learning_evidence_invalidations,
+		  learning_evidence_carryover_proposals,learning_evidence_carryover_links
+		IN SHARE MODE`); err != nil {
 		return knowledge.AcceptedEvidenceImpact{}, fmt.Errorf("lock accepted evidence impact basis: %w", err)
 	}
 	ids := append([]string(nil), nodeRevisionIDs...)
 	sort.Strings(ids)
 	rows, err := tx.Query(ctx, `
-		SELECT evidence.id::text,evidence.node_revision_id::text,evidence.knowledge_revision_id::text
-		FROM learning_evidence evidence
-		WHERE evidence.node_revision_id=ANY($1::uuid[])
-		  AND evidence.accepted_event_seq IS NOT NULL
-		  AND NOT EXISTS (
-		    SELECT 1 FROM learning_evidence_invalidations invalidation
-		    WHERE invalidation.evidence_id=evidence.id
-		  )
-		ORDER BY evidence.id`, ids)
+		WITH valid_source_evidence AS (
+		  SELECT evidence.id,evidence.node_revision_id,evidence.knowledge_revision_id
+		  FROM learning_evidence evidence
+		  WHERE evidence.accepted_event_seq IS NOT NULL
+		    AND NOT EXISTS (
+		      SELECT 1 FROM learning_evidence_invalidations invalidation
+		      WHERE invalidation.evidence_id=evidence.id
+		    )
+		), impact_references AS (
+		  SELECT evidence.id AS evidence_id,evidence.node_revision_id,evidence.knowledge_revision_id
+		  FROM valid_source_evidence evidence
+		  WHERE evidence.node_revision_id=ANY($1::uuid[])
+		  UNION
+		  SELECT evidence.id,link.target_node_revision_id,link.target_knowledge_revision_id
+		  FROM valid_source_evidence evidence
+		  JOIN learning_evidence_carryover_links link ON link.source_evidence_id=evidence.id
+		  JOIN learning_evidence_carryover_proposals proposal
+		    ON proposal.proposal_id=link.proposal_id AND proposal.status='approved'
+		  WHERE link.target_node_revision_id=ANY($1::uuid[])
+		)
+		SELECT evidence_id::text,node_revision_id::text,knowledge_revision_id::text
+		FROM impact_references
+		ORDER BY evidence_id,node_revision_id,knowledge_revision_id`, ids)
 	if err != nil {
 		return knowledge.AcceptedEvidenceImpact{}, fmt.Errorf("query locked accepted evidence impact: %w", err)
 	}
@@ -482,6 +622,70 @@ func lockAcceptedEvidenceImpact(ctx context.Context, tx pgx.Tx, nodeRevisionIDs 
 	}
 	rows.Close()
 	return knowledge.NormalizeAcceptedEvidenceImpact(impact)
+}
+
+func (s *Store) ValidateEvidenceCarryoverTargetLockedWith(
+	ctx context.Context,
+	tx pgx.Tx,
+	targetRevisionID string,
+	knowledgeProposalID string,
+	knowledgeBasisHash string,
+	candidates []learning.EvidenceCarryoverCandidate,
+) (bool, error) {
+	var headID *string
+	var redacted bool
+	err := tx.QueryRow(ctx, `
+		SELECT catalog.head_revision_id::text,revision.redacted_at IS NOT NULL
+		FROM knowledge_catalog catalog
+		JOIN knowledge_revisions revision ON revision.id=$1
+		WHERE catalog.singleton_id=1
+		FOR UPDATE OF catalog`, targetRevisionID).Scan(&headID, &redacted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("lock knowledge target for evidence carryover: %w", err)
+	}
+	if redacted || headID == nil || *headID != targetRevisionID {
+		return false, nil
+	}
+	var originProposal string
+	var originBasis []byte
+	err = tx.QueryRow(ctx, `
+		SELECT proposal_id::text,basis_hash
+		FROM knowledge_revision_origins
+		WHERE revision_id=$1`, targetRevisionID).Scan(&originProposal, &originBasis)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read evidence carryover knowledge origin: %w", err)
+	}
+	if originProposal != knowledgeProposalID || hex.EncodeToString(originBasis) != knowledgeBasisHash {
+		return false, nil
+	}
+	for _, candidate := range candidates {
+		if candidate.KnowledgeRevisionID != targetRevisionID {
+			return false, nil
+		}
+		var valid bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS(
+			  SELECT 1
+			  FROM knowledge_node_revisions node
+			  JOIN knowledge_snapshot_documents snapshot
+			    ON snapshot.knowledge_revision_id=$4
+			   AND snapshot.document_revision_id=node.document_revision_id
+			  WHERE node.id=$1 AND node.node_id=$2 AND node.document_revision_id=$3
+			)`, candidate.NodeRevisionID, candidate.NodeID, candidate.DocumentRevisionID,
+			targetRevisionID).Scan(&valid); err != nil {
+			return false, fmt.Errorf("validate evidence carryover knowledge candidate: %w", err)
+		}
+		if !valid {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func validatePreparedProposal(proposal knowledge.Proposal, commit knowledge.PreparedCommit) error {

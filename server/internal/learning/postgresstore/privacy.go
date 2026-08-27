@@ -192,6 +192,11 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"learning assessment decisions", `UPDATE learning_assessment_decisions SET conclusions='{"redacted":true}'::jsonb,reason=NULL`},
 		{"learning evidence", `UPDATE learning_evidence SET rubric_revision='[redacted]',outcome='partial',help_level='none',misconception_candidates='[]'::jsonb,rubric_outcomes='[]'::jsonb`},
 		{"learning evidence invalidations", `UPDATE learning_evidence_invalidations SET reason='privacy_erasure'`},
+		{"learning evidence carryover proposals", `UPDATE learning_evidence_carryover_proposals SET status=CASE WHEN status='open' THEN 'redacted' ELSE status END,source_evidence_id=NULL,source_knowledge_revision_id=NULL,source_node_revision_id=NULL,target_knowledge_revision_id=NULL,knowledge_basis_hash=decode(repeat('00',32),'hex'),evidence_fingerprint=decode(repeat('00',32),'hex'),candidate_fingerprint=decode(repeat('00',32),'hex'),basis_fingerprint=decode(repeat('00',32),'hex'),updated_at=clock_timestamp(),redacted_at=clock_timestamp()`},
+		{"learning evidence carryover candidates", `UPDATE learning_evidence_carryover_candidates SET target_knowledge_revision_id=NULL,target_node_id=NULL,target_node_revision_id=NULL,target_document_revision_id=NULL`},
+		{"learning evidence carryover decisions", `UPDATE learning_evidence_carryover_decisions SET reason='privacy_erasure'`},
+		{"learning evidence carryover operations", `UPDATE learning_evidence_carryover_operations SET request_hash=decode(repeat('00',32),'hex')`},
+		{"learning evidence carryover links", `UPDATE learning_evidence_carryover_links SET source_evidence_id=NULL,target_knowledge_revision_id=NULL,target_node_id=NULL,target_node_revision_id=NULL,target_document_revision_id=NULL`},
 		{"learning exposures", `UPDATE learning_exposures SET content='',references_snapshot='[]'::jsonb`},
 		{"learning misconceptions", `UPDATE learning_misconception_revisions SET rubric_item_id='[redacted]',candidate_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex'),candidate_text='',status='resolved',source_evidence_ids='{}'::uuid[],counter_evidence_ids='{}'::uuid[]`},
 		{"offline prepare claims", `UPDATE offline_prepare_claims SET request_body='{"redacted":true}'::jsonb,model_artifact=NULL,result_body=CASE WHEN result_body IS NULL THEN NULL ELSE '{"redacted":true}'::jsonb END`},
@@ -223,7 +228,7 @@ func (s *Store) redactLearningProjections(ctx context.Context, tx pgx.Tx, reques
 	for _, table := range []string{
 		"learning_projection_timeline", "learning_projection_routes", "learning_projection_sessions",
 		"learning_projection_nodes", "learning_projection_evidence", "learning_projection_reviews",
-		"learning_projection_misconceptions", "learning_projection_stats",
+		"learning_projection_misconceptions", "learning_projection_stats", "learning_projection_carryovers",
 	} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table); err != nil {
 			return fmt.Errorf("clear redacted %s: %w", table, err)
@@ -378,6 +383,11 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			UNION ALL SELECT count(*) FROM learning_assessment_decisions WHERE conclusions<>'{"redacted":true}'::jsonb OR reason IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_evidence WHERE rubric_revision<>'[redacted]' OR outcome<>'partial' OR help_level<>'none' OR misconception_candidates<>'[]'::jsonb OR rubric_outcomes<>'[]'::jsonb
 			UNION ALL SELECT count(*) FROM learning_evidence_invalidations WHERE reason<>'privacy_erasure'
+			UNION ALL SELECT count(*) FROM learning_evidence_carryover_proposals WHERE redacted_at IS NULL OR status='open' OR source_evidence_id IS NOT NULL OR source_knowledge_revision_id IS NOT NULL OR source_node_revision_id IS NOT NULL OR target_knowledge_revision_id IS NOT NULL OR knowledge_basis_hash<>decode(repeat('00',32),'hex') OR evidence_fingerprint<>decode(repeat('00',32),'hex') OR candidate_fingerprint<>decode(repeat('00',32),'hex') OR basis_fingerprint<>decode(repeat('00',32),'hex')
+			UNION ALL SELECT count(*) FROM learning_evidence_carryover_candidates WHERE target_knowledge_revision_id IS NOT NULL OR target_node_id IS NOT NULL OR target_node_revision_id IS NOT NULL OR target_document_revision_id IS NOT NULL
+			UNION ALL SELECT count(*) FROM learning_evidence_carryover_decisions WHERE reason<>'privacy_erasure'
+			UNION ALL SELECT count(*) FROM learning_evidence_carryover_operations WHERE request_hash<>decode(repeat('00',32),'hex')
+			UNION ALL SELECT count(*) FROM learning_evidence_carryover_links WHERE source_evidence_id IS NOT NULL OR target_knowledge_revision_id IS NOT NULL OR target_node_id IS NOT NULL OR target_node_revision_id IS NOT NULL OR target_document_revision_id IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_exposures WHERE content<>'' OR references_snapshot<>'[]'::jsonb
 			UNION ALL SELECT count(*) FROM learning_misconception_revisions WHERE rubric_item_id<>'[redacted]' OR candidate_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex') OR candidate_text<>'' OR status<>'resolved' OR source_evidence_ids<>'{}'::uuid[] OR counter_evidence_ids<>'{}'::uuid[]
 			UNION ALL SELECT count(*) FROM offline_prepare_claims WHERE request_body<>'{"redacted":true}'::jsonb OR model_artifact IS NOT NULL OR (result_body IS NOT NULL AND result_body<>'{"redacted":true}'::jsonb)
@@ -442,6 +452,7 @@ func (s *Store) verifyLearningProjections(ctx context.Context, request privacy.L
 			UNION ALL SELECT count(*) FROM learning_projection_reviews
 			UNION ALL SELECT count(*) FROM learning_projection_misconceptions
 			UNION ALL SELECT count(*) FROM learning_projection_stats
+			UNION ALL SELECT count(*) FROM learning_projection_carryovers
 		)
 		SELECT COALESCE(sum(remaining),0)::bigint FROM residuals`, generationID, event.EventSequence, event.ID, request.ErasureID, fingerprint).Scan(&remaining)
 	if err != nil {

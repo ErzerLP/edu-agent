@@ -42,6 +42,9 @@ const (
 	EventOfflineActivitySkipped         EventType = "OfflineActivitySkipped"
 	EventOfflineAssessmentQueued        EventType = "OfflineAssessmentQueued"
 	EventOfflineOperationRejected       EventType = "OfflineOperationRejected"
+	EventEvidenceCarryoverApproved      EventType = "EvidenceCarryoverApproved"
+	EventEvidenceCarryoverRejected      EventType = "EvidenceCarryoverRejected"
+	EventEvidenceCarryoverStaled        EventType = "EvidenceCarryoverStaled"
 	EventRedacted                       EventType = "EventRedacted"
 )
 
@@ -222,21 +225,22 @@ type PendingAssessment struct {
 }
 
 type Projection struct {
-	Metadata       ProjectionMetadata            `json:"metadata"`
-	Timeline       []TimelineItem                `json:"timeline"`
-	Routes         []RouteProjection             `json:"routes"`
-	Sessions       map[string]SessionProjection  `json:"sessions"`
-	Stats          map[string]ActiveTimeEstimate `json:"stats"`
-	Evidence       map[string]AcceptedEvidence   `json:"evidence"`
-	Invalidated    map[string]bool               `json:"invalidated_evidence"`
-	Pending        map[string]PendingAssessment  `json:"pending_assessments"`
-	Nodes          map[string]NodeReduction      `json:"nodes"`
-	RedactedEvents map[string]bool               `json:"redacted_events"`
-	Exposures      []Exposure                    `json:"exposures"`
+	Metadata       ProjectionMetadata                      `json:"metadata"`
+	Timeline       []TimelineItem                          `json:"timeline"`
+	Routes         []RouteProjection                       `json:"routes"`
+	Sessions       map[string]SessionProjection            `json:"sessions"`
+	Stats          map[string]ActiveTimeEstimate           `json:"stats"`
+	Evidence       map[string]AcceptedEvidence             `json:"evidence"`
+	Invalidated    map[string]bool                         `json:"invalidated_evidence"`
+	Pending        map[string]PendingAssessment            `json:"pending_assessments"`
+	Nodes          map[string]NodeReduction                `json:"nodes"`
+	Carryovers     map[string]ProvisionalEvidenceCarryover `json:"provisional_carryovers,omitempty"`
+	RedactedEvents map[string]bool                         `json:"redacted_events"`
+	Exposures      []Exposure                              `json:"exposures"`
 }
 
 func EmptyProjection(generationID string) Projection {
-	return Projection{Metadata: ProjectionMetadata{ProjectionVersion: ProjectionVersion, MasteryReducerVersion: MasteryReducerVersion, AssessmentPolicy: AssessmentPolicyVersion, ReviewPolicy: ReviewPolicyVersion, GenerationID: generationID}, Sessions: map[string]SessionProjection{}, Stats: map[string]ActiveTimeEstimate{}, Evidence: map[string]AcceptedEvidence{}, Invalidated: map[string]bool{}, Pending: map[string]PendingAssessment{}, Nodes: map[string]NodeReduction{}, RedactedEvents: map[string]bool{}}
+	return Projection{Metadata: ProjectionMetadata{ProjectionVersion: ProjectionVersion, MasteryReducerVersion: MasteryReducerVersion, AssessmentPolicy: AssessmentPolicyVersion, ReviewPolicy: ReviewPolicyVersion, GenerationID: generationID}, Sessions: map[string]SessionProjection{}, Stats: map[string]ActiveTimeEstimate{}, Evidence: map[string]AcceptedEvidence{}, Invalidated: map[string]bool{}, Pending: map[string]PendingAssessment{}, Nodes: map[string]NodeReduction{}, Carryovers: map[string]ProvisionalEvidenceCarryover{}, RedactedEvents: map[string]bool{}}
 }
 
 func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningEvent) error {
@@ -372,6 +376,32 @@ func ApplyEvent(projection *Projection, registry *EventRegistry, event LearningE
 		}
 		projection.Pending[payload.AssessmentID] = PendingAssessment{AssessmentID: payload.AssessmentID, NodeRevisionID: payload.NodeRevisionID, Reasons: append([]string(nil), payload.Reasons...)}
 		recomputeNode(projection, payload.NodeRevisionID)
+	case EventEvidenceCarryoverApproved:
+		var payload EvidenceCarryoverEvent
+		if err := json.Unmarshal(decoded.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.Provisional == nil || payload.ProposalID == "" || payload.DecisionID == "" ||
+			payload.RequestedDecision != "approve" || payload.Outcome != string(EvidenceCarryoverApproved) ||
+			payload.Provisional.ProposalID != payload.ProposalID || len(payload.Provisional.Links) == 0 {
+			return fmt.Errorf("approved evidence carryover payload is incomplete")
+		}
+		carryover := *payload.Provisional
+		carryover.Links = append([]EvidenceCarryoverLink(nil), carryover.Links...)
+		if carryover.ApprovedEventSequence == 0 {
+			carryover.ApprovedEventSequence = decoded.EventSequence
+		} else if carryover.ApprovedEventSequence != decoded.EventSequence {
+			return fmt.Errorf("approved evidence carryover event sequence does not match envelope")
+		}
+		projection.Carryovers[carryover.ProposalID] = carryover
+	case EventEvidenceCarryoverRejected, EventEvidenceCarryoverStaled:
+		var payload EvidenceCarryoverEvent
+		if err := json.Unmarshal(decoded.Payload, &payload); err != nil {
+			return err
+		}
+		if payload.ProposalID == "" || payload.DecisionID == "" || payload.Provisional != nil {
+			return fmt.Errorf("terminal evidence carryover payload is incomplete")
+		}
 	case EventExposureRecorded:
 		var exposure Exposure
 		if err := json.Unmarshal(decoded.Payload, &exposure); err != nil {

@@ -15,7 +15,8 @@ ALTER TABLE pairing_codes ADD CONSTRAINT pairing_codes_scopes_nonempty CHECK (
 );
 
 -- Knowledge maintenance proposals freeze server-computed analysis and a prepared canonical
--- revision. No learning-owned row is written by this migration or its application path.
+-- revision. The maintenance path does not write evidence, events, mastery, or review projections;
+-- an applied revision may atomically create inert learning-owned carryover proposals below.
 CREATE TABLE knowledge_maintenance_proposals (
     proposal_id UUID PRIMARY KEY,
     request_id UUID NOT NULL UNIQUE,
@@ -170,6 +171,205 @@ BEGIN
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION privacy_enforce_owner_write(%L)',
             table_name||'_privacy_write_gate',table_name,'knowledge'
+        );
+    END LOOP;
+END $$;
+
+-- Carryover is learning-owned. Knowledge application may only insert inert proposals in
+-- the same transaction as the canonical revision; decisions remain separate learning events.
+ALTER TABLE learning_aggregate_heads
+    DROP CONSTRAINT learning_aggregate_heads_aggregate_type_check,
+    ADD CONSTRAINT learning_aggregate_heads_aggregate_type_check
+        CHECK (aggregate_type IN ('goal','session','privacy','offline_attempt','evidence_carryover'));
+ALTER TABLE learning_events
+    DROP CONSTRAINT learning_events_aggregate_type_check,
+    ADD CONSTRAINT learning_events_aggregate_type_check
+        CHECK (aggregate_type IN ('goal','session','privacy','offline_attempt','evidence_carryover'));
+
+CREATE TABLE learning_evidence_carryover_proposals (
+    proposal_id UUID PRIMARY KEY,
+    carryover_key BYTEA NOT NULL UNIQUE CHECK (octet_length(carryover_key)=32),
+    knowledge_proposal_id UUID NOT NULL REFERENCES knowledge_maintenance_proposals(proposal_id),
+    status TEXT NOT NULL CHECK (status IN ('open','approved','rejected','stale','redacted')),
+    source_evidence_id UUID REFERENCES learning_evidence(id),
+    source_knowledge_revision_id UUID REFERENCES knowledge_revisions(id),
+    source_node_revision_id UUID REFERENCES knowledge_node_revisions(id),
+    target_knowledge_revision_id UUID REFERENCES knowledge_revisions(id),
+    knowledge_basis_hash BYTEA NOT NULL CHECK (octet_length(knowledge_basis_hash)=32),
+    evidence_fingerprint BYTEA NOT NULL CHECK (octet_length(evidence_fingerprint)=32),
+    candidate_fingerprint BYTEA NOT NULL CHECK (octet_length(candidate_fingerprint)=32),
+    basis_fingerprint BYTEA NOT NULL CHECK (octet_length(basis_fingerprint)=32),
+    knowledge_generation BIGINT NOT NULL CHECK (knowledge_generation>=1),
+    learning_generation BIGINT NOT NULL CHECK (learning_generation>=1),
+    policy_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    redacted_at TIMESTAMPTZ,
+    CONSTRAINT learning_evidence_carryover_proposal_status_shape CHECK (
+        (status='open' AND redacted_at IS NULL)
+        OR (status IN ('approved','rejected','stale') AND redacted_at IS NULL)
+        OR (status='redacted' AND redacted_at IS NOT NULL)
+        OR (status IN ('approved','rejected','stale') AND redacted_at IS NOT NULL)
+    ),
+    CONSTRAINT learning_evidence_carryover_proposal_reference_shape CHECK (
+        redacted_at IS NOT NULL
+        OR (source_evidence_id IS NOT NULL AND source_knowledge_revision_id IS NOT NULL
+            AND source_node_revision_id IS NOT NULL AND target_knowledge_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT learning_evidence_carryover_proposal_time_order CHECK (updated_at>=created_at)
+);
+CREATE UNIQUE INDEX learning_evidence_carryover_proposal_source
+    ON learning_evidence_carryover_proposals(knowledge_proposal_id,source_evidence_id)
+    WHERE source_evidence_id IS NOT NULL;
+CREATE INDEX learning_evidence_carryover_proposal_status_order
+    ON learning_evidence_carryover_proposals(status,created_at,proposal_id);
+
+CREATE TABLE learning_evidence_carryover_candidates (
+    proposal_id UUID NOT NULL REFERENCES learning_evidence_carryover_proposals(proposal_id),
+    ordinal INTEGER NOT NULL CHECK (ordinal>=0),
+    target_knowledge_revision_id UUID REFERENCES knowledge_revisions(id),
+    target_node_id UUID REFERENCES knowledge_nodes(id),
+    target_node_revision_id UUID REFERENCES knowledge_node_revisions(id),
+    target_document_revision_id UUID REFERENCES knowledge_document_revisions(id),
+    PRIMARY KEY(proposal_id,ordinal),
+    CONSTRAINT learning_evidence_carryover_candidate_reference_shape CHECK (
+        (target_knowledge_revision_id IS NULL AND target_node_id IS NULL
+            AND target_node_revision_id IS NULL AND target_document_revision_id IS NULL)
+        OR (target_knowledge_revision_id IS NOT NULL AND target_node_id IS NOT NULL
+            AND target_node_revision_id IS NOT NULL AND target_document_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT learning_evidence_carryover_candidate_node_owner
+        FOREIGN KEY(target_node_revision_id,target_node_id,target_document_revision_id)
+        REFERENCES knowledge_node_revisions(id,node_id,document_revision_id) MATCH FULL,
+    CONSTRAINT learning_evidence_carryover_candidate_snapshot_owner
+        FOREIGN KEY(target_knowledge_revision_id,target_document_revision_id)
+        REFERENCES knowledge_snapshot_documents(knowledge_revision_id,document_revision_id) MATCH FULL
+);
+CREATE UNIQUE INDEX learning_evidence_carryover_candidate_target
+    ON learning_evidence_carryover_candidates(proposal_id,target_node_revision_id)
+    WHERE target_node_revision_id IS NOT NULL;
+
+CREATE TABLE learning_evidence_carryover_decisions (
+    decision_id UUID PRIMARY KEY,
+    proposal_id UUID NOT NULL UNIQUE REFERENCES learning_evidence_carryover_proposals(proposal_id),
+    operation_id UUID NOT NULL UNIQUE,
+    requested_decision TEXT NOT NULL CHECK (requested_decision IN ('approve','reject')),
+    outcome TEXT NOT NULL CHECK (outcome IN ('approved','rejected','stale')),
+    reason TEXT NOT NULL CHECK (char_length(reason)>=1),
+    actor_device_id UUID NOT NULL REFERENCES devices(id),
+    event_id UUID NOT NULL UNIQUE REFERENCES learning_events(id),
+    event_seq BIGINT NOT NULL UNIQUE REFERENCES learning_events(event_seq),
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT learning_evidence_carryover_decision_shape CHECK (
+        (requested_decision='approve' AND outcome IN ('approved','stale'))
+        OR (requested_decision='reject' AND outcome='rejected')
+    )
+);
+
+CREATE TABLE learning_evidence_carryover_operations (
+    operation_id UUID PRIMARY KEY,
+    request_hash BYTEA NOT NULL CHECK (octet_length(request_hash)=32),
+    proposal_id UUID NOT NULL REFERENCES learning_evidence_carryover_proposals(proposal_id),
+    requested_decision TEXT NOT NULL CHECK (requested_decision IN ('approve','reject')),
+    completed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE learning_evidence_carryover_links (
+    link_id UUID PRIMARY KEY,
+    proposal_id UUID NOT NULL REFERENCES learning_evidence_carryover_proposals(proposal_id),
+    decision_id UUID NOT NULL REFERENCES learning_evidence_carryover_decisions(decision_id),
+    source_evidence_id UUID REFERENCES learning_evidence(id),
+    target_knowledge_revision_id UUID REFERENCES knowledge_revisions(id),
+    target_node_id UUID REFERENCES knowledge_nodes(id),
+    target_node_revision_id UUID REFERENCES knowledge_node_revisions(id),
+    target_document_revision_id UUID REFERENCES knowledge_document_revisions(id),
+    event_id UUID NOT NULL REFERENCES learning_events(id),
+    event_seq BIGINT NOT NULL REFERENCES learning_events(event_seq),
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT learning_evidence_carryover_link_reference_shape CHECK (
+        (source_evidence_id IS NULL AND target_knowledge_revision_id IS NULL
+            AND target_node_id IS NULL AND target_node_revision_id IS NULL
+            AND target_document_revision_id IS NULL)
+        OR (source_evidence_id IS NOT NULL AND target_knowledge_revision_id IS NOT NULL
+            AND target_node_id IS NOT NULL AND target_node_revision_id IS NOT NULL
+            AND target_document_revision_id IS NOT NULL)
+    ),
+    CONSTRAINT learning_evidence_carryover_link_node_owner
+        FOREIGN KEY(target_node_revision_id,target_node_id,target_document_revision_id)
+        REFERENCES knowledge_node_revisions(id,node_id,document_revision_id) MATCH FULL,
+    CONSTRAINT learning_evidence_carryover_link_snapshot_owner
+        FOREIGN KEY(target_knowledge_revision_id,target_document_revision_id)
+        REFERENCES knowledge_snapshot_documents(knowledge_revision_id,document_revision_id) MATCH FULL
+);
+CREATE UNIQUE INDEX learning_evidence_carryover_link_target
+    ON learning_evidence_carryover_links(proposal_id,target_node_revision_id)
+    WHERE target_node_revision_id IS NOT NULL;
+
+CREATE TABLE learning_projection_carryovers (
+    generation_id UUID NOT NULL REFERENCES learning_projection_generations(id),
+    proposal_id UUID NOT NULL,
+    approved_event_seq BIGINT NOT NULL CHECK (approved_event_seq>=1),
+    item JSONB NOT NULL,
+    PRIMARY KEY(generation_id,proposal_id)
+);
+CREATE INDEX learning_projection_carryovers_order
+    ON learning_projection_carryovers(generation_id,approved_event_seq,proposal_id);
+
+CREATE FUNCTION protect_learning_evidence_carryover_proposal() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF privacy_owner_scrub_permitted('learning') THEN
+        IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP='DELETE' THEN RAISE EXCEPTION 'learning evidence carryover proposals cannot be deleted'; END IF;
+    IF OLD.status<>'open' AND NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION 'learning evidence carryover proposal terminal state is immutable';
+    END IF;
+    IF OLD.status='open' AND NEW.status NOT IN ('open','approved','rejected','stale','redacted') THEN
+        RAISE EXCEPTION 'learning evidence carryover proposal has an invalid transition';
+    END IF;
+    IF ROW(NEW.proposal_id,NEW.carryover_key,NEW.knowledge_proposal_id,NEW.source_evidence_id,
+        NEW.source_knowledge_revision_id,NEW.source_node_revision_id,NEW.target_knowledge_revision_id,
+        NEW.knowledge_basis_hash,NEW.evidence_fingerprint,NEW.candidate_fingerprint,
+        NEW.basis_fingerprint,NEW.knowledge_generation,NEW.learning_generation,
+        NEW.policy_version,NEW.created_at)
+       IS DISTINCT FROM
+       ROW(OLD.proposal_id,OLD.carryover_key,OLD.knowledge_proposal_id,OLD.source_evidence_id,
+        OLD.source_knowledge_revision_id,OLD.source_node_revision_id,OLD.target_knowledge_revision_id,
+        OLD.knowledge_basis_hash,OLD.evidence_fingerprint,OLD.candidate_fingerprint,
+        OLD.basis_fingerprint,OLD.knowledge_generation,OLD.learning_generation,
+        OLD.policy_version,OLD.created_at) THEN
+        RAISE EXCEPTION 'learning evidence carryover proposal basis is immutable';
+    END IF;
+    IF OLD.status='open' AND NEW.status='open' AND NEW IS DISTINCT FROM OLD THEN
+        RAISE EXCEPTION 'learning evidence carryover open proposal is immutable';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER learning_evidence_carryover_proposals_state_guard
+    BEFORE UPDATE OR DELETE ON learning_evidence_carryover_proposals
+    FOR EACH ROW EXECUTE FUNCTION protect_learning_evidence_carryover_proposal();
+
+DO $$
+DECLARE table_name TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'learning_evidence_carryover_candidates','learning_evidence_carryover_decisions',
+        'learning_evidence_carryover_operations','learning_evidence_carryover_links'
+    ] LOOP
+        EXECUTE format(
+            'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION reject_learning_history_mutation()',
+            table_name||'_immutable',table_name
+        );
+    END LOOP;
+    FOREACH table_name IN ARRAY ARRAY[
+        'learning_evidence_carryover_proposals','learning_evidence_carryover_candidates',
+        'learning_evidence_carryover_decisions','learning_evidence_carryover_operations',
+        'learning_evidence_carryover_links','learning_projection_carryovers'
+    ] LOOP
+        EXECUTE format(
+            'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION privacy_enforce_owner_write(%L)',
+            table_name||'_privacy_write_gate',table_name,'learning'
         );
     END LOOP;
 END $$;

@@ -20,7 +20,8 @@ Independent scenarios cover:
 - free answer, exact attached quiz ownership, feedback return, and explicit resume;
 - due review presentation, provisional and void non-advancement, then accepted review Evidence advancement;
 - model failure preserving authoritative state and a later successful retry;
-- capture-next response loss, exact-body automatic replay, and Inbox/Evidence uniqueness plus the exact four-event `record_assessment` batch.
+- capture-next response loss, exact-body automatic replay, and Inbox/Evidence uniqueness plus the exact four-event `record_assessment` batch;
+- accepted Evidence followed by an Agent HTTP knowledge proposal, user CLI approval, provisional evidence carryover, Agent decision rejection, user CLI carryover approval, and one shared HTTP/MCP/CLI terminal state without rewriting the original Evidence.
 
 Harness failures report only process names, exit codes, stable error codes, counts, hashes, IDs, and other metadata. They do not print stdin, Markdown, model output, HTTP raw bodies, answers, tokens, or pairing codes.
 

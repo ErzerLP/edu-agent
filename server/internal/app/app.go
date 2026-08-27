@@ -137,7 +137,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		migrationLeases = bridge.privacyStore
 		maintenanceToken = cfg.Nocturne.MaintenanceToken
 	}
-	handler, err := httpapi.New(httpapi.Options{
+	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
+	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
+	handler, err := composeTransportHandler(httpapi.Options{
 		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
 		Learning: learningService, Offline: offlineService,
 		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,
@@ -145,13 +147,13 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		MaintenanceToken: maintenanceToken, ReadPermits: bridge.readPermits,
 		Readiness: readiness, Logger: logger,
 		PairLimiter:           httpapi.NewFixedWindowLimiter(cfg.PairingRateLimitPerMinute, time.Minute),
-		AuthLimiter:           httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute),
-		DeviceLimiter:         httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute),
+		AuthLimiter:           authLimiter,
+		DeviceLimiter:         deviceLimiter,
 		PrivacyLimiter:        httpapi.NewFixedWindowLimiter(5, time.Minute),
 		PrivacyBackupDeadline: cfg.Nocturne.BackupRetention,
 	})
 	if err != nil {
-		return fmt.Errorf("initialize HTTP API: %w", err)
+		return err
 	}
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)

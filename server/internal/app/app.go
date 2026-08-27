@@ -84,7 +84,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	canonicalizer := knowledge.NewCanonicalizer()
 	knowledgeService, err := knowledge.NewService(
-		stores.knowledge, canonicalizer, knowledge.ServiceOptions{Selector: selector},
+		stores.knowledge, canonicalizer, knowledge.ServiceOptions{
+			Selector: selector, MaintenanceStore: stores.knowledge, EvidenceImpactReader: stores.learning,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("initialize knowledge service: %w", err)

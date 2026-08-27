@@ -29,8 +29,8 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 10 || latest.name != "000010_notesync_bridge.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("notesync bridge migration was not embedded with checksum: %+v", latest)
+	if latest.version != 11 || latest.name != "000011_knowledge_maintenance.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("knowledge maintenance migration was not embedded with checksum: %+v", latest)
 	}
 }
 

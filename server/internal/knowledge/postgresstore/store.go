@@ -434,6 +434,11 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 	}
 	revision.CreatedAt = revision.CreatedAt.UTC()
 	revision.ManifestHash = hex.EncodeToString(manifestHash)
+	origin, err := loadRevisionOrigin(ctx, db, revision.ID)
+	if err != nil {
+		return knowledge.KnowledgeRevision{}, err
+	}
+	revision.Origin = origin
 	if revision.Redacted {
 		return revision, nil
 	}
@@ -477,6 +482,29 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 	}
 	revision.Lineages = lineages
 	return revision, nil
+}
+
+func loadRevisionOrigin(ctx context.Context, db queryer, revisionID string) (*knowledge.RevisionOrigin, error) {
+	var origin knowledge.RevisionOrigin
+	var rollbackTarget *string
+	var basisHash []byte
+	err := db.QueryRow(ctx, `
+		SELECT origin_version,origin_kind,proposal_id::text,base_revision_id::text,
+		       rollback_target_revision_id::text,basis_hash
+		FROM knowledge_revision_origins WHERE revision_id=$1`, revisionID).Scan(
+		&origin.Version, &origin.Kind, &origin.ProposalID, &origin.BaseRevisionID, &rollbackTarget, &basisHash,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read knowledge revision origin: %w", err)
+	}
+	if rollbackTarget != nil {
+		origin.RollbackTargetRevisionID = rollbackTarget
+	}
+	origin.BasisHash = hex.EncodeToString(basisHash)
+	return &origin, nil
 }
 
 func loadNodes(ctx context.Context, db queryer, documentRevisionID string) ([]knowledge.NodeRevision, error) {

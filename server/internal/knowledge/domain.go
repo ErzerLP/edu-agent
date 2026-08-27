@@ -41,6 +41,8 @@ const (
 	CodeIdempotencyConflict       = "idempotency_conflict"
 	CodeNotFound                  = "not_found"
 	CodeContentRedacted           = "content_redacted"
+	CodeProposalStale             = "stale_knowledge_proposal"
+	CodeProposalClosed            = "knowledge_proposal_closed"
 )
 
 type Error struct {
@@ -124,6 +126,7 @@ type KnowledgeRevision struct {
 	Redacted              bool               `json:"-"`
 	Documents             []SnapshotDocument `json:"documents,omitempty"`
 	Lineages              []Lineage          `json:"lineages,omitempty"`
+	Origin                *RevisionOrigin    `json:"origin,omitempty"`
 }
 
 type ImportDocument struct {

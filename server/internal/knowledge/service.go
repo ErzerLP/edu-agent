@@ -51,9 +51,11 @@ type CatalogStore interface {
 }
 
 type ServiceOptions struct {
-	Selector Selector
-	NewUUID  func() string
-	Now      func() time.Time
+	Selector             Selector
+	MaintenanceStore     MaintenanceStore
+	EvidenceImpactReader EvidenceImpactReader
+	NewUUID              func() string
+	Now                  func() time.Time
 }
 
 var identityReviewKey = func() []byte {
@@ -71,13 +73,17 @@ type identityReviewRecord struct {
 }
 
 type Service struct {
-	store         CatalogStore
-	canonicalizer *Canonicalizer
-	selector      Selector
-	newUUID       func() string
-	now           func() time.Time
-	reviewMu      sync.RWMutex
-	reviews       map[string]identityReviewRecord
+	store                      CatalogStore
+	maintenanceStore           MaintenanceStore
+	evidenceImpactReader       EvidenceImpactReader
+	canonicalizer              *Canonicalizer
+	selector                   Selector
+	newUUID                    func() string
+	now                        func() time.Time
+	maintenanceReplaceSnapshot bool
+	maintenanceAllowHistorical bool
+	reviewMu                   sync.RWMutex
+	reviews                    map[string]identityReviewRecord
 }
 
 func NewService(store CatalogStore, canonicalizer *Canonicalizer, options ServiceOptions) (*Service, error) {
@@ -90,16 +96,21 @@ func NewService(store CatalogStore, canonicalizer *Canonicalizer, options Servic
 	if options.Now == nil {
 		options.Now = time.Now
 	}
-	return &Service{store: store, canonicalizer: canonicalizer, selector: options.Selector, newUUID: options.NewUUID, now: options.Now, reviews: make(map[string]identityReviewRecord)}, nil
+	return &Service{
+		store: store, maintenanceStore: options.MaintenanceStore, evidenceImpactReader: options.EvidenceImpactReader,
+		canonicalizer: canonicalizer, selector: options.Selector, newUUID: options.NewUUID, now: options.Now,
+		reviews: make(map[string]identityReviewRecord),
+	}, nil
 }
 
 type preparedDocument struct {
-	path       string
-	inspected  InspectedDocument
-	documentID string
-	rootNodeID string
-	nodeIDs    []string
-	old        *SnapshotDocument
+	path            string
+	inspected       InspectedDocument
+	documentID      string
+	rootNodeID      string
+	nodeIDs         []string
+	old             *SnapshotDocument
+	allowHistorical bool
 }
 
 type pendingLineage struct {
@@ -129,6 +140,11 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 	prepared, err := s.prepareDocuments(command.Documents)
 	if err != nil {
 		return ImportResult{}, err
+	}
+	if s.maintenanceAllowHistorical {
+		for index := range prepared {
+			prepared[index].allowHistorical = true
+		}
 	}
 	requestHash := hashImportRequest(command, prepared)
 	if operation, exists, err := s.store.LookupImportOperation(ctx, command.OperationID); err != nil {
@@ -210,7 +226,7 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 	}
 
 	snapshot := make(map[string]SnapshotDocument)
-	if parent != nil {
+	if parent != nil && !s.maintenanceReplaceSnapshot {
 		for _, document := range parent.Documents {
 			if _, moving := incomingDocumentIDs[document.Revision.DocumentID]; !moving {
 				snapshot[document.Path] = document
@@ -436,7 +452,7 @@ func (s *Service) resolveDocuments(ctx context.Context, documents []preparedDocu
 				if err != nil {
 					return nil, err
 				}
-				if exists {
+				if exists && !document.allowHistorical {
 					return nil, &Error{Code: CodeDuplicateDocumentIdentity}
 				}
 				selected = explicit
@@ -575,7 +591,7 @@ func (s *Service) resolveNodes(ctx context.Context, documents []preparedDocument
 					if exists && owner != document.documentID {
 						return nil, nil, &Error{Code: CodeInvalidIdentityMarker}
 					}
-					if exists {
+					if exists && !document.allowHistorical {
 						return nil, nil, &Error{Code: CodeInvalidIdentityMarker}
 					}
 					selected = draft.ExplicitNodeID
@@ -645,11 +661,11 @@ func (s *Service) resolveRootIdentity(ctx context.Context, document preparedDocu
 		return "", &Error{Code: CodeInvalidIdentityMarker}
 	}
 	if explicit != "" {
-		_, exists, err := s.store.NodeIdentityOwner(ctx, explicit)
+		owner, exists, err := s.store.NodeIdentityOwner(ctx, explicit)
 		if err != nil {
 			return "", err
 		}
-		if exists {
+		if exists && (!document.allowHistorical || owner != document.documentID) {
 			return "", &Error{Code: CodeInvalidIdentityMarker}
 		}
 		return explicit, nil

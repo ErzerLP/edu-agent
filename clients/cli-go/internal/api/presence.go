@@ -20,10 +20,10 @@ func validateRequiredJSONFields(data []byte, target any) error {
 	if targetType == nil || targetType.Kind() != reflect.Pointer {
 		return errors.New("presence target must be a pointer")
 	}
-	return validateJSONPresence(json.RawMessage(data), targetType.Elem(), "response")
+	return validateJSONPresence(json.RawMessage(data), targetType.Elem(), "response", false)
 }
 
-func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path string) error {
+func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path string, nullable bool) error {
 	for valueType.Kind() == reflect.Pointer {
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return nil
@@ -34,6 +34,9 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 		return nil
 	}
 	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if nullable {
+			return nil
+		}
 		return fmt.Errorf("%s must not be null", path)
 	}
 	switch valueType.Kind() {
@@ -48,6 +51,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 				continue
 			}
 			name, optional := jsonField(field)
+			fieldNullable := nullableJSONField(valueType, field.Name)
 			if name == "-" {
 				continue
 			}
@@ -58,7 +62,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 				}
 				return fmt.Errorf("%s.%s is required", path, name)
 			}
-			if err := validateJSONPresence(fieldRaw, field.Type, path+"."+name); err != nil {
+			if err := validateJSONPresence(fieldRaw, field.Type, path+"."+name, fieldNullable); err != nil {
 				return err
 			}
 		}
@@ -68,7 +72,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 			return fmt.Errorf("%s must be an array", path)
 		}
 		for index, item := range items {
-			if err := validateJSONPresence(item, valueType.Elem(), fmt.Sprintf("%s[%d]", path, index)); err != nil {
+			if err := validateJSONPresence(item, valueType.Elem(), fmt.Sprintf("%s[%d]", path, index), false); err != nil {
 				return err
 			}
 		}
@@ -78,7 +82,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 			return fmt.Errorf("%s must be an object", path)
 		}
 		for key, entry := range entries {
-			if err := validateJSONPresence(entry, valueType.Elem(), path+"."+key); err != nil {
+			if err := validateJSONPresence(entry, valueType.Elem(), path+"."+key, false); err != nil {
 				return err
 			}
 		}
@@ -102,4 +106,21 @@ func jsonField(field reflect.StructField) (string, bool) {
 		}
 	}
 	return name, false
+}
+
+func nullableJSONField(valueType reflect.Type, fieldName string) bool {
+	switch valueType.Name() {
+	case "KnowledgeMaintenanceIdentityImpact":
+		switch fieldName {
+		case "PreservedDocumentIDs", "AddedDocumentIDs", "RemovedDocumentIDs", "MovedDocumentIDs", "PreservedNodeIDs", "AddedNodeIDs", "RemovedNodeIDs":
+			return true
+		}
+	case "KnowledgeMaintenanceLineageImpact":
+		return fieldName == "Lineages"
+	case "KnowledgeMaintenanceEvidenceImpact":
+		return fieldName == "References"
+	case "KnowledgeMaintenanceRisk":
+		return fieldName == "Reasons"
+	}
+	return false
 }

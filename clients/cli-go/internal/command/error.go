@@ -66,6 +66,12 @@ func mapAPIError(err error) *Error {
 				mapped.Detail += " current_revision_id=" + *apiErr.CurrentRevisionID
 			}
 			mapped.Next = "review the current head and run the import again"
+		case "operation_conflict":
+			mapped.Detail = "the knowledge maintenance operation conflicts with current state"
+			if apiErr.CurrentRevisionID != nil {
+				mapped.Detail += " current_revision_id=" + *apiErr.CurrentRevisionID
+			}
+			mapped.Next = "refresh the proposal and current knowledge head before retrying"
 		case "idempotency_conflict":
 			mapped.Detail = "the operation ID was previously used with different content"
 			mapped.Next = "start a new import operation without changing a replay body"

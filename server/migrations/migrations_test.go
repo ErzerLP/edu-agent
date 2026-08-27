@@ -45,6 +45,8 @@ func TestKnowledgeMaintenanceMigrationDeclaresPairingScopeProfiles(t *testing.T)
 		"'knowledge:approve'",
 		"'learning:approve'",
 		"UPDATE device_tokens",
+		"token.revoked_at IS NULL",
+		"device.revoked_at IS NULL",
 		"ALTER TABLE pairing_codes ALTER COLUMN scopes SET NOT NULL",
 		"cardinality(scopes)>0",
 		"array_position(scopes,NULL) IS NULL",
@@ -67,8 +69,10 @@ func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO devices(id,display_name,created_at)
 		VALUES('11111111-1111-4111-8111-111111111111','legacy-user',now());
-		INSERT INTO device_tokens(id,device_id,token_hash,scopes,created_at)
-		VALUES('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode(repeat('22',32),'hex'),ARRAY['knowledge:read','knowledge:write','learning:approve'],now())`); err != nil {
+		INSERT INTO device_tokens(id,device_id,token_hash,scopes,created_at,revoked_at)
+		VALUES
+		  ('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode(repeat('22',32),'hex'),ARRAY['knowledge:read','knowledge:write','learning:approve'],now(),NULL),
+		  ('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',decode(repeat('33',32),'hex'),ARRAY['knowledge:read'],now(),now())`); err != nil {
 		t.Fatal(err)
 	}
 	if err := Run(ctx, pool); err != nil {
@@ -88,7 +92,13 @@ func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !containsScope(scopes, "knowledge:approve") || !containsScope(scopes, "learning:approve") {
-		t.Fatalf("legacy user token approval scopes were not preserved and separated: %v", scopes)
+		t.Fatalf("legacy active user token approval scopes were not preserved and separated: %v", scopes)
+	}
+	if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id='33333333-3333-4333-8333-333333333333'`).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	if containsScope(scopes, "knowledge:approve") {
+		t.Fatalf("legacy revoked token gained knowledge approval: %v", scopes)
 	}
 
 	invalidScopes := []struct {

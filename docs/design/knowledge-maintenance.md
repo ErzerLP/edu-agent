@@ -225,7 +225,7 @@ Knowledge maintenance planning recognizes accepted source evidence either at its
 
 ## Authorization and transports
 
-The `user` pairing profile freezes both `knowledge:approve` and `learning:approve`; migration `000011` adds `knowledge:approve` to legacy user tokens. The restricted `agent` profile contains neither approval scope and fails closed if either is introduced. Knowledge proposal approve/reject and rollback require `knowledge:approve`. Evidence carryover approve/reject require the independent `learning:approve` scope; neither scope authorizes the other owner's decision path.
+The `user` pairing profile freezes both `knowledge:approve` and `learning:approve`; migration `000011` adds `knowledge:approve` to active legacy user tokens while leaving revoked credentials unchanged. The restricted `agent` profile contains neither approval scope and fails closed if either is introduced. Knowledge proposal approve/reject and rollback require `knowledge:approve`. Evidence carryover approve/reject require the independent `learning:approve` scope; neither scope authorizes the other owner's decision path.
 
 HTTP exposes proposal create/read/decision operations and carryover read/decision operations according to those scopes. MCP exposes proposal submit/read and carryover read descriptors only, with no proposal decision, rollback, carryover decision, raw import, Assessment decision, or Memory admission capability in either its catalog or service interface. The CLI uses the same HTTP DTOs and derives decision actors exclusively from the authenticated credential.
 

@@ -1,0 +1,119 @@
+schema: comet.native.children.v1
+children:
+  - name: platform-foundation
+    depends_on: []
+    covers:
+      - A1
+      - A2
+      - A3
+      - A25
+      - A26
+      - A27
+      - A31
+      - A60
+      - A71
+      - A72
+      - A73
+  - name: knowledge-core
+    depends_on:
+      - platform-foundation
+    covers:
+      - A4
+      - A5
+      - A6
+      - A28
+      - A32
+      - A33
+      - A34
+      - A35
+      - A36
+      - A37
+  - name: learning-core
+    depends_on:
+      - knowledge-core
+    covers:
+      - A7
+      - A8
+      - A9
+      - A10
+      - A11
+      - A15
+      - A29
+      - A38
+      - A39
+      - A40
+      - A41
+      - A42
+      - A43
+      - A44
+      - A45
+      - A46
+      - A47
+      - A48
+      - A49
+      - A50
+      - A51
+      - A52
+      - A63
+      - A64
+  - name: memory-bridge
+    depends_on:
+      - learning-core
+    covers:
+      - A12
+      - A13
+      - A16
+      - A30
+      - A53
+      - A54
+      - A55
+      - A56
+      - A57
+      - A58
+      - A59
+  - name: go-cli-m1
+    depends_on:
+      - memory-bridge
+    covers:
+      - A14
+      - A21
+      - A22
+      - A23
+      - A24
+      - A61
+      - A62
+  - name: offline-sync
+    depends_on:
+      - go-cli-m1
+    covers:
+      - A17
+      - A65
+      - A66
+  - name: notesync-bridge
+    depends_on:
+      - go-cli-m1
+    covers:
+      - A18
+      - A67
+      - A68
+  - name: mcp-surface
+    depends_on:
+      - go-cli-m1
+    covers:
+      - A19
+      - A69
+  - name: knowledge-maintenance
+    depends_on:
+      - go-cli-m1
+    covers:
+      - A20
+      - A70
+  - name: operations-hardening
+    depends_on:
+      - offline-sync
+      - notesync-bridge
+      - mcp-surface
+      - knowledge-maintenance
+    covers:
+      - A74
+      - A75

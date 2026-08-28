@@ -2,4 +2,13 @@
 !/.comet/
 /.comet/*
 !/.comet/config.yaml
+
+# Local configuration and build outputs
+.env
+server/edu-agentd
+clients/cli-go/bin/
+clients/cli-go/dist/
+clients/cli-go/platform-evidence/
+__pycache__/
+*.py[cod]
 # <<< Comet managed project state <<<

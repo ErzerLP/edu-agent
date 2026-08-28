@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://edu-agent.local/schema/nocturne-managed-backup-inventory-v1.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "artifacts"],
+  "properties": {
+    "format": {"const": "edu-agent-managed-backup-inventory-v1"},
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "created_at", "size", "sha256", "learner_generation", "wrapped_key_id"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!managed-inventory\\.json$)(?!\\.edu-agent-backup\\.lock$)(?!\\.edu-agent-backup-)[^/\\\\]+$",
+            "description": "Flat immutable filename under the fixed backup root; the .edu-agent-backup- namespace is reserved for lock, journal, manifest-temp, and quarantine controls, and producers must never replace or mutate a published artifact name."
+          },
+          "created_at": {"type": "string", "format": "date-time"},
+          "size": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "learner_generation": {"type": "integer", "minimum": 1},
+          "wrapped_key_id": {"type": "string", "format": "uuid"}
+        }
+      }
+    }
+  }
+}

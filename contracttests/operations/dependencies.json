@@ -1,0 +1,23 @@
+{
+  "schema_version": "edu-agent.operations.dependencies/v1",
+  "go_version": "go1.26.6",
+  "postgres": {
+    "image": "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73",
+    "platform": "linux/amd64"
+  },
+  "notesync": {
+    "service_image": "haierkeys/fast-note-sync-service@sha256:15833f15e83cee05794c3fe6028c7e41fd36c787f0d651415cad556579fc379f",
+    "service_version": "3.6.1",
+    "service_commit": "7a6c78792c631f999c8a5f725bba5dd7235d6688",
+    "plugin_version": "2.4.0",
+    "plugin_commit": "f2b15c09d34e621d2d97ad526fdee03460bac151",
+    "platform": "linux/amd64"
+  },
+  "nocturne": {
+    "platform": "linux/amd64",
+    "platform_manifest_digest": "sha256:8e427437d35e603cb603608a124ff14344031fcc352435098b4275fa16119d45",
+    "config_digest": "sha256:b81ea6eeb94f9b8401d245d199bfbd1b133ab5977a36da1dabbfdbeca65b31dc",
+    "image_lock_sha256": "95dd844c3998d995ed0bae05d0a5eccb71f7fd4a095ac355ae260eec9550674f",
+    "supply_chain_lock_sha256": "b1be61e93ffdea9fb2b77092f24286e1e989a477aecd0cd1be616ec7baeb9937"
+  }
+}

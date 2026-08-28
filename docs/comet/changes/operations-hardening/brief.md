@@ -31,7 +31,7 @@
 - A7：同一固定模型语料分别以明确的baseline与candidate model profile/version运行；两者必须满足相同schema、错误分类、重试、provisional/accepted和持久化不变量。profile或协议版本变化自动失效旧模型证据。
 - A8：包含add、edit、move、reorder、delete和unchanged文档的固定Knowledge语料，在任意输入排列下，增量snapshot与独立fresh rebuild的规范化完整树逐字段一致，包括stable identity、parent/order、ranges、canonical slice/hash、manifest和lineage。
 - A9：覆盖canonical learning event families、补偿/redaction事件及Offline ingest/evaluation的固定语料，逐事件增量reducer与从零replay得到相同规范化projection与semantic fingerprint；response loss、重试和重启不重复Attempt、Assessment、Decision、Evidence或Outbox事实。
-- A10：真实PostgreSQL中同一pairing code并发消费恰好一个device/token成功；任一device/token/code写点故障全部回滚且不消费code，移除故障后相同code可成功使用；吊销或credential epoch变化不能与并发认证/Offline提交形成越权成功。
+- A10：真实PostgreSQL中同一pairing code并发消费恰好一个device/token成功；任一device/token/code写点故障全部回滚且不消费code，移除故障后相同code可成功使用；device吊销提交与并发认证/Offline提交必须线性化，且任何signed/request credential epoch与锁定的当前持久epoch不一致的Offline item都必须零写入并fail-closed。本change不新增epoch rotation入口，也不以直接SQL突变伪造不存在的用户流程。
 - A11：真实PostgreSQL Outbox consumer在业务副作用已提交而`applied` finalize前故障时，可在lease后reclaim；业务幂等键保证最终只有一个副作用和一个合法terminal状态。claim/defer/dead/cancel/apply写点失败不消费operation且不留下部分sibling writes。
 - A12：完整candidate索引明确列出 PostgreSQL shards、Offline黑盒、fake-model vertical、Fast Note Sync真实容器和Nocturne真实OCI/Compose gate的 `passed/failed/blocked/not-run/reused` 状态及evidence key；只有全部必需项通过或合法复用时总体才为passed，Runtime和Verifier可独立复算该结论。
 

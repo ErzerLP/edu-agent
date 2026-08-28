@@ -3,7 +3,7 @@ name: operations-hardening
 language: zh-CN
 phase: build
 status: active
-state_version: 8
+state_version: 10
 brief: brief.md
 spec_changes:
   - capability: operations-hardening
@@ -16,7 +16,7 @@ workspace:
   finish: null
 loop:
   stage: building
-  goal_cycle: 3
+  goal_cycle: 4
   iteration: 1
   attempt: 0
   retry_epoch: 0
@@ -90,8 +90,9 @@ acceptance:
   - id: A10
     source: brief.md
     text: A10：真实PostgreSQL中同一pairing
-      code并发消费恰好一个device/token成功；任一device/token/code写点故障全部回滚且不消费code，移除故障后相同code可成功使用；吊销或credential
-      epoch变化不能与并发认证/Offline提交形成越权成功。
+      code并发消费恰好一个device/token成功；任一device/token/code写点故障全部回滚且不消费code，移除故障后相同code可成功使用；device吊销提交与并发认证/Offline提交必须线性化，且任何signed/request
+      credential epoch与锁定的当前持久epoch不一致的Offline
+      item都必须零写入并fail-closed。本change不新增epoch rotation入口，也不以直接SQL突变伪造不存在的用户流程。
     result: pending
     reason: null
   - id: A11
@@ -156,7 +157,8 @@ acceptance:
   - id: A18
     source: specs/operations-hardening/spec.md
     text: Identity and Outbox atomicity Real PostgreSQL proves one-time pairing
-      concurrency, rollback and revoke/epoch fences, plus Outbox reclaim after a
+      concurrency, rollback, committed-revoke fences and zero-write rejection of
+      signed/request credential-epoch mismatches, plus Outbox reclaim after a
       committed idempotent side effect but failed finalize. Injected write
       failures leave no partial siblings and converge to one legal terminal
       result.
@@ -212,6 +214,15 @@ history:
       text: Native confirmed acceptance criteria changed
       truncated: false
     completed_at: 2026-08-28T01:37:57.156Z
+  - goal_cycle: 3
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-08-28T03:04:50.704Z
 history_overflow:
   dropped_entries: 0
   first_dropped_at: null

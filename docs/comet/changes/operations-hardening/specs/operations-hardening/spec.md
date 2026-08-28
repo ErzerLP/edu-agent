@@ -91,7 +91,7 @@ The normalized projection and semantic fingerprint include session/work-item sta
 
 ## Identity and Outbox PostgreSQL boundaries
 
-Real PostgreSQL identity tests prove one-time pairing under concurrency, atomic device/token/code writes, recovery with the same code after injected rollback, and fail-closed interaction between revoke or credential epoch change and authentication/Offline submission.
+Real PostgreSQL identity tests prove one-time pairing under concurrency, atomic device/token/code writes, recovery with the same code after injected rollback, and linearization between committed device revoke and concurrent authentication or Offline submission. Offline store tests present a signed/request credential epoch that differs from the locked persisted epoch and prove fail-closed rejection with no writes. Because no production epoch-rotation operation exists, this gate does not simulate one with direct SQL.
 
 Real PostgreSQL Outbox tests prove enqueue identity, claim/lease ownership and terminal compare-and-set behavior. If a consumer commits an idempotent business side effect and fails before Outbox finalize, reclaim converges to one business side effect and one legal terminal state. Faults in claim, attempt, defer, dead, cancel and applied writes leave no partial sibling writes and do not consume the operation identity.
 
@@ -142,7 +142,7 @@ A versioned corpus covering canonical, compensation, redaction and Offline event
 
 ## Scenario: Identity and Outbox atomicity
 
-Real PostgreSQL proves one-time pairing concurrency, rollback and revoke/epoch fences, plus Outbox reclaim after a committed idempotent side effect but failed finalize. Injected write failures leave no partial siblings and converge to one legal terminal result.
+Real PostgreSQL proves one-time pairing concurrency, rollback, committed-revoke fences and zero-write rejection of signed/request credential-epoch mismatches, plus Outbox reclaim after a committed idempotent side effect but failed finalize. Injected write failures leave no partial siblings and converge to one legal terminal result.
 
 ## Scenario: Aggregate qualification
 

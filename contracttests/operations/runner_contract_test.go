@@ -74,6 +74,27 @@ func TestHeavyRunnersShareCanonicalHostLockContract(t *testing.T) {
 	}
 }
 
+func TestOperationsWrapperPreservesSubcommandPosition(t *testing.T) {
+	root, err := FindRepositoryRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper, err := os.ReadFile(filepath.Join(root, "scripts", "test-operations-candidate.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`case "${1:-}" in`,
+		`command=("$BINARY" verify --root "$ROOT" "${@:2}")`,
+		`command=("$BINARY" "$@")`,
+		`command=("$BINARY" run --root "$ROOT" "${@:2}")`,
+	} {
+		if !strings.Contains(string(wrapper), required) {
+			t.Fatalf("operations wrapper lacks subcommand dispatch contract %q", required)
+		}
+	}
+}
+
 func TestCoordinatorHostLockInheritanceDoesNotRelock(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("host lock inheritance is Linux-only")

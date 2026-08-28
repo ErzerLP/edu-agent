@@ -15,9 +15,9 @@
   },
   "nocturne": {
     "platform": "linux/amd64",
-    "platform_manifest_digest": "sha256:4c7b8dbaab7e1b906b079873f7dc1dadd8abca92f0be0eb3343b1bb81e160f35",
-    "config_digest": "sha256:8010cd26cfc620053410ba5c0c2d6ec6baca17e1fccf695f806ffa7dfc62ea47",
-    "image_lock_sha256": "828c3208d3beeca266ac0c39ca7cca535c16624ab8def56da69056fb798e782b",
-    "supply_chain_lock_sha256": "113967fb667b78ecc9a6c7ad72381a48ca998ba5a8602ac24e9b3c259709de36"
+    "platform_manifest_digest": "sha256:8e427437d35e603cb603608a124ff14344031fcc352435098b4275fa16119d45",
+    "config_digest": "sha256:b81ea6eeb94f9b8401d245d199bfbd1b133ab5977a36da1dabbfdbeca65b31dc",
+    "image_lock_sha256": "95dd844c3998d995ed0bae05d0a5eccb71f7fd4a095ac355ae260eec9550674f",
+    "supply_chain_lock_sha256": "b1be61e93ffdea9fb2b77092f24286e1e989a477aecd0cd1be616ec7baeb9937"
   }
 }

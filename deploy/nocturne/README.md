@@ -28,15 +28,19 @@ publication requires a separate verified registry digest record.
 `DOCKER_CONFIG`, creates a temporary docker-container builder from the locked
 BuildKit image digest, verifies its driver image and reported BuildKit version,
 builds the OCI layout, checks every OCI blob, and requires exact equality with
-`image.lock.json` before succeeding.
+`image.lock.json` before succeeding. The Dockerfile also normalizes the generated
+`appuser` shadow last-change day to `SOURCE_DATE_EPOCH / 86400`; otherwise the
+account-creation layer changes across calendar days even when every locked input
+is unchanged. Refreshing `image.lock.json` therefore requires two clean OCI
+builds with identical index, manifest, and config digests.
 
 Run:
 
 ```sh
-deploy/nocturne/scripts/run-contract-tests.sh
-deploy/nocturne/scripts/tool.py verify-lock
-deploy/nocturne/scripts/build-oci.sh
-deploy/nocturne/scripts/tool.py verify-oci
+sh deploy/nocturne/scripts/run-contract-tests.sh
+python3 deploy/nocturne/scripts/tool.py verify-lock
+sh deploy/nocturne/scripts/build-oci.sh
+python3 deploy/nocturne/scripts/tool.py verify-oci
 ```
 
 ## Managed backup protocol

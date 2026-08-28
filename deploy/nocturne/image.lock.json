@@ -1,9 +1,9 @@
 {
   "schema": "edu-agent.nocturne-image-lock.v1",
-  "supply_chain_lock_sha256": "113967fb667b78ecc9a6c7ad72381a48ca998ba5a8602ac24e9b3c259709de36",
+  "supply_chain_lock_sha256": "b1be61e93ffdea9fb2b77092f24286e1e989a477aecd0cd1be616ec7baeb9937",
   "platform": "linux/amd64",
-  "oci_index_sha256": "e23680ff3d18f07901168a22b213cb2c72a2c94cbb628de6938bf53fd0e32323",
-  "platform_manifest_digest": "sha256:4c7b8dbaab7e1b906b079873f7dc1dadd8abca92f0be0eb3343b1bb81e160f35",
-  "config_digest": "sha256:8010cd26cfc620053410ba5c0c2d6ec6baca17e1fccf695f806ffa7dfc62ea47",
+  "oci_index_sha256": "c7754b7a8cf6a282e5cecd6a9c55c05b9cd48618bc05424dfe7af557adb4878d",
+  "platform_manifest_digest": "sha256:8e427437d35e603cb603608a124ff14344031fcc352435098b4275fa16119d45",
+  "config_digest": "sha256:b81ea6eeb94f9b8401d245d199bfbd1b133ab5977a36da1dabbfdbeca65b31dc",
   "registry_digest": null
 }

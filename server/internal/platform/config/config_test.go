@@ -378,7 +378,7 @@ func validNocturneEnv() map[string]string {
 	values["NOCTURNE_BACKUP_ROOT"] = "/var/lib/edu-agent/nocturne-backups"
 	values["NOCTURNE_BACKUP_MASTER_WRAPPING_KEY"] = encodedSecret32(0x33)
 	values["NOCTURNE_PG_DUMP_DSN"] = "postgres://nocturne:secret@database:5432/nocturne?sslmode=require"
-	values["NOCTURNE_IMAGE_LOCK_REFERENCE"] = "registry.example/edu-agent/nocturne@sha256:4c7b8dbaab7e1b906b079873f7dc1dadd8abca92f0be0eb3343b1bb81e160f35"
+	values["NOCTURNE_IMAGE_LOCK_REFERENCE"] = "registry.example/edu-agent/nocturne@sha256:8e427437d35e603cb603608a124ff14344031fcc352435098b4275fa16119d45"
 	return values
 }
 

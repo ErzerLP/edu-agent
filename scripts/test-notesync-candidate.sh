@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 IMAGE='haierkeys/fast-note-sync-service@sha256:15833f15e83cee05794c3fe6028c7e41fd36c787f0d651415cad556579fc379f'
 EXPECTED_VERSION='3.6.1'
-LOCK_FILE='/tmp/edu-agent-notesync-candidate.lock'
+APPROVED_PLATFORM='linux/amd64'
+PLATFORM=${DOCKER_DEFAULT_PLATFORM:-$APPROVED_PLATFORM}
+LOCK_FILE=${OPERATIONS_CANDIDATE_LOCK_FILE:-/tmp/edu-agent-operations-candidate.lock}
+LOCK_FD=${OPERATIONS_CANDIDATE_LOCK_FD:-}
+LOCK_PROTOCOL=${OPERATIONS_CANDIDATE_LOCK_PROTOCOL:-}
 container=''
 
 cleanup() {
@@ -21,20 +26,55 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in docker curl jq go flock; do
+for tool in docker curl jq go flock readlink; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
 		printf 'NoteSync candidate: required tool not found: %s\n' "$tool" >&2
 		exit 2
 	fi
 done
-if ! docker info >/dev/null 2>&1; then
-	printf 'NoteSync candidate: Docker daemon is unavailable\n' >&2
+LOCK_FILE=$(readlink -m -- "$LOCK_FILE")
+if [[ "$PLATFORM" != "$APPROVED_PLATFORM" ]]; then
+	printf 'NoteSync candidate: platform must equal %s\n' "$APPROVED_PLATFORM" >&2
 	exit 2
 fi
 
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-	printf 'NoteSync candidate: another host-wide candidate gate holds %s\n' "$LOCK_FILE" >&2
+acquire_operations_lock() {
+	if [[ -n "$LOCK_FD" ]]; then
+		if [[ "$LOCK_PROTOCOL" != 'inherited-fd-v1' || ! "$LOCK_FD" =~ ^[0-9]+$ ]]; then
+			printf 'NoteSync candidate: invalid inherited operations candidate lock protocol\n' >&2
+			exit 1
+		fi
+		if [[ ! -e "/proc/$$/fd/$LOCK_FD" ]]; then
+			printf 'NoteSync candidate: inherited operations candidate lock descriptor is unavailable\n' >&2
+			exit 1
+		fi
+		local inherited_target expected_target
+		inherited_target=$(readlink -f -- "/proc/$$/fd/$LOCK_FD")
+		expected_target=$(readlink -f -- "$LOCK_FILE")
+		if [[ "$inherited_target" != "$expected_target" ]]; then
+			printf 'NoteSync candidate: inherited operations candidate lock descriptor targets the wrong file\n' >&2
+			exit 1
+		fi
+		if ! flock -n "$LOCK_FD"; then
+			printf 'NoteSync candidate: inherited operations candidate lock is not held\n' >&2
+			exit 1
+		fi
+		return
+	fi
+	exec 9>"$LOCK_FILE"
+	if ! flock -n 9; then
+		printf 'NoteSync candidate: another host-wide candidate gate holds %s\n' "$LOCK_FILE" >&2
+		exit 2
+	fi
+	export OPERATIONS_CANDIDATE_LOCK_FILE="$LOCK_FILE"
+	export OPERATIONS_CANDIDATE_LOCK_FD=9
+	export OPERATIONS_CANDIDATE_LOCK_PROTOCOL='inherited-fd-v1'
+}
+
+acquire_operations_lock
+
+if ! docker info >/dev/null 2>&1; then
+	printf 'NoteSync candidate: Docker daemon is unavailable\n' >&2
 	exit 2
 fi
 
@@ -46,6 +86,7 @@ fi
 stamp="$(date -u +%Y%m%d%H%M%S)-$$"
 container="edu-agent-notesync-candidate-$stamp"
 docker run -d \
+	--platform "$PLATFORM" \
 	--name "$container" \
 	--tmpfs /fast-note-sync/storage:rw,nosuid,nodev,noexec,size=256m,mode=0777 \
 	--tmpfs /fast-note-sync/config:rw,nosuid,nodev,noexec,size=16m,mode=0777 \

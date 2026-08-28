@@ -2,8 +2,10 @@ package postgresstore_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -195,6 +197,96 @@ func TestPostgreSQLOfflineIngestSequenceWinnerRejectionAndOpenQueue(t *testing.T
 	}
 }
 
+func TestPostgreSQLOfflineCredentialEpochFenceAndRevocationRace(t *testing.T) {
+	t.Run("mismatched epoch fails closed without writes", func(t *testing.T) {
+		pool, store, _ := newOfflineIngestFixture(t)
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		activityID := seedOfflineActivity(t, pool, "objective", now.Add(-time.Hour), now.Add(time.Hour), now.Add(24*time.Hour))
+		operation := seedOfflineSubmission(t, pool, learningDeviceOne, 70, activityID, now.Add(time.Hour), now.Add(24*time.Hour), learning.OfflineAttemptCompleted)
+		operation.CredentialEpoch = 2
+		before := captureOfflineWriteSnapshot(t, pool)
+
+		result, err := store.IngestOffline(context.Background(), learning.OfflineIngestRequest{Operation: operation})
+		if err != nil {
+			t.Fatalf("mismatched credential epoch returned an error: %v", err)
+		}
+		if result.ResultKind != learning.OfflineResultBlocked || result.ArchiveStatus != learning.OfflineNotArchivedBlocked || len(result.ReasonCodes) != 1 || result.ReasonCodes[0] != learning.OfflineReasonDeviceRevoked {
+			t.Fatalf("mismatched credential epoch result=%+v", result)
+		}
+		after := captureOfflineWriteSnapshot(t, pool)
+		if !reflect.DeepEqual(after, before) {
+			t.Fatalf("mismatched credential epoch changed durable state before=%v after=%v", before, after)
+		}
+	})
+
+	t.Run("revocation linearizes with offline ingest", func(t *testing.T) {
+		pool, store, _ := newOfflineIngestFixture(t)
+		ctx := context.Background()
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		raceActivity := seedOfflineActivity(t, pool, "objective", now.Add(-time.Hour), now.Add(time.Hour), now.Add(24*time.Hour))
+		postActivity := seedOfflineActivity(t, pool, "objective", now.Add(-time.Hour), now.Add(time.Hour), now.Add(24*time.Hour))
+		raceOperation := seedOfflineSubmission(t, pool, learningDeviceOne, 71, raceActivity, now.Add(time.Hour), now.Add(24*time.Hour), learning.OfflineAttemptCompleted)
+		postOperation := seedOfflineSubmission(t, pool, learningDeviceOne, 72, postActivity, now.Add(time.Hour), now.Add(24*time.Hour), learning.OfflineAttemptCompleted)
+
+		start := make(chan struct{})
+		ingestResult := make(chan learning.OfflineIngestResult, 1)
+		ingestErr := make(chan error, 1)
+		revokeErr := make(chan error, 1)
+		go func() {
+			<-start
+			result, err := store.IngestOffline(context.Background(), learning.OfflineIngestRequest{Operation: raceOperation})
+			ingestResult <- result
+			ingestErr <- err
+		}()
+		go func() {
+			<-start
+			revokeErr <- identitydb.New(pool).RevokeDevice(context.Background(), learningDeviceOne, now)
+		}()
+		close(start)
+
+		result := <-ingestResult
+		if err := <-ingestErr; err != nil {
+			t.Fatalf("offline ingest raced with revocation: %v", err)
+		}
+		if err := <-revokeErr; err != nil {
+			t.Fatalf("revoke device raced with offline ingest: %v", err)
+		}
+		switch result.ArchiveStatus {
+		case learning.OfflineArchivedSucceeded:
+			if result.ResultKind != learning.OfflineResultArchived {
+				t.Fatalf("pre-revocation offline success result=%+v", result)
+			}
+		case learning.OfflineNotArchivedBlocked:
+			if result.ResultKind != learning.OfflineResultBlocked || len(result.ReasonCodes) != 1 || result.ReasonCodes[0] != learning.OfflineReasonDeviceRevoked {
+				t.Fatalf("revocation-win offline result=%+v", result)
+			}
+		default:
+			t.Fatalf("offline/revocation race did not linearize result=%+v", result)
+		}
+
+		var revokedAt *time.Time
+		if err := pool.QueryRow(ctx, `SELECT revoked_at FROM devices WHERE id=$1`, learningDeviceOne).Scan(&revokedAt); err != nil || revokedAt == nil {
+			t.Fatalf("device revocation was not durable revoked_at=%v err=%v", revokedAt, err)
+		}
+		before := captureOfflineWriteSnapshot(t, pool)
+		blocked, err := store.IngestOffline(ctx, learning.OfflineIngestRequest{Operation: postOperation})
+		if err != nil {
+			t.Fatalf("post-revocation offline ingest returned an error: %v", err)
+		}
+		if blocked.ResultKind != learning.OfflineResultBlocked || blocked.ArchiveStatus != learning.OfflineNotArchivedBlocked || len(blocked.ReasonCodes) != 1 || blocked.ReasonCodes[0] != learning.OfflineReasonDeviceRevoked {
+			t.Fatalf("post-revocation offline result=%+v", blocked)
+		}
+		after := captureOfflineWriteSnapshot(t, pool)
+		if !reflect.DeepEqual(after, before) {
+			t.Fatalf("post-revocation offline ingest changed durable state before=%v after=%v", before, after)
+		}
+		var headState string
+		if err := pool.QueryRow(ctx, `SELECT state FROM offline_attempt_heads WHERE submission_id=$1`, postOperation.SubmissionID).Scan(&headState); err != nil || headState != "reserved" {
+			t.Fatalf("post-revocation reservation state=%q err=%v", headState, err)
+		}
+	})
+}
+
 func TestPostgreSQLOfflinePrivacyPossessionAndRedaction(t *testing.T) {
 	pool, learningStore, _ := newOfflineIngestFixture(t)
 	ctx := context.Background()
@@ -323,7 +415,7 @@ func TestPostgreSQLOfflineIngestCriticalWriteGroupsRollback(t *testing.T) {
 				t.Fatalf("fault %s error=%v", test.name, err)
 			}
 			after := captureOfflineWriteSnapshot(t, pool)
-			if fmt.Sprint(before) != fmt.Sprint(after) {
+			if !reflect.DeepEqual(before, after) {
 				t.Fatalf("fault %s left sibling writes\nbefore=%v\nafter=%v", test.name, before, after)
 			}
 			var state string
@@ -370,6 +462,11 @@ func seedOfflineActivity(t *testing.T, pool *pgxpool.Pool, activityType string, 
 	rubric := map[string]any{"rubric_revision": "offline-r1", "items": []any{}}
 	if activityType == "objective" {
 		rubric["objective_rule"] = map[string]any{"accepted_answers": []string{"ok"}, "case_sensitive": false, "trim_space": true}
+	} else if activityType == "open" {
+		rubric["items"] = []any{map[string]any{
+			"rubric_item_id": "item-1", "criterion": "answer matches the referenced topic",
+			"required_reference_ids": []string{learningNodeRevisionID},
+		}}
 	}
 	rubricJSON, _ := json.Marshal(rubric)
 	payloadHash := learning.SHA256([]byte("offline prompt " + activityID))
@@ -470,29 +567,59 @@ func seedOfflineSubmission(t *testing.T, pool *pgxpool.Pool, deviceID string, se
 	return operation
 }
 
-func captureOfflineWriteSnapshot(t *testing.T, pool *pgxpool.Pool) map[string]int64 {
+func captureOfflineWriteSnapshot(t *testing.T, pool *pgxpool.Pool) map[string]string {
 	t.Helper()
-	tables := []string{
-		"learning_activities", "learning_activity_references", "learning_attempt_payloads", "learning_attempts",
-		"learning_activity_evidence_claims", "learning_assessments", "learning_assessment_decisions", "learning_evidence",
-		"learning_event_payloads", "learning_events", "offline_device_sequence_claims", "learning_inbox",
-		"offline_operation_statuses", "offline_operation_status_revisions", "offline_operation_status_heads",
-		"offline_evaluation_jobs", "outbox_messages", "learning_projection_timeline", "learning_projection_evidence",
-	}
-	result := make(map[string]int64, len(tables)+1)
-	for _, table := range tables {
-		query := `SELECT count(*) FROM ` + pgxIdentifier(table)
-		var count int64
-		if err := pool.QueryRow(context.Background(), query).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		result[table] = count
-	}
-	var eventClock int64
-	if err := pool.QueryRow(context.Background(), `SELECT current_event_seq FROM learning_event_clock WHERE singleton_id=1`).Scan(&eventClock); err != nil {
+	ctx := context.Background()
+	rows, err := pool.Query(ctx, `
+		SELECT table_name
+		FROM information_schema.tables
+		WHERE table_schema=current_schema() AND table_type='BASE TABLE'
+		ORDER BY table_name`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	result["event_clock"] = eventClock
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		tables = append(tables, table)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+
+	result := make(map[string]string, len(tables))
+	for _, table := range tables {
+		query := fmt.Sprintf(`
+			SELECT to_jsonb(source)::text AS row_value
+			FROM %s AS source
+			ORDER BY row_value`, pgxIdentifier(table))
+		rows, err := pool.Query(ctx, query)
+		if err != nil {
+			t.Fatalf("read %s for digest: %v", table, err)
+		}
+		hash := sha256.New()
+		for rows.Next() {
+			var row string
+			if err := rows.Scan(&row); err != nil {
+				rows.Close()
+				t.Fatalf("scan %s for digest: %v", table, err)
+			}
+			_, _ = hash.Write([]byte(row))
+			_, _ = hash.Write([]byte{'\n'})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate %s for digest: %v", table, err)
+		}
+		rows.Close()
+		result[table] = fmt.Sprintf("%x", hash.Sum(nil))
+	}
 	return result
 }
 

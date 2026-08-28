@@ -328,12 +328,23 @@ func TestMemoryRoutesMethodsScopesAndActors(t *testing.T) {
 		}
 	}
 
-	readOnly := newMemoryPrivacyAPI(t, []string{"memory:read"}, service, exporter, nil, nil, privacy.NewReadPermitManager(), &logs)
-	response := authenticatedRequest(readOnly, http.MethodPost, "/v1/memory/candidates", candidateBody)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("memory write scope = %d", response.Code)
+	readOnly := newMemoryPrivacyAPI(t, []string{"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read"}, service, exporter, nil, nil, privacy.NewReadPermitManager(), &logs)
+	for _, request := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodPost, "/v1/memory/candidates", candidateBody},
+		{http.MethodPost, "/v1/memory/candidates/" + testCandidateID + "/decisions", decisionBody},
+		{http.MethodDelete, "/v1/memory/records/" + testMemoryID, deleteBody},
+	} {
+		service.method = ""
+		response := authenticatedRequest(readOnly, request.method, request.path, request.body)
+		if response.Code != http.StatusForbidden || service.method != "" {
+			t.Fatalf("restricted Agent memory path %s %s = %d method=%q", request.method, request.path, response.Code, service.method)
+		}
 	}
-	response = authenticatedRequest(handler, http.MethodPatch, "/v1/memory/candidates/"+testCandidateID, "")
+	response := authenticatedRequest(handler, http.MethodPatch, "/v1/memory/candidates/"+testCandidateID, "")
 	if response.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("wrong method = %d", response.Code)
 	}

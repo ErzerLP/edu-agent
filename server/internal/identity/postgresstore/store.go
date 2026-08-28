@@ -23,9 +23,9 @@ func New(pool *pgxpool.Pool) *Store {
 
 func (s *Store) InsertPairingCode(ctx context.Context, code identity.PairingCodeRecord) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO pairing_codes(lookup_id, code_hash, created_at, expires_at, attempts, max_attempts)
-		VALUES($1,$2,$3,$4,$5,$6)`,
-		code.LookupID, code.CodeHash[:], code.CreatedAt, code.ExpiresAt, code.Attempts, code.MaxAttempts)
+		INSERT INTO pairing_codes(lookup_id, code_hash, scopes, created_at, expires_at, attempts, max_attempts)
+		VALUES($1,$2,$3,$4,$5,$6,$7)`,
+		code.LookupID, code.CodeHash[:], code.Scopes, code.CreatedAt, code.ExpiresAt, code.Attempts, code.MaxAttempts)
 	if err != nil {
 		return fmt.Errorf("insert pairing code: %w", err)
 	}
@@ -39,64 +39,66 @@ func (s *Store) ConsumePairingCode(
 	device identity.Device,
 	token identity.TokenRecord,
 	now time.Time,
-) error {
+) ([]string, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return fmt.Errorf("begin pairing exchange: %w", err)
+		return nil, fmt.Errorf("begin pairing exchange: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	var storedHash []byte
+	var scopes []string
 	var expiresAt time.Time
 	var consumedAt *time.Time
 	var attempts, maxAttempts int
 	err = tx.QueryRow(ctx, `
-		SELECT code_hash, expires_at, consumed_at, attempts, max_attempts
+		SELECT code_hash, scopes, expires_at, consumed_at, attempts, max_attempts
 		FROM pairing_codes WHERE lookup_id=$1 FOR UPDATE`, lookupID).
-		Scan(&storedHash, &expiresAt, &consumedAt, &attempts, &maxAttempts)
+		Scan(&storedHash, &scopes, &expiresAt, &consumedAt, &attempts, &maxAttempts)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return identity.ErrInvalidPairingCode
+		return nil, identity.ErrInvalidPairingCode
 	}
 	if err != nil {
-		return fmt.Errorf("lock pairing code: %w", err)
+		return nil, fmt.Errorf("lock pairing code: %w", err)
 	}
 	if consumedAt != nil || !now.Before(expiresAt) || attempts >= maxAttempts {
-		return identity.ErrInvalidPairingCode
+		return nil, identity.ErrInvalidPairingCode
 	}
 	if len(storedHash) != 32 || subtle.ConstantTimeCompare(storedHash, candidateHash[:]) != 1 {
 		if _, err := tx.Exec(ctx, `UPDATE pairing_codes SET attempts=attempts+1 WHERE lookup_id=$1`, lookupID); err != nil {
-			return fmt.Errorf("record pairing failure: %w", err)
+			return nil, fmt.Errorf("record pairing failure: %w", err)
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit pairing failure: %w", err)
+			return nil, fmt.Errorf("commit pairing failure: %w", err)
 		}
-		return identity.ErrInvalidPairingCode
+		return nil, identity.ErrInvalidPairingCode
 	}
 
+	token.Scopes = append([]string(nil), scopes...)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO devices(id,display_name,created_at) VALUES($1,$2,$3)`,
 		device.ID, device.DisplayName, device.CreatedAt); err != nil {
-		return fmt.Errorf("insert device: %w", err)
+		return nil, fmt.Errorf("insert device: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO device_tokens(id,device_id,token_hash,scopes,created_at)
 		VALUES($1,$2,$3,$4,$5)`,
 		token.ID, token.DeviceID, token.TokenHash[:], token.Scopes, token.CreatedAt); err != nil {
-		return fmt.Errorf("insert device token: %w", err)
+		return nil, fmt.Errorf("insert device token: %w", err)
 	}
 	command, err := tx.Exec(ctx, `
 		UPDATE pairing_codes SET consumed_at=$2
 		WHERE lookup_id=$1 AND consumed_at IS NULL`, lookupID, now)
 	if err != nil {
-		return fmt.Errorf("consume pairing code: %w", err)
+		return nil, fmt.Errorf("consume pairing code: %w", err)
 	}
 	if command.RowsAffected() != 1 {
-		return identity.ErrInvalidPairingCode
+		return nil, identity.ErrInvalidPairingCode
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit pairing exchange: %w", err)
+		return nil, fmt.Errorf("commit pairing exchange: %w", err)
 	}
-	return nil
+	return append([]string(nil), scopes...), nil
 }
 
 func (s *Store) FindCredentialByTokenHash(ctx context.Context, hash [32]byte) (identity.Credential, error) {

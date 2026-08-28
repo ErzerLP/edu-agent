@@ -84,7 +84,9 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	canonicalizer := knowledge.NewCanonicalizer()
 	knowledgeService, err := knowledge.NewService(
-		stores.knowledge, canonicalizer, knowledge.ServiceOptions{Selector: selector},
+		stores.knowledge, canonicalizer, knowledge.ServiceOptions{
+			Selector: selector, MaintenanceStore: stores.knowledge, EvidenceImpactReader: stores.learning,
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("initialize knowledge service: %w", err)
@@ -331,7 +333,7 @@ func newOfflineEvaluationWorkerSpec(service *learning.Service, evaluationStore l
 	return periodicWorker("offline_evaluation", time.Second, 10, health.track(worker.RunOnce)), health, nil
 }
 
-func CreatePairingCode(ctx context.Context, cfg config.Config) (string, time.Time, error) {
+func CreatePairingCode(ctx context.Context, cfg config.Config, profile identity.PairingProfile) (string, time.Time, error) {
 	pool, err := platformpostgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return "", time.Time{}, err
@@ -351,7 +353,7 @@ func CreatePairingCode(ctx context.Context, cfg config.Config) (string, time.Tim
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	return service.CreatePairingCode(ctx)
+	return service.CreatePairingCodeForProfile(ctx, profile)
 }
 
 type notesyncBridgeRemote interface {

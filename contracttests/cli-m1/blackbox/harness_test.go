@@ -291,9 +291,18 @@ func (h *harness) pair(home, serverURL, name string) {
 
 func (h *harness) createPairingCode() string {
 	h.t.Helper()
+	return h.createPairingCodeForProfile("")
+}
+
+func (h *harness) createPairingCodeForProfile(profile string) string {
+	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, serverBin, "pairing-code", "create")
+	args := []string{"pairing-code", "create"}
+	if profile != "" {
+		args = append(args, "--profile", profile)
+	}
+	cmd := exec.CommandContext(ctx, serverBin, args...)
 	cmd.Env = replaceEnv(h.serverEnv, "MIGRATE_ON_START", "false")
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
@@ -306,6 +315,66 @@ func (h *harness) createPairingCode() string {
 		h.t.Fatalf("pairing setup failed: invalid one-time code shape")
 	}
 	return code
+}
+
+type pairedCredential struct {
+	DeviceID string
+	Token    string
+}
+
+func (h *harness) pairCredential(profile, displayName string) pairedCredential {
+	h.t.Helper()
+	var response struct {
+		Device struct {
+			ID string `json:"id"`
+		} `json:"device"`
+		Token string `json:"token"`
+	}
+	h.authenticatedJSON(http.MethodPost, h.serverURL+"/v1/pairings/exchange", "", map[string]string{
+		"code": h.createPairingCodeForProfile(profile), "display_name": displayName,
+	}, http.StatusCreated, &response)
+	if response.Device.ID == "" || response.Token == "" {
+		h.t.Fatalf("pairing setup failed: credential response metadata")
+	}
+	return pairedCredential{DeviceID: response.Device.ID, Token: response.Token}
+}
+
+func (h *harness) authenticatedJSON(method, endpoint, token string, input any, wantStatus int, output any) {
+	h.t.Helper()
+	var body io.Reader
+	if input != nil {
+		encoded, err := json.Marshal(input)
+		if err != nil {
+			h.t.Fatalf("authenticated request failed: encode input")
+		}
+		body = bytes.NewReader(encoded)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
+	if err != nil {
+		h.t.Fatalf("authenticated request failed: create request")
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if input != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		h.t.Fatalf("authenticated request failed: transport")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != wantStatus {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		h.t.Fatalf("authenticated request failed: method=%s status=%d want=%d body=%q", method, response.StatusCode, wantStatus, detail)
+	}
+	if output != nil {
+		if err := json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(output); err != nil {
+			h.t.Fatalf("authenticated request failed: decode response")
+		}
+	}
 }
 
 func (h *harness) newCLIHome(label string) string {

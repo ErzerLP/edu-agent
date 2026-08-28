@@ -53,6 +53,9 @@ const (
 	CodeOfflinePrepareUnavailable     = "offline_prepare_unavailable"
 	CodeOfflineSignerUnavailable      = "offline_signer_unavailable"
 	CodeOfflineOperationNotFound      = "operation_not_found"
+	CodeOperationConflict             = "operation_conflict"
+	CodeEvidenceCarryoverClosed       = "evidence_carryover_closed"
+	CodeEvidenceCarryoverNoCandidates = "evidence_carryover_no_candidates"
 )
 
 type Error struct {

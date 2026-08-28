@@ -29,8 +29,121 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 10 || latest.name != "000010_notesync_bridge.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("notesync bridge migration was not embedded with checksum: %+v", latest)
+	if latest.version != 11 || latest.name != "000011_knowledge_maintenance.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("knowledge maintenance migration was not embedded with checksum: %+v", latest)
+	}
+}
+
+func TestKnowledgeMaintenanceMigrationDeclaresPairingScopeProfiles(t *testing.T) {
+	items, err := load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := migrationBody(t, items, 11)
+	for _, required := range []string{
+		"ALTER TABLE pairing_codes ADD COLUMN scopes TEXT[]",
+		"'knowledge:approve'",
+		"'learning:approve'",
+		"UPDATE device_tokens",
+		"SELECT DISTINCT scope",
+		"token.revoked_at IS NULL",
+		"device.revoked_at IS NULL",
+		"ALTER TABLE pairing_codes ALTER COLUMN scopes SET NOT NULL",
+		"cardinality(scopes)>0",
+		"array_position(scopes,NULL) IS NULL",
+		"array_position(scopes,'') IS NULL",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("000011 pairing scope migration is missing %q", required)
+		}
+	}
+}
+
+func TestKnowledgeMaintenanceMigrationBackfillsPairingCodeScopes(t *testing.T) {
+	pool := migrationPoolThrough(t, 10)
+	ctx := context.Background()
+	legacyUserScopes := []string{
+		"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write",
+		"learning:read", "learning:write", "memory:read", "memory:write", "privacy:read", "privacy:device",
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO pairing_codes(lookup_id,code_hash,created_at,expires_at,max_attempts)
+		VALUES('legacy-user-code',decode(repeat('11',32),'hex'),now(),now()+interval '10 minutes',5)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO devices(id,display_name,created_at,revoked_at)
+		VALUES
+		  ('11111111-1111-4111-8111-111111111111','legacy-user',now(),NULL),
+		  ('11111111-1111-4111-8111-111111111112','revoked-device',now(),now());
+		INSERT INTO device_tokens(id,device_id,token_hash,scopes,created_at,revoked_at)
+		VALUES
+		  ('22222222-2222-4222-8222-222222222222','11111111-1111-4111-8111-111111111111',decode(repeat('22',32),'hex'),ARRAY['devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','learning:read','learning:write','memory:read','memory:write','privacy:read','privacy:device'],now(),NULL),
+		  ('33333333-3333-4333-8333-333333333333','11111111-1111-4111-8111-111111111111',decode(repeat('33',32),'hex'),ARRAY['devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','learning:read','learning:write','memory:read','memory:write','privacy:read','privacy:device'],now(),now()),
+		  ('44444444-4444-4444-8444-444444444444','11111111-1111-4111-8111-111111111112',decode(repeat('44',32),'hex'),ARRAY['devices:read','devices:manage','model:probe','knowledge:read','knowledge:write','learning:read','learning:write','memory:read','memory:write','privacy:read','privacy:device'],now(),NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(ctx, pool); err != nil {
+		t.Fatalf("upgrade pairing code scopes through 000011: %v", err)
+	}
+
+	var scopes []string
+	if err := pool.QueryRow(ctx, `SELECT scopes FROM pairing_codes WHERE lookup_id='legacy-user-code'`).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"devices:manage", "knowledge:read", "knowledge:write", "knowledge:approve", "learning:read", "learning:write", "learning:approve", "privacy:device"} {
+		if !containsScope(scopes, required) {
+			t.Fatalf("upgraded user pairing code missing %s: %v", required, scopes)
+		}
+	}
+	if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id='22222222-2222-4222-8222-222222222222'`).Scan(&scopes); err != nil {
+		t.Fatal(err)
+	}
+	if scopeCount(scopes, "knowledge:approve") != 1 || scopeCount(scopes, "learning:approve") != 1 || hasDuplicateScopes(scopes) {
+		t.Fatalf("legacy active user token approvals are not distinct: %v", scopes)
+	}
+	for _, required := range legacyUserScopes {
+		if !containsScope(scopes, required) {
+			t.Fatalf("legacy active user token lost %s: %v", required, scopes)
+		}
+	}
+
+	for _, test := range []struct {
+		name string
+		id   string
+		want []string
+	}{
+		{name: "revoked token", id: "33333333-3333-4333-8333-333333333333", want: legacyUserScopes},
+		{name: "revoked device token", id: "44444444-4444-4444-8444-444444444444", want: legacyUserScopes},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE id=$1`, test.id).Scan(&scopes); err != nil {
+				t.Fatal(err)
+			}
+			if !sameScopes(scopes, test.want) {
+				t.Fatalf("inactive token scopes changed: got=%v want=%v", scopes, test.want)
+			}
+		})
+	}
+
+	invalidScopes := []struct {
+		name  string
+		value string
+	}{
+		{name: "null", value: "NULL"},
+		{name: "empty array", value: "ARRAY[]::TEXT[]"},
+		{name: "null element", value: "ARRAY['knowledge:read',NULL]::TEXT[]"},
+		{name: "empty element", value: "ARRAY['']::TEXT[]"},
+	}
+	for index, test := range invalidScopes {
+		t.Run(test.name, func(t *testing.T) {
+			query := fmt.Sprintf(`
+				INSERT INTO pairing_codes(lookup_id,code_hash,scopes,created_at,expires_at,max_attempts)
+				VALUES($1,decode(repeat('22',32),'hex'),%s,now(),now()+interval '10 minutes',5)`, test.value)
+			if _, err := pool.Exec(ctx, query, fmt.Sprintf("invalid-scopes-%d", index)); err == nil {
+				t.Fatalf("pairing code accepted invalid scopes %s", test.value)
+			}
+		})
 	}
 }
 
@@ -1078,6 +1191,39 @@ func containsScope(scopes []string, expected string) bool {
 	return false
 }
 
+func scopeCount(scopes []string, expected string) int {
+	count := 0
+	for _, scope := range scopes {
+		if scope == expected {
+			count++
+		}
+	}
+	return count
+}
+
+func hasDuplicateScopes(scopes []string) bool {
+	seen := make(map[string]struct{}, len(scopes))
+	for _, scope := range scopes {
+		if _, exists := seen[scope]; exists {
+			return true
+		}
+		seen[scope] = struct{}{}
+	}
+	return false
+}
+
+func sameScopes(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func legacyMigrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	return migrationPoolThrough(t, 3)
@@ -1148,4 +1294,4 @@ func migrationBody(t *testing.T, items []migration, version int64) string {
 	}
 	t.Fatalf("migration %06d not found", version)
 	return ""
-}
+} // pi-lens-ignore: syntax

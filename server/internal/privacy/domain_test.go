@@ -98,6 +98,51 @@ func TestReadPermitCloseCancelsDrainsAndReopens(t *testing.T) {
 	reopened.Release()
 }
 
+type blockingResponseCommitGate struct {
+	entered chan struct{}
+	owners  []OwnerKind
+}
+
+func (g *blockingResponseCommitGate) WithReadGates(ctx context.Context, owners []OwnerKind, _ func() error) error {
+	g.owners = append([]OwnerKind(nil), owners...)
+	close(g.entered)
+	<-ctx.Done()
+	return context.Cause(ctx)
+}
+
+func TestReadPermitPersistentGatePrecedesLocalClosure(t *testing.T) {
+	gate := &blockingResponseCommitGate{entered: make(chan struct{})}
+	manager := NewReadPermitManager(WithResponseCommitGate(gate))
+	permit, err := manager.Acquire(context.Background(), OwnerMemory, OwnerKnowledge, OwnerTutoring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrote := false
+	committed := make(chan error, 1)
+	go func() {
+		err := permit.CommitResponse(func() { wrote = true })
+		permit.Release()
+		committed <- err
+	}()
+	select {
+	case <-gate.entered:
+	case <-time.After(time.Second):
+		t.Fatal("persistent response gate was not acquired")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := manager.CloseAndDrain(ctx, 2, OwnerKnowledge); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-committed; ErrorCode(err) != CodeContentRedacted || wrote {
+		t.Fatalf("local closure did not cancel persistent gate wait: err=%v wrote=%v", err, wrote)
+	}
+	if len(gate.owners) != 3 || gate.owners[0] != OwnerKnowledge || gate.owners[1] != OwnerTutoring || gate.owners[2] != OwnerMemory {
+		t.Fatalf("persistent owner order=%v", gate.owners)
+	}
+}
+
 func TestReadPermitCommitResponseSerializesPrivacyClosure(t *testing.T) {
 	manager := NewReadPermitManager()
 	permit, err := manager.Acquire(context.Background(), OwnerKnowledge)

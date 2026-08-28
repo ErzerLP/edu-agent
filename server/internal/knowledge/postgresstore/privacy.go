@@ -140,6 +140,33 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 			return fmt.Errorf("redact knowledge notesync resolution operations: %w", err)
 		}
 		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_maintenance_proposals
+			SET status=CASE WHEN status='open' THEN 'redacted' ELSE status END,
+				request_hash=decode(repeat('00',32),'hex'),
+				basis_hash=decode(repeat('00',32),'hex'),record='{}'::jsonb,prepared_commit='{}'::jsonb,
+				updated_at=clock_timestamp(),redacted_at=clock_timestamp()
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge maintenance proposals: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_maintenance_decisions
+			SET reason='privacy_erasure'
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge maintenance decisions: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_maintenance_operations
+			SET request_hash=decode(repeat('00',32),'hex')
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge maintenance operations: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE knowledge_revision_origins
+			SET basis_hash=decode(repeat('00',32),'hex')
+			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact knowledge revision origins: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_notesync_publication_attempts
 			SET status='redacted',base_missing=TRUE,base_markdown=NULL,base_sha256=NULL,
 				error_category='privacy_redaction',error_at=clock_timestamp(),updated_at=clock_timestamp()
@@ -214,6 +241,16 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 				    OR request_hash <> decode(repeat('00',32),'hex') OR redacted_at IS NULL
 				    OR result_knowledge_revision_id IS NOT NULL OR result_document_id IS NOT NULL
 				    OR result_document_revision_id IS NOT NULL)+
+				(SELECT count(*) FROM knowledge_maintenance_proposals
+				 WHERE redacted_at IS NULL OR status='open'
+				    OR request_hash<>decode(repeat('00',32),'hex')
+				    OR basis_hash<>decode(repeat('00',32),'hex')
+				    OR record<>'{}'::jsonb OR prepared_commit<>'{}'::jsonb)+
+				(SELECT count(*) FROM knowledge_maintenance_decisions WHERE reason<>'privacy_erasure')+
+				(SELECT count(*) FROM knowledge_maintenance_operations
+				 WHERE request_hash<>decode(repeat('00',32),'hex'))+
+				(SELECT count(*) FROM knowledge_revision_origins
+				 WHERE basis_hash<>decode(repeat('00',32),'hex'))+
 				(SELECT count(*) FROM knowledge_notesync_publication_attempts
 				 WHERE status <> 'redacted' OR NOT base_missing OR base_markdown IS NOT NULL
 				    OR base_sha256 IS NOT NULL OR error_category <> 'privacy_redaction'

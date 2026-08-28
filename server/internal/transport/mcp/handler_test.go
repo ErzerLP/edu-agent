@@ -84,6 +84,12 @@ type testKnowledge struct {
 	head       *knowledge.KnowledgeRevision
 	retrieve   knowledge.RetrievalResult
 	err        error
+	proposal   knowledge.Proposal
+	page       knowledge.ProposalPage
+	create     knowledge.CreateProposalCommand
+	rollback   knowledge.CreateRollbackCommand
+	list       knowledge.ProposalListCommand
+	getID      string
 	retrieveFn func(context.Context, knowledge.RetrievalCommand) (knowledge.RetrievalResult, error)
 }
 
@@ -102,21 +108,42 @@ func (f *testKnowledge) Retrieve(ctx context.Context, command knowledge.Retrieva
 	}
 	return f.retrieve, f.err
 }
+func (f *testKnowledge) Create(_ context.Context, command knowledge.CreateProposalCommand) (knowledge.Proposal, error) {
+	f.create = command
+	return f.proposal, f.err
+}
+func (f *testKnowledge) CreateRollback(_ context.Context, command knowledge.CreateRollbackCommand) (knowledge.Proposal, error) {
+	f.rollback = command
+	return f.proposal, f.err
+}
+func (f *testKnowledge) List(_ context.Context, command knowledge.ProposalListCommand) (knowledge.ProposalPage, error) {
+	f.list = command
+	return f.page, f.err
+}
+func (f *testKnowledge) Get(_ context.Context, proposalID string) (knowledge.Proposal, error) {
+	f.getID = proposalID
+	return f.proposal, f.err
+}
 
 type testLearning struct {
-	mu          sync.Mutex
-	actor       string
-	method      string
-	calls       int
-	err         error
-	current     learning.SessionView
-	timeline    learning.TimelinePage
-	projection  learning.ProjectionStatus
-	operation   learning.OperationResult
-	proposal    learning.ProposalArtifact
-	lastGoal    learning.GoalCommand
-	lastSession learning.SessionCommand
-	lastAction  learning.ActionCommand
+	mu                     sync.Mutex
+	actor                  string
+	method                 string
+	calls                  int
+	err                    error
+	current                learning.SessionView
+	timeline               learning.TimelinePage
+	projection             learning.ProjectionStatus
+	operation              learning.OperationResult
+	proposal               learning.ProposalArtifact
+	lastGoal               learning.GoalCommand
+	lastSession            learning.SessionCommand
+	lastAction             learning.ActionCommand
+	carryover              learning.EvidenceCarryoverProposal
+	carryoverPage          learning.EvidenceCarryoverPage
+	carryoverList          learning.EvidenceCarryoverListCommand
+	carryoverGetID         string
+	carryoverDecisionCalls int
 }
 
 func (f *testLearning) record(method, actor string) {
@@ -176,6 +203,26 @@ func (f *testLearning) Reviews(context.Context, learning.ReviewQuery) (learning.
 }
 func (f *testLearning) ProjectionStatus(context.Context) (learning.ProjectionStatus, error) {
 	return f.projection, f.err
+}
+func (f *testLearning) ListEvidenceCarryovers(_ context.Context, command learning.EvidenceCarryoverListCommand) (learning.EvidenceCarryoverPage, error) {
+	f.record("list_evidence_carryovers", "")
+	f.mu.Lock()
+	f.carryoverList = command
+	f.mu.Unlock()
+	return f.carryoverPage, f.err
+}
+func (f *testLearning) GetEvidenceCarryover(_ context.Context, proposalID string) (learning.EvidenceCarryoverProposal, error) {
+	f.record("get_evidence_carryover", "")
+	f.mu.Lock()
+	f.carryoverGetID = proposalID
+	f.mu.Unlock()
+	return f.carryover, f.err
+}
+func (f *testLearning) DecideEvidenceCarryover(context.Context, string, learning.EvidenceCarryoverDecisionCommand) (learning.EvidenceCarryoverProposal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.carryoverDecisionCalls++
+	return f.carryover, f.err
 }
 
 type testMemory struct {
@@ -332,7 +379,9 @@ func TestOfficialSDKDiscoversExactSurfaceAndInvokesCallbacks(t *testing.T) {
 	}
 	sort.Strings(toolNames)
 	wantTools := []string{
-		"knowledge.retrieve", "learning.create_goal", "learning.list_evidence", "learning.list_reviews", "learning.list_routes",
+		"knowledge.maintenance.get", "knowledge.maintenance.list", "knowledge.maintenance.propose",
+		"knowledge.retrieve", "learning.create_goal", "learning.evidence_carryover.get", "learning.evidence_carryover.list",
+		"learning.list_evidence", "learning.list_reviews", "learning.list_routes",
 		"learning.list_timeline", "memory.list_records", "tutoring.apply_action", "tutoring.create_session", "tutoring.propose",
 	}
 	sort.Strings(wantTools)

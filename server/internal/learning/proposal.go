@@ -52,6 +52,7 @@ type ServiceOptions struct {
 type Service struct {
 	authority       AuthorityStore
 	queries         QueryStore
+	carryovers      EvidenceCarryoverStore
 	proposals       ProposalRepository
 	knowledge       KnowledgeReferenceResolver
 	model           TutorModel
@@ -85,7 +86,11 @@ func NewServiceWithPorts(authority AuthorityStore, queries QueryStore, proposals
 	if options.ModelParameters == nil {
 		options.ModelParameters = map[string]any{}
 	}
-	return &Service{authority: authority, queries: queries, proposals: proposals, knowledge: knowledge, model: options.Model, now: options.Now, newUUID: options.NewUUID, modelID: options.ModelID, modelParameters: options.ModelParameters, promptRevision: options.PromptRevision}, nil
+	var carryovers EvidenceCarryoverStore
+	if value, ok := authority.(EvidenceCarryoverStore); ok {
+		carryovers = value
+	}
+	return &Service{authority: authority, queries: queries, carryovers: carryovers, proposals: proposals, knowledge: knowledge, model: options.Model, now: options.Now, newUUID: options.NewUUID, modelID: options.ModelID, modelParameters: options.ModelParameters, promptRevision: options.PromptRevision}, nil
 }
 
 func (s *Service) Propose(ctx context.Context, deviceID string, request ProposalRequest) (ProposalArtifact, error) {

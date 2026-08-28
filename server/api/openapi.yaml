@@ -176,6 +176,7 @@ paths:
       operationId: importKnowledgeDocuments
       summary: Atomically upsert Markdown documents into a new complete snapshot
       x-required-scope: knowledge:write
+      x-required-scopes: [knowledge:write, knowledge:approve]
       security:
         - deviceBearer: []
       requestBody:
@@ -219,6 +220,153 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
+  /v1/knowledge/maintenance/proposals:
+    post:
+      operationId: createKnowledgeMaintenanceProposal
+      summary: Submit a sourced proposal against the current canonical knowledge revision
+      x-required-scope: knowledge:write
+      x-max-body-bytes: 16777216
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposalRequest" }
+      responses:
+        "200":
+          description: Exact idempotent replay of an existing proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "201":
+          description: Proposal created; bounded low-risk changes may already be applied.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/KnowledgeMaintenanceConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    get:
+      operationId: listKnowledgeMaintenanceProposals
+      summary: List knowledge maintenance proposals with a generation-bound cursor
+      x-required-scope: knowledge:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, open, applied, rejected, stale, redacted]
+            default: all
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Deterministically ordered proposal page.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposalPage" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/KnowledgeMaintenanceConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/knowledge/maintenance/rollbacks:
+    post:
+      operationId: createKnowledgeMaintenanceRollback
+      summary: Submit a destructive proposal restoring an unredacted ancestor snapshot
+      x-required-scope: knowledge:approve
+      x-max-body-bytes: 16777216
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeMaintenanceRollbackRequest" }
+      responses:
+        "200":
+          description: Exact idempotent replay of an existing rollback proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "201":
+          description: Rollback proposal created and left open for human review.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/KnowledgeMaintenanceConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/knowledge/maintenance/proposals/{proposalID}:
+    get:
+      operationId: getKnowledgeMaintenanceProposal
+      summary: Read one frozen knowledge maintenance proposal
+      x-required-scope: knowledge:read
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
+      responses:
+        "200":
+          description: Frozen proposal, computed impacts, policy versions, decision, and origin.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/knowledge/maintenance/proposals/{proposalID}/approve:
+    post:
+      operationId: approveKnowledgeMaintenanceProposal
+      summary: Approve and atomically apply the exact frozen proposal when it is still current
+      x-required-scope: knowledge:approve
+      x-max-body-bytes: 16777216
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceDecisionRequest" } } }
+      responses:
+        "200":
+          description: Applied or deterministically stale terminal proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/KnowledgeMaintenanceConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/knowledge/maintenance/proposals/{proposalID}/reject:
+    post:
+      operationId: rejectKnowledgeMaintenanceProposal
+      summary: Reject one open knowledge maintenance proposal atomically
+      x-required-scope: knowledge:approve
+      x-max-body-bytes: 16777216
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceDecisionRequest" } } }
+      responses:
+        "200":
+          description: Rejected or deterministically stale terminal proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/KnowledgeMaintenanceConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/revisions/{revisionID}/tree:
     get:
       operationId: getKnowledgeRevisionTree
@@ -470,6 +618,102 @@ paths:
         "429": { $ref: "#/components/responses/NotesyncRateLimited" }
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/learning/evidence-carryovers:
+    get:
+      operationId: listEvidenceCarryovers
+      summary: List evidence carryover proposals with a generation-bound cursor
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, open, approved, rejected, stale, redacted]
+            default: all
+        - $ref: "#/components/parameters/Cursor"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Deterministically ordered evidence carryover page.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverPage" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/EvidenceCarryoverConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence-carryovers/{proposalID}:
+    get:
+      operationId: getEvidenceCarryover
+      summary: Read one frozen evidence carryover proposal
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
+      responses:
+        "200":
+          description: Current status, frozen candidates, decision, provisional links, redaction state, and replay state.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence-carryovers/{proposalID}/approve:
+    post:
+      operationId: approveEvidenceCarryover
+      summary: Approve one open carryover as replayable provisional learning state
+      x-required-scope: learning:approve
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverDecisionRequest" } } }
+      responses:
+        "200":
+          description: Approved, stale, or exactly replayed terminal carryover proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/EvidenceCarryoverConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/EvidenceCarryoverNoCandidates" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/evidence-carryovers/{proposalID}/reject:
+    post:
+      operationId: rejectEvidenceCarryover
+      summary: Reject one open carryover without creating projection effects
+      x-required-scope: learning:approve
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverDecisionRequest" } } }
+      responses:
+        "200":
+          description: Rejected, stale, or exactly replayed terminal carryover proposal.
+          content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/EvidenceCarryoverConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { $ref: "#/components/responses/EvidenceCarryoverNoCandidates" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/goals:
     post:
       operationId: createLearningGoal
@@ -676,6 +920,7 @@ paths:
       operationId: decideLearningAssessment
       summary: Compensate an assessment disposition and its evidence
       x-required-scope: learning:write
+      x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/AssessmentID" }]
@@ -1068,6 +1313,7 @@ paths:
       summary: Append an independent confirm, override, or void decision
       description: The decision is fenced by the offline attempt aggregate and disposition versions. It does not read or mutate current tutoring Session state.
       x-required-scope: learning:write
+      x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
       security: [{ deviceBearer: [] }]
       parameters:
@@ -1567,6 +1813,18 @@ components:
       schema:
         type: string
         format: uuid
+    KnowledgeProposalID:
+      name: proposalID
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    EvidenceCarryoverProposalID:
+      name: proposalID
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
     SessionID:
       name: sessionID
       in: path
@@ -1686,6 +1944,21 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
+    KnowledgeMaintenanceConflict:
+      description: Idempotency, stale basis/cursor, closed operation, revision, path, or identity-review conflict.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/KnowledgeMaintenanceError" }
+    EvidenceCarryoverConflict:
+      description: The list cursor is stale or the requested carryover decision conflicts with current state.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/EvidenceCarryoverConflict" }
+    EvidenceCarryoverNoCandidates:
+      description: The carryover has no candidates that can be provisionally approved.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/EvidenceCarryoverNoCandidates" }
     LearningGoalConflict:
       description: Goal idempotency or expected-version conflict.
       content:
@@ -4465,6 +4738,361 @@ components:
           type: array
           items:
             type: string
+    EvidenceCarryoverDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, decision, reason]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        decision: { type: string, enum: [approve, reject] }
+        reason: { type: string, minLength: 1, maxLength: 4000 }
+    EvidenceCarryoverPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceCarryoverProposal" }
+        next_cursor: { type: string, minLength: 1, maxLength: 4096 }
+    EvidenceCarryoverProposal:
+      type: object
+      additionalProperties: false
+      required:
+        [proposal_id, knowledge_proposal_id, status, knowledge_generation, learning_generation,
+         policy_version, created_at, updated_at, redacted]
+      properties:
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        knowledge_proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        status: { type: string, enum: [open, approved, rejected, stale, redacted] }
+        source_evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        candidates:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceCarryoverCandidate" }
+        knowledge_basis_hash: { $ref: "#/components/schemas/SHA256" }
+        accepted_evidence_fingerprint: { $ref: "#/components/schemas/SHA256" }
+        candidate_fingerprint: { $ref: "#/components/schemas/SHA256" }
+        basis_fingerprint: { $ref: "#/components/schemas/SHA256" }
+        knowledge_generation: { type: integer, minimum: 1 }
+        learning_generation: { type: integer, minimum: 1 }
+        policy_version: { const: evidence-carryover-v1 }
+        decision: { $ref: "#/components/schemas/EvidenceCarryoverDecision" }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceCarryoverLink" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        redacted:
+          type: boolean
+          description: True when privacy clearing removed all sensitive carryover payload fields.
+        replayed:
+          type: boolean
+          description: True when a decision response is an exact idempotent replay.
+    EvidenceCarryoverCandidate:
+      type: object
+      additionalProperties: false
+      required: [knowledge_revision_id, node_id, node_revision_id, document_revision_id]
+      properties:
+        knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_id: { $ref: "#/components/schemas/LearningUUID" }
+        node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+    EvidenceCarryoverDecision:
+      type: object
+      additionalProperties: false
+      required: [decision_id, operation_id, requested_decision, outcome, actor_device_id, event_id, event_seq, created_at]
+      properties:
+        decision_id: { $ref: "#/components/schemas/LearningUUID" }
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        requested_decision: { type: string, enum: [approve, reject] }
+        outcome: { type: string, enum: [approved, rejected, stale] }
+        reason: { type: string, maxLength: 4000 }
+        actor_device_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_seq: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    EvidenceCarryoverLink:
+      type: object
+      additionalProperties: false
+      required: [link_id, proposal_id, decision_id, event_id, event_seq, created_at]
+      properties:
+        link_id: { $ref: "#/components/schemas/LearningUUID" }
+        proposal_id: { $ref: "#/components/schemas/LearningUUID" }
+        source_evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_knowledge_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_node_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        target_document_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        decision_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_id: { $ref: "#/components/schemas/LearningUUID" }
+        event_seq: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+    EvidenceCarryoverConflict:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { type: string, enum: [stale_cursor, operation_conflict, evidence_carryover_closed] }
+            message: { type: string }
+            request_id: { type: string }
+    EvidenceCarryoverNoCandidates:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code: { const: evidence_carryover_no_candidates }
+            message: { type: string }
+            request_id: { type: string }
+    KnowledgeMaintenanceProposalRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, base_revision_id, sources, candidate_snapshot]
+      properties:
+        request_id: { type: string, format: uuid }
+        base_revision_id: { type: string, format: uuid }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceSource" }
+        candidate_snapshot:
+          type: array
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceSnapshotDocument" }
+        identity_review_basis_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        identity_review_operation_id: { type: string, format: uuid }
+        identity_review_receipt: { type: string, pattern: "^[0-9a-f]{64}$" }
+        document_resolutions:
+          type: array
+          items: { $ref: "#/components/schemas/DocumentIdentityResolution" }
+        node_resolutions:
+          type: array
+          items: { $ref: "#/components/schemas/NodeIdentityResolution" }
+    KnowledgeMaintenanceRollbackRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, base_revision_id, target_revision_id, sources]
+      properties:
+        request_id: { type: string, format: uuid }
+        base_revision_id: { type: string, format: uuid }
+        target_revision_id: { type: string, format: uuid }
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceSource" }
+    KnowledgeMaintenanceDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, reason]
+      properties:
+        operation_id: { type: string, format: uuid }
+        reason: { type: string, minLength: 1, maxLength: 4000 }
+    KnowledgeMaintenanceSource:
+      type: object
+      additionalProperties: false
+      required: [kind, locator, sha256]
+      properties:
+        kind: { type: string, enum: [url, file, note, repository, other] }
+        locator: { type: string, minLength: 1, maxLength: 2048 }
+        title: { type: string, maxLength: 500 }
+        excerpt: { type: string, maxLength: 4000 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+    KnowledgeMaintenanceSnapshotDocument:
+      type: object
+      additionalProperties: false
+      required: [path, markdown]
+      properties:
+        path:
+          type: string
+          minLength: 1
+          maxLength: 512
+        markdown:
+          type: string
+          maxLength: 4194304
+    KnowledgeMaintenanceProposalPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" }
+        next_cursor:
+          type: string
+          minLength: 1
+          maxLength: 4096
+    KnowledgeMaintenanceProposal:
+      type: object
+      additionalProperties: false
+      required:
+        [proposal_id, request_id, kind, status, base_revision_id, identity_impact, lineage_impact,
+         accepted_learning_evidence_impact, risk, knowledge_generation, canonicalizer_version,
+         identity_policy_version, diff_version, risk_version, auto_apply_policy_version,
+         created_by_device_id, created_at, updated_at, redacted]
+      properties:
+        proposal_id: { type: string, format: uuid }
+        request_id: { type: string, format: uuid }
+        kind: { type: string, enum: [candidate, rollback] }
+        status: { type: string, enum: [open, applied, rejected, stale, redacted] }
+        base_revision_id: { type: string, format: uuid }
+        current_revision_id: { type: string, format: uuid }
+        rollback_target_revision_id: { type: string, format: uuid }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceSource" }
+        candidate_snapshot:
+          type: array
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceSnapshotDocument" }
+        diff:
+          type: array
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceDocumentDiff" }
+        identity_impact: { $ref: "#/components/schemas/KnowledgeMaintenanceIdentityImpact" }
+        lineage_impact: { $ref: "#/components/schemas/KnowledgeMaintenanceLineageImpact" }
+        accepted_learning_evidence_impact: { $ref: "#/components/schemas/KnowledgeMaintenanceEvidenceImpact" }
+        risk: { $ref: "#/components/schemas/KnowledgeMaintenanceRisk" }
+        basis_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        knowledge_generation: { type: integer, minimum: 1 }
+        canonicalizer_version: { const: edu-markdown-v1 }
+        identity_policy_version: { const: identity-policy-v1 }
+        diff_version: { const: knowledge-diff-v1 }
+        risk_version: { const: knowledge-risk-v1 }
+        auto_apply_policy_version: { const: knowledge-auto-apply-v1 }
+        decision: { $ref: "#/components/schemas/KnowledgeMaintenanceDecision" }
+        applied_revision_id: { type: string, format: uuid }
+        origin: { $ref: "#/components/schemas/KnowledgeMaintenanceRevisionOrigin" }
+        created_by_device_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        redacted: { type: boolean }
+        replayed: { type: boolean }
+    KnowledgeMaintenanceDocumentDiff:
+      type: object
+      additionalProperties: false
+      required: [document_id, kind, truncated, local_body_only, changed_body_bytes]
+      properties:
+        document_id: { type: string, format: uuid }
+        before_path: { type: string }
+        after_path: { type: string }
+        kind: { type: string, enum: [add, delete, edit, unchanged] }
+        unified_diff: { type: string, maxLength: 262144 }
+        truncated: { type: boolean }
+        added_node_ids: { type: array, items: { type: string, format: uuid } }
+        removed_node_ids: { type: array, items: { type: string, format: uuid } }
+        edited_node_ids: { type: array, items: { type: string, format: uuid } }
+        title_node_ids: { type: array, items: { type: string, format: uuid } }
+        structure_node_ids: { type: array, items: { type: string, format: uuid } }
+        local_body_only: { type: boolean }
+        changed_body_bytes: { type: integer, minimum: 0 }
+    KnowledgeMaintenanceIdentityImpact:
+      type: object
+      additionalProperties: false
+      required: [preserved_document_ids, added_document_ids, removed_document_ids, moved_document_ids,
+                 preserved_node_ids, added_node_ids, removed_node_ids, uncertain]
+      properties:
+        preserved_document_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        added_document_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        removed_document_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        moved_document_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        preserved_node_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        added_node_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        removed_node_ids: { type: [array, "null"], items: { type: string, format: uuid } }
+        uncertain: { type: boolean }
+    KnowledgeMaintenanceLineageImpact:
+      type: object
+      additionalProperties: false
+      required: [lineages, move, delete, restore, rollback]
+      properties:
+        lineages:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/NodeLineage" }
+        move: { type: boolean }
+        delete: { type: boolean }
+        restore: { type: boolean }
+        rollback: { type: boolean }
+    KnowledgeMaintenanceEvidenceReference:
+      type: object
+      additionalProperties: false
+      required: [evidence_id, node_revision_id, knowledge_revision_id]
+      properties:
+        evidence_id: { type: string, format: uuid }
+        node_revision_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+    KnowledgeMaintenanceEvidenceImpact:
+      type: object
+      additionalProperties: false
+      required: [count, references, fingerprint, generation]
+      properties:
+        count: { type: integer, minimum: 0 }
+        references:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceEvidenceReference" }
+        fingerprint: { type: string, pattern: "^(?:[0-9a-f]{64})?$" }
+        generation: { type: integer, minimum: 1 }
+    KnowledgeMaintenanceRisk:
+      type: object
+      additionalProperties: false
+      required: [level, reasons, auto_apply, policy_version]
+      properties:
+        level: { type: string, enum: ["", low, medium, high] }
+        reasons: { type: [array, "null"], items: { type: string } }
+        auto_apply: { type: boolean }
+        policy_version: { type: string, enum: ["", knowledge-auto-apply-v1] }
+    KnowledgeMaintenanceDecision:
+      type: object
+      additionalProperties: false
+      required: [decision_id, requested_decision, outcome, actor_device_id, created_at]
+      properties:
+        decision_id: { type: string, format: uuid }
+        operation_id: { type: string, format: uuid }
+        requested_decision: { type: string, enum: [auto, approve, reject] }
+        outcome: { type: string, enum: [applied, rejected, stale] }
+        reason: { type: string, maxLength: 4000 }
+        actor_device_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    KnowledgeMaintenanceRevisionOrigin:
+      type: object
+      additionalProperties: false
+      required: [version, kind, proposal_id, base_revision_id, basis_hash]
+      properties:
+        version: { const: knowledge-revision-origin-v1 }
+        kind: { type: string, enum: [candidate, rollback] }
+        proposal_id: { type: string, format: uuid }
+        base_revision_id: { type: string, format: uuid }
+        rollback_target_revision_id: { type: string, format: uuid }
+        basis_hash: { type: string, pattern: "^(?:[0-9a-f]{64})?$" }
+    KnowledgeMaintenanceError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, request_id]
+          properties:
+            code:
+              type: string
+              enum: [operation_conflict, identity_review_required]
+            message: { type: string }
+            request_id: { type: string }
+        current_revision_id:
+          type: [string, "null"]
+          format: uuid
+        identity_review: { $ref: "#/components/schemas/IdentityReview" }
     KnowledgeImportRequest:
       type: object
       additionalProperties: false

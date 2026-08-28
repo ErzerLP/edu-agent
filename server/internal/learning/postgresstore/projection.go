@@ -90,7 +90,7 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 	if err := tx.QueryRow(ctx, `SELECT status,incomplete,reason_codes FROM learning_projection_generations WHERE id=$1 FOR UPDATE`, generationID).Scan(&generationStatus, &existingIncomplete, &existingReasons); err != nil {
 		return fmt.Errorf("lock learning projection generation: %w", err)
 	}
-	for _, table := range []string{"learning_projection_timeline", "learning_projection_routes", "learning_projection_sessions", "learning_projection_nodes", "learning_projection_evidence", "learning_projection_reviews", "learning_projection_misconceptions", "learning_projection_stats"} {
+	for _, table := range []string{"learning_projection_timeline", "learning_projection_routes", "learning_projection_sessions", "learning_projection_nodes", "learning_projection_evidence", "learning_projection_reviews", "learning_projection_misconceptions", "learning_projection_stats", "learning_projection_carryovers"} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE generation_id=$1`, generationID); err != nil {
 			return fmt.Errorf("clear %s: %w", table, err)
 		}
@@ -152,6 +152,18 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 		encoded, _ := json.Marshal(item)
 		if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_evidence(generation_id,evidence_id,node_revision_id,received_at,accepted_event_seq,item) VALUES($1,$2,$3,$4,$5,$6)`, generationID, id, item.NodeRevisionID, item.ReceivedAt, item.AcceptedEventSequence, encoded); err != nil {
 			return fmt.Errorf("project evidence: %w", err)
+		}
+	}
+	carryoverIDs := make([]string, 0, len(projection.Carryovers))
+	for id := range projection.Carryovers {
+		carryoverIDs = append(carryoverIDs, id)
+	}
+	sort.Strings(carryoverIDs)
+	for _, id := range carryoverIDs {
+		item := projection.Carryovers[id]
+		encoded, _ := json.Marshal(item)
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_projection_carryovers(generation_id,proposal_id,approved_event_seq,item) VALUES($1,$2,$3,$4)`, generationID, id, item.ApprovedEventSequence, encoded); err != nil {
+			return fmt.Errorf("project evidence carryover: %w", err)
 		}
 	}
 	fingerprint, err := learning.ProjectionFingerprint(projection)

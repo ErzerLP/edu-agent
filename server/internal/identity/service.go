@@ -14,9 +14,50 @@ import (
 	"unicode/utf8"
 )
 
-var defaultScopes = []string{
-	"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write",
-	"learning:read", "learning:write", "memory:read", "memory:write", "privacy:read", "privacy:device",
+var userPairingScopes = []string{
+	"devices:read", "devices:manage", "model:probe", "knowledge:read", "knowledge:write", "knowledge:approve",
+	"learning:read", "learning:write", "learning:approve", "memory:read", "memory:write",
+	"privacy:read", "privacy:device",
+}
+
+var agentPairingScopes = []string{
+	"knowledge:read", "knowledge:write", "learning:read", "learning:write", "memory:read",
+}
+
+func ParsePairingProfile(value string) (PairingProfile, error) {
+	profile := PairingProfile(strings.TrimSpace(value))
+	switch profile {
+	case PairingProfileUser, PairingProfileAgent:
+		return profile, nil
+	default:
+		return "", ErrInvalidInput
+	}
+}
+
+func pairingProfileScopes(profile PairingProfile) ([]string, error) {
+	var scopes []string
+	switch profile {
+	case PairingProfileUser:
+		scopes = append([]string(nil), userPairingScopes...)
+		for _, required := range []string{"knowledge:approve", "learning:approve"} {
+			if !hasScope(scopes, required) {
+				return nil, fmt.Errorf("user pairing profile must include %s", required)
+			}
+		}
+	case PairingProfileAgent:
+		scopes = append([]string(nil), agentPairingScopes...)
+		for _, forbidden := range []string{"knowledge:approve", "learning:approve", "memory:write", "devices:manage", "privacy:device"} {
+			if hasScope(scopes, forbidden) {
+				return nil, fmt.Errorf("agent pairing profile contains forbidden scope %q", forbidden)
+			}
+		}
+	default:
+		return nil, ErrInvalidInput
+	}
+	if len(scopes) == 0 {
+		return nil, fmt.Errorf("pairing profile scopes are empty")
+	}
+	return scopes, nil
 }
 
 type Options struct {
@@ -60,6 +101,14 @@ func NewService(store Store, options Options) (*Service, error) {
 }
 
 func (s *Service) CreatePairingCode(ctx context.Context) (string, time.Time, error) {
+	return s.CreatePairingCodeForProfile(ctx, PairingProfileUser)
+}
+
+func (s *Service) CreatePairingCodeForProfile(ctx context.Context, profile PairingProfile) (string, time.Time, error) {
+	scopes, err := pairingProfileScopes(profile)
+	if err != nil {
+		return "", time.Time{}, err
+	}
 	lookupBytes, err := randomBytes(s.random, 16)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("generate pairing lookup: %w", err)
@@ -74,7 +123,7 @@ func (s *Service) CreatePairingCode(ctx context.Context) (string, time.Time, err
 	now := s.now().UTC()
 	expires := now.Add(s.pairingCodeTTL)
 	if err := s.store.InsertPairingCode(ctx, PairingCodeRecord{
-		LookupID: lookup, CodeHash: hash, CreatedAt: now, ExpiresAt: expires,
+		LookupID: lookup, CodeHash: hash, Scopes: scopes, CreatedAt: now, ExpiresAt: expires,
 		MaxAttempts: s.pairingCodeMaxAttempts,
 	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("store pairing code: %w", err)
@@ -106,14 +155,16 @@ func (s *Service) ExchangePairingCode(ctx context.Context, code, displayName str
 	tokenText := base64.RawURLEncoding.EncodeToString(tokenBytes)
 	tokenHash := sha256.Sum256(tokenBytes)
 	now := s.now().UTC()
-	device := Device{ID: deviceID, DisplayName: displayName, Scopes: append([]string(nil), defaultScopes...), CreatedAt: now}
-	token := TokenRecord{ID: tokenID, DeviceID: deviceID, TokenHash: tokenHash, Scopes: append([]string(nil), defaultScopes...), CreatedAt: now}
-	if err := s.store.ConsumePairingCode(ctx, lookup, codeHash, device, token, now); err != nil {
+	device := Device{ID: deviceID, DisplayName: displayName, CreatedAt: now}
+	token := TokenRecord{ID: tokenID, DeviceID: deviceID, TokenHash: tokenHash, CreatedAt: now}
+	scopes, err := s.store.ConsumePairingCode(ctx, lookup, codeHash, device, token, now)
+	if err != nil {
 		if err == ErrInvalidPairingCode {
 			return IssuedCredential{}, err
 		}
 		return IssuedCredential{}, fmt.Errorf("exchange pairing code: %w", err)
 	}
+	device.Scopes = append([]string(nil), scopes...)
 	return IssuedCredential{Device: device, Token: tokenText}, nil
 }
 

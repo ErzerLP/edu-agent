@@ -705,8 +705,11 @@ func validateErrorResponse(method, path string, status int, value ErrorResponse)
 	} else if value.IdentityReview != nil {
 		return errors.New("unexpected identity review")
 	}
-	if value.Error.Code == "revision_conflict" {
-		if value.CurrentRevisionID == nil {
+	if value.Error.Code == "revision_conflict" || value.Error.Code == "operation_conflict" {
+		if value.CurrentRevisionID != nil && !validLearningUUID(*value.CurrentRevisionID) {
+			return errors.New("revision conflict head is invalid")
+		}
+		if value.Error.Code == "revision_conflict" && value.CurrentRevisionID == nil {
 			return errors.New("revision conflict head is missing")
 		}
 	} else if value.CurrentRevisionID != nil {

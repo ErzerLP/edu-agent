@@ -202,7 +202,7 @@ type memoryBridgeComposition struct {
 }
 
 func composeMemoryBridge(pool *pgxpool.Pool, stores applicationStores, cfg config.Config, dependencies memoryBridgeDependencies) (memoryBridgeComposition, error) {
-	permits := privacy.NewReadPermitManager()
+	permits := privacy.NewReadPermitManager(privacy.WithResponseCommitGate(privacypostgres.NewResponseCommitGate(pool)))
 	memoryService, err := memory.NewService(stores.memory, memory.ServiceOptions{
 		ReadPermits: permits, DeliveryTTL: cfg.Nocturne.DeliveryTTL,
 	})

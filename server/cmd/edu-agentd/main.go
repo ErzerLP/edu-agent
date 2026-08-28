@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/app"
+	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/observability"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
 
-const usage = "usage: edu-agentd [serve|pairing-code create|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>]"
+const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|agent]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>]"
 
 var (
 	loadConfiguration     = config.Load
@@ -35,10 +36,11 @@ const (
 )
 
 type command struct {
-	kind         commandKind
-	deviceID     string
-	artifactPath string
-	output       string
+	kind           commandKind
+	pairingProfile identity.PairingProfile
+	deviceID       string
+	artifactPath   string
+	output         string
 }
 
 func main() {
@@ -72,7 +74,7 @@ func run() error {
 		return app.Run(ctx, cfg, logger)
 	}
 	if parsed.kind == commandPairingCode {
-		code, expiresAt, err := app.CreatePairingCode(ctx, cfg)
+		code, expiresAt, err := app.CreatePairingCode(ctx, cfg, parsed.pairingProfile)
 		if err != nil {
 			return err
 		}
@@ -96,8 +98,18 @@ func parseCommand(args []string) (command, error) {
 	if len(args) == 0 || len(args) == 1 && args[0] == "serve" {
 		return command{kind: commandServe}, nil
 	}
-	if len(args) == 2 && args[0] == "pairing-code" && args[1] == "create" {
-		return command{kind: commandPairingCode}, nil
+	if len(args) >= 2 && args[0] == "pairing-code" && args[1] == "create" {
+		flags := flag.NewFlagSet("pairing-code create", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		profileValue := flags.String("profile", string(identity.PairingProfileUser), "pairing scope profile")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 {
+			return command{}, errors.New(usage)
+		}
+		profile, err := identity.ParsePairingProfile(*profileValue)
+		if err != nil {
+			return command{}, errors.New("pairing-code --profile must be user or agent")
+		}
+		return command{kind: commandPairingCode, pairingProfile: profile}, nil
 	}
 	if len(args) == 4 && args[0] == "privacy-grant" && args[1] == "create" && args[2] == "--device" {
 		if !privacy.CanonicalUUID(args[3]) {

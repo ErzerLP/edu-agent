@@ -632,12 +632,14 @@ func buildLaneDefinitions(root string, dependencies DependencyLock, dependencyDi
 	model.SelectedTests = []string{modelTest}
 	model.ExpectedGoTests = []string{modelTest}
 	model.RequireAnyGoTest = false
+	model.Tools = append(model.Tools, "psql")
 	model.Selections = []goSelection{{Cwd: filepath.Join(root, "contracttests", "cli-m1"), Package: "./blackbox", Regex: "^" + modelTest + "$", Expected: []string{modelTest}}}
 	offline := postgresLane("offline-blackbox", "offline-blackbox", "real CLI Offline prepare/learn/sync/status black box with PostgreSQL")
 	offline.Scenario = "offline-cli-blackbox-postgresql"
 	offline.SelectedTests = []string{offlineTest}
 	offline.ExpectedGoTests = []string{offlineTest}
 	offline.RequireAnyGoTest = false
+	offline.Tools = append(offline.Tools, "psql")
 	offline.Selections = []goSelection{{Cwd: filepath.Join(root, "contracttests", "cli-m1"), Package: "./blackbox", Regex: "^" + offlineTest + "$", Expected: []string{offlineTest}}}
 
 	notesyncExpected := []string{
@@ -659,7 +661,6 @@ func buildLaneDefinitions(root string, dependencies DependencyLock, dependencyDi
 		Argv:            []string{"bash", "scripts/test-notesync-candidate.sh"},
 		Environment: map[string]string{
 			"DOCKER_DEFAULT_PLATFORM": dependencies.NoteSync.Platform,
-			"GOFLAGS":                 "-json",
 		},
 		Tools:           []string{"bash", "curl", "docker", "flock", "git", "go", "jq", "readlink", "sha256sum"},
 		PinnedInputs:    notesyncPinned,
@@ -699,7 +700,7 @@ func buildLaneDefinitions(root string, dependencies DependencyLock, dependencyDi
 	nocturne := laneDefinition{
 		LaneDescription: LaneDescription{Name: "nocturne-compose", Scenario: "nocturne-verified-oci-compose-full", Description: "verified Nocturne OCI layout and full Compose/PostgreSQL gate"},
 		Argv:            []string{"sh", "contracttests/nocturne/run-compose-e2e.sh", layoutArgument, "full"},
-		Environment:     map[string]string{"GOFLAGS": "-json"},
+		Environment:     map[string]string{},
 		Tools:           []string{"docker", "docker-compose", "flock", "go", "python3", "readlink", "skopeo"},
 		PinnedInputs:    nocturnePinned,
 		SelectedTests:   append(append([]string(nil), nocturneExpected...), "nocturne-compose:full"),
@@ -836,6 +837,7 @@ func preflightLane(lane laneDefinition, dependencies DependencyLock) (Status, st
 func verifyGoSelection(selection goSelection) error {
 	command := exec.Command("go", "test", "-list", selection.Regex, selection.Package)
 	command.Dir = selection.Cwd
+	command.Env = commandEnvironment(map[string]string{"GOFLAGS": ""})
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("enumerate Go tests in %s: %w", selection.Package, err)
@@ -870,6 +872,7 @@ func executeLane(root string, lane laneDefinition, material KeyMaterial, logPath
 	}
 	defer os.RemoveAll(runnerWork)
 	environment := cloneMap(lane.Environment)
+	environment["GOFLAGS"] = ""
 	environment["TMPDIR"] = runnerWork
 	environment["OPERATIONS_CANDIDATE_LOCK_FILE"] = lockPath
 	if len(lane.Argv) >= 2 && lane.Argv[0] == "bash" && lane.Argv[1] == "scripts/test-postgres-candidate.sh" && len(lane.ExpectedGoTests) > 0 {
@@ -1135,6 +1138,8 @@ func collectToolVersion(tool string) string {
 		command = exec.Command("jq", "--version")
 	case "skopeo":
 		command = exec.Command("skopeo", "--version")
+	case "psql":
+		command = exec.Command("psql", "--version")
 	default:
 		return "unavailable"
 	}

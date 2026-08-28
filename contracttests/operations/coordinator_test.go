@@ -35,6 +35,20 @@ func TestLaneDefinitionsProduceValidEvidenceKeys(t *testing.T) {
 	if len(lanes) != len(wantLanes) {
 		t.Fatalf("lane count=%d want=%d", len(lanes), len(wantLanes))
 	}
+	laneByName := make(map[string]laneDefinition, len(lanes))
+	for _, lane := range lanes {
+		laneByName[lane.Name] = lane
+	}
+	for _, name := range []string{"model-vertical", "offline-blackbox"} {
+		if !slices.Contains(laneByName[name].Tools, "psql") {
+			t.Fatalf("lane %s does not declare psql prerequisite", name)
+		}
+	}
+	for _, name := range []string{"notesync-real", "nocturne-compose"} {
+		if value, ok := laneByName[name].Environment["GOFLAGS"]; ok {
+			t.Fatalf("lane %s injects GOFLAGS=%q", name, value)
+		}
+	}
 
 	platform := currentPlatform()
 	for position, lane := range lanes {
@@ -68,5 +82,22 @@ func TestLaneDefinitionsProduceValidEvidenceKeys(t *testing.T) {
 	status, reason := preflightLane(lanes[len(lanes)-1], dependencies)
 	if status != StatusBlocked || !strings.Contains(reason, "--nocturne-oci-layout") {
 		t.Fatalf("missing Nocturne layout status=%s reason=%q", status, reason)
+	}
+}
+
+func TestCommandEnvironmentClearsInheritedGoFlags(t *testing.T) {
+	t.Setenv("GOFLAGS", "-json")
+	environment := commandEnvironment(map[string]string{"GOFLAGS": "", "OPERATIONS_TEST_MARKER": "present"})
+	var goFlags int
+	for _, entry := range environment {
+		if entry == "GOFLAGS=" {
+			goFlags++
+		}
+		if entry == "GOFLAGS=-json" {
+			t.Fatal("inherited GOFLAGS reached a qualification subprocess")
+		}
+	}
+	if goFlags != 1 {
+		t.Fatalf("empty GOFLAGS entries=%d want=1", goFlags)
 	}
 }

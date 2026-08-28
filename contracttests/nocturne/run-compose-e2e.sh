@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 umask 077
+export GOFLAGS=''
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 COMPOSE_FILE="$ROOT/deploy/compose.yaml"
@@ -275,7 +276,7 @@ EOF
 
 (
   cd "$ROOT/server"
-  go test ./internal/integrations/nocturne -run 'TestManagedBackupRoundTripChunkBoundariesAndDestroyedRestore|TestManagedBackupErasureVerificationDestroyedArtifactSucceedsAndLiveKeyFails|TestManagedBackupPrecisePruneSuccess' -count=1
+  go test -json ./internal/integrations/nocturne -run 'TestManagedBackupRoundTripChunkBoundariesAndDestroyedRestore|TestManagedBackupErasureVerificationDestroyedArtifactSucceedsAndLiveKeyFails|TestManagedBackupPrecisePruneSuccess' -count=1
 )
 
 docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" up -d

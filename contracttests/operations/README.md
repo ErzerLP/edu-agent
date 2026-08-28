@@ -34,7 +34,7 @@ scripts/test-operations-candidate.sh verify \
   --nocturne-oci-layout /absolute/verified-oci-layout
 ```
 
-`--dry-run` performs lane preflight and test enumeration. Missing tools, daemon access, locked platform requirements, or the explicit Nocturne OCI layout are `blocked`; available but unexecuted lanes are `not-run`. Neither state is a pass.
+`--dry-run` performs lane preflight and test enumeration. Missing tools, daemon access, locked platform requirements, or the explicit Nocturne OCI layout are `blocked`; available but unexecuted lanes are `not-run`. Neither state is a pass. The model and Offline black-box lanes additionally require a `psql` client on `PATH`; its version is bound into their evidence keys. Every heavyweight runner clears inherited `GOFLAGS` and emits required `go test -json` events explicitly, so host Go flags cannot alter test discovery or runner helper commands.
 
 ## Attestation and schemas
 
@@ -50,7 +50,7 @@ Each manifest records the lane attempt, candidate fingerprint, lane/scenario, ex
 
 The evidence key binds candidate source, lane/scenario, command, platform, toolchain, approved dependency index, runner digest, canonical host lock path/protocol, image/version/commit/config/OCI inputs, test selection, expected Go targets, external targets, and output assertions. The Fast Note Sync lane additionally binds the SHA-256 of `docs/comet/specs/notesync-bridge/spec.md`; dependency loading rejects any service/plugin version or commit that differs from the single promoted contract in that authority file.
 
-The PostgreSQL runner still executes each configured shard in full. When invoked by the coordinator, it receives a candidate-bound expected-target list separately from the discovered shard selection: every required target must emit its own RUN/PASS event, while an unrelated conditional test may skip without satisfying or invalidating a different external lane. A required target that skips always fails.
+The PostgreSQL runner still executes each configured shard in full. When invoked by the coordinator, it receives a candidate-bound expected-target list separately from the discovered shard selection: every required target must emit its own RUN/PASS event, while an unrelated conditional test may skip without satisfying or invalidating a different external lane. A required target that skips always fails. A standalone explicit `--run` first enumerates matching tests and executes only package import paths that contain a match; an empty selection fails before PostgreSQL starts, while the default shard path remains complete.
 
 A candidate index is independently attested. For every lane, verifier requires the index `evidence_key` to equal both the current recomputed key and the referenced manifest key. Passed/reused entries require a complete attested passed manifest and valid durable log. Unknown fields, truncation, missing logs, hash changes, source/runner/lock/OCI drift, empty selection, all-skip, `[no tests to run]`, or missing RUN/PASS events fail closed.
 

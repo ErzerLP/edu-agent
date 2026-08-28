@@ -26,6 +26,9 @@ func TestHeavyRunnersShareCanonicalHostLockContract(t *testing.T) {
 			t.Fatal(readErr)
 		}
 		text := string(content)
+		if !strings.Contains(text, "export GOFLAGS=''") {
+			t.Fatalf("%s does not clear inherited GOFLAGS", path)
+		}
 		for _, required := range []string{
 			"OPERATIONS_CANDIDATE_LOCK_FILE",
 			"OPERATIONS_CANDIDATE_LOCK_FD",
@@ -48,9 +51,25 @@ func TestHeavyRunnersShareCanonicalHostLockContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"$TMP_DIR/gate.log", "$TMP_DIR/compose.log", `rm -rf "$TMP_DIR"`} {
+	for _, expected := range []string{"$TMP_DIR/gate.log", "$TMP_DIR/compose.log", `rm -rf "$TMP_DIR"`, "go test -json ./internal/integrations/nocturne"} {
 		if !strings.Contains(string(nocturne), expected) {
 			t.Fatalf("Nocturne runner lacks unique temporary log cleanup contract %q", expected)
+		}
+	}
+	notesync, err := os.ReadFile(paths[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(notesync), "go test -json -count=1") {
+		t.Fatal("NoteSync runner does not emit explicit Go JSON events")
+	}
+	postgres, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"command -v psql", "SHARD_SELECTION_FILES", `if [[ -n "$TEST_RUN_REGEX" ]]`} {
+		if !strings.Contains(string(postgres), required) {
+			t.Fatalf("PostgreSQL runner lacks narrowed selection contract %q", required)
 		}
 	}
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
+export GOFLAGS=''
 
 IMAGE='haierkeys/fast-note-sync-service@sha256:15833f15e83cee05794c3fe6028c7e41fd36c787f0d651415cad556579fc379f'
 EXPECTED_VERSION='3.6.1'
@@ -181,7 +182,7 @@ cd "$repo_root/server"
 NOTESYNC_REAL_BASE_URL="$base_url" \
 	NOTESYNC_REAL_API_TOKEN="$api_token" \
 	NOTESYNC_REAL_VAULT="$vault" \
-	go test -count=1 -v \
+	go test -json -count=1 \
 	-run '^(TestRealUpstreamCandidate|TestPublicationConsumerCapabilityDependencyAndStaleSuppression)$' \
 	./internal/integrations/notesync
 

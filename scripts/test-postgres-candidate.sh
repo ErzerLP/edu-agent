@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
+export GOFLAGS=''
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 SERVER_DIR="$ROOT/server"
@@ -26,6 +27,7 @@ SHARD_CWD=""
 SHARD_REGEX=""
 SHARD_PACKAGES=()
 declare -A SHARD_KEYS=()
+declare -A SHARD_SELECTION_FILES=()
 declare -A SHARD_EXPECTED_FILES=()
 declare -A SHARD_SELECTION_SHA256=()
 declare -A SHARD_EXPECTED_SHA256=()
@@ -132,6 +134,17 @@ for command in docker flock go git readlink sha256sum sort; do
     echo "required command is unavailable: $command" >&2
     exit 2
   }
+done
+for shard in "${SELECTED_SHARDS[@]}"; do
+  case "$shard" in
+  model-vertical | offline-blackbox)
+    command -v psql >/dev/null 2>&1 || {
+      echo "required command is unavailable: psql" >&2
+      exit 2
+    }
+    break
+    ;;
+  esac
 done
 LOCK_FILE=$(readlink -m -- "$LOCK_FILE")
 [[ -d "$SERVER_DIR" && -d "$CLI_CONTRACT_DIR" ]] || {
@@ -348,6 +361,7 @@ prepare_selection() {
   mv -f "$expected_temporary" "$expected_file"
   chmod 600 "$selection_file" "$expected_file"
   SHARD_KEYS["$shard"]=$evidence_key
+  SHARD_SELECTION_FILES["$shard"]=$selection_file
   SHARD_EXPECTED_FILES["$shard"]=$expected_file
   SHARD_SELECTION_SHA256["$shard"]=$selection_sha
   SHARD_EXPECTED_SHA256["$shard"]=$expected_sha
@@ -501,7 +515,16 @@ run_shard_command() {
   local cwd=${SHARD_CWDS[$shard]}
   local regex=${SHARD_REGEXES[$shard]}
   local package_string=${SHARD_PACKAGE_LISTS[$shard]}
-  read -r -a packages <<<"$package_string"
+  local -a packages=()
+  if [[ -n "$TEST_RUN_REGEX" ]]; then
+    mapfile -t packages < <(cut -f1 "${SHARD_SELECTION_FILES[$shard]}" | LC_ALL=C sort -u)
+  else
+    read -r -a packages <<<"$package_string"
+  fi
+  ((${#packages[@]} > 0)) || {
+    echo "no packages selected for shard $shard" >&2
+    return 1
+  }
   (cd "$cwd" && go test -json -p=1 -count=1 -timeout="$POSTGRES_TEST_TIMEOUT" -run "$regex" "${packages[@]}")
 }
 

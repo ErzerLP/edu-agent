@@ -1,22 +1,64 @@
 #!/bin/sh
 set -eu
 umask 077
+export GOFLAGS=''
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 COMPOSE_FILE="$ROOT/deploy/compose.yaml"
 OCI_LAYOUT=${1:-}
 SCENARIO=${2:-full}
+LOCK_FILE=${OPERATIONS_CANDIDATE_LOCK_FILE:-/tmp/edu-agent-operations-candidate.lock}
+LOCK_FD=${OPERATIONS_CANDIDATE_LOCK_FD:-}
+LOCK_PROTOCOL=${OPERATIONS_CANDIDATE_LOCK_PROTOCOL:-}
 
 if [ -z "$OCI_LAYOUT" ] || [ ! -d "$OCI_LAYOUT" ] || { [ "$SCENARIO" != full ] && [ "$SCENARIO" != rollback ] && [ "$SCENARIO" != backup ] && [ "$SCENARIO" != expiry ] && [ "$SCENARIO" != replay ]; }; then
   printf '%s\n' "usage: $0 /absolute/path/to/verified-oci-layout [full|rollback|backup|expiry|replay]" >&2
   exit 2
 fi
-for command in docker skopeo python3 go; do
+for command in docker skopeo python3 go flock readlink; do
   command -v "$command" >/dev/null 2>&1 || {
     printf '%s\n' "required command is unavailable: $command" >&2
     exit 2
   }
 done
+LOCK_FILE=$(readlink -m "$LOCK_FILE")
+
+if [ -n "$LOCK_FD" ]; then
+  case "$LOCK_FD" in
+  *[!0-9]* | '')
+    printf '%s\n' "invalid inherited operations candidate lock descriptor" >&2
+    exit 1
+    ;;
+  esac
+  [ "$LOCK_PROTOCOL" = 'inherited-fd-v1' ] || {
+    printf '%s\n' "invalid inherited operations candidate lock protocol" >&2
+    exit 1
+  }
+  [ -e "/proc/$$/fd/$LOCK_FD" ] || {
+    printf '%s\n' "inherited operations candidate lock descriptor is unavailable" >&2
+    exit 1
+  }
+  INHERITED_TARGET=$(readlink -f "/proc/$$/fd/$LOCK_FD")
+  EXPECTED_TARGET=$(readlink -f "$LOCK_FILE")
+  [ "$INHERITED_TARGET" = "$EXPECTED_TARGET" ] || {
+    printf '%s\n' "inherited operations candidate lock descriptor targets the wrong file" >&2
+    exit 1
+  }
+  flock -n "$LOCK_FD" || {
+    printf '%s\n' "inherited operations candidate lock is not held" >&2
+    exit 1
+  }
+else
+  exec 9>"$LOCK_FILE"
+  flock -n 9 || {
+    printf '%s\n' "another host-wide candidate gate holds $LOCK_FILE" >&2
+    exit 2
+  }
+  OPERATIONS_CANDIDATE_LOCK_FILE=$LOCK_FILE
+  OPERATIONS_CANDIDATE_LOCK_FD=9
+  OPERATIONS_CANDIDATE_LOCK_PROTOCOL='inherited-fd-v1'
+  export OPERATIONS_CANDIDATE_LOCK_FILE OPERATIONS_CANDIDATE_LOCK_FD OPERATIONS_CANDIDATE_LOCK_PROTOCOL
+fi
 
 docker compose version >/dev/null
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/edu-agent-nocturne-e2e.XXXXXX")
@@ -29,8 +71,8 @@ FAILED_FORWARD_TAG=""
 FAILED_FORWARD_IMAGE_REF=""
 SERVER_IMAGE_SOURCE=${NOCTURNE_E2E_SERVER_IMAGE:-}
 SERVER_IMAGE_REF=""
-GATE_LOG="${NOCTURNE_E2E_GATE_LOG:-${TMPDIR:-/tmp}/edu-agent-nocturne-compose-e2e-last.log}"
-COMPOSE_LOG="${NOCTURNE_E2E_COMPOSE_LOG:-${TMPDIR:-/tmp}/edu-agent-nocturne-compose-e2e-compose-last.log}"
+GATE_LOG="${NOCTURNE_E2E_GATE_LOG:-$TMP_DIR/gate.log}"
+COMPOSE_LOG="${NOCTURNE_E2E_COMPOSE_LOG:-$TMP_DIR/compose.log}"
 
 cleanup() {
   status=$?
@@ -39,7 +81,7 @@ cleanup() {
   if [ "$status" -ne 0 ]; then
     docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" logs --no-color --tail=200 server nocturne >"$COMPOSE_LOG" 2>&1
     cat "$COMPOSE_LOG" >&2
-    printf 'Nocturne Compose service logs preserved at %s\n' "$COMPOSE_LOG" >&2
+    printf 'Nocturne Compose service logs captured for this invocation\n' >&2
   fi
   if [ -f "$ENV_FILE" ] && [ -f "$OVERRIDE_FILE" ]; then
     docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" down --volumes --remove-orphans >/dev/null 2>&1
@@ -234,7 +276,7 @@ EOF
 
 (
   cd "$ROOT/server"
-  go test ./internal/integrations/nocturne -run 'TestManagedBackupRoundTripChunkBoundariesAndDestroyedRestore|TestManagedBackupErasureVerificationDestroyedArtifactSucceedsAndLiveKeyFails|TestManagedBackupPrecisePruneSuccess' -count=1
+  go test -json ./internal/integrations/nocturne -run 'TestManagedBackupRoundTripChunkBoundariesAndDestroyedRestore|TestManagedBackupErasureVerificationDestroyedArtifactSucceedsAndLiveKeyFails|TestManagedBackupPrecisePruneSuccess' -count=1
 )
 
 docker compose -f "$COMPOSE_FILE" -f "$OVERRIDE_FILE" --env-file "$ENV_FILE" -p "$PROJECT" up -d
@@ -250,6 +292,7 @@ GATE_RC=$?
 set -e
 cat "$GATE_LOG"
 if [ "$GATE_RC" -ne 0 ]; then
-  printf 'Nocturne Compose gate failed; preserved gate output at %s\n' "$GATE_LOG" >&2
+  printf 'Nocturne Compose gate failed\n' >&2
   exit "$GATE_RC"
 fi
+printf 'Nocturne Compose candidate: PASS scenario=%s\n' "$SCENARIO"

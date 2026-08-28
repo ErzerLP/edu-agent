@@ -715,6 +715,14 @@ SELECT
             ):
                 raise GateError(f"memory delivery did not exhaust transient retries: {state}")
 
+            self.sql("nocturne-postgres", "ALTER TABLE public.nodes_dead_letter_gate RENAME TO nodes")
+            fault_injected = False
+            self.compose("restart", "nocturne")
+            self.wait_service_health("nocturne")
+            ready = self.wait_ready_status("degraded")
+            if ready.get("components", {}).get("nocturne", {}).get("status") != "healthy":
+                raise GateError("Nocturne component did not restart before replay")
+
             status, response = self.http(
                 "POST", f"/v1/memory/deliveries/{delivery_id}/replays",
                 {"operation_id": str(uuid.uuid4()), "payload_schema_version": 1}, token=self.token,
@@ -722,13 +730,6 @@ SELECT
             if status != 202:
                 raise GateError(f"dead memory delivery replay status={status}, want 202: {response}")
 
-            self.sql("nocturne-postgres", "ALTER TABLE public.nodes_dead_letter_gate RENAME TO nodes")
-            fault_injected = False
-            self.compose("restart", "nocturne")
-            self.wait_service_health("nocturne")
-            ready = self.wait_ready_status("degraded")
-            if ready.get("components", {}).get("nocturne", {}).get("status") != "healthy":
-                raise GateError("Nocturne component did not restart after replay")
             try:
                 self.wait_memory_applied(logical_id, timeout=60)
             except GateError as exc:

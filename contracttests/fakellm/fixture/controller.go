@@ -139,17 +139,18 @@ func (s Scenario) validate() error {
 }
 
 type AuditEntry struct {
-	Sequence       uint64      `json:"sequence"`
-	Method         string      `json:"method"`
-	Path           string      `json:"path"`
-	Model          string      `json:"model,omitempty"`
-	RequestKind    RequestKind `json:"request_kind,omitempty"`
-	RequestID      string      `json:"request_id,omitempty"`
-	ResponseFormat string      `json:"response_format,omitempty"`
-	Scenario       Scenario    `json:"scenario"`
-	Status         int         `json:"status"`
-	RequestBytes   int         `json:"request_bytes"`
-	RequestSHA256  string      `json:"request_sha256,omitempty"`
+	Sequence        uint64      `json:"sequence"`
+	Method          string      `json:"method"`
+	Path            string      `json:"path"`
+	ProtocolProfile string      `json:"protocol_profile,omitempty"`
+	Model           string      `json:"model,omitempty"`
+	RequestKind     RequestKind `json:"request_kind,omitempty"`
+	RequestID       string      `json:"request_id,omitempty"`
+	ResponseFormat  string      `json:"response_format,omitempty"`
+	Scenario        Scenario    `json:"scenario"`
+	Status          int         `json:"status"`
+	RequestBytes    int         `json:"request_bytes"`
+	RequestSHA256   string      `json:"request_sha256,omitempty"`
 }
 
 type program struct {

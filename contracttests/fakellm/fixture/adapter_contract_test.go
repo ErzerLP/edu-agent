@@ -153,8 +153,10 @@ func TestControlAPIProgramsAuditsAndResetsFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	response.Body.Close()
-	if len(auditResponse.Audit) != 1 || auditResponse.Audit[0].RequestKind != KindActivity {
-		t.Fatalf("audit=%+v", auditResponse.Audit)
+	if len(auditResponse.Audit) != 1 || auditResponse.Audit[0].RequestKind != KindActivity ||
+		auditResponse.Audit[0].ProtocolProfile != OpenAIChatCompletionsProfileV1 ||
+		auditResponse.Audit[0].ResponseFormat != "json_schema" || auditResponse.Audit[0].Model != "strict-fake" {
+		t.Fatalf("audit metadata=%+v", auditResponse.Audit)
 	}
 	request, err = http.NewRequest(http.MethodPost, server.URL+ControlPrefix+"/reset", nil)
 	if err != nil {

@@ -85,6 +85,16 @@ def test_compose_gate_covers_real_runtime_phases_without_printing_secrets():
     ]
     for marker in required:
         assert marker in driver
+    replay_start = driver.index("    def check_dead_delivery_replay")
+    replay_end = driver.index("\n    def original_nocturne_volume", replay_start)
+    replay = driver[replay_start:replay_end]
+    replay_call = 'status, response = self.http(\n                "POST", f"/v1/memory/deliveries/{delivery_id}/replays"'
+    first_replay = replay.index(replay_call)
+    dead_replay = replay.index(replay_call, first_replay + len(replay_call))
+    repair = replay.index('ALTER TABLE public.nodes_dead_letter_gate RENAME TO nodes')
+    restart = replay.index('self.compose("restart", "nocturne")', repair)
+    healthy = replay.index('self.wait_service_health("nocturne")', restart)
+    assert repair < restart < healthy < dead_replay
     assert driver.index('if self.scenario in {"rollback", "backup"}:') < driver.index(
         'initial = self.create_memory("I prefer concise compose responses")'
     )

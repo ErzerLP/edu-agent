@@ -40,6 +40,9 @@ RUN python -m pip install --require-hashes -r /tmp/build-requirements.lock \
 
 COPY app/ /app/
 RUN adduser --disabled-password --gecos '' --uid 10001 appuser \
+    && shadow_day=$((SOURCE_DATE_EPOCH / 86400)) \
+    && sed -i "s/^\(appuser:[^:]*:\)[^:]*/\1${shadow_day}/" /etc/shadow \
+    && grep -q "^appuser:[^:]*:${shadow_day}:" /etc/shadow \
     && install -d -o appuser -g appuser /app/snapshots /app/backups \
     && chown -R appuser:appuser /app
 

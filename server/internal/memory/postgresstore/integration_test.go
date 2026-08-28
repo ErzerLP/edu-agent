@@ -2363,6 +2363,108 @@ func TestPostgreSQLDeadDeliveryReplayFencesAndIdempotency(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown attempt replays into reconciliation", func(t *testing.T) {
+		pool, store, ctx, now := memoryHarness(t)
+		plan := automaticPlan(now)
+		plan.Candidate.ValidUntil = now.Add(time.Hour)
+		if _, err := store.CreateCandidate(ctx, plan); err != nil {
+			t.Fatal(err)
+		}
+		attempt, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt, err = store.TransitionAttempt(ctx, memory.AttemptTransition{
+			AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken, LeaseToken: attempt.LeaseToken,
+			From: memory.AttemptPrepared, To: memory.AttemptSent, BootEpoch: "manual-replay-unknown", At: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt, err = store.TransitionAttempt(ctx, memory.AttemptTransition{
+			AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken, LeaseToken: attempt.LeaseToken,
+			From: memory.AttemptSent, To: memory.AttemptUnknown, At: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		markDeliveryOutboxDead(t, pool, plan.OutboxID)
+		if _, err := store.ReplayDelivery(ctx, deliveryReplayPlan(plan.DeliveryID)); err != nil {
+			t.Fatal(err)
+		}
+		var attemptState, deliveryAttemptState, attemptToken, leaseToken, bootEpoch string
+		var sentAt, unknownAt *time.Time
+		var leaseExpired bool
+		if err := pool.QueryRow(ctx, `
+			SELECT ah.state,dh.attempt_state,a.attempt_token,ah.lease_token::text,ah.boot_epoch,
+			       ah.sent_at,ah.unknown_at,ah.lease_expires_at<=clock_timestamp()
+			FROM memory_delivery_attempts a
+			JOIN memory_delivery_attempt_heads ah ON ah.attempt_id=a.id
+			JOIN memory_delivery_heads dh ON dh.delivery_id=a.delivery_id
+			WHERE a.id=$1`, attempt.ID).Scan(
+			&attemptState, &deliveryAttemptState, &attemptToken, &leaseToken, &bootEpoch,
+			&sentAt, &unknownAt, &leaseExpired); err != nil {
+			t.Fatal(err)
+		}
+		if attemptState != "unknown" || deliveryAttemptState != "unknown" || attemptToken != attempt.AttemptToken ||
+			leaseToken != attempt.LeaseToken || bootEpoch != attempt.BootEpoch || sentAt == nil || unknownAt == nil || !leaseExpired {
+			t.Fatalf("replayed attempt state=%s delivery_state=%s token=%s lease=%s boot=%s sent=%v unknown=%v expired=%v",
+				attemptState, deliveryAttemptState, attemptToken, leaseToken, bootEpoch, sentAt, unknownAt, leaseExpired)
+		}
+		reconciling, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reconciling.ID != attempt.ID || reconciling.AttemptToken != attempt.AttemptToken ||
+			reconciling.State != memory.AttemptReconciling || reconciling.LeaseToken == "" || reconciling.LeaseToken == attempt.LeaseToken ||
+			reconciling.BootEpoch != attempt.BootEpoch || reconciling.SentAt == nil || reconciling.UnknownAt == nil {
+			t.Fatalf("reconciled attempt=%+v original=%+v", reconciling, attempt)
+		}
+	})
+
+	t.Run("active reconciliation blocks replay", func(t *testing.T) {
+		pool, store, ctx, now := memoryHarness(t)
+		plan := automaticPlan(now)
+		plan.Candidate.ValidUntil = now.Add(time.Hour)
+		if _, err := store.CreateCandidate(ctx, plan); err != nil {
+			t.Fatal(err)
+		}
+		attempt, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt, err = store.TransitionAttempt(ctx, memory.AttemptTransition{
+			AttemptID: attempt.ID, AttemptToken: attempt.AttemptToken, LeaseToken: attempt.LeaseToken,
+			From: memory.AttemptPrepared, To: memory.AttemptSent, BootEpoch: "manual-replay-active", At: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE memory_delivery_attempt_heads
+			SET lease_expires_at=clock_timestamp()-interval '1 second'
+			WHERE attempt_id=$1`, attempt.ID); err != nil {
+			t.Fatal(err)
+		}
+		reconciling, err := store.ClaimAttempt(ctx, plan.DeliveryID, time.Time{}, time.Minute)
+		if err != nil || reconciling.State != memory.AttemptReconciling {
+			t.Fatalf("reconciling attempt=%+v err=%v", reconciling, err)
+		}
+		markDeliveryOutboxDead(t, pool, plan.OutboxID)
+		_, err = store.ReplayDelivery(ctx, deliveryReplayPlan(plan.DeliveryID))
+		var domainErr *memory.Error
+		if !errors.As(err, &domainErr) || domainErr.Code != memory.CodeDeliveryConflict || domainErr.Reason != "delivery_replay_reconciliation_active" {
+			t.Fatalf("active reconciliation replay err=%v", err)
+		}
+		var outboxStatus string
+		if err := pool.QueryRow(ctx, `SELECT status FROM outbox_messages WHERE id=$1`, plan.OutboxID).Scan(&outboxStatus); err != nil {
+			t.Fatal(err)
+		}
+		if outboxStatus != "dead" {
+			t.Fatalf("active reconciliation outbox status=%s", outboxStatus)
+		}
+	})
+
 	t.Run("ttl expired", func(t *testing.T) {
 		pool, store, ctx, now := memoryHarness(t)
 		plan := automaticPlan(now)

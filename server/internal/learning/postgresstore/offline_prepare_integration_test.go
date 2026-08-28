@@ -174,7 +174,7 @@ func (f offlineIntegrationIdentity) ExchangePairingCode(context.Context, string,
 }
 
 func (f offlineIntegrationIdentity) Authenticate(context.Context, string, string) (identity.Credential, error) {
-	return identity.Credential{Device: identity.Device{ID: f.deviceID}, Scopes: []string{"learning:read", "learning:write"}}, nil
+	return identity.Credential{Device: identity.Device{ID: f.deviceID}, Scopes: []string{"learning:read", "learning:write", "learning:approve"}}, nil
 }
 
 func (f offlineIntegrationIdentity) ListDevices(context.Context) ([]identity.Device, error) {

@@ -78,6 +78,13 @@ def test_fetch_cli_rejects_external_absolute_path_before_network(tmp_path):
     assert sentinel.read_text(encoding="ascii") == "preserve"
 
 
+def test_dockerfile_normalizes_generated_account_dates():
+    dockerfile = (REPO / "deploy/nocturne/Dockerfile").read_text(encoding="utf-8")
+    assert "shadow_day=$((SOURCE_DATE_EPOCH / 86400))" in dockerfile
+    assert 'sed -i "s/^\\(appuser:[^:]*:\\)[^:]*/\\1${shadow_day}/" /etc/shadow' in dockerfile
+    assert 'grep -q "^appuser:[^:]*:${shadow_day}:" /etc/shadow' in dockerfile
+
+
 def test_input_lock_rejects_unused_or_tampered_claims(tmp_path, monkeypatch):
     tool = load_tool()
     source_root = REPO / "deploy/nocturne"

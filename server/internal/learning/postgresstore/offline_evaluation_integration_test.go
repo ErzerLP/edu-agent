@@ -242,7 +242,7 @@ func TestPostgreSQLOfflineEvaluationRetriesThenConvergesProvisionally(t *testing
 	if err != nil || pending.AssessmentStatus != learning.OfflineAssessmentPendingRetry || len(pending.ReasonCodes) != 1 || pending.ReasonCodes[0] != "schema_error" {
 		t.Fatalf("pending retry status=%+v err=%v", pending, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE offline_evaluation_jobs SET retry_deadline=clock_timestamp()-interval '1 second',available_at=clock_timestamp()-interval '1 second' WHERE submission_id=$1`, operation.SubmissionID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE offline_evaluation_jobs SET retry_deadline=created_at,available_at=clock_timestamp()-interval '1 second' WHERE submission_id=$1`, operation.SubmissionID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE outbox_messages SET available_at=clock_timestamp()-interval '1 second' WHERE idempotency_key=$1`, "learning.offline-evaluation:"+operation.SubmissionID); err != nil {

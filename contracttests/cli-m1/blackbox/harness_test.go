@@ -58,6 +58,12 @@ type runningProcess struct {
 	once sync.Once
 }
 
+type harnessOptions struct {
+	offlineSigner bool
+	modelName     string
+	modelTimeout  time.Duration
+}
+
 type harness struct {
 	t             *testing.T
 	schema        string
@@ -171,11 +177,21 @@ func TestMain(m *testing.M) {
 }
 
 func newHarness(t *testing.T) *harness {
-	return newHarnessWithOfflineSigner(t, true)
+	return newHarnessWithOptions(t, harnessOptions{offlineSigner: true})
 }
 
 func newHarnessWithOfflineSigner(t *testing.T, offlineSigner bool) *harness {
+	return newHarnessWithOptions(t, harnessOptions{offlineSigner: offlineSigner})
+}
+
+func newHarnessWithOptions(t *testing.T, options harnessOptions) *harness {
 	t.Helper()
+	if options.modelName == "" {
+		options.modelName = "strict-blackbox"
+	}
+	if options.modelTimeout <= 0 {
+		options.modelTimeout = 5 * time.Second
+	}
 	baseDSN := strings.TrimSpace(os.Getenv("TEST_DATABASE_URL"))
 	if baseDSN == "" {
 		t.Skip("TEST_DATABASE_URL is not set; CLI M1 PostgreSQL black-box scenarios skipped")
@@ -212,15 +228,15 @@ func newHarnessWithOfflineSigner(t *testing.T, offlineSigner bool) *harness {
 		"DEVICE_RATE_LIMIT_PER_MINUTE=10000",
 		"MODEL_REQUIRED=true",
 		"MODEL_BASE_URL="+fakeURL,
-		"MODEL_NAME=strict-blackbox",
+		"MODEL_NAME="+options.modelName,
 		"MODEL_API_KEY="+fakeAPIKey,
 		"MODEL_CONTEXT_WINDOW=8192",
 		"MODEL_MIN_CONTEXT_WINDOW=4096",
-		"MODEL_TIMEOUT=5s",
+		"MODEL_TIMEOUT="+options.modelTimeout.String(),
 		"MODEL_PROBE_CACHE_TTL=100ms",
 		"NOCTURNE_ENABLED=false",
 	)
-	if offlineSigner {
+	if options.offlineSigner {
 		_, offlinePrivateKey, signerErr := ed25519.GenerateKey(rand.Reader)
 		if signerErr != nil {
 			t.Fatalf("offline signer generation failed")

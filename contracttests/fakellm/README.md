@@ -31,5 +31,7 @@ Control endpoints:
 
 - `PUT /__fixture/scenarios/{request_kind}` installs a sequence.
 - `GET /__fixture/scenarios` returns configured programs.
-- `GET /__fixture/audit` returns request metadata and hashes, never message/input text, authorization tokens, or request headers.
+- `GET /__fixture/audit` returns request metadata and hashes, never message/input text, authorization tokens, or request headers. Valid Chat Completions requests include `protocol_profile=openai-chat-completions-v1`, the requested model ID, structured response format, request kind/ID, scenario, status, byte count, and request SHA-256. A timeout cancelled by the production client records status `0`.
 - `POST /__fixture/reset` clears scenarios, cursors, and audit state.
+
+The real PostgreSQL production vertical consuming this control surface is exactly `TestBlackBoxProductionFakeModelVerticalPostgreSQL` in `contracttests/cli-m1/blackbox`. It runs the same schema mismatch, confidence, retry, exhaustion, and later-success corpus for baseline `operations-baseline-v1` and candidate `operations-candidate-v2`; absence of its PostgreSQL prerequisite is a skip and never pass evidence.

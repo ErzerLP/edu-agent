@@ -119,11 +119,24 @@ func (s *Store) ReplayDelivery(ctx context.Context, plan memory.ReplayPlan) (mem
 		return memory.OperationResult{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "delivery_replay_requires_dead_queued_intent"}
 	}
 	payloadHashText := fmt.Sprintf("%x", deliveryPayloadHash)
+	var activeReconciliation bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1
+			FROM memory_delivery_attempt_heads
+			WHERE delivery_id=$1 AND state='reconciling' AND lease_expires_at > $2
+		)`, locked.deliveryID, locked.dbNow).Scan(&activeReconciliation); err != nil {
+		return memory.OperationResult{}, fmt.Errorf("inspect active replay reconciliation: %w", err)
+	}
+	if activeReconciliation {
+		return memory.OperationResult{}, &memory.Error{Code: memory.CodeDeliveryConflict, Reason: "delivery_replay_reconciliation_active"}
+	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE memory_delivery_attempt_heads
 		SET lease_expires_at=$2,updated_at=$2
-		WHERE delivery_id=$1 AND state='prepared' AND sent_at IS NULL`, locked.deliveryID, locked.dbNow); err != nil {
-		return memory.OperationResult{}, fmt.Errorf("release unsent replay attempt: %w", err)
+		WHERE delivery_id=$1
+		  AND ((state='prepared' AND sent_at IS NULL) OR state IN ('sent','unknown'))`, locked.deliveryID, locked.dbNow); err != nil {
+		return memory.OperationResult{}, fmt.Errorf("release replay attempt lease: %w", err)
 	}
 	if locked.deliveryKind == memory.DeliveryDelete {
 		if !currentTombstone {

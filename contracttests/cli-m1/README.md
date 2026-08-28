@@ -12,6 +12,23 @@ TEST_DATABASE_URL='postgres://...' make cli-m1-blackbox
 
 The target exits nonzero when `TEST_DATABASE_URL` is absent, after the independent fixture contracts pass. The package-level no-database check remains available with `cd contracttests/cli-m1 && env -u TEST_DATABASE_URL go test ./blackbox`; its PostgreSQL scenarios explicitly skip before binaries are built. With a DSN, the target uses `go test -p=1 -count=1 -v ./blackbox`. PostgreSQL 18 `psql` must be available on `PATH` for isolated schema setup and metadata-only assertions.
 
+### Production fake-model vertical
+
+The exact real-PostgreSQL test is `TestBlackBoxProductionFakeModelVerticalPostgreSQL`:
+
+```sh
+cd contracttests/cli-m1
+TEST_DATABASE_URL='postgres://...' \
+  go test -p=1 -count=1 -v ./blackbox \
+  -run '^TestBlackBoxProductionFakeModelVerticalPostgreSQL$'
+```
+
+The test requires a reachable PostgreSQL database through `TEST_DATABASE_URL` and a compatible `psql` on `PATH`. Without `TEST_DATABASE_URL`, the top-level test reports an explicit skip stating that the result is not pass evidence. Candidate runners must treat that skip, an empty selection, or `[no tests to run]` as not passed.
+
+For the same fixed assessment corpus, the test starts separate real `edu-agentd` processes with distinct versioned model IDs: baseline `operations-baseline-v1` and candidate `operations-candidate-v2`. Both profiles must use the audited `openai-chat-completions-v1` protocol, proposal schema version `1`, prompt revision `tutor-proposal-v1`, and context window `8192`. Profile identity may differ; schema, failure classification, retry, provisional/accepted authority, and persistence invariants must remain identical.
+
+Each profile runs through the actual `edu-agent` CLI, HTTP API, production OpenAI-compatible client, production tutor-model adapter, learning application service, and isolated PostgreSQL schema. The corpus proves schema mismatch is permanent and creates no assessment, decision, Evidence, or mastery advance; confidence `800` remains provisional until an explicit user decision; timeout and HTTP 429 each perform exactly one retry and persist ordered attempt categories; two 429 responses exhaust the budget without changing authoritative session, event-clock, Evidence, or mastery state; and a later success freezes exactly one assessment proposal artifact and accepted Evidence with matching model provenance. Fixture audit records only protocol/model/request metadata, byte counts, hashes, categories, and statuses, including status `0` for a client-cancelled timeout.
+
 Independent scenarios cover:
 
 - accepted pair/import/goal/route/explanation/activity/assessment completion;

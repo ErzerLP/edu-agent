@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	ChatCompletionsPath = "/v1/chat/completions"
-	ControlPrefix       = "/__fixture"
+	ChatCompletionsPath            = "/v1/chat/completions"
+	ControlPrefix                  = "/__fixture"
+	OpenAIChatCompletionsProfileV1 = "openai-chat-completions-v1"
 )
 
 type Handler struct {
@@ -317,6 +318,9 @@ func (h *Handler) record(generation uint64, r *http.Request, body []byte, kind R
 	entry := AuditEntry{
 		Method: r.Method, Path: r.URL.Path, RequestKind: kind, RequestID: requestID,
 		Scenario: scenario, Status: status, RequestBytes: len(body),
+	}
+	if r.URL.Path == ChatCompletionsPath {
+		entry.ProtocolProfile = OpenAIChatCompletionsProfileV1
 	}
 	if len(body) > 0 {
 		sum := sha256.Sum256(body)

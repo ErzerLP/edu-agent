@@ -273,8 +273,9 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 		t.Fatal("API key rendered in clear text")
 	}
 	updated, _ = keyForm.Update(key("enter"))
-	if got, want := updated.(model).command, []string{"__agent-key-save", "--", "secret-value"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("key command=%#v want=%#v", got, want)
+	keyAction := updated.(model)
+	if keyAction.modelKey != "secret-value" || len(keyAction.command) != 0 {
+		t.Fatalf("key action exposed command=%#v modelKeyPresent=%t", keyAction.command, keyAction.modelKey != "")
 	}
 
 	updated, _ = newModel(snapshot).Update(key("s"))

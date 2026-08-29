@@ -1,13 +1,10 @@
 package keybackend
 
 import (
-	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -21,21 +18,6 @@ func TestAccountIsStableAndSeparatesProfiles(t *testing.T) {
 	}
 	if first == otherDevice || first == otherOrigin {
 		t.Fatal("different profiles produced the same account")
-	}
-}
-
-func TestDarwinStoreCommandKeepsSecretOutOfArguments(t *testing.T) {
-	secret := "sensitive-wrapping-key"
-	command := darwinStoreCommand(context.Background(), "account", secret)
-	if strings.Contains(strings.Join(command.Args, " "), secret) {
-		t.Fatalf("wrapping key leaked into argv: %q", command.Args)
-	}
-	input, err := io.ReadAll(command.Stdin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(input) != secret+"\n" {
-		t.Fatalf("unexpected security stdin: %q", input)
 	}
 }
 

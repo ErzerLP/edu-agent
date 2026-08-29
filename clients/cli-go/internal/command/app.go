@@ -112,6 +112,10 @@ type DashboardRunner interface {
 	Run(context.Context, dashboard.Snapshot) ([]string, bool, error)
 }
 
+type dashboardModelKeySource interface {
+	TakeModelKey() (string, bool)
+}
+
 type App struct {
 	Config       ConfigStore
 	Credentials  CredentialStore
@@ -147,7 +151,7 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 	modelSecrets := modelsecret.New()
 	return &App{
 		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), ModelSecrets: modelSecrets, Terminal: terminalIO,
-		Dashboard: dashboard.Runner{In: in, Out: out}, AgentUI: defaultAgentUIRunner{in: in, out: out},
+		Dashboard: &dashboard.Runner{In: in, Out: out}, AgentUI: defaultAgentUIRunner{in: in, out: out},
 		InputIsTTY: terminalIO.InputIsTTY, OutputIsTTY: terminalIO.OutputIsTTY,
 		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{}, Build: build,
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
@@ -197,6 +201,22 @@ func (a *App) runDashboard(ctx context.Context) int {
 				return lastExit
 			}
 			return a.fail(commandError("terminal_error", "交互式主控制台无法启动", "检查终端能力，或改用显式子命令", ExitInternal))
+		}
+		if source, ok := a.Dashboard.(dashboardModelKeySource); ok {
+			if modelKey, present := source.TakeModelKey(); present {
+				if err := a.saveDashboardAgentKey(modelKey); err != nil {
+					lastExit = a.fail(err)
+				} else {
+					lastExit = ExitOK
+				}
+				if ctx.Err() != nil {
+					return lastExit
+				}
+				if err := a.waitForDashboardReturn(ctx); err != nil {
+					return lastExit
+				}
+				continue
+			}
 		}
 		if quit {
 			return lastExit
@@ -333,8 +353,6 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		return a.runClientConfig(args[1:])
 	case "model":
 		return a.runModel(ctx, args[1:])
-	case "__agent-key-save":
-		return a.runDashboardAgentKeySave(args[1:])
 	case "agent":
 		return a.runAgent(ctx, args[1:])
 	case "logout":

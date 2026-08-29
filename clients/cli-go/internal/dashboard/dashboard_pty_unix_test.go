@@ -32,8 +32,9 @@ func TestRunnerUsesFullScreenAndQuitsFromPTY(t *testing.T) {
 	resultCh := make(chan result, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+	runner := &Runner{In: terminal, Out: terminal}
 	go func() {
-		args, quit, runErr := (Runner{In: terminal, Out: terminal}).Run(ctx, Snapshot{})
+		args, quit, runErr := runner.Run(ctx, Snapshot{})
 		resultCh <- result{args: args, quit: quit, err: runErr}
 	}()
 

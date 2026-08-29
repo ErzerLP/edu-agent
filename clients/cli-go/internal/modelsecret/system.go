@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/darwinkeychain"
 )
 
 var errBackendNotFound = errors.New("system secret not found")
@@ -21,7 +23,14 @@ func (systemBackend) Get(service, account string) (string, error) {
 	case "linux":
 		command = exec.CommandContext(ctx, "secret-tool", "lookup", "service", service, "account", account)
 	case "darwin":
-		command = exec.CommandContext(ctx, "security", "find-generic-password", "-s", service, "-a", account, "-w")
+		value, err := darwinkeychain.Load(ctx, service, account)
+		if errors.Is(err, darwinkeychain.ErrNotFound) {
+			return "", errBackendNotFound
+		}
+		if err != nil {
+			return "", ErrUnavailable
+		}
+		return value, nil
 	case "windows":
 		command = modelPowerShell(ctx, `$path=Join-Path $env:LOCALAPPDATA ('EduAgent\\model-keys\\'+$env:EDU_AGENT_KEY_ACCOUNT+'.txt'); if(!(Test-Path -LiteralPath $path)){exit 44}; $cipher=[IO.File]::ReadAllText($path); $secure=ConvertTo-SecureString $cipher; $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try{[Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr))}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)}`, account)
 	default:
@@ -35,7 +44,7 @@ func (systemBackend) Get(service, account string) (string, error) {
 				if exit.ExitCode() == 1 && len(bytes.TrimSpace(exit.Stderr)) == 0 {
 					return "", errBackendNotFound
 				}
-			case "darwin", "windows":
+			case "windows":
 				if exit.ExitCode() == 44 {
 					return "", errBackendNotFound
 				}
@@ -59,8 +68,10 @@ func (systemBackend) Set(service, account, value string) error {
 		command = exec.CommandContext(ctx, "secret-tool", "store", "--label=Edu Agent model key", "service", service, "account", account)
 		command.Stdin = strings.NewReader(value + "\n")
 	case "darwin":
-		command = exec.CommandContext(ctx, "security", "add-generic-password", "-U", "-s", service, "-a", account, "-w")
-		command.Stdin = strings.NewReader(value + "\n")
+		if err := darwinkeychain.Store(ctx, service, account, value); err != nil {
+			return ErrUnavailable
+		}
+		return nil
 	case "windows":
 		command = modelPowerShell(ctx, `$directory=Join-Path $env:LOCALAPPDATA 'EduAgent\\model-keys'; [IO.Directory]::CreateDirectory($directory) | Out-Null; $secret=[Console]::In.ReadToEnd().Trim(); $secure=ConvertTo-SecureString $secret -AsPlainText -Force; $cipher=ConvertFrom-SecureString $secure; $path=Join-Path $directory ($env:EDU_AGENT_KEY_ACCOUNT+'.txt'); [IO.File]::WriteAllText($path,$cipher); $identity=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object Security.AccessControl.FileSecurity; $acl.SetOwner($identity); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object Security.AccessControl.FileSystemAccessRule($identity,'FullControl','Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $path -AclObject $acl`, account)
 		command.Stdin = strings.NewReader(value)
@@ -81,7 +92,14 @@ func (backend systemBackend) Delete(service, account string) error {
 	case "linux":
 		command = exec.CommandContext(ctx, "secret-tool", "clear", "service", service, "account", account)
 	case "darwin":
-		command = exec.CommandContext(ctx, "security", "delete-generic-password", "-s", service, "-a", account)
+		err := darwinkeychain.Delete(ctx, service, account)
+		if errors.Is(err, darwinkeychain.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return ErrUnavailable
+		}
+		return nil
 	case "windows":
 		command = modelPowerShell(ctx, `$path=Join-Path $env:LOCALAPPDATA ('EduAgent\\model-keys\\'+$env:EDU_AGENT_KEY_ACCOUNT+'.txt'); if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}`, account)
 	default:

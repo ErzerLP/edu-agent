@@ -39,11 +39,13 @@ type Snapshot struct {
 }
 
 type Runner struct {
-	In  io.Reader
-	Out io.Writer
+	In       io.Reader
+	Out      io.Writer
+	modelKey string
 }
 
-func (r Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, error) {
+func (r *Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, error) {
+	r.modelKey = ""
 	initial := newModel(snapshot)
 	program := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithInput(r.In), tea.WithOutput(r.Out), tea.WithContext(ctx))
 	result, err := program.Run()
@@ -54,7 +56,22 @@ func (r Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, err
 	if !ok {
 		return nil, false, fmt.Errorf("unexpected dashboard model %T", result)
 	}
+	if final.modelKey != "" {
+		r.modelKey = final.modelKey
+		return nil, false, nil
+	}
 	return append([]string(nil), final.command...), final.quit, nil
+}
+
+// TakeModelKey transfers a form secret directly to the command layer without
+// representing it as a CLI command or process argument.
+func (r *Runner) TakeModelKey() (string, bool) {
+	if r.modelKey == "" {
+		return "", false
+	}
+	value := r.modelKey
+	r.modelKey = ""
+	return value, true
 }
 
 type screen int
@@ -98,6 +115,7 @@ type model struct {
 	inputLabels        []string
 	focus              int
 	command            []string
+	modelKey           string
 	quit               bool
 }
 
@@ -375,7 +393,7 @@ func (m model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case screenAgentKey:
 			if values[0] != "" {
-				m.command = []string{"__agent-key-save", "--", values[0]}
+				m.modelKey = values[0]
 				return m, tea.Quit
 			}
 		}

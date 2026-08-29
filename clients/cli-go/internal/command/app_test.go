@@ -132,14 +132,16 @@ func (s *memoryCredentialStore) Delete() error {
 }
 
 type fakeDashboardResult struct {
-	args []string
-	quit bool
-	err  error
+	args     []string
+	modelKey string
+	quit     bool
+	err      error
 }
 
 type fakeDashboard struct {
-	results   []fakeDashboardResult
-	snapshots []dashboard.Snapshot
+	results         []fakeDashboardResult
+	snapshots       []dashboard.Snapshot
+	pendingModelKey string
 }
 
 func (d *fakeDashboard) Run(_ context.Context, snapshot dashboard.Snapshot) ([]string, bool, error) {
@@ -149,7 +151,17 @@ func (d *fakeDashboard) Run(_ context.Context, snapshot dashboard.Snapshot) ([]s
 	}
 	result := d.results[0]
 	d.results = d.results[1:]
+	d.pendingModelKey = result.modelKey
 	return result.args, result.quit, result.err
+}
+
+func (d *fakeDashboard) TakeModelKey() (string, bool) {
+	if d.pendingModelKey == "" {
+		return "", false
+	}
+	value := d.pendingModelKey
+	d.pendingModelKey = ""
+	return value, true
 }
 
 type fakeTerminal struct {

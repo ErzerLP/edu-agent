@@ -66,7 +66,8 @@ func (m fixedAgentModel) Complete(context.Context, modelclient.Request) (modelcl
 func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	store := &memoryConfigStore{}
 	secrets := &memoryModelSecretStore{}
-	app, out, errOut := newTestApp(store, &memoryCredentialStore{}, &fakeTerminal{})
+	terminal := &fakeTerminal{lines: []string{""}}
+	app, out, errOut := newTestApp(store, &memoryCredentialStore{}, terminal)
 	app.ModelSecrets = secrets
 
 	if exit := app.Run(t.Context(), []string{"model", "preset", "deepseek"}); exit != ExitOK {
@@ -85,10 +86,25 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 
 	const secret = "private-key-value"
 	out.Reset()
-	if exit := app.Run(t.Context(), []string{"__agent-key-save", "--", secret}); exit != ExitOK || !secrets.present || secrets.binding != modelsecret.Binding(store.value.Agent.Provider, store.value.Agent.BaseURL) {
-		t.Fatalf("key save exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	app.Dashboard = &fakeDashboard{results: []fakeDashboardResult{{modelKey: secret}, {quit: true}}}
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	app.Getenv = func(string) string { return "xterm-256color" }
+	if exit := app.Run(t.Context(), nil); exit != ExitOK || !secrets.present || secrets.binding != modelsecret.Binding(store.value.Agent.Provider, store.value.Agent.BaseURL) {
+		t.Fatalf("dashboard key save exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
+	if secrets.value != secret || secrets.saves != 1 {
+		t.Fatalf("dashboard secret store=%+v", secrets)
+	}
+
 	out.Reset()
+	errOut.Reset()
+	if exit := app.Run(t.Context(), []string{"__agent-key-save", "--", "attacker-value"}); exit != ExitInput || secrets.saves != 1 || secrets.value != secret {
+		t.Fatalf("external key save exit=%d saves=%d value=%q err=%q", exit, secrets.saves, secrets.value, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
 	if exit := app.Run(t.Context(), []string{"model", "show"}); exit != ExitOK {
 		t.Fatalf("show exit=%d err=%q", exit, errOut.String())
 	}

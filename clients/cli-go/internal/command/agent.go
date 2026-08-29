@@ -199,19 +199,19 @@ func (a *App) runModelSet(args []string) error {
 	return err
 }
 
-func (a *App) runDashboardAgentKeySave(args []string) error {
-	if len(args) != 2 || args[0] != "--" || strings.TrimSpace(args[1]) == "" {
+func (a *App) saveDashboardAgentKey(value string) error {
+	if strings.TrimSpace(value) == "" {
 		return modelUsage("API Key不能为空")
 	}
-	value, err := a.loadModelConfig()
+	configValue, err := a.loadModelConfig()
 	if err != nil {
 		return err
 	}
-	if value.Agent == nil {
+	if configValue.Agent == nil {
 		return commandError("agent_not_configured", "请先选择模型提供商", "在设置中选择提供商预设", ExitInput)
 	}
-	binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
-	if err := a.ModelSecrets.Save(binding, args[1]); err != nil {
+	binding := modelsecret.Binding(configValue.Agent.Provider, configValue.Agent.BaseURL)
+	if err := a.ModelSecrets.Save(binding, value); err != nil {
 		return commandError("credential_write_failed", "API Key无法写入系统钥匙串", "确认系统钥匙串可用后重试", ExitInternal)
 	}
 	_, err = fmt.Fprintln(a.Out, "API Key已安全保存到系统钥匙串。")

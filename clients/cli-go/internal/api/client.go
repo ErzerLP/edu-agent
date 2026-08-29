@@ -634,12 +634,39 @@ func validateDecoded(target any) error {
 		if value.ActiveGenerationID == "" || len(value.Fingerprint) != 64 {
 			return errors.New("projection status is incomplete")
 		}
+	case *MemoryCandidatePage:
+		if value.Items == nil || value.ReadGeneration.LearnerGeneration < 1 || value.ReadGeneration.MemoryGeneration < 1 {
+			return errors.New("memory candidate page is incomplete")
+		}
+		for _, item := range value.Items {
+			if err := validateMemoryCandidateView(item); err != nil {
+				return err
+			}
+		}
+	case *MemoryCandidateView:
+		return validateMemoryCandidateView(*value)
+	case *MemoryOperationResponse:
+		if value.Candidate == nil {
+			return errors.New("memory operation candidate is required")
+		}
+		return validateMemoryCandidateView(*value.Candidate)
 	case *OfflinePrepareResponse:
 		return validateOfflinePrepareResponse(*value)
 	case *OfflineSyncResponse:
 		return validateOfflineSyncResponse(*value)
 	case *OfflineOperationStatus:
 		return validateOfflineOperationStatus(*value)
+	}
+	return nil
+}
+
+func validateMemoryCandidateView(value MemoryCandidateView) error {
+	candidate := value.Candidate
+	if candidate.ID == "" || candidate.URI == "" || candidate.PayloadID == "" || len(candidate.ContentHash) != 64 ||
+		candidate.Source == "" || candidate.ProposerID == "" || candidate.Reason == "" || candidate.Category == "" ||
+		candidate.Sensitivity == "" || candidate.Stability == "" || candidate.ValidUntil.IsZero() || candidate.PolicyVersion == "" ||
+		candidate.Status == "" || candidate.Revision < 1 || candidate.CreatedAt.IsZero() || value.ContentStatus == "" {
+		return errors.New("memory candidate is incomplete")
 	}
 	return nil
 }

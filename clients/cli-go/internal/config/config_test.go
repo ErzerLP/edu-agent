@@ -81,6 +81,63 @@ func TestPairingJournalRoundTripAndCleanup(t *testing.T) {
 	}
 }
 
+func TestConfigAllowsLocalAgentSettingsWithoutPairing(t *testing.T) {
+	t.Parallel()
+	agent := DefaultAgentConfig("deepseek")
+	value := Config{Timeout: "30s", Color: "never", Agent: &agent}
+	if err := value.Validate(); err != nil {
+		t.Fatalf("unpaired agent config rejected: %v", err)
+	}
+	if value.HasPairingBinding() {
+		t.Fatalf("unpaired config reported pairing: %+v", value)
+	}
+
+	partial := value
+	partial.ServerURL = DefaultServerURL
+	if err := partial.Validate(); err == nil {
+		t.Fatal("partial pairing tuple accepted")
+	}
+
+	paired := value
+	paired.ServerURL, paired.DeviceID, paired.DisplayName = DefaultServerURL, "device-1", "Laptop"
+	if err := paired.Validate(); err != nil || !paired.HasPairingBinding() {
+		t.Fatalf("paired config rejected: %+v err=%v", paired, err)
+	}
+	local := paired.WithoutPairing()
+	if local.HasPairingBinding() || local.Agent == nil || local.Agent.Model != agent.Model {
+		t.Fatalf("WithoutPairing lost local settings: %+v", local)
+	}
+
+	custom := DefaultAgentConfig("custom")
+	if err := custom.Validate(); err != nil || custom.Provider != "custom" || custom.Model == "" {
+		t.Fatalf("custom provider preset is unusable: %+v err=%v", custom, err)
+	}
+	custom.ContextWindow = 4095
+	if err := custom.Validate(); err == nil {
+		t.Fatal("agent context window below runtime minimum was accepted")
+	}
+}
+
+func TestAgentAPIKeyOptionalOnlyForOllamaAndLoopbackCustom(t *testing.T) {
+	t.Parallel()
+	for name, testCase := range map[string]struct {
+		config AgentConfig
+		want   bool
+	}{
+		"ollama":        {config: DefaultAgentConfig("ollama"), want: true},
+		"loopback":      {config: AgentConfig{Provider: "custom", BaseURL: "http://127.0.0.1:9000/v1"}, want: true},
+		"localhost TLS": {config: AgentConfig{Provider: "custom", BaseURL: "https://localhost:9443/v1"}, want: true},
+		"remote custom": {config: AgentConfig{Provider: "custom", BaseURL: "https://gateway.example.test/v1"}, want: false},
+		"openai":        {config: DefaultAgentConfig("openai"), want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCase.config.APIKeyOptional(); got != testCase.want {
+				t.Fatalf("APIKeyOptional() = %t, want %t", got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestStoreStrictRoundTripAndUnknownField(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "edu-agent", "config.json")

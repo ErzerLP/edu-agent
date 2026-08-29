@@ -440,8 +440,8 @@ func TestOfflinePrepareLearnSyncAndSafeLogoutLoop(t *testing.T) {
 		t.Fatalf("status exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	out.Reset()
-	if exit := app.Run(t.Context(), []string{"logout"}); exit != ExitOK || !client.revoked || configStore.present || credentialStore.present {
-		t.Fatalf("logout exit=%d revoked=%t config=%t credential=%t err=%q", exit, client.revoked, configStore.present, credentialStore.present, errOut.String())
+	if exit := app.Run(t.Context(), []string{"logout"}); exit != ExitOK || !client.revoked || !configStore.present || configStore.value.HasPairingBinding() || credentialStore.present {
+		t.Fatalf("logout exit=%d revoked=%t config=%+v credential=%t err=%q", exit, client.revoked, configStore.value, credentialStore.present, errOut.String())
 	}
 	if exists, err := offline.Exists(root); err != nil || exists {
 		t.Fatalf("offline profile remains after safe logout: exists=%t err=%v", exists, err)

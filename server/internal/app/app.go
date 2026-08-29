@@ -153,6 +153,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		DeviceLimiter:         deviceLimiter,
 		PrivacyLimiter:        httpapi.NewFixedWindowLimiter(5, time.Minute),
 		PrivacyBackupDeadline: cfg.Nocturne.BackupRetention,
+		AdminUI: httpapi.AdminUIOptions{
+			Enabled: cfg.AdminUI.Enabled, Identity: identityService, PublicBaseURL: cfg.PublicBaseURL, Token: cfg.AdminUI.Token,
+			TrustedLoopbackProxy: cfg.AdminUI.TrustedLoopbackProxy,
+			AuthLimiter:          httpapi.NewFixedWindowLimiter(10, time.Minute), WriteLimiter: httpapi.NewFixedWindowLimiter(10, time.Minute),
+		},
 	})
 	if err != nil {
 		return err

@@ -35,6 +35,12 @@ type IdentityService interface {
 	RevokeDevice(context.Context, string) error
 }
 
+type AdminIdentityService interface {
+	CreatePairingCodeForProfile(context.Context, identity.PairingProfile) (string, time.Time, error)
+	ListDevices(context.Context) ([]identity.Device, error)
+	RevokeDevice(context.Context, string) error
+}
+
 type offlinePairingBootstrapService interface {
 	PairingBootstrap(context.Context) (learning.OfflinePairingBootstrap, error)
 }
@@ -160,6 +166,8 @@ type Options struct {
 	MaxKnowledgeRequestBody int64
 	MaxLearningRequestBody  int64
 	MaxOfflineRequestBody   int64
+	// AdminUI exposes only loopback administration workflows and remains disabled unless explicitly configured.
+	AdminUI AdminUIOptions
 }
 
 type API struct {
@@ -188,11 +196,16 @@ type API struct {
 	maxKnowledgeRequestBody int64
 	maxLearningRequestBody  int64
 	maxOfflineRequestBody   int64
+	adminUI                 AdminUIOptions
+	adminSessions           *adminSessionStore
 }
 
 func New(options Options) (http.Handler, error) {
 	if options.Identity == nil || options.Readiness == nil || options.Logger == nil || options.PairLimiter == nil || options.AuthLimiter == nil || options.DeviceLimiter == nil {
 		return nil, errors.New("HTTP API dependencies are required")
+	}
+	if err := validateAdminUIOptions(options.AdminUI); err != nil {
+		return nil, err
 	}
 	if (options.Memory == nil) != (options.MemoryExporter == nil) {
 		return nil, errors.New("memory HTTP API requires both service and exporter")
@@ -241,6 +254,8 @@ func New(options Options) (http.Handler, error) {
 		maxRequestBody: options.MaxRequestBody, maxKnowledgeRequestBody: options.MaxKnowledgeRequestBody,
 		maxLearningRequestBody: options.MaxLearningRequestBody,
 		maxOfflineRequestBody:  options.MaxOfflineRequestBody,
+		adminUI:                options.AdminUI,
+		adminSessions:          newAdminSessionStore(options.Now),
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
@@ -248,6 +263,9 @@ func New(options Options) (http.Handler, error) {
 	router.Use(api.audit)
 	router.Get("/livez", api.livez)
 	router.Get("/readyz", api.readyz)
+	if api.adminUI.Enabled {
+		api.mountAdminUI(router)
+	}
 	if api.mcp != nil {
 		router.Handle("/mcp", api.mcp)
 	}

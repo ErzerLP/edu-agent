@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>edu-agent 管理控制台</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <script src="/admin/assets/admin.js" defer></script>
+  </head>
+  <body class="console-page">
+    <div class="admin-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <span class="brand-mark" aria-hidden="true">E</span>
+          <div>
+            <strong>edu-agent</strong>
+            <span>本地学习服务</span>
+          </div>
+        </div>
+        <nav class="sidebar-nav" aria-label="控制台导航">
+          <a class="active" href="#overview">运行概览</a>
+          <a href="#pairing">客户端配对</a>
+          <a href="#devices">设备管理</a>
+        </nav>
+        <div class="sidebar-boundary">
+          <span class="boundary-dot" aria-hidden="true"></span>
+          <div>
+            <strong>本机管理边界</strong>
+            <span>仅回环地址可访问</span>
+          </div>
+        </div>
+      </aside>
+
+      <div class="workspace-shell">
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow">服务器管理</p>
+            <h1>管理控制台</h1>
+            <p class="header-description">
+              查看运行状态，安全地配对客户端并管理设备授权。
+            </p>
+          </div>
+          <div class="header-actions">
+            <button class="secondary-button" id="refresh" type="button">刷新</button>
+            <button class="quiet-button" id="logout" type="button">退出登录</button>
+          </div>
+        </header>
+
+        <main>
+          <section class="console-section" id="overview" aria-labelledby="overview-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">运行概览</p>
+                <h2 id="overview-title">服务状态</h2>
+              </div>
+              <div class="overall-status" id="overall-status">正在连接</div>
+            </div>
+
+            <div class="metric-grid" aria-label="运行摘要">
+              <div class="metric">
+                <span>正常组件</span>
+                <strong id="healthy-count">-</strong>
+              </div>
+              <div class="metric attention">
+                <span>需要关注</span>
+                <strong id="attention-count">-</strong>
+              </div>
+              <div class="metric">
+                <span>活跃设备</span>
+                <strong id="active-device-count">-</strong>
+              </div>
+              <div class="metric server-metric">
+                <span>客户端连接地址</span>
+                <code id="server-address">正在读取</code>
+              </div>
+            </div>
+
+            <div class="component-grid" id="component-grid" aria-live="polite"></div>
+          </section>
+
+          <section class="console-section access-section" id="pairing" aria-labelledby="pairing-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">客户端接入</p>
+                <h2 id="pairing-title">生成一次性配对码</h2>
+                <p class="section-description">
+                  根据客户端用途选择权限配置。配对码仅显示一次，并会自动过期。
+                </p>
+              </div>
+            </div>
+
+            <form id="pairing-form" class="pairing-form">
+              <div class="field-group">
+                <label for="profile">客户端类型</label>
+                <select id="profile" name="profile">
+                  <option value="user">个人客户端 · 完整学习与管理权限</option>
+                  <option value="agent">Agent 客户端 · 受限知识与学习权限</option>
+                </select>
+              </div>
+              <button class="primary-button" type="submit">生成配对码</button>
+            </form>
+
+            <div class="pairing-result" id="pairing-result" hidden>
+              <div class="result-heading">
+                <div>
+                  <span>一次性配对码</span>
+                  <strong id="pairing-expiry"></strong>
+                </div>
+                <span class="sensitive-label">敏感信息</span>
+              </div>
+              <div class="code-row">
+                <code id="pairing-code"></code>
+                <button class="secondary-button" id="copy-code" type="button">复制配对码</button>
+              </div>
+              <div class="connection-details">
+                <div>
+                  <span>服务器地址</span>
+                  <code id="server-url"></code>
+                </div>
+                <div>
+                  <span>客户端操作</span>
+                  <code>运行 edu-agent，在中文控制台中选择“配对设备”</code>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="console-section" id="devices" aria-labelledby="devices-title">
+            <div class="section-heading device-heading">
+              <div>
+                <p class="eyebrow">身份与授权</p>
+                <h2 id="devices-title">已配对设备</h2>
+                <p class="section-description">检查每个设备的权限与最近使用情况，撤销不再使用的授权。</p>
+              </div>
+              <span class="device-count" id="device-count">0 台活跃设备</span>
+            </div>
+
+            <div class="device-tools">
+              <div class="segmented-control" id="device-filter" aria-label="设备状态筛选">
+                <button class="active" type="button" data-filter="all">全部</button>
+                <button type="button" data-filter="active">活跃</button>
+                <button type="button" data-filter="revoked">已撤销</button>
+              </div>
+              <label class="search-field" for="device-search">
+                <span class="visually-hidden">搜索设备</span>
+                <input id="device-search" type="search" placeholder="搜索设备名称或 ID" autocomplete="off" />
+              </label>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>设备</th>
+                    <th>权限</th>
+                    <th>最近使用</th>
+                    <th>状态</th>
+                    <th><span class="visually-hidden">操作</span></th>
+                  </tr>
+                </thead>
+                <tbody id="device-rows"></tbody>
+              </table>
+              <p class="empty-state" id="empty-devices" hidden>没有符合当前条件的设备</p>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

@@ -89,6 +89,7 @@ func (t *IO) Clear() error {
 	return clearScreen(t.out)
 }
 
+func (t *IO) InputIsTTY() bool  { return t.inputTTY }
 func (t *IO) OutputIsTTY() bool { return t.outputTTY }
 
 func IsControlL(input []byte) bool { return len(input) == 1 && input[0] == ControlL }

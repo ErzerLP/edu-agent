@@ -12,10 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentui"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/dashboard"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/id"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelsecret"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/offline"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
 )
@@ -41,6 +46,16 @@ type CredentialStore interface {
 	Load() (credentials.Record, error)
 	Save(credentials.Record) error
 	Delete() error
+}
+
+type ModelSecretStore interface {
+	Load(string) (string, error)
+	Save(string, string) error
+	Delete(string) error
+}
+
+type AgentUIRunner interface {
+	Run(context.Context, agentui.Conversation, string) error
 }
 
 type Terminal interface {
@@ -76,6 +91,9 @@ type APIClient interface {
 	Node(context.Context, string) (api.NodeView, error)
 	Evidence(context.Context, string, int, string) (api.EvidencePage, error)
 	Reviews(context.Context, string, int, *time.Time) (api.ReviewsPage, error)
+	MemoryCandidates(context.Context, string, int) (api.MemoryCandidatePage, error)
+	MemoryCandidate(context.Context, string) (api.MemoryCandidateView, error)
+	CreateMemoryCandidate(context.Context, api.MemoryCandidateRequest) (api.MemoryOperationResponse, error)
 	ProjectionStatus(context.Context) (api.ProjectionStatus, error)
 	PrepareOffline(context.Context, api.OfflinePrepareRequest) (api.OfflinePrepareResponse, int, error)
 	SyncOfflineCanonical(context.Context, []byte) (api.OfflineSyncResponse, error)
@@ -90,18 +108,28 @@ type BuildInfo struct {
 	Commit  string
 }
 
+type DashboardRunner interface {
+	Run(context.Context, dashboard.Snapshot) ([]string, bool, error)
+}
+
 type App struct {
-	Config      ConfigStore
-	Credentials CredentialStore
-	Terminal    Terminal
-	Out         io.Writer
-	Err         io.Writer
-	Getenv      func(string) string
-	NewClient   func(string, string, time.Duration) APIClient
-	NewUUID     func() (string, error)
-	OfflineRoot func() (string, error)
-	OfflineKeys OfflineKeyStore
-	Build       BuildInfo
+	Config       ConfigStore
+	Credentials  CredentialStore
+	ModelSecrets ModelSecretStore
+	Terminal     Terminal
+	Dashboard    DashboardRunner
+	AgentUI      AgentUIRunner
+	InputIsTTY   func() bool
+	OutputIsTTY  func() bool
+	Out          io.Writer
+	Err          io.Writer
+	Getenv       func(string) string
+	NewClient    func(string, string, time.Duration) APIClient
+	NewModel     func(config.AgentConfig, string) (agentloop.Model, error)
+	NewUUID      func() (string, error)
+	OfflineRoot  func() (string, error)
+	OfflineKeys  OfflineKeyStore
+	Build        BuildInfo
 }
 
 func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, error) {
@@ -113,24 +141,152 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 	if err != nil {
 		return nil, err
 	}
+	terminalIO := terminal.New(in, out, errOut)
+	modelSecrets := modelsecret.New()
 	return &App{
-		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), Terminal: terminal.New(in, out, errOut),
+		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), ModelSecrets: modelSecrets, Terminal: terminalIO,
+		Dashboard: dashboard.Runner{In: in, Out: out}, AgentUI: defaultAgentUIRunner{in: in, out: out},
+		InputIsTTY: terminalIO.InputIsTTY, OutputIsTTY: terminalIO.OutputIsTTY,
 		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{}, Build: build,
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
 			client := api.NewClient(serverURL, token, timeout, http.DefaultClient)
 			return client
+		},
+		NewModel: func(value config.AgentConfig, apiKey string) (agentloop.Model, error) {
+			timeout, err := config.ParseTimeout(value.Timeout)
+			if err != nil {
+				return nil, err
+			}
+			return modelclient.New(value.BaseURL, value.Model, apiKey, timeout, http.DefaultClient)
 		},
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput))
+		if a.interactiveDashboardAvailable() {
+			return a.runDashboard(ctx)
+		}
+		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, config, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput))
 	}
 	if err := a.dispatch(ctx, args); err != nil {
 		return a.fail(err)
 	}
 	return ExitOK
+}
+
+func (a *App) interactiveTerminalAvailable() bool {
+	if a.Getenv != nil && strings.EqualFold(strings.TrimSpace(a.Getenv("TERM")), "dumb") {
+		return false
+	}
+	return a.InputIsTTY != nil && a.OutputIsTTY != nil && a.InputIsTTY() && a.OutputIsTTY()
+}
+
+func (a *App) interactiveDashboardAvailable() bool {
+	return a.Dashboard != nil && a.interactiveTerminalAvailable()
+}
+
+func (a *App) runDashboard(ctx context.Context) int {
+	lastExit := ExitOK
+	for {
+		args, quit, err := a.Dashboard.Run(ctx, a.dashboardSnapshot())
+		if err != nil {
+			if ctx.Err() != nil {
+				return lastExit
+			}
+			return a.fail(commandError("terminal_error", "交互式主控制台无法启动", "检查终端能力，或改用显式子命令", ExitInternal))
+		}
+		if quit {
+			return lastExit
+		}
+		if len(args) == 0 {
+			return a.fail(commandError("terminal_error", "交互式主控制台没有返回可执行操作", "重新启动客户端，或改用显式子命令", ExitInternal))
+		}
+		if err := a.dispatch(ctx, args); err != nil {
+			lastExit = a.fail(err)
+		} else {
+			lastExit = ExitOK
+		}
+		if len(args) > 0 && args[0] == "agent" {
+			continue
+		}
+		if ctx.Err() != nil {
+			return lastExit
+		}
+		if err := a.waitForDashboardReturn(ctx); err != nil {
+			return lastExit
+		}
+	}
+}
+
+func (a *App) waitForDashboardReturn(ctx context.Context) error {
+	result := make(chan error, 1)
+	go func() {
+		_, err := a.Terminal.ReadLine("\n按 Enter 返回主控制台...")
+		result <- err
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-result:
+		return err
+	}
+}
+
+func (a *App) dashboardSnapshot() dashboard.Snapshot {
+	snapshot := dashboard.Snapshot{
+		ServerURL:  config.DefaultServerURL,
+		Timeout:    config.DefaultTimeout.String(),
+		LocalState: dashboard.LocalStateUnpaired,
+	}
+	value, configErr := a.Config.Load()
+	if configErr == nil {
+		if strings.TrimSpace(value.ServerURL) != "" {
+			snapshot.ServerURL = safeText(value.ServerURL)
+		}
+		if strings.TrimSpace(value.Timeout) != "" {
+			snapshot.Timeout = safeText(value.Timeout)
+		}
+		snapshot.Color = safeText(value.Color)
+		snapshot.DeviceName = safeText(value.DisplayName)
+	}
+	if value.Agent != nil {
+		snapshot.AgentProvider = safeText(value.Agent.Provider)
+		snapshot.AgentBaseURL = safeText(value.Agent.BaseURL)
+		snapshot.AgentModel = safeText(value.Agent.Model)
+		snapshot.AgentContextWindow = value.Agent.ContextWindow
+		snapshot.AgentTimeout = safeText(value.Agent.Timeout)
+		snapshot.AgentMaxToolRounds = value.Agent.MaxToolRounds
+	}
+	if a.ModelSecrets != nil && value.Agent != nil {
+		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
+		if key, err := a.ModelSecrets.Load(binding); err == nil && strings.TrimSpace(key) != "" {
+			snapshot.AgentKeyConfigured = true
+		}
+	}
+	record, credentialErr := a.Credentials.Load()
+	_, journalErr := a.Config.LoadPairingJournal()
+
+	configMissing := errors.Is(configErr, config.ErrNotFound)
+	credentialMissing := errors.Is(credentialErr, credentials.ErrNotFound)
+	journalMissing := errors.Is(journalErr, config.ErrJournalNotFound)
+	if configMissing && credentialMissing && journalMissing {
+		return snapshot
+	}
+	if configErr == nil && !value.HasPairingBinding() && credentialMissing && journalMissing {
+		return snapshot
+	}
+	if configErr != nil || credentialErr != nil || !journalMissing {
+		snapshot.LocalState = dashboard.LocalStateIncomplete
+		return snapshot
+	}
+	validated := value
+	if validated.Validate() != nil || strings.TrimSpace(record.Token) == "" || record.ServerURL != validated.ServerURL || record.DeviceID != validated.DeviceID {
+		snapshot.LocalState = dashboard.LocalStateIncomplete
+		return snapshot
+	}
+	snapshot.LocalState = dashboard.LocalStatePaired
+	return snapshot
 }
 
 // dispatch keeps command parsing centralized while workflows remain in focused files.
@@ -153,6 +309,14 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		return a.runPair(ctx, args[1:])
 	case "device":
 		return a.runDevice(ctx, args[1:])
+	case "config":
+		return a.runClientConfig(args[1:])
+	case "model":
+		return a.runModel(ctx, args[1:])
+	case "__agent-key-save":
+		return a.runDashboardAgentKeySave(args[1:])
+	case "agent":
+		return a.runAgent(ctx, args[1:])
 	case "logout":
 		return a.runLogout(ctx, args[1:])
 	case "knowledge":
@@ -185,7 +349,7 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		}
 		return nil
 	default:
-		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput)
+		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, config, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput)
 	}
 }
 

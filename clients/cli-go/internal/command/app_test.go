@@ -19,6 +19,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/dashboard"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
 )
 
@@ -121,14 +122,36 @@ func (s *memoryCredentialStore) Delete() error {
 	return nil
 }
 
+type fakeDashboardResult struct {
+	args []string
+	quit bool
+	err  error
+}
+
+type fakeDashboard struct {
+	results   []fakeDashboardResult
+	snapshots []dashboard.Snapshot
+}
+
+func (d *fakeDashboard) Run(_ context.Context, snapshot dashboard.Snapshot) ([]string, bool, error) {
+	d.snapshots = append(d.snapshots, snapshot)
+	if len(d.results) == 0 {
+		return nil, true, nil
+	}
+	result := d.results[0]
+	d.results = d.results[1:]
+	return result.args, result.quit, result.err
+}
+
 type fakeTerminal struct {
-	secret       string
-	secretCalls  int
-	lines        []string
-	confirmed    bool
-	confirmCalls int
-	clearErr     error
-	clearCalls   int
+	secret        string
+	secretCalls   int
+	lines         []string
+	readLineCalls int
+	confirmed     bool
+	confirmCalls  int
+	clearErr      error
+	clearCalls    int
 }
 
 func (t *fakeTerminal) ReadSecret(string) (string, error) {
@@ -136,6 +159,7 @@ func (t *fakeTerminal) ReadSecret(string) (string, error) {
 	return t.secret, nil
 }
 func (t *fakeTerminal) ReadLine(string) (string, error) {
+	t.readLineCalls++
 	if len(t.lines) == 0 {
 		return "", io.EOF
 	}
@@ -150,6 +174,216 @@ func (t *fakeTerminal) Confirm(string) (bool, error) {
 func (t *fakeTerminal) Clear() error {
 	t.clearCalls++
 	return t.clearErr
+}
+
+type blockingReadTerminal struct {
+	fakeTerminal
+	started  chan struct{}
+	release  chan struct{}
+	returned chan struct{}
+}
+
+func (t *blockingReadTerminal) ReadLine(string) (string, error) {
+	close(t.started)
+	<-t.release
+	close(t.returned)
+	return "", nil
+}
+
+func TestNoArgsUsesDashboardOnlyForInteractiveTTY(t *testing.T) {
+	t.Parallel()
+	t.Run("non tty preserves usage error", func(t *testing.T) {
+		dashboardRunner := &fakeDashboard{}
+		app, _, errOut := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, &fakeTerminal{})
+		app.Dashboard = dashboardRunner
+		app.InputIsTTY = func() bool { return true }
+		app.OutputIsTTY = func() bool { return false }
+		if exit := app.Run(t.Context(), nil); exit != ExitInput || !strings.Contains(errOut.String(), "error[usage]: a command is required") {
+			t.Fatalf("exit=%d err=%q", exit, errOut.String())
+		}
+		if len(dashboardRunner.snapshots) != 0 {
+			t.Fatal("dashboard ran for non-TTY output")
+		}
+	})
+
+	t.Run("dumb terminal preserves usage error", func(t *testing.T) {
+		dashboardRunner := &fakeDashboard{}
+		app, _, errOut := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, &fakeTerminal{})
+		app.Dashboard = dashboardRunner
+		app.InputIsTTY = func() bool { return true }
+		app.OutputIsTTY = func() bool { return true }
+		app.Getenv = func(name string) string {
+			if name == "TERM" {
+				return "dumb"
+			}
+			return ""
+		}
+		if exit := app.Run(t.Context(), nil); exit != ExitInput || !strings.Contains(errOut.String(), "error[usage]: a command is required") {
+			t.Fatalf("exit=%d err=%q", exit, errOut.String())
+		}
+		if len(dashboardRunner.snapshots) != 0 {
+			t.Fatal("dashboard ran for TERM=dumb")
+		}
+	})
+
+	t.Run("tty dispatches existing command and returns", func(t *testing.T) {
+		configStore, credentialStore := pairedStores(config.DefaultServerURL, "never-render-this-token")
+		dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{{args: []string{"version"}}, {quit: true}}}
+		app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{""}})
+		app.Dashboard = dashboardRunner
+		app.InputIsTTY = func() bool { return true }
+		app.OutputIsTTY = func() bool { return true }
+		app.Build = BuildInfo{Version: "v9.8.7", Commit: "dashboard-test"}
+		if exit := app.Run(t.Context(), nil); exit != ExitOK {
+			t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+		}
+		if !strings.Contains(out.String(), "v9.8.7") || len(dashboardRunner.snapshots) != 2 {
+			t.Fatalf("out=%q snapshots=%#v", out.String(), dashboardRunner.snapshots)
+		}
+		for _, snapshot := range dashboardRunner.snapshots {
+			if snapshot.LocalState != dashboard.LocalStatePaired || snapshot.ServerURL != config.DefaultServerURL || snapshot.DeviceName != "Laptop" {
+				t.Fatalf("snapshot=%+v", snapshot)
+			}
+		}
+	})
+}
+
+func TestDashboardSnapshotClassifiesIncompleteBinding(t *testing.T) {
+	t.Parallel()
+	configStore, _ := pairedStores(config.DefaultServerURL, "never-render-this-token")
+	app, _, _ := newTestApp(configStore, &memoryCredentialStore{}, &fakeTerminal{})
+	if snapshot := app.dashboardSnapshot(); snapshot.LocalState != dashboard.LocalStateIncomplete {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+}
+
+func TestDashboardCancellationSkipsReturnPrompt(t *testing.T) {
+	t.Parallel()
+	terminal := &fakeTerminal{lines: []string{"must remain unread"}}
+	dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{{args: []string{"version"}}}}
+	app, _, _ := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, terminal)
+	app.Dashboard = dashboardRunner
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if exit := app.Run(ctx, nil); exit != ExitOK {
+		t.Fatalf("exit=%d", exit)
+	}
+	if terminal.readLineCalls != 0 {
+		t.Fatalf("read line calls=%d", terminal.readLineCalls)
+	}
+}
+
+func TestDashboardCancellationInterruptsReturnPrompt(t *testing.T) {
+	t.Parallel()
+	terminal := &blockingReadTerminal{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		returned: make(chan struct{}),
+	}
+	dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{{args: []string{"version"}}}}
+	app, _, _ := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, terminal)
+	app.Dashboard = dashboardRunner
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	ctx, cancel := context.WithCancel(t.Context())
+	exitResult := make(chan int, 1)
+	go func() { exitResult <- app.Run(ctx, nil) }()
+
+	select {
+	case <-terminal.started:
+	case <-time.After(time.Second):
+		t.Fatal("return prompt did not start")
+	}
+	cancel()
+	select {
+	case exit := <-exitResult:
+		close(terminal.release)
+		<-terminal.returned
+		if exit != ExitOK {
+			t.Fatalf("exit=%d", exit)
+		}
+	case <-time.After(time.Second):
+		close(terminal.release)
+		<-terminal.returned
+		t.Fatal("dashboard did not return after context cancellation")
+	}
+}
+
+func TestDashboardReturnsLastCommandFailure(t *testing.T) {
+	t.Parallel()
+	dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{{args: []string{"not-a-command"}}, {quit: true}}}
+	app, _, errOut := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, &fakeTerminal{lines: []string{""}})
+	app.Dashboard = dashboardRunner
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	if exit := app.Run(t.Context(), nil); exit != ExitInput {
+		t.Fatalf("exit=%d err=%q", exit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "unknown command") {
+		t.Fatalf("err=%q", errOut.String())
+	}
+}
+
+func TestExplicitCommandBypassesDashboard(t *testing.T) {
+	t.Parallel()
+	dashboardRunner := &fakeDashboard{}
+	app, out, _ := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, &fakeTerminal{})
+	app.Dashboard = dashboardRunner
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	if exit := app.Run(t.Context(), []string{"version"}); exit != ExitOK || !strings.Contains(out.String(), "edu-agent") {
+		t.Fatalf("exit=%d out=%q", exit, out.String())
+	}
+	if len(dashboardRunner.snapshots) != 0 {
+		t.Fatal("explicit command entered dashboard")
+	}
+}
+
+func TestClientConfigUpdatesOnlySafePreferences(t *testing.T) {
+	t.Parallel()
+	token := "never-render-this-token"
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, token)
+	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"config", "set", "--timeout", "45s", "--color", "auto"}); exit != ExitOK {
+		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if configStore.value.Timeout != "45s" || configStore.value.Color != "auto" || configStore.value.ServerURL != config.DefaultServerURL {
+		t.Fatalf("config=%+v", configStore.value)
+	}
+	if credentialStore.record.Token != token || strings.Contains(out.String()+errOut.String(), token) {
+		t.Fatal("credential changed or token was rendered")
+	}
+
+	out.Reset()
+	if exit := app.Run(t.Context(), []string{"config", "show"}); exit != ExitOK || !strings.Contains(out.String(), "Timeout: 45s") || !strings.Contains(out.String(), "Color: auto") {
+		t.Fatalf("show exit=%d out=%q", exit, out.String())
+	}
+}
+
+func TestClientConfigCanBeSetBeforePairing(t *testing.T) {
+	t.Parallel()
+	configStore := &memoryConfigStore{}
+	app, out, errOut := newTestApp(configStore, &memoryCredentialStore{}, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"config", "set", "--timeout", "45s", "--color", "auto"}); exit != ExitOK {
+		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if !configStore.present || configStore.value.HasPairingBinding() || configStore.value.Timeout != "45s" || configStore.value.Color != "auto" {
+		t.Fatalf("config=%+v", configStore.value)
+	}
+}
+
+func TestClientConfigRejectsInvalidPreferenceWithoutSaving(t *testing.T) {
+	t.Parallel()
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "token")
+	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"config", "set", "--color", "rainbow"}); exit != ExitInput {
+		t.Fatalf("exit=%d err=%q", exit, errOut.String())
+	}
+	if configStore.saveCalls != 0 || configStore.value.Color != "never" {
+		t.Fatalf("save calls=%d config=%+v", configStore.saveCalls, configStore.value)
+	}
 }
 
 func TestAppVersionAndPairRejectsSecretFlag(t *testing.T) {
@@ -377,6 +611,8 @@ func TestDeviceStatusLogoutAndForgetLocal(t *testing.T) {
 	}))
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, token)
+	modelPreset := config.DefaultAgentConfig("deepseek")
+	configStore.value.Agent = &modelPreset
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{confirmed: true})
 	if exit := app.Run(t.Context(), []string{"device", "status"}); exit != ExitOK {
 		t.Fatalf("status exit=%d out=%q err=%q", exit, out.String(), errOut.String())
@@ -392,17 +628,18 @@ func TestDeviceStatusLogoutAndForgetLocal(t *testing.T) {
 	revokeStatus.Store(http.StatusNoContent)
 	out.Reset()
 	errOut.Reset()
-	if exit := app.Run(t.Context(), []string{"logout"}); exit != ExitOK || configStore.present || credentialStore.present {
+	if exit := app.Run(t.Context(), []string{"logout"}); exit != ExitOK || !configStore.present || configStore.value.HasPairingBinding() || configStore.value.Agent == nil || credentialStore.present {
 		t.Fatalf("successful logout exit=%d config=%+v credential=%+v out=%q err=%q", exit, configStore, credentialStore, out.String(), errOut.String())
 	}
 
 	configStore, credentialStore = pairedStores(server.URL, token)
+	configStore.value.Agent = &modelPreset
 	app, out, errOut = newTestApp(configStore, credentialStore, &fakeTerminal{confirmed: true})
 	app.NewClient = func(string, string, time.Duration) APIClient { panic("forget-local must not create a network client") }
-	if exit := app.Run(t.Context(), []string{"device", "forget-local"}); exit != ExitOK || configStore.present || credentialStore.present {
-		t.Fatalf("forget exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	if exit := app.Run(t.Context(), []string{"device", "forget-local"}); exit != ExitOK || !configStore.present || configStore.value.HasPairingBinding() || configStore.value.Agent == nil || credentialStore.present {
+		t.Fatalf("forget exit=%d config=%+v credential=%+v out=%q err=%q", exit, configStore, credentialStore, out.String(), errOut.String())
 	}
-	if !strings.Contains(out.String(), "remote device may still be valid") {
+	if !strings.Contains(out.String(), "远端设备可能仍有效") {
 		t.Fatalf("forget warning missing: %q", out.String())
 	}
 }
@@ -410,6 +647,8 @@ func TestDeviceStatusLogoutAndForgetLocal(t *testing.T) {
 func TestForgetLocalRepairsPendingJournalWithoutNetwork(t *testing.T) {
 	t.Parallel()
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "token")
+	modelPreset := config.DefaultAgentConfig("openrouter")
+	configStore.value.Agent = &modelPreset
 	configStore.journalPresent = true
 	configStore.journal = config.PairingJournal{SchemaVersion: 1, ServerURL: config.DefaultServerURL, DeviceID: testDeviceID, DisplayName: "Laptop"}
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{confirmed: true})
@@ -417,10 +656,10 @@ func TestForgetLocalRepairsPendingJournalWithoutNetwork(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"device", "forget-local"}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
-	if configStore.present || credentialStore.present || configStore.journalPresent {
-		t.Fatalf("pending local state remains: config=%+v credential=%+v", configStore, credentialStore)
+	if !configStore.present || configStore.value.HasPairingBinding() || configStore.value.Agent == nil || credentialStore.present || configStore.journalPresent {
+		t.Fatalf("pending local state remains or client settings were lost: config=%+v credential=%+v", configStore, credentialStore)
 	}
-	if !strings.Contains(out.String(), "remote device may still be valid") {
+	if !strings.Contains(out.String(), "远端设备可能仍有效") {
 		t.Fatalf("remote warning missing: %q", out.String())
 	}
 }

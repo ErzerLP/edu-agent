@@ -29,6 +29,9 @@ func TestLoadDefaultsToLoopback(t *testing.T) {
 	if cfg.ListenAddr != "127.0.0.1:8080" || cfg.PublicBaseURL.String() != "http://127.0.0.1:8080" || cfg.InsecureNonLoopbackWarning {
 		t.Fatalf("unexpected listening policy: %+v", cfg)
 	}
+	if cfg.AdminUI.Enabled || cfg.AdminUI.Token != "" || cfg.AdminUI.TrustedLoopbackProxy {
+		t.Fatalf("admin UI should be disabled by default: %+v", cfg.AdminUI)
+	}
 	if cfg.Model.Enabled || cfg.Nocturne.Enabled || cfg.Notesync.Enabled {
 		t.Fatal("optional integrations should be disabled when no profile is configured")
 	}
@@ -76,6 +79,68 @@ func TestNonLoopbackRequiresHTTPSOrExplicitOverride(t *testing.T) {
 	if _, err := load(env(values)); err != nil {
 		t.Fatalf("HTTPS public URL should be accepted: %v", err)
 	}
+}
+
+func TestAdminUIRequiresLoopbackAndStrongToken(t *testing.T) {
+	values := baseEnv()
+	values["ADMIN_UI_ENABLED"] = "true"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "ADMIN_UI_TOKEN") {
+		t.Fatalf("expected missing admin token error, got %v", err)
+	}
+	values["ADMIN_UI_TOKEN"] = "short"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "32 random bytes") {
+		t.Fatalf("expected malformed admin token error, got %v", err)
+	}
+	values["ADMIN_UI_TOKEN"] = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x41}, 32))
+	cfg, err := load(env(values))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AdminUI.Enabled || cfg.AdminUI.Token != values["ADMIN_UI_TOKEN"] || cfg.AdminUI.TrustedLoopbackProxy {
+		t.Fatalf("unexpected admin UI config: %+v", cfg.AdminUI)
+	}
+
+	values["LISTEN_ADDR"] = "0.0.0.0:8080"
+	values["ALLOW_INSECURE_NON_LOOPBACK"] = "true"
+	values["PUBLIC_BASE_URL"] = "http://127.0.0.1:8080"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "ADMIN_UI_TRUSTED_LOOPBACK_PROXY") {
+		t.Fatalf("expected non-loopback listener boundary error, got %v", err)
+	}
+	values["ADMIN_UI_TRUSTED_LOOPBACK_PROXY"] = "true"
+	cfg, err = load(env(values))
+	if err != nil || !cfg.AdminUI.TrustedLoopbackProxy {
+		t.Fatalf("trusted loopback publish boundary should be accepted: cfg=%+v err=%v", cfg.AdminUI, err)
+	}
+
+	values["PUBLIC_BASE_URL"] = "https://agent.example.test"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "loopback PUBLIC_BASE_URL") {
+		t.Fatalf("expected non-loopback admin UI error, got %v", err)
+	}
+}
+
+func TestAdminUIRejectsReusedIntegrationSecrets(t *testing.T) {
+	t.Parallel()
+	t.Run("Nocturne maintenance token", func(t *testing.T) {
+		values := validNocturneEnv()
+		values["ADMIN_UI_ENABLED"] = "true"
+		values["ADMIN_UI_TOKEN"] = values["NOCTURNE_MAINTENANCE_TOKEN"]
+		if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "NOCTURNE_MAINTENANCE_TOKEN") || strings.Contains(err.Error(), values["ADMIN_UI_TOKEN"]) {
+			t.Fatalf("reused maintenance token err=%v", err)
+		}
+	})
+	t.Run("model API key", func(t *testing.T) {
+		values := baseEnv()
+		adminToken := encodedSecret32(0x71)
+		values["ADMIN_UI_ENABLED"] = "true"
+		values["ADMIN_UI_TOKEN"] = adminToken
+		values["MODEL_BASE_URL"] = "https://model.example.test/v1"
+		values["MODEL_NAME"] = "fake"
+		values["MODEL_API_KEY"] = adminToken
+		values["MODEL_CONTEXT_WINDOW"] = "8192"
+		if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "MODEL_API_KEY") || strings.Contains(err.Error(), adminToken) {
+			t.Fatalf("reused model key err=%v", err)
+		}
+	})
 }
 
 func TestModelProfileIsAllOrNothingAndChecksContext(t *testing.T) {

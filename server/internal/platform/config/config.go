@@ -32,6 +32,7 @@ type Config struct {
 	MigrateOnStart             bool
 	AllowInsecureNonLoopback   bool
 	InsecureNonLoopbackWarning bool
+	AdminUI                    AdminUIConfig
 	ShutdownTimeout            time.Duration
 	PairingCodeTTL             time.Duration
 	PairingCodeMaxAttempts     int
@@ -44,6 +45,12 @@ type Config struct {
 	Nocturne                   NocturneConfig
 	Notesync                   NotesyncConfig
 	Privacy                    PrivacyConfig
+}
+
+type AdminUIConfig struct {
+	Enabled              bool
+	Token                string
+	TrustedLoopbackProxy bool
 }
 
 type ModelConfig struct {
@@ -178,6 +185,20 @@ func load(lookup envReader) (Config, error) {
 	if cfg.AllowInsecureNonLoopback, err = boolValue(lookup, "ALLOW_INSECURE_NON_LOOPBACK", false); err != nil {
 		return Config{}, err
 	}
+	if cfg.AdminUI.Enabled, err = boolValue(lookup, "ADMIN_UI_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.AdminUI.TrustedLoopbackProxy, err = boolValue(lookup, "ADMIN_UI_TRUSTED_LOOPBACK_PROXY", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.AdminUI.Enabled {
+		if cfg.AdminUI.Token, err = requiredString(lookup, "ADMIN_UI_TOKEN"); err != nil {
+			return Config{}, err
+		}
+		if err := validateAdminUIToken(cfg.AdminUI.Token); err != nil {
+			return Config{}, err
+		}
+	}
 	if cfg.ShutdownTimeout, err = durationValue(lookup, "SHUTDOWN_TIMEOUT", cfg.ShutdownTimeout); err != nil {
 		return Config{}, err
 	}
@@ -210,6 +231,13 @@ func load(lookup envReader) (Config, error) {
 	}
 	if err := validateListeningPolicy(&cfg); err != nil {
 		return Config{}, err
+	}
+	if cfg.AdminUI.Enabled && !isLoopbackHost(cfg.PublicBaseURL.Hostname()) {
+		return Config{}, errors.New("ADMIN_UI_ENABLED requires a loopback PUBLIC_BASE_URL")
+	}
+	listenHost, _, _ := net.SplitHostPort(cfg.ListenAddr)
+	if cfg.AdminUI.Enabled && !isLoopbackHost(listenHost) && !cfg.AdminUI.TrustedLoopbackProxy {
+		return Config{}, errors.New("ADMIN_UI_ENABLED on a non-loopback LISTEN_ADDR requires ADMIN_UI_TRUSTED_LOOPBACK_PROXY=true and an external loopback-only transport boundary")
 	}
 
 	if cfg.Model.Required, err = boolValue(lookup, "MODEL_REQUIRED", false); err != nil {
@@ -281,7 +309,34 @@ func load(lookup envReader) (Config, error) {
 	if cfg.PairingCodeMaxAttempts <= 0 || cfg.PairingRateLimitPerMinute <= 0 || cfg.AuthFailureLimitPerMinute <= 0 || cfg.DeviceRateLimitPerMinute <= 0 || cfg.Model.MinimumContext <= 0 || cfg.Privacy.ErasureGrantMaxAttempts <= 0 {
 		return Config{}, errors.New("numeric limits must be positive")
 	}
+	if err := validateAdminUISecretSeparation(cfg); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+func validateAdminUISecretSeparation(cfg Config) error {
+	if !cfg.AdminUI.Enabled {
+		return nil
+	}
+	secrets := []struct {
+		name  string
+		value string
+	}{
+		{name: "MODEL_API_KEY", value: cfg.Model.APIKey},
+		{name: "NOCTURNE_API_TOKEN", value: cfg.Nocturne.APIToken},
+		{name: "NOCTURNE_MAINTENANCE_TOKEN", value: cfg.Nocturne.MaintenanceToken},
+		{name: "NOTESYNC_API_TOKEN", value: cfg.Notesync.APIToken},
+	}
+	for _, candidate := range secrets {
+		if candidate.value == "" || len(candidate.value) != len(cfg.AdminUI.Token) {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(candidate.value), []byte(cfg.AdminUI.Token)) == 1 {
+			return fmt.Errorf("ADMIN_UI_TOKEN must differ from %s", candidate.name)
+		}
+	}
+	return nil
 }
 
 func offlineChallengeKeys(lookup envReader) (map[int][]byte, error) {
@@ -691,6 +746,14 @@ func validImageDigestReference(value string) bool {
 		}
 	}
 	return true
+}
+
+func validateAdminUIToken(token string) error {
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != token {
+		return errors.New("ADMIN_UI_TOKEN must be the canonical unpadded base64url encoding of 32 random bytes")
+	}
+	return nil
 }
 
 func validateListeningPolicy(cfg *Config) error {

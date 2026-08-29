@@ -92,6 +92,10 @@ services:
       LISTEN_ADDR: 0.0.0.0:8080
       PUBLIC_BASE_URL: http://127.0.0.1:${SERVER_PORT:-8080}
       ALLOW_INSECURE_NON_LOOPBACK: "true"
+      ADMIN_UI_ENABLED: ${ADMIN_UI_ENABLED:-false}
+      ADMIN_UI_TOKEN: ${ADMIN_UI_TOKEN:-}
+      # The published host port above is loopback-only; the container listener itself is not.
+      ADMIN_UI_TRUSTED_LOOPBACK_PROXY: "true"
       DATABASE_URL: postgres://edu_agent:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/edu_agent?sslmode=disable
       MIGRATE_ON_START: "true"
       SHUTDOWN_TIMEOUT: 10s

@@ -30,10 +30,11 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return commandError("usage", "pair accepts only non-secret flags and never accepts --code", "pipe one code line or enter it at the hidden TTY prompt", ExitInput)
 	}
-	if err := a.requireEmptyLocalState(); err != nil {
+	base, fallback, err := a.pairingBaseConfig()
+	if err != nil {
 		return err
 	}
-	resolved, err := config.Resolve(config.Config{}, flags.overrides(), a.Getenv)
+	resolved, err := config.Resolve(base, flags.overrides(), a.Getenv)
 	if err != nil {
 		return commandError("invalid_server_url", "the server URL or connection settings are unsafe", "use HTTPS or explicitly approve non-loopback plaintext HTTP", ExitInput)
 	}
@@ -82,7 +83,7 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 		}
 	}
 	record := credentials.Record{ServerURL: resolved.ServerURL, DeviceID: issued.Device.ID, Token: issued.Token}
-	if err := persistPairing(a.Config, a.Credentials, resolved, record); err != nil {
+	if err := persistPairingWithFallback(a.Config, a.Credentials, resolved, record, fallback); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(a.Out, "Server: %s\nDevice: %s\nDevice ID: %s\n", safeText(resolved.ServerURL), safeText(issued.Device.DisplayName), safeText(issued.Device.ID))
@@ -90,18 +91,22 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 }
 
 func persistPairing(configStore ConfigStore, credentialStore CredentialStore, value config.Config, record credentials.Record) error {
+	return persistPairingWithFallback(configStore, credentialStore, value, record, nil)
+}
+
+func persistPairingWithFallback(configStore ConfigStore, credentialStore CredentialStore, value config.Config, record credentials.Record, fallback *config.Config) error {
 	journal := config.PairingJournal{ServerURL: value.ServerURL, DeviceID: value.DeviceID, DisplayName: value.DisplayName}
 	if err := configStore.SavePairingJournal(journal); err != nil {
 		return commandError("pairing_journal_failed", "the fail-closed pairing journal was not saved", "repair local storage and revoke the remote device from another paired device", ExitInternal)
 	}
 	if err := credentialStore.Save(record); err != nil {
-		if !compensatePairing(configStore, credentialStore) {
+		if !compensatePairing(configStore, credentialStore, fallback) {
 			return pendingPairingError("credential publication failed and local cleanup was incomplete")
 		}
 		return commandError("credential_save_failed", "the device credential was not saved", "repair local storage permissions and pair again", ExitInternal)
 	}
 	if err := configStore.Save(value); err != nil {
-		if !compensatePairing(configStore, credentialStore) {
+		if !compensatePairing(configStore, credentialStore, fallback) {
 			return pendingPairingError("configuration publication failed and local cleanup was incomplete")
 		}
 		return commandError("config_save_failed", "configuration publication failed and the new local state was removed", "repair local storage and pair again", ExitInternal)
@@ -112,9 +117,14 @@ func persistPairing(configStore ConfigStore, credentialStore CredentialStore, va
 	return nil
 }
 
-func compensatePairing(configStore ConfigStore, credentialStore CredentialStore) bool {
+func compensatePairing(configStore ConfigStore, credentialStore CredentialStore, fallback *config.Config) bool {
 	credentialErr := credentialStore.Delete()
-	configErr := configStore.Delete()
+	var configErr error
+	if fallback == nil {
+		configErr = configStore.Delete()
+	} else {
+		configErr = configStore.Save(*fallback)
+	}
 	if credentialErr != nil || configErr != nil {
 		return false
 	}
@@ -125,26 +135,33 @@ func pendingPairingError(detail string) error {
 	return commandError("local_state_pending", detail, "run edu-agent device forget-local before any network command", ExitInternal)
 }
 
-func (a *App) requireEmptyLocalState() error {
+func (a *App) pairingBaseConfig() (config.Config, *config.Config, error) {
 	if _, journalErr := a.Config.LoadPairingJournal(); journalErr == nil {
-		return pendingPairingError("an unfinished pairing journal is present")
+		return config.Config{}, nil, pendingPairingError("an unfinished pairing journal is present")
 	} else if !errors.Is(journalErr, config.ErrJournalNotFound) {
-		return pendingPairingError("the pairing journal cannot be safely read")
+		return config.Config{}, nil, pendingPairingError("the pairing journal cannot be safely read")
 	}
-	_, configErr := a.Config.Load()
+	value, configErr := a.Config.Load()
 	_, credentialErr := a.Credentials.Load()
 	configMissing := errors.Is(configErr, config.ErrNotFound)
 	credentialMissing := errors.Is(credentialErr, credentials.ErrNotFound)
 	if configMissing && credentialMissing {
-		return nil
+		return config.Config{}, nil, nil
 	}
 	if configErr != nil && !configMissing || credentialErr != nil && !credentialMissing {
-		return commandError("local_state_invalid", "existing local state cannot be safely read", "run edu-agent device forget-local", ExitInput)
+		return config.Config{}, nil, commandError("local_state_invalid", "existing local state cannot be safely read", "run edu-agent device forget-local", ExitInput)
+	}
+	if configErr == nil && credentialMissing && !value.HasPairingBinding() {
+		if err := value.Validate(); err != nil {
+			return config.Config{}, nil, commandError("local_state_invalid", "local client settings are invalid", "repair the local configuration", ExitInput)
+		}
+		fallback := value.WithoutPairing()
+		return fallback, &fallback, nil
 	}
 	if configMissing != credentialMissing {
-		return commandError("local_state_orphaned", "configuration and credential halves do not match", "run edu-agent device forget-local", ExitInput)
+		return config.Config{}, nil, commandError("local_state_orphaned", "configuration and credential halves do not match", "run edu-agent device forget-local", ExitInput)
 	}
-	return commandError("already_paired", "a local device binding already exists", "run edu-agent logout or device forget-local before pairing again", ExitConflict)
+	return config.Config{}, nil, commandError("already_paired", "a local device binding already exists", "run edu-agent logout or device forget-local before pairing again", ExitConflict)
 }
 
 func (a *App) runDevice(ctx context.Context, args []string) error {
@@ -271,11 +288,11 @@ func (a *App) runLogout(ctx context.Context, args []string) error {
 		_ = keybackend.Delete(keybackend.Account(bound.Config.ServerURL, bound.Config.DeviceID))
 	}
 	credentialErr := a.Credentials.Delete()
-	configErr := a.Config.Delete()
+	configErr := a.Config.Save(bound.Config.WithoutPairing())
 	if credentialErr != nil || configErr != nil {
-		return commandError("local_cleanup_failed", "the remote device is revoked but local state cleanup is incomplete", "run edu-agent device forget-local", ExitInternal)
+		return commandError("local_cleanup_failed", "the remote device is revoked but local pairing cleanup is incomplete", "run edu-agent device forget-local", ExitInternal)
 	}
-	_, err = fmt.Fprintln(a.Out, "Remote device revoked. Local credential and configuration removed.")
+	_, err = fmt.Fprintln(a.Out, "远端设备已撤销，本地配对已清除；客户端偏好和AI模型设置已保留。")
 	return err
 }
 
@@ -295,20 +312,20 @@ func (a *App) runForgetLocal() error {
 	configMissing := errors.Is(configErr, config.ErrNotFound)
 	credentialMissing := errors.Is(credentialErr, credentials.ErrNotFound)
 	journalMissing := errors.Is(journalErr, config.ErrJournalNotFound)
-	if configMissing && credentialMissing && journalMissing {
-		_, err := fmt.Fprintln(a.Out, "No local device state was found. Remote devices were not changed.")
+	if (configMissing || configErr == nil && !value.HasPairingBinding()) && credentialMissing && journalMissing {
+		_, err := fmt.Fprintln(a.Out, "未找到本地设备状态；客户端偏好和AI模型设置未更改。")
 		return err
 	}
 	if configErr == nil {
-		_, _ = fmt.Fprintf(a.Out, "Local binding: %s %s %s\n", safeText(value.ServerURL), safeText(value.DisplayName), safeText(value.DeviceID))
+		_, _ = fmt.Fprintf(a.Out, "本地绑定：%s %s %s\n", safeText(value.ServerURL), safeText(value.DisplayName), safeText(value.DeviceID))
 	} else if credentialErr == nil {
-		_, _ = fmt.Fprintf(a.Out, "Local credential binding: %s %s\n", safeText(record.ServerURL), safeText(record.DeviceID))
+		_, _ = fmt.Fprintf(a.Out, "本地凭据绑定：%s %s\n", safeText(record.ServerURL), safeText(record.DeviceID))
 	} else if journalErr == nil {
-		_, _ = fmt.Fprintf(a.Out, "Pending local binding: %s %s %s\n", safeText(journal.ServerURL), safeText(journal.DisplayName), safeText(journal.DeviceID))
+		_, _ = fmt.Fprintf(a.Out, "待清理的本地绑定：%s %s %s\n", safeText(journal.ServerURL), safeText(journal.DisplayName), safeText(journal.DeviceID))
 	} else {
-		_, _ = fmt.Fprintln(a.Out, "Local state is incomplete or unreadable.")
+		_, _ = fmt.Fprintln(a.Out, "本地配对状态不完整或无法读取。")
 	}
-	confirmed, err := a.Terminal.Confirm("Forget local device state?")
+	confirmed, err := a.Terminal.Confirm("仅清除本地设备状态？")
 	if err != nil {
 		return commandError("confirmation_failed", "local confirmation could not be read", "retry in an interactive terminal", ExitInput)
 	}
@@ -327,17 +344,22 @@ func (a *App) runForgetLocal() error {
 		return commandError("local_cleanup_failed", "a fail-closed cleanup journal could not be saved", "repair file permissions and run device forget-local again", ExitInternal)
 	}
 	credentialDeleteErr := a.Credentials.Delete()
-	configDeleteErr := a.Config.Delete()
+	var configCleanupErr error
 	if configErr == nil {
-		_ = keybackend.Delete(keybackend.Account(value.ServerURL, value.DeviceID))
+		configCleanupErr = a.Config.Save(value.WithoutPairing())
+		if value.HasPairingBinding() {
+			_ = keybackend.Delete(keybackend.Account(value.ServerURL, value.DeviceID))
+		}
+	} else {
+		configCleanupErr = a.Config.Delete()
 	}
-	if credentialDeleteErr != nil || configDeleteErr != nil {
-		return pendingPairingError("some local state could not be removed")
+	if credentialDeleteErr != nil || configCleanupErr != nil {
+		return pendingPairingError("some local pairing state could not be removed")
 	}
 	if err := a.Config.DeletePairingJournal(); err != nil {
 		return pendingPairingError("local halves were removed but the cleanup journal remains")
 	}
-	_, err = fmt.Fprintln(a.Out, "Local state removed. The remote device may still be valid; revoke it from another paired device.")
+	_, err = fmt.Fprintln(a.Out, "本地配对已清除，客户端偏好和AI模型设置已保留。远端设备可能仍有效，请通过其他已配对设备或管理WebUI撤销。")
 	return err
 }
 

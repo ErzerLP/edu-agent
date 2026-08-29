@@ -1,0 +1,50 @@
+# Operator interfaces
+
+This document defines the local administration Web UI and the interactive CLI dashboard. Both interfaces are adapters over existing application services; neither owns a second copy of identity, knowledge, learning, memory, or privacy state.
+
+## Local administration Web UI
+
+The server may expose `/admin/` only when `ADMIN_UI_ENABLED=true` and `PUBLIC_BASE_URL` resolves to a loopback host. Direct server listeners must also bind loopback, and the request peer address is checked before authentication. The Compose deployment is the explicit proxy-boundary exception: its process listener is non-loopback inside the container, `ADMIN_UI_TRUSTED_LOOPBACK_PROXY=true` records that boundary, and the host port is published only on `127.0.0.1`. Remote operators use an SSH tunnel rather than a LAN listener; the trusted-proxy setting must not be reused behind a public port.
+
+The UI supports only the local identity bootstrap and operational workflows:
+
+- inspect readiness components;
+- create one-time `user` or restricted `agent` pairing codes;
+- list active and revoked devices;
+- revoke an active device;
+- display the exact server URL used by clients.
+
+It does not read or update model keys, Nocturne credentials, NoteSync credentials, database passwords, privacy keys, or other service configuration. Those values remain process-start configuration in the private Compose environment file.
+
+`ADMIN_UI_TOKEN` is an independent credential containing the canonical unpadded base64url encoding of exactly 32 random bytes. It must differ from the configured model, Nocturne API, Nocturne maintenance, and NoteSync API credentials. The dedicated Chinese login page accepts the fixed username `admin` and this management password over the loopback connection; the browser is never asked to use its built-in HTTP Basic prompt. The form disables credential autocomplete, and the application never writes the raw password through page scripts, cookies, browser storage, or markup. Operators must also decline any browser or extension prompt that attempts to retain this management credential. Successful login creates a random server-side session with a 15-minute lifetime and an `HttpOnly`, `SameSite=Strict`, `/admin` cookie. Logout invalidates the session immediately, and a server restart invalidates all active sessions.
+
+Each authenticated session has an independent CSRF token. State-changing requests require that token plus the exact same-origin `Origin` header. The server rate-limits every login attempt before credential comparison, compares credentials in constant time only while the attempt budget is available, rate-limits management writes, and requires the exact configured Host. Admin responses use `Cache-Control: no-store`, a restrictive Content Security Policy, frame denial, MIME sniffing denial, and no referrer policy. Pairing codes are returned once and are never written to logs or browser storage.
+
+Container-network reachability is not an administration grant. A container that can reach the server must still present the independent admin credential and satisfy the request checks. The trusted Compose boundary is the host's loopback-only published port, not the Docker network itself.
+
+## Interactive CLI dashboard
+
+Running `edu-agent` without arguments opens the full-screen dashboard only when stdin and stdout are TTYs and `TERM` is not `dumb`. Explicit subcommands remain available with their existing inputs and outputs for scripts, tests, recovery, and direct use. Running without arguments in a non-interactive or unsupported terminal must fail quickly with usage instead of waiting for input or emitting alternate-screen control sequences.
+
+The dashboard is Chinese-first and exposes selectable workflows for:
+
+- start the AI learning assistant;
+- continue the server-authoritative structured learning flow;
+- pair or replace the local device credential;
+- import knowledge and set a learning goal;
+- inspect progress, routes, evidence, reviews, and devices;
+- configure local connection preferences and the client-side AI model;
+- recover incomplete local pairing state;
+- exit.
+
+The dashboard may collect command inputs and return equivalent arguments to the existing command dispatcher. It must not duplicate HTTP request construction, teaching transitions, assessment decisions, credential persistence, or error mapping. Long-running or interactive commands leave the dashboard presentation before using the existing terminal workflow, and the dashboard can resume after the command returns. A terminal below the minimum usable dimensions renders only a bounded resize state and does not dispatch hidden menu actions. Quitting reports the most recent selected command's exit status.
+
+The settings view shows the configured server URL, timeout, output-color preference, Agent provider, OpenAI-compatible base URL, model name, context window, model timeout, tool-round limit, API-key presence, and one of three local binding states: `unpaired`, `paired`, or `incomplete`. Timeout, color, and Agent model settings can be saved before pairing. Pairing fields form one all-or-nothing binding and remain separate from local model preferences. Logout and `device forget-local` clear only pairing state; they preserve local client preferences, model settings, and the model credential. Replacement pairing offers both an online logout path that revokes the old device and an explicit local-only recovery path for an unavailable old server; the latter warns that the remote device may remain valid. The UI never displays the API key or bearer token.
+
+The client Agent model is independent from the server teaching model. Non-secret model settings are stored in the local JSON configuration. The API key is stored separately through the platform credential backend: Secret Service on Linux, Keychain on macOS, and current-user DPAPI protection on Windows. Credential entries are scoped by an irreversible binding of provider and normalized Base URL, so a key is never reused for another endpoint. Ollama and unauthenticated custom loopback endpoints may operate without a key; preset cloud providers and remote custom endpoints require a matching bound credential and fail closed when the protected backend is unavailable. The first supported adapter is the OpenAI-compatible `/chat/completions` protocol, with presets for OpenAI, DeepSeek, OpenRouter, Ollama, and a custom endpoint. Provider redirects are disabled, response bodies are bounded, and provider failure details are not echoed to the user.
+
+The Agent Loop is stateless with respect to the model and reconstructs context through a narrow client tool surface. It may read knowledge outlines, learning progress, routes, reviews, and admitted long-term preferences. Tool outputs, tool-call counts, tool arguments, assistant text, user input, and the context sent on each request are independently bounded. A model response that exceeds those limits fails closed instead of triggering unbounded reads or model traffic. Model, tool, error, and confirmation text is stripped of terminal and bidirectional control characters before rendering. The only write-capable Agent tool proposes a long-term preference: the loop pauses and places the exact content, reason, category, sensitivity, and stability in the scrollable TUI transcript. The fixed confirmation controls remain visible while the user inspects the full candidate. A server-side Memory candidate is created only after explicit confirmation. The operation ID is retained across response-loss retries; once a submission result becomes unknown, the Session and TUI prohibit cancellation and allow only an idempotent retry with that same ID. If the follow-up model response fails after a successful write, the TUI reports the completed submission and leaves confirmation mode instead of presenting a stale action. Exiting the Agent cancels in-flight model and tool requests.
+
+## Verification boundary
+
+Focused verification covers disabled defaults, loopback and credential validation, Host and Origin rejection, login and write rate limits, session expiry and logout, session-bound CSRF, no-store security headers, identity-service delegation, non-TTY behavior, dashboard command mapping, Chinese-first rendering, explicit-command compatibility, model credential isolation, Agent tool limits, preference confirmation, and narrow terminal rendering. Deployment verification additionally exercises the real Compose server, dedicated browser login, responsive browser UI, one-time pairing, device listing and revocation, local model configuration, and interactive dashboard and Agent launches.

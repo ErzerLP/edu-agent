@@ -21,6 +21,11 @@ const (
 	DefaultServerURL = "http://127.0.0.1:8080"
 	DefaultTimeout   = 30 * time.Second
 	DefaultColor     = "never"
+
+	DefaultAgentProvider      = "openai"
+	DefaultAgentContextWindow = 32768
+	DefaultAgentTimeout       = 60 * time.Second
+	DefaultAgentMaxToolRounds = 8
 )
 
 var (
@@ -36,6 +41,27 @@ type Config struct {
 	Color             string          `json:"color"`
 	AllowInsecureHTTP bool            `json:"allow_insecure_http"`
 	Offline           *OfflineBinding `json:"offline,omitempty"`
+	Agent             *AgentConfig    `json:"agent,omitempty"`
+}
+
+type AgentConfig struct {
+	Provider      string `json:"provider"`
+	BaseURL       string `json:"base_url"`
+	Model         string `json:"model"`
+	ContextWindow int    `json:"context_window"`
+	Timeout       string `json:"timeout"`
+	MaxToolRounds int    `json:"max_tool_rounds"`
+}
+
+func (c AgentConfig) APIKeyOptional() bool {
+	if c.Provider == "ollama" {
+		return true
+	}
+	if c.Provider != "custom" {
+		return false
+	}
+	parsed, err := url.Parse(c.BaseURL)
+	return err == nil && isLoopback(parsed.Hostname())
 }
 
 type OfflineBinding struct {
@@ -147,16 +173,17 @@ func (s Store) pairingJournalPath() string {
 }
 
 func (c *Config) Validate() error {
-	normalized, err := ValidateServerURL(c.ServerURL, c.AllowInsecureHTTP)
-	if err != nil {
-		return err
-	}
-	c.ServerURL = normalized
-	if strings.TrimSpace(c.DeviceID) == "" {
-		return errors.New("device ID is required")
-	}
-	if strings.TrimSpace(c.DisplayName) == "" {
-		return errors.New("display name is required")
+	if c.HasPairingBinding() {
+		if strings.TrimSpace(c.ServerURL) == "" || strings.TrimSpace(c.DeviceID) == "" || strings.TrimSpace(c.DisplayName) == "" {
+			return errors.New("server URL, device ID, and display name must be configured together")
+		}
+		normalized, err := ValidateServerURL(c.ServerURL, c.AllowInsecureHTTP)
+		if err != nil {
+			return err
+		}
+		c.ServerURL = normalized
+	} else if c.Offline != nil {
+		return errors.New("offline binding requires a paired device")
 	}
 	if c.Timeout == "" {
 		c.Timeout = DefaultTimeout.String()
@@ -175,7 +202,103 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if c.Agent != nil {
+		if err := c.Agent.Validate(); err != nil {
+			return fmt.Errorf("agent configuration: %w", err)
+		}
+	}
 	return nil
+}
+
+// HasPairingBinding reports whether any server/device-owned binding field is present.
+func (c Config) HasPairingBinding() bool {
+	return strings.TrimSpace(c.ServerURL) != "" || strings.TrimSpace(c.DeviceID) != "" || strings.TrimSpace(c.DisplayName) != "" || c.Offline != nil
+}
+
+// WithoutPairing preserves local client preferences while removing server-owned binding state.
+func (c Config) WithoutPairing() Config {
+	c.ServerURL = ""
+	c.DeviceID = ""
+	c.DisplayName = ""
+	c.AllowInsecureHTTP = false
+	c.Offline = nil
+	return c
+}
+
+func DefaultAgentConfig(provider string) AgentConfig {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	value := AgentConfig{
+		Provider: provider, ContextWindow: DefaultAgentContextWindow,
+		Timeout: DefaultAgentTimeout.String(), MaxToolRounds: DefaultAgentMaxToolRounds,
+	}
+	switch provider {
+	case "openai":
+		value.BaseURL, value.Model = "https://api.openai.com/v1", "gpt-4.1-mini"
+	case "deepseek":
+		value.BaseURL, value.Model = "https://api.deepseek.com/v1", "deepseek-chat"
+	case "openrouter":
+		value.BaseURL, value.Model = "https://openrouter.ai/api/v1", "openai/gpt-4.1-mini"
+	case "ollama":
+		value.BaseURL, value.Model = "http://127.0.0.1:11434/v1", "qwen3:8b"
+	case "custom":
+		value.BaseURL, value.Model = "http://127.0.0.1:1234/v1", "local-model"
+	default:
+		value.Provider = DefaultAgentProvider
+		value.BaseURL, value.Model = "https://api.openai.com/v1", "gpt-4.1-mini"
+	}
+	return value
+}
+
+func (c *AgentConfig) Validate() error {
+	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
+	switch c.Provider {
+	case "openai", "deepseek", "openrouter", "ollama", "custom":
+	default:
+		return errors.New("provider must be openai, deepseek, openrouter, ollama, or custom")
+	}
+	baseURL, err := validateAgentBaseURL(c.BaseURL)
+	if err != nil {
+		return err
+	}
+	c.BaseURL = baseURL
+	c.Model = strings.TrimSpace(c.Model)
+	if c.Model == "" || len(c.Model) > 256 || strings.IndexFunc(c.Model, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+		return errors.New("model name is invalid")
+	}
+	if c.ContextWindow < 4096 || c.ContextWindow > 1_000_000 {
+		return errors.New("context window must be between 4096 and 1000000")
+	}
+	if c.Timeout == "" {
+		c.Timeout = DefaultAgentTimeout.String()
+	}
+	timeout, err := ParseTimeout(c.Timeout)
+	if err != nil || timeout > 10*time.Minute {
+		return errors.New("agent timeout must be a positive duration no greater than 10m")
+	}
+	if c.MaxToolRounds < 1 || c.MaxToolRounds > 16 {
+		return errors.New("max tool rounds must be between 1 and 16")
+	}
+	return nil
+}
+
+func validateAgentBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" {
+		return "", errors.New("base URL must be an absolute HTTP or HTTPS URL")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", errors.New("base URL scheme must be http or https")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(parsed.Host, "\\") {
+		return "", errors.New("base URL must not contain credentials, query, or fragment")
+	}
+	if parsed.Scheme == "http" && !isLoopback(parsed.Hostname()) {
+		return "", errors.New("plaintext model endpoints are allowed only on loopback")
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
+	parsed.RawPath = strings.TrimSuffix(parsed.RawPath, "/")
+	return strings.TrimSuffix(parsed.String(), "/"), nil
 }
 
 func (b *OfflineBinding) Validate(serverURL string) error {

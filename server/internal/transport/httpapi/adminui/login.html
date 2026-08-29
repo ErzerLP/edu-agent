@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>登录 · edu-agent 管理控制台</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <script src="/admin/assets/login.js" defer></script>
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <section class="login-intro" aria-labelledby="login-title">
+        <div class="brand-block login-brand">
+          <span class="brand-mark" aria-hidden="true">E</span>
+          <div>
+            <strong>edu-agent</strong>
+            <span>本地学习服务</span>
+          </div>
+        </div>
+        <div class="login-copy">
+          <p class="eyebrow">本地管理入口</p>
+          <h1 id="login-title">管理你的学习服务</h1>
+          <p>
+            查看服务状态、生成客户端配对码并管理已授权设备。管理入口仅允许从本机访问。
+          </p>
+        </div>
+        <dl class="login-boundaries">
+          <div>
+            <dt>访问范围</dt>
+            <dd>仅本机回环地址</dd>
+          </div>
+          <div>
+            <dt>会话时长</dt>
+            <dd>15 分钟，服务重启后失效</dd>
+          </div>
+          <div>
+            <dt>敏感信息</dt>
+            <dd>密码不会写入浏览器存储</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="login-panel" aria-label="管理控制台登录">
+        <div class="login-panel-heading">
+          <p class="eyebrow">身份验证</p>
+          <h2>登录管理控制台</h2>
+          <p>使用服务器部署时生成的管理凭据。</p>
+        </div>
+        {{if .Error}}
+        <div class="form-message error" role="alert">{{.Error}}</div>
+        {{end}}
+        <form method="post" action="/admin/login" class="login-form" autocomplete="off">
+          <label for="username">用户名</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            value="admin"
+            autocomplete="off"
+            autocapitalize="none"
+            spellcheck="false"
+            required
+          />
+          <label for="password">管理密码</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="off"
+            autofocus
+            required
+          />
+          <button class="primary-button login-button" type="submit">登录</button>
+        </form>
+        <p class="login-help">
+          管理密码保存在服务器外部秘密配置的 <code>ADMIN_UI_TOKEN</code> 中。
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

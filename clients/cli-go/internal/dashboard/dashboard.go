@@ -29,13 +29,14 @@ type Snapshot struct {
 	DeviceName string
 	LocalState LocalState
 
-	AgentProvider      string
-	AgentBaseURL       string
-	AgentModel         string
-	AgentContextWindow int
-	AgentTimeout       string
-	AgentMaxToolRounds int
-	AgentKeyConfigured bool
+	AgentProvider              string
+	AgentBaseURL               string
+	AgentModel                 string
+	AgentContextWindow         int
+	AgentTimeout               string
+	AgentMaxToolRounds         int
+	AgentKeyConfigured         bool
+	AgentKeyBackendUnavailable bool
 }
 
 type Runner struct {
@@ -483,8 +484,21 @@ func (m model) items() []menuItem {
 			{key: "q", title: "退出", description: "返回Shell"},
 		}
 	}
+	agentItem := menuItem{key: "a", title: "AI学习助手", description: "通过Agent Loop结合知识库、进度和长期偏好辅助学习", command: []string{"agent"}}
+	if strings.TrimSpace(m.snapshot.AgentProvider) == "" {
+		agentItem = menuItem{key: "a", title: "配置AI助手", description: "先选择模型提供商，再确认参数并保存", next: screenAgentProvider}
+	} else {
+		agentConfig := config.AgentConfig{Provider: m.snapshot.AgentProvider, BaseURL: m.snapshot.AgentBaseURL}
+		if !agentConfig.APIKeyOptional() && !m.snapshot.AgentKeyConfigured {
+			if m.snapshot.AgentKeyBackendUnavailable {
+				agentItem = menuItem{key: "a", title: "修复AI助手配置", description: "系统钥匙串不可用；请启用系统凭据服务或改用本地模型", next: screenAgentSettings}
+			} else {
+				agentItem = menuItem{key: "a", title: "补全AI助手配置", description: "当前模型需要API Key，保存后才能启动", next: screenAgentKey}
+			}
+		}
+	}
 	return []menuItem{
-		{key: "a", title: "AI学习助手", description: "通过Agent Loop结合知识库、进度和长期偏好辅助学习", command: []string{"agent"}},
+		agentItem,
 		{key: "l", title: "继续结构化学习", description: "恢复服务端教学状态机中的当前会话", command: []string{"learn"}},
 		{key: "i", title: "导入知识", description: "导入Markdown文件或目录", next: screenImport},
 		{key: "g", title: "设置学习目标", description: "创建或切换当前学习目标", next: screenGoal},
@@ -596,9 +610,11 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 		body.WriteString("\n")
 		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured)))
+			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
+		body.WriteString("\n")
+		body.WriteString(mutedStyle.Render("选择后会进入参数表单；只有在表单中按Enter保存，配置才会生效。"))
 		body.WriteString("\n\n")
 	case screenColor:
 		body.WriteString(labelStyle.Render("命令输出颜色"))
@@ -680,9 +696,12 @@ func colorName(value string) string {
 	}
 }
 
-func keyStatus(configured bool) string {
+func keyStatus(configured, backendUnavailable bool) string {
 	if configured {
 		return "已存入系统钥匙串"
+	}
+	if backendUnavailable {
+		return "系统钥匙串不可用（请启用系统凭据服务或改用本地模型）"
 	}
 	return "未配置"
 }

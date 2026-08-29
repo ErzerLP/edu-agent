@@ -347,6 +347,28 @@ func TestDashboardReturnsLastCommandFailure(t *testing.T) {
 	}
 }
 
+func TestDashboardAgentFailureWaitsForReturnPrompt(t *testing.T) {
+	t.Parallel()
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "never-render-this-token")
+	terminal := &fakeTerminal{lines: []string{""}}
+	dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{{args: []string{"agent"}}, {quit: true}}}
+	app, _, errOut := newTestApp(configStore, credentialStore, terminal)
+	app.Dashboard = dashboardRunner
+	app.AgentUI = &fakeAgentUI{}
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+
+	if exit := app.Run(t.Context(), nil); exit != ExitInput {
+		t.Fatalf("exit=%d err=%q", exit, errOut.String())
+	}
+	if terminal.readLineCalls != 1 {
+		t.Fatalf("return prompt calls=%d, want 1", terminal.readLineCalls)
+	}
+	if !strings.Contains(errOut.String(), "[agent_not_configured]") {
+		t.Fatalf("agent error missing: %q", errOut.String())
+	}
+}
+
 func TestDashboardLocalizesCommandOutputWithoutChangingExplicitOutput(t *testing.T) {
 	t.Parallel()
 	value := config.Config{Timeout: "45s", Color: "auto"}

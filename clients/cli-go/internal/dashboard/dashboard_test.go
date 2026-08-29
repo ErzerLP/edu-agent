@@ -33,6 +33,53 @@ func TestMainMenuCommandsAndShortcuts(t *testing.T) {
 	}
 }
 
+func TestAgentShortcutRequiresCompleteLocalModelSetup(t *testing.T) {
+	t.Parallel()
+
+	unconfigured := newModel(Snapshot{LocalState: LocalStatePaired})
+	if view := unconfigured.View(); !strings.Contains(view, "配置AI助手") || strings.Contains(view, "AI学习助手") {
+		t.Fatalf("unconfigured main menu = %q", view)
+	}
+	updated, command := unconfigured.Update(key("a"))
+	setup := updated.(model)
+	if command != nil || len(setup.command) != 0 || setup.screen != screenAgentProvider {
+		t.Fatalf("unconfigured shortcut = screen %d command %#v tea command %v", setup.screen, setup.command, command)
+	}
+	if !strings.Contains(setup.View(), "只有在表单中按Enter保存，配置才会生效") {
+		t.Fatalf("provider save guidance missing: %q", setup.View())
+	}
+
+	missingKey := Snapshot{
+		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1",
+		AgentModel: "deepseek-chat", AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6,
+	}
+	updated, command = newModel(missingKey).Update(key("a"))
+	keyForm := updated.(model)
+	if command != nil || len(keyForm.command) != 0 || keyForm.screen != screenAgentKey {
+		t.Fatalf("missing-key shortcut = screen %d command %#v tea command %v", keyForm.screen, keyForm.command, command)
+	}
+
+	missingKey.AgentKeyBackendUnavailable = true
+	unavailable := newModel(missingKey)
+	if view := unavailable.View(); !strings.Contains(view, "修复AI助手配置") {
+		t.Fatalf("unavailable-key main menu = %q", view)
+	}
+	updated, command = unavailable.Update(key("a"))
+	settings := updated.(model)
+	if command != nil || len(settings.command) != 0 || settings.screen != screenAgentSettings || !strings.Contains(settings.View(), "系统钥匙串不可用") {
+		t.Fatalf("unavailable-key shortcut = screen %d command %#v view %q", settings.screen, settings.command, settings.View())
+	}
+
+	ollama := Snapshot{
+		LocalState: LocalStatePaired, AgentProvider: "ollama", AgentBaseURL: "http://127.0.0.1:11434/v1",
+		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6,
+	}
+	updated, _ = newModel(ollama).Update(key("a"))
+	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"agent"}) {
+		t.Fatalf("optional-key agent command = %#v", got)
+	}
+}
+
 func TestMenuNavigationAndFormsReturnExistingArgv(t *testing.T) {
 	t.Parallel()
 	modelValue := newModel(Snapshot{})

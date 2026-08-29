@@ -118,6 +118,53 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	}
 }
 
+func TestDashboardModelSetupPersistsBeforeAgentLaunch(t *testing.T) {
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
+	terminal := &fakeTerminal{lines: []string{""}}
+	dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{
+		{args: []string{"model", "set", "--provider", "custom", "--base-url", "http://127.0.0.1:1234/v1", "--model", "local-model", "--context-window", "32768", "--timeout", "1m", "--max-tool-rounds", "8"}},
+		{args: []string{"agent"}},
+		{quit: true},
+	}}
+	agentUI := &fakeAgentUI{}
+	app, out, errOut := newTestApp(configStore, credentialStore, terminal)
+	app.Dashboard = dashboardRunner
+	app.AgentUI = agentUI
+	app.ModelSecrets = &memoryModelSecretStore{}
+	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return fixedAgentModel{}, nil }
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+
+	if exit := app.Run(t.Context(), nil); exit != ExitOK {
+		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if configStore.value.Agent == nil || configStore.value.Agent.Provider != "custom" || configStore.value.Agent.Model != "local-model" {
+		t.Fatalf("persisted agent config=%+v", configStore.value.Agent)
+	}
+	if len(dashboardRunner.snapshots) != 3 || dashboardRunner.snapshots[1].AgentProvider != "custom" {
+		t.Fatalf("dashboard snapshots=%+v", dashboardRunner.snapshots)
+	}
+	if agentUI.calls != 1 || agentUI.modelName != "local-model" {
+		t.Fatalf("agent UI calls=%d model=%q", agentUI.calls, agentUI.modelName)
+	}
+	if terminal.readLineCalls != 1 {
+		t.Fatalf("return prompt calls=%d, want only the model-save prompt", terminal.readLineCalls)
+	}
+}
+
+func TestDashboardSnapshotReportsUnavailableModelCredentialBackend(t *testing.T) {
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
+	preset := config.DefaultAgentConfig("deepseek")
+	configStore.value.Agent = &preset
+	app, _, _ := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	app.ModelSecrets = &memoryModelSecretStore{loadErr: modelsecret.ErrUnavailable}
+
+	snapshot := app.dashboardSnapshot()
+	if snapshot.AgentKeyConfigured || !snapshot.AgentKeyBackendUnavailable {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+}
+
 func TestAgentLaunchRequiresTTYPairingAndModelCredential(t *testing.T) {
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	preset := config.DefaultAgentConfig("deepseek")

@@ -225,7 +225,7 @@ func (a *App) runDashboard(ctx context.Context) int {
 			return a.fail(commandError("terminal_error", "交互式主控制台没有返回可执行操作", "重新启动客户端，或改用显式子命令", ExitInternal))
 		}
 		lastExit = a.runDashboardCommand(ctx, args)
-		if len(args) > 0 && args[0] == "agent" {
+		if len(args) > 0 && args[0] == "agent" && lastExit == ExitOK {
 			continue
 		}
 		if ctx.Err() != nil {
@@ -302,6 +302,8 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
 		if key, err := a.ModelSecrets.Load(binding); err == nil && strings.TrimSpace(key) != "" {
 			snapshot.AgentKeyConfigured = true
+		} else if err != nil && !errors.Is(err, modelsecret.ErrNotFound) {
+			snapshot.AgentKeyBackendUnavailable = true
 		}
 	}
 	record, credentialErr := a.Credentials.Load()

@@ -1,6 +1,6 @@
 # edu-agent
 
-`edu-agent` 是单用户自托管的通用个人学习助理。Go 服务和 PostgreSQL 保存知识、教学状态、学习事件与投影；Go CLI 提供启动即用的全屏 TUI，并保留显式子命令用于脚本；本机管理 WebUI 用于服务状态、客户端配对和设备撤销；Nocturne sidecar 保存经过准入的长期个人记忆。
+`edu-agent` 是单用户自托管的通用个人学习助理。Go 服务和 PostgreSQL 保存知识、教学状态、学习事件与投影；Go CLI 提供启动即用的全屏 TUI，并保留显式子命令用于脚本；本机管理 WebUI 用于服务状态、客户端配对、设备撤销、Nocturne Memory 树浏览、知识库查看与导出，以及 NoteSync 配置和预览；Nocturne sidecar 保存经过准入的长期个人记忆。
 
 ## 使用入口
 
@@ -10,7 +10,7 @@
 http://127.0.0.1:8080/admin/
 ```
 
-浏览器会进入独立的中文登录页，用户名固定为 `admin`，管理密码使用 `ADMIN_UI_TOKEN`。它必须是 32 个随机字节的规范无填充 base64url 编码，并且必须与模型、Nocturne API、Nocturne维护和NoteSync API凭据不同。登录表单关闭凭据自动填充，应用不会把原始密码写入cookie、页面脚本、页面标记或浏览器存储；登录成功后服务端只创建15分钟的短期会话。WebUI不展示或保存任何服务密钥，只提供运行状态、配对码、设备筛选与撤销和客户端连接指引。直接运行服务端时，管理面要求 `LISTEN_ADDR` 为loopback。Compose 仅因宿主端口明确绑定到 `127.0.0.1` 才设置 `ADMIN_UI_TRUSTED_LOOPBACK_PROXY=true`；不要在公开端口后复用这个设置。远程访问使用 SSH 端口转发。
+浏览器会进入独立的中文登录页，用户名固定为 `admin`，管理密码使用 `ADMIN_UI_TOKEN`。它必须是 32 个随机字节的规范无填充 base64url 编码，并且必须与模型、Nocturne API、Nocturne 维护和 NoteSync API 凭据不同。登录表单关闭凭据自动填充，应用不会把原始密码写入 cookie、页面脚本、页面标记或浏览器存储；登录成功后服务端只创建 15 分钟的短期会话。WebUI 提供运行状态、配对码、设备筛选与撤销、客户端连接指引、只读 Memory 树、知识库树与 Markdown 导出，以及 NoteSync 连接配置和同步预览。NoteSync API Token 只写入权限为 `0600` 的服务器设置文件，从不由 API 回显；设置在服务器重启后原子生效。知识导入、知识提案审批和 NoteSync 冲突解决继续使用既有用户凭据与审计路径，管理会话不会冒充设备身份。直接运行服务端时，管理面要求 `LISTEN_ADDR` 为 loopback；若需要在 WebUI 保存 NoteSync 配置，还需为 `ADMIN_UI_SETTINGS_FILE` 指定绝对路径。Compose 仅因宿主端口明确绑定到 `127.0.0.1` 才设置 `ADMIN_UI_TRUSTED_LOOPBACK_PROXY=true`；不要在公开端口后复用这个设置。远程访问使用 SSH 端口转发。
 
 构建客户端后，直接运行即可进入交互式仪表盘：
 

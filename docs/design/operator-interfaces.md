@@ -6,15 +6,20 @@ This document defines the local administration Web UI and the interactive CLI da
 
 The server may expose `/admin/` only when `ADMIN_UI_ENABLED=true` and `PUBLIC_BASE_URL` resolves to a loopback host. Direct server listeners must also bind loopback, and the request peer address is checked before authentication. The Compose deployment is the explicit proxy-boundary exception: its process listener is non-loopback inside the container, `ADMIN_UI_TRUSTED_LOOPBACK_PROXY=true` records that boundary, and the host port is published only on `127.0.0.1`. Remote operators use an SSH tunnel rather than a LAN listener; the trusted-proxy setting must not be reused behind a public port.
 
-The UI supports only the local identity bootstrap and operational workflows:
+The UI exposes the local identity bootstrap and operational workflows:
 
 - inspect readiness components;
 - create one-time `user` or restricted `agent` pairing codes;
 - list active and revoked devices;
 - revoke an active device;
-- display the exact server URL used by clients.
+- display the exact server URL used by clients;
+- browse the admitted Nocturne Memory hierarchy through the existing Memory export service;
+- inspect the canonical Knowledge tree and export the active snapshot as Markdown;
+- inspect NoteSync status, persist connection settings, and run a server-side sync preview.
 
-It does not read or update model keys, Nocturne credentials, NoteSync credentials, database passwords, privacy keys, or other service configuration. Those values remain process-start configuration in the private Compose environment file.
+The Memory and Knowledge pages are read-only adapters over their existing application services. Knowledge import, proposal approval, and rollback retain the authenticated user-credential and audit paths; the management session never impersonates a paired device. NoteSync review resolution likewise remains on the existing authenticated NoteSync transport. The administration UI does not read or update model keys, Nocturne credentials, database passwords, privacy keys, or other service configuration.
+
+NoteSync is startup-bound. When `ADMIN_UI_SETTINGS_FILE` names an absolute server-private path, the UI may atomically persist the NoteSync enabled state, base URL, vault, path prefix, and API token there. The file is created with mode `0600`; its token is never returned by an API, embedded in markup, logged, or stored in browser state. Omitting the token preserves the saved token only when the service address is unchanged; changing the address requires a new token so credentials cannot cross endpoints. Disabling NoteSync removes the token from the pending runtime configuration. Saving reports that a restart is required; the same startup configuration validator applies the complete saved settings on the next process start. Compose mounts a dedicated server-admin volume for this file.
 
 `ADMIN_UI_TOKEN` is an independent credential containing the canonical unpadded base64url encoding of exactly 32 random bytes. It must differ from the configured model, Nocturne API, Nocturne maintenance, and NoteSync API credentials. The dedicated Chinese login page accepts the fixed username `admin` and this management password over the loopback connection; the browser is never asked to use its built-in HTTP Basic prompt. The form disables credential autocomplete, and the application never writes the raw password through page scripts, cookies, browser storage, or markup. Operators must also decline any browser or extension prompt that attempts to retain this management credential. Successful login creates a random server-side session with a 15-minute lifetime and an `HttpOnly`, `SameSite=Strict`, `/admin` cookie. Logout invalidates the session immediately, and a server restart invalidates all active sessions.
 
@@ -47,4 +52,4 @@ The Agent Loop is stateless with respect to the model and reconstructs context t
 
 ## Verification boundary
 
-Focused verification covers disabled defaults, loopback and credential validation, Host and Origin rejection, login and write rate limits, session expiry and logout, session-bound CSRF, no-store security headers, identity-service delegation, non-TTY behavior, dashboard command mapping, Chinese-first rendering, explicit-command compatibility, model credential isolation, Agent tool limits, preference confirmation, and narrow terminal rendering. Deployment verification additionally exercises the real Compose server, dedicated browser login, responsive browser UI, one-time pairing, device listing and revocation, local model configuration, and interactive dashboard and Agent launches.
+Focused verification covers disabled defaults, loopback and credential validation, Host and Origin rejection, login and write rate limits, session expiry and logout, session-bound CSRF, no-store security headers, identity-service delegation, protected NoteSync settings persistence and startup loading, Memory and Knowledge read delegation, unified tab and page routing, non-TTY behavior, dashboard command mapping, Chinese-first rendering, explicit-command compatibility, model credential isolation, Agent tool limits, preference confirmation, and narrow terminal rendering. Deployment verification additionally exercises the real Compose server, dedicated browser login, responsive browser UI, Memory and Knowledge trees, NoteSync configuration and preview, one-time pairing, device listing and revocation, local model configuration, and interactive dashboard and Agent launches.

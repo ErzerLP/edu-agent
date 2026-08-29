@@ -50,7 +50,12 @@
         {{if .Error}}
         <div class="form-message error" role="alert">{{.Error}}</div>
         {{end}}
-        <form method="post" action="/admin/login" class="login-form" autocomplete="off">
+        <form
+          method="post"
+          action="/admin/login"
+          class="login-form"
+          autocomplete="off"
+        >
           <label for="username">用户名</label>
           <input
             id="username"
@@ -71,7 +76,9 @@
             autofocus
             required
           />
-          <button class="primary-button login-button" type="submit">登录</button>
+          <button class="primary-button login-button" type="submit">
+            登录
+          </button>
         </form>
         <p class="login-help">
           管理密码保存在服务器外部秘密配置的 <code>ADMIN_UI_TOKEN</code> 中。

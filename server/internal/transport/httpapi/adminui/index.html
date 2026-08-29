@@ -1,173 +1,207 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
-    <title>edu-agent 管理控制台</title>
-    <link rel="stylesheet" href="/admin/assets/admin.css" />
-    <script src="/admin/assets/admin.js" defer></script>
-  </head>
-  <body class="console-page">
-    <div class="admin-shell">
-      <aside class="sidebar">
-        <div class="brand-block">
-          <span class="brand-mark" aria-hidden="true">E</span>
-          <div>
-            <strong>edu-agent</strong>
-            <span>本地学习服务</span>
-          </div>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>edu-agent server</title>
+  <link rel="stylesheet" href="/admin/assets/admin.css">
+</head>
+<body>
+  <div id="consoleView" class="console-shell">
+    <aside class="sidebar" aria-label="管理导航">
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true">E</span>
+        <div>
+          <strong>edu-agent</strong>
+          <span>server console</span>
         </div>
-        <nav class="sidebar-nav" aria-label="控制台导航">
-          <a class="active" href="#overview">运行概览</a>
-          <a href="#pairing">客户端配对</a>
-          <a href="#devices">设备管理</a>
-        </nav>
-        <div class="sidebar-boundary">
-          <span class="boundary-dot" aria-hidden="true"></span>
-          <div>
-            <strong>本机管理边界</strong>
-            <span>仅回环地址可访问</span>
-          </div>
-        </div>
-      </aside>
-
-      <div class="workspace-shell">
-        <header class="workspace-header">
-          <div>
-            <p class="eyebrow">服务器管理</p>
-            <h1>管理控制台</h1>
-            <p class="header-description">
-              查看运行状态，安全地配对客户端并管理设备授权。
-            </p>
-          </div>
-          <div class="header-actions">
-            <button class="secondary-button" id="refresh" type="button">刷新</button>
-            <button class="quiet-button" id="logout" type="button">退出登录</button>
-          </div>
-        </header>
-
-        <main>
-          <section class="console-section" id="overview" aria-labelledby="overview-title">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">运行概览</p>
-                <h2 id="overview-title">服务状态</h2>
-              </div>
-              <div class="overall-status" id="overall-status">正在连接</div>
-            </div>
-
-            <div class="metric-grid" aria-label="运行摘要">
-              <div class="metric">
-                <span>正常组件</span>
-                <strong id="healthy-count">-</strong>
-              </div>
-              <div class="metric attention">
-                <span>需要关注</span>
-                <strong id="attention-count">-</strong>
-              </div>
-              <div class="metric">
-                <span>活跃设备</span>
-                <strong id="active-device-count">-</strong>
-              </div>
-              <div class="metric server-metric">
-                <span>客户端连接地址</span>
-                <code id="server-address">正在读取</code>
-              </div>
-            </div>
-
-            <div class="component-grid" id="component-grid" aria-live="polite"></div>
-          </section>
-
-          <section class="console-section access-section" id="pairing" aria-labelledby="pairing-title">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">客户端接入</p>
-                <h2 id="pairing-title">生成一次性配对码</h2>
-                <p class="section-description">
-                  根据客户端用途选择权限配置。配对码仅显示一次，并会自动过期。
-                </p>
-              </div>
-            </div>
-
-            <form id="pairing-form" class="pairing-form">
-              <div class="field-group">
-                <label for="profile">客户端类型</label>
-                <select id="profile" name="profile">
-                  <option value="user">个人客户端 · 完整学习与管理权限</option>
-                  <option value="agent">Agent 客户端 · 受限知识与学习权限</option>
-                </select>
-              </div>
-              <button class="primary-button" type="submit">生成配对码</button>
-            </form>
-
-            <div class="pairing-result" id="pairing-result" hidden>
-              <div class="result-heading">
-                <div>
-                  <span>一次性配对码</span>
-                  <strong id="pairing-expiry"></strong>
-                </div>
-                <span class="sensitive-label">敏感信息</span>
-              </div>
-              <div class="code-row">
-                <code id="pairing-code"></code>
-                <button class="secondary-button" id="copy-code" type="button">复制配对码</button>
-              </div>
-              <div class="connection-details">
-                <div>
-                  <span>服务器地址</span>
-                  <code id="server-url"></code>
-                </div>
-                <div>
-                  <span>客户端操作</span>
-                  <code>运行 edu-agent，在中文控制台中选择“配对设备”</code>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section class="console-section" id="devices" aria-labelledby="devices-title">
-            <div class="section-heading device-heading">
-              <div>
-                <p class="eyebrow">身份与授权</p>
-                <h2 id="devices-title">已配对设备</h2>
-                <p class="section-description">检查每个设备的权限与最近使用情况，撤销不再使用的授权。</p>
-              </div>
-              <span class="device-count" id="device-count">0 台活跃设备</span>
-            </div>
-
-            <div class="device-tools">
-              <div class="segmented-control" id="device-filter" aria-label="设备状态筛选">
-                <button class="active" type="button" data-filter="all">全部</button>
-                <button type="button" data-filter="active">活跃</button>
-                <button type="button" data-filter="revoked">已撤销</button>
-              </div>
-              <label class="search-field" for="device-search">
-                <span class="visually-hidden">搜索设备</span>
-                <input id="device-search" type="search" placeholder="搜索设备名称或 ID" autocomplete="off" />
-              </label>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>设备</th>
-                    <th>权限</th>
-                    <th>最近使用</th>
-                    <th>状态</th>
-                    <th><span class="visually-hidden">操作</span></th>
-                  </tr>
-                </thead>
-                <tbody id="device-rows"></tbody>
-              </table>
-              <p class="empty-state" id="empty-devices" hidden>没有符合当前条件的设备</p>
-            </div>
-          </section>
-        </main>
       </div>
-    </div>
+      <nav id="primaryNav" class="primary-nav">
+        <button class="nav-item active" type="button" data-page="overview" aria-current="page"><span>总览</span></button>
+        <button class="nav-item" type="button" data-page="pairing"><span>客户端配对</span></button>
+        <button class="nav-item" type="button" data-page="devices"><span>设备</span><span id="deviceNavCount" class="nav-count">0</span></button>
+        <button class="nav-item" type="button" data-page="memory"><span>记忆树</span></button>
+        <button class="nav-item" type="button" data-page="knowledge"><span>知识库</span></button>
+        <button class="nav-item" type="button" data-page="notesync"><span>NoteSync</span></button>
+      </nav>
+      <div class="sidebar-footer">
+        <span id="sidebarStatus" class="connection-state">正在连接</span>
+        <button id="logoutButton" class="ghost-button full-button" type="button">退出登录</button>
+      </div>
+    </aside>
 
-    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  </body>
+    <main class="workspace">
+      <header class="workspace-header">
+        <div>
+          <p id="pageEyebrow" class="eyebrow">SERVER</p>
+          <h1 id="pageTitle">服务总览</h1>
+        </div>
+        <div class="header-actions">
+          <button id="mobileLogoutButton" class="ghost-button mobile-logout-button" type="button">退出</button>
+          <span id="headerStatus" class="status-badge neutral">检查中</span>
+          <button id="refreshPage" class="icon-button" type="button" title="刷新当前页面" aria-label="刷新当前页面">刷新</button>
+        </div>
+      </header>
+
+      <div id="globalNotice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section id="page-overview" class="page active" data-page-panel="overview" aria-labelledby="pageTitle">
+        <div id="statusStrip" class="status-strip" aria-live="polite"></div>
+        <div class="overview-grid">
+          <section class="section-block service-block">
+            <div class="section-heading">
+              <div><p class="section-kicker">RUNTIME</p><h2>服务状态</h2></div>
+            </div>
+            <div id="serviceList" class="service-list"></div>
+          </section>
+          <section class="section-block facts-block">
+            <div class="section-heading">
+              <div><p class="section-kicker">CONNECTION</p><h2>客户端连接</h2></div>
+            </div>
+            <dl id="connectionFacts" class="fact-list"></dl>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-pairing" class="page" data-page-panel="pairing" aria-labelledby="pageTitle" hidden>
+        <div class="split-layout pairing-layout">
+          <section class="section-block">
+            <div class="section-heading">
+              <div><p class="section-kicker">NEW CLIENT</p><h2>创建一次性配对码</h2></div>
+              <span class="status-badge neutral">10 分钟</span>
+            </div>
+            <form id="pairingForm" class="stack-form compact-form">
+              <fieldset>
+                <legend>客户端类型</legend>
+                <div class="segmented-control">
+                  <label><input type="radio" name="pairingProfile" value="agent"><span>Agent</span></label>
+                  <label><input type="radio" name="pairingProfile" value="user" checked><span>用户客户端</span></label>
+                </div>
+              </fieldset>
+              <button id="pairingSubmit" class="primary-button" type="submit">生成配对码</button>
+            </form>
+          </section>
+          <section id="pairingResult" class="section-block pairing-result" aria-live="polite">
+            <div class="empty-state">
+              <strong>等待创建</strong>
+              <span>新配对码会显示在这里。</span>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-devices" class="page" data-page-panel="devices" aria-labelledby="pageTitle" hidden>
+        <section class="section-block">
+          <div class="section-heading responsive-heading">
+            <div><p class="section-kicker">IDENTITY</p><h2>已配对设备</h2></div>
+            <div class="toolbar">
+              <label class="search-field"><span>筛选</span><input id="deviceSearch" type="search" placeholder="名称或 ID"></label>
+              <button id="refreshDevices" class="secondary-button" type="button">刷新</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>设备</th><th>权限</th><th>状态</th><th>最近使用</th><th class="action-column">操作</th></tr></thead>
+              <tbody id="deviceRows"></tbody>
+            </table>
+          </div>
+          <div id="deviceCards" class="record-list"></div>
+          <div id="deviceEmpty" class="empty-state" hidden><strong>没有匹配设备</strong><span>调整筛选条件或创建新的客户端配对。</span></div>
+        </section>
+      </section>
+
+      <section id="page-memory" class="page" data-page-panel="memory" aria-labelledby="pageTitle" hidden>
+        <div id="memoryStats" class="metric-row"></div>
+        <div class="explorer-layout">
+          <section class="section-block explorer-list-block">
+            <div class="section-heading responsive-heading">
+              <div><p class="section-kicker">NOCTURNE MEMORY</p><h2>记忆节点</h2></div>
+              <label class="search-field"><span>筛选</span><input id="memorySearch" type="search" placeholder="搜索内容或 ID"></label>
+            </div>
+            <div id="memoryTree" class="tree-list"></div>
+            <button id="loadMoreMemory" class="secondary-button full-button" type="button" hidden>加载更多记忆</button>
+          </section>
+          <section class="section-block detail-block">
+            <div id="memoryDetail" class="empty-state"><strong>选择记忆节点</strong><span>查看内容、版本与 Nocturne 投递状态。</span></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-knowledge" class="page" data-page-panel="knowledge" aria-labelledby="pageTitle" hidden>
+        <div id="knowledgeStats" class="metric-row"></div>
+        <div class="explorer-layout">
+          <section class="section-block explorer-list-block">
+            <div class="section-heading responsive-heading">
+              <div><p class="section-kicker">CANONICAL LIBRARY</p><h2>知识目录</h2></div>
+              <label class="search-field"><span>筛选</span><input id="knowledgeSearch" type="search" placeholder="路径或标题"></label>
+            </div>
+            <div id="knowledgeTree" class="tree-list"></div>
+          </section>
+          <section class="section-block detail-block">
+            <div class="section-heading">
+              <div><p class="section-kicker">REVISION</p><h2 id="knowledgeDetailTitle">选择文档</h2></div>
+              <button id="downloadKnowledge" class="secondary-button" type="button" disabled>下载 Markdown</button>
+            </div>
+            <pre id="knowledgeContent" class="content-preview">从左侧选择知识文档。</pre>
+          </section>
+        </div>
+      </section>
+
+      <section id="page-notesync" class="page" data-page-panel="notesync" aria-labelledby="pageTitle" hidden>
+        <div id="notesyncStats" class="metric-row"></div>
+        <div class="notesync-grid">
+          <section class="section-block settings-block">
+            <div class="section-heading">
+              <div><p class="section-kicker">CONNECTION</p><h2>同步配置</h2></div>
+              <span id="notesyncSaveState" class="status-badge neutral">未加载</span>
+            </div>
+            <form id="notesyncForm" class="stack-form compact-form">
+              <label class="toggle-row"><span><strong>启用 NoteSync</strong><small>服务器重启后生效</small></span><input id="notesyncEnabled" type="checkbox" role="switch"></label>
+              <label for="notesyncBaseURL">服务地址</label>
+              <input id="notesyncBaseURL" type="url" autocomplete="off" placeholder="https://notesync.example.com">
+              <label for="notesyncToken">API 密钥</label>
+              <input id="notesyncToken" type="password" autocomplete="new-password" placeholder="留空以保留已保存密钥">
+              <div class="form-grid">
+                <label>Vault<input id="notesyncVault" autocomplete="off"></label>
+                <label>路径前缀<input id="notesyncPrefix" autocomplete="off"></label>
+              </div>
+              <button id="notesyncSave" class="primary-button" type="submit">保存配置</button>
+            </form>
+          </section>
+          <section class="section-block preview-block">
+            <div class="section-heading responsive-heading">
+              <div><p class="section-kicker">PREVIEW</p><h2>同步预览</h2></div>
+              <form id="notesyncPreviewForm" class="inline-form">
+                <input id="notesyncPreviewPath" aria-label="预览文档路径" placeholder="文档路径，可留空">
+                <button class="secondary-button" type="submit">预览</button>
+              </form>
+            </div>
+            <div id="notesyncPreview" class="compact-list"><div class="empty-state"><strong>尚未预览</strong><span>加载当前 NoteSync 差异。</span></div></div>
+            <button id="loadMoreNotesyncPreview" class="secondary-button full-button" type="button" hidden>继续加载预览</button>
+          </section>
+          <section class="section-block reviews-block">
+            <div class="section-heading"><div><p class="section-kicker">REVIEW QUEUE</p><h2>冲突审阅</h2></div></div>
+            <div id="notesyncReviews" class="compact-list"></div>
+            <button id="loadMoreNotesyncReviews" class="secondary-button full-button" type="button" hidden>继续加载审阅</button>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="confirmDialog" class="confirm-dialog">
+    <form method="dialog">
+      <p class="eyebrow">确认操作</p>
+      <h2 id="confirmTitle">确认</h2>
+      <p id="confirmMessage"></p>
+      <div class="dialog-actions">
+        <button id="confirmCancel" class="ghost-button" value="cancel">取消</button>
+        <button id="confirmAccept" class="danger-button" value="confirm">确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/admin/assets/admin.js" defer></script>
+</body>
 </html>

@@ -100,6 +100,7 @@ type fakeMemoryExporter struct {
 	detail      memory.RecordDetail
 	err         error
 	calls       int
+	requests    []memory.PageRequest
 	detailCalls int
 	detailFn    func(context.Context, string) (memory.RecordDetail, error)
 }
@@ -112,8 +113,9 @@ func (f *fakeMemoryExporter) Detail(ctx context.Context, id string) (memory.Reco
 	return f.detail, f.err
 }
 
-func (f *fakeMemoryExporter) Export(context.Context, memory.PageRequest) (memory.ExportPage, error) {
+func (f *fakeMemoryExporter) Export(_ context.Context, request memory.PageRequest) (memory.ExportPage, error) {
 	f.calls++
+	f.requests = append(f.requests, request)
 	return f.page, f.err
 }
 

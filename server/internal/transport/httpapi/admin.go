@@ -8,8 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/edu-agent/edu-agent/server/internal/memory"
+	"github.com/edu-agent/edu-agent/server/internal/platform/config"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -26,13 +30,17 @@ var adminScriptJS []byte
 var adminLoginScriptJS []byte
 
 type AdminUIOptions struct {
-	Enabled              bool
-	Identity             AdminIdentityService
-	PublicBaseURL        *url.URL
-	Token                string
-	TrustedLoopbackProxy bool
-	AuthLimiter          *FixedWindowLimiter
-	WriteLimiter         *FixedWindowLimiter
+	Enabled                 bool
+	Identity                AdminIdentityService
+	PublicBaseURL           *url.URL
+	Token                   string
+	TrustedLoopbackProxy    bool
+	SettingsFile            string
+	Notesync                config.NotesyncConfig
+	NotesyncSource          string
+	NotesyncSettingsSavedAt time.Time
+	AuthLimiter             *FixedWindowLimiter
+	WriteLimiter            *FixedWindowLimiter
 }
 
 func validateAdminUIOptions(options AdminUIOptions) error {
@@ -84,6 +92,12 @@ func (a *API) mountAdminUI(router chi.Router) {
 			api.Use(a.requireAdminAPISession)
 			api.Get("/admin/api/session", a.adminSession)
 			api.Get("/admin/api/overview", a.adminOverview)
+			api.With(a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/admin/api/memory", a.adminMemory)
+			api.With(a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/admin/api/knowledge", a.adminKnowledge)
+			api.Get("/admin/api/notesync", a.adminNotesync)
+			api.With(a.requireAdminOrigin, a.requireAdminCSRF, a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/admin/api/notesync/preview", a.adminNotesyncPreview)
+			api.With(a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/admin/api/notesync/reviews", a.adminNotesyncReviews)
+			api.With(a.requireAdminOrigin, a.requireAdminCSRF).Post("/admin/api/notesync/settings", a.adminUpdateNotesync)
 			api.With(a.requireAdminOrigin, a.requireAdminCSRF).Post("/admin/api/logout", a.adminLogout)
 			api.With(a.requireAdminOrigin, a.requireAdminCSRF).Post("/admin/api/pairing-codes", a.adminCreatePairingCode)
 			api.With(a.requireAdminOrigin, a.requireAdminCSRF).Post("/admin/api/devices/{deviceID}/revoke", a.adminRevokeDevice)

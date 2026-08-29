@@ -48,9 +48,12 @@ type Config struct {
 }
 
 type AdminUIConfig struct {
-	Enabled              bool
-	Token                string
-	TrustedLoopbackProxy bool
+	Enabled                 bool
+	Token                   string
+	TrustedLoopbackProxy    bool
+	SettingsFile            string
+	NotesyncSource          string
+	NotesyncSettingsSavedAt time.Time
 }
 
 type ModelConfig struct {
@@ -101,16 +104,17 @@ type NocturneConfig struct {
 }
 
 type NotesyncConfig struct {
-	Enabled        bool
-	BaseURL        *url.URL
-	APIToken       string
-	Vault          string
-	PathPrefix     string
-	HTTPTimeout    time.Duration
-	WorkerInterval time.Duration
-	WorkerBatch    int
-	ScanPageSize   int
-	ScanMaxPages   int
+	Enabled                  bool
+	AllowInsecureNonLoopback bool
+	BaseURL                  *url.URL
+	APIToken                 string
+	Vault                    string
+	PathPrefix               string
+	HTTPTimeout              time.Duration
+	WorkerInterval           time.Duration
+	WorkerBatch              int
+	ScanPageSize             int
+	ScanMaxPages             int
 }
 
 func (c NotesyncConfig) String() string {
@@ -190,6 +194,14 @@ func load(lookup envReader) (Config, error) {
 	}
 	if cfg.AdminUI.TrustedLoopbackProxy, err = boolValue(lookup, "ADMIN_UI_TRUSTED_LOOPBACK_PROXY", false); err != nil {
 		return Config{}, err
+	}
+	if cfg.AdminUI.SettingsFile, err = stringValue(lookup, "ADMIN_UI_SETTINGS_FILE", ""); err != nil {
+		return Config{}, err
+	}
+	if cfg.AdminUI.SettingsFile != "" {
+		if _, err := validateAdminSettingsPath(cfg.AdminUI.SettingsFile); err != nil {
+			return Config{}, err
+		}
 	}
 	if cfg.AdminUI.Enabled {
 		if cfg.AdminUI.Token, err = requiredString(lookup, "ADMIN_UI_TOKEN"); err != nil {
@@ -290,8 +302,23 @@ func load(lookup envReader) (Config, error) {
 	if err := loadNocturne(lookup, &cfg.Nocturne); err != nil {
 		return Config{}, err
 	}
-	if err := loadNotesync(lookup, &cfg.Notesync, cfg.AllowInsecureNonLoopback); err != nil {
+	if err := loadNotesync(lookup, &cfg.Notesync); err != nil {
 		return Config{}, err
+	}
+	cfg.AdminUI.NotesyncSource = "environment"
+	if cfg.AdminUI.SettingsFile != "" {
+		settings, found, settingsErr := LoadNotesyncAdminSettings(cfg.AdminUI.SettingsFile)
+		if settingsErr != nil {
+			return Config{}, settingsErr
+		}
+		if found {
+			cfg.Notesync, settingsErr = ApplyNotesyncAdminSettings(cfg.Notesync, settings)
+			if settingsErr != nil {
+				return Config{}, fmt.Errorf("admin NoteSync settings: %w", settingsErr)
+			}
+			cfg.AdminUI.NotesyncSource = "admin_settings"
+			cfg.AdminUI.NotesyncSettingsSavedAt = settings.SavedAt
+		}
 	}
 	if cfg.Privacy.ErasureGrantTTL, err = durationValue(lookup, "PRIVACY_ERASURE_GRANT_TTL", cfg.Privacy.ErasureGrantTTL); err != nil {
 		return Config{}, err
@@ -549,25 +576,29 @@ func loadNocturne(lookup envReader, cfg *NocturneConfig) error {
 	return validateNocturneIntervals(*cfg)
 }
 
-func loadNotesync(lookup envReader, cfg *NotesyncConfig, allowInsecureNonLoopback bool) error {
+// pi-lens-ignore: go-bare-error
+func loadNotesync(lookup envReader, cfg *NotesyncConfig) error {
 	var err error
 	if cfg.Enabled, err = boolValue(lookup, "NOTESYNC_ENABLED", false); err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_ENABLED: %w", err)
+	}
+	if cfg.AllowInsecureNonLoopback, err = boolValue(lookup, "NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK", false); err != nil {
+		return fmt.Errorf("NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK: %w", err)
 	}
 	if cfg.HTTPTimeout, err = durationValue(lookup, "NOTESYNC_HTTP_TIMEOUT", cfg.HTTPTimeout); err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_HTTP_TIMEOUT: %w", err)
 	}
 	if cfg.WorkerInterval, err = durationValue(lookup, "NOTESYNC_WORKER_INTERVAL", cfg.WorkerInterval); err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_WORKER_INTERVAL: %w", err)
 	}
 	if cfg.WorkerBatch, err = intValue(lookup, "NOTESYNC_WORKER_BATCH", cfg.WorkerBatch); err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_WORKER_BATCH: %w", err)
 	}
 	if cfg.ScanPageSize, err = intValue(lookup, "NOTESYNC_SCAN_PAGE_SIZE", cfg.ScanPageSize); err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_SCAN_PAGE_SIZE: %w", err)
 	}
 	if cfg.ScanMaxPages, err = intValue(lookup, "NOTESYNC_SCAN_MAX_PAGES", cfg.ScanMaxPages); err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_SCAN_MAX_PAGES: %w", err)
 	}
 	baseRaw := optionalTrimmed(lookup, "NOTESYNC_BASE_URL")
 	cfg.Vault = optionalTrimmed(lookup, "NOTESYNC_VAULT")
@@ -589,13 +620,13 @@ func loadNotesync(lookup envReader, cfg *NotesyncConfig, allowInsecureNonLoopbac
 	}
 	cfg.BaseURL, err = parseHTTPURL("NOTESYNC_BASE_URL", baseRaw)
 	if err != nil {
-		return err
+		return fmt.Errorf("NOTESYNC_BASE_URL: %w", err)
 	}
 	if cfg.BaseURL.RawPath != "" {
 		return errors.New("NOTESYNC_BASE_URL must not contain percent-encoded path segments")
 	}
-	if cfg.BaseURL.Scheme == "http" && !isLoopbackHost(cfg.BaseURL.Hostname()) && !allowInsecureNonLoopback {
-		return errors.New("non-loopback NOTESYNC_BASE_URL requires HTTPS or ALLOW_INSECURE_NON_LOOPBACK=true")
+	if cfg.BaseURL.Scheme == "http" && !isLoopbackHost(cfg.BaseURL.Hostname()) && !cfg.AllowInsecureNonLoopback {
+		return errors.New("non-loopback NOTESYNC_BASE_URL requires HTTPS or NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK=true")
 	}
 	if !validNotesyncToken(cfg.APIToken) {
 		return errors.New("NOTESYNC_API_TOKEN must contain at least 32 visible ASCII characters")

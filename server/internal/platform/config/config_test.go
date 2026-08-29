@@ -405,18 +405,23 @@ func TestNotesyncConfigurationIsServerOnlyAndFailClosed(t *testing.T) {
 	}
 }
 
-func TestNotesyncRejectsNonLoopbackPlainHTTPWithoutExistingOverride(t *testing.T) {
+func TestNotesyncRejectsNonLoopbackPlainHTTPWithoutDedicatedOverride(t *testing.T) {
 	values := validNotesyncEnv()
 	values["NOTESYNC_BASE_URL"] = "http://notes.internal:8080"
 	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "non-loopback") {
 		t.Fatalf("insecure remote NoteSync URL accepted: %v", err)
 	}
 	values["ALLOW_INSECURE_NON_LOOPBACK"] = "true"
+	if _, err := load(env(values)); err == nil || !strings.Contains(err.Error(), "NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK") {
+		t.Fatalf("global insecure override unexpectedly relaxed NoteSync: %v", err)
+	}
+	values["NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK"] = "true"
 	if _, err := load(env(values)); err != nil {
-		t.Fatalf("explicit insecure override was not reused: %v", err)
+		t.Fatalf("dedicated insecure NoteSync override was not accepted: %v", err)
 	}
 	values["NOTESYNC_BASE_URL"] = "http://127.0.0.1:8080"
 	delete(values, "ALLOW_INSECURE_NON_LOOPBACK")
+	delete(values, "NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK")
 	if _, err := load(env(values)); err != nil {
 		t.Fatalf("loopback HTTP should be accepted: %v", err)
 	}

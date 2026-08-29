@@ -9,11 +9,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/memory"
+	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 )
 
@@ -207,7 +213,7 @@ func TestAdminUILoginReplacesBasicChallengeWithShortLivedSession(t *testing.T) {
 	}
 	page := httptest.NewRecorder()
 	handler.ServeHTTP(page, authenticatedAdminRequest(http.MethodGet, "/admin/", "", session))
-	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "管理控制台") {
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "服务总览") {
 		t.Fatalf("admin page status/body = %d %q", page.Code, page.Body.String())
 	}
 	if page.Header().Get("Cache-Control") != "no-store" || page.Header().Get("Content-Security-Policy") == "" || page.Header().Get("X-Frame-Options") != "DENY" {
@@ -377,5 +383,342 @@ func TestAdminSessionStoreBoundsActiveSessions(t *testing.T) {
 	}
 	if _, ok := store.lookup(firstToken); ok {
 		t.Fatal("oldest session remained valid after the session limit was reached")
+	}
+}
+
+func newAdminResourceTestAPI(t *testing.T, settingsPath string, limits ...int) (http.Handler, *fakeMemoryExporter, *fakeKnowledge, *fakeNotesyncReviewHTTP) {
+	t.Helper()
+	writeLimit := 100
+	if len(limits) > 0 {
+		writeLimit = limits[0]
+	}
+	scanPageSize := 100
+	if len(limits) > 1 {
+		scanPageSize = limits[1]
+	}
+	baseURL, err := url.Parse("http://127.0.0.1:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notesURL, err := url.Parse("https://notes.example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	admin := &fakeAdminIdentity{fakeIdentity: &fakeIdentity{}}
+	memoryService := &fakeMemoryHTTP{}
+	memoryExporter := &fakeMemoryExporter{}
+	memoryExporter.page.Items = []memory.ExportItem{
+		{
+			Record:         memory.Record{ID: "record-1", LogicalMemoryID: "memory-1", Revision: 1, Status: memory.RecordApplied},
+			DeliveryStatus: memory.DeliveryApplied,
+			ContentStatus:  memory.ExportContentAvailable,
+			Content:        "prefers focused sessions",
+		},
+	}
+	knowledgeService := &fakeKnowledge{}
+	knowledgeService.head = &knowledge.KnowledgeRevision{ID: "revision-1", RevisionNo: 3}
+	knowledgeService.tree = knowledge.TreeResult{Revision: knowledge.KnowledgeRevision{ID: "revision-1"}}
+	knowledgeService.export = knowledge.ExportResult{
+		RevisionID: "revision-1",
+		Documents:  []knowledge.ExportDocument{{Path: "learning.md", Markdown: "# Learning map"}},
+	}
+	notesyncService := &fakeNotesyncReviewHTTP{}
+	notesyncService.status = notesync.ReviewStatus{Configured: true, Compatible: true, Version: "1", Vault: "learning"}
+	notesyncService.previewResult.Items = []notesync.PreviewItem{{Category: "local_changed", RemotePath: "learning.md"}}
+	notesyncService.listResult.Items = []notesync.ReviewSummary{}
+
+	notesyncConfig := config.NotesyncConfig{
+		Enabled:        true,
+		BaseURL:        notesURL,
+		APIToken:       strings.Repeat("n", 32),
+		Vault:          "learning",
+		PathPrefix:     "edu-agent",
+		HTTPTimeout:    10 * time.Second,
+		WorkerInterval: 30 * time.Second,
+		WorkerBatch:    20,
+		ScanPageSize:   scanPageSize,
+		ScanMaxPages:   100,
+	}
+	adminOptions := AdminUIOptions{
+		Enabled:              true,
+		Identity:             admin,
+		PublicBaseURL:        baseURL,
+		Token:                adminTestToken,
+		TrustedLoopbackProxy: true,
+		SettingsFile:         settingsPath,
+		Notesync:             notesyncConfig,
+		AuthLimiter:          NewFixedWindowLimiter(100, time.Minute),
+		WriteLimiter:         NewFixedWindowLimiter(writeLimit, time.Minute),
+	}
+	options := Options{
+		Identity:       admin.fakeIdentity,
+		Knowledge:      knowledgeService,
+		Notesync:       notesyncService,
+		Memory:         memoryService,
+		MemoryExporter: memoryExporter,
+		Readiness:      fakeReadiness{report: health.Report{Status: health.StatusHealthy, Components: map[string]health.Component{}}},
+		Logger:         slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil)),
+		PairLimiter:    NewFixedWindowLimiter(100, time.Minute),
+		AuthLimiter:    NewFixedWindowLimiter(100, time.Minute),
+		DeviceLimiter:  NewFixedWindowLimiter(100, time.Minute),
+		AdminUI:        adminOptions,
+	}
+	handler, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler, memoryExporter, knowledgeService, notesyncService
+}
+
+func TestAdminNotesyncPreviewRequiresWriteProtections(t *testing.T) {
+	handler, _, _, notesyncService := newAdminResourceTestAPI(t, "", 1)
+	session := loginAdmin(t, handler)
+	otherSession := loginAdmin(t, handler)
+	body := `{"path":"learning.md","page":1,"page_size":25}`
+
+	missingOrigin := authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/preview", body, session)
+	missingOrigin.Header.Del("Origin")
+	missingOriginResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingOriginResponse, missingOrigin)
+	if missingOriginResponse.Code != http.StatusForbidden || notesyncService.calls["preview"] != 0 {
+		t.Fatalf("missing-origin preview status/calls/body = %d/%d/%s", missingOriginResponse.Code, notesyncService.calls["preview"], missingOriginResponse.Body.String())
+	}
+
+	missingCSRF := authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/preview", body, session)
+	missingCSRF.Header.Del(adminCSRFHeader)
+	missingCSRFResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingCSRFResponse, missingCSRF)
+	if missingCSRFResponse.Code != http.StatusForbidden || notesyncService.calls["preview"] != 0 {
+		t.Fatalf("missing-CSRF preview status/calls/body = %d/%d/%s", missingCSRFResponse.Code, notesyncService.calls["preview"], missingCSRFResponse.Body.String())
+	}
+
+	wrongCSRF := authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/preview", body, session)
+	wrongCSRF.Header.Set(adminCSRFHeader, otherSession.csrf)
+	wrongCSRFResponse := httptest.NewRecorder()
+	handler.ServeHTTP(wrongCSRFResponse, wrongCSRF)
+	if wrongCSRFResponse.Code != http.StatusForbidden || notesyncService.calls["preview"] != 0 {
+		t.Fatalf("wrong-CSRF preview status/calls/body = %d/%d/%s", wrongCSRFResponse.Code, notesyncService.calls["preview"], wrongCSRFResponse.Body.String())
+	}
+
+	accepted := httptest.NewRecorder()
+	handler.ServeHTTP(accepted, authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/preview", body, session))
+	if accepted.Code != http.StatusOK || notesyncService.calls["preview"] != 1 || notesyncService.previewCmd.PageSize != notesync.MaxPreviewPageSize {
+		t.Fatalf("accepted preview status/calls/command/body = %d/%d/%+v/%s", accepted.Code, notesyncService.calls["preview"], notesyncService.previewCmd, accepted.Body.String())
+	}
+
+	limited := httptest.NewRecorder()
+	handler.ServeHTTP(limited, authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/preview", body, session))
+	if limited.Code != http.StatusTooManyRequests || notesyncService.calls["preview"] != 1 {
+		t.Fatalf("limited preview status/calls/body = %d/%d/%s", limited.Code, notesyncService.calls["preview"], limited.Body.String())
+	}
+}
+
+func TestAdminNotesyncPreviewClampsToConfiguredScanPageSize(t *testing.T) {
+	handler, _, _, notesyncService := newAdminResourceTestAPI(t, "", 100, 10)
+	session := loginAdmin(t, handler)
+	body := `{"path":"learning.md","page":1,"page_size":25}`
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/preview", body, session))
+	if response.Code != http.StatusOK || notesyncService.calls["preview"] != 1 || notesyncService.previewCmd.PageSize != 10 {
+		t.Fatalf("configured-page preview status/calls/command/body = %d/%d/%+v/%s", response.Code, notesyncService.calls["preview"], notesyncService.previewCmd, response.Body.String())
+	}
+}
+
+func TestAdminNotesyncReviewsForwardBoundedPagination(t *testing.T) {
+	handler, _, _, notesyncService := newAdminResourceTestAPI(t, "")
+	session := loginAdmin(t, handler)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodGet, "/admin/api/notesync/reviews?status=all&cursor=next-review", "", session))
+	if response.Code != http.StatusOK {
+		t.Fatalf("review pagination status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if notesyncService.calls["list"] != 1 || notesyncService.listCmd.Status != "all" || notesyncService.listCmd.Cursor != "next-review" || notesyncService.listCmd.Limit != notesync.MaxReviewPageSize {
+		t.Fatalf("review pagination calls/command = %d/%+v", notesyncService.calls["list"], notesyncService.listCmd)
+	}
+
+	invalid := httptest.NewRecorder()
+	handler.ServeHTTP(invalid, authenticatedAdminRequest(http.MethodGet, "/admin/api/notesync/reviews?cursor="+strings.Repeat("x", 4097), "", session))
+	if invalid.Code != http.StatusBadRequest || notesyncService.calls["list"] != 1 {
+		t.Fatalf("invalid review pagination status/calls/body = %d/%d/%s", invalid.Code, notesyncService.calls["list"], invalid.Body.String())
+	}
+}
+
+func TestAdminNotesyncSettingsRequireCSRFAndPersistWithoutEchoingSecret(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "private", "admin-settings.json")
+	handler, _, _, _ := newAdminResourceTestAPI(t, settingsPath)
+	session := loginAdmin(t, handler)
+	body := `{"enabled":true,"base_url":"https://notes.example.test","api_token":"new-notesync-secret-0000000000000","vault":"learning","path_prefix":"edu-agent"}`
+
+	missingCSRF := authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/settings", body, session)
+	missingCSRF.Header.Del(adminCSRFHeader)
+	missingCSRFResponse := httptest.NewRecorder()
+	handler.ServeHTTP(missingCSRFResponse, missingCSRF)
+	if missingCSRFResponse.Code != http.StatusForbidden {
+		t.Fatalf("missing-CSRF status/body = %d/%s", missingCSRFResponse.Code, missingCSRFResponse.Body.String())
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Fatalf("settings file exists after rejected request: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/settings", body, session))
+	if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "new-notesync-secret") {
+		t.Fatalf("settings status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"restart_required":true`) || !strings.Contains(response.Body.String(), `"configuration_source":"environment"`) || !strings.Contains(response.Body.String(), `"configuration_source":"admin_settings"`) {
+		t.Fatalf("settings response omitted restart/source metadata: %s", response.Body.String())
+	}
+	info, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("settings mode = %o, want 600", info.Mode().Perm())
+	}
+	stored, found, err := config.LoadNotesyncAdminSettings(settingsPath)
+	if err != nil || !found || stored.APIToken != "new-notesync-secret-0000000000000" {
+		t.Fatalf("stored settings = %+v found=%v err=%v", stored, found, err)
+	}
+}
+
+func TestAdminNotesyncSettingsRejectManagementSecretReuse(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "private", "admin-settings.json")
+	handler, _, _, _ := newAdminResourceTestAPI(t, settingsPath)
+	session := loginAdmin(t, handler)
+	body, err := json.Marshal(adminNotesyncSettingsRequest{
+		Enabled: true, BaseURL: "https://notes.example.test", APIToken: adminTestToken, Vault: "learning", PathPrefix: "edu-agent",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/settings", string(body), session))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("secret-reuse status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Fatalf("settings file exists after secret-reuse rejection: %v", err)
+	}
+}
+
+func TestAdminNotesyncSettingsRequireNewSecretWhenEndpointChanges(t *testing.T) {
+	settingsPath := filepath.Join(t.TempDir(), "private", "admin-settings.json")
+	handler, _, _, _ := newAdminResourceTestAPI(t, settingsPath)
+	session := loginAdmin(t, handler)
+	body := `{"enabled":true,"base_url":"https://other-notes.example.test","api_token":"","vault":"learning","path_prefix":"edu-agent"}`
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodPost, "/admin/api/notesync/settings", body, session))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "new NoteSync API token") {
+		t.Fatalf("endpoint switch without new secret status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
+		t.Fatalf("settings file exists after endpoint-switch rejection: %v", err)
+	}
+}
+
+func TestAdminMemoryForwardsBoundedPagination(t *testing.T) {
+	handler, exporter, _, _ := newAdminResourceTestAPI(t, "")
+	session := loginAdmin(t, handler)
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodGet, "/admin/api/memory?limit=25&cursor=next-page", "", session))
+	if response.Code != http.StatusOK {
+		t.Fatalf("memory pagination status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if len(exporter.requests) != 1 || exporter.requests[0].Limit != 25 || exporter.requests[0].Cursor != "next-page" {
+		t.Fatalf("memory pagination request = %+v", exporter.requests)
+	}
+
+	invalid := httptest.NewRecorder()
+	handler.ServeHTTP(invalid, authenticatedAdminRequest(http.MethodGet, "/admin/api/memory?limit=201", "", session))
+	if invalid.Code != http.StatusBadRequest || len(exporter.requests) != 1 {
+		t.Fatalf("invalid memory pagination status/calls/body = %d/%d/%s", invalid.Code, len(exporter.requests), invalid.Body.String())
+	}
+}
+
+func TestAdminUIUsesOneNavigationStateForAllPages(t *testing.T) {
+	page := string(adminPageHTML)
+	for _, name := range []string{"overview", "pairing", "devices", "memory", "knowledge", "notesync"} {
+		if !strings.Contains(page, `data-page="`+name+`"`) || !strings.Contains(page, `id="page-`+name+`"`) {
+			t.Fatalf("admin page does not bind navigation and panel for %q", name)
+		}
+	}
+	script := string(adminScriptJS)
+	for _, contract := range []string{
+		`document.querySelectorAll("[data-page]")`,
+		`const active = panel.dataset.pagePanel === page`,
+		`panel.hidden = !active`,
+		`const active = item.dataset.page === page`,
+		`item.classList.toggle("active", active)`,
+		`history[replaceHash ? "replaceState" : "pushState"](null, "", targetHash)`,
+		`scrollIntoView({ block: "nearest", inline: "center" })`,
+	} {
+		if !strings.Contains(script, contract) {
+			t.Fatalf("admin navigation contract missing %q", contract)
+		}
+	}
+}
+
+func TestAdminUIMapsPublicResourceStatuses(t *testing.T) {
+	script := string(adminScriptJS)
+	for _, status := range []string{
+		"applied", "superseded", "delete_pending", "deleted", "fenced", "expiry_reconciling",
+		"queued", "prepared", "sent", "reconciling", "succeeded", "failed", "permanently_rejected", "absence_verified", "unknown",
+		"available", "redacted", "unavailable", "pending", "not_applicable", "unsupported", "partial", "confirmed",
+		"in_sync", "local_changed", "remote_unchanged", "remote_changed", "remote_missing", "both_changed", "remote_moved",
+		"unbased_remote", "path_occupied", "invalid_remote_markdown", "open", "resolved",
+	} {
+		if !strings.Contains(script, status+`: [`) {
+			t.Fatalf("admin status map does not cover public status %q", status)
+		}
+	}
+	for _, contract := range []string{
+		`deleted: ["已删除", "danger"]`, `fenced: ["已隔离", "danger"]`, `permanently_rejected: ["永久拒绝", "danger"]`,
+		`redacted: ["已清除", "danger"]`, `unavailable: ["不可用", "danger"]`, `both_changed: ["两端均已变化", "danger"]`,
+		`remote_moved: ["远端身份已移动", "danger"]`, `path_occupied: ["路径已占用", "danger"]`, `invalid_remote_markdown: ["远端文档无效", "danger"]`,
+		`const statusLabel = (value) => statusMeta[value]?.[0] || "未知状态"`, `}[value] || "原因未知"`,
+		`tree-node-meta status-badge ${statusClass(item.delivery_status)}`, `status-badge ${statusClass(status)}`,
+		`statusLabel(review.category)`, `statusClass(review.category)`, `badges.className = "compact-badges"`,
+	} {
+		if !strings.Contains(script, contract) {
+			t.Fatalf("admin localized status contract missing %q", contract)
+		}
+	}
+}
+
+func TestAdminUIUsesAuthenticatedAssetAndDeviceContracts(t *testing.T) {
+	page := string(adminPageHTML)
+	for _, asset := range []string{
+		`href="/admin/assets/admin.css"`, `src="/admin/assets/admin.js"`, `id="mobileLogoutButton"`,
+		`id="loadMoreNotesyncPreview"`, `id="loadMoreNotesyncReviews"`,
+	} {
+		if !strings.Contains(page, asset) {
+			t.Fatalf("authenticated admin page missing %q", asset)
+		}
+	}
+	if strings.Contains(page, `src="/admin/login.js"`) || strings.Contains(page, `id="loginView"`) {
+		t.Fatal("authenticated admin page still embeds the dedicated login flow")
+	}
+	script := string(adminScriptJS)
+	for _, contract := range []string{
+		`device.display_name`, `device.id`, `/revoke`, `method: "POST"`, `bootstrapConsole();`,
+		`window.location.replace("/admin/login")`, `scheduleSessionExpiry(session.expires_at)`,
+		`notesync_not_configured`, `NoteSync 尚未启用。保存启用配置并重启服务后再试。`,
+		`page_size: 25`, `method: "POST", csrf: true`, `reviewsNextCursor`,
+		`permanently_rejected: ["永久拒绝", "danger"]`, `invalid_remote_markdown: ["远端文档无效", "danger"]`,
+		`const statusLabel = (value) => statusMeta[value]?.[0] || "未知状态"`,
+	} {
+		if !strings.Contains(script, contract) {
+			t.Fatalf("authenticated admin script missing %q", contract)
+		}
+	}
+	for _, obsolete := range []string{`device.label`, `device.device_id`, `method: "DELETE"`, `page_size: 50`} {
+		if strings.Contains(script, obsolete) {
+			t.Fatalf("authenticated admin script still contains obsolete device contract %q", obsolete)
+		}
 	}
 }

@@ -94,6 +94,8 @@ services:
       ALLOW_INSECURE_NON_LOOPBACK: "true"
       ADMIN_UI_ENABLED: ${ADMIN_UI_ENABLED:-false}
       ADMIN_UI_TOKEN: ${ADMIN_UI_TOKEN:-}
+      ADMIN_UI_SETTINGS_FILE: /var/lib/edu-agent/private/admin-settings.json
+      NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK: ${NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK:-false}
       # The published host port above is loopback-only; the container listener itself is not.
       ADMIN_UI_TRUSTED_LOOPBACK_PROXY: "true"
       DATABASE_URL: postgres://edu_agent:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/edu_agent?sslmode=disable
@@ -142,6 +144,7 @@ services:
       PRIVACY_OFFLINE_CHALLENGE_KEYS: ${PRIVACY_OFFLINE_CHALLENGE_KEYS:?set versioned canonical 32-byte base64url privacy challenge keys in .env}
     volumes:
       - nocturne-backups:/var/lib/edu-agent/nocturne-backups
+      - server-admin-settings:/var/lib/edu-agent
     healthcheck:
       test:
         ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
@@ -159,6 +162,7 @@ volumes:
   nocturne-postgres-data:
   nocturne-backups:
   nocturne-snapshots:
+  server-admin-settings:
 
 networks:
   app-internal:

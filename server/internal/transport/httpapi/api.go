@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -198,6 +199,7 @@ type API struct {
 	maxOfflineRequestBody   int64
 	adminUI                 AdminUIOptions
 	adminSessions           *adminSessionStore
+	adminSettingsMu         sync.Mutex
 }
 
 func New(options Options) (http.Handler, error) {

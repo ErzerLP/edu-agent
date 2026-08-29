@@ -454,7 +454,6 @@ func (m model) items() []menuItem {
 		return []menuItem{
 			{key: "p", title: "修复本地配对状态", description: "确认后删除不完整的本地状态", command: []string{"device", "forget-local"}},
 			{key: "a", title: "配置AI助手", description: "管理本地模型和系统钥匙串中的API Key", next: screenAgentSettings},
-			{key: "s", title: "设置", description: "检查不完整的本地状态", next: screenSettings},
 			{key: "q", title: "退出", description: "返回Shell"},
 		}
 	}

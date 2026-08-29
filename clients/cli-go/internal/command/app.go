@@ -130,6 +130,8 @@ type App struct {
 	OfflineRoot  func() (string, error)
 	OfflineKeys  OfflineKeyStore
 	Build        BuildInfo
+
+	dashboardMode bool
 }
 
 func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, error) {
@@ -202,11 +204,7 @@ func (a *App) runDashboard(ctx context.Context) int {
 		if len(args) == 0 {
 			return a.fail(commandError("terminal_error", "交互式主控制台没有返回可执行操作", "重新启动客户端，或改用显式子命令", ExitInternal))
 		}
-		if err := a.dispatch(ctx, args); err != nil {
-			lastExit = a.fail(err)
-		} else {
-			lastExit = ExitOK
-		}
+		lastExit = a.runDashboardCommand(ctx, args)
 		if len(args) > 0 && args[0] == "agent" {
 			continue
 		}
@@ -217,6 +215,28 @@ func (a *App) runDashboard(ctx context.Context) int {
 			return lastExit
 		}
 	}
+}
+
+func (a *App) runDashboardCommand(ctx context.Context, args []string) int {
+	originalOut, originalErr := a.Out, a.Err
+	a.Out = dashboardOutputWriter{target: originalOut}
+	a.Err = dashboardOutputWriter{target: originalErr}
+	a.dashboardMode = true
+	defer func() {
+		a.dashboardMode = false
+		a.Out, a.Err = originalOut, originalErr
+	}()
+	if err := a.dispatch(ctx, args); err != nil {
+		return a.fail(err)
+	}
+	return ExitOK
+}
+
+func (a *App) dashboardText(plain, localized string) string {
+	if a.dashboardMode {
+		return localized
+	}
+	return plain
 }
 
 func (a *App) waitForDashboardReturn(ctx context.Context) error {
@@ -358,7 +378,11 @@ func (a *App) fail(err error) int {
 	if !errors.As(err, &commandErr) {
 		commandErr = mapAPIError(err)
 	}
-	_, _ = fmt.Fprintln(a.Err, safeText(commandErr.Error()))
+	if a.dashboardMode {
+		_, _ = fmt.Fprintln(a.Err, safeText(formatDashboardError(commandErr)))
+	} else {
+		_, _ = fmt.Fprintln(a.Err, safeText(commandErr.Error()))
+	}
 	return commandErr.ExitCode
 }
 

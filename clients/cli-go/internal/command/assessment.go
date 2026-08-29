@@ -56,7 +56,7 @@ func (a *App) runAssessment(ctx context.Context, args []string) error {
 	case "confirm":
 		request = api.AssessmentConfirmRequest{SessionOperation: base, Kind: "confirm", ExpectedDispositionVersion: decision.Version}
 	case "override":
-		reason, readErr := a.Terminal.ReadLine("Override reason: ")
+		reason, readErr := a.Terminal.ReadLine(a.dashboardText("Override reason: ", "覆盖评估原因："))
 		if readErr != nil || strings.TrimSpace(reason) == "" {
 			return commandError("invalid_assessment_reason", "override requires a non-empty reason", "run assessment override again and explain the correction", ExitInput)
 		}
@@ -69,7 +69,7 @@ func (a *App) runAssessment(ctx context.Context, args []string) error {
 			Reason: strings.TrimSpace(reason), Items: items,
 		}
 	case "void":
-		reason, readErr := a.Terminal.ReadLine("Void reason: ")
+		reason, readErr := a.Terminal.ReadLine(a.dashboardText("Void reason: ", "作废评估原因："))
 		if readErr != nil || strings.TrimSpace(reason) == "" {
 			return commandError("invalid_assessment_reason", "void requires a non-empty reason", "run assessment void again and explain why it should not count", ExitInput)
 		}
@@ -106,7 +106,10 @@ func (a *App) collectAssessmentOverride(artifact api.AssessmentArtifact, decisio
 			return nil, commandError("protocol_error", "the current assessment decision changed immutable assessment source fields", "refresh the assessment", ExitInternal)
 		}
 		_, _ = fmt.Fprintf(a.Out, "Rubric: %s current=%s\n", safeText(source.RubricItemID), safeText(current.Conclusion))
-		prompt := fmt.Sprintf("Conclusion (pass/partial/fail) [%s]: ", safeText(current.Conclusion))
+		prompt := a.dashboardText(
+			fmt.Sprintf("Conclusion (pass/partial/fail) [%s]: ", safeText(current.Conclusion)),
+			fmt.Sprintf("结论（pass/partial/fail）[%s]：", safeText(current.Conclusion)),
+		)
 		conclusion, err := a.Terminal.ReadLine(prompt)
 		if err != nil {
 			return nil, commandError("assessment_input_failed", "override conclusion could not be read", "run assessment override again", ExitInput)
@@ -118,7 +121,7 @@ func (a *App) collectAssessmentOverride(artifact api.AssessmentArtifact, decisio
 		if conclusion != "pass" && conclusion != "partial" && conclusion != "fail" {
 			return nil, commandError("invalid_assessment_conclusion", "override conclusion must be pass, partial, or fail", "run assessment override again", ExitInput)
 		}
-		candidate, err := a.Terminal.ReadLine("Misconception candidate (blank preserves current): ")
+		candidate, err := a.Terminal.ReadLine(a.dashboardText("Misconception candidate (blank preserves current): ", "误区候选（留空保留当前值）："))
 		if err != nil {
 			return nil, commandError("assessment_input_failed", "misconception candidate could not be read", "run assessment override again", ExitInput)
 		}

@@ -184,7 +184,7 @@ func (a *App) retrieveForWorkItem(ctx context.Context, client APIClient, view ap
 	if result.Degraded || result.Truncated {
 		reasons := retrievalReasons(result)
 		_, _ = fmt.Fprintf(a.Err, "warning[retrieval_degraded]: degraded=%t truncated=%t reasons=%s\n", result.Degraded, result.Truncated, safeText(strings.Join(reasons, ",")))
-		confirmed, confirmErr := a.Terminal.Confirm("Continue with the displayed retrieval limits?")
+		confirmed, confirmErr := a.Terminal.Confirm(a.dashboardText("Continue with the displayed retrieval limits?", "是否在当前检索限制下继续？"))
 		if confirmErr != nil || !confirmed {
 			return api.KnowledgeRetrievalResult{}, commandError("retrieval_declined", "the degraded or truncated retrieval was not accepted", "retry later or refine the input", ExitInput)
 		}

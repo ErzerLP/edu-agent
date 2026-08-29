@@ -29,6 +29,15 @@ const (
 	testDocRevID = "30000000-0000-4000-8000-000000000001"
 )
 
+type shortWriter struct{}
+
+func (shortWriter) Write(value []byte) (int, error) {
+	if len(value) == 0 {
+		return 0, nil
+	}
+	return len(value) - 1, nil
+}
+
 type memoryConfigStore struct {
 	value            config.Config
 	present          bool
@@ -321,8 +330,60 @@ func TestDashboardReturnsLastCommandFailure(t *testing.T) {
 	if exit := app.Run(t.Context(), nil); exit != ExitInput {
 		t.Fatalf("exit=%d err=%q", exit, errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "unknown command") {
-		t.Fatalf("err=%q", errOut.String())
+	if !strings.Contains(errOut.String(), "错误[usage]") || !strings.Contains(errOut.String(), "输入的操作或参数不符合要求") || strings.Contains(errOut.String(), "unknown command") {
+		t.Fatalf("dashboard error was not localized: %q", errOut.String())
+	}
+}
+
+func TestDashboardLocalizesCommandOutputWithoutChangingExplicitOutput(t *testing.T) {
+	t.Parallel()
+	value := config.Config{Timeout: "45s", Color: "auto"}
+	configStore := &memoryConfigStore{present: true, value: value}
+	dashboardRunner := &fakeDashboard{results: []fakeDashboardResult{{args: []string{"config", "show"}}, {quit: true}}}
+	app, out, errOut := newTestApp(configStore, &memoryCredentialStore{}, &fakeTerminal{lines: []string{""}})
+	app.Dashboard = dashboardRunner
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	if exit := app.Run(t.Context(), nil); exit != ExitOK {
+		t.Fatalf("dashboard exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if !strings.Contains(out.String(), "服务器：") || !strings.Contains(out.String(), "请求超时：45s") || !strings.Contains(out.String(), "输出颜色：auto") || strings.Contains(out.String(), "Server:") {
+		t.Fatalf("dashboard output was not localized: %q", out.String())
+	}
+
+	explicitApp, explicitOut, explicitErr := newTestApp(configStore, &memoryCredentialStore{}, &fakeTerminal{})
+	if exit := explicitApp.Run(t.Context(), []string{"config", "show"}); exit != ExitOK {
+		t.Fatalf("explicit exit=%d out=%q err=%q", exit, explicitOut.String(), explicitErr.String())
+	}
+	if !strings.Contains(explicitOut.String(), "Server:") || !strings.Contains(explicitOut.String(), "Timeout: 45s") || strings.Contains(explicitOut.String(), "服务器：") {
+		t.Fatalf("explicit output contract changed: %q", explicitOut.String())
+	}
+}
+
+func TestDashboardTextAndLearningLabelsAreModeScoped(t *testing.T) {
+	t.Parallel()
+	app := &App{}
+	if got := app.dashboardText("Pairing code: ", "配对码："); got != "Pairing code: " {
+		t.Fatalf("explicit prompt = %q", got)
+	}
+	app.dashboardMode = true
+	if got := app.dashboardText("Pairing code: ", "配对码："); got != "配对码：" {
+		t.Fatalf("dashboard prompt = %q", got)
+	}
+
+	got := localizeDashboardOutput("Allowed help: none,hint\nCommands: :ask :quit\nCurrent: answer (not scored)\n")
+	for _, want := range []string{"可选帮助等级：none,hint", "可用命令：:ask :quit", "当前：回答（不计分）"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("localized learning output = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestDashboardOutputWriterRejectsShortWrite(t *testing.T) {
+	t.Parallel()
+	written, err := (dashboardOutputWriter{target: shortWriter{}}).Write([]byte("Server: http://127.0.0.1\n"))
+	if written != 0 || !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("write = (%d, %v), want (0, io.ErrShortWrite)", written, err)
 	}
 }
 
@@ -371,6 +432,23 @@ func TestClientConfigCanBeSetBeforePairing(t *testing.T) {
 	}
 	if !configStore.present || configStore.value.HasPairingBinding() || configStore.value.Timeout != "45s" || configStore.value.Color != "auto" {
 		t.Fatalf("config=%+v", configStore.value)
+	}
+}
+
+func TestUnpairedClientSettingsAreNotReportedAsOrphaned(t *testing.T) {
+	t.Parallel()
+	preset := config.DefaultAgentConfig("ollama")
+	configStore := &memoryConfigStore{present: true, value: config.Config{Timeout: "45s", Color: "auto", Agent: &preset}}
+	app, _, _ := newTestApp(configStore, &memoryCredentialStore{}, &fakeTerminal{})
+
+	_, _, bindingErr := app.loadBinding(config.Overrides{})
+	var commandErr *Error
+	if !errors.As(bindingErr, &commandErr) || commandErr.Code != "not_paired" {
+		t.Fatalf("loadBinding error = %v, want not_paired", bindingErr)
+	}
+	_, mutableErr := app.loadMutableClientConfig()
+	if !errors.As(mutableErr, &commandErr) || commandErr.Code != "not_paired" {
+		t.Fatalf("loadMutableClientConfig error = %v, want not_paired", mutableErr)
 	}
 }
 

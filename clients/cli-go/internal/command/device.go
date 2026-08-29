@@ -48,7 +48,7 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 	if len([]rune(name)) > 100 {
 		return commandError("invalid_device_name", "device name exceeds 100 characters", "choose a shorter device name", ExitInput)
 	}
-	code, err := a.Terminal.ReadSecret("Pairing code: ")
+	code, err := a.Terminal.ReadSecret(a.dashboardText("Pairing code: ", "配对码："))
 	if err != nil || strings.TrimSpace(code) == "" {
 		return commandError("invalid_pairing_input", "one non-empty pairing code is required", "create a new code on the server and enter one line", ExitInput)
 	}
@@ -378,6 +378,17 @@ func (a *App) loadBinding(overrides config.Overrides) (binding, time.Duration, e
 			return binding{}, 0, commandError("not_paired", "no local device binding exists", "run edu-agent pair", ExitAuth)
 		}
 		return binding{}, 0, commandError("local_state_invalid", "configuration cannot be safely read", "run edu-agent device forget-local", ExitInput)
+	}
+	if !value.HasPairingBinding() {
+		if err := value.Validate(); err != nil {
+			return binding{}, 0, commandError("invalid_configuration", "client configuration is invalid or unsafe", "repair local settings before pairing", ExitInput)
+		}
+		if _, credentialErr := a.Credentials.Load(); errors.Is(credentialErr, credentials.ErrNotFound) {
+			return binding{}, 0, commandError("not_paired", "local client settings exist without a device binding", "run edu-agent pair", ExitAuth)
+		} else if credentialErr != nil {
+			return binding{}, 0, commandError("local_state_invalid", "the credential store cannot be safely read", "run edu-agent device forget-local", ExitInput)
+		}
+		return binding{}, 0, commandError("local_state_orphaned", "a credential exists without a device binding", "run edu-agent device forget-local", ExitInput)
 	}
 	resolved, err := config.Resolve(value, overrides, a.Getenv)
 	if err != nil {

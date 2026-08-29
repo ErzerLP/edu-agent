@@ -218,7 +218,7 @@ func (a *App) collectIdentityResolutions(review api.IdentityReview) ([]api.Docum
 	documents := make([]api.DocumentResolution, 0, len(review.Documents))
 	for _, item := range review.Documents {
 		printDocumentReview(a.Out, item)
-		action, err := a.Terminal.ReadLine("Document action (preserve/new): ")
+		action, err := a.Terminal.ReadLine(a.dashboardText("Document action (preserve/new): ", "文档处理方式（preserve/new）："))
 		if err != nil {
 			return nil, nil, commandError("identity_review_input_failed", "document action could not be read", "rerun the import and review every candidate", ExitInput)
 		}
@@ -228,13 +228,13 @@ func (a *App) collectIdentityResolutions(review api.IdentityReview) ([]api.Docum
 		}
 		resolution := api.DocumentResolution{Locator: item.Locator, Action: action}
 		if action == "preserve" {
-			source, readErr := a.Terminal.ReadLine("Source document ID: ")
+			source, readErr := a.Terminal.ReadLine(a.dashboardText("Source document ID: ", "来源文档 ID："))
 			if readErr != nil || !documentCandidateContains(item.Candidates, strings.TrimSpace(source)) {
 				return nil, nil, commandError("invalid_identity_source", "preserve requires an explicit candidate document ID", "rerun the import and enter a displayed stable ID", ExitInput)
 			}
 			resolution.DocumentID = strings.TrimSpace(source)
 		}
-		reason, readErr := a.Terminal.ReadLine("Reason: ")
+		reason, readErr := a.Terminal.ReadLine(a.dashboardText("Reason: ", "原因："))
 		if readErr != nil || strings.TrimSpace(reason) == "" {
 			return nil, nil, commandError("invalid_identity_reason", "every identity decision requires a non-empty reason", "rerun the import and explain the decision", ExitInput)
 		}
@@ -244,7 +244,7 @@ func (a *App) collectIdentityResolutions(review api.IdentityReview) ([]api.Docum
 	nodes := make([]api.NodeResolution, 0, len(review.Nodes))
 	for _, item := range review.Nodes {
 		printNodeReview(a.Out, item)
-		action, err := a.Terminal.ReadLine("Node action (preserve/new/rewrite/split/merge): ")
+		action, err := a.Terminal.ReadLine(a.dashboardText("Node action (preserve/new/rewrite/split/merge): ", "知识节点处理方式（preserve/new/rewrite/split/merge）："))
 		if err != nil {
 			return nil, nil, commandError("identity_review_input_failed", "node action could not be read", "rerun the import and review every candidate", ExitInput)
 		}
@@ -254,7 +254,7 @@ func (a *App) collectIdentityResolutions(review api.IdentityReview) ([]api.Docum
 		}
 		resolution := api.NodeResolution{Locator: item.Locator, Action: action}
 		if action != "new" {
-			sources, readErr := a.Terminal.ReadLine("Source node revision IDs (comma-separated): ")
+			sources, readErr := a.Terminal.ReadLine(a.dashboardText("Source node revision IDs (comma-separated): ", "来源节点版本 ID（逗号分隔）："))
 			if readErr != nil {
 				return nil, nil, commandError("identity_review_input_failed", "node sources could not be read", "rerun the import", ExitInput)
 			}
@@ -263,7 +263,7 @@ func (a *App) collectIdentityResolutions(review api.IdentityReview) ([]api.Docum
 				return nil, nil, commandError("invalid_identity_source", "the action requires explicit displayed source node revision IDs", "rerun the import and enter candidate revision IDs", ExitInput)
 			}
 		}
-		reason, readErr := a.Terminal.ReadLine("Reason: ")
+		reason, readErr := a.Terminal.ReadLine(a.dashboardText("Reason: ", "原因："))
 		if readErr != nil || strings.TrimSpace(reason) == "" {
 			return nil, nil, commandError("invalid_identity_reason", "every identity decision requires a non-empty reason", "rerun the import and explain the decision", ExitInput)
 		}

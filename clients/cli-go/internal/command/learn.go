@@ -29,7 +29,7 @@ func (a *App) runLearn(ctx context.Context, args []string) error {
 		return err
 	}
 	if !active {
-		goalText, readErr := a.Terminal.ReadLine("Goal: ")
+		goalText, readErr := a.Terminal.ReadLine(a.dashboardText("Goal: ", "学习目标："))
 		if readErr != nil || strings.TrimSpace(goalText) == "" {
 			return commandError("invalid_goal", "a goal is required when no active session exists", "enter a non-empty goal or run goal set", ExitInput)
 		}
@@ -223,7 +223,7 @@ func (a *App) learnRouteActive(ctx context.Context, client APIClient, view api.S
 		for _, pageMetadata := range metadata {
 			printProjectionWarning(a.Err, pageMetadata)
 		}
-		confirmed, confirmErr := a.Terminal.Confirm("A review is due for the current node. Present it now?")
+		confirmed, confirmErr := a.Terminal.Confirm(a.dashboardText("A review is due for the current node. Present it now?", "当前知识节点已到复习时间，是否现在开始复习？"))
 		if confirmErr != nil {
 			return view, false, commandError("confirmation_failed", "review confirmation could not be read", "retry in an interactive terminal", ExitInput)
 		}
@@ -430,7 +430,7 @@ func (a *App) learnAwaitingResponse(ctx context.Context, client APIClient, view 
 }
 
 func (a *App) readMultilineAnswer() (string, error) {
-	_, _ = fmt.Fprintln(a.Err, "Enter answer lines; a single . ends the block.")
+	_, _ = fmt.Fprintln(a.Err, a.dashboardText("Enter answer lines; a single . ends the block.", "请输入多行答案；单独输入一行 . 结束。"))
 	var lines []string
 	total := 0
 	for {
@@ -475,9 +475,9 @@ func (a *App) submitAttempt(ctx context.Context, client APIClient, view api.Sess
 func (a *App) chooseHelp(values []string) (string, error) {
 	_, _ = fmt.Fprintf(a.Out, "Allowed help: %s\n", safeText(strings.Join(values, ",")))
 	defaultNone := allowed(values, "none")
-	prompt := "Help: "
+	prompt := a.dashboardText("Help: ", "帮助等级：")
 	if defaultNone {
-		prompt = "Help [none]: "
+		prompt = a.dashboardText("Help [none]: ", "帮助等级 [none]：")
 	}
 	value, err := a.Terminal.ReadLine(prompt)
 	if err != nil {
@@ -577,7 +577,7 @@ func (a *App) learnAssessmentDecision(ctx context.Context, client APIClient, vie
 	case "confirm":
 		request = api.AssessmentConfirmRequest{SessionOperation: base, Kind: "confirm", ExpectedDispositionVersion: decision.Version}
 	case "override":
-		reason, readErr := a.Terminal.ReadLine("Override reason: ")
+		reason, readErr := a.Terminal.ReadLine(a.dashboardText("Override reason: ", "覆盖评估原因："))
 		if readErr != nil || strings.TrimSpace(reason) == "" {
 			return view, commandError("invalid_assessment_reason", "override requires a non-empty reason", "retry :assessment override", ExitInput)
 		}
@@ -587,7 +587,7 @@ func (a *App) learnAssessmentDecision(ctx context.Context, client APIClient, vie
 		}
 		request = api.AssessmentOverrideRequest{SessionOperation: base, Kind: "override", ExpectedDispositionVersion: decision.Version, Reason: strings.TrimSpace(reason), Items: items}
 	case "void":
-		reason, readErr := a.Terminal.ReadLine("Void reason: ")
+		reason, readErr := a.Terminal.ReadLine(a.dashboardText("Void reason: ", "作废评估原因："))
 		if readErr != nil || strings.TrimSpace(reason) == "" {
 			return view, commandError("invalid_assessment_reason", "void requires a non-empty reason", "retry :assessment void", ExitInput)
 		}
@@ -659,7 +659,7 @@ func (a *App) handleLearnCommand(ctx context.Context, client APIClient, view api
 		return view, true, nil
 	case ":ask":
 		if argument == "" {
-			value, err := a.Terminal.ReadLine("Question: ")
+			value, err := a.Terminal.ReadLine(a.dashboardText("Question: ", "问题："))
 			if err != nil {
 				return view, false, commandError("input_closed", "question input ended", "run learn again", ExitInput)
 			}
@@ -696,14 +696,14 @@ func (a *App) handleLearnCommand(ctx context.Context, client APIClient, view api
 		printReviewsPage(a.Out, a.Err, page)
 		return view, false, nil
 	case ":end":
-		confirmed, err := a.Terminal.Confirm("Ending the activity may invalidate the active focus. Continue?")
+		confirmed, err := a.Terminal.Confirm(a.dashboardText("Ending the activity may invalidate the active focus. Continue?", "结束当前活动可能使学习焦点失效，是否继续？"))
 		if err != nil || !confirmed {
 			return view, false, commandError("end_activity_declined", "the activity was not ended", "continue learning or retry :end", ExitInput)
 		}
 		fresh, _, err := a.noFieldAction(ctx, client, view, "end_activity")
 		return fresh, false, err
 	case ":complete":
-		confirmed, err := a.Terminal.Confirm("Completing the session may invalidate the active focus. Continue?")
+		confirmed, err := a.Terminal.Confirm(a.dashboardText("Completing the session may invalidate the active focus. Continue?", "完成当前学习会话可能使学习焦点失效，是否继续？"))
 		if err != nil || !confirmed {
 			return view, false, commandError("complete_session_declined", "the session was not completed", "continue learning or retry :complete", ExitInput)
 		}

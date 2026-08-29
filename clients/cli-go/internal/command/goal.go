@@ -36,7 +36,7 @@ func (a *App) runGoal(ctx context.Context, args []string) error {
 			return commandError("invalid_state", "the active session cannot switch goal in its current state", "resolve the current assessment or use a displayed allowed action", ExitConflict)
 		}
 		_, _ = fmt.Fprintf(a.Out, "Current: state=%s session=%s\n", safeText(current.Session.State), safeText(current.Session.SessionID))
-		confirmed, confirmErr := a.Terminal.Confirm("Switching goal may invalidate the active focus. Continue?")
+		confirmed, confirmErr := a.Terminal.Confirm(a.dashboardText("Switching goal may invalidate the active focus. Continue?", "切换学习目标可能使当前学习焦点失效，是否继续？"))
 		if confirmErr != nil {
 			return commandError("confirmation_failed", "goal switch confirmation could not be read", "retry in an interactive terminal", ExitInput)
 		}

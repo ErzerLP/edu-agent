@@ -68,6 +68,17 @@ func (a *App) loadMutableClientConfig() (config.Config, error) {
 		}
 		return config.Config{}, commandError("local_state_invalid", "configuration cannot be safely read", "run edu-agent device forget-local", ExitInput)
 	}
+	if err := value.Validate(); err != nil {
+		return config.Config{}, commandError("invalid_configuration", "client configuration is invalid or unsafe", "run edu-agent device forget-local", ExitInput)
+	}
+	if !value.HasPairingBinding() {
+		if _, credentialErr := a.Credentials.Load(); errors.Is(credentialErr, credentials.ErrNotFound) {
+			return config.Config{}, commandError("not_paired", "local client settings exist without a device binding", "pair this device before starting the Agent", ExitAuth)
+		} else if credentialErr != nil {
+			return config.Config{}, commandError("local_state_invalid", "the credential store cannot be safely read", "run edu-agent device forget-local", ExitInput)
+		}
+		return config.Config{}, commandError("local_state_orphaned", "a credential exists without a device binding", "run edu-agent device forget-local", ExitInput)
+	}
 	record, credentialErr := a.Credentials.Load()
 	if credentialErr != nil {
 		if errors.Is(credentialErr, credentials.ErrNotFound) {
@@ -75,14 +86,10 @@ func (a *App) loadMutableClientConfig() (config.Config, error) {
 		}
 		return config.Config{}, commandError("local_state_invalid", "the credential store cannot be safely read", "run edu-agent device forget-local", ExitInput)
 	}
-	validated := value
-	if err := validated.Validate(); err != nil {
-		return config.Config{}, commandError("invalid_configuration", "client configuration is invalid or unsafe", "run edu-agent device forget-local", ExitInput)
-	}
-	if strings.TrimSpace(record.Token) == "" || record.ServerURL != validated.ServerURL || record.DeviceID != validated.DeviceID {
+	if strings.TrimSpace(record.Token) == "" || record.ServerURL != value.ServerURL || record.DeviceID != value.DeviceID {
 		return config.Config{}, commandError("device_mismatch", "configuration and credential bindings disagree", "run edu-agent device forget-local", ExitConflict)
 	}
-	return validated, nil
+	return value, nil
 }
 
 func clientConfigUsage(message string) error {

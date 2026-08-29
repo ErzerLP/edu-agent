@@ -159,10 +159,19 @@ func TestLocalPreferenceCommandsWorkBeforePairing(t *testing.T) {
 func TestIncompleteLocalStateOffersRecovery(t *testing.T) {
 	t.Parallel()
 	modelValue := newModel(Snapshot{LocalState: LocalStateIncomplete})
-	if view := modelValue.View(); !containsAll(view, "修复本地配对状态", "设置", "退出") || containsAll(view, "继续结构化学习") {
+	if view := modelValue.View(); !containsAll(view, "修复本地配对状态", "配置AI助手", "退出") || containsAll(view, "继续结构化学习") {
 		t.Fatalf("incomplete main view = %q", view)
 	}
-	for _, blockedKey := range []string{"l", "i", "g", "v", "r", "e", "w", "d"} {
+	items := modelValue.items()
+	if len(items) != 3 {
+		t.Fatalf("incomplete items = %#v", items)
+	}
+	for _, item := range items {
+		if item.key == "s" || item.title == "设置" {
+			t.Fatalf("incomplete main menu contains redundant settings item: %#v", items)
+		}
+	}
+	for _, blockedKey := range []string{"s", "l", "i", "g", "v", "r", "e", "w", "d"} {
 		updated, _ := modelValue.Update(key(blockedKey))
 		got := updated.(model)
 		if len(got.command) != 0 || got.screen != screenMain || got.quit {
@@ -173,16 +182,6 @@ func TestIncompleteLocalStateOffersRecovery(t *testing.T) {
 	updated, _ := modelValue.Update(key("p"))
 	if got, want := updated.(model).command, []string{"device", "forget-local"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("main recovery command = %#v, want %#v", got, want)
-	}
-
-	updated, _ = modelValue.Update(key("s"))
-	settings := updated.(model)
-	if view := settings.View(); !containsAll(view, "本地状态：需要修复", "修复本地配对状态") {
-		t.Fatalf("settings view = %q", view)
-	}
-	updated, _ = settings.Update(key("f"))
-	if got, want := updated.(model).command, []string{"device", "forget-local"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("settings recovery command = %#v, want %#v", got, want)
 	}
 }
 

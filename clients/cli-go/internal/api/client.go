@@ -643,6 +643,8 @@ func validateDecoded(target any) error {
 				return err
 			}
 		}
+	case *MemoryExportPage:
+		return validateMemoryExportPage(*value)
 	case *MemoryCandidateView:
 		return validateMemoryCandidateView(*value)
 	case *MemoryOperationResponse:

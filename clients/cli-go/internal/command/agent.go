@@ -43,11 +43,13 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 	server := a.NewClient(value.ServerURL, record.Token, requestTimeout)
 	session, err := agentloop.New(model, server, agentloop.Options{
 		ContextWindow: value.Agent.ContextWindow, MaxToolRounds: value.Agent.MaxToolRounds,
-		NewUUID: a.NewUUID,
+		ContextCompaction: value.Agent.ContextCompaction,
+		NewUUID:           a.NewUUID,
 	})
 	if err != nil {
 		return commandError("agent_configuration_invalid", "AI学习助手配置无效", "检查模型参数后重试", ExitInput)
 	}
+	defer session.Close()
 	if err := a.AgentUI.Run(ctx, session, value.Agent.Model); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -79,9 +81,9 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 		if _, keyErr := a.ModelSecrets.Load(binding); keyErr == nil {
 			keyStatus = "已存入系统钥匙串"
 		}
-		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n请求超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
+		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n请求超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
 			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow,
-			safeText(value.Agent.Timeout), value.Agent.MaxToolRounds, keyStatus)
+			safeText(value.Agent.ContextCompaction), safeText(value.Agent.Timeout), value.Agent.MaxToolRounds, keyStatus)
 		return err
 	case "preset":
 		if len(args) != 2 {
@@ -147,12 +149,13 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 
 func (a *App) runModelSet(args []string) error {
 	set := newFlagSet("model set")
-	var provider, baseURL, modelName, timeout string
+	var provider, baseURL, modelName, timeout, contextCompaction string
 	var contextWindow, maxToolRounds int
 	set.StringVar(&provider, "provider", "", "model provider")
 	set.StringVar(&baseURL, "base-url", "", "OpenAI-compatible base URL")
 	set.StringVar(&modelName, "model", "", "model name")
 	set.IntVar(&contextWindow, "context-window", 0, "context window")
+	set.StringVar(&contextCompaction, "context-compaction", "", "auto, recent-only, or off")
 	set.StringVar(&timeout, "timeout", "", "model timeout")
 	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, "maximum tool rounds")
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
@@ -181,6 +184,9 @@ func (a *App) runModelSet(args []string) error {
 	}
 	if contextWindow != 0 {
 		candidate.ContextWindow = contextWindow
+	}
+	if strings.TrimSpace(contextCompaction) != "" {
+		candidate.ContextCompaction = strings.TrimSpace(contextCompaction)
 	}
 	if strings.TrimSpace(timeout) != "" {
 		candidate.Timeout = strings.TrimSpace(timeout)

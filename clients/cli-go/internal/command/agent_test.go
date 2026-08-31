@@ -54,6 +54,34 @@ func (u *fakeAgentUI) Run(_ context.Context, conversation agentui.Conversation, 
 	return nil
 }
 
+type contextPassingAgentUI struct {
+	firstErr  error
+	secondErr error
+}
+
+func (u *contextPassingAgentUI) Run(ctx context.Context, conversation agentui.Conversation, _ string) error {
+	_, u.firstErr = conversation.Send(ctx, "第一轮")
+	if u.firstErr == nil {
+		_, u.secondErr = conversation.Send(ctx, "第二轮")
+	}
+	return nil
+}
+
+type sequenceAgentModel struct {
+	responses []modelclient.Response
+	calls     int
+}
+
+func (m *sequenceAgentModel) Complete(context.Context, modelclient.Request) (modelclient.Response, error) {
+	m.calls++
+	if len(m.responses) == 0 {
+		return modelclient.Response{}, errors.New("unexpected model request")
+	}
+	response := m.responses[0]
+	m.responses = m.responses[1:]
+	return response, nil
+}
+
 type fixedAgentModel struct {
 	response modelclient.Response
 	err      error
@@ -77,10 +105,10 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 		t.Fatalf("config=%+v", store.value)
 	}
 	out.Reset()
-	if exit := app.Run(t.Context(), []string{"model", "set", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--timeout", "2m", "--max-tool-rounds", "8"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"model", "set", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--timeout", "2m", "--max-tool-rounds", "8"}); exit != ExitOK {
 		t.Fatalf("set exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
-	if got := store.value.Agent; got.BaseURL != "https://model.example/v1" || got.Model != "teacher-model" || got.ContextWindow != 65536 || got.Timeout != "2m" || got.MaxToolRounds != 8 {
+	if got := store.value.Agent; got.BaseURL != "https://model.example/v1" || got.Model != "teacher-model" || got.ContextWindow != 65536 || got.ContextCompaction != "recent-only" || got.Timeout != "2m" || got.MaxToolRounds != 8 {
 		t.Fatalf("agent config=%+v", got)
 	}
 
@@ -108,7 +136,7 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"model", "show"}); exit != ExitOK {
 		t.Fatalf("show exit=%d err=%q", exit, errOut.String())
 	}
-	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") {
+	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") {
 		t.Fatalf("secret leaked or status missing: %q", out.String())
 	}
 	deletesBefore := secrets.deletes
@@ -191,11 +219,38 @@ func TestAgentLaunchRequiresTTYPairingAndModelCredential(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"agent"}); exit != ExitOK || runner.calls != 1 || runner.conversation == nil || runner.modelName != preset.Model {
 		t.Fatalf("launch exit=%d calls=%d model=%q err=%q", exit, runner.calls, runner.modelName, errOut.String())
 	}
+	if _, err := runner.conversation.Send(t.Context(), "界面退出后不应继续追加"); !errors.Is(err, agentloop.ErrSessionClosed) {
+		t.Fatalf("runAgent did not close session: %v", err)
+	}
 
 	app.OutputIsTTY = func() bool { return false }
 	errOut.Reset()
 	if exit := app.Run(t.Context(), []string{"agent"}); exit != ExitInput || !strings.Contains(errOut.String(), "not_a_terminal") {
 		t.Fatalf("non-tty exit=%d err=%q", exit, errOut.String())
+	}
+}
+
+func TestAgentLaunchPassesContextCompactionMode(t *testing.T) {
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
+	preset := config.DefaultAgentConfig("ollama")
+	preset.ContextWindow = 4096
+	preset.ContextCompaction = "off"
+	configStore.value.Agent = &preset
+	model := &sequenceAgentModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", Content: strings.Repeat("x", 20<<10)}}}}
+	runner := &contextPassingAgentUI{}
+	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	app.ModelSecrets = &memoryModelSecretStore{}
+	app.AgentUI = runner
+	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	app.Getenv = func(string) string { return "xterm" }
+
+	if exit := app.Run(t.Context(), []string{"agent"}); exit != ExitOK {
+		t.Fatalf("launch exit=%d err=%q", exit, errOut.String())
+	}
+	if runner.firstErr != nil || runner.secondErr == nil || !strings.Contains(runner.secondErr.Error(), agentloop.ContextBudgetInvalid) || model.calls != 1 {
+		t.Fatalf("context mode was not passed: first=%v second=%v calls=%d", runner.firstErr, runner.secondErr, model.calls)
 	}
 }
 
@@ -292,6 +347,18 @@ func TestModelSetAcceptsProviderAndRejectsUnknown(t *testing.T) {
 	}
 	if exit := app.Run(t.Context(), []string{"model", "set", "--provider", "unknown"}); exit != ExitInput {
 		t.Fatalf("unknown provider exit=%d", exit)
+	}
+}
+
+func TestModelSetRejectsInvalidContextCompaction(t *testing.T) {
+	t.Parallel()
+	store := &memoryConfigStore{}
+	app, _, errOut := newTestApp(store, &memoryCredentialStore{}, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"model", "set", "--context-compaction", "rolling"}); exit != ExitInput {
+		t.Fatalf("invalid mode exit=%d err=%q", exit, errOut.String())
+	}
+	if store.saveCalls != 0 {
+		t.Fatalf("invalid mode was saved: %+v", store.value.Agent)
 	}
 }
 

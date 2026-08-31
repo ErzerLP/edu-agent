@@ -32,11 +32,19 @@ type ToolDefinition struct {
 }
 
 type Request struct {
-	Messages []Message
-	Tools    []Tool
+	Messages  []Message
+	Tools     []Tool
+	MaxTokens int
+}
+
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
 }
 
 type Response struct {
 	Message      Message
 	FinishReason string
+	Usage        *Usage
 }

@@ -16,24 +16,77 @@ type Model interface {
 type Server interface {
 	RetrieveKnowledge(context.Context, api.KnowledgeRetrievalRequest) (api.KnowledgeRetrievalResult, error)
 	CurrentSession(context.Context) (api.SessionView, error)
-	Routes(context.Context, string, int, bool) (api.RoutesPage, error)
 	Reviews(context.Context, string, int, *time.Time) (api.ReviewsPage, error)
-	MemoryCandidates(context.Context, string, int) (api.MemoryCandidatePage, error)
+	ExportMemory(context.Context, string, int) (api.MemoryExportPage, error)
+	MemoryCandidate(context.Context, string) (api.MemoryCandidateView, error)
 	CreateMemoryCandidate(context.Context, api.MemoryCandidateRequest) (api.MemoryOperationResponse, error)
+	DecideMemoryCandidate(context.Context, string, api.MemoryCandidateDecisionRequest) (api.MemoryOperationResponse, error)
+}
+
+type LearningStatus struct {
+	Active bool
+	View   api.SessionView
 }
 
 type UUIDSource func() (string, error)
+type ContextIDSource func(string) (string, error)
 
 type Options struct {
-	ContextWindow int
-	MaxToolRounds int
-	Now           func() time.Time
-	NewUUID       UUIDSource
+	ContextWindow     int
+	MaxToolRounds     int
+	ContextCompaction string
+	Now               func() time.Time
+	NewUUID           UUIDSource
+	ContextIDSource   ContextIDSource
 }
 
+type EventStatus string
+
+const (
+	EventRunning              EventStatus = "running"
+	EventSucceeded            EventStatus = "succeeded"
+	EventFailed               EventStatus = "failed"
+	EventInvalid              EventStatus = "invalid"
+	EventConfirmationRequired EventStatus = "confirmation_required"
+	EventOutcomeUnknown       EventStatus = "outcome_unknown"
+)
+
 type Event struct {
+	ID      string
 	Tool    string
 	Summary string
+	Status  EventStatus
+	Detail  string
+}
+
+type ActivityKind string
+
+const (
+	ActivityThinking ActivityKind = "thinking"
+	ActivityTool     ActivityKind = "tool"
+)
+
+type Activity struct {
+	Kind  ActivityKind
+	Event Event
+}
+
+type activityReporter func(Activity)
+type activityReporterContextKey struct{}
+
+// WithActivityReporter attaches a safe, presentation-level activity sink to one Agent operation.
+// Activities contain lifecycle summaries only; they never contain model reasoning or tool arguments.
+func WithActivityReporter(ctx context.Context, reporter func(Activity)) context.Context {
+	if reporter == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, activityReporterContextKey{}, activityReporter(reporter))
+}
+
+func PublishActivity(ctx context.Context, activity Activity) {
+	if reporter, ok := ctx.Value(activityReporterContextKey{}).(activityReporter); ok && reporter != nil {
+		reporter(activity)
+	}
 }
 
 type PreferenceConfirmation struct {
@@ -45,7 +98,7 @@ type PreferenceConfirmation struct {
 	RetryOnly   bool
 }
 
-var ErrPreferenceOutcomeUnknown = errors.New("长期偏好候选提交结果未知")
+var ErrPreferenceOutcomeUnknown = errors.New("长期偏好保存结果未知")
 
 type Result struct {
 	Text    string

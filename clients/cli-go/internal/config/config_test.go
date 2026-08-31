@@ -118,6 +118,27 @@ func TestConfigAllowsLocalAgentSettingsWithoutPairing(t *testing.T) {
 	}
 }
 
+func TestAgentContextCompactionDefaultsAndValidatesStrictly(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"auto", "recent-only", "off"} {
+		value := DefaultAgentConfig("openai")
+		value.ContextCompaction = mode
+		if err := value.Validate(); err != nil || value.ContextCompaction != mode {
+			t.Fatalf("mode %q rejected or changed: %+v err=%v", mode, value, err)
+		}
+	}
+	missing := DefaultAgentConfig("openai")
+	missing.ContextCompaction = ""
+	if err := missing.Validate(); err != nil || missing.ContextCompaction != DefaultAgentContextCompaction {
+		t.Fatalf("missing mode did not normalize to auto: %+v err=%v", missing, err)
+	}
+	invalid := DefaultAgentConfig("openai")
+	invalid.ContextCompaction = "automatic"
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("invalid context compaction mode was accepted")
+	}
+}
+
 func TestAgentAPIKeyOptionalOnlyForOllamaAndLoopbackCustom(t *testing.T) {
 	t.Parallel()
 	for name, testCase := range map[string]struct {

@@ -22,10 +22,11 @@ const (
 	DefaultTimeout   = 30 * time.Second
 	DefaultColor     = "never"
 
-	DefaultAgentProvider      = "openai"
-	DefaultAgentContextWindow = 32768
-	DefaultAgentTimeout       = 60 * time.Second
-	DefaultAgentMaxToolRounds = 8
+	DefaultAgentProvider          = "openai"
+	DefaultAgentContextWindow     = 32768
+	DefaultAgentTimeout           = 60 * time.Second
+	DefaultAgentMaxToolRounds     = 8
+	DefaultAgentContextCompaction = "auto"
 )
 
 var (
@@ -45,12 +46,13 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	Provider      string `json:"provider"`
-	BaseURL       string `json:"base_url"`
-	Model         string `json:"model"`
-	ContextWindow int    `json:"context_window"`
-	Timeout       string `json:"timeout"`
-	MaxToolRounds int    `json:"max_tool_rounds"`
+	Provider          string `json:"provider"`
+	BaseURL           string `json:"base_url"`
+	Model             string `json:"model"`
+	ContextWindow     int    `json:"context_window"`
+	Timeout           string `json:"timeout"`
+	MaxToolRounds     int    `json:"max_tool_rounds"`
+	ContextCompaction string `json:"context_compaction,omitempty"`
 }
 
 func (c AgentConfig) APIKeyOptional() bool {
@@ -230,6 +232,7 @@ func DefaultAgentConfig(provider string) AgentConfig {
 	value := AgentConfig{
 		Provider: provider, ContextWindow: DefaultAgentContextWindow,
 		Timeout: DefaultAgentTimeout.String(), MaxToolRounds: DefaultAgentMaxToolRounds,
+		ContextCompaction: DefaultAgentContextCompaction,
 	}
 	switch provider {
 	case "openai":
@@ -277,6 +280,15 @@ func (c *AgentConfig) Validate() error {
 	}
 	if c.MaxToolRounds < 1 || c.MaxToolRounds > 16 {
 		return errors.New("max tool rounds must be between 1 and 16")
+	}
+	c.ContextCompaction = strings.ToLower(strings.TrimSpace(c.ContextCompaction))
+	if c.ContextCompaction == "" {
+		c.ContextCompaction = DefaultAgentContextCompaction
+	}
+	switch c.ContextCompaction {
+	case "auto", "recent-only", "off":
+	default:
+		return errors.New("context compaction must be auto, recent-only, or off")
 	}
 	return nil
 }

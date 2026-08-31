@@ -2,7 +2,10 @@ package api
 
 import "time"
 
-const ProposalContextSchemaVersion = "go-cli-context-v1"
+const (
+	ProposalContextSchemaVersion = "go-cli-context-v1"
+	QueryContextSchemaVersion    = "query-context-v1"
+)
 
 type KnowledgeRetrievalRequest struct {
 	Query                     string                `json:"query"`

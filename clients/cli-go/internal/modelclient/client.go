@@ -23,10 +23,11 @@ type Client struct {
 }
 
 type completionRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Tools    []Tool    `json:"tools,omitempty"`
-	Stream   bool      `json:"stream"`
+	Model     string    `json:"model"`
+	Messages  []Message `json:"messages"`
+	Tools     []Tool    `json:"tools,omitempty"`
+	MaxTokens int       `json:"max_tokens,omitempty"`
+	Stream    bool      `json:"stream"`
 }
 
 type completionResponse struct {
@@ -34,6 +35,7 @@ type completionResponse struct {
 		Message      Message `json:"message"`
 		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 type errorResponse struct {
@@ -73,7 +75,7 @@ func (c *Client) Complete(ctx context.Context, request Request) (Response, error
 	if len(request.Messages) == 0 {
 		return Response{}, errors.New("模型消息不能为空")
 	}
-	body, err := json.Marshal(completionRequest{Model: c.model, Messages: request.Messages, Tools: request.Tools, Stream: false})
+	body, err := json.Marshal(completionRequest{Model: c.model, Messages: request.Messages, Tools: request.Tools, MaxTokens: request.MaxTokens, Stream: false})
 	if err != nil {
 		return Response{}, fmt.Errorf("编码模型请求: %w", err)
 	}
@@ -133,7 +135,7 @@ func (c *Client) Complete(ctx context.Context, request Request) (Response, error
 			return Response{}, errors.New("模型工具调用格式无效")
 		}
 	}
-	return Response{Message: message, FinishReason: envelope.Choices[0].FinishReason}, nil
+	return Response{Message: message, FinishReason: envelope.Choices[0].FinishReason, Usage: envelope.Usage}, nil
 }
 
 func safeCode(value string) string {

@@ -289,12 +289,12 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	t.Parallel()
 	snapshot := Snapshot{
 		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6, AgentKeyConfigured: true,
+		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentTimeout: "90s", AgentMaxToolRounds: 6, AgentKeyConfigured: true,
 	}
 	updated, _ := newModel(snapshot).Update(key("s"))
 	updated, _ = updated.(model).Update(key("a"))
 	settings := updated.(model)
-	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "API Key：已存入系统钥匙串") {
+	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "API Key：已存入系统钥匙串") {
 		t.Fatalf("agent settings=%q", settings.View())
 	}
 
@@ -303,10 +303,11 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	form.inputs[0].SetValue("https://model.example/v1")
 	form.inputs[1].SetValue("teacher-model")
 	form.inputs[2].SetValue("65536")
-	form.inputs[3].SetValue("2m")
-	form.inputs[4].SetValue("8")
+	form.inputs[3].SetValue("recent-only")
+	form.inputs[4].SetValue("2m")
+	form.inputs[5].SetValue("8")
 	updated, _ = form.Update(key("enter"))
-	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--timeout", "2m", "--max-tool-rounds", "8"}
+	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--timeout", "2m", "--max-tool-rounds", "8"}
 	if got := updated.(model).command; !reflect.DeepEqual(got, want) {
 		t.Fatalf("model command=%#v want=%#v", got, want)
 	}

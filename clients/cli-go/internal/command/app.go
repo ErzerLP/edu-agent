@@ -93,7 +93,9 @@ type APIClient interface {
 	Reviews(context.Context, string, int, *time.Time) (api.ReviewsPage, error)
 	MemoryCandidates(context.Context, string, int) (api.MemoryCandidatePage, error)
 	MemoryCandidate(context.Context, string) (api.MemoryCandidateView, error)
+	ExportMemory(context.Context, string, int) (api.MemoryExportPage, error)
 	CreateMemoryCandidate(context.Context, api.MemoryCandidateRequest) (api.MemoryOperationResponse, error)
+	DecideMemoryCandidate(context.Context, string, api.MemoryCandidateDecisionRequest) (api.MemoryOperationResponse, error)
 	ProjectionStatus(context.Context) (api.ProjectionStatus, error)
 	PrepareOffline(context.Context, api.OfflinePrepareRequest) (api.OfflinePrepareResponse, int, error)
 	SyncOfflineCanonical(context.Context, []byte) (api.OfflineSyncResponse, error)
@@ -295,6 +297,7 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		snapshot.AgentBaseURL = safeText(value.Agent.BaseURL)
 		snapshot.AgentModel = safeText(value.Agent.Model)
 		snapshot.AgentContextWindow = value.Agent.ContextWindow
+		snapshot.AgentContextCompaction = safeText(value.Agent.ContextCompaction)
 		snapshot.AgentTimeout = safeText(value.Agent.Timeout)
 		snapshot.AgentMaxToolRounds = value.Agent.MaxToolRounds
 	}

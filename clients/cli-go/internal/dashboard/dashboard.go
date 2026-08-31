@@ -33,6 +33,7 @@ type Snapshot struct {
 	AgentBaseURL               string
 	AgentModel                 string
 	AgentContextWindow         int
+	AgentContextCompaction     string
 	AgentTimeout               string
 	AgentMaxToolRounds         int
 	AgentKeyConfigured         bool
@@ -277,6 +278,7 @@ func (m *model) open(next screen) {
 			agentConfig.AgentBaseURL = preset.BaseURL
 			agentConfig.AgentModel = preset.Model
 			agentConfig.AgentContextWindow = preset.ContextWindow
+			agentConfig.AgentContextCompaction = preset.ContextCompaction
 			agentConfig.AgentTimeout = preset.Timeout
 			agentConfig.AgentMaxToolRounds = preset.MaxToolRounds
 		}
@@ -292,10 +294,11 @@ func (m *model) open(next screen) {
 			newInput("https://api.openai.com/v1", agentConfig.AgentBaseURL),
 			newInput("模型名称", agentConfig.AgentModel),
 			newInput("32768", contextWindow),
+			newInput("auto", display(agentConfig.AgentContextCompaction, config.DefaultAgentContextCompaction)),
 			newInput("90s", display(agentConfig.AgentTimeout, "90s")),
 			newInput("6", toolRounds),
 		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "模型请求超时", "最大工具轮数"}
+		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型请求超时", "最大工具轮数"}
 	case screenAgentKey:
 		input := newInput("输入不会显示", "")
 		input.EchoMode = textinput.EchoPassword
@@ -389,7 +392,7 @@ func (m model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if provider != "" {
 					m.command = append(m.command, "--provider", provider)
 				}
-				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--timeout", values[3], "--max-tool-rounds", values[4])
+				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--context-compaction", values[3], "--timeout", values[4], "--max-tool-rounds", values[5])
 				return m, tea.Quit
 			}
 		case screenAgentKey:
@@ -434,7 +437,7 @@ func (m model) items() []menuItem {
 	case screenAgentSettings:
 		items := []menuItem{
 			{key: "p", title: "选择提供商预设", description: "OpenAI、DeepSeek、OpenRouter、Ollama或自定义服务", next: screenAgentProvider},
-			{key: "m", title: "编辑模型参数", description: "Base URL、模型、上下文窗口、超时和工具轮数", next: screenAgentConfig},
+			{key: "m", title: "编辑模型参数", description: "Base URL、模型、上下文窗口、压缩模式、超时和工具轮数", next: screenAgentConfig},
 			{key: "u", title: "更新API Key", description: "通过隐藏输入写入系统钥匙串", next: screenAgentKey},
 		}
 		if m.snapshot.AgentKeyConfigured {
@@ -608,9 +611,9 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 	case screenAgentSettings:
 		body.WriteString(labelStyle.Render("AI助手与模型"))
 		body.WriteString("\n")
-		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
+		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
+			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
 		body.WriteString("\n")

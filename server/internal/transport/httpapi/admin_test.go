@@ -694,7 +694,7 @@ func TestAdminUIUsesAuthenticatedAssetAndDeviceContracts(t *testing.T) {
 	page := string(adminPageHTML)
 	for _, asset := range []string{
 		`href="/admin/assets/admin.css"`, `src="/admin/assets/admin.js"`, `id="mobileLogoutButton"`,
-		`id="loadMoreNotesyncPreview"`, `id="loadMoreNotesyncReviews"`,
+		`id="loadMoreNotesyncPreview"`, `id="loadMoreNotesyncReviews"`, `aria-labelledby="confirmTitle"`, `aria-describedby="confirmMessage"`,
 	} {
 		if !strings.Contains(page, asset) {
 			t.Fatalf("authenticated admin page missing %q", asset)
@@ -709,6 +709,8 @@ func TestAdminUIUsesAuthenticatedAssetAndDeviceContracts(t *testing.T) {
 		`window.location.replace("/admin/login")`, `scheduleSessionExpiry(session.expires_at)`,
 		`notesync_not_configured`, `NoteSync 尚未启用。保存启用配置并重启服务后再试。`,
 		`page_size: 25`, `method: "POST", csrf: true`, `reviewsNextCursor`,
+		`record.record_revision_id`, `node.dataset.memoryId = recordID`, `node.dataset.knowledgeFocus = documentFocusKey`,
+		`dialog.returnValue = ""`, `dialog.addEventListener("cancel", handleCancel`, `复制失败，请手动复制上方配对命令。`,
 		`permanently_rejected: ["永久拒绝", "danger"]`, `invalid_remote_markdown: ["远端文档无效", "danger"]`,
 		`const statusLabel = (value) => statusMeta[value]?.[0] || "未知状态"`,
 	} {
@@ -716,7 +718,7 @@ func TestAdminUIUsesAuthenticatedAssetAndDeviceContracts(t *testing.T) {
 			t.Fatalf("authenticated admin script missing %q", contract)
 		}
 	}
-	for _, obsolete := range []string{`device.label`, `device.device_id`, `method: "DELETE"`, `page_size: 50`} {
+	for _, obsolete := range []string{`device.label`, `device.device_id`, `record.id`, `method: "DELETE"`, `page_size: 50`} {
 		if strings.Contains(script, obsolete) {
 			t.Fatalf("authenticated admin script still contains obsolete device contract %q", obsolete)
 		}

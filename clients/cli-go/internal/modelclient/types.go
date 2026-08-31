@@ -2,6 +2,19 @@ package modelclient
 
 import "encoding/json"
 
+type ReasoningEffort string
+
+const (
+	ReasoningEffortAuto    ReasoningEffort = "auto"
+	ReasoningEffortNone    ReasoningEffort = "none"
+	ReasoningEffortMinimal ReasoningEffort = "minimal"
+	ReasoningEffortLow     ReasoningEffort = "low"
+	ReasoningEffortMedium  ReasoningEffort = "medium"
+	ReasoningEffortHigh    ReasoningEffort = "high"
+	ReasoningEffortXHigh   ReasoningEffort = "xhigh"
+	ReasoningEffortMax     ReasoningEffort = "max"
+)
+
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
@@ -32,9 +45,10 @@ type ToolDefinition struct {
 }
 
 type Request struct {
-	Messages  []Message
-	Tools     []Tool
-	MaxTokens int
+	Messages        []Message
+	Tools           []Tool
+	MaxTokens       int
+	ReasoningEffort ReasoningEffort
 }
 
 type Usage struct {
@@ -44,7 +58,21 @@ type Usage struct {
 }
 
 type Response struct {
-	Message      Message
-	FinishReason string
-	Usage        *Usage
+	Message               Message
+	FinishReason          string
+	Usage                 *Usage
+	CompatibilityFallback bool
+}
+
+type StreamEventKind string
+
+const (
+	StreamEventResponseStarted       StreamEventKind = "response_started"
+	StreamEventTextDelta             StreamEventKind = "text_delta"
+	StreamEventCompatibilityFallback StreamEventKind = "compatibility_fallback"
+)
+
+type StreamEvent struct {
+	Kind StreamEventKind
+	Text string
 }

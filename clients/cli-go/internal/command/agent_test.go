@@ -91,6 +91,23 @@ func (m fixedAgentModel) Complete(context.Context, modelclient.Request) (modelcl
 	return m.response, m.err
 }
 
+type requestCapturingAgentModel struct {
+	requests []modelclient.Request
+	response modelclient.Response
+}
+
+func (m *requestCapturingAgentModel) Complete(_ context.Context, request modelclient.Request) (modelclient.Response, error) {
+	m.requests = append(m.requests, request)
+	return m.response, nil
+}
+
+type singleSendAgentUI struct{ err error }
+
+func (u *singleSendAgentUI) Run(ctx context.Context, conversation agentui.Conversation, _ string) error {
+	_, u.err = conversation.Send(ctx, "测试默认推理强度")
+	return nil
+}
+
 func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	store := &memoryConfigStore{}
 	secrets := &memoryModelSecretStore{}
@@ -101,14 +118,14 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"model", "preset", "deepseek"}); exit != ExitOK {
 		t.Fatalf("preset exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
-	if !store.present || store.value.Agent == nil || store.value.Agent.Provider != "deepseek" {
+	if !store.present || store.value.Agent == nil || store.value.Agent.Provider != "deepseek" || store.value.Agent.ReasoningEffort != config.DefaultAgentReasoningEffort {
 		t.Fatalf("config=%+v", store.value)
 	}
 	out.Reset()
-	if exit := app.Run(t.Context(), []string{"model", "set", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--timeout", "2m", "--max-tool-rounds", "8"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"model", "set", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "8"}); exit != ExitOK {
 		t.Fatalf("set exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
-	if got := store.value.Agent; got.BaseURL != "https://model.example/v1" || got.Model != "teacher-model" || got.ContextWindow != 65536 || got.ContextCompaction != "recent-only" || got.Timeout != "2m" || got.MaxToolRounds != 8 {
+	if got := store.value.Agent; got.BaseURL != "https://model.example/v1" || got.Model != "teacher-model" || got.ContextWindow != 65536 || got.ContextCompaction != "recent-only" || got.ReasoningEffort != "high" || got.Timeout != "2m" || got.MaxToolRounds != 8 {
 		t.Fatalf("agent config=%+v", got)
 	}
 
@@ -136,7 +153,7 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"model", "show"}); exit != ExitOK {
 		t.Fatalf("show exit=%d err=%q", exit, errOut.String())
 	}
-	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") {
+	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") || !strings.Contains(out.String(), "默认推理强度：high") {
 		t.Fatalf("secret leaked or status missing: %q", out.String())
 	}
 	deletesBefore := secrets.deletes
@@ -183,12 +200,13 @@ func TestDashboardModelSetupPersistsBeforeAgentLaunch(t *testing.T) {
 func TestDashboardSnapshotReportsUnavailableModelCredentialBackend(t *testing.T) {
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	preset := config.DefaultAgentConfig("deepseek")
+	preset.ReasoningEffort = "xhigh"
 	configStore.value.Agent = &preset
 	app, _, _ := newTestApp(configStore, credentialStore, &fakeTerminal{})
 	app.ModelSecrets = &memoryModelSecretStore{loadErr: modelsecret.ErrUnavailable}
 
 	snapshot := app.dashboardSnapshot()
-	if snapshot.AgentKeyConfigured || !snapshot.AgentKeyBackendUnavailable {
+	if snapshot.AgentKeyConfigured || !snapshot.AgentKeyBackendUnavailable || snapshot.AgentReasoningEffort != "xhigh" {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
 }
@@ -359,6 +377,73 @@ func TestModelSetRejectsInvalidContextCompaction(t *testing.T) {
 	}
 	if store.saveCalls != 0 {
 		t.Fatalf("invalid mode was saved: %+v", store.value.Agent)
+	}
+}
+
+func TestModelSetRejectsInvalidReasoningEffort(t *testing.T) {
+	t.Parallel()
+	store := &memoryConfigStore{}
+	app, _, errOut := newTestApp(store, &memoryCredentialStore{}, &fakeTerminal{})
+	if exit := app.Run(t.Context(), []string{"model", "set", "--reasoning-effort", "extreme"}); exit != ExitInput {
+		t.Fatalf("invalid effort exit=%d err=%q", exit, errOut.String())
+	}
+	if store.saveCalls != 0 {
+		t.Fatalf("invalid effort was saved: %+v", store.value.Agent)
+	}
+}
+
+func TestAgentAndModelTestUseConfiguredReasoningEffort(t *testing.T) {
+	preset := config.DefaultAgentConfig("ollama")
+	preset.ReasoningEffort = "xhigh"
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
+	configStore.value.Agent = &preset
+	model := &requestCapturingAgentModel{response: modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "连接正常"}}}
+	runner := &singleSendAgentUI{}
+	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	app.ModelSecrets = &memoryModelSecretStore{}
+	app.AgentUI = runner
+	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	app.Getenv = func(string) string { return "xterm" }
+
+	if exit := app.Run(t.Context(), []string{"agent"}); exit != ExitOK || runner.err != nil {
+		t.Fatalf("agent exit=%d send=%v err=%q", exit, runner.err, errOut.String())
+	}
+	if len(model.requests) != 1 || model.requests[0].ReasoningEffort != modelclient.ReasoningEffortXHigh {
+		t.Fatalf("agent requests=%+v", model.requests)
+	}
+
+	model.requests = nil
+	out.Reset()
+	errOut.Reset()
+	if exit := app.Run(t.Context(), []string{"model", "test"}); exit != ExitOK {
+		t.Fatalf("model test exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if len(model.requests) != 1 || model.requests[0].ReasoningEffort != modelclient.ReasoningEffortXHigh {
+		t.Fatalf("model test requests=%+v", model.requests)
+	}
+}
+
+func TestModelTestPreservesUnsupportedReasoningCode(t *testing.T) {
+	t.Parallel()
+	preset := config.DefaultAgentConfig("ollama")
+	preset.ReasoningEffort = "max"
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
+	configStore.value.Agent = &preset
+	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	app.ModelSecrets = &memoryModelSecretStore{}
+	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) {
+		return fixedAgentModel{err: &modelclient.ClientError{
+			Code: modelclient.ErrorCodeReasoningEffortUnsupported, Message: "reasoning_effort unsupported",
+		}}, nil
+	}
+
+	if exit := app.Run(t.Context(), []string{"model", "test"}); exit != ExitUnavailable {
+		t.Fatalf("exit=%d err=%q", exit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), string(modelclient.ErrorCodeReasoningEffortUnsupported)) || !strings.Contains(errOut.String(), "auto或none") {
+		t.Fatalf("stable recovery guidance missing: %q", errOut.String())
 	}
 }
 

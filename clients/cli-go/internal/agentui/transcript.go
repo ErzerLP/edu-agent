@@ -3,6 +3,7 @@ package agentui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
@@ -17,6 +18,7 @@ const (
 	entryThinking  entryKind = "thinking"
 	entryTools     entryKind = "tools"
 	entryConfirm   entryKind = "confirm"
+	entryQuestion  entryKind = "question"
 	entryError     entryKind = "error"
 	entryContext   entryKind = "context"
 )
@@ -24,9 +26,15 @@ const (
 type transcriptEntry struct {
 	kind         entryKind
 	text         string
-	event        agentloop.Event
-	events       []agentloop.Event
+	activity     agentloop.Activity
+	activities   []agentloop.Activity
 	contextEvent agentloop.ContextEvent
+	turnID       uint64
+	streaming    bool
+	stopped      bool
+	failed       bool
+	pending      *agentloop.PreferenceConfirmation
+	question     *agentloop.PendingQuestion
 }
 
 func renderTranscriptEntry(entry transcriptEntry, width int, toolsExpanded bool) string {
@@ -37,13 +45,24 @@ func renderTranscriptEntry(entry transcriptEntry, width int, toolsExpanded bool)
 	case entryUser:
 		return userStyle.Width(width).Render(userLabelStyle.Render("你") + "\n" + renderMarkdown(entry.text, width-3))
 	case entryAssistant:
-		return assistantStyle.Width(width).Render(assistantLabelStyle.Render("Agent") + "\n" + renderMarkdown(entry.text, width-3))
+		label := "Agent"
+		switch {
+		case entry.streaming:
+			label += " · 正在生成"
+		case entry.stopped:
+			label += " · 已停止"
+		case entry.failed:
+			label += " · 未完成"
+		}
+		return assistantStyle.Width(width).Render(assistantLabelStyle.Render(label) + "\n" + renderMarkdown(entry.text, width-3))
 	case entryThinking:
-		return renderThinkingActivity(entry.event, width)
+		return renderThinkingActivity(entry.activity, width, toolsExpanded)
 	case entryTools:
-		return renderToolGroup(entry.events, width, toolsExpanded)
+		return renderToolGroup(entry.activities, width, toolsExpanded)
 	case entryConfirm:
 		return confirmStyle.Width(max(20, width-4)).Render(confirmLabelStyle.Render("长期偏好确认") + "\n" + safeTerminalText(entry.text))
+	case entryQuestion:
+		return questionStyle.Width(max(20, width-4)).Render(questionLabelStyle.Render("需要你的选择") + "\n" + safeTerminalText(entry.text))
 	case entryError:
 		return errorCardStyle.Width(max(20, width-4)).Render(errorLabelStyle.Render("请求失败") + "\n" + safeTerminalText(entry.text))
 	case entryContext:
@@ -70,7 +89,8 @@ func renderContextEvent(event agentloop.ContextEvent, width int) string {
 	return style.Width(max(20, width-4)).Render(label + "\n" + detail)
 }
 
-func renderThinkingActivity(event agentloop.Event, width int) string {
+func renderThinkingActivity(activity agentloop.Activity, width int, expanded bool) string {
+	event := activity.Event
 	status := normalizedEventStatus(event.Status)
 	icon, label, style := "◇", "已思考", thinkingDoneStyle
 	switch status {
@@ -80,16 +100,30 @@ func renderThinkingActivity(event agentloop.Event, width int) string {
 		icon, label, style = "!", "思考中断", toolDangerStyle
 	}
 	line := fmt.Sprintf("%s %s  %s", icon, label, safeTerminalText(event.Summary))
-	return thinkingStyle.Width(width).Render(style.Render(line))
+	lines := []string{style.Render(line)}
+	if expanded {
+		detail := fmt.Sprintf("  阶段：%s", phaseLabel(activity.Phase))
+		if elapsed := activityElapsed(activity); elapsed != "" {
+			detail += " · 用时：" + elapsed
+		}
+		if activity.TimeoutBudget > 0 {
+			detail += " · 超时预算：" + visibleDuration(activity.TimeoutBudget)
+		}
+		if activity.StableCode != "" {
+			detail += " · 代码：" + safeTerminalText(activity.StableCode)
+		}
+		lines = append(lines, toolDetailStyle.Render(detail))
+	}
+	return thinkingStyle.Width(width).Render(strings.Join(lines, "\n"))
 }
 
-func renderToolGroup(events []agentloop.Event, width int, expanded bool) string {
-	if len(events) == 0 {
+func renderToolGroup(activities []agentloop.Activity, width int, expanded bool) string {
+	if len(activities) == 0 {
 		return ""
 	}
 	succeeded, failed, waiting, running := 0, 0, 0, 0
-	for _, event := range events {
-		switch normalizedEventStatus(event.Status) {
+	for _, activity := range activities {
+		switch normalizedEventStatus(activity.Event.Status) {
 		case agentloop.EventRunning:
 			running++
 		case agentloop.EventSucceeded:
@@ -100,7 +134,7 @@ func renderToolGroup(events []agentloop.Event, width int, expanded bool) string 
 			failed++
 		}
 	}
-	summary := fmt.Sprintf("工具调用 · %d 项", len(events))
+	summary := fmt.Sprintf("工具调用 · %d 项", len(activities))
 	if running > 0 {
 		summary += fmt.Sprintf(" · %d 进行中", running)
 	}
@@ -120,21 +154,50 @@ func renderToolGroup(events []agentloop.Event, width int, expanded bool) string 
 	}
 
 	lines := []string{toolHeaderStyle.Render(summary)}
-	for _, event := range events {
+	for _, activity := range activities {
+		event := activity.Event
 		status := normalizedEventStatus(event.Status)
 		icon, statusText, style := toolEventAppearance(status)
 		name := toolDisplayName(event.Tool)
 		line := fmt.Sprintf("%s %-8s %s", icon, name, safeTerminalText(event.Summary))
 		lines = append(lines, style.Width(max(20, width-2)).Render(line))
 		if expanded {
-			detail := fmt.Sprintf("    状态：%s · 工具：%s", statusText, safeTerminalText(event.Tool))
-			if strings.TrimSpace(event.Detail) != "" {
-				detail += " · 代码：" + safeTerminalText(event.Detail)
+			detail := fmt.Sprintf("    状态：%s · 阶段：%s · 工具：%s", statusText, phaseLabel(activity.Phase), safeTerminalText(event.Tool))
+			if elapsed := activityElapsed(activity); elapsed != "" {
+				detail += " · 用时：" + elapsed
+			}
+			if activity.TimeoutBudget > 0 {
+				detail += " · 超时预算：" + visibleDuration(activity.TimeoutBudget)
+			}
+			code := activity.StableCode
+			if code == "" {
+				code = event.Detail
+			}
+			if strings.TrimSpace(code) != "" {
+				detail += " · 代码：" + safeTerminalText(code)
 			}
 			lines = append(lines, toolDetailStyle.Width(max(20, width-4)).Render(detail))
 		}
 	}
 	return toolGroupStyle.Width(width).Render(strings.Join(lines, "\n"))
+}
+
+func activityElapsed(activity agentloop.Activity) string {
+	if activity.StartedAt.IsZero() {
+		return ""
+	}
+	end := activity.UpdatedAt
+	if normalizedEventStatus(activity.Event.Status) == agentloop.EventRunning {
+		end = time.Now()
+	}
+	if end.IsZero() || end.Before(activity.StartedAt) {
+		end = activity.StartedAt
+	}
+	duration := end.Sub(activity.StartedAt).Round(100 * time.Millisecond)
+	if duration < time.Second {
+		return fmt.Sprintf("%.1fs", duration.Seconds())
+	}
+	return duration.Round(time.Second).String()
 }
 
 func normalizedEventStatus(status agentloop.EventStatus) agentloop.EventStatus {
@@ -169,6 +232,7 @@ func toolDisplayName(name string) string {
 		"get_due_reviews":            "读取到期复习",
 		"list_long_term_preferences": "读取长期偏好",
 		"recall_session_memory":      "回查会话证据",
+		"ask_user_question":          "询问用户",
 		"remember_preference":        "保存长期偏好",
 	}
 	if label, ok := labels[name]; ok {
@@ -181,65 +245,111 @@ func eventKey(event agentloop.Event) string {
 	return strings.Join([]string{event.ID, event.Tool, string(normalizedEventStatus(event.Status)), event.Summary, event.Detail}, "\x00")
 }
 
-func upsertThinkingActivity(entries []transcriptEntry, event agentloop.Event) []transcriptEntry {
-	if event.ID != "" {
-		for index := len(entries) - 1; index >= 0; index-- {
-			if entries[index].kind == entryUser {
-				break
-			}
-			if entries[index].kind == entryThinking && entries[index].event.ID == event.ID {
-				entries[index].event = event
-				return entries
-			}
+func upsertAssistantDelta(entries []transcriptEntry, turnID uint64, delta string) []transcriptEntry {
+	delta = safeTerminalText(delta)
+	if delta == "" {
+		return entries
+	}
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].kind == entryAssistant && entries[index].turnID == turnID && entries[index].streaming {
+			entries[index].text += delta
+			return entries
 		}
 	}
-	return append(entries, transcriptEntry{kind: entryThinking, event: event})
+	return append(entries, transcriptEntry{kind: entryAssistant, text: delta, turnID: turnID, streaming: true})
 }
 
-func upsertToolEvent(entries []transcriptEntry, event agentloop.Event) []transcriptEntry {
-	if event.ID != "" {
-		for entryIndex := len(entries) - 1; entryIndex >= 0; entryIndex-- {
-			if entries[entryIndex].kind == entryUser {
-				break
+func finalizeAssistant(entries []transcriptEntry, turnID uint64, text string) []transcriptEntry {
+	text = safeTerminalText(text)
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].kind == entryAssistant && entries[index].turnID == turnID && entries[index].streaming {
+			if text != "" {
+				entries[index].text = text
 			}
-			if entries[entryIndex].kind != entryTools {
+			entries[index].streaming = false
+			return entries
+		}
+	}
+	if strings.TrimSpace(text) != "" {
+		entries = append(entries, transcriptEntry{kind: entryAssistant, text: text, turnID: turnID})
+	}
+	return entries
+}
+
+func markAssistant(entries []transcriptEntry, turnID uint64, state string) []transcriptEntry {
+	for index := len(entries) - 1; index >= 0; index-- {
+		if entries[index].kind == entryAssistant && entries[index].turnID == turnID && entries[index].streaming {
+			entries[index].streaming = false
+			entries[index].stopped = state == "stopped"
+			entries[index].failed = state == "failed"
+			return entries
+		}
+	}
+	if state == "stopped" {
+		return append(entries, transcriptEntry{
+			kind: entryAssistant, text: "当前轮次已停止，未提交回答。", turnID: turnID, stopped: true,
+		})
+	}
+	return entries
+}
+
+func upsertActivity(entries []transcriptEntry, turnID uint64, activity agentloop.Activity) []transcriptEntry {
+	if activity.Kind == agentloop.ActivityThinking {
+		if activity.Event.ID != "" {
+			for index := len(entries) - 1; index >= 0; index-- {
+				if entries[index].kind == entryUser && entries[index].turnID != turnID {
+					break
+				}
+				if entries[index].kind == entryThinking && entries[index].turnID == turnID && entries[index].activity.Event.ID == activity.Event.ID {
+					entries[index].activity = activity
+					return entries
+				}
+			}
+		}
+		return append(entries, transcriptEntry{kind: entryThinking, activity: activity, turnID: turnID})
+	}
+	if activity.Kind != agentloop.ActivityTool {
+		return entries
+	}
+	if activity.Event.ID != "" {
+		for entryIndex := len(entries) - 1; entryIndex >= 0; entryIndex-- {
+			if entries[entryIndex].kind != entryTools || entries[entryIndex].turnID != turnID {
 				continue
 			}
-			for eventIndex := len(entries[entryIndex].events) - 1; eventIndex >= 0; eventIndex-- {
-				if entries[entryIndex].events[eventIndex].ID == event.ID {
-					entries[entryIndex].events[eventIndex] = event
+			for activityIndex := len(entries[entryIndex].activities) - 1; activityIndex >= 0; activityIndex-- {
+				if entries[entryIndex].activities[activityIndex].Event.ID == activity.Event.ID {
+					entries[entryIndex].activities[activityIndex] = activity
 					return entries
 				}
 			}
 		}
 	}
-	if len(entries) > 0 && entries[len(entries)-1].kind == entryTools {
-		entries[len(entries)-1].events = append(entries[len(entries)-1].events, event)
+	if len(entries) > 0 && entries[len(entries)-1].kind == entryTools && entries[len(entries)-1].turnID == turnID {
+		entries[len(entries)-1].activities = append(entries[len(entries)-1].activities, activity)
 		return entries
 	}
-	return append(entries, transcriptEntry{kind: entryTools, events: []agentloop.Event{event}})
+	return append(entries, transcriptEntry{kind: entryTools, activities: []agentloop.Activity{activity}, turnID: turnID})
 }
 
-func appendToolEvents(entries []transcriptEntry, events []agentloop.Event) []transcriptEntry {
+func appendToolEvents(entries []transcriptEntry, turnID uint64, events []agentloop.Event) []transcriptEntry {
 	for _, event := range events {
-		entries = upsertToolEvent(entries, event)
+		entries = upsertActivity(entries, turnID, agentloop.Activity{Kind: agentloop.ActivityTool, Event: event, Phase: agentloop.ActivityExecutingTool})
 	}
 	return entries
 }
 
 func updatePreferenceToolStatus(entries []transcriptEntry, status agentloop.EventStatus, summary, detail string) []transcriptEntry {
 	for entryIndex := len(entries) - 1; entryIndex >= 0; entryIndex-- {
-		if entries[entryIndex].kind == entryUser {
-			break
-		}
 		if entries[entryIndex].kind != entryTools {
 			continue
 		}
-		for eventIndex := len(entries[entryIndex].events) - 1; eventIndex >= 0; eventIndex-- {
-			if entries[entryIndex].events[eventIndex].Tool == "remember_preference" {
-				entries[entryIndex].events[eventIndex].Status = status
-				entries[entryIndex].events[eventIndex].Summary = summary
-				entries[entryIndex].events[eventIndex].Detail = detail
+		for activityIndex := len(entries[entryIndex].activities) - 1; activityIndex >= 0; activityIndex-- {
+			activity := &entries[entryIndex].activities[activityIndex]
+			if activity.Event.Tool == "remember_preference" {
+				activity.Event.Status = status
+				activity.Event.Summary = summary
+				activity.Event.Detail = detail
+				activity.StableCode = detail
 				return entries
 			}
 		}
@@ -272,6 +382,7 @@ var (
 	userLabelStyle            = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	assistantLabelStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	confirmLabelStyle         = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
+	questionLabelStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	errorLabelStyle           = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("1"))
 	userStyle                 = lipgloss.NewStyle().BorderLeft(true).BorderStyle(lipgloss.ThickBorder()).BorderForeground(lipgloss.Color("2")).PaddingLeft(1)
 	assistantStyle            = lipgloss.NewStyle().BorderLeft(true).BorderStyle(lipgloss.ThickBorder()).BorderForeground(lipgloss.Color("6")).PaddingLeft(1)
@@ -287,6 +398,7 @@ var (
 	noticeStyle               = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	mutedStyle                = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	confirmStyle              = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("3")).Padding(0, 1)
+	questionStyle             = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("6")).Padding(0, 1)
 	errorCardStyle            = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("1")).Padding(0, 1)
 	contextInfoStyle          = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("6")).Padding(0, 1)
 	contextDangerStyle        = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("1")).Padding(0, 1)

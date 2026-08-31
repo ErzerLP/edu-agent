@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -150,7 +151,11 @@ func (s *fakeServer) DecideMemoryCandidate(_ context.Context, candidateID string
 			return api.MemoryOperationResponse{}, err
 		}
 	}
-	return api.MemoryOperationResponse{Candidate: &api.MemoryCandidateView{Candidate: api.MemoryCandidate{ID: candidateID, Status: "admitted", Revision: request.ExpectedRevision + 1}}}, nil
+	status := "admitted"
+	if request.Decision == "reject" {
+		status = "rejected"
+	}
+	return api.MemoryOperationResponse{Candidate: &api.MemoryCandidateView{Candidate: api.MemoryCandidate{ID: candidateID, Status: status, Revision: request.ExpectedRevision + 1}}}, nil
 }
 
 func TestSessionLearningStatusUsesAuthoritativeCurrentSession(t *testing.T) {
@@ -232,23 +237,38 @@ func TestSessionPublishesSafeThinkingAndToolLifecycle(t *testing.T) {
 	if _, err := session.Send(ctx, "教我图论"); err != nil {
 		t.Fatal(err)
 	}
-	if len(activities) != 6 {
+	if len(activities) < 9 {
 		t.Fatalf("activities=%+v", activities)
 	}
-	wantKinds := []ActivityKind{ActivityThinking, ActivityThinking, ActivityTool, ActivityTool, ActivityThinking, ActivityThinking}
-	wantStatuses := []EventStatus{EventRunning, EventSucceeded, EventRunning, EventSucceeded, EventRunning, EventSucceeded}
-	for index := range activities {
-		if activities[index].Kind != wantKinds[index] || activities[index].Event.Status != wantStatuses[index] {
-			t.Fatalf("activity[%d]=%+v", index, activities[index])
+	phases := make(map[ActivityPhase]bool)
+	toolRunning, toolDone := false, false
+	firstThinkingID, secondThinkingID := "", ""
+	for _, activity := range activities {
+		if activity.StartedAt.IsZero() || activity.UpdatedAt.IsZero() || activity.UpdatedAt.Before(activity.StartedAt) {
+			t.Fatalf("activity timestamps=%+v", activity)
+		}
+		phases[activity.Phase] = true
+		if activity.Event.ID == "call-1" {
+			if activity.Event.Tool != "search_knowledge" || strings.Contains(activity.Event.Summary, "图论") {
+				t.Fatalf("tool lifecycle leaked arguments or lost identity: %+v", activity)
+			}
+			toolRunning = toolRunning || activity.Event.Status == EventRunning
+			toolDone = toolDone || activity.Event.Status == EventSucceeded
+		}
+		if activity.Kind == ActivityThinking && activity.Event.Summary == "正在分析问题" {
+			firstThinkingID = activity.Event.ID
+		}
+		if activity.Kind == ActivityThinking && activity.Event.Summary == "正在结合工具结果继续分析" && strings.HasPrefix(activity.Event.ID, "thinking-") {
+			secondThinkingID = activity.Event.ID
 		}
 	}
-	if activities[2].Event.ID != "call-1" || activities[3].Event.ID != "call-1" ||
-		activities[2].Event.Tool != "search_knowledge" || strings.Contains(activities[2].Event.Summary, "图论") {
-		t.Fatalf("tool lifecycle leaked arguments or lost identity: %+v", activities[2:4])
+	for _, phase := range []ActivityPhase{ActivityPreparingContext, ActivityWaitingModel, ActivityValidatingResponse, ActivityAssemblingTools, ActivityExecutingTool, ActivityContinuingAfterTool} {
+		if !phases[phase] {
+			t.Fatalf("missing phase %s: %+v", phase, activities)
+		}
 	}
-	if activities[0].Event.ID == activities[4].Event.ID || activities[0].Event.Summary != "正在分析问题" ||
-		activities[4].Event.Summary != "正在结合工具结果继续分析" {
-		t.Fatalf("thinking lifecycle=%+v", activities)
+	if !toolRunning || !toolDone || firstThinkingID == "" || secondThinkingID == "" || firstThinkingID == secondThinkingID {
+		t.Fatalf("lifecycle incomplete: running=%t done=%t first=%q second=%q activities=%+v", toolRunning, toolDone, firstThinkingID, secondThinkingID, activities)
 	}
 }
 
@@ -440,7 +460,7 @@ func TestPreferenceConfirmationAdmitsPendingPersonalContext(t *testing.T) {
 	if err != nil || result.Pending == nil || server.createCalls != 0 || server.decisionCalls != 0 {
 		t.Fatalf("result=%+v create=%d decision=%d err=%v", result, server.createCalls, server.decisionCalls, err)
 	}
-	result, err = session.ResolvePreference(t.Context(), true)
+	result, err = session.ResolvePreference(t.Context(), PreferenceSave)
 	if err != nil || result.Text == "" || server.createCalls != 1 || server.decisionCalls != 1 {
 		t.Fatalf("result=%+v create=%d decision=%d err=%v", result, server.createCalls, server.decisionCalls, err)
 	}
@@ -466,7 +486,7 @@ func TestPreferenceDeclineProducesToolResultWithoutWrite(t *testing.T) {
 	if err != nil || result.Pending == nil {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	result, err = session.ResolvePreference(t.Context(), false)
+	result, err = session.ResolvePreference(t.Context(), PreferenceDecline)
 	if err != nil || server.createCalls != 0 || !strings.Contains(result.Text, "不保存") {
 		t.Fatalf("result=%+v calls=%d err=%v", result, server.createCalls, err)
 	}
@@ -484,7 +504,7 @@ func TestPreferenceResolutionRemainsUnambiguousWhenFollowupModelFails(t *testing
 	if err != nil || result.Pending == nil {
 		t.Fatalf("send result=%+v err=%v", result, err)
 	}
-	result, err = session.ResolvePreference(t.Context(), true)
+	result, err = session.ResolvePreference(t.Context(), PreferenceSave)
 	if err != nil || result.Pending != nil || server.createCalls != 1 || server.decisionCalls != 1 || !strings.Contains(result.Text, "已保存") {
 		t.Fatalf("resolve result=%+v create=%d decision=%d err=%v", result, server.createCalls, server.decisionCalls, err)
 	}
@@ -505,12 +525,92 @@ func TestPreferenceDeterministicRejectionAllowsDecline(t *testing.T) {
 	if err != nil || result.Pending == nil || len(result.Events) != 1 || result.Events[0].Status != EventConfirmationRequired {
 		t.Fatalf("send result=%+v err=%v", result, err)
 	}
-	if _, err := session.ResolvePreference(t.Context(), true); err == nil || errors.Is(err, ErrPreferenceOutcomeUnknown) || !strings.Contains(err.Error(), "forbidden") {
+	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); err == nil || errors.Is(err, ErrPreferenceOutcomeUnknown) || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("deterministic rejection err=%v", err)
 	}
-	result, err = session.ResolvePreference(t.Context(), false)
+	result, err = session.ResolvePreference(t.Context(), PreferenceDecline)
 	if err != nil || result.Pending != nil || !strings.Contains(result.Text, "没有保存") || server.createCalls != 1 {
 		t.Fatalf("decline result=%+v calls=%d err=%v", result, server.createCalls, err)
+	}
+}
+
+func TestPreferencePendingCandidateAdmissionFailureIsCompensatedBeforeLocalChoice(t *testing.T) {
+	arguments := `{"content":"回答时先给结论","reason":"用户明确要求长期保持回答风格","category":"interaction_preference","sensitivity":"non_sensitive","stability":"stable"}`
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("call-pref", "remember_preference", arguments)},
+		{Message: modelclient.Message{Role: "assistant", Content: "本次只在当前会话使用。"}},
+	}}
+	server := &fakeServer{decisionErrors: []error{&api.APIError{Code: "admission_forbidden", Status: 403}, nil}}
+	session := newTestSession(t, model, server)
+	result, err := session.Send(t.Context(), "请长期记住")
+	if err != nil || result.Pending == nil {
+		t.Fatalf("send result=%+v err=%v", result, err)
+	}
+	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); err == nil || errors.Is(err, ErrPreferenceOutcomeUnknown) || !strings.Contains(err.Error(), "admission_forbidden") {
+		t.Fatalf("compensated deterministic error=%v", err)
+	}
+	if server.createCalls != 1 || server.decisionCalls != 2 || len(server.decisionRequests) != 2 {
+		t.Fatalf("writes create=%d decisions=%d requests=%+v", server.createCalls, server.decisionCalls, server.decisionRequests)
+	}
+	admit, reject := server.decisionRequests[0], server.decisionRequests[1]
+	if admit.Decision != "admit" || reject.Decision != "reject" || reject.ExpectedRevision != admit.ExpectedRevision ||
+		admit.OperationID == reject.OperationID || server.createRequests[0].OperationID == reject.OperationID {
+		t.Fatalf("admit=%+v reject=%+v create=%+v", admit, reject, server.createRequests[0])
+	}
+	if session.pendingCandidateID != "" || session.pendingRejectOperationID != "" || session.pendingOperationID != "" || session.pendingDecisionOperationID != "" {
+		t.Fatalf("compensated write state not cleared: candidate=%q create=%q admit=%q reject=%q", session.pendingCandidateID, session.pendingOperationID, session.pendingDecisionOperationID, session.pendingRejectOperationID)
+	}
+	result, err = session.ResolvePreference(t.Context(), PreferenceSessionOnly)
+	if err != nil || !strings.Contains(result.Text, "当前会话") {
+		t.Fatalf("local choice was not restored: result=%+v err=%v", result, err)
+	}
+}
+
+func TestPreferenceCompensationUnknownKeepsRetryOnlyStateAndReusesRejectOperationID(t *testing.T) {
+	arguments := `{"content":"回答时先给结论","reason":"用户明确要求长期保持回答风格","category":"interaction_preference","sensitivity":"non_sensitive","stability":"stable"}`
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("call-pref", "remember_preference", arguments)},
+		{Message: modelclient.Message{Role: "assistant", Content: "本次只在当前会话使用。"}},
+	}}
+	server := &fakeServer{decisionErrors: []error{
+		&api.APIError{Code: "admission_forbidden", Status: 403},
+		errors.New("reject response lost"),
+		nil,
+	}}
+	session := newTestSession(t, model, server)
+	result, err := session.Send(t.Context(), "请长期记住")
+	if err != nil || result.Pending == nil {
+		t.Fatalf("send result=%+v err=%v", result, err)
+	}
+	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
+		t.Fatalf("unknown compensation err=%v", err)
+	}
+	createID, admitID, rejectID := session.pendingOperationID, session.pendingDecisionOperationID, session.pendingRejectOperationID
+	if session.pendingCandidateID != "candidate-1" || session.pendingCandidateRevision != 1 || createID == "" || admitID == "" || rejectID == "" {
+		t.Fatalf("retry state candidate=%q revision=%d create=%q admit=%q reject=%q", session.pendingCandidateID, session.pendingCandidateRevision, createID, admitID, rejectID)
+	}
+	if _, err := session.ResolvePreference(t.Context(), PreferenceDecline); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
+		t.Fatalf("unknown compensation allowed decline: %v", err)
+	}
+	if _, err := session.ResolvePreference(t.Context(), PreferenceRetry); err == nil || errors.Is(err, ErrPreferenceOutcomeUnknown) || !strings.Contains(err.Error(), "admission_forbidden") {
+		t.Fatalf("compensation retry did not return original deterministic failure: %v", err)
+	}
+	if server.createCalls != 1 || server.decisionCalls != 3 || len(server.decisionRequests) != 3 {
+		t.Fatalf("retry duplicated stages: create=%d decisions=%d requests=%+v", server.createCalls, server.decisionCalls, server.decisionRequests)
+	}
+	if server.decisionRequests[0].OperationID != admitID || server.decisionRequests[1].OperationID != rejectID || server.decisionRequests[2].OperationID != rejectID ||
+		server.decisionRequests[1].Decision != "reject" || server.decisionRequests[2].Decision != "reject" {
+		t.Fatalf("operation IDs changed across compensation retry: %+v", server.decisionRequests)
+	}
+	if session.pendingCandidateID != "" || session.pendingRejectOperationID != "" || session.pendingOperationID != "" || session.pendingDecisionOperationID != "" {
+		t.Fatalf("resolved compensation state not cleared: candidate=%q create=%q admit=%q reject=%q", session.pendingCandidateID, session.pendingOperationID, session.pendingDecisionOperationID, session.pendingRejectOperationID)
+	}
+	result, err = session.ResolvePreference(t.Context(), PreferenceSessionOnly)
+	if err != nil || !strings.Contains(result.Text, "当前会话") {
+		t.Fatalf("local choices did not recover after verified rejection: result=%+v err=%v", result, err)
+	}
+	if turn := session.turns[session.currentTurnID]; turn == nil || turn.Protected || turn.OutcomeUnknown || !turn.Completed {
+		t.Fatalf("reconciled preference turn remained protected or unknown: %+v", turn)
 	}
 }
 
@@ -547,7 +647,7 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 	if err != nil || result.Pending == nil {
 		t.Fatalf("send result=%+v err=%v", result, err)
 	}
-	if _, err := session.ResolvePreference(t.Context(), true); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
+	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
 		t.Fatalf("first ambiguous write err=%v", err)
 	}
 	createID, decisionID := session.pendingOperationID, session.pendingDecisionOperationID
@@ -559,10 +659,10 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 		turn == nil || !turn.Protected || !turn.OutcomeUnknown || !messagesContainText(session.messages, "请长期记住") {
 		t.Fatalf("outcome-unknown preference was trimmed or IDs changed: create=%q decision=%q turn=%+v messages=%+v", createID, decisionID, turn, session.messages)
 	}
-	if _, err := session.ResolvePreference(t.Context(), false); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
+	if _, err := session.ResolvePreference(t.Context(), PreferenceDecline); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
 		t.Fatalf("ambiguous write allowed decline: %v", err)
 	}
-	result, err = session.ResolvePreference(t.Context(), true)
+	result, err = session.ResolvePreference(t.Context(), PreferenceRetry)
 	if err != nil || result.Pending != nil || server.createCalls != 2 || server.decisionCalls != 1 || uuidCalls != 2 {
 		t.Fatalf("retry result=%+v create=%d decision=%d uuidCalls=%d err=%v", result, server.createCalls, server.decisionCalls, uuidCalls, err)
 	}
@@ -578,7 +678,7 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 	if err != nil || result.Pending == nil {
 		t.Fatalf("second send result=%+v err=%v", result, err)
 	}
-	if _, err := session.ResolvePreference(t.Context(), true); err != nil {
+	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); err != nil {
 		t.Fatal(err)
 	}
 	if uuidCalls != 4 || len(server.createRequests) != 3 || len(server.decisionRequests) != 2 ||
@@ -600,13 +700,13 @@ func TestPreferenceDecisionRetryReusesOperationIDAfterAmbiguousFailure(t *testin
 	if err != nil || result.Pending == nil {
 		t.Fatalf("send result=%+v err=%v", result, err)
 	}
-	if _, err := session.ResolvePreference(t.Context(), true); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
+	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
 		t.Fatalf("first decision err=%v", err)
 	}
-	if _, err := session.ResolvePreference(t.Context(), false); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
+	if _, err := session.ResolvePreference(t.Context(), PreferenceDecline); !errors.Is(err, ErrPreferenceOutcomeUnknown) {
 		t.Fatalf("ambiguous decision allowed decline: %v", err)
 	}
-	result, err = session.ResolvePreference(t.Context(), true)
+	result, err = session.ResolvePreference(t.Context(), PreferenceRetry)
 	if err != nil || result.Pending != nil || server.createCalls != 2 || server.decisionCalls != 2 {
 		t.Fatalf("retry result=%+v create=%d decision=%d err=%v", result, server.createCalls, server.decisionCalls, err)
 	}
@@ -808,10 +908,7 @@ func newTestSession(t *testing.T, model Model, server Server) *Session {
 		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			uuidCalls++
-			if uuidCalls == 1 {
-				return "60000000-0000-4000-8000-000000000001", nil
-			}
-			return "60000000-0000-4000-8000-000000000002", nil
+			return fmt.Sprintf("60000000-0000-4000-8000-%012d", uuidCalls), nil
 		},
 	})
 	if err != nil {

@@ -40,10 +40,17 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 	if err != nil {
 		return commandError("invalid_configuration", "客户端请求超时配置无效", "在设置中修复客户端配置", ExitInput)
 	}
+	modelTimeout, err := config.ParseTimeout(value.Agent.Timeout)
+	if err != nil {
+		return commandError("invalid_configuration", "模型请求超时配置无效", "在设置中修复模型配置", ExitInput)
+	}
 	server := a.NewClient(value.ServerURL, record.Token, requestTimeout)
 	session, err := agentloop.New(model, server, agentloop.Options{
 		ContextWindow: value.Agent.ContextWindow, MaxToolRounds: value.Agent.MaxToolRounds,
 		ContextCompaction: value.Agent.ContextCompaction,
+		ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
+		ModelTimeout:      modelTimeout,
+		ToolTimeout:       requestTimeout,
 		NewUUID:           a.NewUUID,
 	})
 	if err != nil {
@@ -81,9 +88,9 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 		if _, keyErr := a.ModelSecrets.Load(binding); keyErr == nil {
 			keyStatus = "已存入系统钥匙串"
 		}
-		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n请求超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
+		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n默认推理强度：%s\n请求超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
 			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow,
-			safeText(value.Agent.ContextCompaction), safeText(value.Agent.Timeout), value.Agent.MaxToolRounds, keyStatus)
+			safeText(value.Agent.ContextCompaction), safeText(value.Agent.ReasoningEffort), safeText(value.Agent.Timeout), value.Agent.MaxToolRounds, keyStatus)
 		return err
 	case "preset":
 		if len(args) != 2 {
@@ -113,11 +120,17 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		response, err := model.Complete(ctx, modelclient.Request{Messages: []modelclient.Message{
-			{Role: "system", Content: "你正在执行连接检查。"},
-			{Role: "user", Content: "仅回复：连接正常"},
-		}})
+		response, err := model.Complete(ctx, modelclient.Request{
+			Messages: []modelclient.Message{
+				{Role: "system", Content: "你正在执行连接检查。"},
+				{Role: "user", Content: "仅回复：连接正常"},
+			},
+			ReasoningEffort: modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
+		})
 		if err != nil {
+			if modelclient.StableErrorCode(err) == modelclient.ErrorCodeReasoningEffortUnsupported {
+				return commandError(string(modelclient.ErrorCodeReasoningEffortUnsupported), "模型不支持当前推理强度", "将--reasoning-effort改为auto或none，或选择兼容模型", ExitUnavailable)
+			}
 			return commandError("model_unavailable", "模型连接测试失败", "检查Base URL、模型名称、API Key和网络", ExitUnavailable)
 		}
 		if strings.TrimSpace(response.Message.Content) == "" {
@@ -149,13 +162,14 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 
 func (a *App) runModelSet(args []string) error {
 	set := newFlagSet("model set")
-	var provider, baseURL, modelName, timeout, contextCompaction string
+	var provider, baseURL, modelName, timeout, contextCompaction, reasoningEffort string
 	var contextWindow, maxToolRounds int
 	set.StringVar(&provider, "provider", "", "model provider")
 	set.StringVar(&baseURL, "base-url", "", "OpenAI-compatible base URL")
 	set.StringVar(&modelName, "model", "", "model name")
 	set.IntVar(&contextWindow, "context-window", 0, "context window")
 	set.StringVar(&contextCompaction, "context-compaction", "", "auto, recent-only, or off")
+	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
 	set.StringVar(&timeout, "timeout", "", "model timeout")
 	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, "maximum tool rounds")
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
@@ -188,6 +202,9 @@ func (a *App) runModelSet(args []string) error {
 	if strings.TrimSpace(contextCompaction) != "" {
 		candidate.ContextCompaction = strings.TrimSpace(contextCompaction)
 	}
+	if strings.TrimSpace(reasoningEffort) != "" {
+		candidate.ReasoningEffort = strings.TrimSpace(reasoningEffort)
+	}
 	if strings.TrimSpace(timeout) != "" {
 		candidate.Timeout = strings.TrimSpace(timeout)
 	}
@@ -195,7 +212,7 @@ func (a *App) runModelSet(args []string) error {
 		candidate.MaxToolRounds = maxToolRounds
 	}
 	if err := candidate.Validate(); err != nil {
-		return commandError("invalid_configuration", "AI模型参数无效", "检查地址、模型、上下文窗口、超时和工具轮数", ExitInput)
+		return commandError("invalid_configuration", "AI模型参数无效", "检查地址、模型、上下文窗口、压缩模式、推理强度、超时和工具轮数", ExitInput)
 	}
 	value.Agent = &candidate
 	if err := a.Config.Save(value); err != nil {

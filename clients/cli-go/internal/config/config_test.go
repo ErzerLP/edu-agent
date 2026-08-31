@@ -139,6 +139,46 @@ func TestAgentContextCompactionDefaultsAndValidatesStrictly(t *testing.T) {
 	}
 }
 
+func TestAgentReasoningEffortDefaultsAndValidatesStrictly(t *testing.T) {
+	t.Parallel()
+	for _, effort := range []string{"auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
+		value := DefaultAgentConfig("openai")
+		value.ReasoningEffort = effort
+		if err := value.Validate(); err != nil || value.ReasoningEffort != effort {
+			t.Fatalf("effort %q rejected or changed: %+v err=%v", effort, value, err)
+		}
+	}
+	missing := DefaultAgentConfig("openai")
+	missing.ReasoningEffort = ""
+	if err := missing.Validate(); err != nil || missing.ReasoningEffort != DefaultAgentReasoningEffort {
+		t.Fatalf("missing effort did not normalize to auto: %+v err=%v", missing, err)
+	}
+	invalid := DefaultAgentConfig("openai")
+	invalid.ReasoningEffort = "extreme"
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("invalid reasoning effort was accepted")
+	}
+}
+
+func TestStoreLoadsLegacyAgentJSONWithAutoReasoningEffort(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "edu-agent", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"server_url":"","device_id":"","display_name":"","timeout":"30s","color":"never","allow_insecure_http":false,"agent":{"provider":"ollama","base_url":"http://127.0.0.1:11434/v1","model":"qwen3:8b","context_window":32768,"timeout":"1m0s","max_tool_rounds":8,"context_compaction":"auto"}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := (Store{Path: path}).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Agent == nil || loaded.Agent.ReasoningEffort != DefaultAgentReasoningEffort {
+		t.Fatalf("legacy agent config = %+v", loaded.Agent)
+	}
+}
+
 func TestAgentAPIKeyOptionalOnlyForOllamaAndLoopbackCustom(t *testing.T) {
 	t.Parallel()
 	for name, testCase := range map[string]struct {

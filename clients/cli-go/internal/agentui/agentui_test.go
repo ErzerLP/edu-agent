@@ -11,18 +11,33 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 type fakeConversation struct {
 	result             agentloop.Result
 	resolved           agentloop.Result
+	questionResolved   agentloop.Result
 	activities         []agentloop.Activity
 	resolvedActivities []agentloop.Activity
 	sendErr            error
 	sent               string
 	approved           bool
+	resolution         agentloop.PreferenceResolution
+	questionAnswer     agentloop.QuestionAnswer
 	resolveCalls       int
+	questionCalls      int
 	resolveErrors      []error
+	resolveStarted     chan struct{}
+	resolveRelease     chan struct{}
+	questionStarted    chan struct{}
+	questionRelease    chan struct{}
+	reasoningEffort    modelclient.ReasoningEffort
+	setReasoningErr    error
+	contextStatus      agentloop.ContextStatus
+	contextUpdates     chan agentloop.ContextEvent
+	learningStatus     agentloop.LearningStatus
+	learningErr        error
 }
 
 func (c *fakeConversation) Send(ctx context.Context, input string) (agentloop.Result, error) {
@@ -32,10 +47,24 @@ func (c *fakeConversation) Send(ctx context.Context, input string) (agentloop.Re
 	}
 	return c.result, c.sendErr
 }
-func (c *fakeConversation) ResolvePreference(ctx context.Context, approved bool) (agentloop.Result, error) {
-	c.approved, c.resolveCalls = approved, c.resolveCalls+1
+func (c *fakeConversation) ResolvePreference(ctx context.Context, resolution agentloop.PreferenceResolution) (agentloop.Result, error) {
+	c.resolution, c.approved, c.resolveCalls = resolution, resolution == agentloop.PreferenceSave || resolution == agentloop.PreferenceRetry, c.resolveCalls+1
 	for _, activity := range c.resolvedActivities {
 		agentloop.PublishActivity(ctx, activity)
+	}
+	if c.resolveStarted != nil {
+		select {
+		case c.resolveStarted <- struct{}{}:
+		case <-ctx.Done():
+			return agentloop.Result{}, ctx.Err()
+		}
+	}
+	if c.resolveRelease != nil {
+		select {
+		case <-c.resolveRelease:
+		case <-ctx.Done():
+			return agentloop.Result{}, ctx.Err()
+		}
 	}
 	if len(c.resolveErrors) > 0 {
 		err := c.resolveErrors[0]
@@ -45,6 +74,43 @@ func (c *fakeConversation) ResolvePreference(ctx context.Context, approved bool)
 		}
 	}
 	return c.resolved, nil
+}
+func (c *fakeConversation) ResolveQuestion(ctx context.Context, answer agentloop.QuestionAnswer) (agentloop.Result, error) {
+	c.questionCalls++
+	c.questionAnswer = answer
+	if c.questionStarted != nil {
+		select {
+		case c.questionStarted <- struct{}{}:
+		case <-ctx.Done():
+			return agentloop.Result{}, ctx.Err()
+		}
+	}
+	if c.questionRelease != nil {
+		select {
+		case <-c.questionRelease:
+		case <-ctx.Done():
+			return agentloop.Result{}, ctx.Err()
+		}
+	}
+	return c.questionResolved, nil
+}
+func (c *fakeConversation) ReasoningEffort() modelclient.ReasoningEffort {
+	if c.reasoningEffort == "" {
+		return modelclient.ReasoningEffortAuto
+	}
+	return c.reasoningEffort
+}
+func (c *fakeConversation) SetReasoningEffort(value modelclient.ReasoningEffort) error {
+	if c.setReasoningErr != nil {
+		return c.setReasoningErr
+	}
+	c.reasoningEffort = value
+	return nil
+}
+func (c *fakeConversation) ContextStatus() agentloop.ContextStatus        { return c.contextStatus }
+func (c *fakeConversation) ContextUpdates() <-chan agentloop.ContextEvent { return c.contextUpdates }
+func (c *fakeConversation) LearningStatus(context.Context) (agentloop.LearningStatus, error) {
+	return c.learningStatus, c.learningErr
 }
 
 func runTurn(t *testing.T, value model, command tea.Cmd) model {
@@ -275,16 +341,16 @@ func TestAgentUIPreferenceRequiresYOrN(t *testing.T) {
 	if value.pending == nil || !strings.Contains(value.View(), "将保存以下长期偏好") || !strings.Contains(value.viewport.View(), "用户明确要求长期保持回答顺序") {
 		t.Fatalf("pending view=%s viewport=%s", value.View(), value.viewport.View())
 	}
-	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	value = updated.(model)
 	if command == nil || !value.busy {
 		t.Fatalf("confirmation did not start")
 	}
-	if _, duplicate := value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")}); duplicate != nil {
-		t.Fatal("busy confirmation accepted a duplicate Y")
+	if _, duplicate := value.Update(tea.KeyMsg{Type: tea.KeyEnter}); duplicate != nil {
+		t.Fatal("busy confirmation accepted a duplicate Enter")
 	}
-	if _, decline := value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}); decline != nil {
-		t.Fatal("busy confirmation accepted N after Y")
+	if _, decline := value.Update(tea.KeyMsg{Type: tea.KeyEsc}); decline != nil {
+		t.Fatal("busy confirmation accepted Esc after submission")
 	}
 	value = runTurn(t, value, command)
 	if conversation.resolveCalls != 1 || !conversation.approved || value.pending != nil {
@@ -293,6 +359,7 @@ func TestAgentUIPreferenceRequiresYOrN(t *testing.T) {
 }
 
 type blockingConversation struct {
+	fakeConversation
 	started  chan struct{}
 	canceled chan struct{}
 }
@@ -302,10 +369,6 @@ func (c *blockingConversation) Send(ctx context.Context, _ string) (agentloop.Re
 	<-ctx.Done()
 	close(c.canceled)
 	return agentloop.Result{}, ctx.Err()
-}
-
-func (*blockingConversation) ResolvePreference(context.Context, bool) (agentloop.Result, error) {
-	return agentloop.Result{}, nil
 }
 
 func TestAgentUIAmbiguousPreferenceCanOnlyRetry(t *testing.T) {
@@ -322,21 +385,51 @@ func TestAgentUIAmbiguousPreferenceCanOnlyRetry(t *testing.T) {
 	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	value = updated.(model)
 	value = runTurn(t, value, command)
-	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	value = updated.(model)
 	value = runTurn(t, value, command)
 	view := value.View()
-	if value.pending == nil || !value.pending.RetryOnly || !strings.Contains(view, "保存结果未知") || !strings.Contains(view, "Y 重试核对") || strings.Contains(view, "N 取消") {
+	if value.pending == nil || !value.pending.RetryOnly || !strings.Contains(view, "结果未知") || !strings.Contains(view, "重试核对原操作") || strings.Contains(view, "仅本次会话使用") {
 		t.Fatalf("ambiguous preference state = pending=%+v view=%s", value.pending, view)
 	}
-	if _, decline := value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")}); decline != nil || conversation.resolveCalls != 1 {
+	if _, decline := value.Update(tea.KeyMsg{Type: tea.KeyEsc}); decline != nil || conversation.resolveCalls != 1 {
 		t.Fatalf("ambiguous preference accepted decline: command=%v calls=%d", decline, conversation.resolveCalls)
 	}
-	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	value = updated.(model)
 	value = runTurn(t, value, command)
 	if value.pending != nil || conversation.resolveCalls != 2 || !strings.Contains(value.View(), "已核对提交") {
 		t.Fatalf("retry state pending=%+v calls=%d view=%s", value.pending, conversation.resolveCalls, value.View())
+	}
+}
+
+func TestAgentUIKnownCompensationFailureRestoresAllPreferenceChoices(t *testing.T) {
+	pending := &agentloop.PreferenceConfirmation{
+		Content: "先给结论", Reason: "用户明确要求长期保持回答顺序",
+		Category: "interaction_preference", Sensitivity: "non_sensitive", Stability: "stable",
+	}
+	conversation := &fakeConversation{
+		result: agentloop.Result{Pending: pending},
+		resolveErrors: []error{
+			agentloop.ErrPreferenceOutcomeUnknown,
+			errors.New("长期偏好未保存（admission_forbidden）"),
+		},
+	}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("记住这个偏好")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	if value.pending == nil || !value.pending.RetryOnly {
+		t.Fatalf("first ambiguous failure did not enter retry-only state: %+v", value.pending)
+	}
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	view := value.View()
+	if value.pending == nil || value.pending.RetryOnly || value.selector == nil || value.selector.kind != selectorPreference || conversation.resolveCalls != 2 ||
+		!strings.Contains(view, "仅本次会话使用") || !strings.Contains(view, "不保存") {
+		t.Fatalf("known compensation result did not restore choices: pending=%+v calls=%d view=%s", value.pending, conversation.resolveCalls, view)
 	}
 }
 
@@ -439,7 +532,7 @@ func TestAgentUILongPreferenceKeepsConfirmationControlsVisible(t *testing.T) {
 	value = updated.(model)
 	value = runTurn(t, value, command)
 	view := value.View()
-	if !strings.Contains(view, "Y 确认保存") || !strings.Contains(view, "PgUp/PgDn 滚动检查") || value.viewport.TotalLineCount() <= value.viewport.Height {
+	if !strings.Contains(view, "保存为长期偏好") || !strings.Contains(view, "PgUp/PgDn") || value.viewport.TotalLineCount() <= value.viewport.Height {
 		t.Fatalf("long confirmation is not inspectable: lines=%d height=%d view=%s", value.viewport.TotalLineCount(), value.viewport.Height, view)
 	}
 	before := value.viewport.YOffset
@@ -511,6 +604,11 @@ func TestAgentUIToolTimelineShowsStatusAndDetails(t *testing.T) {
 	expanded := value.viewport.View()
 	if !strings.Contains(expanded, "search_knowledge") || !strings.Contains(expanded, "protocol_error") || !strings.Contains(expanded, "状态：失败") {
 		t.Fatalf("expanded tool timeline=%s", expanded)
+	}
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("ctrl+0")})
+	value = updated.(model)
+	if value.toolsExpanded || strings.Contains(value.viewport.View(), "protocol_error") {
+		t.Fatalf("Ctrl+0 did not collapse activity details: %s", value.viewport.View())
 	}
 }
 
@@ -673,6 +771,601 @@ func TestAgentUISmallTerminalStaysBounded(t *testing.T) {
 	for _, line := range lines {
 		if len([]rune(line)) > 12 {
 			t.Fatalf("line too wide: %q", line)
+		}
+	}
+}
+
+func testQuestion(mode agentloop.QuestionMode) *agentloop.PendingQuestion {
+	return &agentloop.PendingQuestion{
+		ID: "next-step", Header: "下一步", Question: "你希望如何继续？", Mode: mode, AllowCustom: true,
+		Options: []agentloop.QuestionOption{
+			{ID: "first", Label: "第一项", Description: "继续第一项内容"},
+			{ID: "second", Label: "第二项", Description: "继续第二项内容"},
+		},
+	}
+}
+
+func TestAgentUIQuestionSelectorSupportsSingleMultipleCustomAndCancel(t *testing.T) {
+	t.Run("single", func(t *testing.T) {
+		conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: testQuestion(agentloop.QuestionSingle)}, questionResolved: agentloop.Result{Text: "已选择"}}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("请问我")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyDown})
+		value = updated.(model)
+		updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		if conversation.questionCalls != 1 || len(conversation.questionAnswer.OptionIDs) != 1 || conversation.questionAnswer.OptionIDs[0] != "second" {
+			t.Fatalf("answer=%+v calls=%d", conversation.questionAnswer, conversation.questionCalls)
+		}
+	})
+
+	t.Run("multiple", func(t *testing.T) {
+		conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: testQuestion(agentloop.QuestionMultiple)}, questionResolved: agentloop.Result{Text: "已多选"}}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("请多选")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		updated, noSubmit := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = updated.(model)
+		if noSubmit != nil || value.selector == nil || value.selector.submitted {
+			t.Fatalf("empty multiple selection submitted unexpectedly: command=%v selector=%+v", noSubmit, value.selector)
+		}
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+		value = updated.(model)
+		if value.selector.focus != 1 || value.selector.hasSelectedOptions() {
+			t.Fatalf("numeric shortcut must focus without toggling: focus=%d options=%+v", value.selector.focus, value.selector.options)
+		}
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeySpace})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeySpace})
+		value = updated.(model)
+		updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		if strings.Join(conversation.questionAnswer.OptionIDs, ",") != "first,second" {
+			t.Fatalf("answer=%+v", conversation.questionAnswer)
+		}
+	})
+
+	t.Run("custom multiline", func(t *testing.T) {
+		conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: testQuestion(agentloop.QuestionSingle)}, questionResolved: agentloop.Result{Text: "已记录自定义"}}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("我要自定义")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("0")})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("第一行")})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("第二行")})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyUp})
+		value = updated.(model)
+		if value.selector.focus != len(value.selector.options) {
+			t.Fatalf("custom editor Up escaped the editor: focus=%d", value.selector.focus)
+		}
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyDown})
+		value = updated.(model)
+		updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		if conversation.questionAnswer.Custom != "第一行\n第二行" || len(conversation.questionAnswer.OptionIDs) != 0 {
+			t.Fatalf("answer=%+v", conversation.questionAnswer)
+		}
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: testQuestion(agentloop.QuestionSingle)}, questionResolved: agentloop.Result{Text: "已取消"}}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("取消问题")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		value = runTurn(t, updated.(model), command)
+		if conversation.questionAnswer.Status != agentloop.QuestionCancelled {
+			t.Fatalf("answer=%+v", conversation.questionAnswer)
+		}
+	})
+}
+
+func TestAgentUICancelledInteractionContinuationClearsConsumedSelector(t *testing.T) {
+	t.Run("question", func(t *testing.T) {
+		conversation := &fakeConversation{
+			result:          agentloop.Result{PendingQuestion: testQuestion(agentloop.QuestionSingle)},
+			questionStarted: make(chan struct{}), questionRelease: make(chan struct{}),
+		}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("请问我")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+
+		updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = updated.(model)
+		message := command()
+		updated, command = value.Update(message)
+		value = updated.(model)
+		select {
+		case <-conversation.questionStarted:
+		case <-time.After(time.Second):
+			t.Fatal("question continuation did not start")
+		}
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		value = updated.(model)
+		message = command()
+		updated, _ = value.Update(message)
+		value = updated.(model)
+		if value.busy || value.selector != nil || value.pendingQuestion != nil || !value.input.Focused() {
+			t.Fatalf("cancelled question restored stale selector: busy=%t selector=%+v pending=%+v", value.busy, value.selector, value.pendingQuestion)
+		}
+	})
+
+	t.Run("session-only preference", func(t *testing.T) {
+		pending := &agentloop.PreferenceConfirmation{Content: "先给结论", Reason: "明确要求", Category: "interaction_preference", Sensitivity: "non_sensitive", Stability: "stable"}
+		conversation := &fakeConversation{
+			result:         agentloop.Result{Pending: pending},
+			resolveStarted: make(chan struct{}), resolveRelease: make(chan struct{}),
+		}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("记住偏好")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyDown})
+		value = updated.(model)
+
+		updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = updated.(model)
+		message := command()
+		updated, command = value.Update(message)
+		value = updated.(model)
+		select {
+		case <-conversation.resolveStarted:
+		case <-time.After(time.Second):
+			t.Fatal("preference continuation did not start")
+		}
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		value = updated.(model)
+		message = command()
+		updated, _ = value.Update(message)
+		value = updated.(model)
+		if value.busy || value.selector != nil || value.pending != nil || !value.input.Focused() {
+			t.Fatalf("cancelled preference restored stale selector: busy=%t selector=%+v pending=%+v", value.busy, value.selector, value.pending)
+		}
+	})
+}
+
+func TestAgentUIPreferenceSelectorUsesThreeExplicitResolutions(t *testing.T) {
+	pending := &agentloop.PreferenceConfirmation{Content: "先给结论", Reason: "明确要求", Category: "interaction_preference", Sensitivity: "non_sensitive", Stability: "stable"}
+	tests := []struct {
+		name string
+		keys []tea.KeyMsg
+		want agentloop.PreferenceResolution
+	}{
+		{name: "save", keys: []tea.KeyMsg{{Type: tea.KeyEnter}}, want: agentloop.PreferenceSave},
+		{name: "session only", keys: []tea.KeyMsg{{Type: tea.KeyDown}, {Type: tea.KeyEnter}}, want: agentloop.PreferenceSessionOnly},
+		{name: "decline with escape", keys: []tea.KeyMsg{{Type: tea.KeyEsc}}, want: agentloop.PreferenceDecline},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conversation := &fakeConversation{result: agentloop.Result{Pending: pending}, resolved: agentloop.Result{Text: "已处理"}}
+			value := newModel(t.Context(), conversation, "model")
+			value.input.SetValue("处理偏好")
+			updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			value = runTurn(t, updated.(model), command)
+			for index, key := range test.keys {
+				updated, command = value.Update(key)
+				value = updated.(model)
+				if index+1 < len(test.keys) && command != nil {
+					t.Fatalf("navigation unexpectedly started resolution")
+				}
+			}
+			value = runTurn(t, value, command)
+			if conversation.resolveCalls != 1 || conversation.resolution != test.want {
+				t.Fatalf("resolution=%q calls=%d", conversation.resolution, conversation.resolveCalls)
+			}
+		})
+	}
+}
+
+type blockingPreferenceConversation struct {
+	fakeConversation
+	started  chan struct{}
+	release  chan struct{}
+	canceled chan struct{}
+	writes   int
+}
+
+func (c *blockingPreferenceConversation) ResolvePreference(ctx context.Context, resolution agentloop.PreferenceResolution) (agentloop.Result, error) {
+	c.writes++
+	c.resolution = resolution
+	close(c.started)
+	select {
+	case <-c.release:
+		return agentloop.Result{Text: "保存完成"}, nil
+	case <-ctx.Done():
+		close(c.canceled)
+		return agentloop.Result{}, ctx.Err()
+	}
+}
+
+func TestAgentUIPreferenceWriteIgnoresEscapeAndExecutesOnce(t *testing.T) {
+	conversation := &blockingPreferenceConversation{
+		fakeConversation: fakeConversation{result: agentloop.Result{Pending: &agentloop.PreferenceConfirmation{Content: "先给结论", Reason: "明确要求", Category: "interaction_preference", Sensitivity: "non_sensitive", Stability: "stable"}}},
+		started:          make(chan struct{}), release: make(chan struct{}), canceled: make(chan struct{}),
+	}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("保存偏好")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	start := command().(turnMsg)
+	updated, wait := value.Update(start)
+	value = updated.(model)
+	result := make(chan tea.Msg, 1)
+	go func() { result <- wait() }()
+	select {
+	case <-conversation.started:
+	case <-time.After(time.Second):
+		t.Fatal("preference write did not start")
+	}
+	updated, stop := value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	value = updated.(model)
+	if stop != nil || value.stopping {
+		t.Fatalf("non-cancellable write accepted Esc: stopping=%t", value.stopping)
+	}
+	select {
+	case <-conversation.canceled:
+		t.Fatal("preference write context was cancelled")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(conversation.release)
+	updated, _ = value.Update(<-result)
+	value = updated.(model)
+	if value.busy || conversation.writes != 1 || conversation.resolution != agentloop.PreferenceSave {
+		t.Fatalf("busy=%t writes=%d resolution=%q", value.busy, conversation.writes, conversation.resolution)
+	}
+}
+
+func TestAgentUIReasoningSelectorAndUnsupportedError(t *testing.T) {
+	t.Run("idle selection", func(t *testing.T) {
+		conversation := &fakeConversation{reasoningEffort: modelclient.ReasoningEffortAuto}
+		value := newModel(t.Context(), conversation, "model")
+		updated, _ := value.Update(tea.KeyMsg{Type: tea.KeyF3})
+		value = updated.(model)
+		if value.selector == nil || value.selector.kind != selectorReasoning || !strings.Contains(value.View(), "none") || !strings.Contains(value.View(), "auto") {
+			t.Fatalf("reasoning selector missing: %s", value.View())
+		}
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")})
+		value = updated.(model)
+		updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = updated.(model)
+		if conversation.reasoningEffort != modelclient.ReasoningEffortMedium || !strings.Contains(value.View(), "推理 medium") {
+			t.Fatalf("effort=%q view=%s", conversation.reasoningEffort, value.View())
+		}
+	})
+
+	t.Run("provider rejection has stable code", func(t *testing.T) {
+		conversation := &fakeConversation{sendErr: &modelclient.ClientError{Code: modelclient.ErrorCodeReasoningEffortUnsupported, Message: "所选推理强度不受支持"}}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("测试推理")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		if !strings.Contains(value.View(), string(modelclient.ErrorCodeReasoningEffortUnsupported)) || value.input.Value() != "测试推理" {
+			t.Fatalf("error/input missing: input=%q view=%s", value.input.Value(), value.View())
+		}
+	})
+}
+
+func TestAgentUIReasoningEffortSwitchClearsPendingMarkerWhenNextRequestStarts(t *testing.T) {
+	conversation := &fakeConversation{reasoningEffort: modelclient.ReasoningEffortLow}
+	value := newModel(t.Context(), conversation, "model")
+	value.busy = true
+	value.activeTurnID = 1
+	value.activeEffort = modelclient.ReasoningEffortLow
+	value.handleActivity(1, agentloop.Activity{
+		Kind: agentloop.ActivityThinking, Phase: agentloop.ActivityWaitingModel,
+		ReasoningEffort: modelclient.ReasoningEffortLow,
+		Event:           agentloop.Event{ID: "thinking-1", Summary: "正在分析问题", Status: agentloop.EventRunning},
+	})
+	value.applyReasoningEffort(modelclient.ReasoningEffortHigh)
+	if footer := value.renderFooterStatus(120); !strings.Contains(footer, "下一请求 high") {
+		t.Fatalf("pending effort not shown: %s", footer)
+	}
+	value.handleActivity(1, agentloop.Activity{
+		Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool,
+		Event: agentloop.Event{ID: "tool-1", Tool: "get_learning_progress", Summary: "学习进度已读取", Status: agentloop.EventSucceeded},
+	})
+	value.handleActivity(1, agentloop.Activity{
+		Kind: agentloop.ActivityThinking, Phase: agentloop.ActivityWaitingModel,
+		ReasoningEffort: modelclient.ReasoningEffortHigh,
+		Event:           agentloop.Event{ID: "thinking-2", Summary: "正在结合工具结果继续分析", Status: agentloop.EventRunning},
+	})
+	if footer := value.renderFooterStatus(120); value.activeEffort != modelclient.ReasoningEffortHigh || strings.Contains(footer, "下一请求") {
+		t.Fatalf("next request did not activate selected effort: active=%q footer=%s", value.activeEffort, footer)
+	}
+}
+
+func TestAgentUIStreamingDeduplicatesFinalAndKeepsProtocolPartial(t *testing.T) {
+	t.Run("final replaces draft", func(t *testing.T) {
+		conversation := &fakeConversation{
+			activities: []agentloop.Activity{
+				{Kind: agentloop.ActivityTextDelta, Delta: "最终"},
+				{Kind: agentloop.ActivityTextDelta, Delta: "回答"},
+			},
+			result: agentloop.Result{Text: "最终回答"},
+		}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("流式")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		if count := strings.Count(value.viewport.View(), "最终回答"); count != 1 {
+			t.Fatalf("final duplicated %d times: %s", count, value.viewport.View())
+		}
+	})
+
+	t.Run("protocol failure preserves sanitized partial", func(t *testing.T) {
+		conversation := &fakeConversation{
+			activities: []agentloop.Activity{{Kind: agentloop.ActivityTextDelta, Delta: "部分回答\x1b[2J"}},
+			sendErr:    &modelclient.ClientError{Code: modelclient.ErrorCodeStreamProtocol, Message: "流协议失败"},
+		}
+		value := newModel(t.Context(), conversation, "model")
+		value.input.SetValue("流失败")
+		updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		value = runTurn(t, updated.(model), command)
+		view := value.View()
+		if !strings.Contains(view, "部分回答") || !strings.Contains(view, "未完成") || !strings.Contains(view, string(modelclient.ErrorCodeStreamProtocol)) || strings.ContainsRune(view, '\x1b') {
+			t.Fatalf("partial/error state=%s", view)
+		}
+	})
+}
+
+type cancellableActivityConversation struct {
+	fakeConversation
+	started    chan struct{}
+	canceled   chan struct{}
+	activities []agentloop.Activity
+}
+
+func (c *cancellableActivityConversation) Send(ctx context.Context, _ string) (agentloop.Result, error) {
+	for _, activity := range c.activities {
+		agentloop.PublishActivity(ctx, activity)
+	}
+	close(c.started)
+	<-ctx.Done()
+	close(c.canceled)
+	return agentloop.Result{}, ctx.Err()
+}
+
+func TestAgentUIEscapeStopsTurnPreservesVisibleWorkAndRejectsLateEvents(t *testing.T) {
+	conversation := &cancellableActivityConversation{
+		started: make(chan struct{}), canceled: make(chan struct{}),
+		activities: []agentloop.Activity{
+			{Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool, Event: agentloop.Event{ID: "tool-1", Tool: "search_knowledge", Summary: "检索完成", Status: agentloop.EventSucceeded}},
+			{Kind: agentloop.ActivityTextDelta, Delta: "部分答案"},
+		},
+	}
+	value := newModel(context.Background(), conversation, "model")
+	value.input.SetValue("需要取消")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	start := command().(turnMsg)
+	oldTurnID := start.turnID
+	updated, wait := value.Update(start)
+	value = updated.(model)
+	for range conversation.activities {
+		updated, wait = value.Update(wait())
+		value = updated.(model)
+	}
+	select {
+	case <-conversation.started:
+	case <-time.After(time.Second):
+		t.Fatal("turn did not start")
+	}
+	result := make(chan tea.Msg, 1)
+	go func() { result <- wait() }()
+	updated, firstStop := value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	value = updated.(model)
+	updated, secondStop := value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	value = updated.(model)
+	if firstStop != nil || secondStop != nil || !value.stopping {
+		t.Fatalf("repeated Esc state: stopping=%t first=%v second=%v", value.stopping, firstStop, secondStop)
+	}
+	select {
+	case <-conversation.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("turn context was not cancelled")
+	}
+	updated, _ = value.Update(<-result)
+	value = updated.(model)
+	view := value.View()
+	if value.busy || !strings.Contains(view, "需要取消") || !strings.Contains(view, "检索完成") || !strings.Contains(view, "部分答案") || !strings.Contains(view, "已停止") || strings.Contains(view, "请求失败") {
+		t.Fatalf("cancelled state=%s", view)
+	}
+	before := len(value.entries)
+	late := agentloop.Activity{Kind: agentloop.ActivityTextDelta, Delta: "不应出现"}
+	updated, _ = value.Update(turnMsg{turnID: oldTurnID, kind: turnSend, activity: &late, stream: &turnStream{activities: make(chan agentloop.Activity), completion: make(chan turnMsg, 1)}})
+	value = updated.(model)
+	if len(value.entries) != before || strings.Contains(value.View(), "不应出现") {
+		t.Fatalf("late event contaminated transcript: %s", value.View())
+	}
+}
+
+type delayedCancellationConversation struct {
+	fakeConversation
+	started        chan struct{}
+	cancelObserved chan struct{}
+	release        chan struct{}
+}
+
+func (c *delayedCancellationConversation) Send(ctx context.Context, _ string) (agentloop.Result, error) {
+	close(c.started)
+	<-ctx.Done()
+	close(c.cancelObserved)
+	<-c.release
+	return agentloop.Result{}, ctx.Err()
+}
+
+func TestAgentUIWaitsForCancelledWorkerBeforeRestoringComposer(t *testing.T) {
+	conversation := &delayedCancellationConversation{
+		started: make(chan struct{}), cancelObserved: make(chan struct{}), release: make(chan struct{}),
+	}
+	value := newModel(context.Background(), conversation, "model")
+	value.input.SetValue("延迟停止")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	start := command().(turnMsg)
+	updated, wait := value.Update(start)
+	value = updated.(model)
+	select {
+	case <-conversation.started:
+	case <-time.After(time.Second):
+		t.Fatal("turn did not start")
+	}
+	result := make(chan tea.Msg, 1)
+	go func() { result <- wait() }()
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	value = updated.(model)
+	select {
+	case <-conversation.cancelObserved:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not observe cancellation")
+	}
+	select {
+	case message := <-result:
+		t.Fatalf("UI completed before worker acknowledged cancellation: %#v", message)
+	case <-time.After(25 * time.Millisecond):
+	}
+	value.input.SetValue("不应发送")
+	updated, duplicate := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	if duplicate != nil || !value.busy || !value.stopping {
+		t.Fatalf("composer reopened while worker was alive: busy=%t stopping=%t command=%v", value.busy, value.stopping, duplicate)
+	}
+	close(conversation.release)
+	select {
+	case message := <-result:
+		updated, _ = value.Update(message)
+		value = updated.(model)
+	case <-time.After(time.Second):
+		t.Fatal("cancelled worker did not finish")
+	}
+	if value.busy || value.stopping || !strings.Contains(value.View(), "已停止") {
+		t.Fatalf("cancel completion state: %s", value.View())
+	}
+}
+
+func TestAgentUIActivityDetailsShowPhaseElapsedAndSlowHint(t *testing.T) {
+	value := newModel(t.Context(), &fakeConversation{}, "model")
+	value.busy = true
+	value.activeCancelable = true
+	value.activeTurnID = 1
+	value.activeStarted = time.Now().Add(-slowTurnThreshold - time.Second)
+	value.handleActivity(1, agentloop.Activity{
+		Kind: agentloop.ActivityThinking, Phase: agentloop.ActivityWaitingModel,
+		StartedAt: time.Now().Add(-3 * time.Second), UpdatedAt: time.Now(), TimeoutBudget: 90 * time.Second,
+		Event: agentloop.Event{ID: "thinking", Summary: "等待模型", Status: agentloop.EventRunning},
+	})
+	value.toolsExpanded = true
+	value.refreshTranscript(false)
+	view := value.View()
+	if !strings.Contains(view, "等待模型响应") || !strings.Contains(view, "用时：") || !strings.Contains(view, "已等待") || !strings.Contains(view, "超时预算 1m30s") || !strings.Contains(view, "超时预算：1m30s") || !strings.Contains(view, "Esc") {
+		t.Fatalf("lifecycle details missing: %s", view)
+	}
+}
+
+func TestAgentUIQuestionSelectorWrapsLongOptionLabelsAndDescriptions(t *testing.T) {
+	question := testQuestion(agentloop.QuestionSingle)
+	question.Header = strings.Repeat("题", 17) + "尾"
+	question.Question = strings.Repeat("问", 35) + "尾"
+	question.Options[0].Label = strings.Repeat("宽", 15) + "尾"
+	question.Options[0].Description = strings.Repeat("详", 29) + "尾"
+	conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: question}}
+	value := newModel(t.Context(), conversation, "model")
+	updated, _ := value.Update(tea.WindowSizeMsg{Width: minimumWidth, Height: minimumHeight})
+	value = updated.(model)
+	value.input.SetValue("显示长选项")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	view := value.View()
+	if strings.Count(view, "题") != 17 || strings.Count(view, "问") != 35 || strings.Count(view, "宽") != 15 || strings.Count(view, "详") != 29 {
+		t.Fatalf("maximum legal question content was truncated: %s", view)
+	}
+	lines := strings.Split(view, "\n")
+	if len(lines) > minimumHeight {
+		t.Fatalf("selector exceeded minimum height: lines=%d view=%s", len(lines), view)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > minimumWidth {
+			t.Fatalf("line width=%d limit=%d line=%q", lipgloss.Width(line), minimumWidth, line)
+		}
+	}
+}
+
+func TestAgentUIQuestionSelectorResizePreservesFocusSelectionAndDraft(t *testing.T) {
+	question := testQuestion(agentloop.QuestionMultiple)
+	question.Options = append(question.Options,
+		agentloop.QuestionOption{ID: "third", Label: "第三项", Description: "继续第三项内容"},
+		agentloop.QuestionOption{ID: "fourth", Label: "第四项", Description: "继续第四项内容"},
+	)
+	conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: question}}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("调整尺寸")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	value = updated.(model)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeySpace})
+	value = updated.(model)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("0")})
+	value = updated.(model)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("保留草稿")})
+	value = updated.(model)
+
+	for _, size := range []tea.WindowSizeMsg{{Width: 58, Height: 22}, {Width: minimumWidth, Height: minimumHeight}} {
+		updated, _ = value.Update(size)
+		value = updated.(model)
+	}
+	if value.selector == nil || value.selector.focus != len(question.Options) || !value.selector.options[1].Selected || value.selector.custom.Value() != "保留草稿" {
+		t.Fatalf("resize lost selector state: selector=%+v", value.selector)
+	}
+	view := value.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > minimumHeight || !strings.Contains(view, "保留草稿") {
+		t.Fatalf("resized selector exceeded bounds or hid draft: lines=%d view=%s", len(lines), view)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > minimumWidth {
+			t.Fatalf("line width=%d limit=%d line=%q", lipgloss.Width(line), minimumWidth, line)
+		}
+	}
+}
+
+func TestAgentUIQuestionSelectorFitsMinimumTerminalAndKeepsDetailsScrollable(t *testing.T) {
+	question := testQuestion(agentloop.QuestionMultiple)
+	question.Question = strings.Repeat("请选择下一步学习方向", 20)
+	question.Options = append(question.Options,
+		agentloop.QuestionOption{ID: "third", Label: "第三项", Description: strings.Repeat("很长的第三项说明", 30)},
+		agentloop.QuestionOption{ID: "fourth", Label: "第四项", Description: strings.Repeat("很长的第四项说明", 30)},
+	)
+	conversation := &fakeConversation{result: agentloop.Result{PendingQuestion: question}}
+	value := newModel(t.Context(), conversation, "model")
+	updated, _ := value.Update(tea.WindowSizeMsg{Width: minimumWidth, Height: minimumHeight})
+	value = updated.(model)
+	value.input.SetValue("显示问题")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	view := value.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > minimumHeight || !strings.Contains(view, "自定义") || !strings.Contains(view, "Enter") || value.viewport.TotalLineCount() <= value.viewport.Height {
+		t.Fatalf("minimum selector layout lines=%d total=%d height=%d view=%s", len(lines), value.viewport.TotalLineCount(), value.viewport.Height, view)
+	}
+	for _, line := range lines {
+		if lipgloss.Width(line) > minimumWidth {
+			t.Fatalf("line width=%d limit=%d line=%q", lipgloss.Width(line), minimumWidth, line)
 		}
 	}
 }

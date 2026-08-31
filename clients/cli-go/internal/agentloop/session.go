@@ -29,32 +29,43 @@ const (
 )
 
 type Session struct {
-	model                      Model
-	server                     Server
-	options                    Options
-	appendMu                   sync.Mutex
-	messages                   []modelclient.Message
-	messageTurnIDs             []string
-	turns                      map[string]*sessionTurn
-	turnOrder                  []string
-	currentTurnID              string
-	turnSequence               int
-	hotRawTokenLimit           int
-	contextRuntime             *ContextRuntime
-	estimator                  *ConservativeTokenEstimator
-	toolHistory                map[string]string
-	toolReferences             map[string]*ServerReference
-	currentToolResultTokens    int
-	currentToolResultBudget    int
-	remaining                  int
-	toolCallsRemaining         int
-	pendingCalls               []modelclient.ToolCall
-	pendingIndex               int
-	pendingArgs                preferenceArgs
-	pendingEvents              []Event
-	pendingOperationID         string
-	pendingDecisionOperationID string
-	activitySequence           int
+	model                        Model
+	server                       Server
+	options                      Options
+	appendMu                     sync.Mutex
+	activityMu                   sync.Mutex
+	activityStarts               map[string]time.Time
+	messages                     []modelclient.Message
+	messageTurnIDs               []string
+	turns                        map[string]*sessionTurn
+	turnOrder                    []string
+	currentTurnID                string
+	activeTurnID                 string
+	turnSequence                 int
+	reasoningEffort              modelclient.ReasoningEffort
+	hotRawTokenLimit             int
+	contextRuntime               *ContextRuntime
+	estimator                    *ConservativeTokenEstimator
+	toolHistory                  map[string]string
+	toolReferences               map[string]*ServerReference
+	currentToolResultTokens      int
+	currentToolResultBudget      int
+	remaining                    int
+	toolCallsRemaining           int
+	pendingKind                  pendingInteractionKind
+	pendingCalls                 []modelclient.ToolCall
+	pendingIndex                 int
+	pendingArgs                  preferenceArgs
+	pendingQuestion              *PendingQuestion
+	pendingResolving             bool
+	pendingEvents                []Event
+	pendingOperationID           string
+	pendingDecisionOperationID   string
+	pendingRejectOperationID     string
+	pendingCandidateID           string
+	pendingCandidateRevision     int64
+	pendingPreferenceFailureCode string
+	activitySequence             int
 }
 
 type sessionTurn struct {
@@ -63,6 +74,8 @@ type sessionTurn struct {
 	Protected      bool
 	OutcomeUnknown bool
 	SourceIDs      []string
+	QuestionsAsked int
+	QuestionIDs    map[string]struct{}
 }
 
 type preferenceArgs struct {
@@ -83,11 +96,23 @@ func New(model Model, server Server, options Options) (*Session, error) {
 	if options.ContextCompaction == "" {
 		options.ContextCompaction = ContextCompactionAuto
 	}
+	if options.ReasoningEffort == "" {
+		options.ReasoningEffort = modelclient.ReasoningEffortAuto
+	}
+	if !validReasoningEffort(options.ReasoningEffort) {
+		return nil, errors.New("agent reasoning effort is invalid")
+	}
 	if options.ContextCompaction != ContextCompactionAuto && options.ContextCompaction != ContextCompactionRecentOnly && options.ContextCompaction != ContextCompactionOff {
 		return nil, errors.New("agent context compaction mode is invalid")
 	}
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.ModelTimeout <= 0 {
+		options.ModelTimeout = 90 * time.Second
+	}
+	if options.ToolTimeout <= 0 {
+		options.ToolTimeout = 30 * time.Second
 	}
 	estimator := NewTokenEstimator()
 	session := &Session{
@@ -96,6 +121,8 @@ func New(model Model, server Server, options Options) (*Session, error) {
 		messageTurnIDs:          []string{""},
 		turns:                   make(map[string]*sessionTurn),
 		turnOrder:               []string{},
+		reasoningEffort:         options.ReasoningEffort,
+		activityStarts:          make(map[string]time.Time),
 		hotRawTokenLimit:        clampInt(divideRoundUp(options.ContextWindow*55, 100), 1024, options.ContextWindow),
 		estimator:               estimator,
 		toolHistory:             make(map[string]string),
@@ -112,28 +139,82 @@ func (s *Session) startTurn() (string, error) {
 	if s.contextRuntime.isClosed() {
 		return "", ErrSessionClosed
 	}
+	if s.activeTurnID != "" {
+		return "", ErrActiveTurn
+	}
 	s.turnSequence++
 	turnID := fmt.Sprintf("turn-%d", s.turnSequence)
-	s.turns[turnID] = &sessionTurn{ID: turnID}
+	s.turns[turnID] = &sessionTurn{ID: turnID, QuestionIDs: make(map[string]struct{})}
 	s.turnOrder = append(s.turnOrder, turnID)
 	s.currentTurnID = turnID
+	s.activeTurnID = turnID
 	return turnID, nil
 }
 
 func (s *Session) discardTurn(turnID string) {
 	s.appendMu.Lock()
-	defer s.appendMu.Unlock()
+	turn := s.turns[turnID]
 	delete(s.turns, turnID)
-	filtered := s.turnOrder[:0]
+	filteredOrder := s.turnOrder[:0]
 	for _, current := range s.turnOrder {
 		if current != turnID {
-			filtered = append(filtered, current)
+			filteredOrder = append(filteredOrder, current)
 		}
 	}
-	s.turnOrder = filtered
+	s.turnOrder = filteredOrder
+	messages := make([]modelclient.Message, 0, len(s.messages))
+	turnIDs := make([]string, 0, len(s.messageTurnIDs))
+	for index, message := range s.messages {
+		messageTurnID := ""
+		if index < len(s.messageTurnIDs) {
+			messageTurnID = s.messageTurnIDs[index]
+		}
+		if messageTurnID == turnID {
+			if message.Role == "tool" {
+				delete(s.toolHistory, message.ToolCallID)
+				delete(s.toolReferences, message.ToolCallID)
+			}
+			continue
+		}
+		messages = append(messages, message)
+		turnIDs = append(turnIDs, messageTurnID)
+	}
+	s.messages = messages
+	s.messageTurnIDs = turnIDs
+	if s.activeTurnID == turnID {
+		s.activeTurnID = ""
+		s.clearPendingLocked()
+		s.remaining = 0
+		s.toolCallsRemaining = 0
+		s.currentToolResultTokens = 0
+	}
 	if s.currentTurnID == turnID {
 		s.currentTurnID = ""
 	}
+	s.appendMu.Unlock()
+	if turn != nil {
+		s.contextRuntime.discardIncompleteTurn(turnID)
+	}
+}
+
+func (s *Session) clearPendingLocked() {
+	s.pendingKind = pendingNone
+	s.pendingCalls = nil
+	s.pendingEvents = nil
+	s.pendingIndex = 0
+	s.pendingArgs = preferenceArgs{}
+	s.pendingQuestion = nil
+	s.pendingResolving = false
+	s.clearPreferenceWriteStateLocked()
+}
+
+func (s *Session) clearPreferenceWriteStateLocked() {
+	s.pendingOperationID = ""
+	s.pendingDecisionOperationID = ""
+	s.pendingRejectOperationID = ""
+	s.pendingCandidateID = ""
+	s.pendingCandidateRevision = 0
+	s.pendingPreferenceFailureCode = ""
 }
 
 func (s *Session) appendCapturedMessage(turnID string, message modelclient.Message, recall string, kind SourceKind, authority AuthorityClass, freshness FreshnessClass, reference *ServerReference) error {
@@ -142,6 +223,10 @@ func (s *Session) appendCapturedMessage(turnID string, message modelclient.Messa
 	if s.contextRuntime.isClosed() {
 		return ErrSessionClosed
 	}
+	return s.appendCapturedMessageLocked(turnID, message, recall, kind, authority, freshness, reference)
+}
+
+func (s *Session) appendCapturedMessageLocked(turnID string, message modelclient.Message, recall string, kind SourceKind, authority AuthorityClass, freshness FreshnessClass, reference *ServerReference) error {
 	sourceID, err := s.contextRuntime.appendSource(sourceDraft{
 		TurnID: turnID, Kind: kind, CreatedAt: s.options.Now().UTC(), ModelMessage: message,
 		RecallText: recall, Authority: authority, Freshness: freshness, ServerReference: reference,
@@ -191,16 +276,63 @@ func (s *Session) markPreferenceOutcomeUnknown() {
 
 func (s *Session) finishSuccessfulTurn() {
 	s.appendMu.Lock()
-	if turn, exists := s.turns[s.currentTurnID]; exists {
+	s.finishSuccessfulTurnLocked()
+	s.appendMu.Unlock()
+	s.afterSuccessfulTurn()
+}
+
+func (s *Session) finishSuccessfulTurnLocked() {
+	turnID := s.activeTurnID
+	if turnID == "" {
+		turnID = s.currentTurnID
+	}
+	if turn, exists := s.turns[turnID]; exists {
 		turn.Completed = true
 		if !turn.OutcomeUnknown {
 			turn.Protected = false
 		}
 	}
-	s.appendMu.Unlock()
+	if s.activeTurnID == turnID {
+		s.activeTurnID = ""
+	}
+	s.clearPendingLocked()
+}
+
+func (s *Session) afterSuccessfulTurn() {
 	s.contextRuntime.setPreferencePending(false)
 	s.trimRawHistory()
 	s.contextRuntime.triggerConsolidation()
+}
+
+// commitFinalAnswer is the ordinary-answer linearization point. Cancellation
+// observed while appendMu is held wins and leaves no assistant/source entry;
+// once this check succeeds, the completed answer wins over any later cancel.
+func (s *Session) commitFinalAnswer(ctx context.Context, message modelclient.Message, text string) error {
+	s.appendMu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.appendMu.Unlock()
+		return err
+	}
+	if s.contextRuntime.isClosed() {
+		s.appendMu.Unlock()
+		return ErrSessionClosed
+	}
+	turnID := s.activeTurnID
+	if turnID == "" {
+		turnID = s.currentTurnID
+	}
+	if turnID == "" || s.turns[turnID] == nil {
+		s.appendMu.Unlock()
+		return errors.New("Agent轮次已失效")
+	}
+	if err := s.appendCapturedMessageLocked(turnID, message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
+		s.appendMu.Unlock()
+		return err
+	}
+	s.finishSuccessfulTurnLocked()
+	s.appendMu.Unlock()
+	s.afterSuccessfulTurn()
+	return nil
 }
 
 func (s *Session) trimRawHistory() {
@@ -336,19 +468,19 @@ func (s *Session) Close() {
 	s.turns = make(map[string]*sessionTurn)
 	s.turnOrder = nil
 	s.currentTurnID = ""
+	s.activeTurnID = ""
 	s.toolHistory = make(map[string]string)
 	s.toolReferences = make(map[string]*ServerReference)
-	s.pendingCalls = nil
-	s.pendingEvents = nil
+	s.clearPendingLocked()
 	s.appendMu.Unlock()
+	s.activityMu.Lock()
+	s.activityStarts = make(map[string]time.Time)
+	s.activityMu.Unlock()
 }
 
 func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 	if s.contextRuntime.isClosed() {
 		return Result{}, ErrSessionClosed
-	}
-	if len(s.pendingCalls) != 0 {
-		return Result{}, errors.New("请先确认或拒绝待保存的长期偏好")
 	}
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -362,166 +494,46 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	ctx = withActivityTurn(ctx, turnID)
 	userMessage := modelclient.Message{Role: "user", Content: input}
 	if err := s.appendCapturedMessage(turnID, userMessage, input, SourceUser, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
 		s.discardTurn(turnID)
 		return Result{}, err
 	}
+	s.activityMu.Lock()
+	s.activityStarts = make(map[string]time.Time)
+	s.activityMu.Unlock()
 	s.activitySequence = 0
 	s.currentToolResultTokens = 0
 	s.remaining = s.options.MaxToolRounds
 	s.toolCallsRemaining = maxToolCallsPerTurn
-	return s.run(ctx, nil)
+	result, runErr := s.run(ctx, nil)
+	if runErr != nil {
+		runErr = preferContextError(ctx, runErr)
+		if ctx.Err() != nil {
+			s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: "turn-stop", Summary: "正在停止当前回答", Status: EventRunning}, Phase: ActivityStopping, StableCode: stableActivityCode(runErr, "turn_stopping")})
+		}
+		s.discardTurn(turnID)
+		if ctx.Err() != nil {
+			s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: "turn-stop", Summary: "当前回答已停止", Status: EventSucceeded}, Phase: ActivityStopped, StableCode: stableActivityCode(runErr, "turn_stopped")})
+		}
+		return Result{}, runErr
+	}
+	return cloneResult(result), nil
 }
 
-func (s *Session) ResolvePreference(ctx context.Context, approved bool) (Result, error) {
-	if s.contextRuntime.isClosed() {
-		return Result{}, ErrSessionClosed
+func cloneResult(value Result) Result {
+	value.Events = append([]Event(nil), value.Events...)
+	if value.Pending != nil {
+		pending := *value.Pending
+		value.Pending = &pending
 	}
-	if len(s.pendingCalls) == 0 || s.pendingIndex >= len(s.pendingCalls) {
-		return Result{}, errors.New("当前没有待确认的长期偏好")
+	if value.PendingQuestion != nil {
+		question := *value.PendingQuestion
+		question.Options = append([]QuestionOption(nil), value.PendingQuestion.Options...)
+		value.PendingQuestion = &question
 	}
-	if !approved && (s.pendingOperationID != "" || s.pendingDecisionOperationID != "") {
-		return Result{}, ErrPreferenceOutcomeUnknown
-	}
-	events := append([]Event(nil), s.pendingEvents...)
-	call := s.pendingCalls[s.pendingIndex]
-	var output any
-	var preferenceEvent Event
-	if approved {
-		PublishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{
-			ID: call.ID, Tool: call.Function.Name, Summary: "正在保存长期偏好", Status: EventRunning,
-		}})
-		if s.pendingOperationID == "" {
-			createOperationID, err := s.options.NewUUID()
-			if err != nil {
-				PublishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{
-					ID: call.ID, Tool: call.Function.Name, Summary: "无法开始长期偏好保存", Status: EventFailed, Detail: "create_operation_id_failed",
-				}})
-				return Result{}, errors.New("无法生成偏好创建操作ID")
-			}
-			decisionOperationID, err := s.options.NewUUID()
-			if err != nil || decisionOperationID == createOperationID {
-				PublishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{
-					ID: call.ID, Tool: call.Function.Name, Summary: "无法开始长期偏好保存", Status: EventFailed, Detail: "decision_operation_id_failed",
-				}})
-				return Result{}, errors.New("无法生成独立的偏好确认操作ID")
-			}
-			s.pendingOperationID = createOperationID
-			s.pendingDecisionOperationID = decisionOperationID
-		}
-		saved, err := s.createPreference(ctx, s.pendingArgs, s.pendingOperationID, s.pendingDecisionOperationID)
-		if err != nil {
-			status, detail := EventFailed, "request_failed"
-			if errors.Is(err, ErrPreferenceOutcomeUnknown) {
-				status, detail = EventOutcomeUnknown, "outcome_unknown"
-			}
-			PublishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{
-				ID: call.ID, Tool: call.Function.Name, Summary: "长期偏好未确认保存", Status: status, Detail: detail,
-			}})
-			if errors.Is(err, ErrPreferenceOutcomeUnknown) {
-				s.markPreferenceOutcomeUnknown()
-			} else {
-				s.pendingOperationID = ""
-				s.pendingDecisionOperationID = ""
-			}
-			return Result{}, err
-		}
-		output = saved
-		preferenceEvent = Event{ID: call.ID, Tool: call.Function.Name, Summary: "长期偏好已保存", Status: EventSucceeded}
-	} else {
-		output = map[string]any{"submitted": false, "saved": false, "reason": "user_declined"}
-		preferenceEvent = Event{ID: call.ID, Tool: call.Function.Name, Summary: "用户取消了长期偏好保存", Status: EventSucceeded}
-	}
-	PublishActivity(ctx, Activity{Kind: ActivityTool, Event: preferenceEvent})
-	events = append(events, preferenceEvent)
-	if err := s.appendToolResult(call.Function.Name, call.ID, output); err != nil {
-		return Result{}, err
-	}
-	calls, index := s.pendingCalls, s.pendingIndex+1
-	s.pendingCalls, s.pendingEvents = nil, nil
-	s.pendingIndex, s.pendingArgs, s.pendingOperationID, s.pendingDecisionOperationID = 0, preferenceArgs{}, "", ""
-	s.contextRuntime.setPreferencePending(false)
-	result, err := s.processCalls(ctx, calls, index, events)
-	if err == nil {
-		return result, nil
-	}
-	text := "已取消长期偏好保存；Agent后续回答暂时失败，你可以继续提问。"
-	if approved {
-		text = "长期偏好已保存；Agent后续回答暂时失败，你可以继续提问。"
-	}
-	message := modelclient.Message{Role: "assistant", Content: text}
-	if appendErr := s.appendCapturedMessage(s.currentTurnID, message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); appendErr != nil {
-		return Result{}, appendErr
-	}
-	s.finishSuccessfulTurn()
-	return Result{Events: events, Text: text}, nil
-}
-
-func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
-	if s.remaining <= 0 {
-		return Result{}, errors.New("Agent工具轮数已达到上限，请缩小问题范围后重试")
-	}
-	s.remaining--
-	plan, err := s.contextPlan()
-	if err != nil {
-		return Result{}, err
-	}
-	thinkingID := s.nextThinkingActivityID()
-	thinkingSummary := "正在分析问题"
-	if len(events) > 0 {
-		thinkingSummary = "正在结合工具结果继续分析"
-	}
-	PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-		ID: thinkingID, Summary: thinkingSummary, Status: EventRunning,
-	}})
-	response, err := s.model.Complete(ctx, plan.Request)
-	if err != nil {
-		PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-			ID: thinkingID, Summary: "模型响应失败", Status: EventFailed, Detail: "model_request_failed",
-		}})
-		return Result{}, err
-	}
-	if response.Usage != nil {
-		s.estimator.ObserveActual(plan.EstimatedInput, *response.Usage)
-	}
-	if err := validateModelMessage(response.Message); err != nil {
-		PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-			ID: thinkingID, Summary: "模型响应不符合协议", Status: EventFailed, Detail: "invalid_model_response",
-		}})
-		return Result{}, err
-	}
-	if len(response.Message.ToolCalls) > s.toolCallsRemaining {
-		PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-			ID: thinkingID, Summary: "工具调用超过安全上限", Status: EventFailed, Detail: "tool_limit_exceeded",
-		}})
-		return Result{}, errors.New("模型请求的工具调用总数超过安全上限")
-	}
-	s.toolCallsRemaining -= len(response.Message.ToolCalls)
-	if len(response.Message.ToolCalls) == 0 {
-		text := strings.TrimSpace(response.Message.Content)
-		if text == "" {
-			PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-				ID: thinkingID, Summary: "模型没有返回可显示的回答", Status: EventFailed, Detail: "empty_model_response",
-			}})
-			return Result{}, errors.New("模型没有返回可显示的回答")
-		}
-		PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-			ID: thinkingID, Summary: "已完成回答组织", Status: EventSucceeded,
-		}})
-		if err := s.appendCapturedMessage(s.currentTurnID, response.Message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
-			return Result{}, err
-		}
-		s.finishSuccessfulTurn()
-		return Result{Text: text, Events: events}, nil
-	}
-	PublishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{
-		ID: thinkingID, Summary: "已确定下一步工具操作", Status: EventSucceeded,
-	}})
-	if err := s.appendTurnMessage(s.currentTurnID, response.Message); err != nil {
-		return Result{}, err
-	}
-	return s.processCalls(ctx, response.Message.ToolCalls, 0, events)
+	return value
 }
 
 func validateModelMessage(message modelclient.Message) error {
@@ -532,7 +544,15 @@ func validateModelMessage(message modelclient.Message) error {
 		return errors.New("模型单轮请求的工具调用数超过安全上限")
 	}
 	totalArguments := 0
+	seenCallIDs := make(map[string]struct{}, len(message.ToolCalls))
 	for _, call := range message.ToolCalls {
+		if call.ID == "" || call.Type != "function" || call.Function.Name == "" {
+			return errors.New("模型工具调用身份无效")
+		}
+		if _, duplicate := seenCallIDs[call.ID]; duplicate {
+			return errors.New("模型工具调用ID重复")
+		}
+		seenCallIDs[call.ID] = struct{}{}
 		if len(call.Function.Arguments) > maxToolCallArgumentsBytes {
 			return errors.New("模型工具参数超过客户端安全上限")
 		}
@@ -556,241 +576,17 @@ func containsUnsafeControl(value string) bool {
 	return false
 }
 
-func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall, start int, events []Event) (Result, error) {
-	for index := start; index < len(calls); index++ {
-		call := calls[index]
-		PublishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{
-			ID: call.ID, Tool: call.Function.Name, Summary: toolRunningSummary(call.Function.Name), Status: EventRunning,
-		}})
-		if call.Function.Name == "remember_preference" {
-			args, err := decodePreferenceArgs(call.Function.Arguments)
-			if err != nil {
-				if appendErr := s.appendToolResult(call.Function.Name, call.ID, map[string]any{"error": err.Error()}); appendErr != nil {
-					return Result{}, appendErr
-				}
-				event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "偏好候选参数无效", Status: EventInvalid, Detail: "invalid_arguments"}
-				PublishActivity(ctx, Activity{Kind: ActivityTool, Event: event})
-				events = append(events, event)
-				continue
-			}
-			s.pendingCalls, s.pendingIndex, s.pendingArgs = calls, index, args
-			s.pendingEvents = append([]Event(nil), events...)
-			s.markPreferencePending()
-			pendingEvent := Event{ID: call.ID, Tool: call.Function.Name, Summary: "等待用户确认长期偏好候选", Status: EventConfirmationRequired}
-			PublishActivity(ctx, Activity{Kind: ActivityTool, Event: pendingEvent})
-			return Result{Events: append(events, pendingEvent), Pending: &PreferenceConfirmation{
-				Content: args.Content, Reason: args.Reason, Category: args.Category,
-				Sensitivity: args.Sensitivity, Stability: args.Stability,
-			}}, nil
-		}
-		output, summary := s.executeReadTool(ctx, call)
-		if err := s.appendToolResult(call.Function.Name, call.ID, output); err != nil {
-			return Result{}, err
-		}
-		event := eventFromToolOutput(call.Function.Name, summary, output)
-		event.ID = call.ID
-		PublishActivity(ctx, Activity{Kind: ActivityTool, Event: event})
-		events = append(events, event)
-	}
-	return s.run(ctx, events)
-}
-
-func (s *Session) executeReadTool(ctx context.Context, call modelclient.ToolCall) (any, string) {
-	switch call.Function.Name {
-	case "search_knowledge":
-		var args struct {
-			Query string `json:"query"`
-		}
-		if err := decodeArguments(call.Function.Arguments, &args); err != nil || strings.TrimSpace(args.Query) == "" {
-			return toolError("invalid_arguments"), "知识检索参数无效"
-		}
-		result, err := s.server.RetrieveKnowledge(ctx, api.KnowledgeRetrievalRequest{
-			Query: strings.TrimSpace(args.Query), QueryContextSchemaVersion: api.QueryContextSchemaVersion,
-			Context: map[string]any{"surface": "client_agent"},
-			Limits:  &api.KnowledgeQueryLimits{MaxDepth: 4, CandidatesPerLayer: 8, MaxHits: 8, TotalCandidates: 32},
-		})
-		if err != nil {
-			return toolFailure(err, "knowledge_unavailable"), "知识库检索失败"
-		}
-		hits := make([]map[string]any, 0, len(result.Hits))
-		for _, hit := range result.Hits {
-			hits = append(hits, map[string]any{
-				"path":             hit.Path,
-				"node_revision_id": hit.NodeRevisionID,
-				"text":             hit.CanonicalSlice,
-				"provenance":       hit.Provenance,
-			})
-		}
-		return map[string]any{
-			"knowledge_revision_id": result.KnowledgeRevisionID,
-			"hits":                  hits,
-			"degraded":              result.Degraded,
-			"truncated":             result.Truncated,
-		}, fmt.Sprintf("检索到 %d 条知识片段", len(hits))
-	case "get_learning_progress":
-		if err := requireEmptyArguments(call.Function.Arguments); err != nil {
-			return toolError("invalid_arguments"), "学习进度参数无效"
-		}
-		result, err := s.server.CurrentSession(ctx)
-		if err != nil {
-			if isAPINotFound(err) {
-				return map[string]any{"active": false, "reason": "no_current_session"}, "当前没有进行中的学习会话"
-			}
-			return toolFailure(err, "current_session_unavailable"), "当前学习进度不可用"
-		}
-		return map[string]any{"active": true, "session": result}, "已读取当前学习状态"
-	case "get_learning_route":
-		var args struct {
-			Offset int `json:"offset"`
-		}
-		if err := decodeArguments(call.Function.Arguments, &args); err != nil || args.Offset < 0 {
-			return toolError("invalid_arguments"), "学习路线参数无效"
-		}
-		view, err := s.server.CurrentSession(ctx)
-		if err != nil {
-			if isAPINotFound(err) {
-				return map[string]any{"active": false, "reason": "no_current_session"}, "当前没有进行中的学习会话"
-			}
-			return toolFailure(err, "learning_route_unavailable"), "学习路线不可用"
-		}
-		if view.WorkItem == nil || view.WorkItem.RouteRevision == nil {
-			return map[string]any{"active": false, "reason": "route_not_ready", "session_state": view.Session.State}, "当前学习会话尚未生成路线"
-		}
-		route := view.WorkItem.RouteRevision
-		start := min(args.Offset, len(route.Steps))
-		end := min(start+12, len(route.Steps))
-		steps := make([]map[string]any, 0, end-start)
-		for _, step := range route.Steps[start:end] {
-			steps = append(steps, map[string]any{
-				"ordinal":              step.Ordinal,
-				"node_revision_id":     step.NodeRevisionID,
-				"teaching_intent":      step.TeachingIntent,
-				"completion_condition": step.CompletionCondition,
-			})
-		}
-		value := map[string]any{
-			"active":            true,
-			"route_revision_id": route.RouteRevisionID,
-			"goal_revision_id":  route.GoalRevisionID,
-			"revision":          route.Revision,
-			"generation":        view.Metadata.Generation,
-			"offset":            start,
-			"returned":          len(steps),
-			"total_steps":       len(route.Steps),
-			"steps":             steps,
-			"has_more":          end < len(route.Steps),
-		}
-		if end < len(route.Steps) {
-			value["next_offset"] = end
-		}
-		return value, fmt.Sprintf("已读取当前路线的 %d/%d 个步骤", len(steps), len(route.Steps))
-	case "get_due_reviews":
-		var args struct {
-			Cursor string `json:"cursor"`
-		}
-		if err := decodeArguments(call.Function.Arguments, &args); err != nil || len(args.Cursor) > 4096 {
-			return toolError("invalid_arguments"), "复习任务参数无效"
-		}
-		due := s.options.Now().UTC()
-		result, err := s.server.Reviews(ctx, args.Cursor, 20, &due)
-		if err != nil {
-			return toolFailure(err, "reviews_unavailable"), "复习任务不可用"
-		}
-		value := map[string]any{
-			"items":      result.Items,
-			"returned":   len(result.Items),
-			"due_before": due,
-			"generation": result.Metadata.Generation,
-			"has_more":   result.NextCursor != "",
-		}
-		if result.NextCursor != "" {
-			value["next_cursor"] = result.NextCursor
-		}
-		return value, fmt.Sprintf("已读取 %d 项到期复习", len(result.Items))
-	case "list_long_term_preferences":
-		var args struct {
-			Cursor string `json:"cursor"`
-		}
-		if err := decodeArguments(call.Function.Arguments, &args); err != nil || len(args.Cursor) > 4096 {
-			return toolError("invalid_arguments"), "长期偏好参数无效"
-		}
-		result, err := s.server.ExportMemory(ctx, args.Cursor, 20)
-		if err != nil {
-			return toolFailure(err, "preferences_unavailable"), "长期偏好不可用"
-		}
-		degraded := result.Degraded
-		reasonCodes := append([]string(nil), result.ReasonCodes...)
-		privacyInvalidated := false
-		for _, code := range reasonCodes {
-			if code == "content_redacted" || code == "privacy_clear_in_progress" {
-				privacyInvalidated = true
-			}
-		}
-		now := s.options.Now().UTC()
-		items := make([]map[string]any, 0, len(result.Items))
-		for _, item := range result.Items {
-			if item.ContentStatus == "redacted" {
-				degraded = true
-				privacyInvalidated = true
-				reasonCodes = appendUnique(reasonCodes, "content_redacted")
-			}
-			if item.ContentStatus != "available" || strings.TrimSpace(item.Content) == "" {
-				continue
-			}
-			candidate, candidateErr := s.server.MemoryCandidate(ctx, item.Record.CandidateID)
-			if candidateErr != nil {
-				degraded = true
-				reasonCodes = appendUnique(reasonCodes, "candidate_metadata_unavailable")
-				continue
-			}
-			if !preferenceCategory(candidate.Candidate.Category) || !candidate.Candidate.ValidUntil.After(now) {
-				continue
-			}
-			items = append(items, map[string]any{
-				"memory_id":   item.Record.LogicalMemoryID,
-				"revision":    item.Record.Revision,
-				"category":    candidate.Candidate.Category,
-				"sensitivity": candidate.Candidate.Sensitivity,
-				"stability":   candidate.Candidate.Stability,
-				"valid_until": candidate.Candidate.ValidUntil,
-				"content":     item.Content,
-			})
-		}
-		value := map[string]any{
-			"items":               items,
-			"read_generation":     result.ReadGeneration,
-			"degraded":            degraded,
-			"privacy_invalidated": privacyInvalidated,
-			"reason_codes":        reasonCodes,
-			"has_more":            result.NextCursor != "",
-		}
-		if result.NextCursor != "" {
-			value["next_cursor"] = result.NextCursor
-		}
-		summary := fmt.Sprintf("已读取 %d 条长期偏好", len(items))
-		if degraded {
-			summary += "（部分内容暂不可用）"
-		}
-		return value, summary
-	case "recall_session_memory":
-		var args struct {
-			MemoryID string `json:"memory_id"`
-		}
-		if err := decodeArguments(call.Function.Arguments, &args); err != nil ||
-			!validOpaqueID(args.MemoryID, "obs_") && !validOpaqueID(args.MemoryID, "ref_") {
-			return toolError("invalid_arguments"), "会话证据回查参数无效"
-		}
-		value := s.contextRuntime.recallMemory(args.MemoryID)
-		if toolResultCode(value) == ContextSourceUnavailable {
-			s.contextRuntime.PublishSourceUnavailable()
-		}
-		return value, recallSummary(value)
-	default:
-		return toolError("unknown tool"), "模型请求了未知工具"
-	}
-}
-
 func (s *Session) createPreference(ctx context.Context, args preferenceArgs, createOperationID, decisionOperationID string) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.preferenceCompensationPending() {
+		failureCode, err := s.rejectPendingPreferenceCandidate(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return nil, preferenceSaveFailure(failureCode)
+	}
 	validUntil := s.options.Now().UTC().Add(90 * 24 * time.Hour)
 	if args.Stability == "stable" {
 		validUntil = s.options.Now().UTC().AddDate(10, 0, 0)
@@ -799,10 +595,13 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 		OperationID: createOperationID, PayloadSchemaVersion: 1, Content: args.Content, Reason: args.Reason,
 		Category: args.Category, Sensitivity: args.Sensitivity, Stability: args.Stability, ValidUntil: validUntil,
 	})
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w，请使用相同操作ID重试核对", ErrPreferenceOutcomeUnknown)
+	}
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 {
-			return nil, fmt.Errorf("长期偏好未保存（%s）", apiErr.Code)
+			return nil, preferenceSaveFailure(apiErr.Code)
 		}
 		return nil, fmt.Errorf("%w，请使用相同操作ID重试核对", ErrPreferenceOutcomeUnknown)
 	}
@@ -824,7 +623,7 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 			return nil, fmt.Errorf("%w，待确认候选缺少有效身份或修订", ErrPreferenceOutcomeUnknown)
 		}
 	case "rejected", "expired":
-		return nil, fmt.Errorf("长期偏好未保存（candidate_%s）", candidate.Status)
+		return nil, preferenceSaveFailure("candidate_" + candidate.Status)
 	default:
 		return nil, fmt.Errorf("%w，服务端返回未知候选状态", ErrPreferenceOutcomeUnknown)
 	}
@@ -833,10 +632,18 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 		OperationID: decisionOperationID, PayloadSchemaVersion: 1, ExpectedRevision: candidate.Revision,
 		Decision: "admit", Reason: "user_confirmed_preference_save",
 	})
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%w，请使用相同操作ID重试核对", ErrPreferenceOutcomeUnknown)
+	}
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 {
-			return nil, fmt.Errorf("长期偏好未保存（%s）", apiErr.Code)
+			s.setPreferenceCompensation(candidate.ID, candidate.Revision, apiErr.Code)
+			failureCode, rejectErr := s.rejectPendingPreferenceCandidate(ctx)
+			if rejectErr != nil {
+				return nil, rejectErr
+			}
+			return nil, preferenceSaveFailure(failureCode)
 		}
 		return nil, fmt.Errorf("%w，请使用相同操作ID重试核对", ErrPreferenceOutcomeUnknown)
 	}
@@ -848,6 +655,86 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 		"submitted": true, "saved": true, "candidate_id": decisionResult.Candidate.Candidate.ID,
 		"status": decisionResult.Candidate.Candidate.Status, "replayed": result.Replayed || decisionResult.Replayed,
 	}, nil
+}
+
+func preferenceSaveFailure(code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "request_rejected"
+	}
+	return fmt.Errorf("长期偏好未保存（%s）", code)
+}
+
+func (s *Session) preferenceCompensationPending() bool {
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	return s.pendingCandidateID != ""
+}
+
+func (s *Session) setPreferenceCompensation(candidateID string, revision int64, failureCode string) {
+	s.appendMu.Lock()
+	s.pendingCandidateID = candidateID
+	s.pendingCandidateRevision = revision
+	s.pendingPreferenceFailureCode = strings.TrimSpace(failureCode)
+	s.appendMu.Unlock()
+}
+
+func (s *Session) ensurePreferenceRejectOperationID() error {
+	s.appendMu.Lock()
+	if s.pendingCandidateID == "" {
+		s.appendMu.Unlock()
+		return errors.New("没有需要补偿拒绝的长期偏好候选")
+	}
+	if s.pendingRejectOperationID != "" {
+		s.appendMu.Unlock()
+		return nil
+	}
+	createOperationID := s.pendingOperationID
+	decisionOperationID := s.pendingDecisionOperationID
+	s.appendMu.Unlock()
+
+	rejectOperationID, err := s.options.NewUUID()
+	if err != nil || rejectOperationID == "" || rejectOperationID == createOperationID || rejectOperationID == decisionOperationID {
+		return fmt.Errorf("%w，无法生成独立的候选补偿操作ID", ErrPreferenceOutcomeUnknown)
+	}
+	s.appendMu.Lock()
+	if s.pendingCandidateID == "" {
+		s.appendMu.Unlock()
+		return errors.New("需要补偿拒绝的长期偏好候选已失效")
+	}
+	if s.pendingRejectOperationID == "" {
+		s.pendingRejectOperationID = rejectOperationID
+	}
+	s.appendMu.Unlock()
+	return nil
+}
+
+func (s *Session) rejectPendingPreferenceCandidate(ctx context.Context) (string, error) {
+	if err := s.ensurePreferenceRejectOperationID(); err != nil {
+		return "", err
+	}
+	s.appendMu.Lock()
+	candidateID := s.pendingCandidateID
+	candidateRevision := s.pendingCandidateRevision
+	failureCode := s.pendingPreferenceFailureCode
+	rejectOperationID := s.pendingRejectOperationID
+	s.appendMu.Unlock()
+
+	result, err := s.server.DecideMemoryCandidate(ctx, candidateID, api.MemoryCandidateDecisionRequest{
+		OperationID: rejectOperationID, PayloadSchemaVersion: 1, ExpectedRevision: candidateRevision,
+		Decision: "reject", Reason: "compensate_failed_preference_admission",
+	})
+	if ctx.Err() != nil {
+		return "", fmt.Errorf("%w，候选补偿结果未知，请使用相同操作ID重试核对", ErrPreferenceOutcomeUnknown)
+	}
+	if err != nil {
+		return "", fmt.Errorf("%w，长期偏好候选补偿拒绝未确认", ErrPreferenceOutcomeUnknown)
+	}
+	if result.Candidate == nil || result.Candidate.Candidate.ID != candidateID ||
+		result.Candidate.Candidate.Status != "rejected" || result.Candidate.Candidate.Revision <= candidateRevision {
+		return "", fmt.Errorf("%w，服务端未确认长期偏好候选已拒绝", ErrPreferenceOutcomeUnknown)
+	}
+	return failureCode, nil
 }
 
 func (s *Session) appendToolResult(tool, callID string, value any) error {
@@ -906,6 +793,40 @@ func (s *Session) appendToolResult(tool, callID string, value any) error {
 	s.messageTurnIDs = append(s.messageTurnIDs, s.currentTurnID)
 	if sourceID != "" {
 		if turn, exists := s.turns[s.currentTurnID]; exists {
+			turn.SourceIDs = append(turn.SourceIDs, sourceID)
+		}
+	}
+	return nil
+}
+
+func (s *Session) appendSessionToolResult(tool, callID string, value any) error {
+	projection := projectToolResult(tool, value)
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	if s.contextRuntime.isClosed() {
+		return ErrSessionClosed
+	}
+	live := projection.Live
+	estimated := s.estimator.EstimateText(live) + 6
+	if s.currentToolResultTokens+estimated > s.currentToolResultBudget {
+		live = currentTurnBudgetProjection(tool, value)
+		estimated = s.estimator.EstimateText(live) + 6
+	}
+	s.currentToolResultTokens = min(s.currentToolResultBudget, s.currentToolResultTokens+estimated)
+	message := modelclient.Message{Role: "tool", ToolCallID: callID, Content: live}
+	sourceID, err := s.contextRuntime.appendSource(sourceDraft{
+		TurnID: s.currentTurnID, Kind: SourceTool, CreatedAt: s.options.Now().UTC(), ModelMessage: message,
+		RecallText: projection.Recall, Authority: AuthoritySessionStatement, Freshness: FreshnessSessionCurrent,
+	})
+	if err != nil {
+		return err
+	}
+	s.toolHistory[callID] = projection.History
+	delete(s.toolReferences, callID)
+	s.messages = append(s.messages, message)
+	s.messageTurnIDs = append(s.messageTurnIDs, s.currentTurnID)
+	if sourceID != "" {
+		if turn := s.turns[s.currentTurnID]; turn != nil {
 			turn.SourceIDs = append(turn.SourceIDs, sourceID)
 		}
 	}
@@ -1256,6 +1177,8 @@ const systemPrompt = `你是 edu-agent 客户端中的中文学习助手。你�
 1. 回答学习问题前，按需使用知识库、当前学习状态、路线、复习任务和长期偏好工具，不要臆造服务端内容。
 2. 以中文为主，表达清楚、具体、可执行。尊重用户已经保存的交互偏好。
 3. 只有用户明确表达希望长期保留的偏好、时间约束或个人学习背景时，才调用 remember_preference。
-4. remember_preference 会触发本地用户确认；未获得确认前，不得声称偏好已经保存。
-5. 不得请求、显示或保存 API Key、设备令牌、服务密钥等秘密。不要把普通聊天原文当作长期偏好。
-6. 工具失败时如实说明，并继续提供不依赖该工具的有限帮助。`
+4. remember_preference 会触发专用本地确认；未获得“保存为长期记忆”的明确确认前，不得声称偏好已经保存。“仅本次会话”和“不采用”都不是服务端写授权。
+5. 只有继续学习确实需要用户做当前会话决定时才调用 ask_user_question。单选返回一个稳定 option ID，多选返回稳定 option ID 数组，也可接收有界自定义回答；普通问询答案只用于当前会话，不构成长期记忆、外部写入、删除或发布授权。
+6. ask_user_question 不得索取密码、API Key、token、私钥、恢复码或助记词；不得把选项文案描述成持久写入授权。
+7. 不得请求、显示或保存 API Key、设备令牌、服务密钥等秘密。不要把普通聊天原文当作长期偏好。
+8. 工具失败时如实说明，并继续提供不依赖该工具的有限帮助。`

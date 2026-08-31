@@ -103,7 +103,7 @@ func (m model) renderSidebar(width, height int) string {
 }
 
 func (m model) sidebarContent(width, budget int) []string {
-	compact := budget <= 12
+	compact := budget <= 15
 	lines := []string{
 		sidebarSectionStyle.Render("AGENT"),
 		m.renderStatus(),

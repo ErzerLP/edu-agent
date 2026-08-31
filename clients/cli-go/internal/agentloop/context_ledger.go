@@ -362,6 +362,99 @@ func (r *ContextRuntime) isClosed() bool {
 	return r.closed
 }
 
+func (r *ContextRuntime) discardIncompleteTurn(turnID string) {
+	if turnID == "" || r.mode != ContextCompactionAuto {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	removedSources := make(map[string]struct{})
+	oldIndex := make(map[string]int, len(r.ledger.SourceIndex))
+	for id, index := range r.ledger.SourceIndex {
+		oldIndex[id] = index
+	}
+	oldCoverage := r.ledger.CoverageIndex
+	newOrder := make([]string, 0, len(r.ledger.SourceOrder))
+	for _, sourceID := range r.ledger.SourceOrder {
+		source := r.ledger.Sources[sourceID]
+		if source.TurnID == turnID {
+			removedSources[sourceID] = struct{}{}
+			delete(r.ledger.Sources, sourceID)
+			continue
+		}
+		newOrder = append(newOrder, sourceID)
+	}
+	if len(removedSources) == 0 {
+		return
+	}
+	r.ledger.SourceOrder = newOrder
+	r.ledger.SourceIndex = make(map[string]int, len(newOrder))
+	r.ledger.CoverageIndex = -1
+	r.ledger.CoverageWatermark = ""
+	for index, sourceID := range newOrder {
+		r.ledger.SourceIndex[sourceID] = index
+		if previous, exists := oldIndex[sourceID]; exists && previous <= oldCoverage {
+			r.ledger.CoverageIndex = index
+			r.ledger.CoverageWatermark = sourceID
+		}
+	}
+
+	removedObservations := make(map[string]struct{})
+	observationOrder := make([]string, 0, len(r.ledger.ObservationOrder))
+	for _, observationID := range r.ledger.ObservationOrder {
+		observation := r.ledger.Observations[observationID]
+		remove := false
+		for _, sourceID := range observation.SourceEntryIDs {
+			if _, missing := removedSources[sourceID]; missing {
+				remove = true
+				break
+			}
+		}
+		if remove {
+			removedObservations[observationID] = struct{}{}
+			delete(r.ledger.Observations, observationID)
+			delete(r.ledger.Tombstones, observationID)
+			continue
+		}
+		observationOrder = append(observationOrder, observationID)
+	}
+	r.ledger.ObservationOrder = observationOrder
+
+	reflectionOrder := make([]string, 0, len(r.ledger.ReflectionOrder))
+	for _, reflectionID := range r.ledger.ReflectionOrder {
+		reflection := r.ledger.Reflections[reflectionID]
+		remove := false
+		for _, support := range reflection.Support {
+			if _, missing := removedObservations[support.ObservationID]; missing {
+				remove = true
+				break
+			}
+		}
+		if remove {
+			delete(r.ledger.Reflections, reflectionID)
+			continue
+		}
+		reflectionOrder = append(reflectionOrder, reflectionID)
+	}
+	r.ledger.ReflectionOrder = reflectionOrder
+
+	supersessions := make([]Supersession, 0, len(r.ledger.Supersessions))
+	for _, relation := range r.ledger.Supersessions {
+		_, olderRemoved := removedObservations[relation.OlderObservationID]
+		_, newerRemoved := removedObservations[relation.NewerObservationID]
+		if !olderRemoved && !newerRemoved {
+			supersessions = append(supersessions, relation)
+		}
+	}
+	r.ledger.Supersessions = supersessions
+	delete(r.hotTurns, turnID)
+	delete(r.degradedTurns, turnID)
+	r.refreshMemoryCountsLocked()
+}
+
 func (r *ContextRuntime) setPreferencePending(pending bool) {
 	r.mu.Lock()
 	if !r.closed {

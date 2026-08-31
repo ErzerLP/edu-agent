@@ -66,6 +66,58 @@ func TestCompleteAcceptsMissingUsageAndOmitsUnsetMaxTokens(t *testing.T) {
 	}
 }
 
+func TestCompleteRejectsIncompleteAndUnknownFinishReasons(t *testing.T) {
+	for _, test := range []struct {
+		reason string
+		code   ErrorCode
+	}{
+		{reason: "length", code: ErrorCodeResponseTruncated},
+		{reason: "content_filter", code: ErrorCodeContentFiltered},
+		{reason: "provider_unknown", code: ErrorCodeResponseProtocol},
+	} {
+		t.Run(test.reason, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"partial"},"finish_reason":"`+test.reason+`"}]}`)
+			}))
+			defer server.Close()
+			client, err := New(server.URL, "model", "", time.Second, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Complete(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}})
+			if StableErrorCode(err) != test.code || response.Message.Content != "" || response.FinishReason != "" || response.Usage != nil || response.CompatibilityFallback {
+				t.Fatalf("response=%+v error=%v code=%q", response, err, StableErrorCode(err))
+			}
+		})
+	}
+}
+
+func TestCompleteRejectsFinishReasonToolMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{name: "tool reason without calls", body: `{"choices":[{"message":{"role":"assistant","content":"text"},"finish_reason":"tool_calls"}]}`},
+		{name: "calls with stop reason", body: `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"get_learning_progress","arguments":"{}"}}]},"finish_reason":"stop"}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, test.body)
+			}))
+			defer server.Close()
+			client, err := New(server.URL, "model", "", time.Second, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Complete(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}}); StableErrorCode(err) != ErrorCodeResponseProtocol {
+				t.Fatalf("error=%v code=%q", err, StableErrorCode(err))
+			}
+		})
+	}
+}
+
 func TestCompleteRefusesRedirectAndRedactsProviderBody(t *testing.T) {
 	var redirected bool
 	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -7,11 +7,20 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 const (
 	composerMinRows = 2
 	composerMaxRows = 6
+)
+
+var (
+	selectorPanelStyle  = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("6")).Padding(0, 1)
+	selectorTitleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	selectorOptionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	selectorFocusStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 )
 
 type footerHint struct {
@@ -27,6 +36,146 @@ func (m model) renderHeader(width int) string {
 		return line
 	}
 	return titleStyle.Render(truncateDisplayWidth("◇ edu-agent", width))
+}
+
+func (m model) renderControl(width int) string {
+	if m.selector != nil {
+		return m.renderSelector(width)
+	}
+	return m.renderComposer(width)
+}
+
+func (m model) renderSelector(width int) string {
+	selector := m.selector
+	if selector == nil {
+		return ""
+	}
+	innerWidth := max(12, width-4)
+	bodyRows, detailRows := 2, 2
+	lines := []string{selectorTitleStyle.Render(truncateDisplayWidth(selector.title, innerWidth))}
+	for _, line := range wrapDisplayLines(selector.body, innerWidth, bodyRows) {
+		lines = append(lines, mutedStyle.Render(line))
+	}
+
+	maxVisibleOptions, optionLabelRows := 5, 1
+	if selector.kind == selectorQuestion {
+		maxVisibleOptions, optionLabelRows = 3, 2
+		if m.height <= minimumHeight {
+			maxVisibleOptions = 1
+		}
+		if m.height >= 28 {
+			optionLabelRows = 3
+		}
+	} else if m.height >= 22 {
+		maxVisibleOptions = 8
+	}
+	start, end := 0, len(selector.options)
+	if end > maxVisibleOptions {
+		start = max(0, selector.focus-maxVisibleOptions/2)
+		end = min(len(selector.options), start+maxVisibleOptions)
+		start = max(0, end-maxVisibleOptions)
+	}
+	for index := start; index < end; index++ {
+		option := selector.options[index]
+		cursor := "  "
+		if selector.focus == index {
+			cursor = "› "
+		}
+		marker := "○"
+		if selector.kind == selectorQuestion && selector.mode == agentloop.QuestionMultiple {
+			marker = "[ ]"
+			if option.Selected {
+				marker = "[x]"
+			}
+		} else if option.Selected {
+			marker = "●"
+		}
+		labelText := safeSingleLineTerminalText(option.Label)
+		prefix := fmt.Sprintf("%s%d. %s ", cursor, index+1, marker)
+		continuation := strings.Repeat(" ", lipgloss.Width(prefix))
+		labelWidth := max(4, innerWidth-lipgloss.Width(prefix))
+		wrappedLabel := wrapDisplayLines(labelText, labelWidth, optionLabelRows)
+		style := selectorOptionStyle
+		if selector.focus == index {
+			style = selectorFocusStyle
+		}
+		for row, labelLine := range wrappedLabel {
+			linePrefix := continuation
+			if row == 0 {
+				linePrefix = prefix
+			}
+			lines = append(lines, style.Render(linePrefix+labelLine))
+		}
+	}
+	if selector.focus >= start && selector.focus < end {
+		focused := selector.options[selector.focus]
+		if description := strings.TrimSpace(focused.Description); description != "" {
+			for _, line := range wrapDisplayLines("说明："+description, innerWidth, detailRows) {
+				lines = append(lines, mutedStyle.Render(line))
+			}
+		}
+	}
+	if start > 0 || end < len(selector.options) {
+		lines = append(lines, mutedStyle.Render(fmt.Sprintf("  选项 %d-%d / %d", start+1, end, len(selector.options))))
+	}
+	if selector.hasCustom {
+		cursor := "  "
+		if selector.focus == len(selector.options) {
+			cursor = "› "
+		}
+		value := safeComposerText(selector.custom.Value())
+		if strings.TrimSpace(value) == "" {
+			value = "输入自定义回答"
+		}
+		customLines := strings.Split(value, "\n")
+		if len(customLines) > 2 {
+			customLines = customLines[len(customLines)-2:]
+		}
+		for index, line := range customLines {
+			prefix := "    "
+			if index == 0 {
+				prefix = cursor + "0. 自定义 "
+			}
+			style := selectorOptionStyle
+			if selector.focus == len(selector.options) {
+				style = selectorFocusStyle
+			}
+			lines = append(lines, style.Render(truncateDisplayWidth(prefix+line, innerWidth)))
+		}
+	}
+	lines = append(lines, mutedStyle.Render(truncateDisplayWidth(selector.helpText(), innerWidth)))
+	return selectorPanelStyle.Width(max(12, width-2)).Render(strings.Join(lines, "\n"))
+}
+
+func wrapDisplayLines(value string, width, maxLines int) []string {
+	if width <= 0 || maxLines <= 0 {
+		return nil
+	}
+	value = strings.ReplaceAll(safeTerminalText(value), "\t", " ")
+	wrapped := make([]string, 0, maxLines)
+	for sourceLine := range strings.SplitSeq(value, "\n") {
+		if sourceLine == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+		line := ""
+		for _, current := range sourceLine {
+			candidate := line + string(current)
+			if line != "" && lipgloss.Width(candidate) > width {
+				wrapped = append(wrapped, line)
+				line = string(current)
+				continue
+			}
+			line = candidate
+		}
+		wrapped = append(wrapped, line)
+	}
+	if len(wrapped) <= maxLines {
+		return wrapped
+	}
+	wrapped = wrapped[:maxLines]
+	wrapped[maxLines-1] = truncateDisplayWidth(strings.TrimSuffix(wrapped[maxLines-1], "…")+"…", width)
+	return wrapped
 }
 
 func (m model) renderComposer(width int) string {
@@ -112,11 +261,18 @@ func (m model) renderFooterStatus(width int) string {
 		newPart = newMessageStyle.Render("↓ 有新消息")
 	}
 
+	effort := m.session.ReasoningEffort()
+	if effort == "" {
+		effort = modelclient.ReasoningEffortAuto
+	}
+	reasoningPart := "推理 " + string(effort)
+	if m.busy && m.activeEffort != "" && m.activeEffort != effort {
+		reasoningPart = fmt.Sprintf("推理 %s → 下一请求 %s", m.activeEffort, effort)
+	}
 	candidates := [][]string{
-		{newPart, m.renderStatus(), mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextSummary(true) + fmt.Sprintf(" · %d轮 · %d条记忆", m.contextStatus.RecentCompleteTurns, m.contextStatus.MemoryItemCount)), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(modelPart)},
+		{newPart, m.renderStatus(), mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(reasoningPart)},
 	}
 	for _, parts := range candidates {
 		line := joinFooterParts(parts)
@@ -168,31 +324,28 @@ func (m model) renderFooterHints(width int) string {
 
 func (m model) footerHintVariants() [][]footerHint {
 	switch {
-	case m.busy && m.pending != nil:
+	case m.selector != nil:
 		return [][]footerHint{
-			{{key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+G", action: "到底部"}, {key: "Ctrl+C", action: "取消退出"}},
-			{{key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+C", action: "取消退出"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "PgUp/PgDn", action: "检查详情"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}},
 		}
-	case m.pending != nil && m.pending.RetryOnly:
-		return [][]footerHint{
-			{{key: "Y", action: "重试核对"}, {key: "PgUp/PgDn", action: "检查偏好"}, {key: "Ctrl+O", action: "工具详情"}, {key: "Ctrl+C", action: "退出"}},
-			{{key: "Y", action: "重试核对"}, {key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+C", action: "退出"}},
+	case m.stopping:
+		return [][]footerHint{{{key: "Esc", action: "正在停止"}, {key: "Ctrl+C", action: "退出"}}}
+	case m.busy && m.activeCancelable:
+		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "F3", action: "推理强度"}, {key: "Ctrl+O", action: "活动详情"}}
+		if m.isSlowTurn() {
+			hints = append(hints, footerHint{key: "提示", action: m.slowTurnDetail()})
 		}
-	case m.pending != nil:
-		return [][]footerHint{
-			{{key: "Y", action: "确认保存"}, {key: "N", action: "取消"}, {key: "PgUp/PgDn", action: "滚动检查"}, {key: "Ctrl+O", action: "工具详情"}},
-			{{key: "Y", action: "保存"}, {key: "N", action: "取消"}, {key: "PgUp/PgDn", action: "滚动"}},
-		}
+		return [][]footerHint{hints, {{key: "Esc", action: "停止"}, {key: "F3", action: "推理"}, {key: "Ctrl+C", action: "退出"}}}
 	case m.busy:
 		return [][]footerHint{
-			{{key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+G", action: "到底部"}, {key: "Ctrl+O", action: "工具详情"}, {key: "Ctrl+C", action: "取消退出"}},
-			{{key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+G", action: "到底部"}, {key: "Ctrl+C", action: "退出"}},
+			{{key: "长期偏好写入", action: "不可中断"}, {key: "F3", action: "下一请求推理强度"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "Ctrl+C", action: "退出整个 Agent"}},
 		}
 	default:
 		return [][]footerHint{
-			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+G", action: "到底部"}, {key: "Ctrl+O", action: "工具详情"}, {key: "Esc", action: "退出"}},
-			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "PgUp/PgDn", action: "滚动"}, {key: "Ctrl+G", action: "到底部"}, {key: "Esc", action: "退出"}},
-			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "Esc", action: "退出"}},
+			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "F3", action: "推理强度"}, {key: "Ctrl+O", action: "活动详情"}, {key: "Esc", action: "退出"}},
+			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "F3", action: "推理"}, {key: "Esc", action: "退出"}},
 		}
 	}
 }

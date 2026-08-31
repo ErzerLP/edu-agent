@@ -298,6 +298,7 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		snapshot.AgentModel = safeText(value.Agent.Model)
 		snapshot.AgentContextWindow = value.Agent.ContextWindow
 		snapshot.AgentContextCompaction = safeText(value.Agent.ContextCompaction)
+		snapshot.AgentReasoningEffort = safeText(value.Agent.ReasoningEffort)
 		snapshot.AgentTimeout = safeText(value.Agent.Timeout)
 		snapshot.AgentMaxToolRounds = value.Agent.MaxToolRounds
 	}

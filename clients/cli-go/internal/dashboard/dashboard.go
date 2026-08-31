@@ -34,6 +34,7 @@ type Snapshot struct {
 	AgentModel                 string
 	AgentContextWindow         int
 	AgentContextCompaction     string
+	AgentReasoningEffort       string
 	AgentTimeout               string
 	AgentMaxToolRounds         int
 	AgentKeyConfigured         bool
@@ -89,6 +90,7 @@ const (
 	screenRePair
 	screenAgentSettings
 	screenAgentProvider
+	screenAgentReasoning
 	screenAgentConfig
 	screenAgentKey
 	screenAgentKeyDelete
@@ -222,7 +224,7 @@ func (m *model) goBack() {
 		m.screen = screenSettings
 	case screenAgentSettings:
 		m.screen = screenSettings
-	case screenAgentProvider:
+	case screenAgentProvider, screenAgentReasoning:
 		m.screen = screenAgentSettings
 	}
 	m.cursor = 0
@@ -386,13 +388,15 @@ func (m model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if allPresent(values) {
 				m.command = []string{"model", "set"}
 				provider := m.snapshot.AgentProvider
+				reasoningEffort := display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort)
 				if m.agentProviderDraft != "" {
 					provider = m.agentProviderDraft
+					reasoningEffort = config.DefaultAgentConfig(provider).ReasoningEffort
 				}
 				if provider != "" {
 					m.command = append(m.command, "--provider", provider)
 				}
-				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--context-compaction", values[3], "--timeout", values[4], "--max-tool-rounds", values[5])
+				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--context-compaction", values[3], "--reasoning-effort", reasoningEffort, "--timeout", values[4], "--max-tool-rounds", values[5])
 				return m, tea.Quit
 			}
 		case screenAgentKey:
@@ -434,10 +438,23 @@ func (m model) items() []menuItem {
 			{key: "c", title: "自定义兼容服务", description: "任意OpenAI Chat Completions兼容端点", provider: "custom"},
 			{key: "b", title: "返回", description: "返回AI助手设置", next: screenMain},
 		}
+	case screenAgentReasoning:
+		return []menuItem{
+			{key: "a", title: "自动（推荐）", description: "由兼容端点决定；请求中省略推理强度字段", command: []string{"model", "set", "--reasoning-effort", "auto"}},
+			{key: "n", title: "关闭", description: "不使用推理模式", command: []string{"model", "set", "--reasoning-effort", "none"}},
+			{key: "m", title: "最小", description: "使用最少推理预算", command: []string{"model", "set", "--reasoning-effort", "minimal"}},
+			{key: "l", title: "低", description: "较低推理强度", command: []string{"model", "set", "--reasoning-effort", "low"}},
+			{key: "d", title: "中", description: "平衡速度与推理深度", command: []string{"model", "set", "--reasoning-effort", "medium"}},
+			{key: "g", title: "高", description: "提高推理深度", command: []string{"model", "set", "--reasoning-effort", "high"}},
+			{key: "x", title: "超高", description: "使用xhigh兼容档位", command: []string{"model", "set", "--reasoning-effort", "xhigh"}},
+			{key: "z", title: "最大", description: "使用端点支持的最大推理强度", command: []string{"model", "set", "--reasoning-effort", "max"}},
+			{key: "b", title: "返回", description: "返回AI助手设置", next: screenMain},
+		}
 	case screenAgentSettings:
 		items := []menuItem{
 			{key: "p", title: "选择提供商预设", description: "OpenAI、DeepSeek、OpenRouter、Ollama或自定义服务", next: screenAgentProvider},
 			{key: "m", title: "编辑模型参数", description: "Base URL、模型、上下文窗口、压缩模式、超时和工具轮数", next: screenAgentConfig},
+			{key: "r", title: "默认推理强度", description: "为新AI助手会话选择auto到max的默认档位", next: screenAgentReasoning},
 			{key: "u", title: "更新API Key", description: "通过隐藏输入写入系统钥匙串", next: screenAgentKey},
 		}
 		if m.snapshot.AgentKeyConfigured {
@@ -611,13 +628,19 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 	case screenAgentSettings:
 		body.WriteString(labelStyle.Render("AI助手与模型"))
 		body.WriteString("\n")
-		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
+		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
+			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
 		body.WriteString("\n")
 		body.WriteString(mutedStyle.Render("选择后会进入参数表单；只有在表单中按Enter保存，配置才会生效。"))
+		body.WriteString("\n\n")
+	case screenAgentReasoning:
+		body.WriteString(labelStyle.Render("默认推理强度"))
+		body.WriteString("\n")
+		body.WriteString(fmt.Sprintf("当前：%s\n", display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort)))
+		body.WriteString(mutedStyle.Render("只影响以后新建的AI助手会话；会话内临时覆盖不会改写这里。"))
 		body.WriteString("\n\n")
 	case screenColor:
 		body.WriteString(labelStyle.Render("命令输出颜色"))

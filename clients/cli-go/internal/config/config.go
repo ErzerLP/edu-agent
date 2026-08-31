@@ -27,6 +27,7 @@ const (
 	DefaultAgentTimeout           = 60 * time.Second
 	DefaultAgentMaxToolRounds     = 8
 	DefaultAgentContextCompaction = "auto"
+	DefaultAgentReasoningEffort   = "auto"
 )
 
 var (
@@ -53,6 +54,7 @@ type AgentConfig struct {
 	Timeout           string `json:"timeout"`
 	MaxToolRounds     int    `json:"max_tool_rounds"`
 	ContextCompaction string `json:"context_compaction,omitempty"`
+	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 }
 
 func (c AgentConfig) APIKeyOptional() bool {
@@ -232,7 +234,7 @@ func DefaultAgentConfig(provider string) AgentConfig {
 	value := AgentConfig{
 		Provider: provider, ContextWindow: DefaultAgentContextWindow,
 		Timeout: DefaultAgentTimeout.String(), MaxToolRounds: DefaultAgentMaxToolRounds,
-		ContextCompaction: DefaultAgentContextCompaction,
+		ContextCompaction: DefaultAgentContextCompaction, ReasoningEffort: DefaultAgentReasoningEffort,
 	}
 	switch provider {
 	case "openai":
@@ -289,6 +291,15 @@ func (c *AgentConfig) Validate() error {
 	case "auto", "recent-only", "off":
 	default:
 		return errors.New("context compaction must be auto, recent-only, or off")
+	}
+	c.ReasoningEffort = strings.ToLower(strings.TrimSpace(c.ReasoningEffort))
+	if c.ReasoningEffort == "" {
+		c.ReasoningEffort = DefaultAgentReasoningEffort
+	}
+	switch c.ReasoningEffort {
+	case "auto", "none", "minimal", "low", "medium", "high", "xhigh", "max":
+	default:
+		return errors.New("reasoning effort must be auto, none, minimal, low, medium, high, xhigh, or max")
 	}
 	return nil
 }

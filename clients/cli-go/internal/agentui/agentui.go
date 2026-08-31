@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -13,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 const (
@@ -20,16 +23,18 @@ const (
 	minimumHeight     = 18
 	horizontalPadding = 6
 	turnStreamBuffer  = 128
+	slowTurnThreshold = 8 * time.Second
 )
 
 type Conversation interface {
 	Send(context.Context, string) (agentloop.Result, error)
-	ResolvePreference(context.Context, bool) (agentloop.Result, error)
-}
-
-type contextConversation interface {
+	ResolvePreference(context.Context, agentloop.PreferenceResolution) (agentloop.Result, error)
+	ResolveQuestion(context.Context, agentloop.QuestionAnswer) (agentloop.Result, error)
+	ReasoningEffort() modelclient.ReasoningEffort
+	SetReasoningEffort(modelclient.ReasoningEffort) error
 	ContextStatus() agentloop.ContextStatus
 	ContextUpdates() <-chan agentloop.ContextEvent
+	LearningStatus(context.Context) (agentloop.LearningStatus, error)
 }
 
 type Runner struct {
@@ -54,21 +59,64 @@ type turnKind string
 
 const (
 	turnSend       turnKind = "send"
+	turnQuestion   turnKind = "question"
 	turnPreference turnKind = "preference"
 )
 
+type turnStream struct {
+	activities chan agentloop.Activity
+	completion chan turnMsg
+	wake       chan struct{}
+	deltaMu    sync.Mutex
+	pending    string
+}
+
+func (s *turnStream) publish(ctx context.Context, activity agentloop.Activity) {
+	if activity.Kind == agentloop.ActivityTextDelta {
+		if activity.Delta == "" || ctx.Err() != nil {
+			return
+		}
+		s.deltaMu.Lock()
+		s.pending += activity.Delta
+		s.deltaMu.Unlock()
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
+		return
+	}
+	select {
+	case s.activities <- activity:
+	case <-ctx.Done():
+	}
+}
+
+func (s *turnStream) popDelta() (agentloop.Activity, bool) {
+	s.deltaMu.Lock()
+	defer s.deltaMu.Unlock()
+	if s.pending == "" {
+		return agentloop.Activity{}, false
+	}
+	delta := s.pending
+	s.pending = ""
+	return agentloop.Activity{Kind: agentloop.ActivityTextDelta, Delta: delta}, true
+}
+
 type turnMsg struct {
+	turnID   uint64
 	kind     turnKind
 	result   agentloop.Result
 	err      error
 	activity *agentloop.Activity
-	stream   <-chan turnMsg
+	stream   *turnStream
 	done     bool
+	tick     bool
 }
 
 type contextMsg struct {
 	event  agentloop.ContextEvent
 	stream <-chan agentloop.ContextEvent
+	closed bool
 }
 
 type learningMsg struct {
@@ -89,7 +137,10 @@ type model struct {
 	input                  textarea.Model
 	entries                []transcriptEntry
 	pending                *agentloop.PreferenceConfirmation
+	pendingQuestion        *agentloop.PendingQuestion
+	selector               *selectorModel
 	busy                   bool
+	stopping               bool
 	status                 string
 	follow                 bool
 	hasNewContent          bool
@@ -103,6 +154,21 @@ type model struct {
 	learningRefreshPending bool
 	learningFailed         bool
 	learningProvider       bool
+
+	turnSeq               uint64
+	activeTurnID          uint64
+	activeTurnCancel      context.CancelFunc
+	activeCancelable      bool
+	activeKind            turnKind
+	activeInput           string
+	activeQuestion        *agentloop.PendingQuestion
+	activePreference      *agentloop.PreferenceConfirmation
+	activeResolution      agentloop.PreferenceResolution
+	activeEffort          modelclient.ReasoningEffort
+	activePhase           agentloop.ActivityPhase
+	activeStarted         time.Time
+	activeActivityStarted time.Time
+	activeTimeoutBudget   time.Duration
 }
 
 func newModel(ctx context.Context, session Conversation, modelName string) model {
@@ -116,22 +182,14 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 	input.FocusedStyle.Prompt = composerPromptStyle
 	input.FocusedStyle.Placeholder = mutedStyle
 	input.BlurredStyle.Prompt = mutedStyle
-	input.BlurredStyle.Placeholder = mutedStyle
-	input.KeyMap.InsertNewline.SetKeys("ctrl+j", "alt+enter")
+	input.KeyMap.InsertNewline.SetKeys("ctrl+j", "alt+enter", "shift+enter")
 	input.Focus()
 	view := viewport.New(80, 14)
 	value := model{
 		ctx: sessionCtx, cancel: cancel, session: session, modelName: safeSingleLineTerminalText(modelName), width: 80, height: 24,
 		viewport: view, input: input, status: "就绪", follow: true, shownEventKeys: map[string]struct{}{},
-		entries: []transcriptEntry{{kind: entryNotice, text: "可以直接提问，也可以让我结合服务端知识库、学习进度和长期偏好帮助你学习。"}},
-	}
-	if contextSession, ok := session.(contextConversation); ok {
-		value.contextStatus = contextSession.ContextStatus()
-		value.contextUpdates = contextSession.ContextUpdates()
-	}
-	if _, ok := session.(learningConversation); ok {
-		value.learningProvider = true
-		value.learningLoading = true
+		entries:       []transcriptEntry{{kind: entryNotice, text: "可以直接提问，也可以让我结合服务端知识库、学习进度和长期偏好帮助你学习。"}},
+		contextStatus: session.ContextStatus(), contextUpdates: session.ContextUpdates(), learningProvider: true, learningLoading: true,
 	}
 	value.resize()
 	value.refreshTranscript(false)
@@ -150,25 +208,24 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript(false)
 		return m, nil
 	case turnMsg:
+		if msg.turnID != m.activeTurnID {
+			return m, nil
+		}
+		if msg.tick {
+			m.refreshTranscript(false)
+			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
+		}
 		if msg.stream != nil && msg.activity == nil && !msg.done {
-			return m, waitTurnCmd(msg.stream)
+			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
 		}
 		if msg.activity != nil {
-			m.handleActivity(*msg.activity)
-			m.refreshTranscript(true)
-			return m, waitTurnCmd(msg.stream)
+			if !m.stopping {
+				m.handleActivity(msg.turnID, *msg.activity)
+				m.refreshTranscript(true)
+			}
+			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
 		}
-		m.busy = false
-		if msg.err != nil {
-			m.handleTurnError(msg.err)
-		} else {
-			m.handleTurnResult(msg.result)
-		}
-		if m.pending == nil {
-			m.input.Focus()
-		} else {
-			m.input.Blur()
-		}
+		m.finishTurn(msg.result, msg.err)
 		m.resize()
 		m.refreshTranscript(true)
 		learningCmd := m.startLearningRefresh()
@@ -188,6 +245,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case contextMsg:
+		if msg.closed {
+			return m, nil
+		}
 		m.contextStatus = msg.event.Status
 		if msg.event.Kind == agentloop.ContextEventCompacted || msg.event.Kind == agentloop.ContextEventDegraded || msg.event.Kind == agentloop.ContextEventSourceUnavailable {
 			m.entries = append(m.entries, transcriptEntry{kind: entryContext, contextEvent: msg.event})
@@ -195,112 +255,310 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitContextCmd(m.ctx, msg.stream)
 	case tea.KeyMsg:
-		key := msg.String()
-		if key == "ctrl+c" || key == "ctrl+q" || key == "esc" && !m.busy && m.pending == nil && strings.TrimSpace(m.input.Value()) == "" {
-			m.cancel()
-			return m, tea.Quit
-		}
-		if m.terminalTooSmall() {
-			return m, nil
-		}
-		if key == "ctrl+r" && m.sidebarWidth > 0 {
-			return m, m.startLearningRefresh()
-		}
-		if m.handleNavigationKey(key) {
-			return m, nil
-		}
-		if m.pending != nil {
-			if m.busy {
-				return m, nil
-			}
-			switch key {
-			case "y", "Y":
-				m.busy, m.status = true, "正在保存长期偏好"
-				return m, resolvePreferenceCmd(m.ctx, m.session, true)
-			case "n", "N", "esc":
-				if m.pending.RetryOnly {
-					return m, nil
-				}
-				m.busy, m.status = true, "正在取消保存"
-				return m, resolvePreferenceCmd(m.ctx, m.session, false)
-			}
-			return m, nil
-		}
-		if m.busy {
-			return m, nil
-		}
-		switch key {
-		case "enter":
-			m.sanitizeComposer()
-			input := strings.TrimSpace(m.input.Value())
-			if input == "" {
-				return m, nil
-			}
-			m.entries = append(m.entries, transcriptEntry{kind: entryUser, text: input})
-			m.input.Reset()
-			m.input.Blur()
-			m.busy, m.status = true, "Agent 正在思考"
-			m.follow, m.hasNewContent = true, false
-			m.shownEventKeys = map[string]struct{}{}
-			m.resize()
-			m.refreshTranscript(true)
-			return m, sendCmd(m.ctx, m.session, input)
-		}
-		previousHeight := m.input.Height()
-		var command tea.Cmd
-		m.input, command = m.input.Update(msg)
-		m.resize()
-		if m.input.Height() != previousHeight {
-			m.refreshTranscript(false)
-		}
-		return m, command
+		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m *model) handleActivity(activity agentloop.Activity) {
-	event := activity.Event
-	switch activity.Kind {
-	case agentloop.ActivityThinking:
-		m.entries = upsertThinkingActivity(m.entries, event)
-	case agentloop.ActivityTool:
-		m.entries = upsertToolEvent(m.entries, event)
-		if event.Status != agentloop.EventRunning {
-			m.shownEventKeys[eventKey(event)] = struct{}{}
+func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	if key == "ctrl+c" || key == "ctrl+q" {
+		m.cancel()
+		return m, tea.Quit
+	}
+	if m.terminalTooSmall() {
+		return m, nil
+	}
+	if key == "ctrl+r" && m.sidebarWidth > 0 {
+		return m, m.startLearningRefresh()
+	}
+	if m.handleNavigationKey(key) {
+		return m, nil
+	}
+	if key == "f3" {
+		return m.handleReasoningKey()
+	}
+	if m.selector != nil {
+		action, command := m.selector.handleKey(msg)
+		switch action.kind {
+		case selectorCancel:
+			switch m.selector.kind {
+			case selectorQuestion:
+				return m.startQuestionResolution(agentloop.QuestionAnswer{QuestionID: m.selector.questionID, Status: agentloop.QuestionCancelled})
+			case selectorReasoning:
+				m.selector = nil
+				m.restoreInputFocus()
+				m.resize()
+				return m, nil
+			}
+		case selectorSubmit:
+			switch m.selector.kind {
+			case selectorQuestion:
+				return m.startQuestionResolution(agentloop.QuestionAnswer{
+					QuestionID: m.selector.questionID, Status: agentloop.QuestionAnswered,
+					OptionIDs: action.optionIDs, Custom: action.custom,
+				})
+			case selectorPreference, selectorPreferenceRetry:
+				return m.startPreferenceResolution(action.resolution)
+			case selectorReasoning:
+				m.applyReasoningEffort(action.effort)
+				m.resize()
+				m.refreshTranscript(false)
+				return m, nil
+			}
 		}
-	default:
+		return m, command
+	}
+	if key == "esc" {
+		if m.busy {
+			if m.activeCancelable && m.activeTurnCancel != nil && !m.stopping {
+				m.stopping = true
+				m.status = "正在停止当前轮次"
+				m.activePhase = agentloop.ActivityStopping
+				m.activeTurnCancel()
+			}
+			return m, nil
+		}
+		if strings.TrimSpace(m.input.Value()) == "" {
+			m.cancel()
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if m.busy {
+		return m, nil
+	}
+	if key == "enter" {
+		m.sanitizeComposer()
+		input := strings.TrimSpace(m.input.Value())
+		if input == "" {
+			return m, nil
+		}
+		m.entries = append(m.entries, transcriptEntry{kind: entryUser, text: input})
+		m.input.Reset()
+		m.input.Blur()
+		m.pending, m.pendingQuestion = nil, nil
+		m.follow, m.hasNewContent = true, false
+		m.shownEventKeys = map[string]struct{}{}
+		m.refreshTranscript(true)
+		return m.beginTurn(turnSend, true, input, nil, nil, "", func(turnCtx context.Context) (agentloop.Result, error) {
+			return m.session.Send(turnCtx, input)
+		})
+	}
+	previousHeight := m.input.Height()
+	var command tea.Cmd
+	m.input, command = m.input.Update(msg)
+	m.resize()
+	if m.input.Height() != previousHeight {
+		m.refreshTranscript(false)
+	}
+	return m, command
+}
+
+func (m model) handleReasoningKey() (tea.Model, tea.Cmd) {
+	if m.selector != nil && m.selector.kind != selectorReasoning {
+		return m, nil
+	}
+	if m.selector != nil {
+		m.selector = nil
+		m.restoreInputFocus()
+		m.resize()
+		return m, nil
+	}
+	m.selector = newReasoningSelector(m.session.ReasoningEffort())
+	m.input.Blur()
+	m.resize()
+	return m, nil
+}
+
+func (m *model) applyReasoningEffort(effort modelclient.ReasoningEffort) {
+	if err := m.session.SetReasoningEffort(effort); err != nil {
+		m.entries = append(m.entries, transcriptEntry{kind: entryError, text: stableErrorCardText(err)})
+		m.status = "推理强度更新失败"
 		return
 	}
-	switch event.Status {
-	case agentloop.EventRunning:
-		m.status = event.Summary
-	case agentloop.EventConfirmationRequired:
-		m.status = "等待确认"
-	case agentloop.EventFailed, agentloop.EventInvalid, agentloop.EventOutcomeUnknown:
+	m.selector = nil
+	if m.busy {
+		m.status = fmt.Sprintf("下一模型请求将使用 %s；当前请求保持 %s", effort, m.activeEffort)
+	} else {
+		m.status = "推理强度已设为 " + string(effort)
+	}
+	m.restoreInputFocus()
+}
+
+func (m model) startQuestionResolution(answer agentloop.QuestionAnswer) (tea.Model, tea.Cmd) {
+	question := cloneQuestion(m.pendingQuestion)
+	m.pendingQuestion = nil
+	m.selector = nil
+	m.input.Blur()
+	return m.beginTurn(turnQuestion, true, "", question, nil, "", func(turnCtx context.Context) (agentloop.Result, error) {
+		return m.session.ResolveQuestion(turnCtx, answer)
+	})
+}
+
+func (m model) startPreferenceResolution(resolution agentloop.PreferenceResolution) (tea.Model, tea.Cmd) {
+	preference := clonePreference(m.pending)
+	m.pending = nil
+	m.selector = nil
+	m.input.Blur()
+	cancelable := resolution != agentloop.PreferenceSave && resolution != agentloop.PreferenceRetry
+	return m.beginTurn(turnPreference, cancelable, "", nil, preference, resolution, func(turnCtx context.Context) (agentloop.Result, error) {
+		return m.session.ResolvePreference(turnCtx, resolution)
+	})
+}
+
+func (m model) beginTurn(kind turnKind, cancelable bool, input string, question *agentloop.PendingQuestion, preference *agentloop.PreferenceConfirmation, resolution agentloop.PreferenceResolution, run func(context.Context) (agentloop.Result, error)) (tea.Model, tea.Cmd) {
+	m.turnSeq++
+	m.activeTurnID = m.turnSeq
+	m.activeKind = kind
+	m.activeInput = input
+	m.activeQuestion = question
+	m.activePreference = preference
+	m.activeResolution = resolution
+	m.activeCancelable = cancelable
+	m.activeEffort = m.session.ReasoningEffort()
+	if m.activeEffort == "" {
+		m.activeEffort = modelclient.ReasoningEffortAuto
+	}
+	m.activePhase = agentloop.ActivityPreparingContext
+	m.activeStarted = time.Now()
+	m.busy, m.stopping, m.status = true, false, phaseLabel(agentloop.ActivityPreparingContext)
+	turnCtx := m.ctx
+	if cancelable {
+		turnCtx, m.activeTurnCancel = context.WithCancel(m.ctx)
+	} else {
+		m.activeTurnCancel = nil
+	}
+	m.resize()
+	return m, startTurnCmd(turnCtx, m.activeTurnID, kind, run)
+}
+
+func (m *model) finishTurn(result agentloop.Result, err error) {
+	if m.activeTurnCancel != nil {
+		m.activeTurnCancel()
+	}
+	turnID, kind := m.activeTurnID, m.activeKind
+	wasStopping := m.stopping
+	activeInput := m.activeInput
+	activePreference := clonePreference(m.activePreference)
+	activeResolution := m.activeResolution
+
+	m.busy, m.stopping, m.activeCancelable = false, false, false
+	m.activeTurnCancel = nil
+	m.activePhase = ""
+	m.activeStarted = time.Time{}
+	m.activeActivityStarted = time.Time{}
+	m.activeTimeoutBudget = 0
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) && wasStopping {
+			m.markAssistantDraft(turnID, "stopped")
+			m.status = "已停止当前轮次"
+			m.clearActiveTurn()
+			m.restoreInputFocus()
+			return
+		}
+		m.markAssistantDraft(turnID, "failed")
+		m.handleTurnError(err)
+		if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
+			if m.pending == nil {
+				m.pending = activePreference
+			}
+			if m.pending != nil {
+				m.pending.RetryOnly = true
+			}
+			m.selector = newPreferenceRetrySelector()
+		} else {
+			if kind == turnPreference && (activeResolution == agentloop.PreferenceSave || activeResolution == agentloop.PreferenceRetry) {
+				if activePreference != nil {
+					activePreference.RetryOnly = false
+				}
+				m.restorePending(kind, nil, activePreference)
+			}
+			if kind == turnSend {
+				m.input.SetValue(activeInput)
+			}
+		}
+		m.clearActiveTurn()
+		m.restoreInputFocus()
+		return
+	}
+
+	m.finalizeAssistantDraft(turnID, result.Text)
+	m.handleTurnResult(result)
+	m.clearActiveTurn()
+	m.restoreInputFocus()
+}
+
+func (m *model) restorePending(kind turnKind, question *agentloop.PendingQuestion, preference *agentloop.PreferenceConfirmation) {
+	switch kind {
+	case turnQuestion:
+		m.pendingQuestion = question
+		if question != nil {
+			m.selector = newQuestionSelector(question)
+		}
+	case turnPreference:
+		m.pending = preference
+		if preference != nil {
+			if preference.RetryOnly {
+				m.selector = newPreferenceRetrySelector()
+			} else {
+				m.selector = newPreferenceSelector(preference)
+			}
+		}
+	}
+}
+
+func (m *model) clearActiveTurn() {
+	m.activeTurnID = 0
+	m.activeKind = ""
+	m.activeInput = ""
+	m.activeQuestion = nil
+	m.activePreference = nil
+	m.activeResolution = ""
+}
+
+func (m *model) handleActivity(turnID uint64, activity agentloop.Activity) {
+	if !activity.StartedAt.IsZero() {
+		m.activeActivityStarted = activity.StartedAt
+	}
+	m.activeTimeoutBudget = activity.TimeoutBudget
+	if (activity.Phase == agentloop.ActivityWaitingModel || activity.Phase == agentloop.ActivityReceivingStream) && activity.ReasoningEffort != "" {
+		m.activeEffort = activity.ReasoningEffort
+	}
+	if activity.Kind == agentloop.ActivityTextDelta {
+		m.entries = upsertAssistantDelta(m.entries, turnID, activity.Delta)
+		m.activePhase = agentloop.ActivityReceivingStream
+		m.status = phaseLabel(agentloop.ActivityReceivingStream)
+		return
+	}
+	m.activePhase = activity.Phase
+	m.entries = upsertActivity(m.entries, turnID, activity)
+	if activity.Kind == agentloop.ActivityTool && activity.Event.Status != agentloop.EventRunning {
+		m.shownEventKeys[eventKey(activity.Event)] = struct{}{}
+	}
+	if label := phaseLabel(activity.Phase); label != "" {
+		m.status = label
+	}
+	if activity.Event.Status == agentloop.EventConfirmationRequired {
+		m.status = phaseLabel(agentloop.ActivityWaitingUser)
+	}
+	if activity.Event.Status == agentloop.EventFailed || activity.Event.Status == agentloop.EventInvalid || activity.Event.Status == agentloop.EventOutcomeUnknown {
 		m.status = "Agent 遇到异常"
-	default:
-		m.status = "Agent 正在继续处理"
 	}
 }
 
 func (m *model) handleTurnError(err error) {
-	if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) && m.pending != nil {
-		m.pending.RetryOnly = true
+	if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
 		m.entries = updatePreferenceToolStatus(m.entries, agentloop.EventOutcomeUnknown, "长期偏好保存结果未知", "outcome_unknown")
-		for index := len(m.entries) - 1; index >= 0; index-- {
-			if m.entries[index].kind == entryConfirm {
-				m.entries[index].text = preferenceConfirmationText(m.pending)
-				break
-			}
-		}
 		m.status = "保存结果待核对"
 	} else {
-		if m.pending != nil {
-			m.entries = updatePreferenceToolStatus(m.entries, agentloop.EventFailed, "长期偏好未保存", "request_rejected")
+		if m.activeKind == turnPreference {
+			m.entries = updatePreferenceToolStatus(m.entries, agentloop.EventFailed, "长期偏好未保存", stableErrorCode(err))
 		}
 		m.status = "请求失败"
 	}
-	m.entries = append(m.entries, transcriptEntry{kind: entryError, text: errorCardText(err, m.pending != nil)})
+	m.entries = append(m.entries, transcriptEntry{kind: entryError, text: errorCardText(err, m.activeKind == turnPreference)})
 }
 
 func (m *model) handleTurnResult(result agentloop.Result) {
@@ -313,22 +571,48 @@ func (m *model) handleTurnResult(result agentloop.Result) {
 		m.shownEventKeys[key] = struct{}{}
 		newEvents = append(newEvents, event)
 	}
-	m.entries = appendToolEvents(m.entries, newEvents)
-	if strings.TrimSpace(result.Text) != "" {
-		m.entries = append(m.entries, transcriptEntry{kind: entryAssistant, text: result.Text})
+	m.entries = appendToolEvents(m.entries, m.activeTurnID, newEvents)
+	m.pending, m.pendingQuestion, m.selector = nil, nil, nil
+	if result.PendingQuestion != nil {
+		m.pendingQuestion = cloneQuestion(result.PendingQuestion)
+		m.entries = append(m.entries, transcriptEntry{kind: entryQuestion, text: questionTranscriptText(m.pendingQuestion), question: m.pendingQuestion})
+		m.selector = newQuestionSelector(m.pendingQuestion)
+		m.status = "等待你的选择"
+		return
 	}
-	m.pending = result.Pending
-	if m.pending != nil {
-		m.entries = append(m.entries, transcriptEntry{kind: entryConfirm, text: preferenceConfirmationText(m.pending)})
-		m.status = "等待确认"
+	if result.Pending != nil {
+		m.pending = clonePreference(result.Pending)
+		m.entries = append(m.entries, transcriptEntry{kind: entryConfirm, text: preferenceConfirmationText(m.pending), pending: m.pending})
+		if m.pending.RetryOnly {
+			m.selector = newPreferenceRetrySelector()
+		} else {
+			m.selector = newPreferenceSelector(m.pending)
+		}
+		m.status = "等待长期偏好确认"
 		return
 	}
 	m.status = "就绪"
 }
 
+func (m *model) finalizeAssistantDraft(turnID uint64, text string) {
+	m.entries = finalizeAssistant(m.entries, turnID, text)
+}
+
+func (m *model) markAssistantDraft(turnID uint64, state string) {
+	m.entries = markAssistant(m.entries, turnID, state)
+}
+
+func (m *model) restoreInputFocus() {
+	if m.selector == nil && !m.busy {
+		m.input.Focus()
+	} else {
+		m.input.Blur()
+	}
+}
+
 func (m *model) handleNavigationKey(key string) bool {
 	switch key {
-	case "ctrl+o":
+	case "ctrl+0", "ctrl+o":
 		m.toolsExpanded = !m.toolsExpanded
 		m.refreshTranscript(false)
 		return true
@@ -337,7 +621,7 @@ func (m *model) handleNavigationKey(key string) bool {
 		m.updateFollowAfterScroll()
 		return true
 	case "ctrl+up":
-		m.viewport.LineUp(3)
+		m.viewport.ScrollUp(3)
 		m.updateFollowAfterScroll()
 		return true
 	case "home", "ctrl+home":
@@ -349,7 +633,7 @@ func (m *model) handleNavigationKey(key string) bool {
 		m.updateFollowAfterScroll()
 		return true
 	case "ctrl+down":
-		m.viewport.LineDown(3)
+		m.viewport.ScrollDown(3)
 		m.updateFollowAfterScroll()
 		return true
 	case "end", "ctrl+g":
@@ -368,44 +652,63 @@ func (m *model) updateFollowAfterScroll() {
 	}
 }
 
-func sendCmd(ctx context.Context, session Conversation, input string) tea.Cmd {
-	return startTurnCmd(ctx, turnSend, func(turnCtx context.Context) (agentloop.Result, error) {
-		return session.Send(turnCtx, input)
-	})
-}
-
-func resolvePreferenceCmd(ctx context.Context, session Conversation, approved bool) tea.Cmd {
-	return startTurnCmd(ctx, turnPreference, func(turnCtx context.Context) (agentloop.Result, error) {
-		return session.ResolvePreference(turnCtx, approved)
-	})
-}
-
-func startTurnCmd(ctx context.Context, kind turnKind, run func(context.Context) (agentloop.Result, error)) tea.Cmd {
+func startTurnCmd(ctx context.Context, turnID uint64, kind turnKind, run func(context.Context) (agentloop.Result, error)) tea.Cmd {
 	return func() tea.Msg {
-		stream := make(chan turnMsg, turnStreamBuffer)
+		stream := &turnStream{
+			activities: make(chan agentloop.Activity, turnStreamBuffer),
+			completion: make(chan turnMsg, 1),
+			wake:       make(chan struct{}, 1),
+		}
 		go func() {
 			turnCtx := agentloop.WithActivityReporter(ctx, func(activity agentloop.Activity) {
-				value := activity
-				select {
-				case stream <- turnMsg{kind: kind, activity: &value, stream: stream}:
-				case <-ctx.Done():
-				}
+				stream.publish(ctx, activity)
 			})
 			result, err := run(turnCtx)
-			stream <- turnMsg{kind: kind, result: result, err: err, stream: stream, done: true}
-			close(stream)
+			stream.completion <- turnMsg{turnID: turnID, kind: kind, result: result, err: err, stream: stream, done: true}
 		}()
-		return turnMsg{kind: kind, stream: stream}
+		return turnMsg{turnID: turnID, kind: kind, stream: stream}
 	}
 }
 
-func waitTurnCmd(stream <-chan turnMsg) tea.Cmd {
+func waitTurnCmd(ctx context.Context, turnID uint64, kind turnKind, stream *turnStream) tea.Cmd {
 	return func() tea.Msg {
-		message, ok := <-stream
-		if !ok {
-			return turnMsg{done: true, err: errors.New("Agent 状态流意外关闭")}
+		timer := time.NewTimer(time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case activity := <-stream.activities:
+				value := activity
+				return turnMsg{turnID: turnID, kind: kind, activity: &value, stream: stream}
+			default:
+			}
+			if activity, ok := stream.popDelta(); ok {
+				return turnMsg{turnID: turnID, kind: kind, activity: &activity, stream: stream}
+			}
+			select {
+			case message := <-stream.completion:
+				select {
+				case activity := <-stream.activities:
+					stream.completion <- message
+					value := activity
+					return turnMsg{turnID: turnID, kind: kind, activity: &value, stream: stream}
+				default:
+				}
+				if activity, ok := stream.popDelta(); ok {
+					stream.completion <- message
+					return turnMsg{turnID: turnID, kind: kind, activity: &activity, stream: stream}
+				}
+				return message
+			case activity := <-stream.activities:
+				value := activity
+				return turnMsg{turnID: turnID, kind: kind, activity: &value, stream: stream}
+			case <-stream.wake:
+				continue
+			case <-timer.C:
+				return turnMsg{turnID: turnID, kind: kind, stream: stream, tick: true}
+			case <-ctx.Done():
+				return turnMsg{turnID: turnID, kind: kind, err: ctx.Err(), done: true}
+			}
 		}
-		return message
 	}
 }
 
@@ -415,29 +718,38 @@ func waitContextCmd(ctx context.Context, stream <-chan agentloop.ContextEvent) t
 	}
 	return func() tea.Msg {
 		select {
-		case event := <-stream:
+		case event, ok := <-stream:
+			if !ok {
+				return contextMsg{closed: true}
+			}
 			return contextMsg{event: event, stream: stream}
 		case <-ctx.Done():
-			return nil
+			return contextMsg{closed: true}
 		}
 	}
 }
 
 func (m *model) resize() {
-	contentWidth := m.width - horizontalPadding
-	if contentWidth < 20 {
-		contentWidth = 20
-	}
+	contentWidth := max(20, m.width-horizontalPadding)
 	m.contentWidth = contentWidth
 	mainWidth, sidebarWidth := sidebarLayoutWidths(contentWidth)
 	m.sidebarWidth = sidebarWidth
 	m.sanitizeComposer()
 	m.input.SetWidth(composerInnerWidth(mainWidth))
 	m.input.SetHeight(m.composerInputRows(mainWidth))
+	if m.selector != nil {
+		m.selector.setWidth(max(16, mainWidth-4))
+	}
 	m.viewport.Width = mainWidth
-	m.viewport.Height = m.height - m.input.Height() - 7
-	if m.viewport.Height < 5 {
-		m.viewport.Height = 5
+	controlHeight := lipgloss.Height(m.renderControl(mainWidth))
+	footerHeight := lipgloss.Height(m.renderFooter(mainWidth))
+	m.viewport.Height = m.height - controlHeight - footerHeight - 2
+	minimumViewport := 5
+	if m.selector != nil {
+		minimumViewport = 2
+	}
+	if m.viewport.Height < minimumViewport {
+		m.viewport.Height = minimumViewport
 	}
 }
 
@@ -475,7 +787,7 @@ func (m model) View() string {
 	contentWidth := max(mainWidth, m.contentWidth)
 	main := lipgloss.JoinVertical(lipgloss.Left,
 		m.viewport.View(),
-		m.renderComposer(mainWidth),
+		m.renderControl(mainWidth),
 		m.renderFooter(mainWidth),
 	)
 	if m.sidebarWidth > 0 {
@@ -494,6 +806,9 @@ func (m model) View() string {
 }
 
 func (m model) renderStatus() string {
+	if m.isSlowTurn() && m.activeCancelable {
+		return m.renderStatusText(m.slowTurnDetail())
+	}
 	return m.renderStatusText(m.status)
 }
 
@@ -502,7 +817,7 @@ func (m model) renderStatusText(status string) string {
 	switch {
 	case m.busy:
 		return statusBusyStyle.Render(text)
-	case m.status == "请求失败" || m.status == "提交结果待核对" || m.status == "保存结果待核对" || m.status == "Agent 遇到异常":
+	case m.status == "请求失败" || m.status == "推理强度更新失败" || m.status == "保存结果待核对" || m.status == "Agent 遇到异常":
 		return statusErrorStyle.Render(text)
 	default:
 		return statusReadyStyle.Render(text)
@@ -511,27 +826,80 @@ func (m model) renderStatusText(status string) string {
 
 func (m model) compactStatus() string {
 	switch {
+	case m.stopping:
+		return "停止中"
+	case m.isSlowTurn() && m.activeCancelable:
+		started := m.activeActivityStarted
+		if started.IsZero() {
+			started = m.activeStarted
+		}
+		if m.activeTimeoutBudget > 0 {
+			return fmt.Sprintf("已等待 %s / 超时预算 %s", visibleDuration(time.Since(started)), visibleDuration(m.activeTimeoutBudget))
+		}
+		return "耗时较长"
 	case m.busy:
 		return "处理中"
-	case m.status == "请求失败":
+	case m.status == "请求失败" || m.status == "推理强度更新失败":
 		return "失败"
-	case m.status == "提交结果待核对" || m.status == "保存结果待核对":
+	case m.status == "保存结果待核对":
 		return "待核对"
-	case m.pending != nil:
-		return "待确认"
+	case m.selector != nil:
+		return "待选择"
 	default:
 		return "就绪"
 	}
 }
 
-func errorCardText(err error, pending bool) string {
+func (m model) isSlowTurn() bool {
+	return m.busy && !m.activeStarted.IsZero() && time.Since(m.activeStarted) >= slowTurnThreshold
+}
+
+func (m model) slowTurnDetail() string {
+	started := m.activeActivityStarted
+	if started.IsZero() {
+		started = m.activeStarted
+	}
+	elapsed := visibleDuration(time.Since(started))
+	if m.activeTimeoutBudget > 0 {
+		return fmt.Sprintf("已等待 %s / 超时预算 %s，可按 Esc 停止", elapsed, visibleDuration(m.activeTimeoutBudget))
+	}
+	return fmt.Sprintf("已等待 %s，耗时较长，可按 Esc 停止", elapsed)
+}
+
+func visibleDuration(value time.Duration) string {
+	if value < 0 {
+		value = 0
+	}
+	if value < time.Second {
+		return value.Round(100 * time.Millisecond).String()
+	}
+	return value.Round(time.Second).String()
+}
+
+func errorCardText(err error, preference bool) string {
 	stage, suggestion := "Agent 请求", "可以调整问题后重试；错误卡片会保留在对话中。"
+	code := stableErrorCode(err)
 	if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
 		stage = "长期偏好提交"
-		suggestion = "结果未知，不能取消；请按 Y 使用同一操作 ID 重试核对。"
-	} else if pending {
+		suggestion = "结果未知，不能改选；请使用原操作 ID 重试核对。"
+	} else if preference {
 		stage = "长期偏好提交"
-		suggestion = "服务端未接受本次提交；可按 N 取消，或按 Y 再次尝试。"
+		suggestion = "服务端未接受本次提交；请检查错误后重试原选择。"
+	} else if code == string(modelclient.ErrorCodeReasoningEffortUnsupported) {
+		stage = "模型请求"
+		suggestion = "当前提供商不支持所选推理强度；按 F3 选择 auto 或受支持档位后重试。"
+	} else if code == string(modelclient.ErrorCodeResponseTruncated) {
+		stage = "模型输出"
+		suggestion = "回答达到长度上限；已保留安全的可见部分但未写入会话历史，请缩小问题或分步请求。"
+	} else if code == string(modelclient.ErrorCodeContentFiltered) {
+		stage = "模型内容策略"
+		suggestion = "模型在完成前触发内容策略；部分输出未写入会话历史，可调整问题后重试。"
+	} else if code == string(modelclient.ErrorCodeResponseProtocol) {
+		stage = "模型响应协议"
+		suggestion = "兼容端点返回了不完整或未知的完成状态；请检查模型服务兼容性。"
+	} else if code == string(modelclient.ErrorCodeStreamProtocol) || code == string(modelclient.ErrorCodeStreamResponseTooLarge) {
+		stage = "模型流式响应"
+		suggestion = "已保留安全的部分输出；可稍后重试，未完成内容不会写入下一轮上下文。"
 	} else {
 		var contextErr *agentloop.ContextError
 		if errors.As(err, &contextErr) {
@@ -542,7 +910,7 @@ func errorCardText(err error, pending bool) string {
 			case agentloop.ContextTurnTooLarge:
 				suggestion = "当前这一轮本身过大；请缩短输入或减少单轮工具结果后重试。"
 			case agentloop.ContextRecentTurnsTooLarge:
-				suggestion = "当前轮次与最近完整轮次无法同时保留；请开启新会话，或避免在连续轮次中返回超大工具结果。"
+				suggestion = "当前轮次与最近完整轮次无法同时保留；请开启新会话，或避免连续返回超大工具结果。"
 			default:
 				suggestion = "上下文整理未完成；可缩短问题或开启新会话后重试。"
 			}
@@ -561,7 +929,43 @@ func errorCardText(err error, pending bool) string {
 			}
 		}
 	}
-	return fmt.Sprintf("阶段：%s\n原因：%s\n建议：%s", stage, safeTerminalText(err.Error()), suggestion)
+	return fmt.Sprintf("阶段：%s\n代码：%s\n原因：%s\n建议：%s", stage, code, safeTerminalText(err.Error()), suggestion)
+}
+
+func stableErrorCardText(err error) string {
+	return fmt.Sprintf("阶段：推理强度设置\n代码：%s\n原因：%s", stableErrorCode(err), safeTerminalText(err.Error()))
+}
+
+func stableErrorCode(err error) string {
+	if code := modelclient.StableErrorCode(err); code != "" {
+		return string(code)
+	}
+	if errors.Is(err, context.Canceled) {
+		return "context_cancelled"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "context_deadline_exceeded"
+	}
+	if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
+		return "outcome_unknown"
+	}
+	var contextErr *agentloop.ContextError
+	if errors.As(err, &contextErr) {
+		return string(contextErr.Code)
+	}
+	return "agent_request_failed"
+}
+
+func questionTranscriptText(question *agentloop.PendingQuestion) string {
+	if question == nil {
+		return ""
+	}
+	lines := []string{question.Header, question.Question}
+	for index, option := range question.Options {
+		lines = append(lines, fmt.Sprintf("%d. %s — %s", index+1, option.Label, option.Description))
+	}
+	lines = append(lines, "自定义回答：可输入最多 2000 个字符的多行文本。")
+	return strings.Join(lines, "\n")
 }
 
 func preferenceConfirmationText(pending *agentloop.PreferenceConfirmation) string {
@@ -574,7 +978,7 @@ func preferenceConfirmationText(pending *agentloop.PreferenceConfirmation) strin
 		preferenceValueLabel(pending.Stability),
 	)
 	if pending.RetryOnly {
-		text += "\n提交结果未知：不能再取消，只能使用原操作ID重试核对。"
+		text += "\n提交结果未知：不能改选，只能使用原操作 ID 重试核对。"
 	}
 	return text
 }
@@ -593,6 +997,50 @@ func preferenceValueLabel(value string) string {
 		return label + " (" + value + ")"
 	}
 	return value
+}
+
+func cloneQuestion(value *agentloop.PendingQuestion) *agentloop.PendingQuestion {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	clone.Options = append([]agentloop.QuestionOption(nil), value.Options...)
+	return &clone
+}
+
+func clonePreference(value *agentloop.PreferenceConfirmation) *agentloop.PreferenceConfirmation {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func phaseLabel(phase agentloop.ActivityPhase) string {
+	switch phase {
+	case agentloop.ActivityPreparingContext:
+		return "准备上下文"
+	case agentloop.ActivityWaitingModel:
+		return "等待模型响应"
+	case agentloop.ActivityReceivingStream:
+		return "正在接收模型输出"
+	case agentloop.ActivityValidatingResponse:
+		return "校验模型响应"
+	case agentloop.ActivityAssemblingTools:
+		return "组装工具调用"
+	case agentloop.ActivityExecutingTool:
+		return "执行工具"
+	case agentloop.ActivityWaitingUser:
+		return "等待你的选择"
+	case agentloop.ActivityContinuingAfterTool:
+		return "结合工具结果继续生成"
+	case agentloop.ActivityStopping:
+		return "正在停止当前轮次"
+	case agentloop.ActivityStopped:
+		return "已停止当前轮次"
+	default:
+		return "Agent 正在处理"
+	}
 }
 
 func safeSingleLineTerminalText(value string) string {

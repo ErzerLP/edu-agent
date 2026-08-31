@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 )
 
 func TestMainMenuCommandsAndShortcuts(t *testing.T) {
@@ -289,12 +290,12 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	t.Parallel()
 	snapshot := Snapshot{
 		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentTimeout: "90s", AgentMaxToolRounds: 6, AgentKeyConfigured: true,
+		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "high", AgentTimeout: "90s", AgentMaxToolRounds: 6, AgentKeyConfigured: true,
 	}
 	updated, _ := newModel(snapshot).Update(key("s"))
 	updated, _ = updated.(model).Update(key("a"))
 	settings := updated.(model)
-	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "API Key：已存入系统钥匙串") {
+	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "默认推理强度：high", "API Key：已存入系统钥匙串") {
 		t.Fatalf("agent settings=%q", settings.View())
 	}
 
@@ -307,7 +308,7 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	form.inputs[4].SetValue("2m")
 	form.inputs[5].SetValue("8")
 	updated, _ = form.Update(key("enter"))
-	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--timeout", "2m", "--max-tool-rounds", "8"}
+	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "8"}
 	if got := updated.(model).command; !reflect.DeepEqual(got, want) {
 		t.Fatalf("model command=%#v want=%#v", got, want)
 	}
@@ -337,6 +338,39 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	updated, _ = confirm.Update(key("y"))
 	if got, want := updated.(model).command, []string{"model", "key", "delete", "--confirmed"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("delete command=%#v want=%#v", got, want)
+	}
+}
+
+func TestAgentReasoningEffortUsesDedicatedSelectionScreen(t *testing.T) {
+	t.Parallel()
+	snapshot := Snapshot{
+		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
+		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "medium", AgentTimeout: "90s", AgentMaxToolRounds: 6,
+	}
+	updated, _ := newModel(snapshot).Update(key("s"))
+	updated, _ = updated.(model).Update(key("a"))
+	settings := updated.(model)
+	updated, command := settings.Update(key("r"))
+	selector := updated.(model)
+	if command != nil || selector.screen != screenAgentReasoning || !containsAll(selector.View(), "默认推理强度", "当前：medium", "会话内临时覆盖不会改写这里") {
+		t.Fatalf("reasoning selector screen=%d command=%v view=%q", selector.screen, command, selector.View())
+	}
+	if len(selector.inputs) != 0 {
+		t.Fatalf("reasoning selector unexpectedly uses free-text inputs: %#v", selector.inputs)
+	}
+
+	for keyValue, effort := range map[string]string{"a": "auto", "n": "none", "m": "minimal", "l": "low", "d": "medium", "g": "high", "x": "xhigh", "z": "max"} {
+		candidate := selector
+		updated, _ = candidate.Update(key(keyValue))
+		want := []string{"model", "set", "--reasoning-effort", effort}
+		if got := updated.(model).command; !reflect.DeepEqual(got, want) {
+			t.Fatalf("effort %q command=%#v want=%#v", effort, got, want)
+		}
+	}
+
+	preset := config.DefaultAgentConfig("deepseek")
+	if preset.ReasoningEffort != config.DefaultAgentReasoningEffort {
+		t.Fatalf("preset reasoning effort=%q", preset.ReasoningEffort)
 	}
 }
 

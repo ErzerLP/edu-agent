@@ -7,6 +7,7 @@
     devices: ["IDENTITY", "设备管理"],
     memory: ["MEMORY", "记忆树"],
     knowledge: ["KNOWLEDGE", "知识库"],
+    mcp: ["AGENT PROTOCOL", "MCP 管理"],
     notesync: ["INTEGRATION", "NoteSync"],
   };
   const validPages = new Set(Object.keys(pageMeta));
@@ -18,6 +19,7 @@
     devices: [],
     memory: null,
     knowledge: null,
+    mcp: null,
     notesync: null,
     selectedMemory: "",
     selectedKnowledgePath: "",
@@ -37,6 +39,17 @@
     node.addEventListener("click", handler);
     return node;
   };
+  async function copyText(value, successMessage, failureMessage) {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("clipboard_unavailable");
+      }
+      await navigator.clipboard.writeText(value);
+      showNotice(successMessage, "success");
+    } catch {
+      showNotice(failureMessage, "danger");
+    }
+  }
   const shortID = (value) => (value ? String(value).slice(0, 8) : "-");
   const formatDate = (value) => {
     if (!value) return "从未";
@@ -55,6 +68,7 @@
     active: ["有效", "success"],
     applied: ["已应用", "success"],
     succeeded: ["成功", "success"],
+    success: ["成功", "success"],
     available: ["可读取", "success"],
     compatible: ["兼容", "success"],
     in_sync: ["已同步", "success"],
@@ -78,6 +92,7 @@
     remote_missing: ["远端缺失", "warning"],
     unavailable: ["不可用", "danger"],
     failed: ["失败", "danger"],
+    error: ["错误", "danger"],
     rejected: ["已拒绝", "danger"],
     permanently_rejected: ["永久拒绝", "danger"],
     redacted: ["已清除", "danger"],
@@ -253,6 +268,7 @@
       if (page === "devices") await loadDevices(force);
       if (page === "memory") await loadMemory(force);
       if (page === "knowledge") await loadKnowledge(force);
+      if (page === "mcp") await loadMCP(force);
       if (page === "notesync") await loadNotesync(force);
     } catch (error) {
       showNotice(error.message, "danger");
@@ -513,17 +529,13 @@
     const command = `edu-agent pair --server ${payload.server_url || ""} --code ${payload.code || ""}`;
     wrapper.append(text("pre", command, "command-display"));
     wrapper.append(
-      button("复制配对命令", "secondary-button", async () => {
-        try {
-          if (!navigator.clipboard?.writeText) {
-            throw new Error("clipboard_unavailable");
-          }
-          await navigator.clipboard.writeText(command);
-          showNotice("配对命令已复制。", "success");
-        } catch {
-          showNotice("复制失败，请手动复制上方配对命令。", "danger");
-        }
-      }),
+      button("复制配对命令", "secondary-button", () =>
+        copyText(
+          command,
+          "配对命令已复制。",
+          "复制失败，请手动复制上方配对命令。",
+        ),
+      ),
     );
     wrapper.append(text("small", `有效期至 ${formatDate(payload.expires_at)}`));
     byId("pairingResult").replaceChildren(wrapper);
@@ -871,6 +883,246 @@
     URL.revokeObjectURL(url);
   }
 
+  async function loadMCP(force) {
+    if (!force && state.mcp) {
+      renderMCP();
+      return;
+    }
+    state.mcp = await api("/admin/api/mcp");
+    renderMCP();
+  }
+
+  function renderMCP() {
+    const data = state.mcp || {};
+    renderMetrics("mcpStats", [
+      ["Resources", data.resource_count || 0],
+      ["Tools", data.tool_count || 0],
+      ["写入 Tools", (data.descriptors || []).filter((item) => item.kind === "tool" && !item.read_only).length],
+      ["近期调用", (data.recent_invocations || []).length],
+    ]);
+    const runtime = byId("mcpRuntimeStatus");
+    runtime.className = `status-badge ${data.available ? "success" : "danger"}`;
+    runtime.textContent = data.available ? "已挂载" : "不可用";
+
+    const facts = [
+      ["Endpoint", data.endpoint || "-"],
+      ["实现", `${data.implementation_name || "-"} · ${data.implementation_version || "-"}`],
+      ["传输", data.transport === "streamable_http" ? "Streamable HTTP" : data.transport || "-"],
+      ["会话模式", data.stateless ? "Stateless · 每请求认证" : "Stateful"],
+      ["响应模式", data.json_response ? "JSON response" : "协议默认"],
+      ["请求上限", formatBytes(data.max_request_body_bytes)],
+    ];
+    byId("mcpFacts").replaceChildren(
+      ...facts.map(([label, value]) => {
+        const wrapper = document.createElement("div");
+        wrapper.append(text("dt", label), text("dd", value));
+        return wrapper;
+      }),
+    );
+    byId("mcpConfig").textContent = JSON.stringify(data.client_config || {}, null, 2);
+    byId("mcpCatalogCount").textContent = `${(data.descriptors || []).length} 项`;
+    renderMCPCatalog(data.descriptors || []);
+    renderMCPAudit(data.recent_invocations || []);
+  }
+
+  function renderMCPCatalog(descriptors) {
+    const host = byId("mcpCatalog");
+    host.replaceChildren();
+    const groups = [
+      ["Resources", descriptors.filter((item) => item.kind !== "tool")],
+      ["Tools", descriptors.filter((item) => item.kind === "tool")],
+    ];
+    groups.forEach(([label, items]) => {
+      if (!items.length) return;
+      const heading = document.createElement("div");
+      heading.className = "mcp-catalog-heading";
+      heading.append(text("strong", label), text("span", String(items.length)));
+      host.append(heading);
+      items.forEach((descriptor) => host.append(mcpDescriptorCard(descriptor)));
+    });
+    if (!descriptors.length) {
+      host.append(empty("Catalog 为空", "服务器尚未返回 MCP descriptor。"));
+    }
+  }
+
+  function mcpDescriptorCard(descriptor) {
+    const card = document.createElement("article");
+    card.className = "mcp-descriptor";
+    const heading = document.createElement("div");
+    heading.className = "mcp-descriptor-heading";
+    const name = document.createElement("div");
+    name.append(
+      text("strong", descriptor.name || "未命名 descriptor"),
+      text(
+        "code",
+        descriptor.uri || descriptor.uri_template || descriptor.kind || "-",
+      ),
+    );
+    let descriptorLabel = "Resource";
+    if (descriptor.kind === "tool") {
+      descriptorLabel = descriptor.read_only ? "只读 Tool" : "写入 Tool";
+    } else if (descriptor.kind === "resource_template") {
+      descriptorLabel = "Resource 模板";
+    }
+    heading.append(
+      name,
+      text(
+        "span",
+        descriptorLabel,
+        `status-badge ${descriptor.kind === "tool" && !descriptor.read_only ? "warning" : "neutral"}`,
+      ),
+    );
+    const meta = document.createElement("div");
+    meta.className = "mcp-descriptor-meta";
+    meta.append(
+      text("span", descriptor.required_scope || "scope 未声明", "scope-chip"),
+      ...(descriptor.privacy_owners || []).map((owner) =>
+        text("span", `privacy:${owner}`, "scope-chip"),
+      ),
+      text(
+        "span",
+        `输入 ${descriptor.input_limit_bytes ? formatBytes(descriptor.input_limit_bytes) : "无参数"}`,
+        "scope-chip",
+      ),
+      text("span", `输出 ${formatBytes(descriptor.output_limit_bytes)}`, "scope-chip"),
+    );
+    card.append(
+      heading,
+      text("p", descriptor.description || "无描述", "mcp-descriptor-description"),
+      meta,
+    );
+    return card;
+  }
+
+  function renderMCPAudit(invocations) {
+    const host = byId("mcpAudit");
+    host.replaceChildren();
+    if (!invocations.length) {
+      host.append(empty("暂无 MCP 调用", "完成 MCP discovery 或工具调用后会显示脱敏元数据。"));
+      return;
+    }
+    invocations.forEach((invocation) => {
+      const detail = [
+        formatDate(invocation.completed_at),
+        `请求 ${shortID(invocation.request_id)}`,
+        invocation.device_id ? `设备 ${shortID(invocation.device_id)}` : "未认证设备",
+        `${invocation.duration_ms || 0} ms`,
+        invocation.peer || "peer 未知",
+      ].join(" · ");
+      host.append(
+        compactItem(
+          invocation.descriptor || "unknown",
+          detail,
+          statusLabel(invocation.result),
+          statusClass(invocation.result),
+          invocation.error_code || "",
+          invocation.error_code ? "danger" : "neutral",
+        ),
+      );
+    });
+  }
+
+  async function createMCPPairing() {
+    const control = byId("mcpPairingButton");
+    control.disabled = true;
+    try {
+      const payload = await api("/admin/api/pairing-codes", {
+        method: "POST",
+        csrf: true,
+        body: JSON.stringify({ profile: "agent" }),
+      });
+      renderMCPPairingResult(payload);
+      state.overview = null;
+    } catch (error) {
+      showNotice(error.message, "danger");
+    } finally {
+      control.disabled = false;
+    }
+  }
+
+  function renderMCPPairingResult(payload) {
+    const exchangeURL = state.mcp?.pairing_exchange_url || "";
+    const exchangeBody = JSON.stringify({
+      code: payload.code || "",
+      display_name: "MCP client",
+    });
+    const command = `curl -sS -X POST '${exchangeURL}' \\\n  -H 'Content-Type: application/json' \\\n  --data '${exchangeBody}'`;
+    const wrapper = document.createElement("div");
+    wrapper.className = "pairing-code mcp-pairing-code";
+    wrapper.append(
+      text("span", "一次性 Agent 配对码", "eyebrow"),
+      text("div", payload.code || "-", "code-display"),
+      text("pre", command, "command-display"),
+      button("复制换取令牌命令", "secondary-button", () =>
+        copyText(
+          command,
+          "配对交换命令已复制。",
+          "复制失败，请手动复制上方命令。",
+        ),
+      ),
+      text(
+        "small",
+        `有效期至 ${formatDate(payload.expires_at)}。交换响应中的 token 仅返回一次，请保存到 MCP 客户端的安全凭据配置。`,
+      ),
+    );
+    byId("mcpPairingResult").replaceChildren(wrapper);
+  }
+
+  async function probeMCP(event) {
+    event.preventDefault();
+    const input = byId("mcpProbeToken");
+    const control = byId("mcpProbeButton");
+    const token = input.value.trim();
+    input.value = "";
+    if (!token) {
+      showNotice("请输入现有 Agent 设备令牌。", "danger");
+      return;
+    }
+    control.disabled = true;
+    try {
+      const result = await api("/admin/api/mcp/probe", {
+        method: "POST",
+        csrf: true,
+        body: JSON.stringify({ token }),
+      });
+      state.mcp = null;
+      await loadMCP(true);
+      renderMCPProbeResult(result);
+    } catch (error) {
+      renderMCPProbeResult({ ok: false, error_code: "admin_request_failed" });
+      showNotice(error.message, "danger");
+    } finally {
+      input.value = "";
+      control.disabled = false;
+    }
+  }
+
+  function renderMCPProbeResult(result) {
+    const host = byId("mcpProbeResult");
+    const card = document.createElement("div");
+    card.className = "mcp-probe-summary";
+    const heading = document.createElement("div");
+    heading.className = "section-heading-inline";
+    heading.append(
+      text("strong", result.ok ? "身份与 Catalog 自检通过" : "自检未通过"),
+      text(
+        "span",
+        result.ok ? "成功" : result.error_code || "失败",
+        `status-badge ${result.ok ? "success" : "danger"}`,
+      ),
+    );
+    const facts = document.createElement("dl");
+    facts.className = "mcp-probe-facts";
+    [
+      ["HTTP", String(result.http_status || "-")],
+      ["Tools", String(result.tool_count || 0)],
+      ["请求 ID", shortID(result.request_id)],
+      ["耗时", `${result.duration_ms || 0} ms`],
+    ].forEach(([label, value]) => facts.append(text("dt", label), text("dd", value)));
+    card.append(heading, facts);
+    host.replaceChildren(card);
+  }
+
   async function loadNotesync(force) {
     if (!force && state.notesync) {
       renderNotesync();
@@ -1181,6 +1433,16 @@
     ).toFixed(1);
   }
 
+  function formatBytes(value) {
+    const bytes = Number(value || 0);
+    if (!Number.isFinite(bytes) || bytes <= 0) return "-";
+    if (bytes >= 1024 * 1024)
+      return `${(bytes / (1024 * 1024)).toFixed(bytes % (1024 * 1024) === 0 ? 0 : 1)} MiB`;
+    if (bytes >= 1024)
+      return `${(bytes / 1024).toFixed(bytes % 1024 === 0 ? 0 : 1)} KiB`;
+    return `${bytes} B`;
+  }
+
   function confirmAction(title, message) {
     const dialog = byId("confirmDialog");
     byId("confirmTitle").textContent = title;
@@ -1228,6 +1490,15 @@
       "click",
       downloadSelectedKnowledge,
     );
+    byId("copyMCPConfig").addEventListener("click", () =>
+      copyText(
+        byId("mcpConfig").textContent,
+        "MCP 客户端配置已复制。",
+        "复制失败，请手动复制客户端配置。",
+      ),
+    );
+    byId("mcpPairingButton").addEventListener("click", createMCPPairing);
+    byId("mcpProbeForm").addEventListener("submit", probeMCP);
     byId("notesyncForm").addEventListener("submit", saveNotesync);
     byId("notesyncPreviewForm").addEventListener("submit", previewNotesync);
     byId("loadMoreNotesyncPreview").addEventListener(

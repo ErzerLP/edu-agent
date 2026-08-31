@@ -825,6 +825,155 @@ tr:last-child td {
   overflow-wrap: anywhere;
 }
 
+.mcp-grid {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.mcp-catalog-block,
+.mcp-audit-block {
+  grid-column: 1 / -1;
+}
+.mcp-section-body {
+  padding: 18px;
+}
+.mcp-section-body.stack-form {
+  padding-bottom: 10px;
+}
+.section-description {
+  margin-bottom: 15px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.section-heading-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.section-heading-inline strong,
+.section-heading-inline small {
+  display: block;
+}
+.section-heading-inline small {
+  margin-top: 4px;
+  font-size: 10px;
+}
+.mcp-config-preview {
+  min-height: 150px;
+  max-height: 260px;
+  margin-top: 13px;
+  overflow: auto;
+}
+.mcp-inline-result {
+  border-top: 1px solid var(--line);
+  padding: 0 18px 18px;
+}
+.mcp-bootstrap-block .mcp-inline-result {
+  border-top: 0;
+  padding-top: 0;
+}
+.compact-empty {
+  min-height: 105px;
+  padding: 16px;
+}
+.mcp-pairing-code {
+  gap: 11px;
+}
+.mcp-pairing-code .code-display {
+  padding: 12px;
+  font-size: clamp(18px, 3vw, 24px);
+}
+.mcp-probe-summary {
+  padding-top: 15px;
+}
+.mcp-probe-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 15px 0 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+.mcp-probe-facts dt,
+.mcp-probe-facts dd {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+.mcp-probe-facts dt {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.mcp-probe-facts dd {
+  font-size: 11px;
+  font-weight: 670;
+}
+.mcp-catalog-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+.mcp-catalog-heading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 5px 2px;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.mcp-catalog-heading span {
+  border-radius: 10px;
+  padding: 2px 7px;
+  background: var(--surface-subtle);
+}
+.mcp-descriptor {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 13px;
+  background: var(--surface-subtle);
+}
+.mcp-descriptor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.mcp-descriptor-heading strong,
+.mcp-descriptor-heading code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.mcp-descriptor-heading strong {
+  font-size: 12px;
+}
+.mcp-descriptor-heading code {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.mcp-descriptor-description {
+  min-height: 34px;
+  margin: 11px 0;
+  color: #4e5b58;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.mcp-descriptor-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 .notesync-grid {
   display: grid;
   grid-template-columns: minmax(300px, 0.8fr) minmax(380px, 1.2fr);
@@ -957,8 +1106,15 @@ tr:last-child td {
   .overview-grid,
   .split-layout,
   .explorer-layout,
+  .mcp-grid,
   .notesync-grid {
     grid-template-columns: 1fr;
+  }
+  .mcp-catalog-list {
+    grid-template-columns: 1fr;
+  }
+  .mcp-probe-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .settings-block {
     grid-row: auto;
@@ -1010,9 +1166,9 @@ tr:last-child td {
   }
   .primary-nav {
     display: grid;
-    grid-template-columns: repeat(6, minmax(76px, 1fr));
+    grid-template-columns: repeat(7, minmax(76px, 1fr));
     gap: 3px;
-    width: max(100%, 570px);
+    width: max(100%, 660px);
     margin: 0;
   }
   .nav-item {
@@ -1117,6 +1273,23 @@ tr:last-child td {
   }
   .form-grid {
     grid-template-columns: 1fr;
+  }
+  .section-heading-inline {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .section-heading-inline .secondary-button {
+    width: 100%;
+  }
+  .mcp-probe-facts {
+    grid-template-columns: 1fr 1fr;
+  }
+  .mcp-descriptor-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .mcp-descriptor-heading .status-badge {
+    align-self: flex-start;
   }
   .inline-form {
     width: 100%;

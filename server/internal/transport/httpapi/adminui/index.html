@@ -39,6 +39,9 @@
           <button class="nav-item" type="button" data-page="knowledge">
             <span>知识库</span>
           </button>
+          <button class="nav-item" type="button" data-page="mcp">
+            <span>MCP</span>
+          </button>
           <button class="nav-item" type="button" data-page="notesync">
             <span>NoteSync</span>
           </button>
@@ -309,6 +312,124 @@
                 </button>
               </div>
               <pre id="knowledgeContent" class="content-preview">从左侧选择知识文档。</pre>
+            </section>
+          </div>
+        </section>
+
+        <section
+          id="page-mcp"
+          class="page"
+          data-page-panel="mcp"
+          aria-labelledby="pageTitle"
+          hidden
+        >
+          <div id="mcpStats" class="metric-row"></div>
+          <div class="mcp-grid">
+            <section class="section-block mcp-connection-block">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">STREAMABLE HTTP</p>
+                  <h2>连接信息</h2>
+                </div>
+                <span id="mcpRuntimeStatus" class="status-badge neutral"
+                  >未加载</span
+                >
+              </div>
+              <dl id="mcpFacts" class="fact-list"></dl>
+              <div class="mcp-section-body">
+                <div class="section-heading-inline">
+                  <div>
+                    <strong>通用客户端配置</strong>
+                    <small>将占位符替换为受限 Agent 设备令牌</small>
+                  </div>
+                  <button
+                    id="copyMCPConfig"
+                    class="secondary-button"
+                    type="button"
+                  >
+                    复制配置
+                  </button>
+                </div>
+                <pre id="mcpConfig" class="command-display mcp-config-preview"></pre>
+              </div>
+            </section>
+
+            <section class="section-block mcp-bootstrap-block">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">AGENT IDENTITY</p>
+                  <h2>创建 MCP 凭据</h2>
+                </div>
+                <span class="status-badge neutral">受限权限</span>
+              </div>
+              <div class="mcp-section-body">
+                <p class="section-description">
+                  创建一次性 Agent 配对码，再通过现有配对接口换取仅返回一次的设备令牌。
+                </p>
+                <button
+                  id="mcpPairingButton"
+                  class="primary-button full-button"
+                  type="button"
+                >
+                  生成 Agent 配对码
+                </button>
+                <div id="mcpPairingResult" class="mcp-inline-result">
+                  <div class="empty-state compact-empty">
+                    <strong>尚未创建</strong>
+                    <span>配对码不会写入日志或浏览器存储。</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="section-block mcp-probe-block">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">AUTHENTICATED DISCOVERY</p>
+                  <h2>连接自检</h2>
+                </div>
+              </div>
+              <form id="mcpProbeForm" class="stack-form compact-form mcp-section-body">
+                <label for="mcpProbeToken">现有设备令牌</label>
+                <input
+                  id="mcpProbeToken"
+                  type="password"
+                  autocomplete="off"
+                  maxlength="4096"
+                  placeholder="仅用于本次 tools/list 请求"
+                />
+                <button id="mcpProbeButton" class="secondary-button" type="submit">
+                  运行身份与 Catalog 自检
+                </button>
+              </form>
+              <div id="mcpProbeResult" class="mcp-inline-result">
+                <div class="empty-state compact-empty">
+                  <strong>尚未运行</strong>
+                  <span>令牌不会保存在页面状态，提交后立即清空。</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="section-block mcp-catalog-block">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">LIVE CATALOG</p>
+                  <h2>Resources 与 Tools</h2>
+                </div>
+                <span id="mcpCatalogCount" class="status-badge neutral">0</span>
+              </div>
+              <div id="mcpCatalog" class="mcp-catalog-list"></div>
+            </section>
+
+            <section class="section-block mcp-audit-block">
+              <div class="section-heading">
+                <div>
+                  <p class="section-kicker">RECENT INVOCATIONS</p>
+                  <h2>近期脱敏调用</h2>
+                </div>
+                <span class="status-badge neutral">进程内 · 最多 50 条</span>
+              </div>
+              <div id="mcpAudit" class="compact-list"></div>
             </section>
           </div>
         </section>

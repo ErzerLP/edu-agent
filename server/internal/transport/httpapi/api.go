@@ -24,6 +24,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/transport/access"
+	"github.com/edu-agent/edu-agent/server/internal/transport/mcpadmin"
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -155,7 +156,7 @@ type Options struct {
 	MaintenanceToken        string
 	ReadPermits             *privacy.ReadPermitManager
 	Readiness               Readiness
-	MCP                     http.Handler
+	MCP                     mcpadmin.Service
 	Logger                  *slog.Logger
 	PairLimiter             *FixedWindowLimiter
 	AuthLimiter             *FixedWindowLimiter
@@ -185,7 +186,7 @@ type API struct {
 	maintenanceToken        string
 	readPermits             *privacy.ReadPermitManager
 	readiness               Readiness
-	mcp                     http.Handler
+	mcp                     mcpadmin.Service
 	logger                  *slog.Logger
 	pairLimiter             *FixedWindowLimiter
 	authLimiter             *FixedWindowLimiter

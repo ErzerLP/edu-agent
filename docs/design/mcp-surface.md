@@ -44,6 +44,11 @@ The one MiB request limit is no greater than the existing learning write limit. 
 | MCP tool | HTTP operation | Scope | Privacy owner | Read-only | Input / output limit |
 | --- | --- | --- | --- | --- | ---: |
 | `knowledge.retrieve` | `retrieveKnowledge` | `knowledge:read` | knowledge | yes | 256 KiB / 16 MiB |
+| `knowledge.maintenance.propose` | `createKnowledgeMaintenanceProposal` | `knowledge:write` | knowledge, learning | no | 16 MiB / 16 MiB |
+| `knowledge.maintenance.list` | `listKnowledgeMaintenanceProposals` | `knowledge:read` | knowledge, learning | yes | 256 KiB / 16 MiB |
+| `knowledge.maintenance.get` | `getKnowledgeMaintenanceProposal` | `knowledge:read` | knowledge, learning | yes | 256 KiB / 16 MiB |
+| `learning.evidence_carryover.list` | `listEvidenceCarryovers` | `learning:read` | knowledge, learning | yes | 256 KiB / 4 MiB |
+| `learning.evidence_carryover.get` | `getEvidenceCarryover` | `learning:read` | knowledge, learning | yes | 256 KiB / 4 MiB |
 | `learning.list_timeline` | `listLearningTimeline` | `learning:read` | learning, tutoring | yes | 256 KiB / 4 MiB |
 | `learning.list_routes` | `listLearningRoutes` | `learning:read` | learning, tutoring | yes | 256 KiB / 4 MiB |
 | `learning.list_evidence` | `listLearningEvidence` | `learning:read` | learning, tutoring | yes | 256 KiB / 4 MiB |
@@ -54,7 +59,17 @@ The one MiB request limit is no greater than the existing learning write limit. 
 | `tutoring.propose` | `proposeTutoringArtifact` | `learning:write` | learning, tutoring | no | 1 MiB / 16 MiB |
 | `tutoring.apply_action` | `applyTutoringAction` | `learning:write` | learning, tutoring | no | 1 MiB / 4 MiB |
 
-The catalog deliberately has no knowledge import or proposal approval, Assessment decision, Memory Candidate/admission/delete/replay, privacy, device, NoteSync, offline, or direct Nocturne descriptor. Unknown method, tool name, or resource URI fails before any application callback.
+The catalog deliberately has no knowledge import or maintenance approval/rollback, evidence-carryover approval/rejection, Assessment decision, Memory Candidate/admission/delete/replay, privacy, device, NoteSync, offline, or direct Nocturne descriptor. Unknown method, tool name, or resource URI fails before any application callback.
+
+## Local management view
+
+When the loopback administration UI is enabled, `/admin/#mcp` reads a bounded management snapshot from the live MCP handler. The snapshot reports the mounted endpoint, `mcp-surface-v1` implementation, Streamable HTTP/stateless/JSON mode, request limit, 4 static resources, 5 resource templates, 15 tools, and the descriptor metadata derived directly from the catalog. The Admin backend and frontend do not keep a second list of descriptor names.
+
+The page can reuse the existing restricted `agent` pairing-code profile and produces a generic remote `mcpServers` example with `Bearer <DEVICE_TOKEN>`. It never inserts or persists a real token. A same-origin, CSRF-protected probe accepts an existing device token for one `tools/list` request through the real handler. The probe response contains only success, HTTP status, request ID, stable error code, tool count, and duration; it does not return the token or raw MCP payload.
+
+The handler also keeps a concurrency-safe process-local ring of at most 100 completed invocation summaries. The Admin response returns at most the newest 50. Each summary is limited to completion time, request ID, descriptor audit name, credential-derived device ID, result, stable error code, duration, and peer, matching the existing redacted audit contract. This is recent operational context, not durable audit storage, and it resets on process restart.
+
+The management surface does not add an MCP enable switch. `/mcp` remains mounted by normal application composition and protected by its existing authentication, scope, rate-limit, Host, Origin, privacy, and forbidden-descriptor rules.
 
 ## Gateway order
 

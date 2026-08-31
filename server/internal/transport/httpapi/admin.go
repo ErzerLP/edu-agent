@@ -95,6 +95,8 @@ func (a *API) mountAdminUI(router chi.Router) {
 			api.With(a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerMemory)).Get("/admin/api/memory", a.adminMemory)
 			api.With(a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/admin/api/knowledge", a.adminKnowledge)
 			api.Get("/admin/api/notesync", a.adminNotesync)
+			api.Get("/admin/api/mcp", a.adminMCP)
+			api.With(a.requireAdminOrigin, a.requireAdminCSRF).Post("/admin/api/mcp/probe", a.adminMCPProbe)
 			api.With(a.requireAdminOrigin, a.requireAdminCSRF, a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/admin/api/notesync/preview", a.adminNotesyncPreview)
 			api.With(a.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/admin/api/notesync/reviews", a.adminNotesyncReviews)
 			api.With(a.requireAdminOrigin, a.requireAdminCSRF).Post("/admin/api/notesync/settings", a.adminUpdateNotesync)

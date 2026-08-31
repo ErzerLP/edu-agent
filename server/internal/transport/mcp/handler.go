@@ -21,6 +21,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/transport/access"
+	"github.com/edu-agent/edu-agent/server/internal/transport/mcpadmin"
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
@@ -94,6 +95,8 @@ type Handler struct {
 	originProtection    *http.CrossOriginProtection
 	sdk                 http.Handler
 	beforeResponseWrite func(context.Context)
+	recentMu            sync.Mutex
+	recentInvocations   []mcpadmin.Invocation
 }
 
 type invocationContextKey struct{}
@@ -144,7 +147,7 @@ func New(options Options) (*Handler, error) {
 	if options.MaxRequestBody <= 0 {
 		options.MaxRequestBody = DefaultMaxRequestBodyBytes
 	}
-	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "edu-agent", Version: "mcp-surface-v1"}, &sdkmcp.ServerOptions{
+	server := sdkmcp.NewServer(&sdkmcp.Implementation{Name: implementationName, Version: implementationVersion}, &sdkmcp.ServerOptions{
 		Capabilities: &sdkmcp.ServerCapabilities{
 			Resources: &sdkmcp.ResourceCapabilities{}, Tools: &sdkmcp.ToolCapabilities{},
 		},
@@ -196,10 +199,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result := "rejected"
 	errorCode := ""
 	defer func() {
+		duration := time.Since(started)
+		peer := access.ClientIP(r)
+		h.recordInvocation(mcpadmin.Invocation{
+			CompletedAt: time.Now().UTC(), RequestID: requestID, Descriptor: descriptorName,
+			DeviceID: deviceID, Result: result, ErrorCode: errorCode,
+			DurationMS: duration.Milliseconds(), Peer: peer,
+		})
 		h.logger.InfoContext(r.Context(), "mcp_invocation",
 			"request_id", requestID, "transport", "mcp", "descriptor", descriptorName,
 			"device_id", deviceID, "result", result, "error_code", errorCode,
-			"duration_ms", time.Since(started).Milliseconds(), "peer", access.ClientIP(r))
+			"duration_ms", duration.Milliseconds(), "peer", peer)
 	}()
 
 	if !validRequestHost(r) {

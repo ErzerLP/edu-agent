@@ -642,7 +642,7 @@ func TestAdminMemoryForwardsBoundedPagination(t *testing.T) {
 
 func TestAdminUIUsesOneNavigationStateForAllPages(t *testing.T) {
 	page := string(adminPageHTML)
-	for _, name := range []string{"overview", "pairing", "devices", "memory", "knowledge", "notesync"} {
+	for _, name := range []string{"overview", "pairing", "devices", "memory", "knowledge", "mcp", "notesync"} {
 		if !strings.Contains(page, `data-page="`+name+`"`) || !strings.Contains(page, `id="page-`+name+`"`) {
 			t.Fatalf("admin page does not bind navigation and panel for %q", name)
 		}

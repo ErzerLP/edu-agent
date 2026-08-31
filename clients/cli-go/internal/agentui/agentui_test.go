@@ -94,6 +94,30 @@ func (c *learningStatusConversation) LearningStatus(context.Context) (agentloop.
 	return c.status, c.err
 }
 
+func TestAgentUIWideTerminalUsesAvailableWidth(t *testing.T) {
+	const terminalWidth = 200
+	value := newModel(t.Context(), &fakeConversation{}, "model")
+	updated, _ := value.Update(tea.WindowSizeMsg{Width: terminalWidth, Height: 30})
+	value = updated.(model)
+	view := value.View()
+	if value.contentWidth != terminalWidth-horizontalPadding {
+		t.Fatalf("content width=%d want=%d; wide terminal left blank=%q", value.contentWidth, terminalWidth-horizontalPadding, strings.Split(view, "\n")[0])
+	}
+	header := strings.Split(view, "\n")[0]
+	leadingWidth := lipgloss.Width(header) - lipgloss.Width(strings.TrimLeft(header, " "))
+	if leadingWidth > 3 {
+		t.Fatalf("header begins at column %d, want <=3: %q", leadingWidth, header)
+	}
+	if value.sidebarWidth == 0 || value.viewport.Width < sidebarMinMainWidth {
+		t.Fatalf("wide layout sidebar=%d main=%d", value.sidebarWidth, value.viewport.Width)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > terminalWidth {
+			t.Fatalf("line width=%d limit=%d line=%q", lipgloss.Width(line), terminalWidth, line)
+		}
+	}
+}
+
 func TestAgentUIRightSidebarShowsAuthoritativeLearningStatus(t *testing.T) {
 	conversation := &learningStatusConversation{status: agentloop.LearningStatus{
 		Active: true,

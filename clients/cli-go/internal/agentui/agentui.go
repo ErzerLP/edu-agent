@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	minimumWidth     = 46
-	minimumHeight    = 18
-	maximumWidth     = 108
-	turnStreamBuffer = 128
+	minimumWidth      = 46
+	minimumHeight     = 18
+	horizontalPadding = 6
+	turnStreamBuffer  = 128
 )
 
 type Conversation interface {
@@ -424,10 +424,7 @@ func waitContextCmd(ctx context.Context, stream <-chan agentloop.ContextEvent) t
 }
 
 func (m *model) resize() {
-	contentWidth := m.width - 6
-	if contentWidth > maximumWidth {
-		contentWidth = maximumWidth
-	}
+	contentWidth := m.width - horizontalPadding
 	if contentWidth < 20 {
 		contentWidth = 20
 	}

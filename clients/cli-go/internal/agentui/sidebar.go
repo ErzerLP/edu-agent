@@ -107,7 +107,8 @@ func (m model) sidebarContent(width, budget int) []string {
 	lines := []string{
 		sidebarSectionStyle.Render("AGENT"),
 		m.renderStatus(),
-		sidebarKV("上下文", m.contextSummary(true)),
+		sidebarKV("上下文", m.contextTokenSummary()),
+		sidebarKV("缓存命中", m.cacheHitSummary()),
 	}
 	if !compact {
 		lines = append(lines,
@@ -118,6 +119,43 @@ func (m model) sidebarContent(width, budget int) []string {
 	}
 	lines = append(lines, "", sidebarSectionStyle.Render("当前学习"))
 	return append(lines, m.learningSidebarLines(width, compact)...)
+}
+
+func (m model) contextTokenSummary() string {
+	if m.contextStatus.ContextWindow <= 0 {
+		return m.contextSummary(true)
+	}
+	prefix := ""
+	if m.contextStatus.Estimated && m.contextStatus.CurrentTokens > 0 {
+		prefix = "约"
+	}
+	return prefix + formatCompactTokens(m.contextStatus.CurrentTokens) + "/" + formatCompactTokens(m.contextStatus.ContextWindow)
+}
+
+func (m model) cacheHitSummary() string {
+	if !m.contextStatus.CacheHitRateAvailable {
+		return "—"
+	}
+	rate := min(max(m.contextStatus.CacheHitRate, 0), 100)
+	return fmt.Sprintf("%.1f%%", rate)
+}
+
+func formatCompactTokens(value int) string {
+	value = max(0, value)
+	switch {
+	case value < 1000:
+		return fmt.Sprintf("%d", value)
+	case value < 1_000_000:
+		if value%1000 == 0 {
+			return fmt.Sprintf("%dk", value/1000)
+		}
+		return fmt.Sprintf("%.1fk", float64(value)/1000)
+	default:
+		if value%1_000_000 == 0 {
+			return fmt.Sprintf("%dM", value/1_000_000)
+		}
+		return fmt.Sprintf("%.1fM", float64(value)/1_000_000)
+	}
 }
 
 func (m model) learningSidebarLines(width int, compact bool) []string {

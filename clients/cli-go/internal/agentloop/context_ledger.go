@@ -137,7 +137,7 @@ func newContextRuntime(model Model, options Options, estimator TokenEstimator) *
 		closeWait:           defaultContextCloseWait,
 		updates:             make(chan ContextEvent, 32),
 		status: ContextStatus{
-			Estimated: true, Mode: options.ContextCompaction, Phase: "idle",
+			Estimated: true, ContextWindow: options.ContextWindow, Mode: options.ContextCompaction, Phase: "idle",
 		},
 		degradedTurns: make(map[string]struct{}),
 	}
@@ -1165,6 +1165,8 @@ func (r *ContextRuntime) UpdatePlanStatus(plan ContextPlan, currentTurnID string
 	}
 	degraded := r.mode == ContextCompactionAuto && plan.DroppedTurns > 0 && !plan.UsedMemory
 	r.status.Estimated = true
+	r.status.CurrentTokens = plan.EstimatedInput
+	r.status.ContextWindow = r.contextWindow
 	r.status.WindowPercent = percent
 	r.status.RecentCompleteTurns = max(0, plan.SelectedTurns-1)
 	r.status.Mode = r.mode
@@ -1190,6 +1192,37 @@ func (r *ContextRuntime) UpdatePlanStatus(plan ContextPlan, currentTurnID string
 			})
 		}
 	}
+}
+
+func (r *ContextRuntime) UpdateUsageStatus(usage modelclient.Usage) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	changed := false
+	if usage.PromptTokens > 0 {
+		r.status.Estimated = false
+		r.status.CurrentTokens = usage.PromptTokens
+		r.status.ContextWindow = r.contextWindow
+		if r.contextWindow > 0 {
+			boundedTokens := min(usage.PromptTokens, r.contextWindow)
+			r.status.WindowPercent = clampInt(divideRoundUp(boundedTokens*100, r.contextWindow), 0, 100)
+		}
+		changed = true
+	}
+	if cacheRead, reported := usage.CacheReadTokens(); reported && usage.PromptTokens > 0 && cacheRead >= 0 && cacheRead <= usage.PromptTokens {
+		r.status.CachePromptTokens += int64(usage.PromptTokens)
+		r.status.CacheReadTokens += int64(cacheRead)
+		r.status.CacheHitRate = float64(r.status.CacheReadTokens) / float64(r.status.CachePromptTokens) * 100
+		r.status.CacheHitRateAvailable = true
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	r.refreshMemoryCountsLocked()
+	r.publishLocked(ContextEvent{Kind: ContextEventStatus, Phase: r.status.Phase})
 }
 
 func (r *ContextRuntime) PublishCompacted(dropped, recent int) {

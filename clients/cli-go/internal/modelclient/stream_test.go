@@ -36,7 +36,7 @@ func TestStreamSendsCompatibleRequestAndAssemblesTextUsage(t *testing.T) {
 		_, _ = w.Write(payload[split:])
 		flusher.Flush()
 		writeSSE(t, w, `{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
-		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14}}`)
+		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":3,"total_tokens":14,"prompt_tokens_details":{"cached_tokens":7}}}`)
 		writeSSE(t, w, `[DONE]`)
 	}))
 	defer server.Close()
@@ -57,8 +57,12 @@ func TestStreamSendsCompatibleRequestAndAssemblesTextUsage(t *testing.T) {
 	if !received.Stream || received.StreamOptions == nil || !received.StreamOptions.IncludeUsage || received.ReasoningEffort != ReasoningEffortHigh || received.MaxTokens != 512 {
 		t.Fatalf("request=%+v", received)
 	}
-	if response.Message.Role != "assistant" || response.Message.Content != "你好" || response.FinishReason != "stop" || response.Usage == nil || response.Usage.TotalTokens != 14 || response.CompatibilityFallback {
-		t.Fatalf("response=%+v", response)
+	if response.Usage == nil {
+		t.Fatal("response usage is nil")
+	}
+	cacheRead, cacheReported := response.Usage.CacheReadTokens()
+	if response.Message.Role != "assistant" || response.Message.Content != "你好" || response.FinishReason != "stop" || response.Usage.TotalTokens != 14 || !cacheReported || cacheRead != 7 || response.CompatibilityFallback {
+		t.Fatalf("response=%+v cache-read=%d reported=%t", response, cacheRead, cacheReported)
 	}
 	if len(events) != 2 || events[0].Kind != StreamEventResponseStarted || events[1] != (StreamEvent{Kind: StreamEventTextDelta, Text: "你好"}) {
 		t.Fatalf("events=%+v", events)
@@ -67,6 +71,22 @@ func TestStreamSendsCompatibleRequestAndAssemblesTextUsage(t *testing.T) {
 		if strings.Contains(event.Text, "hidden-secret") {
 			t.Fatalf("hidden reasoning leaked: %+v", events)
 		}
+	}
+}
+
+func TestStreamRejectsInvalidPromptCacheUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}`)
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1,"total_tokens":11,"prompt_cache_hit_tokens":11}}`)
+		writeSSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	_, err := newTestClient(t, server.URL).Stream(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}}, func(StreamEvent) error { return nil })
+	if StableErrorCode(err) != ErrorCodeStreamProtocol {
+		t.Fatalf("error=%v code=%q", err, StableErrorCode(err))
 	}
 }
 

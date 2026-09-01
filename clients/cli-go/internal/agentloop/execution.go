@@ -45,9 +45,6 @@ func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
 		return Result{}, err
 	}
 	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "正在校验模型响应", Status: EventRunning}, Phase: ActivityValidatingResponse})
-	if response.Usage != nil {
-		s.estimator.ObserveActual(plan.EstimatedInput, *response.Usage)
-	}
 	if err := validateModelMessage(response.Message); err != nil {
 		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "模型响应不符合协议", Status: EventFailed, Detail: "invalid_model_response"}, Phase: ActivityValidatingResponse, StableCode: "invalid_model_response"})
 		return Result{}, err
@@ -57,6 +54,13 @@ func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
 		return Result{}, errors.New("模型请求的工具调用总数超过安全上限")
 	}
 	s.toolCallsRemaining -= len(response.Message.ToolCalls)
+	recordUsage := func() {
+		if response.Usage == nil {
+			return
+		}
+		s.estimator.ObserveActual(plan.EstimatedInput, *response.Usage)
+		s.contextRuntime.UpdateUsageStatus(*response.Usage)
+	}
 	if len(response.Message.ToolCalls) == 0 {
 		text := strings.TrimSpace(response.Message.Content)
 		if text == "" {
@@ -65,6 +69,7 @@ func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
 		if err := s.commitFinalAnswer(ctx, response.Message, text); err != nil {
 			return Result{}, err
 		}
+		recordUsage()
 		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "已完成回答组织", Status: EventSucceeded}, Phase: ActivityValidatingResponse})
 		return Result{Text: text, Events: events}, nil
 	}
@@ -72,6 +77,7 @@ func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
 	if err := s.appendTurnMessage(s.currentTurnID, response.Message); err != nil {
 		return Result{}, err
 	}
+	recordUsage()
 	return s.processCalls(ctx, response.Message.ToolCalls, 0, events)
 }
 

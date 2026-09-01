@@ -226,16 +226,22 @@ type ContextMemoryProjection struct {
 }
 
 type ContextStatus struct {
-	Estimated           bool
-	WindowPercent       int
-	RecentCompleteTurns int
-	ObservationCount    int
-	ReflectionCount     int
-	MemoryItemCount     int
-	Mode                string
-	Phase               string
-	Degraded            bool
-	DegradedCode        string
+	Estimated             bool
+	WindowPercent         int
+	CurrentTokens         int
+	ContextWindow         int
+	CachePromptTokens     int64
+	CacheReadTokens       int64
+	CacheHitRate          float64
+	CacheHitRateAvailable bool
+	RecentCompleteTurns   int
+	ObservationCount      int
+	ReflectionCount       int
+	MemoryItemCount       int
+	Mode                  string
+	Phase                 string
+	Degraded              bool
+	DegradedCode          string
 }
 
 type ContextEventKind string

@@ -578,6 +578,19 @@ func validUsage(usage Usage) bool {
 	if usage.PromptTokens < 0 || usage.CompletionTokens < 0 || usage.TotalTokens < 0 {
 		return false
 	}
+	var nested *int
+	if usage.PromptTokensDetails != nil {
+		nested = usage.PromptTokensDetails.CachedTokens
+	}
+	if nested != nil && (*nested < 0 || *nested > usage.PromptTokens) {
+		return false
+	}
+	if usage.PromptCacheHitTokens != nil && (*usage.PromptCacheHitTokens < 0 || *usage.PromptCacheHitTokens > usage.PromptTokens) {
+		return false
+	}
+	if nested != nil && usage.PromptCacheHitTokens != nil && *nested != *usage.PromptCacheHitTokens {
+		return false
+	}
 	sum := usage.PromptTokens + usage.CompletionTokens
 	return usage.TotalTokens == 0 || usage.TotalTokens >= sum
 }

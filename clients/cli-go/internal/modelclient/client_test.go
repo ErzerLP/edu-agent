@@ -20,7 +20,7 @@ func TestCompleteSendsOpenAICompatibleToolRequest(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"get_learning_progress","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":123,"completion_tokens":17,"total_tokens":140}}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"get_learning_progress","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":123,"completion_tokens":17,"total_tokens":140,"prompt_tokens_details":{"cached_tokens":90}}}`)
 	}))
 	defer server.Close()
 	client, err := New(server.URL+"/v1", "test-model", "model-token", time.Second, nil)
@@ -35,8 +35,58 @@ func TestCompleteSendsOpenAICompatibleToolRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if received.Model != "test-model" || received.Stream || received.MaxTokens != 2048 || len(response.Message.ToolCalls) != 1 || response.Usage == nil || response.Usage.PromptTokens != 123 || response.Usage.CompletionTokens != 17 || response.Usage.TotalTokens != 140 {
-		t.Fatalf("request=%+v response=%+v", received, response)
+	if response.Usage == nil {
+		t.Fatal("response usage is nil")
+	}
+	cacheRead, cacheReported := response.Usage.CacheReadTokens()
+	if received.Model != "test-model" || received.Stream || received.MaxTokens != 2048 || len(response.Message.ToolCalls) != 1 || response.Usage.PromptTokens != 123 || response.Usage.CompletionTokens != 17 || response.Usage.TotalTokens != 140 || !cacheReported || cacheRead != 90 {
+		t.Fatalf("request=%+v response=%+v cache-read=%d reported=%t", received, response, cacheRead, cacheReported)
+	}
+}
+
+func TestCompleteParsesDeepSeekPromptCacheUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":12000,"completion_tokens":10,"total_tokens":12010,"prompt_cache_hit_tokens":9000,"prompt_cache_miss_tokens":3000}}`)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "model", "", time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Complete(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Usage == nil {
+		t.Fatal("response usage is nil")
+	}
+	cacheRead, cacheReported := response.Usage.CacheReadTokens()
+	if !cacheReported || cacheRead != 9000 {
+		t.Fatalf("usage=%+v cache-read=%d reported=%t", response.Usage, cacheRead, cacheReported)
+	}
+}
+
+func TestCompleteRejectsInvalidPromptCacheUsage(t *testing.T) {
+	for _, body := range []string{
+		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":101}}}`,
+		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_cache_hit_tokens":-1}}`,
+		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":50},"prompt_cache_hit_tokens":40}}`,
+	} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, body)
+		}))
+		client, err := New(server.URL, "model", "", time.Second, nil)
+		if err != nil {
+			server.Close()
+			t.Fatal(err)
+		}
+		_, err = client.Complete(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}})
+		server.Close()
+		if StableErrorCode(err) != ErrorCodeResponseProtocol {
+			t.Fatalf("body=%s error=%v code=%q", body, err, StableErrorCode(err))
+		}
 	}
 }
 

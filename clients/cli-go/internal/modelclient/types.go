@@ -51,10 +51,36 @@ type Request struct {
 	ReasoningEffort ReasoningEffort
 }
 
+type PromptTokensDetails struct {
+	CachedTokens *int `json:"cached_tokens,omitempty"`
+}
+
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens,omitempty"`
-	CompletionTokens int `json:"completion_tokens,omitempty"`
-	TotalTokens      int `json:"total_tokens,omitempty"`
+	PromptTokens         int                  `json:"prompt_tokens,omitempty"`
+	CompletionTokens     int                  `json:"completion_tokens,omitempty"`
+	TotalTokens          int                  `json:"total_tokens,omitempty"`
+	PromptTokensDetails  *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	PromptCacheHitTokens *int                 `json:"prompt_cache_hit_tokens,omitempty"`
+}
+
+func (u Usage) CacheReadTokens() (int, bool) {
+	var nested *int
+	if u.PromptTokensDetails != nil {
+		nested = u.PromptTokensDetails.CachedTokens
+	}
+	if nested != nil && u.PromptCacheHitTokens != nil {
+		if *nested != *u.PromptCacheHitTokens {
+			return 0, false
+		}
+		return *nested, true
+	}
+	if nested != nil {
+		return *nested, true
+	}
+	if u.PromptCacheHitTokens != nil {
+		return *u.PromptCacheHitTokens, true
+	}
+	return 0, false
 }
 
 type Response struct {

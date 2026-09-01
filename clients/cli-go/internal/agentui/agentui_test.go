@@ -656,6 +656,44 @@ type contextAwareConversation struct {
 func (c *contextAwareConversation) ContextStatus() agentloop.ContextStatus        { return c.status }
 func (c *contextAwareConversation) ContextUpdates() <-chan agentloop.ContextEvent { return c.updates }
 
+func TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate(t *testing.T) {
+	conversation := &contextAwareConversation{
+		status: agentloop.ContextStatus{
+			Estimated: true, WindowPercent: 38, CurrentTokens: 12340, ContextWindow: 32768,
+			RecentCompleteTurns: 3, MemoryItemCount: 4,
+		},
+		updates: make(chan agentloop.ContextEvent, 2),
+	}
+	value := newModel(t.Context(), conversation, "model")
+	updated, _ := value.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	value = updated.(model)
+	view := value.View()
+	if !strings.Contains(view, "上下文 约12.3k/32.8k") || !strings.Contains(view, "缓存命中 —") {
+		t.Fatalf("estimated sidebar metrics missing: %s", view)
+	}
+
+	conversation.updates <- agentloop.ContextEvent{
+		Kind: agentloop.ContextEventStatus,
+		Status: agentloop.ContextStatus{
+			WindowPercent: 37, CurrentTokens: 12000, ContextWindow: 32768,
+			CachePromptTokens: 20000, CacheReadTokens: 12000, CacheHitRate: 60, CacheHitRateAvailable: true,
+			RecentCompleteTurns: 3, MemoryItemCount: 4,
+		},
+	}
+	message := waitContextCmd(value.ctx, conversation.updates)().(contextMsg)
+	updated, _ = value.Update(message)
+	value = updated.(model)
+	view = value.View()
+	if !strings.Contains(view, "上下文 12k/32.8k") || !strings.Contains(view, "缓存命中 60.0%") {
+		t.Fatalf("actual sidebar metrics missing: %s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) > 120 {
+			t.Fatalf("line width=%d limit=120 line=%q", lipgloss.Width(line), line)
+		}
+	}
+}
+
 func TestAgentUIContextHeaderUpdatesAndStructuredCards(t *testing.T) {
 	conversation := &contextAwareConversation{
 		status:  agentloop.ContextStatus{Estimated: true, WindowPercent: 54, RecentCompleteTurns: 6, MemoryItemCount: 18, Mode: agentloop.ContextCompactionAuto},

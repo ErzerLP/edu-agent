@@ -1422,7 +1422,7 @@ func TestTwentyPlusTurnCompactionRecallAndFallbackVisibility(t *testing.T) {
 		t.Fatalf("recall result missing or leaked unsafe data: %s", recallToolContent)
 	}
 	status := session.ContextStatus()
-	if status.WindowPercent < 0 || status.WindowPercent > 100 || status.RecentCompleteTurns < 2 || status.MemoryItemCount == 0 {
+	if status.WindowPercent < 0 || status.WindowPercent > 100 || status.CurrentTokens <= 0 || status.ContextWindow != 4096 || status.RecentCompleteTurns < 2 || status.MemoryItemCount == 0 {
 		t.Fatalf("context status=%+v", status)
 	}
 

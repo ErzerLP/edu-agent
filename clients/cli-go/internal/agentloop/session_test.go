@@ -224,6 +224,56 @@ func TestSessionUsesProviderPromptUsageForBoundedCalibration(t *testing.T) {
 	}
 }
 
+func TestSessionPublishesActualContextTokensAndCumulativeCacheHitRate(t *testing.T) {
+	openAIHit, deepSeekHit := 9000, 3000
+	model := &fakeModel{responses: []modelclient.Response{
+		{
+			Message: modelclient.Message{Role: "assistant", Content: "first"},
+			Usage: &modelclient.Usage{
+				PromptTokens: 12000, CompletionTokens: 10, TotalTokens: 12010,
+				PromptTokensDetails: &modelclient.PromptTokensDetails{CachedTokens: &openAIHit},
+			},
+		},
+		{
+			Message: modelclient.Message{Role: "assistant", Content: "second"},
+			Usage: &modelclient.Usage{
+				PromptTokens: 8000, CompletionTokens: 10, TotalTokens: 8010,
+				PromptCacheHitTokens: &deepSeekHit,
+			},
+		},
+		{
+			Message: modelclient.Message{Role: "assistant", Content: "third"},
+			Usage:   &modelclient.Usage{PromptTokens: 5000, CompletionTokens: 10, TotalTokens: 5010},
+		},
+	}}
+	session := newTestSession(t, model, &fakeServer{})
+	for _, input := range []string{"first question", "second question", "third question"} {
+		if _, err := session.Send(t.Context(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status := session.ContextStatus()
+	if status.Estimated || status.CurrentTokens != 5000 || status.ContextWindow != 32768 || status.WindowPercent != 16 ||
+		status.CachePromptTokens != 20000 || status.CacheReadTokens != 12000 || !status.CacheHitRateAvailable || status.CacheHitRate != 60 {
+		t.Fatalf("context status=%+v", status)
+	}
+	found := false
+drain:
+	for {
+		select {
+		case event := <-session.ContextUpdates():
+			if event.Kind == ContextEventStatus && event.Status.CurrentTokens == 5000 && event.Status.CacheHitRate == 60 {
+				found = true
+			}
+		default:
+			break drain
+		}
+	}
+	if !found {
+		t.Fatal("actual token and cumulative cache status event was not published")
+	}
+}
+
 func TestSessionPublishesSafeThinkingAndToolLifecycle(t *testing.T) {
 	model := &fakeModel{responses: []modelclient.Response{
 		{Message: toolMessage("call-1", "search_knowledge", `{"query":"图论"}`)},

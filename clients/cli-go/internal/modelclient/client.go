@@ -134,6 +134,9 @@ func (c *Client) Complete(ctx context.Context, request Request) (Response, error
 	if err := decoder.Decode(&envelope); err != nil || len(envelope.Choices) == 0 {
 		return Response{}, errors.New("模型响应格式无效")
 	}
+	if envelope.Usage != nil && !validUsage(*envelope.Usage) {
+		return Response{}, clientError(ErrorCodeResponseProtocol, "模型 usage 无效")
+	}
 	finishReason := strings.TrimSpace(envelope.Choices[0].FinishReason)
 	if err := finishReasonError(finishReason, false); err != nil {
 		return Response{}, err

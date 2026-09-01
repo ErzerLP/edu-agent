@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
 const (
@@ -24,6 +26,42 @@ func projectToolResult(tool string, value any) ToolResultProjection {
 		Recall:          boundedProjectionJSON(tool, value, maxRecallToolOutputBytes, "recall_projection_limit"),
 		ServerReference: serverReferenceForToolResult(tool, value),
 	}
+}
+
+func projectWorkspaceToolResult(tool string, result workspace.Result) ToolResultProjection {
+	value := workspaceModelVisibleValue(result)
+	projection := projectToolResult(tool, value)
+	projection.ServerReference = nil
+	projection.WorkspaceReference = cloneWorkspaceReference(result.Reference)
+	return projection
+}
+
+func workspaceModelVisibleValue(result workspace.Result) any {
+	object := normalizedProjectionObject(result.Value)
+	if object == nil {
+		return result.Value
+	}
+	if _, failed := object["error"]; failed {
+		if _, ok := object["message"]; !ok && result.Summary != "" {
+			object["message"] = truncateUTF8(result.Summary, 240)
+		}
+	}
+	if result.Reference != nil {
+		if _, ok := object["path"]; !ok && result.Reference.Path != "" {
+			object["path"] = result.Reference.Path
+		}
+		if result.Reference.InvalidateObserved && result.Reference.ContentHash != "" {
+			if _, ok := object["expected_hash"]; !ok {
+				object["expected_hash"] = result.Reference.ContentHash
+			}
+		}
+	}
+	if result.Publication != "" {
+		if _, ok := object["publication_outcome"]; !ok {
+			object["publication_outcome"] = string(result.Publication)
+		}
+	}
+	return object
 }
 
 func serverReferenceForToolResult(tool string, value any) *ServerReference {
@@ -417,4 +455,88 @@ func currentTurnBudgetProjection(tool string, value any) string {
 		return `{"truncated":true,"degraded":true,"reason":"current_turn_tool_result_budget"}`
 	}
 	return strings.TrimSpace(string(data))
+}
+
+func workspaceBudgetProjectionCandidates(tool string, value any) []string {
+	object := normalizedProjectionObject(value)
+	if object == nil {
+		return []string{currentTurnBudgetProjection(tool, value)}
+	}
+	payloadLimits := []int{384, 192, 96, 48, 16, 4}
+	candidates := make([]string, 0, len(payloadLimits))
+	for _, payloadLimit := range payloadLimits {
+		projected := workspaceBudgetProjection(tool, object, payloadLimit)
+		data, err := json.Marshal(projected)
+		if err == nil {
+			candidates = append(candidates, string(data))
+		}
+	}
+	return candidates
+}
+
+func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit int) map[string]any {
+	result := map[string]any{"tool": tool}
+	for _, key := range []string{
+		"path", "operation", "error", "code", "message", "suggestion", "publication_outcome",
+		"content_hash", "expected_hash", "complete", "truncated", "truncation_reason", "returned",
+		"returned_lines", "next_offset", "next_byte_offset", "first_changed_line", "preview_kind",
+		"preview_truncated", "scanned_files", "scanned_bytes",
+	} {
+		if current, ok := object[key]; ok {
+			if text, isText := current.(string); isText && (key == "message" || key == "suggestion") {
+				current = truncateUTF8(text, max(24, payloadLimit))
+			}
+			result[key] = current
+		}
+	}
+
+	payloadKept := false
+	switch tool {
+	case workspace.ToolList:
+		if entries, ok := object["entries"].([]any); ok && len(entries) > 0 {
+			result["entries"] = []any{compactProjectionValue(entries[0], 0, 3, max(12, payloadLimit))}
+			payloadKept = true
+		}
+	case workspace.ToolRead:
+		if content, ok := object["content"].(string); ok && content != "" {
+			result["content"] = truncateUTF8(content, payloadLimit)
+			payloadKept = true
+		}
+	case workspace.ToolSearch:
+		if matches, ok := object["matches"].([]any); ok && len(matches) > 0 {
+			result["matches"] = []any{compactProjectionValue(matches[0], 0, 3, max(12, payloadLimit))}
+			payloadKept = true
+		}
+	case workspace.ToolWrite, workspace.ToolEdit:
+		for _, key := range []string{"preview", "diff"} {
+			if preview, ok := object[key].(string); ok && preview != "" {
+				result[key] = truncateUTF8(preview, payloadLimit)
+				payloadKept = true
+				break
+			}
+		}
+	}
+	if _, failed := object["error"]; !failed && !payloadKept {
+		result["payload_summary"] = "结果为空；请依据状态字段继续"
+	}
+	if tool == workspace.ToolList || tool == workspace.ToolRead || tool == workspace.ToolSearch {
+		if complete, _ := object["complete"].(bool); complete {
+			result["source_complete"] = true
+		}
+		result["complete"] = false
+		result["truncation_reason"] = "current_turn_budget"
+		if _, ok := result["suggestion"]; !ok {
+			switch tool {
+			case workspace.ToolList:
+				result["suggestion"] = "按偏移继续"
+			case workspace.ToolRead:
+				result["suggestion"] = "按偏移并携带哈希继续"
+			case workspace.ToolSearch:
+				result["suggestion"] = "缩小范围后重试"
+			}
+		}
+	} else if payloadKept {
+		result["preview_truncated"] = true
+	}
+	return result
 }

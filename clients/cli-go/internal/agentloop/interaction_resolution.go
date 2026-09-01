@@ -126,8 +126,7 @@ func (s *Session) ResolvePreference(ctx context.Context, resolution PreferenceRe
 		if saved {
 			return s.preferenceCompletionFallback(events, appendErr)
 		}
-		s.discardTurn(turnID)
-		return Result{}, appendErr
+		return s.finishAfterTurnFailure(turnID, events, appendErr)
 	}
 	s.clearPendingAfterResolution()
 	result, err := s.processCalls(ctx, calls, index+1, events)
@@ -138,8 +137,7 @@ func (s *Session) ResolvePreference(ctx context.Context, resolution PreferenceRe
 	if saved {
 		return s.preferenceCompletionFallback(events, err)
 	}
-	s.discardTurn(turnID)
-	return Result{}, err
+	return s.finishAfterTurnFailure(turnID, events, err)
 }
 
 func (s *Session) ResolveQuestion(ctx context.Context, answer QuestionAnswer) (Result, error) {
@@ -170,8 +168,7 @@ func (s *Session) ResolveQuestion(ctx context.Context, answer QuestionAnswer) (R
 
 	call := calls[index]
 	if err := s.appendSessionToolResult(call.Function.Name, call.ID, value); err != nil {
-		s.discardTurn(turnID)
-		return Result{}, err
+		return s.finishAfterTurnFailure(turnID, events, err)
 	}
 	event := Event{ID: call.ID, Tool: call.Function.Name, Summary: questionResolutionSummary(answer.Status), Status: EventSucceeded}
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityContinuingAfterTool})
@@ -180,8 +177,7 @@ func (s *Session) ResolveQuestion(ctx context.Context, answer QuestionAnswer) (R
 	result, err := s.processCalls(ctx, calls, index+1, events)
 	if err != nil {
 		err = preferContextError(ctx, err)
-		s.discardTurn(turnID)
-		return Result{}, err
+		return s.finishAfterTurnFailure(turnID, events, err)
 	}
 	return cloneResult(result), nil
 }

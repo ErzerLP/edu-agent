@@ -33,7 +33,13 @@ make cli-build
 
 Agent TUI 顶部只显示产品标识，把运行状态、估算上下文、模型名称和键位帮助放在消息输入区下方。输入区是按内容增长的有界多行 composer：`Enter` 发送，`Ctrl+J` 或 `Alt+Enter` 换行，字符计数显示 `8000` 上限；暂停跟随 transcript 时，底部状态会提示有新消息并保留回到底部的快捷键。宽终端还会在右侧显示学习概览：当前 Agent 状态、服务端权威学习目标、会话状态、路线进度、当前 Activity 与估算活跃时间；它在启动、完整 turn 结束或 `Ctrl+R` 时刷新，读取失败不阻断对话，窄终端会完全折叠侧栏。侧栏不显示任何 opaque ID、凭据、隐藏推理或原始工具参数，也不持久化学习状态副本。
 
-Agent的唯一写工具是提出长期偏好候选。执行前，TUI会把候选内容、理由、类别、敏感性和稳定性完整放入可滚动区域，并固定显示确认控件；拒绝不会产生服务端写入。确认后也只会创建Memory候选，后续准入和隐私处理继续由服务端合同控制。响应丢失时会保留原 `operation_id` 并只允许幂等重试核对，不允许把未知结果改称“取消保存”；写入成功后的模型续答失败则会明确报告候选已提交并退出确认状态。退出Agent会话会取消在途模型和工具请求，也不会把对话或模型响应写入本地文件。
+### 本地工作区与文件工具
+
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型只获得工作区相对路径上的 `list`、`read`、`search`、`write` 和 `edit` 五个结构化 UTF-8 文本工具；首版不提供 delete、move、copy、patch、shell、进程或网络工具。链接、junction、reparse point、绝对路径和工作区逃逸会被拒绝。工作区内没有额外 protected-path denylist，因此隐藏文件、`.git`、`.comet`、`.env` 与其他路径遵循相同规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+
+`write`/`edit` 默认逐操作显示冻结的 content preview 或 diff 并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、内容 hash、冲突检测、原子发布和取消校验，切换模式也不会自动批准已经等待确认的修改。
+
+对服务端数据，Agent 的唯一写工具仍是提出长期偏好候选。执行前，TUI会把候选内容、理由、类别、敏感性和稳定性完整放入可滚动区域，并固定显示确认控件；拒绝不会产生服务端写入。确认后也只会创建Memory候选，后续准入和隐私处理继续由服务端合同控制。响应丢失时会保留原 `operation_id` 并只允许幂等重试核对，不允许把未知结果改称“取消保存”；写入成功后的模型续答失败则会明确报告候选已提交并退出确认状态。退出Agent会话会取消在途模型和工具请求，也不会把对话或模型响应写入工作区或其他本地文件。
 
 ## Commands
 
@@ -57,7 +63,7 @@ edu-agent model preset openai|deepseek|openrouter|ollama|custom
 edu-agent model set [--base-url URL] [--model NAME] [--context-window N] [--timeout DURATION] [--max-tool-rounds N]
 edu-agent model test
 edu-agent model key delete --confirmed
-edu-agent agent
+edu-agent agent [--workspace PATH]
 edu-agent clear
 edu-agent version
 ```

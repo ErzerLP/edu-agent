@@ -17,6 +17,8 @@ const (
 	selectorPreference
 	selectorPreferenceRetry
 	selectorReasoning
+	selectorFileMutation
+	selectorFileMode
 )
 
 type selectorOption struct {
@@ -49,11 +51,13 @@ const (
 )
 
 type selectorAction struct {
-	kind       selectorActionKind
-	optionIDs  []string
-	custom     string
-	resolution agentloop.PreferenceResolution
-	effort     modelclient.ReasoningEffort
+	kind           selectorActionKind
+	optionIDs      []string
+	custom         string
+	resolution     agentloop.PreferenceResolution
+	effort         modelclient.ReasoningEffort
+	fileResolution agentloop.FileMutationResolution
+	fileMode       agentloop.FileAuthorizationMode
 }
 
 func newQuestionSelector(question *agentloop.PendingQuestion) *selectorModel {
@@ -89,6 +93,42 @@ func newPreferenceRetrySelector() *selectorModel {
 		options: []selectorOption{
 			{ID: string(agentloop.PreferenceRetry), Label: "重试核对原操作", Description: "沿用原操作 ID 查询或重试，不创建新操作"},
 		},
+	}
+}
+
+func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorModel {
+	body := fmt.Sprintf("操作：%s\n路径：%s\n%s：\n%s", pending.Operation, pending.Path, pending.PreviewKind, pending.Preview)
+	if pending.Truncated {
+		body += "\n预览已按安全上限截断。"
+	}
+	return &selectorModel{
+		kind: selectorFileMutation, title: "文件修改授权", body: body,
+		options: []selectorOption{
+			{ID: string(agentloop.FileMutationApprove), Label: "允许此次修改", Description: "重新校验版本后只发布上方已冻结候选"},
+			{ID: string(agentloop.FileMutationDecline), Label: "拒绝此次修改", Description: "文件保持不变，并把 authorization_denied 返回模型"},
+		},
+	}
+}
+
+func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel {
+	if current == "" {
+		current = agentloop.FileAuthorizationConfirm
+	}
+	options := []selectorOption{
+		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit 都显示冻结预览并等待明确授权"},
+		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit 不再确认，但所有安全校验保持不变"},
+	}
+	focus := 0
+	for index := range options {
+		options[index].Selected = options[index].ID == string(current)
+		if options[index].Selected {
+			focus = index
+		}
+	}
+	return &selectorModel{
+		kind: selectorFileMode, title: "文件授权模式",
+		body:    "YOLO 仅当前 Session 有效。隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。",
+		options: options, focus: focus,
 	}
 }
 
@@ -154,6 +194,8 @@ func (s *selectorModel) handleKey(msg tea.KeyMsg) (selectorAction, tea.Cmd) {
 		case selectorPreference:
 			s.submitted = true
 			return selectorAction{kind: selectorSubmit, resolution: agentloop.PreferenceDecline}, nil
+		case selectorFileMutation, selectorFileMode:
+			return selectorAction{kind: selectorCancel}, nil
 		case selectorReasoning:
 			return selectorAction{kind: selectorCancel}, nil
 		case selectorPreferenceRetry:
@@ -227,6 +269,12 @@ func (s *selectorModel) handleKey(msg tea.KeyMsg) (selectorAction, tea.Cmd) {
 		if s.kind == selectorReasoning {
 			return selectorAction{kind: selectorSubmit, effort: modelclient.ReasoningEffort(s.options[s.focus].ID)}, nil
 		}
+		if s.kind == selectorFileMutation {
+			return selectorAction{kind: selectorSubmit, fileResolution: agentloop.FileMutationResolution(s.options[s.focus].ID)}, nil
+		}
+		if s.kind == selectorFileMode {
+			return selectorAction{kind: selectorSubmit, fileMode: agentloop.FileAuthorizationMode(s.options[s.focus].ID)}, nil
+		}
 		return selectorAction{kind: selectorSubmit, resolution: agentloop.PreferenceResolution(s.options[s.focus].ID)}, nil
 	}
 
@@ -288,6 +336,10 @@ func (s *selectorModel) helpText() string {
 		return "Enter 重试原操作 · Esc 已禁用"
 	case selectorReasoning:
 		return "↑/↓/Tab 或数字 · Enter 应用 · Esc 返回"
+	case selectorFileMutation:
+		return "↑/↓/Tab 或 1-2 · Enter 确认 · Esc 停止当前轮次"
+	case selectorFileMode:
+		return "↑/↓/Tab 或 1-2 · Enter 应用 · Esc 返回"
 	default:
 		return fmt.Sprintf("%d 个选项", len(s.options))
 	}

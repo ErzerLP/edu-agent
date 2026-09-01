@@ -127,7 +127,7 @@ switch ($env:RUNNER_OS_NAME) {
         $systemKeyMethod = "keychain-generic-password+stdin-secret"
     }
     "Windows" {
-        $rootConfinementMethod = "resolved-root+reparse-rejection+final-handle-boundary"
+        $rootConfinementMethod = "retained-root-parent-handles+ntcreatefile-no-follow+ntsetinformationfile-rename"
         $hiddenInputMethod = "windows-conpty+xterm-readpassword+input-echo-probe+final-fragment-rejection"
         $clearMethod = "windows-conpty+production-clearscreen+vt-clear+forced-vt-unavailable+fillconsole-cursor-fallback"
         $systemKeyMethod = "dpapi-current-user+user-only-acl"
@@ -151,6 +151,12 @@ $checks = @(
     @{ Name = "ctrl-l"; Package = "./internal/terminal"; Pattern = "^TestPlatformControlL$"; Method = "native-go-test" },
     @{ Name = "clear"; Package = "./internal/terminal"; Pattern = "^TestPlatformClear$"; Method = $clearMethod }
 )
+
+if ($env:RUNNER_OS_NAME -eq "Windows") {
+    $checks += @(
+        @{ Name = "workspace-securefile-handle-publication"; Package = "./internal/securefile"; Pattern = "^TestWindows(HandleRelativeCreateReplaceAndCleanup|RejectsReparseAndInvalidPaths|ReplacePreservesProtectedDACL|RootAndParentHandlesPinNamespace|HardlinkAliasesShareFileIdentity)$"; Method = $rootConfinementMethod }
+    )
+}
 
 $failed = $false
 Push-Location $moduleRoot

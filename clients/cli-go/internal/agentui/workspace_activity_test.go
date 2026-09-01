@@ -1,0 +1,131 @@
+package agentui
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
+)
+
+func TestAgentUIWorkspaceActivityDetailsAreStructuredSafeAndUpserted(t *testing.T) {
+	searchRunning := agentloop.Activity{
+		Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool, TimeoutBudget: 30 * time.Second,
+		Event: agentloop.Event{ID: "search-call", Tool: "search", Summary: "正在搜索 src：已扫描 1 个文件", Status: agentloop.EventRunning},
+		File:  &agentloop.FileActivityDetail{Path: "src", ScannedFiles: 1, ScannedBytes: 128, HasScanned: true, Matches: 1, HasMatches: true},
+	}
+	searchUpdated := searchRunning
+	searchUpdated.Event.Summary = "正在搜索 src：已扫描 40 个文件"
+	searchUpdated.File = &agentloop.FileActivityDetail{Path: "src", ScannedFiles: 40, ScannedBytes: 4096, HasScanned: true, Matches: 3, HasMatches: true}
+	searchDone := searchUpdated
+	searchDone.Event = agentloop.Event{ID: "search-call", Tool: "search", Summary: "搜索达到匹配上限", Status: agentloop.EventFailed, Detail: "match_limit"}
+	searchDone.StableCode = "match_limit"
+	searchDone.File.TruncationReason = "match_limit"
+	writeDone := agentloop.Activity{
+		Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool,
+		Event: agentloop.Event{ID: "write-call", Tool: "write", Summary: "已完成 write_replace：notes.md", Status: agentloop.EventSucceeded},
+		File: &agentloop.FileActivityDetail{
+			Path: "notes.md", Operation: "write_replace", PreviewKind: "diff", Preview: "-old\n+new\n",
+			FirstChangedLine: 1, PublicationOutcome: "completed",
+		},
+	}
+	conversation := &fakeConversation{
+		workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"},
+		activities:      []agentloop.Activity{searchRunning, searchUpdated, searchDone, writeDone},
+		result: agentloop.Result{
+			Text:   "文件检查已结束。",
+			Events: []agentloop.Event{searchDone.Event, writeDone.Event},
+		},
+	}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("检查文件")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	collapsed := value.viewport.View()
+	if !strings.Contains(collapsed, "工具调用 · 2 项") || strings.Count(collapsed, "搜索文件") != 1 ||
+		!strings.Contains(collapsed, "src") || !strings.Contains(collapsed, "notes.md") || !strings.Contains(collapsed, "完成") {
+		t.Fatalf("collapsed workspace timeline=%s", collapsed)
+	}
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	value = updated.(model)
+	expanded := value.viewport.View()
+	for _, expected := range []string{
+		"路径：src", "扫描：40 个文件 · 4096 字节 · 匹配：3", "截断原因：match_limit", "代码：match_limit",
+		"路径：notes.md", "操作：write_replace", "发布结果：completed", "首个变化行：1", "最终差异：", "-old", "+new",
+	} {
+		if !strings.Contains(expanded, expected) {
+			t.Fatalf("expanded workspace timeline missing %q: %s", expected, expanded)
+		}
+	}
+	for _, forbidden := range []string{"/home/private", `{"path"`, "expected_hash", "sha256:", "provider reasoning"} {
+		if strings.Contains(expanded, forbidden) {
+			t.Fatalf("expanded workspace timeline leaked %q: %s", forbidden, expanded)
+		}
+	}
+}
+
+func TestAgentUISlowWorkspaceSearchShowsProgressBudgetAndEscInOneActivity(t *testing.T) {
+	conversation := &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"}}
+	value := newModel(t.Context(), conversation, "model")
+	value.busy = true
+	value.activeCancelable = true
+	value.activeTurnID = 1
+	value.activeStarted = time.Now().Add(-slowTurnThreshold - time.Second)
+	started := time.Now().Add(-9 * time.Second)
+	for _, detail := range []*agentloop.FileActivityDetail{
+		{Path: "src", ScannedFiles: 1, ScannedBytes: 128, HasScanned: true, Matches: 0, HasMatches: true},
+		{Path: "src", ScannedFiles: 12, ScannedBytes: 8192, HasScanned: true, Matches: 4, HasMatches: true},
+	} {
+		value.handleActivity(1, agentloop.Activity{
+			Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool, StartedAt: started, UpdatedAt: time.Now(), TimeoutBudget: 30 * time.Second,
+			Event: agentloop.Event{ID: "search-call", Tool: "search", Summary: "正在搜索 src", Status: agentloop.EventRunning}, File: detail,
+		})
+	}
+	toolActivities := 0
+	for _, entry := range value.entries {
+		if entry.kind == entryTools {
+			toolActivities += len(entry.activities)
+		}
+	}
+	detail := value.slowTurnDetail()
+	for _, expected := range []string{"已等待", "已扫描 12 个文件 / 8192 字节", "匹配 4", "超时预算 30s", "Esc"} {
+		if !strings.Contains(detail, expected) {
+			t.Fatalf("slow detail missing %q: %s", expected, detail)
+		}
+	}
+	if toolActivities != 1 {
+		t.Fatalf("progress appended duplicate activities: %d entries=%+v", toolActivities, value.entries)
+	}
+	value.toolsExpanded = true
+	value.refreshTranscript(false)
+	if transcript := value.viewport.View(); !strings.Contains(transcript, "扫描：12 个文件 · 8192 字节 · 匹配：4") {
+		t.Fatalf("live search progress missing: %s", transcript)
+	}
+}
+
+func TestAgentUIWorkspaceFooterAtMinimumWidthKeepsModeAndSanitizedWorkspace(t *testing.T) {
+	conversation := &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{
+		Available: true, Label: "/home/private/project-with-a-very-long-workspace-label",
+	}}
+	value := newModel(t.Context(), conversation, "a-very-long-model-name")
+	updated, _ := value.Update(tea.WindowSizeMsg{Width: minimumWidth, Height: minimumHeight})
+	value = updated.(model)
+	for _, mode := range []agentloop.FileAuthorizationMode{agentloop.FileAuthorizationConfirm, agentloop.FileAuthorizationYOLO} {
+		conversation.fileMode = mode
+		footer := value.renderFooterStatus(value.viewport.Width)
+		wantMode := "文件 确认"
+		if mode == agentloop.FileAuthorizationYOLO {
+			wantMode = "文件 YOLO"
+		}
+		if lipgloss.Width(footer) > value.viewport.Width || !strings.Contains(footer, wantMode) || !strings.Contains(footer, "工作区") || strings.Contains(footer, "/home/") {
+			t.Fatalf("mode=%q width=%d limit=%d footer=%q", mode, lipgloss.Width(footer), value.viewport.Width, footer)
+		}
+	}
+	for _, line := range strings.Split(value.View(), "\n") {
+		if lipgloss.Width(line) > minimumWidth || strings.Contains(line, "/home/private") {
+			t.Fatalf("minimum-width line width=%d line=%q", lipgloss.Width(line), line)
+		}
+	}
+}

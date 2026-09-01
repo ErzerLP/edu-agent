@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -245,6 +246,79 @@ func TestAgentLaunchRequiresTTYPairingAndModelCredential(t *testing.T) {
 	errOut.Reset()
 	if exit := app.Run(t.Context(), []string{"agent"}); exit != ExitInput || !strings.Contains(errOut.String(), "not_a_terminal") {
 		t.Fatalf("non-tty exit=%d err=%q", exit, errOut.String())
+	}
+}
+
+func TestAgentLaunchSelectsWorkspaceAndDegradesInvalidRoots(t *testing.T) {
+	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
+	preset := config.DefaultAgentConfig("ollama")
+	configStore.value.Agent = &preset
+	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
+	app.ModelSecrets = &memoryModelSecretStore{}
+	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return fixedAgentModel{}, nil }
+	app.InputIsTTY = func() bool { return true }
+	app.OutputIsTTY = func() bool { return true }
+	app.Getenv = func(string) string { return "xterm" }
+
+	startupRoot := t.TempDir()
+	t.Chdir(startupRoot)
+	runner := &fakeAgentUI{}
+	app.AgentUI = runner
+	if exit := app.Run(t.Context(), []string{"agent"}); exit != ExitOK {
+		t.Fatalf("default workspace exit=%d err=%q", exit, errOut.String())
+	}
+	status := runner.conversation.WorkspaceStatus()
+	if !status.Available || status.Label != filepath.Base(startupRoot) || runner.conversation.FileAuthorizationMode() != agentloop.FileAuthorizationConfirm {
+		t.Fatalf("default workspace status=%+v fileMode=%q", status, runner.conversation.FileAuthorizationMode())
+	}
+
+	explicitRoot := t.TempDir()
+	runner = &fakeAgentUI{}
+	app.AgentUI = runner
+	errOut.Reset()
+	if exit := app.Run(t.Context(), []string{"agent", "--workspace", explicitRoot}); exit != ExitOK {
+		t.Fatalf("explicit workspace exit=%d err=%q", exit, errOut.String())
+	}
+	status = runner.conversation.WorkspaceStatus()
+	if !status.Available || status.Label != filepath.Base(explicitRoot) {
+		t.Fatalf("explicit workspace status=%+v", status)
+	}
+
+	runner = &fakeAgentUI{}
+	app.AgentUI = runner
+	errOut.Reset()
+	missingRoot := filepath.Join(t.TempDir(), "missing")
+	if exit := app.Run(t.Context(), []string{"agent", "--workspace", missingRoot}); exit != ExitOK {
+		t.Fatalf("unavailable workspace exit=%d err=%q", exit, errOut.String())
+	}
+	status = runner.conversation.WorkspaceStatus()
+	if status.Available || status.Code != "workspace_unavailable" {
+		t.Fatalf("unavailable workspace status=%+v", status)
+	}
+
+	calls := runner.calls
+	errOut.Reset()
+	if exit := app.Run(t.Context(), []string{"agent", "extra"}); exit != ExitInput || runner.calls != calls || !strings.Contains(errOut.String(), "usage") {
+		t.Fatalf("invalid args exit=%d calls=%d err=%q", exit, runner.calls, errOut.String())
+	}
+}
+
+func TestAgentHelpShowsWorkspaceWithoutTTYOrDependencies(t *testing.T) {
+	app, out, errOut := newTestApp(&memoryConfigStore{}, &memoryCredentialStore{}, &fakeTerminal{})
+	runner := &fakeAgentUI{}
+	app.AgentUI = runner
+	app.InputIsTTY = func() bool { return false }
+	app.OutputIsTTY = func() bool { return false }
+	if exit := app.Run(t.Context(), []string{"agent", "--help"}); exit != ExitOK {
+		t.Fatalf("help exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	for _, expected := range []string{"edu-agent agent [--workspace PATH]", "--workspace PATH", "F4", "YOLO", "list、read、search、write、edit"} {
+		if !strings.Contains(out.String(), expected) {
+			t.Fatalf("help missing %q: %s", expected, out.String())
+		}
+	}
+	if runner.calls != 0 || errOut.Len() != 0 {
+		t.Fatalf("help started UI or wrote stderr: calls=%d err=%q", runner.calls, errOut.String())
 	}
 }
 

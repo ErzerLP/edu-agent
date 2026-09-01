@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
@@ -12,15 +13,16 @@ import (
 type entryKind string
 
 const (
-	entryNotice    entryKind = "notice"
-	entryUser      entryKind = "user"
-	entryAssistant entryKind = "assistant"
-	entryThinking  entryKind = "thinking"
-	entryTools     entryKind = "tools"
-	entryConfirm   entryKind = "confirm"
-	entryQuestion  entryKind = "question"
-	entryError     entryKind = "error"
-	entryContext   entryKind = "context"
+	entryNotice      entryKind = "notice"
+	entryUser        entryKind = "user"
+	entryAssistant   entryKind = "assistant"
+	entryThinking    entryKind = "thinking"
+	entryTools       entryKind = "tools"
+	entryConfirm     entryKind = "confirm"
+	entryFileConfirm entryKind = "file_confirm"
+	entryQuestion    entryKind = "question"
+	entryError       entryKind = "error"
+	entryContext     entryKind = "context"
 )
 
 type transcriptEntry struct {
@@ -34,6 +36,7 @@ type transcriptEntry struct {
 	stopped      bool
 	failed       bool
 	pending      *agentloop.PreferenceConfirmation
+	fileMutation *agentloop.PendingFileMutation
 	question     *agentloop.PendingQuestion
 }
 
@@ -61,6 +64,8 @@ func renderTranscriptEntry(entry transcriptEntry, width int, toolsExpanded bool)
 		return renderToolGroup(entry.activities, width, toolsExpanded)
 	case entryConfirm:
 		return confirmStyle.Width(max(20, width-4)).Render(confirmLabelStyle.Render("长期偏好确认") + "\n" + safeTerminalText(entry.text))
+	case entryFileConfirm:
+		return confirmStyle.Width(max(20, width-4)).Render(confirmLabelStyle.Render("文件修改授权") + "\n" + safeTerminalText(entry.text))
 	case entryQuestion:
 		return questionStyle.Width(max(20, width-4)).Render(questionLabelStyle.Render("需要你的选择") + "\n" + safeTerminalText(entry.text))
 	case entryError:
@@ -159,27 +164,154 @@ func renderToolGroup(activities []agentloop.Activity, width int, expanded bool) 
 		status := normalizedEventStatus(event.Status)
 		icon, statusText, style := toolEventAppearance(status)
 		name := toolDisplayName(event.Tool)
-		line := fmt.Sprintf("%s %-8s %s", icon, name, safeTerminalText(event.Summary))
-		lines = append(lines, style.Width(max(20, width-2)).Render(line))
+		line := fmt.Sprintf("%s %s", icon, name)
+		statusSuffix := " · " + statusText
+		if activity.File != nil && activity.File.Path != "" {
+			pathWidth := max(4, width-2-lipgloss.Width(line)-lipgloss.Width(statusSuffix)-3)
+			line += " · " + truncateDisplayWidth(safeSingleLineTerminalText(activity.File.Path), pathWidth)
+		}
+		line += statusSuffix
+		if summaryText := strings.TrimSpace(safeSingleLineTerminalText(event.Summary)); summaryText != "" {
+			available := max(0, width-2-lipgloss.Width(line)-3)
+			if available >= 8 {
+				line += " · " + truncateDisplayWidth(summaryText, available)
+			}
+		}
+		lines = append(lines, style.Render(truncateDisplayWidth(line, max(20, width-2))))
 		if expanded {
-			detail := fmt.Sprintf("    状态：%s · 阶段：%s · 工具：%s", statusText, phaseLabel(activity.Phase), safeTerminalText(event.Tool))
+			baseDetail := fmt.Sprintf("状态：%s · 阶段：%s · 工具：%s", statusText, phaseLabel(activity.Phase), safeTerminalText(event.Tool))
+			lines = appendWrappedToolDetail(lines, "    "+baseDetail, max(20, width-4), 3)
+			lifecycle := make([]string, 0, 3)
 			if elapsed := activityElapsed(activity); elapsed != "" {
-				detail += " · 用时：" + elapsed
+				lifecycle = append(lifecycle, "用时："+elapsed)
 			}
 			if activity.TimeoutBudget > 0 {
-				detail += " · 超时预算：" + visibleDuration(activity.TimeoutBudget)
+				lifecycle = append(lifecycle, "超时预算："+visibleDuration(activity.TimeoutBudget))
 			}
 			code := activity.StableCode
 			if code == "" {
 				code = event.Detail
 			}
 			if strings.TrimSpace(code) != "" {
-				detail += " · 代码：" + safeTerminalText(code)
+				lifecycle = append(lifecycle, "代码："+safeTerminalText(code))
 			}
-			lines = append(lines, toolDetailStyle.Width(max(20, width-4)).Render(detail))
+			if len(lifecycle) > 0 {
+				lines = appendWrappedToolDetail(lines, "    "+strings.Join(lifecycle, " · "), max(20, width-4), 3)
+			}
+			lines = append(lines, renderFileActivityDetails(activity.File, max(20, width-4))...)
 		}
 	}
 	return toolGroupStyle.Width(width).Render(strings.Join(lines, "\n"))
+}
+
+func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) []string {
+	if detail == nil {
+		return nil
+	}
+	lines := make([]string, 0, 12)
+	appendLine := func(value string) {
+		lines = appendWrappedToolDetail(lines, "    "+value, width, 4)
+	}
+	if detail.Path != "" {
+		appendLine("路径：" + safeSingleLineTerminalText(detail.Path))
+	}
+	operation := make([]string, 0, 3)
+	if detail.Operation != "" {
+		operation = append(operation, "操作："+safeSingleLineTerminalText(detail.Operation))
+	}
+	if detail.PublicationOutcome != "" {
+		operation = append(operation, "发布结果："+safeSingleLineTerminalText(detail.PublicationOutcome))
+	}
+	if detail.FirstChangedLine > 0 {
+		operation = append(operation, fmt.Sprintf("首个变化行：%d", detail.FirstChangedLine))
+	}
+	if len(operation) > 0 {
+		appendLine(strings.Join(operation, " · "))
+	}
+	if detail.HasReturned {
+		appendLine(fmt.Sprintf("返回：%d 项", detail.Returned))
+	}
+	if detail.HasRange {
+		appendLine(fmt.Sprintf("范围：第 %d-%d 行", detail.StartLine, detail.EndLine))
+	}
+	if detail.HasBytes {
+		appendLine(fmt.Sprintf("返回字节：%d", detail.Bytes))
+	}
+	if detail.HasScanned {
+		scan := fmt.Sprintf("扫描：%d 个文件 · %d 字节", detail.ScannedFiles, detail.ScannedBytes)
+		if detail.HasMatches {
+			scan += fmt.Sprintf(" · 匹配：%d", detail.Matches)
+		}
+		appendLine(scan)
+	} else if detail.HasMatches {
+		appendLine(fmt.Sprintf("匹配：%d", detail.Matches))
+	}
+	if detail.TruncationReason != "" {
+		appendLine("截断原因：" + safeSingleLineTerminalText(detail.TruncationReason))
+	}
+	if detail.HasContinuation {
+		continuation := fmt.Sprintf("继续：next_offset=%d", detail.NextOffset)
+		if detail.HasRange || detail.HasBytes {
+			continuation += fmt.Sprintf(" · next_byte_offset=%d", detail.NextByteOffset)
+		}
+		appendLine(continuation)
+	}
+	if detail.PreviewKind != "" {
+		appendLine("预览类型：" + safeSingleLineTerminalText(detail.PreviewKind))
+	}
+	if detail.PreviewTruncated {
+		appendLine("最终预览已按安全上限截断")
+	}
+	if detail.Preview != "" {
+		label := "最终预览："
+		if detail.PreviewKind == "diff" {
+			label = "最终差异："
+		}
+		appendLine(label)
+		preview, truncated := boundedActivityPreview(detail.Preview, 4<<10)
+		previewWidth := max(8, width-6)
+		if previewDisplayLineCount(preview, previewWidth) > 32 {
+			truncated = true
+		}
+		wrapped := wrapDisplayLines(preview, previewWidth, 32)
+		for _, line := range wrapped {
+			lines = append(lines, toolDetailStyle.Render("      "+line))
+		}
+		if truncated {
+			appendLine("终端详情已按 4 KiB 上限收敛")
+		}
+	}
+	return lines
+}
+
+func appendWrappedToolDetail(lines []string, value string, width, maxLines int) []string {
+	for _, line := range wrapDisplayLines(value, width, maxLines) {
+		lines = append(lines, toolDetailStyle.Render(line))
+	}
+	return lines
+}
+
+func boundedActivityPreview(value string, limit int) (string, bool) {
+	value = safeTerminalText(value)
+	if limit <= 0 || len(value) <= limit {
+		return value, false
+	}
+	value = value[:limit]
+	for value != "" && !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value, true
+}
+
+func previewDisplayLineCount(value string, width int) int {
+	if value == "" || width <= 0 {
+		return 0
+	}
+	count := 0
+	for line := range strings.SplitSeq(value, "\n") {
+		count += max(1, (lipgloss.Width(line)+width-1)/width)
+	}
+	return count
 }
 
 func activityElapsed(activity agentloop.Activity) string {
@@ -234,6 +366,11 @@ func toolDisplayName(name string) string {
 		"recall_session_memory":      "回查会话证据",
 		"ask_user_question":          "询问用户",
 		"remember_preference":        "保存长期偏好",
+		"list":                       "列出工作区",
+		"read":                       "读取文件",
+		"search":                     "搜索文件",
+		"write":                      "写入文件",
+		"edit":                       "编辑文件",
 	}
 	if label, ok := labels[name]; ok {
 		return label

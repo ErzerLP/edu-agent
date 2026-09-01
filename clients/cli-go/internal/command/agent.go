@@ -3,8 +3,10 @@ package command
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelsecret"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
 type defaultAgentUIRunner struct {
@@ -26,8 +29,25 @@ func (r defaultAgentUIRunner) Run(ctx context.Context, conversation agentui.Conv
 }
 
 func (a *App) runAgent(ctx context.Context, args []string) error {
-	if len(args) != 0 {
-		return commandError("usage", "AI学习助手不接受额外参数", "在交互终端运行 edu-agent agent", ExitInput)
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		_, err := io.WriteString(a.Out, agentHelpText+"\n")
+		return err
+	}
+	set := newFlagSet("agent")
+	var workspacePath string
+	set.StringVar(&workspacePath, "workspace", "", "fixed workspace root")
+	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
+		return commandError("usage", "AI学习助手参数格式无效", "在交互终端运行 edu-agent agent [--workspace PATH]", ExitInput)
+	}
+	workspaceProvided := false
+	set.Visit(func(current *flag.Flag) {
+		if current.Name == "workspace" {
+			workspaceProvided = true
+		}
+	})
+	var workspacePathErr error
+	if !workspaceProvided {
+		workspacePath, workspacePathErr = os.Getwd()
 	}
 	if !a.interactiveTerminalAvailable() || a.AgentUI == nil {
 		return commandError("not_a_terminal", "AI学习助手需要交互终端", "请在TTY终端运行 edu-agent agent", ExitInput)
@@ -45,6 +65,14 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 		return commandError("invalid_configuration", "模型请求超时配置无效", "在设置中修复模型配置", ExitInput)
 	}
 	server := a.NewClient(value.ServerURL, record.Token, requestTimeout)
+	workspaceStatus := workspace.Status{Code: workspace.CodeWorkspaceUnavailable}
+	var workspaceExecutor *workspace.Workspace
+	if workspacePathErr == nil {
+		workspaceExecutor, err = workspace.Open(workspacePath)
+		if err == nil {
+			workspaceStatus = workspaceExecutor.Status()
+		}
+	}
 	session, err := agentloop.New(model, server, agentloop.Options{
 		ContextWindow: value.Agent.ContextWindow, MaxToolRounds: value.Agent.MaxToolRounds,
 		ContextCompaction: value.Agent.ContextCompaction,
@@ -52,8 +80,13 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 		ModelTimeout:      modelTimeout,
 		ToolTimeout:       requestTimeout,
 		NewUUID:           a.NewUUID,
+		Workspace:         workspaceExecutor,
+		WorkspaceStatus:   workspaceStatus,
 	})
 	if err != nil {
+		if workspaceExecutor != nil {
+			_ = workspaceExecutor.Close()
+		}
 		return commandError("agent_configuration_invalid", "AI学习助手配置无效", "检查模型参数后重试", ExitInput)
 	}
 	defer session.Close()
@@ -65,6 +98,16 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 	}
 	return nil
 }
+
+const agentHelpText = `用法：edu-agent agent [--workspace PATH]
+
+启动交互式 AI 学习助手。
+
+选项：
+  --workspace PATH  固定本 Session 的本地工作区；省略时使用 Agent 启动目录
+  -h, --help        显示此帮助
+
+文件工具：list、read、search、write、edit。write/edit 默认逐次确认；在 TUI 中按 F4 可切换仅当前 Session 生效的 YOLO 模式。`
 
 func (a *App) runModel(ctx context.Context, args []string) error {
 	if len(args) == 0 {

@@ -52,6 +52,14 @@ func (m model) renderSelector(width int) string {
 	}
 	innerWidth := max(12, width-4)
 	bodyRows, detailRows := 2, 2
+	if selector.kind == selectorFileMutation {
+		bodyRows = 10
+		if m.height <= minimumHeight {
+			bodyRows = 4
+		}
+	} else if selector.kind == selectorFileMode {
+		bodyRows = 5
+	}
 	lines := []string{selectorTitleStyle.Render(truncateDisplayWidth(selector.title, innerWidth))}
 	for _, line := range wrapDisplayLines(selector.body, innerWidth, bodyRows) {
 		lines = append(lines, mutedStyle.Render(line))
@@ -187,6 +195,8 @@ func (m model) renderComposer(width int) string {
 		label = "处理中"
 	case m.pending != nil:
 		label = "等待偏好确认"
+	case m.pendingFileMutation != nil:
+		label = "等待文件授权"
 	}
 
 	safeInput := safeComposerText(m.input.Value())
@@ -221,7 +231,7 @@ func (m model) composerBorderStyle() lipgloss.Style {
 	switch {
 	case m.status == "请求失败" || m.status == "提交结果待核对" || m.status == "保存结果待核对":
 		return composerDangerBorderStyle
-	case m.busy || m.pending != nil:
+	case m.busy || m.pending != nil || m.pendingFileMutation != nil:
 		return composerBusyBorderStyle
 	default:
 		return composerReadyBorderStyle
@@ -269,10 +279,12 @@ func (m model) renderFooterStatus(width int) string {
 	if m.busy && m.activeEffort != "" && m.activeEffort != effort {
 		reasoningPart = fmt.Sprintf("推理 %s → 下一请求 %s", m.activeEffort, effort)
 	}
+	workspacePart := mutedStyle.Render(m.workspaceSummary())
+	fileModePart := mutedStyle.Render(m.fileModeSummary())
 	candidates := [][]string{
-		{newPart, m.renderStatus(), mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(reasoningPart)},
+		{newPart, m.renderStatus(), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{newPart, m.renderStatusText(m.compactStatus()), fileModePart, workspacePart, mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{newPart, m.renderStatusText(m.compactStatus()), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(reasoningPart)},
 	}
 	for _, parts := range candidates {
 		line := joinFooterParts(parts)
@@ -281,15 +293,64 @@ func (m model) renderFooterStatus(width int) string {
 		}
 	}
 
-	parts := compactNonEmpty([]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.contextSummary(true))})
-	prefix := joinFooterParts(parts)
-	modelPrefix := mutedStyle.Render("模型 ")
-	separator := footerSeparatorStyle.Render(" · ")
-	available := width - lipgloss.Width(prefix) - lipgloss.Width(separator) - lipgloss.Width(modelPrefix)
-	if available <= 0 {
-		return prefix
+	if m.workspaceStatus.Available {
+		return m.renderRequiredWorkspaceFooter(width)
 	}
-	return prefix + separator + modelPrefix + mutedStyle.Render(truncateDisplayWidth(modelName, available))
+	fallback := joinFooterParts([]string{newPart, m.renderStatusText(m.compactStatus()), workspacePart})
+	if lipgloss.Width(fallback) <= width {
+		return fallback
+	}
+	return mutedStyle.Render(truncateDisplayWidth(strings.Join(compactNonEmpty([]string{m.compactStatus(), m.workspaceSummary()}), " · "), width))
+}
+
+func (m model) fileModeSummary() string {
+	if !m.workspaceStatus.Available {
+		return ""
+	}
+	if m.session.FileAuthorizationMode() == agentloop.FileAuthorizationYOLO {
+		return "文件 YOLO"
+	}
+	return "文件 确认"
+}
+
+func (m model) workspaceSummary() string {
+	if !m.workspaceStatus.Available {
+		return "工作区不可用"
+	}
+	return "工作区 " + truncateDisplayWidth(safeWorkspaceLabel(m.workspaceStatus.Label), 24)
+}
+
+func (m model) renderRequiredWorkspaceFooter(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	mode := m.fileModeSummary()
+	label := safeWorkspaceLabel(m.workspaceStatus.Label)
+	separator := footerSeparatorStyle.Render(" · ")
+	workspacePrefix := "工作区 "
+	available := width - lipgloss.Width(mode) - lipgloss.Width(separator) - lipgloss.Width(workspacePrefix)
+	if available < 1 {
+		return mutedStyle.Render(truncateDisplayWidth(mode+" · "+workspacePrefix+label, width))
+	}
+	line := mutedStyle.Render(mode) + separator + mutedStyle.Render(workspacePrefix+truncateDisplayWidth(label, available))
+	if lipgloss.Width(line) <= width {
+		return line
+	}
+	return mutedStyle.Render(truncateDisplayWidth(mode+" · "+workspacePrefix+label, width))
+}
+
+func safeWorkspaceLabel(value string) string {
+	value = strings.TrimSpace(safeSingleLineTerminalText(value))
+	value = strings.ReplaceAll(value, `\`, "/")
+	value = strings.TrimRight(value, "/")
+	if index := strings.LastIndex(value, "/"); index >= 0 {
+		value = value[index+1:]
+	}
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." || value == ".." {
+		return "workspace"
+	}
+	return value
 }
 
 func (m model) contextSummary(compact bool) string {
@@ -326,26 +387,26 @@ func (m model) footerHintVariants() [][]footerHint {
 	switch {
 	case m.selector != nil:
 		return [][]footerHint{
-			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "PgUp/PgDn", action: "检查详情"}, {key: "Ctrl+O", action: "活动详情"}},
-			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "F4", action: "文件模式"}, {key: "PgUp/PgDn", action: "检查详情"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "F4", action: "文件模式"}},
 		}
 	case m.stopping:
 		return [][]footerHint{{{key: "Esc", action: "正在停止"}, {key: "Ctrl+C", action: "退出"}}}
 	case m.busy && m.activeCancelable:
-		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "F3", action: "推理强度"}, {key: "Ctrl+O", action: "活动详情"}}
+		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}}
 		if m.isSlowTurn() {
 			hints = append(hints, footerHint{key: "提示", action: m.slowTurnDetail()})
 		}
 		return [][]footerHint{hints, {{key: "Esc", action: "停止"}, {key: "F3", action: "推理"}, {key: "Ctrl+C", action: "退出"}}}
 	case m.busy:
 		return [][]footerHint{
-			{{key: "长期偏好写入", action: "不可中断"}, {key: "F3", action: "下一请求推理强度"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "长期偏好写入", action: "不可中断"}, {key: "F3", action: "下一请求推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}},
 			{{key: "Ctrl+C", action: "退出整个 Agent"}},
 		}
 	default:
 		return [][]footerHint{
-			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "F3", action: "推理强度"}, {key: "Ctrl+O", action: "活动详情"}, {key: "Esc", action: "退出"}},
-			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "F3", action: "推理"}, {key: "Esc", action: "退出"}},
+			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}, {key: "Esc", action: "退出"}},
+			{{key: "Enter", action: "发送"}, {key: "F3", action: "推理"}, {key: "F4", action: "文件模式"}, {key: "Esc", action: "退出"}},
 		}
 	}
 }

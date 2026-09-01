@@ -107,6 +107,8 @@ func (m model) sidebarContent(width, budget int) []string {
 	lines := []string{
 		sidebarSectionStyle.Render("AGENT"),
 		m.renderStatus(),
+		sidebarKV("工作区", m.workspaceSidebarSummary()),
+		sidebarKV("文件", m.fileModeSummary()),
 		sidebarKV("上下文", m.contextTokenSummary()),
 		sidebarKV("缓存命中", m.cacheHitSummary()),
 	}
@@ -119,6 +121,17 @@ func (m model) sidebarContent(width, budget int) []string {
 	}
 	lines = append(lines, "", sidebarSectionStyle.Render("当前学习"))
 	return append(lines, m.learningSidebarLines(width, compact)...)
+}
+
+func (m model) workspaceSidebarSummary() string {
+	if !m.workspaceStatus.Available {
+		return "不可用"
+	}
+	label := strings.TrimSpace(safeSingleLineTerminalText(m.workspaceStatus.Label))
+	if label == "" {
+		return "可用"
+	}
+	return label
 }
 
 func (m model) contextTokenSummary() string {

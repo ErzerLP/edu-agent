@@ -19,6 +19,14 @@ func Tools() []modelclient.Tool {
 	}
 }
 
+func (s *Session) tools() []modelclient.Tool {
+	result := Tools()
+	if s.workspace != nil && s.workspaceStatus.Available {
+		result = append(result, s.workspace.Definitions()...)
+	}
+	return result
+}
+
 const (
 	emptySchema  = `{"type":"object","properties":{},"additionalProperties":false}`
 	cursorSchema = `{"type":"object","properties":{"cursor":{"type":"string","minLength":1,"maxLength":4096,"description":"上一页返回的next_cursor；首页省略"}},"additionalProperties":false}`

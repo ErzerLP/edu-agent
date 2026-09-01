@@ -30,10 +30,15 @@ type Conversation interface {
 	Send(context.Context, string) (agentloop.Result, error)
 	ResolvePreference(context.Context, agentloop.PreferenceResolution) (agentloop.Result, error)
 	ResolveQuestion(context.Context, agentloop.QuestionAnswer) (agentloop.Result, error)
+	ResolveFileMutation(context.Context, string, agentloop.FileMutationResolution) (agentloop.Result, error)
+	CancelPendingFileMutation(string) (agentloop.Result, error)
+	FileAuthorizationMode() agentloop.FileAuthorizationMode
+	SetFileAuthorizationMode(agentloop.FileAuthorizationMode) error
 	ReasoningEffort() modelclient.ReasoningEffort
 	SetReasoningEffort(modelclient.ReasoningEffort) error
 	ContextStatus() agentloop.ContextStatus
 	ContextUpdates() <-chan agentloop.ContextEvent
+	WorkspaceStatus() agentloop.WorkspaceStatus
 	LearningStatus(context.Context) (agentloop.LearningStatus, error)
 }
 
@@ -58,9 +63,10 @@ func (r Runner) Run(ctx context.Context) error {
 type turnKind string
 
 const (
-	turnSend       turnKind = "send"
-	turnQuestion   turnKind = "question"
-	turnPreference turnKind = "preference"
+	turnSend         turnKind = "send"
+	turnQuestion     turnKind = "question"
+	turnPreference   turnKind = "preference"
+	turnFileMutation turnKind = "file_mutation"
 )
 
 type turnStream struct {
@@ -138,6 +144,8 @@ type model struct {
 	entries                []transcriptEntry
 	pending                *agentloop.PreferenceConfirmation
 	pendingQuestion        *agentloop.PendingQuestion
+	pendingFileMutation    *agentloop.PendingFileMutation
+	pendingFileTurnID      uint64
 	selector               *selectorModel
 	busy                   bool
 	stopping               bool
@@ -148,6 +156,7 @@ type model struct {
 	shownEventKeys         map[string]struct{}
 	contextStatus          agentloop.ContextStatus
 	contextUpdates         <-chan agentloop.ContextEvent
+	workspaceStatus        agentloop.WorkspaceStatus
 	learningStatus         agentloop.LearningStatus
 	learningLoaded         bool
 	learningLoading        bool
@@ -163,12 +172,16 @@ type model struct {
 	activeInput           string
 	activeQuestion        *agentloop.PendingQuestion
 	activePreference      *agentloop.PreferenceConfirmation
+	activeFileMutation    *agentloop.PendingFileMutation
 	activeResolution      agentloop.PreferenceResolution
+	activeFileResolution  agentloop.FileMutationResolution
 	activeEffort          modelclient.ReasoningEffort
 	activePhase           agentloop.ActivityPhase
 	activeStarted         time.Time
 	activeActivityStarted time.Time
 	activeTimeoutBudget   time.Duration
+	activeFileTool        string
+	activeFileDetail      *agentloop.FileActivityDetail
 }
 
 func newModel(ctx context.Context, session Conversation, modelName string) model {
@@ -185,11 +198,22 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 	input.KeyMap.InsertNewline.SetKeys("ctrl+j", "alt+enter", "shift+enter")
 	input.Focus()
 	view := viewport.New(80, 14)
+	workspaceStatus := session.WorkspaceStatus()
+	if !workspaceStatus.Available && workspaceStatus.Code == "" {
+		workspaceStatus.Code = "workspace_unavailable"
+	}
+	entries := []transcriptEntry{{kind: entryNotice, text: "可以直接提问，也可以让我结合服务端知识库、学习进度和长期偏好帮助你学习。"}}
+	if workspaceStatus.Available {
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区 %s 已启用。默认对每次文件写入/编辑逐次确认；可按 F4 为当前 Session 切换 YOLO。工作区内所有文件（包括隐藏文件、.git、.comet 和可能包含秘密的文件）都可被读取并发送给当前模型 provider。", safeWorkspaceLabel(workspaceStatus.Label))})
+		input.Placeholder = "输入问题；Agent 可按需读取或修改工作区文件"
+	} else {
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区不可用（%s）；文件工具未启用，普通对话仍可使用。", safeSingleLineTerminalText(workspaceStatus.Code))})
+	}
 	value := model{
 		ctx: sessionCtx, cancel: cancel, session: session, modelName: safeSingleLineTerminalText(modelName), width: 80, height: 24,
 		viewport: view, input: input, status: "就绪", follow: true, shownEventKeys: map[string]struct{}{},
-		entries:       []transcriptEntry{{kind: entryNotice, text: "可以直接提问，也可以让我结合服务端知识库、学习进度和长期偏好帮助你学习。"}},
-		contextStatus: session.ContextStatus(), contextUpdates: session.ContextUpdates(), learningProvider: true, learningLoading: true,
+		entries:       entries,
+		contextStatus: session.ContextStatus(), contextUpdates: session.ContextUpdates(), workspaceStatus: workspaceStatus, learningProvider: true, learningLoading: true,
 	}
 	value.resize()
 	value.refreshTranscript(false)
@@ -278,6 +302,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "f3" {
 		return m.handleReasoningKey()
 	}
+	if key == "f4" {
+		return m.handleFileModeKey()
+	}
 	if m.selector != nil {
 		action, command := m.selector.handleKey(msg)
 		switch action.kind {
@@ -285,6 +312,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch m.selector.kind {
 			case selectorQuestion:
 				return m.startQuestionResolution(agentloop.QuestionAnswer{QuestionID: m.selector.questionID, Status: agentloop.QuestionCancelled})
+			case selectorFileMutation:
+				return m.cancelFileMutation()
+			case selectorFileMode:
+				m.selector = nil
+				m.restoreInteractionSelector()
+				m.resize()
+				return m, nil
 			case selectorReasoning:
 				m.selector = nil
 				m.restoreInputFocus()
@@ -300,6 +334,13 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 			case selectorPreference, selectorPreferenceRetry:
 				return m.startPreferenceResolution(action.resolution)
+			case selectorFileMutation:
+				return m.startFileMutationResolution(action.fileResolution)
+			case selectorFileMode:
+				m.applyFileAuthorizationMode(action.fileMode)
+				m.resize()
+				m.refreshTranscript(false)
+				return m, nil
 			case selectorReasoning:
 				m.applyReasoningEffort(action.effort)
 				m.resize()
@@ -353,6 +394,97 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript(false)
 	}
 	return m, command
+}
+
+func (m model) handleFileModeKey() (tea.Model, tea.Cmd) {
+	if !m.workspaceStatus.Available {
+		return m, nil
+	}
+	if m.selector != nil && m.selector.kind == selectorFileMode {
+		m.selector = nil
+		m.restoreInteractionSelector()
+		m.resize()
+		return m, nil
+	}
+	if m.selector != nil && m.selector.kind != selectorFileMutation {
+		return m, nil
+	}
+	m.selector = newFileModeSelector(m.session.FileAuthorizationMode())
+	m.input.Blur()
+	m.resize()
+	return m, nil
+}
+
+func (m *model) applyFileAuthorizationMode(mode agentloop.FileAuthorizationMode) {
+	if err := m.session.SetFileAuthorizationMode(mode); err != nil {
+		m.entries = append(m.entries, transcriptEntry{kind: entryError, text: stableErrorCardText(err)})
+		m.status = "文件授权模式更新失败"
+		return
+	}
+	m.selector = nil
+	if mode == agentloop.FileAuthorizationYOLO {
+		m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "文件模式已切换为 YOLO（仅当前 Session）。后续 write/edit 不再逐次确认；隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。"})
+		m.status = "文件模式已切换为 YOLO"
+	} else {
+		m.status = "文件模式已切换为逐次确认"
+	}
+	m.restoreInteractionSelector()
+}
+
+func (m *model) restoreInteractionSelector() {
+	switch {
+	case m.pendingFileMutation != nil:
+		m.selector = newFileMutationSelector(m.pendingFileMutation)
+	case m.pendingQuestion != nil:
+		m.selector = newQuestionSelector(m.pendingQuestion)
+	case m.pending != nil:
+		if m.pending.RetryOnly {
+			m.selector = newPreferenceRetrySelector()
+		} else {
+			m.selector = newPreferenceSelector(m.pending)
+		}
+	default:
+		m.restoreInputFocus()
+	}
+}
+
+func (m model) startFileMutationResolution(resolution agentloop.FileMutationResolution) (tea.Model, tea.Cmd) {
+	pending := cloneFileMutation(m.pendingFileMutation)
+	if pending == nil {
+		return m, nil
+	}
+	m.pendingFileMutation = nil
+	m.selector = nil
+	m.input.Blur()
+	m.activeFileMutation = pending
+	m.activeFileResolution = resolution
+	return m.beginTurn(turnFileMutation, true, "", nil, nil, "", func(turnCtx context.Context) (agentloop.Result, error) {
+		return m.session.ResolveFileMutation(turnCtx, pending.CallID, resolution)
+	})
+}
+
+func (m model) cancelFileMutation() (tea.Model, tea.Cmd) {
+	pending := cloneFileMutation(m.pendingFileMutation)
+	if pending == nil {
+		return m, nil
+	}
+	result, err := m.session.CancelPendingFileMutation(pending.CallID)
+	m.pendingFileMutation = nil
+	m.selector = nil
+	if err != nil {
+		m.entries = append(m.entries, transcriptEntry{kind: entryError, text: errorCardText(err, false)})
+		m.status = "文件修改停止失败"
+	} else if strings.TrimSpace(result.Text) != "" {
+		m.entries = append(m.entries, transcriptEntry{kind: entryAssistant, text: result.Text, turnID: m.pendingFileTurnID})
+		m.status = "文件修改后续处理已停止"
+	} else {
+		m.status = "已停止当前文件修改轮次"
+	}
+	m.pendingFileTurnID = 0
+	m.restoreInputFocus()
+	m.resize()
+	m.refreshTranscript(true)
+	return m, nil
 }
 
 func (m model) handleReasoningKey() (tea.Model, tea.Cmd) {
@@ -441,6 +573,7 @@ func (m *model) finishTurn(result agentloop.Result, err error) {
 	wasStopping := m.stopping
 	activeInput := m.activeInput
 	activePreference := clonePreference(m.activePreference)
+	activeFileMutation := cloneFileMutation(m.activeFileMutation)
 	activeResolution := m.activeResolution
 
 	m.busy, m.stopping, m.activeCancelable = false, false, false
@@ -478,6 +611,10 @@ func (m *model) finishTurn(result agentloop.Result, err error) {
 			if kind == turnSend {
 				m.input.SetValue(activeInput)
 			}
+			if kind == turnFileMutation && activeFileMutation != nil {
+				m.pendingFileMutation = activeFileMutation
+				m.selector = newFileMutationSelector(activeFileMutation)
+			}
 		}
 		m.clearActiveTurn()
 		m.restoreInputFocus()
@@ -506,6 +643,11 @@ func (m *model) restorePending(kind turnKind, question *agentloop.PendingQuestio
 				m.selector = newPreferenceSelector(preference)
 			}
 		}
+	case turnFileMutation:
+		m.pendingFileMutation = m.activeFileMutation
+		if m.pendingFileMutation != nil {
+			m.selector = newFileMutationSelector(m.pendingFileMutation)
+		}
 	}
 }
 
@@ -515,7 +657,11 @@ func (m *model) clearActiveTurn() {
 	m.activeInput = ""
 	m.activeQuestion = nil
 	m.activePreference = nil
+	m.activeFileMutation = nil
 	m.activeResolution = ""
+	m.activeFileResolution = ""
+	m.activeFileTool = ""
+	m.activeFileDetail = nil
 }
 
 func (m *model) handleActivity(turnID uint64, activity agentloop.Activity) {
@@ -527,10 +673,17 @@ func (m *model) handleActivity(turnID uint64, activity agentloop.Activity) {
 		m.activeEffort = activity.ReasoningEffort
 	}
 	if activity.Kind == agentloop.ActivityTextDelta {
+		m.activeFileTool, m.activeFileDetail = "", nil
 		m.entries = upsertAssistantDelta(m.entries, turnID, activity.Delta)
 		m.activePhase = agentloop.ActivityReceivingStream
 		m.status = phaseLabel(agentloop.ActivityReceivingStream)
 		return
+	}
+	if activity.Kind == agentloop.ActivityTool && normalizedEventStatus(activity.Event.Status) == agentloop.EventRunning {
+		m.activeFileTool = activity.Event.Tool
+		m.activeFileDetail = cloneFileActivityDetail(activity.File)
+	} else {
+		m.activeFileTool, m.activeFileDetail = "", nil
 	}
 	m.activePhase = activity.Phase
 	m.entries = upsertActivity(m.entries, turnID, activity)
@@ -572,7 +725,15 @@ func (m *model) handleTurnResult(result agentloop.Result) {
 		newEvents = append(newEvents, event)
 	}
 	m.entries = appendToolEvents(m.entries, m.activeTurnID, newEvents)
-	m.pending, m.pendingQuestion, m.selector = nil, nil, nil
+	m.pending, m.pendingQuestion, m.pendingFileMutation, m.selector = nil, nil, nil, nil
+	if result.PendingFileMutation != nil {
+		m.pendingFileMutation = cloneFileMutation(result.PendingFileMutation)
+		m.pendingFileTurnID = m.activeTurnID
+		m.entries = append(m.entries, transcriptEntry{kind: entryFileConfirm, text: fileMutationConfirmationText(m.pendingFileMutation), fileMutation: m.pendingFileMutation})
+		m.selector = newFileMutationSelector(m.pendingFileMutation)
+		m.status = "等待文件修改授权"
+		return
+	}
 	if result.PendingQuestion != nil {
 		m.pendingQuestion = cloneQuestion(result.PendingQuestion)
 		m.entries = append(m.entries, transcriptEntry{kind: entryQuestion, text: questionTranscriptText(m.pendingQuestion), question: m.pendingQuestion})
@@ -833,6 +994,9 @@ func (m model) compactStatus() string {
 		if started.IsZero() {
 			started = m.activeStarted
 		}
+		if m.activeFileTool == "search" && m.activeFileDetail != nil && m.activeFileDetail.HasScanned {
+			return fmt.Sprintf("已等待 %s · 扫描 %d 文件/%d 字节", visibleDuration(time.Since(started)), m.activeFileDetail.ScannedFiles, m.activeFileDetail.ScannedBytes)
+		}
 		if m.activeTimeoutBudget > 0 {
 			return fmt.Sprintf("已等待 %s / 超时预算 %s", visibleDuration(time.Since(started)), visibleDuration(m.activeTimeoutBudget))
 		}
@@ -860,6 +1024,16 @@ func (m model) slowTurnDetail() string {
 		started = m.activeStarted
 	}
 	elapsed := visibleDuration(time.Since(started))
+	if m.activeFileTool == "search" && m.activeFileDetail != nil && m.activeFileDetail.HasScanned {
+		detail := fmt.Sprintf("已等待 %s，已扫描 %d 个文件 / %d 字节", elapsed, m.activeFileDetail.ScannedFiles, m.activeFileDetail.ScannedBytes)
+		if m.activeFileDetail.HasMatches {
+			detail += fmt.Sprintf("，匹配 %d", m.activeFileDetail.Matches)
+		}
+		if m.activeTimeoutBudget > 0 {
+			detail += fmt.Sprintf("，超时预算 %s", visibleDuration(m.activeTimeoutBudget))
+		}
+		return detail + "，可按 Esc 停止"
+	}
 	if m.activeTimeoutBudget > 0 {
 		return fmt.Sprintf("已等待 %s / 超时预算 %s，可按 Esc 停止", elapsed, visibleDuration(m.activeTimeoutBudget))
 	}
@@ -968,6 +1142,18 @@ func questionTranscriptText(question *agentloop.PendingQuestion) string {
 	return strings.Join(lines, "\n")
 }
 
+func fileMutationConfirmationText(pending *agentloop.PendingFileMutation) string {
+	if pending == nil {
+		return ""
+	}
+	text := fmt.Sprintf("操作：%s\n路径：%s\n预览类型：%s\n%s", pending.Operation, pending.Path, pending.PreviewKind, pending.Preview)
+	if pending.Truncated {
+		text += "\n预览已按安全上限截断。"
+	}
+	text += "\nEsc 将停止当前轮次，不等价于拒绝。"
+	return text
+}
+
 func preferenceConfirmationText(pending *agentloop.PreferenceConfirmation) string {
 	text := fmt.Sprintf(
 		"将保存以下长期偏好：\n内容：%s\n原因：%s\n分类：%s\n敏感性：%s\n稳定性：%s",
@@ -1005,6 +1191,22 @@ func cloneQuestion(value *agentloop.PendingQuestion) *agentloop.PendingQuestion 
 	}
 	clone := *value
 	clone.Options = append([]agentloop.QuestionOption(nil), value.Options...)
+	return &clone
+}
+
+func cloneFileActivityDetail(value *agentloop.FileActivityDetail) *agentloop.FileActivityDetail {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	return &clone
+}
+
+func cloneFileMutation(value *agentloop.PendingFileMutation) *agentloop.PendingFileMutation {
+	if value == nil {
+		return nil
+	}
+	clone := *value
 	return &clone
 }
 

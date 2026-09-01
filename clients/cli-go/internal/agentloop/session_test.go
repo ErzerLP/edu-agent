@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
 type fakeModel struct {
@@ -31,6 +33,80 @@ func (m *fakeModel) Complete(_ context.Context, request modelclient.Request) (mo
 	m.responses = m.responses[1:]
 	return response, nil
 }
+
+type cancelAfterMutationModel struct {
+	requests        int
+	followupStarted chan struct{}
+}
+
+func (m *cancelAfterMutationModel) Complete(ctx context.Context, _ modelclient.Request) (modelclient.Response, error) {
+	m.requests++
+	if m.requests == 1 {
+		return modelclient.Response{Message: toolMessage("write-call", workspace.ToolWrite, `{"path":"notes.md","mode":"create","content":"hello"}`)}, nil
+	}
+	close(m.followupStarted)
+	<-ctx.Done()
+	return modelclient.Response{}, ctx.Err()
+}
+
+type fakeWorkspaceExecutor struct {
+	status         workspace.Status
+	results        map[string]workspace.Result
+	prepareResults map[string]workspace.Result
+	prepared       map[string]*workspace.PreparedMutation
+	commitResults  []workspace.Result
+	calls          []string
+	prepareCalls   []string
+	commitCalls    []string
+	started        chan string
+	block          bool
+}
+
+func (w *fakeWorkspaceExecutor) Definitions() []modelclient.Tool { return workspace.Definitions() }
+func (w *fakeWorkspaceExecutor) Execute(ctx context.Context, toolName, _ string) workspace.Result {
+	w.calls = append(w.calls, toolName)
+	if w.started != nil {
+		select {
+		case w.started <- toolName:
+		case <-ctx.Done():
+		}
+	}
+	if w.block {
+		<-ctx.Done()
+		return workspace.Result{Value: map[string]any{"code": workspace.CodeCancelled}, Summary: "工作区工具已取消"}
+	}
+	if result, ok := w.results[toolName]; ok {
+		return result
+	}
+	return workspace.Result{Value: map[string]any{"code": workspace.CodeInvalidArguments}, Summary: "未知工作区工具"}
+}
+func (w *fakeWorkspaceExecutor) PrepareMutation(ctx context.Context, toolName, _ string) (*workspace.PreparedMutation, workspace.Result) {
+	w.prepareCalls = append(w.prepareCalls, toolName)
+	if w.block {
+		<-ctx.Done()
+		return nil, workspace.Result{Value: map[string]any{"code": workspace.CodeCancelled}, Summary: "工作区工具已取消", Publication: workspace.PublicationUnchanged}
+	}
+	if prepared := w.prepared[toolName]; prepared != nil {
+		return prepared, workspace.Result{}
+	}
+	if result, ok := w.prepareResults[toolName]; ok {
+		return nil, result
+	}
+	return nil, workspace.Result{Value: map[string]any{"error": workspace.CodeInvalidArguments, "code": workspace.CodeInvalidArguments}, Summary: "文件修改参数无效", Publication: workspace.PublicationUnchanged}
+}
+func (w *fakeWorkspaceExecutor) CommitMutation(_ context.Context, prepared *workspace.PreparedMutation) workspace.Result {
+	if prepared != nil {
+		w.commitCalls = append(w.commitCalls, prepared.Presentation.Tool)
+	}
+	if len(w.commitResults) == 0 {
+		return workspace.Result{Value: map[string]any{"error": workspace.CodeInternalError}, Summary: "文件修改失败", Publication: workspace.PublicationUnchanged}
+	}
+	result := w.commitResults[0]
+	w.commitResults = w.commitResults[1:]
+	return result
+}
+func (w *fakeWorkspaceExecutor) Status() workspace.Status { return w.status }
+func (*fakeWorkspaceExecutor) Close() error               { return nil }
 
 type usageCalibratingModel struct {
 	requests []modelclient.Request
@@ -209,6 +285,364 @@ func TestSessionExecutesKnowledgeToolBeforeAnswer(t *testing.T) {
 	messages := model.requests[1].Messages
 	if messages[len(messages)-1].Role != "tool" || !strings.Contains(messages[len(messages)-1].Content, "图的顶点") {
 		t.Fatalf("tool message=%+v", messages[len(messages)-1])
+	}
+}
+
+func TestSessionExecutesWorkspaceToolWithLocalAuthorityBeforeAnswer(t *testing.T) {
+	const contentHash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	executor := &fakeWorkspaceExecutor{
+		status: workspace.Status{Available: true, Label: "project"},
+		results: map[string]workspace.Result{
+			workspace.ToolRead: {
+				Value:     map[string]any{"path": "notes.md", "content": "workspace text\n", "complete": true, "content_hash": contentHash},
+				Summary:   "已读取 notes.md",
+				Reference: &workspace.Reference{Path: "notes.md", ContentHash: contentHash, Kind: "file"},
+			},
+		},
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("workspace-call", workspace.ToolRead, `{"path":"notes.md"}`)},
+		{Message: modelclient.Message{Role: "assistant", Content: "已结合工作区文件回答。"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	result, err := session.Send(t.Context(), "读取工作区笔记")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text == "" || len(model.requests) != 2 || !reflect.DeepEqual(executor.calls, []string{workspace.ToolRead}) {
+		t.Fatalf("result=%+v requests=%d calls=%+v", result, len(model.requests), executor.calls)
+	}
+	toolNames := make(map[string]bool, len(model.requests[0].Tools))
+	for _, definition := range model.requests[0].Tools {
+		toolNames[definition.Function.Name] = true
+	}
+	for _, expected := range []string{workspace.ToolList, workspace.ToolRead, workspace.ToolSearch, workspace.ToolWrite, workspace.ToolEdit} {
+		if !toolNames[expected] {
+			t.Fatalf("workspace tool %q missing from request: %+v", expected, toolNames)
+		}
+	}
+	if toolNames["shell"] {
+		t.Fatalf("forbidden workspace tool shell was exposed")
+	}
+	messages := model.requests[1].Messages
+	last := messages[len(messages)-1]
+	if last.Role != "tool" || last.ToolCallID != "workspace-call" || !strings.Contains(last.Content, "workspace text") {
+		t.Fatalf("workspace tool message=%+v", last)
+	}
+	if session.toolReferences["workspace-call"] != nil {
+		t.Fatalf("workspace result was recorded as server reference: %+v", session.toolReferences["workspace-call"])
+	}
+	reference := session.workspaceReferences["workspace-call"]
+	if reference == nil || reference.Path != "notes.md" || reference.ContentHash != contentHash {
+		t.Fatalf("workspace reference=%+v", reference)
+	}
+	session.contextRuntime.mu.Lock()
+	defer session.contextRuntime.mu.Unlock()
+	foundWorkspaceSource := false
+	for _, sourceID := range session.contextRuntime.ledger.SourceOrder {
+		source := session.contextRuntime.ledger.Sources[sourceID]
+		if source.ModelMessage.ToolCallID != "workspace-call" {
+			continue
+		}
+		foundWorkspaceSource = source.Authority == AuthorityWorkspaceSnapshot && source.Freshness == FreshnessWorkspaceObserved && source.ServerReference == nil && source.WorkspaceReference != nil
+	}
+	if !foundWorkspaceSource {
+		t.Fatal("workspace tool result did not retain local workspace authority")
+	}
+}
+
+func TestFileMutationConfirmFreezesPendingOperationAcrossYOLOSwitch(t *testing.T) {
+	prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+		Tool: workspace.ToolWrite, Operation: "write_create", Path: "notes.md", PreviewKind: "content", Preview: "hello\n",
+	}}
+	executor := &fakeWorkspaceExecutor{
+		status:   workspace.Status{Available: true, Label: "project"},
+		prepared: map[string]*workspace.PreparedMutation{workspace.ToolWrite: prepared},
+		commitResults: []workspace.Result{{
+			Value:   map[string]any{"path": "notes.md", "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "complete": true, "publication_outcome": "completed"},
+			Summary: "已创建 notes.md", Reference: &workspace.Reference{Path: "notes.md", ContentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: "file"},
+			Publication: workspace.PublicationCompleted,
+		}},
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("write-call", workspace.ToolWrite, `{"path":"notes.md","mode":"create","content":"hello\n"}`)},
+		{Message: modelclient.Message{Role: "assistant", Content: "文件已创建。"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	if mode := session.FileAuthorizationMode(); mode != FileAuthorizationConfirm {
+		t.Fatalf("default mode=%q", mode)
+	}
+	pendingResult, err := session.Send(t.Context(), "创建笔记")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := pendingResult.PendingFileMutation
+	if pending == nil || pending.CallID != "write-call" || pending.Path != "notes.md" || len(executor.commitCalls) != 0 || len(model.requests) != 1 {
+		t.Fatalf("pending=%+v commits=%+v requests=%d", pending, executor.commitCalls, len(model.requests))
+	}
+	if err := session.SetFileAuthorizationMode(FileAuthorizationYOLO); err != nil {
+		t.Fatal(err)
+	}
+	if len(executor.commitCalls) != 0 {
+		t.Fatalf("mode switch auto-approved pending mutation: %+v", executor.commitCalls)
+	}
+	resolved, err := session.ResolveFileMutation(t.Context(), pending.CallID, FileMutationApprove)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Text != "文件已创建。" || !reflect.DeepEqual(executor.commitCalls, []string{workspace.ToolWrite}) || len(model.requests) != 2 {
+		t.Fatalf("resolved=%+v commits=%+v requests=%d", resolved, executor.commitCalls, len(model.requests))
+	}
+}
+
+func TestFileMutationDeclineIsIsolatedFromOtherResolvers(t *testing.T) {
+	prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+		Tool: workspace.ToolEdit, Operation: "edit", Path: "notes.md", PreviewKind: "diff", Preview: "-old\n+new\n",
+	}}
+	executor := &fakeWorkspaceExecutor{
+		status:   workspace.Status{Available: true, Label: "project"},
+		prepared: map[string]*workspace.PreparedMutation{workspace.ToolEdit: prepared},
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("edit-call", workspace.ToolEdit, `{"path":"notes.md","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}]}`)},
+		{Message: modelclient.Message{Role: "assistant", Content: "已保留原文件。"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	pendingResult, err := session.Send(t.Context(), "编辑笔记")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := pendingResult.PendingFileMutation
+	if pending == nil {
+		t.Fatal("file mutation did not enter its dedicated pending state")
+	}
+	if _, err := session.ResolveQuestion(t.Context(), QuestionAnswer{QuestionID: "q", Status: QuestionCancelled}); err == nil {
+		t.Fatal("question resolver authorized or consumed a file mutation")
+	}
+	if _, err := session.ResolvePreference(t.Context(), PreferenceDecline); err == nil {
+		t.Fatal("preference resolver authorized or consumed a file mutation")
+	}
+	if len(executor.commitCalls) != 0 {
+		t.Fatalf("unrelated resolver committed mutation: %+v", executor.commitCalls)
+	}
+	resolved, err := session.ResolveFileMutation(t.Context(), pending.CallID, FileMutationDecline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Text != "已保留原文件。" || len(executor.commitCalls) != 0 || len(model.requests) != 2 {
+		t.Fatalf("resolved=%+v commits=%+v requests=%d", resolved, executor.commitCalls, len(model.requests))
+	}
+	messages := model.requests[1].Messages
+	last := messages[len(messages)-1]
+	if last.Role != "tool" || last.ToolCallID != "edit-call" || !strings.Contains(last.Content, workspace.CodeAuthorizationDenied) {
+		t.Fatalf("decline tool result=%+v", last)
+	}
+}
+
+func TestFileMutationYOLOCommitsFutureOperationWithoutPending(t *testing.T) {
+	prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+		Tool: workspace.ToolWrite, Operation: "write_replace", Path: "notes.md", PreviewKind: "diff", Preview: "-old\n+new\n",
+	}}
+	executor := &fakeWorkspaceExecutor{
+		status:   workspace.Status{Available: true, Label: "project"},
+		prepared: map[string]*workspace.PreparedMutation{workspace.ToolWrite: prepared},
+		commitResults: []workspace.Result{{
+			Value:   map[string]any{"path": "notes.md", "complete": true, "publication_outcome": "completed"},
+			Summary: "已替换 notes.md", Publication: workspace.PublicationCompleted,
+		}},
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("write-call", workspace.ToolWrite, `{"path":"notes.md","mode":"replace","content":"new","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)},
+		{Message: modelclient.Message{Role: "assistant", Content: "已更新。"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	if err := session.SetFileAuthorizationMode(FileAuthorizationYOLO); err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.Send(t.Context(), "直接更新")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PendingFileMutation != nil || result.Text != "已更新。" || !reflect.DeepEqual(executor.commitCalls, []string{workspace.ToolWrite}) || len(model.requests) != 2 {
+		t.Fatalf("result=%+v commits=%+v requests=%d", result, executor.commitCalls, len(model.requests))
+	}
+}
+
+func TestFileMutationUnknownOutcomeStopsSiblingsAndFollowUpModel(t *testing.T) {
+	prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+		Tool: workspace.ToolWrite, Operation: "write_create", Path: "notes.md", PreviewKind: "content", Preview: "hello",
+	}}
+	executor := &fakeWorkspaceExecutor{
+		status:   workspace.Status{Available: true, Label: "project"},
+		prepared: map[string]*workspace.PreparedMutation{workspace.ToolWrite: prepared},
+		commitResults: []workspace.Result{{
+			Value:   map[string]any{"path": "notes.md", "code": workspace.CodeOutcomeUnknown, "publication_outcome": "unknown", "complete": false},
+			Summary: "文件发布结果无法确认", Publication: workspace.PublicationUnknown,
+		}},
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{
+			{ID: "write-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolWrite, Arguments: `{"path":"notes.md","mode":"create","content":"hello"}`}},
+			{ID: "read-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md"}`}},
+		}}},
+		{Message: modelclient.Message{Role: "assistant", Content: "不应继续调用模型"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	if err := session.SetFileAuthorizationMode(FileAuthorizationYOLO); err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.Send(t.Context(), "创建后读取")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "无法确认") || len(model.requests) != 1 || len(executor.calls) != 0 {
+		t.Fatalf("result=%+v requests=%d readCalls=%+v", result, len(model.requests), executor.calls)
+	}
+	foundTool := false
+	for _, message := range session.messages {
+		if message.Role == "tool" && message.ToolCallID == "write-call" && strings.Contains(message.Content, workspace.CodeOutcomeUnknown) {
+			foundTool = true
+		}
+		if message.Role == "tool" && message.ToolCallID == "read-call" {
+			t.Fatal("sibling tool was retained after unknown publication")
+		}
+	}
+	if !foundTool {
+		t.Fatal("unknown publication tool result was not preserved")
+	}
+}
+
+func TestFileMutationModelFailurePreservesCompletedEffect(t *testing.T) {
+	prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+		Tool: workspace.ToolWrite, Operation: "write_create", Path: "notes.md", PreviewKind: "content", Preview: "hello",
+	}}
+	executor := &fakeWorkspaceExecutor{
+		status:   workspace.Status{Available: true, Label: "project"},
+		prepared: map[string]*workspace.PreparedMutation{workspace.ToolWrite: prepared},
+		commitResults: []workspace.Result{{
+			Value:   map[string]any{"path": "notes.md", "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "complete": true, "publication_outcome": "completed"},
+			Summary: "已创建 notes.md", Reference: &workspace.Reference{Path: "notes.md", ContentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: "file"},
+			Publication: workspace.PublicationCompleted,
+		}},
+	}
+	model := &fakeModel{
+		responses: []modelclient.Response{{Message: toolMessage("write-call", workspace.ToolWrite, `{"path":"notes.md","mode":"create","content":"hello"}`)}},
+		err:       errors.New("provider failed after publication"),
+	}
+	session := newWorkspaceTestSession(t, model, executor)
+	if err := session.SetFileAuthorizationMode(FileAuthorizationYOLO); err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.Send(t.Context(), "创建文件")
+	if err != nil {
+		t.Fatalf("completed file effect should return a local fallback, got %v", err)
+	}
+	if !strings.Contains(result.Text, "文件修改已完成") || len(model.requests) != 2 {
+		t.Fatalf("result=%+v requests=%d", result, len(model.requests))
+	}
+	foundTool, foundFallback := false, false
+	for _, message := range session.messages {
+		if message.Role == "tool" && message.ToolCallID == "write-call" {
+			foundTool = true
+		}
+		if message.Role == "assistant" && strings.Contains(message.Content, "文件修改已完成") {
+			foundFallback = true
+		}
+	}
+	if !foundTool || !foundFallback || session.workspaceReferences["write-call"] == nil {
+		t.Fatalf("effect history tool=%t fallback=%t reference=%+v", foundTool, foundFallback, session.workspaceReferences["write-call"])
+	}
+}
+
+func TestFileMutationCancellationAfterPublicationPreservesEffect(t *testing.T) {
+	prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+		Tool: workspace.ToolWrite, Operation: "write_create", Path: "notes.md", PreviewKind: "content", Preview: "hello",
+	}}
+	executor := &fakeWorkspaceExecutor{
+		status:   workspace.Status{Available: true, Label: "project"},
+		prepared: map[string]*workspace.PreparedMutation{workspace.ToolWrite: prepared},
+		commitResults: []workspace.Result{{
+			Value:   map[string]any{"path": "notes.md", "content_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "complete": true, "publication_outcome": "completed"},
+			Summary: "已创建 notes.md", Reference: &workspace.Reference{Path: "notes.md", ContentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: "file"},
+			Publication: workspace.PublicationCompleted,
+		}},
+	}
+	model := &cancelAfterMutationModel{followupStarted: make(chan struct{})}
+	session := newWorkspaceTestSession(t, model, executor)
+	if err := session.SetFileAuthorizationMode(FileAuthorizationYOLO); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	type outcome struct {
+		result Result
+		err    error
+	}
+	finished := make(chan outcome, 1)
+	go func() {
+		result, err := session.Send(ctx, "创建文件")
+		finished <- outcome{result: result, err: err}
+	}()
+	select {
+	case <-model.followupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("follow-up model request did not start")
+	}
+	cancel()
+	select {
+	case completed := <-finished:
+		if completed.err != nil || !strings.Contains(completed.result.Text, "文件修改已完成") {
+			t.Fatalf("result=%+v err=%v", completed.result, completed.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled post-publication turn did not finish")
+	}
+	if model.requests != 2 || session.workspaceReferences["write-call"] == nil {
+		t.Fatalf("requests=%d reference=%+v", model.requests, session.workspaceReferences["write-call"])
+	}
+}
+
+func TestWorkspaceToolCancellationSkipsSiblingsAndFollowUpModel(t *testing.T) {
+	executor := &fakeWorkspaceExecutor{
+		status:  workspace.Status{Available: true, Label: "project"},
+		started: make(chan string, 1),
+		block:   true,
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{
+			{ID: "read-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md"}`}},
+			{ID: "list-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolList, Arguments: `{}`}},
+		}}},
+		{Message: modelclient.Message{Role: "assistant", Content: "不应继续调用模型"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, err := session.Send(ctx, "读取后列目录")
+		result <- err
+	}()
+	select {
+	case tool := <-executor.started:
+		if tool != workspace.ToolRead {
+			t.Fatalf("first tool=%q", tool)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("workspace read tool did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("send err=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("workspace cancellation did not finish")
+	}
+	if !reflect.DeepEqual(executor.calls, []string{workspace.ToolRead}) || len(model.requests) != 1 {
+		t.Fatalf("calls=%+v requests=%d", executor.calls, len(model.requests))
+	}
+	if len(session.workspaceReferences) != 0 {
+		t.Fatalf("cancelled workspace result polluted history: %+v", session.workspaceReferences)
 	}
 }
 
@@ -959,6 +1393,111 @@ func TestToolProjectionProducesValidHistoryAndEnforcesTurnBudget(t *testing.T) {
 	}
 }
 
+func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing.T) {
+	const hash = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	executor := &fakeWorkspaceExecutor{
+		status: workspace.Status{Available: true, Label: "project"},
+		results: map[string]workspace.Result{
+			workspace.ToolList: {
+				Value:   map[string]any{"path": ".", "entries": []any{map[string]any{"path": "alpha.txt", "type": "file"}, map[string]any{"path": "beta.txt", "type": "file"}}, "returned": 2, "complete": false, "next_offset": 2, "truncation_reason": "entry_limit"},
+				Summary: "已列出工作区", Reference: &workspace.Reference{Path: ".", ContentHash: hash, Kind: "directory_listing"},
+			},
+			workspace.ToolRead: {
+				Value:   map[string]any{"path": "notes.md", "content": strings.Repeat("工作区内容", 1200), "content_hash": hash, "complete": false, "next_offset": 20, "next_byte_offset": 0, "truncation_reason": "result_bytes"},
+				Summary: "已读取 notes.md", Reference: &workspace.Reference{Path: "notes.md", ContentHash: hash, Kind: "file"},
+			},
+			workspace.ToolSearch: {
+				Value:   map[string]any{"path": ".", "matches": []any{map[string]any{"path": "notes.md", "line": 3, "column": 2, "preview": strings.Repeat("匹配", 500)}}, "returned": 1, "scanned_files": 30, "scanned_bytes": 9000, "complete": false, "truncation_reason": "result_bytes"},
+				Summary: "已搜索工作区", Reference: &workspace.Reference{Path: ".", ContentHash: hash, Kind: "search_result"},
+			},
+		},
+	}
+	calls := []modelclient.ToolCall{
+		{ID: "list-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolList, Arguments: `{}`}},
+		{ID: "read-one", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md"}`}},
+		{ID: "search-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolSearch, Arguments: `{"query":"工作区"}`}},
+		{ID: "read-two", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md","offset":20}`}},
+	}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: modelclient.Message{Role: "assistant", ToolCalls: calls}},
+		{Message: modelclient.Message{Role: "assistant", Content: "已结合四个结果。"}},
+	}}
+	uuidCalls := 0
+	session, err := New(model, &fakeServer{}, Options{
+		ContextWindow: 4096, MaxToolRounds: 8, Workspace: executor,
+		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
+		NewUUID: func() (string, error) {
+			uuidCalls++
+			return fmt.Sprintf("62000000-0000-4000-8000-%012d", uuidCalls), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Send(t.Context(), "读取并搜索工作区"); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) != 2 {
+		t.Fatalf("requests=%d", len(model.requests))
+	}
+	if model.requests[1].MaxTokens != 512 {
+		t.Fatalf("minimum-context workspace output reserve=%d", model.requests[1].MaxTokens)
+	}
+	contents := map[string]string{}
+	for _, message := range model.requests[1].Messages {
+		if message.Role == "tool" {
+			if !json.Valid([]byte(message.Content)) {
+				t.Fatalf("invalid projection for %s: %s", message.ToolCallID, message.Content)
+			}
+			contents[message.ToolCallID] = message.Content
+		}
+	}
+	for callID, required := range map[string][]string{
+		"list-call":   {`"entries"`, `"next_offset":2`, `"path":"."`},
+		"read-one":    {`"content"`, `"content_hash"`, `"next_offset":20`},
+		"search-call": {`"matches"`, `"scanned_files":30`, `"path":"."`},
+		"read-two":    {`"content"`, `"next_byte_offset":0`, `"truncation_reason"`},
+	} {
+		content := contents[callID]
+		for _, fragment := range required {
+			if !strings.Contains(content, fragment) {
+				t.Fatalf("%s projection lost %s: %s", callID, fragment, content)
+			}
+		}
+	}
+	if session.currentToolResultTokens > session.currentToolResultBudget {
+		t.Fatalf("tool tokens=%d budget=%d", session.currentToolResultTokens, session.currentToolResultBudget)
+	}
+}
+
+func TestWorkspaceProjectionRetainsMutationPreviewAndFailureRecovery(t *testing.T) {
+	session := newWorkspaceTestSession(t, &fakeModel{}, &fakeWorkspaceExecutor{status: workspace.Status{Available: true, Label: "project"}})
+	if _, err := session.startTurn(); err != nil {
+		t.Fatal(err)
+	}
+	const hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	results := []struct {
+		tool   string
+		callID string
+		result workspace.Result
+		want   []string
+	}{
+		{workspace.ToolWrite, "write", workspace.Result{Value: map[string]any{"path": "notes.md", "operation": "write_replace", "content_hash": hash, "complete": true, "publication_outcome": "completed", "preview": strings.Repeat("+新增内容\n", 400), "preview_kind": "diff", "first_changed_line": 7}, Summary: "已替换 notes.md", Publication: workspace.PublicationCompleted}, []string{`"preview"`, `"operation":"write_replace"`, `"first_changed_line":7`, `"publication_outcome":"completed"`}},
+		{workspace.ToolEdit, "edit", workspace.Result{Value: map[string]any{"error": workspace.CodeReplacementNotUnique, "code": workspace.CodeReplacementNotUnique, "complete": false, "path": "notes.md", "expected_hash": hash, "message": "文件编辑目标文本不唯一", "suggestion": "扩大 old_text 上下文使其只匹配一次"}, Summary: "文件编辑目标文本不唯一", Publication: workspace.PublicationUnchanged}, []string{workspace.CodeReplacementNotUnique, `"message"`, `"suggestion"`, `"expected_hash"`}},
+	}
+	for _, test := range results {
+		if err := session.appendWorkspaceToolResult(test.tool, test.callID, test.result); err != nil {
+			t.Fatal(err)
+		}
+		content := session.messages[len(session.messages)-1].Content
+		for _, fragment := range test.want {
+			if !strings.Contains(content, fragment) {
+				t.Fatalf("%s projection lost %s: %s", test.tool, fragment, content)
+			}
+		}
+	}
+}
+
 func messagesContainText(messages []modelclient.Message, text string) bool {
 	for _, message := range messages {
 		if strings.Contains(message.Content, text) {
@@ -995,6 +1534,23 @@ func newTestSession(t *testing.T, model Model, server Server) *Session {
 		NewUUID: func() (string, error) {
 			uuidCalls++
 			return fmt.Sprintf("60000000-0000-4000-8000-%012d", uuidCalls), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session
+}
+
+func newWorkspaceTestSession(t *testing.T, model Model, executor workspace.Executor) *Session {
+	t.Helper()
+	uuidCalls := 0
+	session, err := New(model, &fakeServer{}, Options{
+		ContextWindow: 32768, MaxToolRounds: 8, Workspace: executor,
+		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
+		NewUUID: func() (string, error) {
+			uuidCalls++
+			return fmt.Sprintf("61000000-0000-4000-8000-%012d", uuidCalls), nil
 		},
 	})
 	if err != nil {

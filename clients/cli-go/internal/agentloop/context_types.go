@@ -68,17 +68,20 @@ const (
 type AuthorityClass string
 
 const (
-	AuthoritySessionStatement AuthorityClass = "session_statement"
-	AuthorityServerSnapshot   AuthorityClass = "server_snapshot"
-	AuthorityServerReference  AuthorityClass = "server_reference"
+	AuthoritySessionStatement  AuthorityClass = "session_statement"
+	AuthorityServerSnapshot    AuthorityClass = "server_snapshot"
+	AuthorityServerReference   AuthorityClass = "server_reference"
+	AuthorityWorkspaceSnapshot AuthorityClass = "workspace_snapshot"
 )
 
 type FreshnessClass string
 
 const (
-	FreshnessSessionCurrent FreshnessClass = "session_current"
-	FreshnessHistorical     FreshnessClass = "historical_snapshot"
-	FreshnessInvalidated    FreshnessClass = "invalidated"
+	FreshnessSessionCurrent      FreshnessClass = "session_current"
+	FreshnessHistorical          FreshnessClass = "historical_snapshot"
+	FreshnessInvalidated         FreshnessClass = "invalidated"
+	FreshnessWorkspaceObserved   FreshnessClass = "workspace_observed"
+	FreshnessWorkspaceSuperseded FreshnessClass = "workspace_superseded"
 )
 
 type Relevance string
@@ -114,6 +117,7 @@ const (
 	ReflectionCompletion     ReflectionKind = "completion"
 	ReflectionOpenBlocker    ReflectionKind = "open_blocker"
 	ReflectionServerState    ReflectionKind = "server_state"
+	ReflectionWorkspaceState ReflectionKind = "workspace_state"
 	ReflectionPreferenceFlow ReflectionKind = "preference_flow"
 )
 
@@ -155,20 +159,21 @@ func (r *ServerReference) Identity() string {
 }
 
 type SourceEntry struct {
-	ID              string
-	TurnID          string
-	Kind            SourceKind
-	CreatedAt       time.Time
-	ModelMessage    modelclient.Message
-	HasModelMessage bool
-	RecallText      string
-	ContentHash     string
-	SourceAvailable bool
-	TokenEstimate   int
-	Retention       RetentionClass
-	Authority       AuthorityClass
-	Freshness       FreshnessClass
-	ServerReference *ServerReference
+	ID                 string
+	TurnID             string
+	Kind               SourceKind
+	CreatedAt          time.Time
+	ModelMessage       modelclient.Message
+	HasModelMessage    bool
+	RecallText         string
+	ContentHash        string
+	SourceAvailable    bool
+	TokenEstimate      int
+	Retention          RetentionClass
+	Authority          AuthorityClass
+	Freshness          FreshnessClass
+	ServerReference    *ServerReference
+	WorkspaceReference *WorkspaceReference
 }
 
 type Observation struct {
@@ -214,10 +219,11 @@ type ObservationTombstone struct {
 // ToolResultProjection separates the representation used in the active tool
 // chain from compact history and future exact-ID recall representations.
 type ToolResultProjection struct {
-	Live            string
-	History         string
-	Recall          string
-	ServerReference *ServerReference
+	Live               string
+	History            string
+	Recall             string
+	ServerReference    *ServerReference
+	WorkspaceReference *WorkspaceReference
 }
 
 type ContextMemoryProjection struct {

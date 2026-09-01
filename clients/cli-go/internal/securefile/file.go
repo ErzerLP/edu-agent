@@ -1,17 +1,80 @@
 package securefile
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-var ErrNotFound = errors.New("secure file was not found")
+var (
+	ErrNotFound       = errors.New("secure file was not found")
+	ErrNotDirectory   = errors.New("secure path is not a directory")
+	ErrNotRegular     = errors.New("secure file is not a regular file")
+	ErrLink           = errors.New("secure path is a link or reparse point")
+	ErrPermission     = errors.New("secure path permission denied")
+	ErrTooLarge       = errors.New("secure file exceeds size limit")
+	ErrChanged        = errors.New("secure file changed while reading")
+	ErrAlreadyExists  = errors.New("secure file already exists")
+	ErrOutcomeUnknown = errors.New("secure file publication outcome is unknown")
+	ErrOutsideRoot    = errors.New("secure file handle is outside its root")
+)
 
 const maxFileBytes = 32 << 20
+
+type EntryType string
+
+const (
+	EntryFile      EntryType = "file"
+	EntryDirectory EntryType = "directory"
+	EntryLink      EntryType = "link"
+	EntryOther     EntryType = "other"
+)
+
+type DirEntry struct {
+	Name string
+	Type EntryType
+}
+
+type Snapshot struct {
+	Data     []byte
+	Size     int64
+	ModTime  time.Time
+	Mode     os.FileMode
+	Identity string
+}
+
+type PublishMode string
+
+const (
+	PublishCreate  PublishMode = "create"
+	PublishReplace PublishMode = "replace"
+)
+
+type PublishOutcome string
+
+const (
+	PublishUnchanged PublishOutcome = "unchanged"
+	PublishCompleted PublishOutcome = "completed"
+	PublishUnknown   PublishOutcome = "unknown"
+)
+
+type PublishOptions struct {
+	Mode          PublishMode
+	Permission    os.FileMode
+	ExpectedHash  string
+	ExpectedLimit int64
+}
+
+type PublishResult struct {
+	Outcome PublishOutcome
+}
 
 type Root struct {
 	file         *os.File
@@ -23,7 +86,9 @@ func (r *Root) Close() error {
 	if r == nil || r.file == nil {
 		return nil
 	}
-	return r.file.Close()
+	err := r.file.Close()
+	r.file = nil
+	return err
 }
 
 func Read(path string, private bool) ([]byte, error) {
@@ -42,29 +107,48 @@ func ReadLimit(path string, limit int64, private bool) ([]byte, error) {
 }
 
 func readOpenFile(file *os.File, info os.FileInfo, limit int64, private bool) ([]byte, error) {
+	snapshot, err := readOpenFileSnapshot(file, info, limit, private)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.Data, nil
+}
+
+func readOpenFileSnapshot(file *os.File, info os.FileInfo, limit int64, private bool) (Snapshot, error) {
 	defer file.Close()
 	if limit < 0 {
-		return nil, errors.New("secure file size limit is invalid")
+		return Snapshot{}, errors.New("secure file size limit is invalid")
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("secure file is not a regular file")
+		return Snapshot{}, ErrNotRegular
 	}
 	if private {
 		if err := checkPrivateFile(info); err != nil {
-			return nil, err
+			return Snapshot{}, err
 		}
 	}
 	if info.Size() > limit {
-		return nil, errors.New("secure file exceeds size limit")
+		return Snapshot{}, ErrTooLarge
 	}
 	data, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read secure file: %w", err)
+		return Snapshot{}, fmt.Errorf("read secure file: %w", err)
 	}
 	if int64(len(data)) > limit {
-		return nil, errors.New("secure file exceeds size limit")
+		return Snapshot{}, ErrTooLarge
 	}
-	return data, nil
+	after, err := file.Stat()
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("reinspect secure file: %w", err)
+	}
+	if !after.Mode().IsRegular() || !os.SameFile(info, after) || after.Size() != info.Size() || !after.ModTime().Equal(info.ModTime()) || int64(len(data)) != after.Size() {
+		return Snapshot{}, ErrChanged
+	}
+	identity, err := snapshotFileIdentityForPlatform(file, after)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("identify secure file: %w", err)
+	}
+	return Snapshot{Data: data, Size: after.Size(), ModTime: after.ModTime(), Mode: after.Mode(), Identity: identity}, nil
 }
 
 func relativeComponents(relative string) ([]string, error) {
@@ -78,6 +162,39 @@ func relativeComponents(relative string) ([]string, error) {
 		}
 	}
 	return components, nil
+}
+
+func directoryComponents(relative string) ([]string, error) {
+	if relative == "." {
+		return nil, nil
+	}
+	return relativeComponents(relative)
+}
+
+// Publish atomically creates or replaces a root-confined regular file.
+func (r *Root) Publish(ctx context.Context, relative string, data []byte, options PublishOptions) (PublishResult, error) {
+	if r == nil || r.file == nil {
+		return PublishResult{Outcome: PublishUnchanged}, errors.New("secure root is closed")
+	}
+	if options.Mode != PublishCreate && options.Mode != PublishReplace {
+		return PublishResult{Outcome: PublishUnchanged}, errors.New("secure publish mode is invalid")
+	}
+	if options.Mode == PublishCreate && options.ExpectedHash != "" || options.Mode == PublishReplace && (options.ExpectedHash == "" || options.ExpectedLimit < 1) {
+		return PublishResult{Outcome: PublishUnchanged}, errors.New("secure publish version precondition is invalid")
+	}
+	if err := ctx.Err(); err != nil {
+		return PublishResult{Outcome: PublishUnchanged}, err
+	}
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return PublishResult{Outcome: PublishUnchanged}, err
+	}
+	return publishWithinRootOptions(ctx, r, components, data, options)
+}
+
+func snapshotContentHash(data []byte) string {
+	hash := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(hash[:])
 }
 
 func AtomicWrite(path string, data []byte, private bool) error {

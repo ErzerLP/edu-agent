@@ -7,6 +7,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
 type Model interface {
@@ -38,6 +39,9 @@ type LearningStatus struct {
 type UUIDSource func() (string, error)
 type ContextIDSource func(string) (string, error)
 
+type WorkspaceStatus = workspace.Status
+type WorkspaceReference = workspace.Reference
+
 type Options struct {
 	ContextWindow     int
 	MaxToolRounds     int
@@ -48,6 +52,8 @@ type Options struct {
 	Now               func() time.Time
 	NewUUID           UUIDSource
 	ContextIDSource   ContextIDSource
+	Workspace         workspace.Executor
+	WorkspaceStatus   WorkspaceStatus
 }
 
 type EventStatus string
@@ -97,6 +103,35 @@ type ActivityProgress struct {
 	Total     int
 }
 
+// FileActivityDetail contains bounded, presentation-safe workspace lifecycle
+// data. It never contains raw tool arguments, hashes, provider reasoning,
+// absolute workspace roots, or operating-system errors.
+type FileActivityDetail struct {
+	Path               string
+	Operation          string
+	Returned           int
+	HasReturned        bool
+	StartLine          int
+	EndLine            int
+	HasRange           bool
+	Bytes              int64
+	HasBytes           bool
+	ScannedFiles       int
+	ScannedBytes       int64
+	HasScanned         bool
+	Matches            int
+	HasMatches         bool
+	TruncationReason   string
+	NextOffset         int
+	NextByteOffset     int
+	HasContinuation    bool
+	PreviewKind        string
+	Preview            string
+	PreviewTruncated   bool
+	FirstChangedLine   int
+	PublicationOutcome string
+}
+
 // Activity contains presentation-safe lifecycle data only. Delta never contains
 // provider reasoning, tool arguments, credentials, or raw provider errors.
 type Activity struct {
@@ -108,6 +143,7 @@ type Activity struct {
 	StartedAt       time.Time
 	UpdatedAt       time.Time
 	Progress        *ActivityProgress
+	File            *FileActivityDetail
 	StableCode      string
 	Delta           string
 }
@@ -135,6 +171,31 @@ func reportActivitySafely(reporter activityReporter, activity Activity) {
 		_ = recover()
 	}()
 	reporter(activity)
+}
+
+type FileAuthorizationMode string
+
+const (
+	FileAuthorizationConfirm FileAuthorizationMode = "confirm"
+	FileAuthorizationYOLO    FileAuthorizationMode = "yolo"
+)
+
+type FileMutationResolution string
+
+const (
+	FileMutationApprove FileMutationResolution = "approve"
+	FileMutationDecline FileMutationResolution = "decline"
+)
+
+type PendingFileMutation struct {
+	CallID      string
+	Tool        string
+	Operation   string
+	Path        string
+	PreviewKind string
+	Preview     string
+	Truncated   bool
+	BaseVersion string
 }
 
 type PreferenceConfirmation struct {
@@ -198,8 +259,9 @@ var (
 )
 
 type Result struct {
-	Text            string
-	Events          []Event
-	Pending         *PreferenceConfirmation
-	PendingQuestion *PendingQuestion
+	Text                string
+	Events              []Event
+	Pending             *PreferenceConfirmation
+	PendingQuestion     *PendingQuestion
+	PendingFileMutation *PendingFileMutation
 }

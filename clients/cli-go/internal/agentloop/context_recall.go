@@ -109,6 +109,9 @@ func (r *ContextRuntime) recallObservationLocked(observation Observation) (map[s
 		if source.ServerReference != nil {
 			metadata["server_reference"] = cloneServerReference(source.ServerReference)
 		}
+		if source.WorkspaceReference != nil {
+			metadata["workspace_reference"] = cloneWorkspaceReference(source.WorkspaceReference)
+		}
 		if available {
 			metadata["recall_text"] = truncateUTF8(sanitizeContextEvidence(source.RecallText), maxContextSourceRecallBytes)
 		} else {
@@ -123,6 +126,9 @@ func (r *ContextRuntime) recallObservationLocked(observation Observation) (map[s
 func memoryFreshnessStatus(freshness FreshnessClass, dropped bool) string {
 	if freshness == FreshnessInvalidated {
 		return "invalidated"
+	}
+	if freshness == FreshnessWorkspaceSuperseded {
+		return "superseded"
 	}
 	if dropped {
 		return "dropped"

@@ -15,9 +15,10 @@ import (
 type pendingInteractionKind string
 
 const (
-	pendingNone       pendingInteractionKind = ""
-	pendingPreference pendingInteractionKind = "preference"
-	pendingQuestion   pendingInteractionKind = "question"
+	pendingNone         pendingInteractionKind = ""
+	pendingPreference   pendingInteractionKind = "preference"
+	pendingQuestion     pendingInteractionKind = "question"
+	pendingFileMutation pendingInteractionKind = "file_mutation"
 )
 
 type questionArgs struct {
@@ -70,6 +71,28 @@ func (s *Session) frozenReasoningEffort() modelclient.ReasoningEffort {
 	return s.reasoningEffort
 }
 
+func (s *Session) FileAuthorizationMode() FileAuthorizationMode {
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	if s.fileAuthorizationMode == "" {
+		return FileAuthorizationConfirm
+	}
+	return s.fileAuthorizationMode
+}
+
+func (s *Session) SetFileAuthorizationMode(mode FileAuthorizationMode) error {
+	if mode != FileAuthorizationConfirm && mode != FileAuthorizationYOLO {
+		return errors.New("文件授权模式无效")
+	}
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	if s.contextRuntime.isClosed() {
+		return ErrSessionClosed
+	}
+	s.fileAuthorizationMode = mode
+	return nil
+}
+
 type activityTurnContextKey struct{}
 
 func withActivityTurn(ctx context.Context, turnID string) context.Context {
@@ -108,6 +131,10 @@ func (s *Session) publishActivity(ctx context.Context, activity Activity) {
 	if activity.Progress != nil {
 		progress := *activity.Progress
 		activity.Progress = &progress
+	}
+	if activity.File != nil {
+		detail := *activity.File
+		activity.File = &detail
 	}
 	s.activityMu.Unlock()
 	if reporter, exists := ctx.Value(activityReporterContextKey{}).(activityReporter); exists && reporter != nil {

@@ -7,10 +7,11 @@ import (
 )
 
 type ContextPlanner struct {
-	ContextWindow int
-	Mode          string
-	Estimator     TokenEstimator
-	Memory        ContextMemoryProjection
+	ContextWindow          int
+	Mode                   string
+	Estimator              TokenEstimator
+	Memory                 ContextMemoryProjection
+	ReservedOutputOverride int
 }
 
 func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient.Tool, history map[string]string) (ContextPlan, error) {
@@ -26,6 +27,9 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	}
 
 	reservedOutput := clampInt(divideRoundUp(p.ContextWindow*15, 100), 1024, 8192)
+	if p.ReservedOutputOverride > 0 {
+		reservedOutput = clampInt(p.ReservedOutputOverride, 512, 8192)
+	}
 	safetyMargin := divideRoundUp(p.ContextWindow*5, 100)
 	inputLimit := p.ContextWindow - reservedOutput - safetyMargin
 	if inputLimit <= 0 {
@@ -48,6 +52,10 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 
 	current := groups[len(groups)-1]
 	currentTokens := p.estimateAdditional(current)
+	if fixedTokens+currentTokens > inputLimit && mode != ContextCompactionOff {
+		current = projectCompletedToolCallArguments(current)
+		currentTokens = p.estimateAdditional(current)
+	}
 	if fixedTokens+currentTokens > inputLimit {
 		return ContextPlan{}, contextError(ContextTurnTooLarge, "当前完整对话轮次超过上下文上限，请缩短输入或减少工具结果后重试")
 	}
@@ -67,7 +75,7 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	projected := make([][]modelclient.Message, len(groups))
 	for index, group := range groups {
 		if index == len(groups)-1 {
-			projected[index] = append([]modelclient.Message(nil), group...)
+			projected[index] = append([]modelclient.Message(nil), current...)
 		} else {
 			projected[index] = projectHistoryGroup(group, history)
 		}
@@ -173,6 +181,28 @@ func splitSystemMessages(messages []modelclient.Message) ([]modelclient.Message,
 		}
 	}
 	return system, conversation
+}
+
+func projectCompletedToolCallArguments(group []modelclient.Message) []modelclient.Message {
+	completed := make(map[string]struct{})
+	for _, message := range group {
+		if message.Role == "tool" && message.ToolCallID != "" {
+			completed[message.ToolCallID] = struct{}{}
+		}
+	}
+	result := make([]modelclient.Message, len(group))
+	for index, message := range group {
+		result[index] = cloneModelMessage(message)
+		if message.Role != "assistant" || len(message.ToolCalls) == 0 {
+			continue
+		}
+		for callIndex := range result[index].ToolCalls {
+			if _, ok := completed[result[index].ToolCalls[callIndex].ID]; ok {
+				result[index].ToolCalls[callIndex].Function.Arguments = `{}`
+			}
+		}
+	}
+	return result
 }
 
 func projectHistoryGroup(group []modelclient.Message, history map[string]string) []modelclient.Message {

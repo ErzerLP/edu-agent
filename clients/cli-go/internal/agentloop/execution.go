@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
 func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
@@ -174,6 +175,74 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 			s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityWaitingUser})
 			return Result{Events: append(events, event), PendingQuestion: clonePendingQuestion(pending)}, nil
 		default:
+			if workspace.IsMutationTool(call.Function.Name) && s.workspace != nil && s.workspaceStatus.Available {
+				toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
+				prepared, preparationResult := s.workspace.PrepareMutation(toolCtx, call.Function.Name, call.Function.Arguments)
+				toolErr := toolCtx.Err()
+				cancel()
+				if toolErr != nil {
+					return Result{}, preferContextError(ctx, toolErr)
+				}
+				if prepared == nil {
+					if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, preparationResult); err != nil {
+						return Result{}, err
+					}
+					event := eventFromToolOutput(call.Function.Name, preparationResult.Summary, preparationResult.Value)
+					event.ID = call.ID
+					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: fileActivityDetailFromResult(call.Function.Name, preparationResult)})
+					events = append(events, event)
+					continue
+				}
+				if s.FileAuthorizationMode() == FileAuthorizationConfirm {
+					pending := pendingFileMutationFrom(call.ID, prepared)
+					s.appendMu.Lock()
+					s.pendingKind = pendingFileMutation
+					s.pendingCalls = append([]modelclient.ToolCall(nil), calls...)
+					s.pendingIndex = index
+					s.pendingFileMutation = pending
+					s.pendingPreparedMutation = prepared
+					s.pendingEvents = append([]Event(nil), events...)
+					s.pendingResolving = false
+					s.appendMu.Unlock()
+					event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "等待用户授权文件修改", Status: EventConfirmationRequired}
+					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityWaitingUser, File: fileActivityDetailFromPrepared(prepared)})
+					return Result{Events: append(events, event), PendingFileMutation: pending}, nil
+				}
+				commitResult, event, stop, err := s.commitPreparedFileMutation(ctx, call, prepared)
+				if err != nil {
+					return Result{}, err
+				}
+				events = append(events, event)
+				if stop || commitResult.Publication == workspace.PublicationUnknown {
+					return s.fileMutationCompletionFallback(s.currentTurnID, events)
+				}
+				continue
+			}
+			if workspace.IsReadTool(call.Function.Name) && s.workspace != nil && s.workspaceStatus.Available {
+				toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
+				progressCtx := workspace.WithProgressReporter(toolCtx, func(progress workspace.Progress) {
+					detail := fileActivityDetailFromProgress(progress)
+					s.publishActivity(toolCtx, Activity{
+						Kind:  ActivityTool,
+						Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: workspaceProgressSummary(call.Function.Name, detail), Status: EventRunning},
+						Phase: ActivityExecutingTool, File: detail,
+					})
+				})
+				workspaceResult := s.workspace.Execute(progressCtx, call.Function.Name, call.Function.Arguments)
+				toolErr := toolCtx.Err()
+				cancel()
+				if toolErr != nil {
+					return Result{}, preferContextError(ctx, toolErr)
+				}
+				if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, workspaceResult); err != nil {
+					return Result{}, err
+				}
+				event := eventFromToolOutput(call.Function.Name, workspaceResult.Summary, workspaceResult.Value)
+				event.ID = call.ID
+				s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: fileActivityDetailFromResult(call.Function.Name, workspaceResult)})
+				events = append(events, event)
+				continue
+			}
 			output, summary := s.executeReadTool(ctx, call)
 			if err := ctx.Err(); err != nil {
 				return Result{}, err

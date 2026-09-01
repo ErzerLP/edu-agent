@@ -18,6 +18,7 @@ type fakeConversation struct {
 	result             agentloop.Result
 	resolved           agentloop.Result
 	questionResolved   agentloop.Result
+	fileResolved       agentloop.Result
 	activities         []agentloop.Activity
 	resolvedActivities []agentloop.Activity
 	sendErr            error
@@ -25,6 +26,10 @@ type fakeConversation struct {
 	approved           bool
 	resolution         agentloop.PreferenceResolution
 	questionAnswer     agentloop.QuestionAnswer
+	fileResolution     agentloop.FileMutationResolution
+	fileCallID         string
+	cancelledFileCall  string
+	fileMode           agentloop.FileAuthorizationMode
 	resolveCalls       int
 	questionCalls      int
 	resolveErrors      []error
@@ -36,6 +41,7 @@ type fakeConversation struct {
 	setReasoningErr    error
 	contextStatus      agentloop.ContextStatus
 	contextUpdates     chan agentloop.ContextEvent
+	workspaceStatus    agentloop.WorkspaceStatus
 	learningStatus     agentloop.LearningStatus
 	learningErr        error
 }
@@ -94,6 +100,25 @@ func (c *fakeConversation) ResolveQuestion(ctx context.Context, answer agentloop
 	}
 	return c.questionResolved, nil
 }
+func (c *fakeConversation) ResolveFileMutation(_ context.Context, callID string, resolution agentloop.FileMutationResolution) (agentloop.Result, error) {
+	c.fileCallID = callID
+	c.fileResolution = resolution
+	return c.fileResolved, nil
+}
+func (c *fakeConversation) CancelPendingFileMutation(callID string) (agentloop.Result, error) {
+	c.cancelledFileCall = callID
+	return agentloop.Result{}, nil
+}
+func (c *fakeConversation) FileAuthorizationMode() agentloop.FileAuthorizationMode {
+	if c.fileMode == "" {
+		return agentloop.FileAuthorizationConfirm
+	}
+	return c.fileMode
+}
+func (c *fakeConversation) SetFileAuthorizationMode(mode agentloop.FileAuthorizationMode) error {
+	c.fileMode = mode
+	return nil
+}
 func (c *fakeConversation) ReasoningEffort() modelclient.ReasoningEffort {
 	if c.reasoningEffort == "" {
 		return modelclient.ReasoningEffortAuto
@@ -109,6 +134,12 @@ func (c *fakeConversation) SetReasoningEffort(value modelclient.ReasoningEffort)
 }
 func (c *fakeConversation) ContextStatus() agentloop.ContextStatus        { return c.contextStatus }
 func (c *fakeConversation) ContextUpdates() <-chan agentloop.ContextEvent { return c.contextUpdates }
+func (c *fakeConversation) WorkspaceStatus() agentloop.WorkspaceStatus {
+	if c.workspaceStatus.Available || c.workspaceStatus.Code != "" {
+		return c.workspaceStatus
+	}
+	return agentloop.WorkspaceStatus{Available: false, Code: "workspace_unavailable"}
+}
 func (c *fakeConversation) LearningStatus(context.Context) (agentloop.LearningStatus, error) {
 	return c.learningStatus, c.learningErr
 }
@@ -145,6 +176,156 @@ func TestAgentUIIsChineseAndSendsInput(t *testing.T) {
 	value = runTurn(t, value, command)
 	if conversation.sent != "解释图论" || value.busy || !strings.Contains(value.viewport.View(), "这是回答") {
 		t.Fatalf("sent=%q busy=%t viewport=%s", conversation.sent, value.busy, value.viewport.View())
+	}
+}
+
+func TestAgentUIWorkspaceNoticeUsesSafeSessionStatus(t *testing.T) {
+	available := newModel(t.Context(), &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"}}, "model")
+	availableView := available.View()
+	for _, expected := range []string{"工作区 project 已启用", ".git", ".comet", "发送给当前模型 provider", "工作区 project"} {
+		if !strings.Contains(availableView, expected) {
+			t.Fatalf("available workspace view missing %q: %s", expected, availableView)
+		}
+	}
+
+	unavailable := newModel(t.Context(), &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Code: "workspace_unavailable"}}, "model")
+	unavailableView := unavailable.View()
+	if !strings.Contains(unavailableView, "工作区不可用（workspace_unavailable）") || strings.Contains(unavailableView, "/home/") {
+		t.Fatalf("unavailable workspace view=%s", unavailableView)
+	}
+}
+
+func TestAgentUIFileMutationSelectorKeepsPendingAcrossYOLOSwitch(t *testing.T) {
+	conversation := &fakeConversation{
+		workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"},
+		fileResolved:    agentloop.Result{Text: "文件修改已完成。"},
+	}
+	value := newModel(t.Context(), conversation, "model")
+	pending := &agentloop.PendingFileMutation{
+		CallID: "write-call", Tool: "write", Operation: "write_create", Path: "notes.md",
+		PreviewKind: "content", Preview: "hello\n", Truncated: true,
+	}
+	value.handleTurnResult(agentloop.Result{PendingFileMutation: pending})
+	if value.selector == nil || value.selector.kind != selectorFileMutation || !strings.Contains(value.View(), "hello") || value.pendingFileMutation == nil {
+		t.Fatalf("file mutation selector was not rendered: %s", value.View())
+	}
+	resized, _ := value.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	value = resized.(model)
+	for _, line := range strings.Split(value.View(), "\n") {
+		if lipgloss.Width(line) > 60 {
+			t.Fatalf("file selector line width=%d: %q", lipgloss.Width(line), line)
+		}
+	}
+
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyF4})
+	value = updated.(model)
+	if command != nil || value.selector == nil || value.selector.kind != selectorFileMode {
+		t.Fatalf("F4 did not open file mode selector: selector=%+v command=%v", value.selector, command)
+	}
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyDown})
+	value = updated.(model)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	if conversation.fileMode != agentloop.FileAuthorizationYOLO || value.selector == nil || value.selector.kind != selectorFileMutation || value.pendingFileMutation == nil {
+		t.Fatalf("mode=%q selector=%+v pending=%+v", conversation.fileMode, value.selector, value.pendingFileMutation)
+	}
+	if !strings.Contains(value.View(), "文件 YOLO") || !strings.Contains(value.View(), "仅当前 Session") {
+		t.Fatalf("YOLO warning/status missing: %s", value.View())
+	}
+
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	if !value.busy || command == nil {
+		t.Fatalf("approve did not start resolution: busy=%t command=%v", value.busy, command)
+	}
+	value = runTurn(t, value, command)
+	if conversation.fileCallID != "write-call" || conversation.fileResolution != agentloop.FileMutationApprove || value.pendingFileMutation != nil {
+		t.Fatalf("call=%q resolution=%q pending=%+v", conversation.fileCallID, conversation.fileResolution, value.pendingFileMutation)
+	}
+
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyF4})
+	value = updated.(model)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyUp})
+	value = updated.(model)
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	if conversation.fileMode != agentloop.FileAuthorizationConfirm || !strings.Contains(value.View(), "文件 确认") {
+		t.Fatalf("mode did not switch back to confirm: mode=%q view=%s", conversation.fileMode, value.View())
+	}
+}
+
+func TestAgentUIEscCancelsPendingFileMutation(t *testing.T) {
+	conversation := &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"}}
+	value := newModel(t.Context(), conversation, "model")
+	pending := &agentloop.PendingFileMutation{
+		CallID: "edit-call", Tool: "edit", Operation: "edit", Path: "notes.md", PreviewKind: "diff", Preview: "-old\n+new\n",
+	}
+	value.handleTurnResult(agentloop.Result{PendingFileMutation: pending})
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	value = updated.(model)
+	if command != nil || conversation.cancelledFileCall != "edit-call" || value.pendingFileMutation != nil || value.selector != nil {
+		t.Fatalf("command=%v cancelled=%q pending=%+v selector=%+v", command, conversation.cancelledFileCall, value.pendingFileMutation, value.selector)
+	}
+}
+
+func TestAgentUIDeclinesPendingFileMutation(t *testing.T) {
+	conversation := &fakeConversation{
+		workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"},
+		fileResolved:    agentloop.Result{Text: "已保留原文件。"},
+	}
+	value := newModel(t.Context(), conversation, "model")
+	pending := &agentloop.PendingFileMutation{
+		CallID: "edit-call", Tool: "edit", Operation: "edit", Path: "notes.md", PreviewKind: "diff", Preview: "-old\n+new\n", Truncated: true,
+	}
+	value.handleTurnResult(agentloop.Result{PendingFileMutation: pending})
+	view := value.View()
+	for _, expected := range []string{"notes.md", "操作：edit", "-old", "+new", "预览已按安全上限截断"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("edit confirmation missing %q: %s", expected, view)
+		}
+	}
+	updated, _ := value.Update(tea.KeyMsg{Type: tea.KeyDown})
+	value = updated.(model)
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	if !value.busy || command == nil {
+		t.Fatalf("decline did not start resolution: busy=%t command=%v", value.busy, command)
+	}
+	value = runTurn(t, value, command)
+	if conversation.fileCallID != "edit-call" || conversation.fileResolution != agentloop.FileMutationDecline || value.pendingFileMutation != nil || !strings.Contains(value.viewport.View(), "已保留原文件") {
+		t.Fatalf("call=%q resolution=%q pending=%+v transcript=%s", conversation.fileCallID, conversation.fileResolution, value.pendingFileMutation, value.viewport.View())
+	}
+}
+
+func TestAgentUIFileToolTimelineIsBoundedAndExpandable(t *testing.T) {
+	conversation := &fakeConversation{result: agentloop.Result{
+		Text: "文件检查已结束。",
+		Events: []agentloop.Event{
+			{ID: "write-call", Tool: "write", Summary: "已完成 write_create：notes.md", Status: agentloop.EventSucceeded},
+			{ID: "search-call", Tool: "search", Summary: "在 src 中找到 100 处匹配", Status: agentloop.EventFailed, Detail: "match_limit"},
+		},
+	}}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("检查文件")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = updated.(model)
+	value = runTurn(t, value, command)
+	collapsed := value.viewport.View()
+	if !strings.Contains(collapsed, "工具调用 · 2 项") || !strings.Contains(collapsed, "写入文件") || !strings.Contains(collapsed, "搜索文件") || strings.Contains(collapsed, "match_limit") {
+		t.Fatalf("collapsed file timeline=%s", collapsed)
+	}
+	updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	value = updated.(model)
+	expanded := value.viewport.View()
+	for _, expected := range []string{"工具：write", "工具：search", "代码：match_limit", "notes.md"} {
+		if !strings.Contains(expanded, expected) {
+			t.Fatalf("expanded file timeline missing %q: %s", expected, expanded)
+		}
+	}
+	for _, forbidden := range []string{"/home/", `{"path"`, "expected_hash", "provider reasoning"} {
+		if strings.Contains(expanded, forbidden) {
+			t.Fatalf("expanded file timeline leaked %q: %s", forbidden, expanded)
+		}
 	}
 }
 
@@ -305,7 +486,7 @@ func TestAgentUIPlacesMetadataBelowDynamicComposer(t *testing.T) {
 		}
 	}
 	composerEnd := strings.Index(view, "╰")
-	metadata := strings.Index(view, "上下文约 54%")
+	metadata := strings.LastIndex(view, "约54%")
 	if composerEnd < 0 || metadata <= composerEnd || !strings.Contains(view, "╭─ 消息") ||
 		!strings.Contains(view, "› 解释图论") || !strings.Contains(view, "8/8000") {
 		t.Fatalf("composer/footer hierarchy is incomplete: %s", view)

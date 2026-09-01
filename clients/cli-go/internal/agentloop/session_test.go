@@ -615,7 +615,11 @@ func TestWorkspaceToolCancellationSkipsSiblingsAndFollowUpModel(t *testing.T) {
 		{Message: modelclient.Message{Role: "assistant", Content: "不应继续调用模型"}},
 	}}
 	session := newWorkspaceTestSession(t, model, executor)
-	ctx, cancel := context.WithCancel(t.Context())
+	var activities []Activity
+	activityCtx := WithActivityReporter(t.Context(), func(activity Activity) {
+		activities = append(activities, activity)
+	})
+	ctx, cancel := context.WithCancel(activityCtx)
 	result := make(chan error, 1)
 	go func() {
 		_, err := session.Send(ctx, "读取后列目录")
@@ -643,6 +647,21 @@ func TestWorkspaceToolCancellationSkipsSiblingsAndFollowUpModel(t *testing.T) {
 	}
 	if len(session.workspaceReferences) != 0 {
 		t.Fatalf("cancelled workspace result polluted history: %+v", session.workspaceReferences)
+	}
+	var runningWithPath, stoppedWithPath bool
+	for _, activity := range activities {
+		if activity.Kind != ActivityTool || activity.Event.ID != "read-call" {
+			continue
+		}
+		if activity.Event.Status == EventRunning && activity.File != nil && activity.File.Path == "notes.md" {
+			runningWithPath = true
+		}
+		if activity.Event.Status == EventFailed && activity.Phase == ActivityStopped && activity.StableCode == workspace.CodeCancelled && activity.File != nil && activity.File.Path == "notes.md" {
+			stoppedWithPath = true
+		}
+	}
+	if !runningWithPath || !stoppedWithPath {
+		t.Fatalf("cancelled activity missing path or terminal state: %+v", activities)
 	}
 }
 

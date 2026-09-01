@@ -42,6 +42,14 @@ func TestWorkspaceFailuresExposeStableSafeRecovery(t *testing.T) {
 	if !strings.Contains(changed["suggestion"].(string), "content_hash") {
 		t.Fatalf("content_changed suggestion=%q", changed["suggestion"])
 	}
+	denied := resultObject(t, MutationDenied(&PreparedMutation{Presentation: MutationPresentation{Operation: "write_create", Path: "note.txt"}}))
+	if denied["message"] == "" || denied["suggestion"] == "" || denied["path"] != "note.txt" || denied["publication_outcome"] != string(PublicationUnchanged) {
+		t.Fatalf("denied=%+v", denied)
+	}
+	unknown := resultObject(t, mutationOutcomeUnknown(&PreparedMutation{path: "note.txt", Presentation: MutationPresentation{Operation: "write_replace"}}))
+	if unknown["message"] == "" || unknown["suggestion"] == "" || unknown["path"] != "note.txt" || unknown["publication_outcome"] != string(PublicationUnknown) {
+		t.Fatalf("unknown=%+v", unknown)
+	}
 }
 
 func TestWorkspacePathContractRejectsEscapesControlsAndADS(t *testing.T) {
@@ -217,6 +225,63 @@ func TestWorkspaceReadLongLineUsesRuneSafeByteContinuation(t *testing.T) {
 	if second["content"] == "" || !utf8.ValidString(second["content"].(string)) {
 		t.Fatalf("second long read=%+v", second)
 	}
+}
+
+func TestWorkspaceReadJSONEscapedMultilineContinuationIsRecoverable(t *testing.T) {
+	root := t.TempDir()
+	line := strings.Repeat(`"`, 16) + "\\\\" + "\n"
+	content := strings.Repeat(line, 500)
+	if err := os.WriteFile(filepath.Join(root, "escaped.txt"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.Close()
+
+	offset, byteOffset := 1, 0
+	expectedHash := ""
+	var rebuilt strings.Builder
+	for page := 0; page < 16; page++ {
+		arguments, marshalErr := json.Marshal(map[string]any{
+			"path": "escaped.txt", "offset": offset, "byte_offset": byteOffset,
+			"expected_hash": expectedHash,
+		})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		result := workspace.Execute(t.Context(), ToolRead, string(arguments))
+		if code := resultCode(t, result); code != "" {
+			t.Fatalf("page %d code=%q value=%+v", page, code, result.Value)
+		}
+		value := resultObject(t, result)
+		encoded, _ := json.Marshal(value)
+		if len(encoded) > DefaultLimits().ResultBytes {
+			t.Fatalf("page %d bytes=%d", page, len(encoded))
+		}
+		chunk, _ := value["content"].(string)
+		if chunk == "" {
+			t.Fatalf("page %d empty content: %+v", page, value)
+		}
+		rebuilt.WriteString(chunk)
+		if expectedHash == "" {
+			expectedHash, _ = value["content_hash"].(string)
+		}
+		if value["complete"] == true {
+			if rebuilt.String() != content {
+				t.Fatalf("rebuilt bytes=%d want=%d", rebuilt.Len(), len(content))
+			}
+			return
+		}
+		nextOffset := intValue(value["next_offset"])
+		nextByteOffset := intValue(value["next_byte_offset"])
+		if nextOffset < offset || nextOffset == offset && nextByteOffset <= byteOffset {
+			t.Fatalf("page %d cursor did not advance: %d/%d -> %d/%d", page, offset, byteOffset, nextOffset, nextByteOffset)
+		}
+		offset, byteOffset = nextOffset, nextByteOffset
+	}
+	t.Fatalf("read did not finish; rebuilt bytes=%d want=%d", rebuilt.Len(), len(content))
 }
 
 func TestWorkspaceReadRejectsBinaryInvalidUTF8OversizeAndLink(t *testing.T) {

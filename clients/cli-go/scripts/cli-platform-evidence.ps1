@@ -15,6 +15,27 @@ function ConvertTo-GitHubCommandValue([string] $Value, [bool] $Property = $false
     return $escaped
 }
 
+function Get-GoTestSkipCount([object[]] $OutputLines) {
+    $count = 0
+    foreach ($line in @($OutputLines)) {
+        $text = [string] $line
+        if ($text -match '^\s*(--- SKIP:|=== SKIP(?:\s|:))') {
+            $count++
+        }
+    }
+    return $count
+}
+
+function Test-NativeCheckPassed([string] $CheckName, [int] $ExitCode, [int] $SkipCount) {
+    if ($ExitCode -ne 0) {
+        return $false
+    }
+    if ($CheckName -eq "workspace-securefile-handle-publication" -and $SkipCount -ne 0) {
+        return $false
+    }
+    return $true
+}
+
 function Get-SafeFailureCategory([object[]] $OutputLines) {
     $joined = [string]::Join(" ", [string[]] @($OutputLines | ForEach-Object { [string] $_ }))
     if ([string]::IsNullOrWhiteSpace($joined)) {
@@ -47,6 +68,9 @@ function Get-SafeFailureCategory([object[]] $OutputLines) {
 function Get-FailureAnnotationBody([string] $CheckName, [string] $Method, [int] $ExitCode, [object[]] $OutputLines) {
     if ($CheckName -eq "pair-hidden-input") {
         return "check=$CheckName method=$Method exit=$ExitCode failure_category=pair-hidden-input-failed raw_output=omitted"
+    }
+    if ($CheckName -eq "workspace-securefile-handle-publication" -and (Get-GoTestSkipCount $OutputLines) -ne 0) {
+        return "check=$CheckName method=$Method exit=$ExitCode failure_category=required-test-skipped raw_output=omitted"
     }
     $category = Get-SafeFailureCategory $OutputLines
     return "check=$CheckName method=$Method exit=$ExitCode failure_category=$category raw_output=omitted"
@@ -85,7 +109,35 @@ function Invoke-FailureAnnotationSanitizationSelfTest {
     if ($otherBody -notmatch 'failure_category=timeout raw_output=omitted$') {
         throw "non-pair annotation did not retain a safe failure category"
     }
+    $skipFixture = @(
+        "=== RUN   TestWindowsRequiredFixture",
+        "--- SKIP: TestWindowsRequiredFixture/symlink (0.00s)",
+        "=== SKIP  TestWindowsRequiredFixture/junction"
+    )
+    $skipCount = Get-GoTestSkipCount $skipFixture
+    if ($skipCount -ne 2) {
+        throw "workspace skip counter did not recognize both Go skip markers"
+    }
+    if (Test-NativeCheckPassed "workspace-securefile-handle-publication" 0 1) {
+        throw "workspace evidence accepted a required skipped test"
+    }
+    if (-not (Test-NativeCheckPassed "workspace-securefile-handle-publication" 0 0)) {
+        throw "workspace evidence rejected a zero-skip successful test"
+    }
+    if (-not (Test-NativeCheckPassed "clear" 0 2)) {
+        throw "zero-skip policy changed an unrelated platform check"
+    }
+    $unrelatedSkipBody = Get-FailureAnnotationBody "clear" "self-test-method" 1 $skipFixture
+    if ($unrelatedSkipBody -notmatch 'failure_category=check-failure raw_output=omitted$') {
+        throw "workspace skip category changed an unrelated platform annotation"
+    }
+    $skipBody = Get-FailureAnnotationBody "workspace-securefile-handle-publication" "self-test-method" 1 $skipFixture
+    if ($skipBody -notmatch 'failure_category=required-test-skipped raw_output=omitted$') {
+        throw "workspace skip failure did not retain a safe diagnostic category"
+    }
+
     Write-Output "failure_annotation_sanitization=pass"
+    Write-Output "workspace_skip_policy=pass"
 }
 
 if ($env:EDU_AGENT_EVIDENCE_SELF_TEST -eq "1") {
@@ -169,12 +221,21 @@ try {
         Add-Evidence "command[$($check.Name)]=$command"
         $output = @(& go test $package -run $pattern -count=1 -v 2>&1)
         $exitCode = $LASTEXITCODE
+        $skipCount = 0
+        if ($check.Name -eq "workspace-securefile-handle-publication") {
+            $skipCount = Get-GoTestSkipCount $output
+            Add-Evidence "skipped[$($check.Name)]=$skipCount"
+        }
         Add-Evidence "output[$($check.Name)]=captured_lines=$($output.Count) raw_output=omitted"
-        if ($exitCode -eq 0) {
+        if (Test-NativeCheckPassed $check.Name $exitCode $skipCount) {
             Add-Evidence "result[$($check.Name)]=pass"
         } else {
-            Add-Evidence "result[$($check.Name)]=fail exit_code=$exitCode"
-            Write-FailureAnnotation $check.Name $check.Method $exitCode $output
+            $effectiveExitCode = $exitCode
+            if ($effectiveExitCode -eq 0) {
+                $effectiveExitCode = 1
+            }
+            Add-Evidence "result[$($check.Name)]=fail exit_code=$effectiveExitCode"
+            Write-FailureAnnotation $check.Name $check.Method $effectiveExitCode $output
             $failed = $true
         }
     }

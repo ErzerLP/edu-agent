@@ -38,6 +38,7 @@ func (w *Workspace) executeRead(ctx context.Context, raw string) Result {
 	if err := ctx.Err(); err != nil {
 		return contextFailure(err)
 	}
+	publishProgress(ctx, Progress{Tool: ToolRead, Path: path, StartLine: args.Offset})
 	snapshot, err := w.root.ReadSnapshot(path, w.limits.FileBytes, false)
 	if err != nil {
 		if errors.Is(err, securefile.ErrLink) {
@@ -54,6 +55,7 @@ func (w *Workspace) executeRead(ctx context.Context, raw string) Result {
 	if err := ctx.Err(); err != nil {
 		return contextFailure(err)
 	}
+	publishProgress(ctx, Progress{Tool: ToolRead, Path: path, StartLine: args.Offset, Bytes: int64(len(snapshot.Data))})
 	decoded, err := decodeText(snapshot.Data)
 	if err != nil {
 		return resultForError(err, "文件不是可读取的 UTF-8 文本")
@@ -126,11 +128,14 @@ func (w *Workspace) executeRead(ctx context.Context, raw string) Result {
 	for safeResultJSONSize(value) > w.limits.ResultBytes && len(content) > 0 {
 		shrink := max(1, safeResultJSONSize(value)-w.limits.ResultBytes+16)
 		content = truncateUTF8Bytes(content, max(0, len(content)-shrink))
+		endLine, returnedLines, nextOffset, nextByteOffset = readPrefixPosition(lines, startIndex, args.ByteOffset, len(content))
 		value["content"] = content
+		value["end_line"] = endLine
+		value["returned_lines"] = returnedLines
 		value["complete"] = false
 		value["truncation_reason"] = "result_bytes"
-		value["next_offset"] = args.Offset
-		value["next_byte_offset"] = args.ByteOffset + len(content)
+		value["next_offset"] = nextOffset
+		value["next_byte_offset"] = nextByteOffset
 	}
 	progress := Progress{
 		Tool: ToolRead, Path: path, StartLine: args.Offset, EndLine: endLine,
@@ -149,6 +154,39 @@ func (w *Workspace) executeRead(ctx context.Context, raw string) Result {
 		Summary:   fmt.Sprintf("已读取 %s 第 %d-%d 行", path, args.Offset, endLine),
 		Reference: &Reference{Path: path, ContentHash: decoded.Hash, Kind: "file"},
 	}
+}
+
+// readPrefixPosition maps a byte prefix of the contiguous read stream back to
+// the next line/byte cursor. Lines include their newline terminators, so a
+// prefix ending exactly at a line boundary continues at the next line.
+func readPrefixPosition(lines []string, startIndex, startByteOffset, consumed int) (endLine, returnedLines, nextOffset, nextByteOffset int) {
+	index := startIndex
+	byteOffset := startByteOffset
+	for index < len(lines) {
+		if byteOffset >= len(lines[index]) {
+			index++
+			byteOffset = 0
+			continue
+		}
+		if consumed <= 0 {
+			break
+		}
+		remaining := len(lines[index]) - byteOffset
+		take := min(consumed, remaining)
+		if take > 0 {
+			endLine = index + 1
+			returnedLines++
+			byteOffset += take
+			consumed -= take
+		}
+		if byteOffset == len(lines[index]) {
+			index++
+			byteOffset = 0
+			continue
+		}
+		break
+	}
+	return endLine, returnedLines, index + 1, byteOffset
 }
 
 func readContentChangedResult(path, expectedHash, summary string) Result {

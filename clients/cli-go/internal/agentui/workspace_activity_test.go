@@ -105,6 +105,43 @@ func TestAgentUISlowWorkspaceSearchShowsProgressBudgetAndEscInOneActivity(t *tes
 	}
 }
 
+func TestAgentUISlowWorkspaceReadShowsPathProgressBudgetEscAndStoppedState(t *testing.T) {
+	conversation := &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"}}
+	value := newModel(t.Context(), conversation, "model")
+	value.busy = true
+	value.activeCancelable = true
+	value.activeTurnID = 1
+	value.activeStarted = time.Now().Add(-slowTurnThreshold - time.Second)
+	started := time.Now().Add(-9 * time.Second)
+	running := agentloop.Activity{
+		Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool, StartedAt: started, UpdatedAt: time.Now(), TimeoutBudget: 30 * time.Second,
+		Event: agentloop.Event{ID: "read-call", Tool: "read", Summary: "正在读取 notes.md 第 3 行起", Status: agentloop.EventRunning},
+		File:  &agentloop.FileActivityDetail{Path: "notes.md", StartLine: 3, HasRange: true, Bytes: 8192, HasBytes: true},
+	}
+	value.handleActivity(1, running)
+	for _, expected := range []string{"已等待", "正在读取 notes.md", "从第 3 行开始", "已处理 8192 字节", "超时预算 30s", "Esc"} {
+		if detail := value.slowTurnDetail(); !strings.Contains(detail, expected) {
+			t.Fatalf("slow read detail missing %q: %s", expected, detail)
+		}
+	}
+	stopped := running
+	stopped.Phase = agentloop.ActivityStopped
+	stopped.Event = agentloop.Event{ID: "read-call", Tool: "read", Summary: "工作区文件操作已取消", Status: agentloop.EventFailed, Detail: "cancelled"}
+	stopped.StableCode = "cancelled"
+	value.handleActivity(1, stopped)
+	value.toolsExpanded = true
+	value.refreshTranscript(false)
+	transcript := value.viewport.View()
+	for _, expected := range []string{"路径：notes.md", "范围：从第 3 行开始", "返回字节：8192", "代码：cancelled"} {
+		if !strings.Contains(transcript, expected) {
+			t.Fatalf("stopped read missing %q: %s", expected, transcript)
+		}
+	}
+	if strings.Count(transcript, "读取文件") != 1 {
+		t.Fatalf("read activity did not upsert: %s", transcript)
+	}
+}
+
 func TestAgentUIWorkspaceFooterAtMinimumWidthKeepsModeAndSanitizedWorkspace(t *testing.T) {
 	conversation := &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{
 		Available: true, Label: "/home/private/project-with-a-very-long-workspace-label",

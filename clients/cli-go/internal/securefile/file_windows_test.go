@@ -4,13 +4,14 @@ package securefile
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -107,19 +108,14 @@ func TestWindowsRejectsReparseAndInvalidPaths(t *testing.T) {
 
 	t.Run("symlink-reparse", func(t *testing.T) {
 		link := filepath.Join(rootPath, "linked")
-		if err := os.Symlink(outside, link); err != nil {
-			t.Skipf("directory symlink creation is unavailable: %v", err)
-		}
+		createWindowsDirectorySymlinkFixture(t, link, outside)
 		assertWindowsLinkRejected(t, root, "linked")
 		assertWindowsListMarksLink(t, root, "linked")
 	})
 
 	t.Run("junction", func(t *testing.T) {
 		link := filepath.Join(rootPath, "junction")
-		command := exec.Command("cmd.exe", "/c", "mklink", "/J", link, outside)
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Skipf("junction creation is unavailable: %v (%s)", err, strings.TrimSpace(string(output)))
-		}
+		createWindowsJunctionFixture(t, link, outside)
 		assertWindowsLinkRejected(t, root, "junction")
 		assertWindowsListMarksLink(t, root, "junction")
 	})
@@ -246,8 +242,8 @@ func TestWindowsHardlinkAliasesShareFileIdentity(t *testing.T) {
 	if err := os.WriteFile(firstPath, []byte("same file"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Link(firstPath, secondPath); err != nil {
-		t.Skipf("hard links are unavailable on this filesystem: %v", err)
+	if err := createWindowsHardlinkFixture(secondPath, firstPath); err != nil {
+		failWindowsFixture(t, "hardlink", "create", err)
 	}
 	root, err := OpenRoot(rootPath)
 	if err != nil {
@@ -265,6 +261,140 @@ func TestWindowsHardlinkAliasesShareFileIdentity(t *testing.T) {
 	if first.Identity == "" || second.Identity == "" || first.Identity != second.Identity {
 		t.Fatalf("hardlink identities differ: first %q, second %q", first.Identity, second.Identity)
 	}
+}
+
+const windowsSymbolicLinkFlagAllowUnprivilegedCreate = 0x2
+
+func createWindowsDirectorySymlinkFixture(t *testing.T, linkPath, targetPath string) {
+	t.Helper()
+	linkPointer, err := windows.UTF16PtrFromString(linkPath)
+	if err != nil {
+		failWindowsFixture(t, "directory-symlink", "encode-link", err)
+	}
+	targetPointer, err := windows.UTF16PtrFromString(targetPath)
+	if err != nil {
+		failWindowsFixture(t, "directory-symlink", "encode-target", err)
+	}
+	if err := windows.CreateSymbolicLink(
+		linkPointer,
+		targetPointer,
+		windows.SYMBOLIC_LINK_FLAG_DIRECTORY|windowsSymbolicLinkFlagAllowUnprivilegedCreate,
+	); err != nil {
+		failWindowsFixture(t, "directory-symlink", "create-native", err)
+	}
+}
+
+func createWindowsJunctionFixture(t *testing.T, junctionPath, targetPath string) {
+	t.Helper()
+	if err := os.Mkdir(junctionPath, 0o700); err != nil {
+		failWindowsFixture(t, "junction", "create-directory", err)
+	}
+	junctionPointer, err := windows.UTF16PtrFromString(junctionPath)
+	if err != nil {
+		failWindowsFixture(t, "junction", "encode-directory", err)
+	}
+	handle, err := windows.CreateFile(
+		junctionPointer,
+		windows.GENERIC_WRITE,
+		windowsAllShare,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+	if err != nil {
+		failWindowsFixture(t, "junction", "open-reparse-directory", err)
+	}
+	buffer, err := windowsMountPointReparseBuffer(targetPath)
+	if err != nil {
+		_ = windows.CloseHandle(handle)
+		failWindowsFixture(t, "junction", "build-reparse-buffer", err)
+	}
+	var bytesReturned uint32
+	setErr := windows.DeviceIoControl(
+		handle,
+		windows.FSCTL_SET_REPARSE_POINT,
+		&buffer[0],
+		uint32(len(buffer)),
+		nil,
+		0,
+		&bytesReturned,
+		nil,
+	)
+	closeErr := windows.CloseHandle(handle)
+	if setErr != nil {
+		failWindowsFixture(t, "junction", "set-mount-point", setErr)
+	}
+	if closeErr != nil {
+		failWindowsFixture(t, "junction", "close-directory", closeErr)
+	}
+}
+
+func windowsMountPointReparseBuffer(targetPath string) ([]byte, error) {
+	cleanTarget := filepath.Clean(targetPath)
+	substituteName, err := windows.UTF16FromString(`\??\` + cleanTarget)
+	if err != nil {
+		return nil, err
+	}
+	printName, err := windows.UTF16FromString(cleanTarget)
+	if err != nil {
+		return nil, err
+	}
+
+	substituteNameBytes := len(substituteName) * 2
+	printNameBytes := len(printName) * 2
+	pathBytes := substituteNameBytes + printNameBytes
+	reparseDataLength := 8 + pathBytes
+	if reparseDataLength > int(^uint16(0)) {
+		return nil, errors.New("mount-point reparse buffer exceeds Windows limit")
+	}
+	buffer := make([]byte, 8+reparseDataLength)
+	binary.LittleEndian.PutUint32(buffer[0:4], windows.IO_REPARSE_TAG_MOUNT_POINT)
+	binary.LittleEndian.PutUint16(buffer[4:6], uint16(reparseDataLength))
+	binary.LittleEndian.PutUint16(buffer[8:10], 0)
+	binary.LittleEndian.PutUint16(buffer[10:12], uint16(substituteNameBytes-2))
+	binary.LittleEndian.PutUint16(buffer[12:14], uint16(substituteNameBytes))
+	binary.LittleEndian.PutUint16(buffer[14:16], uint16(printNameBytes-2))
+
+	offset := 16
+	for _, value := range substituteName {
+		binary.LittleEndian.PutUint16(buffer[offset:offset+2], value)
+		offset += 2
+	}
+	for _, value := range printName {
+		binary.LittleEndian.PutUint16(buffer[offset:offset+2], value)
+		offset += 2
+	}
+	return buffer, nil
+}
+
+func createWindowsHardlinkFixture(linkPath, targetPath string) error {
+	linkPointer, err := windows.UTF16PtrFromString(linkPath)
+	if err != nil {
+		return err
+	}
+	targetPointer, err := windows.UTF16PtrFromString(targetPath)
+	if err != nil {
+		return err
+	}
+	return windows.CreateHardLink(linkPointer, targetPointer, 0)
+}
+
+func failWindowsFixture(t *testing.T, fixture, step string, err error) {
+	t.Helper()
+	t.Fatalf("%s fixture failed at %s (%s)", fixture, step, safeWindowsFixtureError(err))
+}
+
+func safeWindowsFixtureError(err error) string {
+	var status windows.NTStatus
+	if errors.As(err, &status) {
+		return fmt.Sprintf("ntstatus=0x%08x", uint32(status))
+	}
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return fmt.Sprintf("win32=%d", uint32(errno))
+	}
+	return fmt.Sprintf("error_type=%T", err)
 }
 
 func assertWindowsLinkRejected(t *testing.T, root *Root, relative string) {
@@ -318,19 +448,19 @@ func setAndReadProtectedWindowsDACL(t *testing.T, path string) string {
 	t.Helper()
 	tokenUser, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
-		t.Skipf("current user SID is unavailable: %v", err)
+		failWindowsFixture(t, "protected-dacl", "read-current-user", err)
 	}
 	securityDescriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;FA;;;%s)", tokenUser.User.Sid.String()))
 	if err != nil {
-		t.Fatal(err)
+		failWindowsFixture(t, "protected-dacl", "build-security-descriptor", err)
 	}
 	dacl, _, err := securityDescriptor.DACL()
 	if err != nil {
-		t.Fatal(err)
+		failWindowsFixture(t, "protected-dacl", "read-descriptor-dacl", err)
 	}
 	handle, err := openWindowsTestSecurityHandle(path, windows.READ_CONTROL|windows.WRITE_DAC)
 	if err != nil {
-		t.Skipf("target DACL cannot be changed: %v", err)
+		failWindowsFixture(t, "protected-dacl", "open-target", err)
 	}
 	err = windows.SetSecurityInfo(
 		handle,
@@ -342,9 +472,12 @@ func setAndReadProtectedWindowsDACL(t *testing.T, path string) string {
 		nil,
 	)
 	runtime.KeepAlive(securityDescriptor)
-	_ = windows.CloseHandle(handle)
+	closeErr := windows.CloseHandle(handle)
 	if err != nil {
-		t.Skipf("target DACL cannot be changed: %v", err)
+		failWindowsFixture(t, "protected-dacl", "apply", err)
+	}
+	if closeErr != nil {
+		failWindowsFixture(t, "protected-dacl", "close-target", closeErr)
 	}
 	return readWindowsDACLSignature(t, path)
 }

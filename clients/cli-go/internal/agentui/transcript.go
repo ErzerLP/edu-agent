@@ -232,7 +232,11 @@ func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) 
 		appendLine(fmt.Sprintf("返回：%d 项", detail.Returned))
 	}
 	if detail.HasRange {
-		appendLine(fmt.Sprintf("范围：第 %d-%d 行", detail.StartLine, detail.EndLine))
+		if detail.EndLine >= detail.StartLine {
+			appendLine(fmt.Sprintf("范围：第 %d-%d 行", detail.StartLine, detail.EndLine))
+		} else {
+			appendLine(fmt.Sprintf("范围：从第 %d 行开始", detail.StartLine))
+		}
 	}
 	if detail.HasBytes {
 		appendLine(fmt.Sprintf("返回字节：%d", detail.Bytes))

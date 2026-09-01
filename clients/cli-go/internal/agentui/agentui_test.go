@@ -266,6 +266,13 @@ func TestAgentUIEscCancelsPendingFileMutation(t *testing.T) {
 	if command != nil || conversation.cancelledFileCall != "edit-call" || value.pendingFileMutation != nil || value.selector != nil {
 		t.Fatalf("command=%v cancelled=%q pending=%+v selector=%+v", command, conversation.cancelledFileCall, value.pendingFileMutation, value.selector)
 	}
+	value.toolsExpanded = true
+	value.refreshTranscript(false)
+	for _, expected := range []string{"路径：notes.md", "操作：edit", "代码：cancelled"} {
+		if !strings.Contains(value.viewport.View(), expected) {
+			t.Fatalf("cancelled mutation missing %q: %s", expected, value.viewport.View())
+		}
+	}
 }
 
 func TestAgentUIDeclinesPendingFileMutation(t *testing.T) {

@@ -14,6 +14,7 @@ const maxSearchProgressReports = 64
 type Progress struct {
 	Tool             string
 	Path             string
+	Operation        string
 	Returned         int
 	StartLine        int
 	EndLine          int
@@ -29,6 +30,69 @@ type Progress struct {
 
 type progressReporter func(Progress)
 type progressReporterContextKey struct{}
+
+// InitialProgress returns a bounded, validated presentation for a workspace
+// call before filesystem work begins. Invalid or unsafe arguments produce no
+// detail rather than exposing raw model input.
+func InitialProgress(toolName, rawArguments string) (Progress, bool) {
+	progress := Progress{Tool: toolName}
+	var path string
+	var err error
+	switch toolName {
+	case ToolList:
+		var args listArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		if args.Path == "" {
+			args.Path = "."
+		}
+		path, err = normalizeModelPath(args.Path, true)
+	case ToolRead:
+		var args readArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Path, false)
+		if args.Offset == 0 {
+			args.Offset = 1
+		}
+		progress.StartLine = args.Offset
+	case ToolSearch:
+		var args searchArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		if args.Path == "" {
+			args.Path = "."
+		}
+		path, err = normalizeModelPath(args.Path, true)
+	case ToolWrite:
+		var args writeArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Path, false)
+		progress.Operation = "write_" + args.Mode
+	case ToolEdit:
+		var args editArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Path, false)
+		progress.Operation = "edit"
+	default:
+		return Progress{}, false
+	}
+	if err != nil {
+		return Progress{}, false
+	}
+	progress.Path = path
+	if !safeProgress(progress) {
+		return Progress{}, false
+	}
+	return progress, true
+}
 
 // WithProgressReporter attaches a presentation-only progress sink to one
 // workspace operation. Reporter panics are isolated from workspace execution.
@@ -48,16 +112,20 @@ func publishProgress(ctx context.Context, progress Progress) {
 		return
 	}
 	defer func() {
-		_ = recover()
+		recover()
 	}()
 	reporter(progress)
 }
 
 func safeProgress(progress Progress) bool {
-	if progress.Tool != ToolList && progress.Tool != ToolRead && progress.Tool != ToolSearch {
+	if progress.Tool != ToolList && progress.Tool != ToolRead && progress.Tool != ToolSearch && progress.Tool != ToolWrite && progress.Tool != ToolEdit {
 		return false
 	}
-	normalized, err := normalizeModelPath(progress.Path, true)
+	allowRoot := progress.Tool == ToolList || progress.Tool == ToolSearch
+	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" {
+		return false
+	}
+	normalized, err := normalizeModelPath(progress.Path, allowRoot)
 	if err != nil || normalized != progress.Path || progress.Path == "" || len(progress.Path) > 4096 || !utf8.ValidString(progress.Path) {
 		return false
 	}

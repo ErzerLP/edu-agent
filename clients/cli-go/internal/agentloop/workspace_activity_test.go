@@ -73,6 +73,43 @@ func TestWorkspaceSearchProgressPublishesSafeActivityOnOriginalCall(t *testing.T
 	}
 }
 
+func TestWorkspaceReadFailureActivityKeepsValidatedPathAndTerminalCode(t *testing.T) {
+	executor, err := workspace.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = executor.Close() })
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: toolMessage("read-missing", workspace.ToolRead, `{"path":"missing.txt","offset":4}`)},
+		{Message: modelclient.Message{Role: "assistant", Content: "文件不存在。"}},
+	}}
+	session := newWorkspaceTestSession(t, model, executor)
+	var activities []Activity
+	ctx := WithActivityReporter(t.Context(), func(activity Activity) {
+		activities = append(activities, activity)
+	})
+	result, err := session.Send(ctx, "读取缺失文件")
+	if err != nil || result.Text != "文件不存在。" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	var running, failed *Activity
+	for index := range activities {
+		activity := &activities[index]
+		if activity.Kind != ActivityTool || activity.Event.ID != "read-missing" {
+			continue
+		}
+		if activity.Event.Status == EventRunning && activity.File != nil && activity.File.Path == "missing.txt" {
+			running = activity
+		}
+		if activity.Event.Status == EventFailed {
+			failed = activity
+		}
+	}
+	if running == nil || running.File.StartLine != 4 || failed == nil || failed.StableCode != workspace.CodeNotFound || failed.File == nil || failed.File.Path != "missing.txt" {
+		t.Fatalf("running=%+v failed=%+v activities=%+v", running, failed, activities)
+	}
+}
+
 func TestWorkspaceYOLOMutationPublishesBoundedFinalDiffActivity(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "notes.md")

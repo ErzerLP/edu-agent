@@ -469,6 +469,18 @@ func (m model) cancelFileMutation() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	result, err := m.session.CancelPendingFileMutation(pending.CallID)
+	if err == nil {
+		activity := agentloop.Activity{
+			Kind: agentloop.ActivityTool, Phase: agentloop.ActivityStopped, StableCode: "cancelled",
+			Event: agentloop.Event{ID: pending.CallID, Tool: pending.Tool, Summary: "文件修改授权已取消", Status: agentloop.EventFailed, Detail: "cancelled"},
+			File: &agentloop.FileActivityDetail{
+				Path: pending.Path, Operation: pending.Operation, PreviewKind: pending.PreviewKind,
+				Preview: pending.Preview, PreviewTruncated: pending.Truncated,
+			},
+		}
+		m.entries = upsertActivity(m.entries, m.pendingFileTurnID, activity)
+		m.shownEventKeys[eventKey(activity.Event)] = struct{}{}
+	}
 	m.pendingFileMutation = nil
 	m.selector = nil
 	if err != nil {
@@ -997,6 +1009,9 @@ func (m model) compactStatus() string {
 		if m.activeFileTool == "search" && m.activeFileDetail != nil && m.activeFileDetail.HasScanned {
 			return fmt.Sprintf("已等待 %s · 扫描 %d 文件/%d 字节", visibleDuration(time.Since(started)), m.activeFileDetail.ScannedFiles, m.activeFileDetail.ScannedBytes)
 		}
+		if m.activeFileTool == "read" && m.activeFileDetail != nil {
+			return fmt.Sprintf("已等待 %s · 读取 %s/%d 字节", visibleDuration(time.Since(started)), safeSingleLineTerminalText(m.activeFileDetail.Path), m.activeFileDetail.Bytes)
+		}
 		if m.activeTimeoutBudget > 0 {
 			return fmt.Sprintf("已等待 %s / 超时预算 %s", visibleDuration(time.Since(started)), visibleDuration(m.activeTimeoutBudget))
 		}
@@ -1028,6 +1043,19 @@ func (m model) slowTurnDetail() string {
 		detail := fmt.Sprintf("已等待 %s，已扫描 %d 个文件 / %d 字节", elapsed, m.activeFileDetail.ScannedFiles, m.activeFileDetail.ScannedBytes)
 		if m.activeFileDetail.HasMatches {
 			detail += fmt.Sprintf("，匹配 %d", m.activeFileDetail.Matches)
+		}
+		if m.activeTimeoutBudget > 0 {
+			detail += fmt.Sprintf("，超时预算 %s", visibleDuration(m.activeTimeoutBudget))
+		}
+		return detail + "，可按 Esc 停止"
+	}
+	if m.activeFileTool == "read" && m.activeFileDetail != nil {
+		detail := fmt.Sprintf("已等待 %s，正在读取 %s", elapsed, safeSingleLineTerminalText(m.activeFileDetail.Path))
+		if m.activeFileDetail.HasRange {
+			detail += fmt.Sprintf("，从第 %d 行开始", m.activeFileDetail.StartLine)
+		}
+		if m.activeFileDetail.HasBytes {
+			detail += fmt.Sprintf("，已处理 %d 字节", m.activeFileDetail.Bytes)
 		}
 		if m.activeTimeoutBudget > 0 {
 			detail += fmt.Sprintf("，超时预算 %s", visibleDuration(m.activeTimeoutBudget))

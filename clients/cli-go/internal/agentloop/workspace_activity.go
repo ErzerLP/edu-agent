@@ -1,6 +1,8 @@
 package agentloop
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -10,12 +12,30 @@ import (
 
 const maxFileActivityPreviewBytes = 6 << 10
 
+func initialWorkspaceFileActivity(tool, rawArguments string) *FileActivityDetail {
+	progress, ok := workspace.InitialProgress(tool, rawArguments)
+	if !ok {
+		return nil
+	}
+	return fileActivityDetailFromProgress(progress)
+}
+
+func workspaceToolContextFailureEvent(id, tool string, err error) Event {
+	code := workspace.CodeCancelled
+	summary := "工作区文件操作已取消"
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = workspace.CodeTimeout
+		summary = "工作区文件操作已超时"
+	}
+	return Event{ID: id, Tool: tool, Summary: summary, Status: EventFailed, Detail: code}
+}
+
 func fileActivityDetailFromProgress(progress workspace.Progress) *FileActivityDetail {
 	path := safeActivityWorkspacePath(progress.Path)
 	if path == "" {
 		return nil
 	}
-	detail := &FileActivityDetail{Path: path}
+	detail := &FileActivityDetail{Path: path, Operation: safeActivityToken(progress.Operation, 64)}
 	switch progress.Tool {
 	case workspace.ToolList:
 		detail.Returned, detail.HasReturned = progress.Returned, true
@@ -122,14 +142,52 @@ func mergePreparedFileActivity(detail *FileActivityDetail, prepared *workspace.P
 	return detail
 }
 
+func mergeFileActivityDetail(detail, fallback *FileActivityDetail) *FileActivityDetail {
+	if detail == nil {
+		if fallback == nil {
+			return nil
+		}
+		copy := *fallback
+		return &copy
+	}
+	if fallback == nil {
+		return detail
+	}
+	if detail.Path == "" {
+		detail.Path = fallback.Path
+	}
+	if detail.Operation == "" {
+		detail.Operation = fallback.Operation
+	}
+	if !detail.HasReturned && fallback.HasReturned {
+		detail.Returned, detail.HasReturned = fallback.Returned, true
+	}
+	if !detail.HasRange && fallback.HasRange {
+		detail.StartLine, detail.EndLine, detail.HasRange = fallback.StartLine, fallback.EndLine, true
+	}
+	if !detail.HasBytes && fallback.HasBytes {
+		detail.Bytes, detail.HasBytes = fallback.Bytes, true
+	}
+	if !detail.HasScanned && fallback.HasScanned {
+		detail.ScannedFiles, detail.ScannedBytes, detail.HasScanned = fallback.ScannedFiles, fallback.ScannedBytes, true
+	}
+	if !detail.HasMatches && fallback.HasMatches {
+		detail.Matches, detail.HasMatches = fallback.Matches, true
+	}
+	return detail
+}
+
 func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 	if detail == nil {
 		return toolRunningSummary(tool)
 	}
 	switch tool {
 	case workspace.ToolRead:
-		if detail.HasRange {
+		if detail.HasRange && detail.EndLine >= detail.StartLine {
 			return "正在读取 " + detail.Path + " 第 " + intText(detail.StartLine) + "-" + intText(detail.EndLine) + " 行"
+		}
+		if detail.HasRange {
+			return "正在读取 " + detail.Path + " 第 " + intText(detail.StartLine) + " 行起"
 		}
 		return "正在读取 " + detail.Path
 	case workspace.ToolSearch:

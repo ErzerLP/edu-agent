@@ -166,7 +166,7 @@ Unix 使用 root FD、逐组件 `openat`、`O_NOFOLLOW`、发布前 parent ances
 
 - 只读 regular UTF-8 text；
 - 支持 1-based line offset 和 line limit；
-- 结果达到 line/byte limit 时显式给出 next position；
+- 结果达到 line/byte limit 时显式给出 next position；JSON 转义导致结果二次收缩时，必须把实际 UTF-8 前缀重新映射为准确的 line/byte continuation，不能把跨行字节数错误附加到初始行；
 - 跨页可携带 expected version，版本变化返回 `content_changed`。
 
 ### `search`
@@ -374,7 +374,7 @@ footer 高优先级显示：
 
 工作区只显示安全短标签，不显示绝对路径。YOLO 状态在窄布局中不得先于普通 model name 被裁掉。
 
-`Ctrl+O` 继续作为统一详情开关；Activity 增加 presentation-safe 文件详情，不能把原始 arguments 塞进 `Event.Detail`。搜索通过 context 注入的 workspace progress reporter 原地更新同一 call ID；首个文件、每 32 个文件、每 256 KiB、每 16 个匹配或最终状态才报告，且每次搜索最多 64 个事件。详情只含相对路径、范围、扫描计数、continuation、稳定错误码和最多 6 KiB 的最终 preview/diff；TUI 再限制为最多 4 KiB、32 个显示行。慢搜索状态显示等待时间、扫描文件/字节、超时预算与 `Esc` 提示。
+`Ctrl+O` 继续作为统一详情开关；Activity 增加 presentation-safe 文件详情，不能把原始 arguments 塞进 `Event.Detail`。所有五个文件工具在 filesystem 工作前先从严格解析并规范化后的参数发布相对路径；`read` 在读取前、取得 bounded snapshot 后和结果完成时原地更新同一 call ID，`search` 在首个文件、每 32 个文件、每 256 KiB、每 16 个匹配或最终状态更新，且每次搜索最多 64 个事件。取消或超时必须把同一 call ID 更新为 stopped/failed，不能让已显示卡片停留在 running。详情只含相对路径、范围、返回/扫描字节、扫描计数、continuation、稳定错误码和最多 6 KiB 的最终 preview/diff；TUI 再限制为最多 4 KiB、32 个显示行。慢读取/搜索状态显示等待时间、相对路径或扫描文件/字节、超时预算与 `Esc` 提示。
 
 ## 稳定错误码
 
@@ -474,4 +474,4 @@ internal_error
 - workspace authority、server invalidation 隔离和 compaction；
 - TUI F4、preview/diff、Ctrl+O、footer、YOLO warning、窄终端。
 
-候选门禁仅覆盖受影响客户端 packages、CLI build、定向 race 和 `git diff --check`。无需 PostgreSQL、Compose、OpenAPI、migration 或服务端黑盒，除非实现意外扩大边界。Windows reparse/junction/ADS 结论必须来自原生 Windows runner，Linux cross-compile 只证明编译兼容。
+候选门禁仅覆盖受影响客户端 packages、CLI build、定向 race 和 `git diff --check`。无需 PostgreSQL、Compose、OpenAPI、migration 或服务端黑盒，除非实现意外扩大边界。Windows reparse/junction/ADS/DACL/硬链接结论必须来自原生 Windows runner，Linux cross-compile 只证明编译兼容；关键 Windows fixture 不得以 `t.Skip` 形成成功路径，SHA-bound evidence 必须记录该 check 的 skip 数并要求为零。

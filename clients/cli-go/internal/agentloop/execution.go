@@ -114,7 +114,15 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 			return Result{}, err
 		}
 		call := calls[index]
-		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: toolRunningSummary(call.Function.Name), Status: EventRunning}, Phase: ActivityExecutingTool})
+		initialFile := (*FileActivityDetail)(nil)
+		runningSummary := toolRunningSummary(call.Function.Name)
+		if s.workspace != nil && s.workspaceStatus.Available && (workspace.IsReadTool(call.Function.Name) || workspace.IsMutationTool(call.Function.Name)) {
+			initialFile = initialWorkspaceFileActivity(call.Function.Name, call.Function.Arguments)
+			if initialFile != nil {
+				runningSummary = workspaceProgressSummary(call.Function.Name, initialFile)
+			}
+		}
+		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: runningSummary, Status: EventRunning}, Phase: ActivityExecutingTool, File: initialFile})
 		switch call.Function.Name {
 		case "remember_preference":
 			args, err := decodePreferenceArgs(call.Function.Arguments)
@@ -181,6 +189,8 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				toolErr := toolCtx.Err()
 				cancel()
 				if toolErr != nil {
+					event := workspaceToolContextFailureEvent(call.ID, call.Function.Name, toolErr)
+					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityStopped, StableCode: event.Detail, File: mergePreparedFileActivity(initialFile, prepared)})
 					return Result{}, preferContextError(ctx, toolErr)
 				}
 				if prepared == nil {
@@ -189,7 +199,8 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 					}
 					event := eventFromToolOutput(call.Function.Name, preparationResult.Summary, preparationResult.Value)
 					event.ID = call.ID
-					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: fileActivityDetailFromResult(call.Function.Name, preparationResult)})
+					finalFile := mergeFileActivityDetail(fileActivityDetailFromResult(call.Function.Name, preparationResult), initialFile)
+					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: finalFile})
 					events = append(events, event)
 					continue
 				}
@@ -219,19 +230,23 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				continue
 			}
 			if workspace.IsReadTool(call.Function.Name) && s.workspace != nil && s.workspaceStatus.Available {
+				lastFile := initialFile
 				toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
 				progressCtx := workspace.WithProgressReporter(toolCtx, func(progress workspace.Progress) {
 					detail := fileActivityDetailFromProgress(progress)
+					lastFile = mergeFileActivityDetail(detail, lastFile)
 					s.publishActivity(toolCtx, Activity{
 						Kind:  ActivityTool,
-						Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: workspaceProgressSummary(call.Function.Name, detail), Status: EventRunning},
-						Phase: ActivityExecutingTool, File: detail,
+						Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: workspaceProgressSummary(call.Function.Name, lastFile), Status: EventRunning},
+						Phase: ActivityExecutingTool, File: lastFile,
 					})
 				})
 				workspaceResult := s.workspace.Execute(progressCtx, call.Function.Name, call.Function.Arguments)
 				toolErr := toolCtx.Err()
 				cancel()
 				if toolErr != nil {
+					event := workspaceToolContextFailureEvent(call.ID, call.Function.Name, toolErr)
+					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityStopped, StableCode: event.Detail, File: lastFile})
 					return Result{}, preferContextError(ctx, toolErr)
 				}
 				if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, workspaceResult); err != nil {
@@ -239,7 +254,8 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				}
 				event := eventFromToolOutput(call.Function.Name, workspaceResult.Summary, workspaceResult.Value)
 				event.ID = call.ID
-				s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: fileActivityDetailFromResult(call.Function.Name, workspaceResult)})
+				finalFile := mergeFileActivityDetail(fileActivityDetailFromResult(call.Function.Name, workspaceResult), lastFile)
+				s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: finalFile})
 				events = append(events, event)
 				continue
 			}

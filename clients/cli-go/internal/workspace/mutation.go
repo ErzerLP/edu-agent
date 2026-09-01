@@ -309,13 +309,14 @@ func MutationDenied(prepared *PreparedMutation) Result {
 		path = prepared.Presentation.Path
 		operation = prepared.Presentation.Operation
 	}
-	return Result{
-		Value: map[string]any{
-			"error": CodeAuthorizationDenied, "code": CodeAuthorizationDenied, "complete": false,
-			"path": path, "operation": operation, "publication_outcome": string(PublicationUnchanged),
-		},
-		Summary: "用户拒绝了文件修改", Publication: PublicationUnchanged,
+	result := failureResult(CodeAuthorizationDenied, "用户拒绝了文件修改")
+	result.Publication = PublicationUnchanged
+	if value, ok := result.Value.(map[string]any); ok {
+		value["path"] = path
+		value["operation"] = operation
+		value["publication_outcome"] = string(PublicationUnchanged)
 	}
+	return result
 }
 
 func mutationContentChanged(path, expectedHash, summary string) Result {
@@ -346,14 +347,15 @@ func mutationSuccess(prepared *PreparedMutation) Result {
 }
 
 func mutationOutcomeUnknown(prepared *PreparedMutation) Result {
-	return Result{
-		Value: map[string]any{
-			"error": CodeOutcomeUnknown, "code": CodeOutcomeUnknown, "complete": false,
-			"path": prepared.path, "operation": prepared.Presentation.Operation,
-			"publication_outcome": string(PublicationUnknown),
-		},
-		Summary: "文件发布结果无法确认", Reference: &Reference{Path: prepared.path, Kind: "file", InvalidateObserved: true}, Publication: PublicationUnknown,
+	result := failureResult(CodeOutcomeUnknown, "文件发布结果无法确认")
+	result.Reference = &Reference{Path: prepared.path, Kind: "file", InvalidateObserved: true}
+	result.Publication = PublicationUnknown
+	if value, ok := result.Value.(map[string]any); ok {
+		value["path"] = prepared.path
+		value["operation"] = prepared.Presentation.Operation
+		value["publication_outcome"] = string(PublicationUnknown)
 	}
+	return result
 }
 
 func mutationFailure(code, summary string) Result {

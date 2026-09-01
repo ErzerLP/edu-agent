@@ -1,6 +1,7 @@
 package agentui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +140,144 @@ func TestAgentUISlowWorkspaceReadShowsPathProgressBudgetEscAndStoppedState(t *te
 	}
 	if strings.Count(transcript, "读取文件") != 1 {
 		t.Fatalf("read activity did not upsert: %s", transcript)
+	}
+}
+
+func TestAgentUIStoppingAppliesTerminalWorkspaceActivityUnderOriginalCall(t *testing.T) {
+	for _, test := range []struct {
+		tool   string
+		path   string
+		detail *agentloop.FileActivityDetail
+	}{
+		{tool: "read", path: "notes.md", detail: &agentloop.FileActivityDetail{Path: "notes.md", StartLine: 3, HasRange: true, Bytes: 128, HasBytes: true}},
+		{tool: "search", path: "src", detail: &agentloop.FileActivityDetail{Path: "src", ScannedFiles: 2, ScannedBytes: 256, HasScanned: true, Matches: 1, HasMatches: true}},
+		{tool: "write", path: "notes.md", detail: &agentloop.FileActivityDetail{Path: "notes.md", Operation: "write_create", PreviewKind: "content", Preview: "hello\n"}},
+		{tool: "edit", path: "notes.md", detail: &agentloop.FileActivityDetail{Path: "notes.md", Operation: "edit", PreviewKind: "diff", Preview: "-old\n+new\n"}},
+	} {
+		t.Run(test.tool, func(t *testing.T) {
+			value := newModel(t.Context(), &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"}}, "model")
+			value.busy = true
+			value.activeCancelable = true
+			value.activeTurnID = 1
+			value.activeTurnCancel = func() {}
+			running := agentloop.Activity{
+				Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool,
+				Event: agentloop.Event{ID: test.tool + "-call", Tool: test.tool, Summary: "工作区文件操作进行中", Status: agentloop.EventRunning},
+				File:  test.detail,
+			}
+			updated, _ := value.Update(turnMsg{turnID: 1, activity: &running})
+			value = updated.(model)
+			updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+			value = updated.(model)
+			if !value.stopping {
+				t.Fatal("Esc did not enter stopping state")
+			}
+
+			late := running
+			late.File = &agentloop.FileActivityDetail{Path: "late.md", Bytes: 999, HasBytes: true}
+			updated, _ = value.Update(turnMsg{turnID: 1, activity: &late})
+			value = updated.(model)
+			if value.activeFileDetail == nil || value.activeFileDetail.Path != test.path {
+				t.Fatalf("late running activity replaced active detail: %+v", value.activeFileDetail)
+			}
+
+			stopped := running
+			stopped.Phase = agentloop.ActivityStopped
+			stopped.Event = agentloop.Event{ID: test.tool + "-call", Tool: test.tool, Summary: "工作区文件操作已取消", Status: agentloop.EventFailed, Detail: "cancelled"}
+			stopped.StableCode = "cancelled"
+			updated, _ = value.Update(turnMsg{turnID: 1, activity: &stopped})
+			value = updated.(model)
+			value.toolsExpanded = true
+			value.refreshTranscript(false)
+			transcript := value.viewport.View()
+			if !strings.Contains(transcript, "路径："+test.path) || !strings.Contains(transcript, "代码：cancelled") || strings.Contains(transcript, "late.md") {
+				t.Fatalf("terminal workspace activity not applied safely: %s", transcript)
+			}
+			if strings.Count(transcript, "代码：cancelled") != 1 {
+				t.Fatalf("terminal activity did not upsert original call: %s", transcript)
+			}
+		})
+	}
+}
+
+func TestTurnStreamCarriesTerminalWorkspaceActivityAcrossEscCancellation(t *testing.T) {
+	for _, test := range []struct {
+		tool   string
+		detail *agentloop.FileActivityDetail
+	}{
+		{tool: "read", detail: &agentloop.FileActivityDetail{Path: "notes.md", StartLine: 3, HasRange: true}},
+		{tool: "search", detail: &agentloop.FileActivityDetail{Path: "src", ScannedFiles: 2, ScannedBytes: 256, HasScanned: true}},
+		{tool: "write", detail: &agentloop.FileActivityDetail{Path: "notes.md", Operation: "write_create", PreviewKind: "content", Preview: "hello\n"}},
+		{tool: "edit", detail: &agentloop.FileActivityDetail{Path: "notes.md", Operation: "edit", PreviewKind: "diff", Preview: "-old\n+new\n"}},
+	} {
+		t.Run(test.tool, func(t *testing.T) {
+			for iteration := 0; iteration < 32; iteration++ {
+				deliveryCtx, cancelDelivery := context.WithCancel(t.Context())
+				turnCtx, cancelTurn := context.WithCancel(deliveryCtx)
+				value := newModel(deliveryCtx, &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{Available: true, Label: "project"}}, "model")
+				value.busy = true
+				value.activeCancelable = true
+				value.activeTurnID = 1
+				value.activeTurnCancel = cancelTurn
+
+				running := agentloop.Activity{
+					Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool,
+					Event: agentloop.Event{ID: test.tool + "-call", Tool: test.tool, Summary: "工作区文件操作进行中", Status: agentloop.EventRunning},
+					File:  test.detail,
+				}
+				stopped := running
+				stopped.Phase = agentloop.ActivityStopped
+				stopped.Event = agentloop.Event{ID: test.tool + "-call", Tool: test.tool, Summary: "工作区文件操作已取消", Status: agentloop.EventFailed, Detail: "cancelled"}
+				stopped.StableCode = "cancelled"
+
+				start := startTurnCmd(deliveryCtx, turnCtx, 1, turnSend, func(ctx context.Context) (agentloop.Result, error) {
+					agentloop.PublishActivity(ctx, running)
+					<-ctx.Done()
+					agentloop.PublishActivity(ctx, stopped)
+					return agentloop.Result{}, ctx.Err()
+				})
+				initial := start().(turnMsg)
+				updated, wait := value.Update(initial)
+				value = updated.(model)
+				if wait == nil {
+					t.Fatalf("iteration %d did not start stream wait", iteration)
+				}
+				runningMessage := wait().(turnMsg)
+				if runningMessage.activity == nil || runningMessage.activity.Event.Status != agentloop.EventRunning {
+					t.Fatalf("iteration %d first stream message=%+v", iteration, runningMessage)
+				}
+				updated, wait = value.Update(runningMessage)
+				value = updated.(model)
+				updated, _ = value.Update(tea.KeyMsg{Type: tea.KeyEsc})
+				value = updated.(model)
+				if !value.stopping || wait == nil {
+					t.Fatalf("iteration %d did not enter stopping state", iteration)
+				}
+
+				terminalMessage := wait().(turnMsg)
+				if terminalMessage.activity == nil || terminalMessage.activity.Phase != agentloop.ActivityStopped || terminalMessage.activity.StableCode != "cancelled" {
+					t.Fatalf("iteration %d terminal stream message=%+v", iteration, terminalMessage)
+				}
+				updated, wait = value.Update(terminalMessage)
+				value = updated.(model)
+				if wait == nil {
+					t.Fatalf("iteration %d terminal activity did not continue draining", iteration)
+				}
+				completion := wait().(turnMsg)
+				if !completion.done {
+					t.Fatalf("iteration %d completion=%+v", iteration, completion)
+				}
+				updated, _ = value.Update(completion)
+				value = updated.(model)
+				value.toolsExpanded = true
+				value.refreshTranscript(false)
+				transcript := value.viewport.View()
+				if !strings.Contains(transcript, "代码：cancelled") || strings.Count(transcript, "代码：cancelled") != 1 || strings.Contains(transcript, "进行中") {
+					t.Fatalf("iteration %d terminal activity was not delivered and upserted: %s", iteration, transcript)
+				}
+				cancelDelivery()
+			}
+		})
 	}
 }
 

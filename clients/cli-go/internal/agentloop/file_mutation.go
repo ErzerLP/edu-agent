@@ -123,6 +123,11 @@ func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclie
 	toolErr := toolCtx.Err()
 	cancel()
 	if result.Publication == workspace.PublicationUnchanged && toolErr != nil {
+		event := workspaceToolContextFailureEvent(call.ID, call.Function.Name, toolErr)
+		s.publishActivity(ctx, Activity{
+			Kind: ActivityTool, Event: event, Phase: ActivityStopped, StableCode: event.Detail,
+			File: mergePreparedFileActivity(fileActivityDetailFromResult(call.Function.Name, result), prepared),
+		})
 		return result, Event{}, false, preferContextError(ctx, toolErr)
 	}
 	if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, result); err != nil {

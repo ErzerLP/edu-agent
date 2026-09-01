@@ -77,9 +77,9 @@ type turnStream struct {
 	pending    string
 }
 
-func (s *turnStream) publish(ctx context.Context, activity agentloop.Activity) {
+func (s *turnStream) publish(turnCtx, deliveryCtx context.Context, activity agentloop.Activity) {
 	if activity.Kind == agentloop.ActivityTextDelta {
-		if activity.Delta == "" || ctx.Err() != nil {
+		if activity.Delta == "" || turnCtx.Err() != nil {
 			return
 		}
 		s.deltaMu.Lock()
@@ -91,9 +91,16 @@ func (s *turnStream) publish(ctx context.Context, activity agentloop.Activity) {
 		}
 		return
 	}
+	if terminalActivityWhileStopping(activity) {
+		select {
+		case s.activities <- activity:
+		case <-deliveryCtx.Done():
+		}
+		return
+	}
 	select {
 	case s.activities <- activity:
-	case <-ctx.Done():
+	case <-turnCtx.Done():
 	}
 }
 
@@ -243,7 +250,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
 		}
 		if msg.activity != nil {
-			if !m.stopping {
+			if !m.stopping || terminalActivityWhileStopping(*msg.activity) {
 				m.handleActivity(msg.turnID, *msg.activity)
 				m.refreshTranscript(true)
 			}
@@ -574,7 +581,7 @@ func (m model) beginTurn(kind turnKind, cancelable bool, input string, question 
 		m.activeTurnCancel = nil
 	}
 	m.resize()
-	return m, startTurnCmd(turnCtx, m.activeTurnID, kind, run)
+	return m, startTurnCmd(m.ctx, turnCtx, m.activeTurnID, kind, run)
 }
 
 func (m *model) finishTurn(result agentloop.Result, err error) {
@@ -674,6 +681,18 @@ func (m *model) clearActiveTurn() {
 	m.activeFileResolution = ""
 	m.activeFileTool = ""
 	m.activeFileDetail = nil
+}
+
+func terminalActivityWhileStopping(activity agentloop.Activity) bool {
+	if activity.Phase != agentloop.ActivityStopped && activity.Kind != agentloop.ActivityTool {
+		return false
+	}
+	switch activity.Event.Status {
+	case agentloop.EventSucceeded, agentloop.EventFailed, agentloop.EventInvalid, agentloop.EventOutcomeUnknown:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *model) handleActivity(turnID uint64, activity agentloop.Activity) {
@@ -825,7 +844,7 @@ func (m *model) updateFollowAfterScroll() {
 	}
 }
 
-func startTurnCmd(ctx context.Context, turnID uint64, kind turnKind, run func(context.Context) (agentloop.Result, error)) tea.Cmd {
+func startTurnCmd(deliveryCtx, turnCtx context.Context, turnID uint64, kind turnKind, run func(context.Context) (agentloop.Result, error)) tea.Cmd {
 	return func() tea.Msg {
 		stream := &turnStream{
 			activities: make(chan agentloop.Activity, turnStreamBuffer),
@@ -833,10 +852,10 @@ func startTurnCmd(ctx context.Context, turnID uint64, kind turnKind, run func(co
 			wake:       make(chan struct{}, 1),
 		}
 		go func() {
-			turnCtx := agentloop.WithActivityReporter(ctx, func(activity agentloop.Activity) {
-				stream.publish(ctx, activity)
+			activityCtx := agentloop.WithActivityReporter(turnCtx, func(activity agentloop.Activity) {
+				stream.publish(turnCtx, deliveryCtx, activity)
 			})
-			result, err := run(turnCtx)
+			result, err := run(activityCtx)
 			stream.completion <- turnMsg{turnID: turnID, kind: kind, result: result, err: err, stream: stream, done: true}
 		}()
 		return turnMsg{turnID: turnID, kind: kind, stream: stream}

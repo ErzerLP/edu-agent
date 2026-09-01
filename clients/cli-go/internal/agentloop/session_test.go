@@ -60,6 +60,8 @@ type fakeWorkspaceExecutor struct {
 	commitCalls    []string
 	started        chan string
 	block          bool
+	commitStarted  chan string
+	commitBlock    bool
 }
 
 func (w *fakeWorkspaceExecutor) Definitions() []modelclient.Tool { return workspace.Definitions() }
@@ -94,9 +96,33 @@ func (w *fakeWorkspaceExecutor) PrepareMutation(ctx context.Context, toolName, _
 	}
 	return nil, workspace.Result{Value: map[string]any{"error": workspace.CodeInvalidArguments, "code": workspace.CodeInvalidArguments}, Summary: "文件修改参数无效", Publication: workspace.PublicationUnchanged}
 }
-func (w *fakeWorkspaceExecutor) CommitMutation(_ context.Context, prepared *workspace.PreparedMutation) workspace.Result {
+func (w *fakeWorkspaceExecutor) CommitMutation(ctx context.Context, prepared *workspace.PreparedMutation) workspace.Result {
+	toolName := ""
 	if prepared != nil {
-		w.commitCalls = append(w.commitCalls, prepared.Presentation.Tool)
+		toolName = prepared.Presentation.Tool
+		w.commitCalls = append(w.commitCalls, toolName)
+	}
+	if w.commitStarted != nil {
+		select {
+		case w.commitStarted <- toolName:
+		case <-ctx.Done():
+		}
+	}
+	if w.commitBlock {
+		<-ctx.Done()
+		code, summary := workspace.CodeCancelled, "工作区工具已取消"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			code, summary = workspace.CodeTimeout, "工作区工具已超时"
+		}
+		return workspace.Result{
+			Value: map[string]any{
+				"error":               code,
+				"code":                code,
+				"complete":            false,
+				"publication_outcome": string(workspace.PublicationUnchanged),
+			},
+			Summary: summary, Publication: workspace.PublicationUnchanged,
+		}
 	}
 	if len(w.commitResults) == 0 {
 		return workspace.Result{Value: map[string]any{"error": workspace.CodeInternalError}, Summary: "文件修改失败", Publication: workspace.PublicationUnchanged}
@@ -662,6 +688,93 @@ func TestWorkspaceToolCancellationSkipsSiblingsAndFollowUpModel(t *testing.T) {
 	}
 	if !runningWithPath || !stoppedWithPath {
 		t.Fatalf("cancelled activity missing path or terminal state: %+v", activities)
+	}
+}
+
+func TestFileMutationCommitCancellationAndTimeoutPublishTerminalActivity(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		cancel   bool
+		wantCode string
+		wantErr  error
+	}{
+		{name: "cancelled", cancel: true, wantCode: workspace.CodeCancelled, wantErr: context.Canceled},
+		{name: "timeout", wantCode: workspace.CodeTimeout, wantErr: context.DeadlineExceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			prepared := &workspace.PreparedMutation{Presentation: workspace.MutationPresentation{
+				Tool: workspace.ToolWrite, Operation: "write_create", Path: "notes.md", PreviewKind: "content", Preview: "hello\n",
+			}}
+			executor := &fakeWorkspaceExecutor{
+				status:        workspace.Status{Available: true, Label: "project"},
+				prepared:      map[string]*workspace.PreparedMutation{workspace.ToolWrite: prepared},
+				commitStarted: make(chan string, 1),
+				commitBlock:   true,
+			}
+			model := &fakeModel{responses: []modelclient.Response{{
+				Message: toolMessage("write-call", workspace.ToolWrite, `{"path":"notes.md","mode":"create","content":"hello"}`),
+			}}}
+			session := newWorkspaceTestSession(t, model, executor)
+			if err := session.SetFileAuthorizationMode(FileAuthorizationYOLO); err != nil {
+				t.Fatal(err)
+			}
+			if !test.cancel {
+				session.options.ToolTimeout = 20 * time.Millisecond
+			}
+			var activities []Activity
+			activityCtx := WithActivityReporter(t.Context(), func(activity Activity) {
+				activities = append(activities, activity)
+			})
+			ctx := activityCtx
+			var cancel context.CancelFunc
+			if test.cancel {
+				ctx, cancel = context.WithCancel(activityCtx)
+				t.Cleanup(cancel)
+			}
+			finished := make(chan error, 1)
+			go func() {
+				_, err := session.Send(ctx, "创建文件")
+				finished <- err
+			}()
+			select {
+			case tool := <-executor.commitStarted:
+				if tool != workspace.ToolWrite {
+					t.Fatalf("commit tool=%q", tool)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("workspace mutation commit did not start")
+			}
+			if cancel != nil {
+				cancel()
+			}
+			select {
+			case err := <-finished:
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("send err=%v want=%v", err, test.wantErr)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("workspace mutation stop did not finish")
+			}
+			if len(model.requests) != 1 || len(session.workspaceReferences) != 0 {
+				t.Fatalf("requests=%d references=%+v", len(model.requests), session.workspaceReferences)
+			}
+			var runningWithPath, stoppedWithPath bool
+			for _, activity := range activities {
+				if activity.Kind != ActivityTool || activity.Event.ID != "write-call" {
+					continue
+				}
+				if activity.Event.Status == EventRunning && activity.File != nil && activity.File.Path == "notes.md" {
+					runningWithPath = true
+				}
+				if activity.Event.Status == EventFailed && activity.Phase == ActivityStopped && activity.StableCode == test.wantCode &&
+					activity.File != nil && activity.File.Path == "notes.md" && activity.File.Operation == "write_create" {
+					stoppedWithPath = true
+				}
+			}
+			if !runningWithPath || !stoppedWithPath {
+				t.Fatalf("mutation activity missing path or terminal state: %+v", activities)
+			}
+		})
 	}
 }
 

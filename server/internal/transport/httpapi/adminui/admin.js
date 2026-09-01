@@ -1,6 +1,4 @@
 (() => {
-  "use strict";
-
   const pageMeta = {
     overview: ["SERVER", "服务总览"],
     pairing: ["IDENTITY", "客户端配对"],
@@ -897,7 +895,12 @@
     renderMetrics("mcpStats", [
       ["Resources", data.resource_count || 0],
       ["Tools", data.tool_count || 0],
-      ["写入 Tools", (data.descriptors || []).filter((item) => item.kind === "tool" && !item.read_only).length],
+      [
+        "写入 Tools",
+        (data.descriptors || []).filter(
+          (item) => item.kind === "tool" && !item.read_only,
+        ).length,
+      ],
       ["近期调用", (data.recent_invocations || []).length],
     ]);
     const runtime = byId("mcpRuntimeStatus");
@@ -906,8 +909,16 @@
 
     const facts = [
       ["Endpoint", data.endpoint || "-"],
-      ["实现", `${data.implementation_name || "-"} · ${data.implementation_version || "-"}`],
-      ["传输", data.transport === "streamable_http" ? "Streamable HTTP" : data.transport || "-"],
+      [
+        "实现",
+        `${data.implementation_name || "-"} · ${data.implementation_version || "-"}`,
+      ],
+      [
+        "传输",
+        data.transport === "streamable_http"
+          ? "Streamable HTTP"
+          : data.transport || "-",
+      ],
       ["会话模式", data.stateless ? "Stateless · 每请求认证" : "Stateful"],
       ["响应模式", data.json_response ? "JSON response" : "协议默认"],
       ["请求上限", formatBytes(data.max_request_body_bytes)],
@@ -919,8 +930,13 @@
         return wrapper;
       }),
     );
-    byId("mcpConfig").textContent = JSON.stringify(data.client_config || {}, null, 2);
-    byId("mcpCatalogCount").textContent = `${(data.descriptors || []).length} 项`;
+    byId("mcpConfig").textContent = JSON.stringify(
+      data.client_config || {},
+      null,
+      2,
+    );
+    byId("mcpCatalogCount").textContent =
+      `${(data.descriptors || []).length} 项`;
     renderMCPCatalog(data.descriptors || []);
     renderMCPAudit(data.recent_invocations || []);
   }
@@ -984,11 +1000,19 @@
         `输入 ${descriptor.input_limit_bytes ? formatBytes(descriptor.input_limit_bytes) : "无参数"}`,
         "scope-chip",
       ),
-      text("span", `输出 ${formatBytes(descriptor.output_limit_bytes)}`, "scope-chip"),
+      text(
+        "span",
+        `输出 ${formatBytes(descriptor.output_limit_bytes)}`,
+        "scope-chip",
+      ),
     );
     card.append(
       heading,
-      text("p", descriptor.description || "无描述", "mcp-descriptor-description"),
+      text(
+        "p",
+        descriptor.description || "无描述",
+        "mcp-descriptor-description",
+      ),
       meta,
     );
     return card;
@@ -998,14 +1022,21 @@
     const host = byId("mcpAudit");
     host.replaceChildren();
     if (!invocations.length) {
-      host.append(empty("暂无 MCP 调用", "完成 MCP discovery 或工具调用后会显示脱敏元数据。"));
+      host.append(
+        empty(
+          "暂无 MCP 调用",
+          "完成 MCP discovery 或工具调用后会显示脱敏元数据。",
+        ),
+      );
       return;
     }
     invocations.forEach((invocation) => {
       const detail = [
         formatDate(invocation.completed_at),
         `请求 ${shortID(invocation.request_id)}`,
-        invocation.device_id ? `设备 ${shortID(invocation.device_id)}` : "未认证设备",
+        invocation.device_id
+          ? `设备 ${shortID(invocation.device_id)}`
+          : "未认证设备",
         `${invocation.duration_ms || 0} ms`,
         invocation.peer || "peer 未知",
       ].join(" · ");
@@ -1118,7 +1149,9 @@
       ["Tools", String(result.tool_count || 0)],
       ["请求 ID", shortID(result.request_id)],
       ["耗时", `${result.duration_ms || 0} ms`],
-    ].forEach(([label, value]) => facts.append(text("dt", label), text("dd", value)));
+    ].forEach(([label, value]) =>
+      facts.append(text("dt", label), text("dd", value)),
+    );
     card.append(heading, facts);
     host.replaceChildren(card);
   }

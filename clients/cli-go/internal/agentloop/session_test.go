@@ -274,6 +274,42 @@ drain:
 	}
 }
 
+func TestSessionPublishesExplicitZeroCacheHitRate(t *testing.T) {
+	zeroCacheHit := 0
+	model := &fakeModel{responses: []modelclient.Response{{
+		Message: modelclient.Message{Role: "assistant", Content: "uncached"},
+		Usage: &modelclient.Usage{
+			PromptTokens: 4000, CompletionTokens: 10, TotalTokens: 4010,
+			PromptTokensDetails: &modelclient.PromptTokensDetails{CachedTokens: &zeroCacheHit},
+		},
+	}}}
+	session := newTestSession(t, model, &fakeServer{})
+	if _, err := session.Send(t.Context(), "uncached question"); err != nil {
+		t.Fatal(err)
+	}
+	status := session.ContextStatus()
+	if status.Estimated || status.CurrentTokens != 4000 || status.CachePromptTokens != 4000 || status.CacheReadTokens != 0 ||
+		!status.CacheHitRateAvailable || status.CacheHitRate != 0 {
+		t.Fatalf("context status=%+v", status)
+	}
+	found := false
+drain:
+	for {
+		select {
+		case event := <-session.ContextUpdates():
+			if event.Kind == ContextEventStatus && event.Status.CachePromptTokens == 4000 &&
+				event.Status.CacheHitRateAvailable && event.Status.CacheHitRate == 0 {
+				found = true
+			}
+		default:
+			break drain
+		}
+	}
+	if !found {
+		t.Fatal("explicit zero cache-hit status event was not published")
+	}
+}
+
 func TestSessionPublishesSafeThinkingAndToolLifecycle(t *testing.T) {
 	model := &fakeModel{responses: []modelclient.Response{
 		{Message: toolMessage("call-1", "search_knowledge", `{"query":"图论"}`)},

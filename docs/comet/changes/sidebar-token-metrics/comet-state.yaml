@@ -3,7 +3,7 @@ name: sidebar-token-metrics
 language: zh-CN
 phase: build
 status: active
-state_version: 2
+state_version: 5
 brief: brief.md
 spec_changes:
   - capability: agent-sidebar-token-metrics
@@ -15,356 +15,779 @@ workspace:
   target_branch: main
   finish: null
 loop:
-  stage: building
+  stage: repairing
   goal_cycle: 1
-  iteration: 1
+  iteration: 2
   attempt: 0
   retry_epoch: 0
-  failed_iteration_count: 0
+  failed_iteration_count: 1
   no_progress_count: 0
   execution_failure_count: 0
-  previous_unresolved_ids: []
-  next_action: submit-builder-candidate
+  previous_unresolved_ids:
+    - A59
+  next_action: repair-failed-acceptance
 acceptance:
   - id: A1
     source: brief.md
     text: "A1: 当 context window 为 `32768`、当前请求估算输入为约 `12340` tokens 时，宽终端侧栏显示类似 `上下文
       约12.3k/32.8k`，而不是只显示 `约38%`。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Context Planner 将 EstimatedInput 和 ContextWindow 发布到
+        ContextStatus；宽侧栏回归验证了“上下文 约12.3k/32.8k”。
+      truncated: false
   - id: A2
     source: brief.md
     text: "A2: 当 provider 随已完成响应返回 `prompt_tokens=12000` 时，侧栏更新为实际
       `12k/32.8k`，并同步更新既有上下文百分比计算。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 合法 prompt_tokens 会覆盖当前估算值、清除 Estimated，并按实际值重算 WindowPercent；TUI 验证了
+        12k/32.8k。
+      truncated: false
   - id: A3
     source: brief.md
     text: "A3: 当 Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000`
       时，侧栏显示累计缓存命中率 `60.0%`；OpenAI-compatible 的
       `prompt_tokens_details.cached_tokens` 与 DeepSeek 的
       `prompt_cache_hit_tokens` 使用同一累计口径。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: OpenAI 嵌套字段与 DeepSeek 字段统一映射为 cache-read，并按 12000+8000 分母、9000+3000 分子得到
+        60.0%。
+      truncated: false
   - id: A4
     source: brief.md
     text: "A4: 当 provider 尚未对任何请求返回可识别的缓存 token 明细时，侧栏显示 `缓存命中 —`，不显示误导性的
       `0%`；明确报告零命中的请求则进入累计分母并可显示真实 `0.0%`。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 未报告缓存字段时 CacheHitRateAvailable 保持 false 并显示“—”；显式零值指针会进入正 prompt 分母并计算为
+        0.0%。
+      truncated: false
   - id: A5
     source: brief.md
     text: "A5: 多轮工具调用中的每个已完成模型响应都可以更新指标；上下文 token 反映最近一次请求，缓存命中率反映当前 Session
       内所有已报告缓存明细请求的累计结果。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 递归工具轮次的每个已提交模型响应都会调用 UpdateUsageStatus；当前 token 被最新响应覆盖，缓存计数持续累计。
+      truncated: false
   - id: A6
     source: brief.md
     text: "A6: 侧栏仍只在满足现有宽度合同的终端显示；窄终端继续完全折叠侧栏，所有渲染行不得超过终端宽度，也不得暴露 prompt
       正文、工具参数、隐藏推理、凭据或 opaque ID。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 沿用 86 列断点和 56 列主区下限；现有宽度、最小高度和折叠测试通过，新增指标值只由数字、单位和状态标记组成。
+      truncated: false
   - id: A7
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 交互式 Go CLI Agent 在宽终端右侧栏中提供可读、诚实且有界的模型上下文指标。用户可以看到当前模型请求占用了多少上下文
       token、配置的上下文窗口上限，以及当前 Agent Session 的累计提示缓存命中率，从而判断上下文压力与缓存是否持续生效。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 生产路径已贯通 usage 解码、ContextStatus 投影和宽终端侧栏展示。
+      truncated: false
   - id: A8
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 该 capability 只负责当前进程内的 usage 解析、状态投影和 TUI 展示，不成为服务端遥测、计费或长期历史系统。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 候选只修改 CLI 进程内 modelclient、agentloop、agentui 及文档，没有新增服务端、数据库、计费或历史系统。
+      truncated: false
   - id: A9
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 上下文窗口上限来自当前 Agent Session 已验证的 `ContextWindow` 配置。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextWindow 来自 New 已验证的 Session Options，并在 newContextRuntime 中固定保存和发布。
+      truncated: false
   - id: A10
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当前上下文 token 在模型请求发出前来自 Context Planner 的 `EstimatedInput`。如果 provider
       对该请求返回合法 `usage.prompt_tokens`，该实际值覆盖当前请求的估算展示；usage
       缺失时继续保留保守估算，不能把未知值显示为零。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 每次计划先发布 EstimatedInput；合法正 prompt_tokens 覆盖估算，Usage 为 nil 或无有效 prompt
+        值时不把状态改成未知零值。
+      truncated: false
   - id: A11
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 缓存命中 token 只来自 provider usage：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 缓存命中数据只从 modelclient.Usage 的受支持 provider 字段读取。
+      truncated: false
   - id: A12
     source: specs/agent-sidebar-token-metrics/spec.md
     text: OpenAI/OpenRouter 风格端点读取 `usage.prompt_tokens_details.cached_tokens`；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: PromptTokensDetails.CachedTokens 正确解码
+        usage.prompt_tokens_details.cached_tokens。
+      truncated: false
   - id: A13
     source: specs/agent-sidebar-token-metrics/spec.md
     text: DeepSeek 风格端点读取 `usage.prompt_cache_hit_tokens`；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: PromptCacheHitTokens 正确解码 usage.prompt_cache_hit_tokens。
+      truncated: false
   - id: A14
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 其他端点只有在返回上述兼容字段时才提供缓存指标。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: CacheReadTokens 在两个受支持字段均缺失时返回 reported=false，不从其他字段推测缓存指标。
+      truncated: false
   - id: A15
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 缓存命中率按当前 Agent Session 中所有明确报告受支持缓存字段的已完成模型请求累计计算：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextRuntime 在 Session 生命周期内累计 CachePromptTokens 和
+        CacheReadTokens，并用累计比值计算命中率。
+      truncated: false
   - id: A16
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 每个纳入累计的 `prompt_tokens` 都是该请求的完整输入
       token，总数包含缓存命中与未命中部分。没有报告缓存字段的请求不作为零命中加入分母，避免把“未知/不支持”误算成 cache
       miss。缓存命中率不跨进程、不跨 Agent Session，也不从价格、响应时间、重复文本或本地估算反推。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 只有明确报告缓存明细的请求才增加完整 prompt_tokens 分母；无字段请求不污染累计，且每个 Session 使用独立 runtime。
+      truncated: false
   - id: A17
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 现有进程内 `ContextStatus` 同时携带：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus 已扩展并集中携带本 change 要求的 token、窗口和缓存指标。
+      truncated: false
   - id: A18
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当前上下文 token；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus.CurrentTokens 携带当前上下文 token。
+      truncated: false
   - id: A19
     source: specs/agent-sidebar-token-metrics/spec.md
     text: context window token；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus.ContextWindow 携带已验证的窗口 token 上限。
+      truncated: false
   - id: A20
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当前 token 是否仍为估算；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus.Estimated 区分计划估算值与 provider 实际值。
+      truncated: false
   - id: A21
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 既有上下文百分比、最近完整轮次、会话记忆计数和压缩状态；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 原有 WindowPercent、RecentCompleteTurns、MemoryItemCount、Phase 和降级字段均被保留。
+      truncated: false
   - id: A22
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当前 Agent Session 已报告缓存明细请求的累计 prompt token；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus.CachePromptTokens 保存已报告缓存明细请求的累计 prompt token。
+      truncated: false
   - id: A23
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当前 Agent Session 的累计缓存命中 token；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus.CacheReadTokens 保存 Session 累计缓存命中 token。
+      truncated: false
   - id: A24
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 根据上述累计值计算的缓存命中率及其是否可用。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: ContextStatus.CacheHitRate 与 CacheHitRateAvailable 分别表达累计比率和可用性。
+      truncated: false
   - id: A25
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 每次 Context Planner 完成计划后，状态先发布估算 token、窗口上限与按估算值计算的窗口百分比。每次前台模型响应通过协议校验并返回
       usage 后，状态再使用实际 prompt token 更新当前 token 数值和窗口百分比；如果 usage
       同时包含合法缓存明细，则把该请求的 prompt token 与 cache read token 加入 Session
       累计值并重新计算缓存命中率。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: contextPlan 成功后立即发布估算状态；响应通过消息校验并成功提交后发布实际 prompt token及合法缓存累计。
+      truncated: false
   - id: A26
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 工具调用导致同一用户 turn 内存在多次模型请求时，每个已完成且报告缓存明细的响应都进入 Session
       累计。失败、取消、协议无效或尚未完成的响应不得改变累计值；未报告缓存字段的完整响应只更新当前上下文 token，不改变缓存累计。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 每次递归模型请求独立记录合法 usage；请求错误、取消、消息协议无效及工具上限失败均发生在 recordUsage 之前，缺失缓存字段只更新当前
+        token。
+      truncated: false
   - id: A27
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 状态更新沿用现有 ContextRuntime 锁和有界 ContextEvent 通道。该 capability 不创建后台
       worker、不增加无界队列，也不持久化 usage。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 指标复用 ContextRuntime.mu 和容量为 32 的现有更新通道，没有新增 worker、队列或持久化。
+      truncated: false
   - id: A28
     source: specs/agent-sidebar-token-metrics/spec.md
     text: usage 的基本 token 计数必须保持非负。缓存 token 只有满足以下条件时才可用于展示：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: validUsage 拒绝负的 prompt、completion 或 total token 计数。
+      truncated: false
   - id: A29
     source: specs/agent-sidebar-token-metrics/spec.md
     text: provider 明确返回受支持的缓存字段；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 只有 CachedTokens 或 PromptCacheHitTokens 明确存在时 CacheReadTokens 才报告可用。
+      truncated: false
   - id: A30
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "`prompt_tokens > 0`；"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: UpdateUsageStatus 仅在 usage.PromptTokens 大于零时把缓存明细加入累计。
+      truncated: false
   - id: A31
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 缓存 token 非负；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 流式和非流式 validUsage 均拒绝负缓存 token，runtime 也执行非负防御检查。
+      truncated: false
   - id: A32
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 缓存 token 不大于 `prompt_tokens`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: validUsage 和 UpdateUsageStatus 都拒绝 cache-read 大于 prompt_tokens。
+      truncated: false
   - id: A33
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 只有满足全部条件的请求才进入 Session 缓存累计。provider 明确报告零缓存 token 的合法请求进入累计分母，因此可以形成真实的
       `0.0%`；字段完全缺失的请求不进入缓存累计。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 合法零缓存指针仍返回 reported=true 并增加正 prompt 分母；完全缺失字段返回 reported=false。
+      truncated: false
   - id: A34
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 如果 OpenAI 风格和 DeepSeek 风格字段同时存在，优先使用标准嵌套的
       `prompt_tokens_details.cached_tokens`；实现必须保持确定性，并对冲突或非法值失败关闭或忽略缓存明细，不能产生超过
       `100%` 的命中率。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 两个字段一致时确定性采用该值；冲突或任一非法值会协议失败关闭，且 runtime/TUI 均防止产生超过 100% 的展示。
+      truncated: false
   - id: A35
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 流式 Chat Completions 的最终 usage chunk 与非流式响应使用同一 Usage 类型和校验语义。缺失 usage
       仍是兼容行为，不得因此使原本可用的 provider 请求失败。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: SSE 最终 usage 与非流式响应共用 Usage 和 validUsage；流式响应没有 usage 时仍可在 finish_reason
+        后正常完成。
+      truncated: false
   - id: A36
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当现有响应式布局启用右侧栏时，`AGENT` 区显示：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 响应式布局启用侧栏时，AGENT 区同时渲染上下文 token 对和缓存命中率。
+      truncated: false
   - id: A37
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 规则：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 侧栏实现遵循规格列出的估算、单位、顺序、不可用状态及累计比率规则。
+      truncated: false
   - id: A38
     source: specs/agent-sidebar-token-metrics/spec.md
     text: Context Planner 的估算值带“约”；provider 返回实际 prompt usage 后去掉“约”。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: Estimated=true 且当前 token 为正时添加“约”；实际 usage 更新后清除 Estimated 并去掉该标记。
+      truncated: false
   - id: A39
     source: specs/agent-sidebar-token-metrics/spec.md
     text: token 使用紧凑单位：小值可显示整数，千级显示 `k`，必要时显示 `M`；数值不得因为格式化而突破侧栏宽度。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: formatCompactTokens 支持整数、k 和 M；sidebarFrameLine 使用 ANSI 感知截断确保行宽有界。
+      truncated: false
   - id: A40
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 当前 token 和窗口上限始终使用 `当前/上限` 顺序。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: contextTokenSummary 固定按 CurrentTokens/ContextWindow 顺序格式化。
+      truncated: false
   - id: A41
     source: specs/agent-sidebar-token-metrics/spec.md
     text: provider 尚未对当前 Session 的任何请求返回可识别缓存明细时，缓存命中显示不可用标记 `—`，不得显示误导性的 `0%`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: CacheHitRateAvailable=false 时 cacheHitSummary 固定返回“—”。
+      truncated: false
   - id: A42
     source: specs/agent-sidebar-token-metrics/spec.md
     text: provider 明确报告零缓存 token 且 prompt token 大于零时，该请求进入累计分母，缓存命中率可以显示真实 `0.0%`。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 显式 cached_tokens=0 或 prompt_cache_hit_tokens=0 会被识别为已报告，并在正 prompt 分母下形成真实
+        0.0%。
+      truncated: false
   - id: A43
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 命中率显示一位小数并限定在 `0.0%` 到 `100.0%`；数值由当前 Session 的累计 cache read/prompt token
       计算。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 命中率按累计 read/prompt 计算，TUI 将其限定在 0 到 100 并使用 %.1f%% 展示。
+      truncated: false
   - id: A44
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 侧栏仍可显示公开运行状态、模型名、最近轮次和会话记忆计数；为满足现有最小高度，次要行可以沿用现有 compact 策略，但上下文 token 对是
       `AGENT` 区核心信息。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 非 compact 侧栏保留运行状态、最近轮次、记忆和模型；compact 模式优先保留 AGENT、上下文和缓存指标。
+      truncated: false
   - id: A45
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 终端宽度不足现有侧栏合同或主 transcript 会低于最小宽度时，侧栏继续完全折叠，不显示半截指标，不通过横向滚动补偿。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: sidebarLayoutWidths 在低于断点或主区不足 56 列时返回零侧栏宽度，不渲染半截侧栏或横向滚动。
+      truncated: false
   - id: A46
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 本 capability 不要求把缓存命中率复制到底部 footer。既有底部上下文百分比可继续保留，用于窄终端降级；宽侧栏则提供具体 token
       数值。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 缓存命中率只新增在 sidebar.go；底部 footer 继续使用既有上下文百分比，没有复制缓存指标。
+      truncated: false
   - id: A47
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 指标只包含数字、单位、估算标记和不可用状态。不得显示或记录：
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 新增指标值仅由数字、斜杠、k/M、百分号、“约”和“—”构成。
+      truncated: false
   - id: A48
     source: specs/agent-sidebar-token-metrics/spec.md
     text: prompt、assistant 或工具正文；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 指标状态不携带或渲染 prompt、assistant 或工具正文。
+      truncated: false
   - id: A49
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 工具参数和原始 provider 响应；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 指标路径只接收已解析数值 Usage，不保存或展示工具参数及原始 provider 响应。
+      truncated: false
   - id: A50
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 隐藏 reasoning；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 流式隐藏 reasoning 不进入 Usage、ContextStatus 或侧栏，现有流式测试也验证其不泄漏。
+      truncated: false
   - id: A51
     source: specs/agent-sidebar-token-metrics/spec.md
     text: API key、设备 token 或其他凭据；
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 新增类型和渲染路径不接收 API key、设备 token 或其他凭据。
+      truncated: false
   - id: A52
     source: specs/agent-sidebar-token-metrics/spec.md
     text: session、turn、revision、node 或其他 opaque ID。
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 新增指标不携带 session、turn、revision、node 或其他 opaque ID。
+      truncated: false
   - id: A53
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "A1: context window 为 `32768` 且当前计划估算输入约 `12340` tokens 时，宽侧栏显示类似 `上下文
       约12.3k/32.8k`，不再只显示百分比。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 重复端到端合同已由计划状态投影和 12340/32768 宽侧栏回归满足。
+      truncated: false
   - id: A54
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "A2: provider 返回 `prompt_tokens=12000` 后，侧栏更新为实际
       `12k/32.8k`，且窗口百分比按实际值同步更新。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 重复端到端合同已由实际 prompt token 覆盖、百分比重算和 12k/32.8k TUI 回归满足。
+      truncated: false
   - id: A55
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "A3: Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000`
       时，OpenAI/OpenRouter 或 DeepSeek 字段均产生累计缓存命中率 `60.0%`。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 重复端到端合同已由两种 provider 字段的统一累计及 60.0% 状态/TUI 回归满足。
+      truncated: false
   - id: A56
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "A4: provider 尚未对任何请求返回受支持缓存字段时显示 `—` 而不是 `0%`；明确返回零命中的请求进入累计分母并可显示真实
       `0.0%`。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 静态实现正确区分未报告字段与显式零命中，并分别产生“—”和 0.0%。
+      truncated: false
   - id: A57
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "A5: 同一 turn 的多次模型请求逐次更新当前上下文 token；所有合法且报告缓存明细的完整响应累计更新 Session
       命中率，失败、取消、协议无效或字段缺失的响应不污染累计。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 同一 turn 的递归 run 路径逐次覆盖当前 token并累计合法缓存 usage；错误、取消和协议失败在记录前返回，缺失字段不增加缓存分母。
+      truncated: false
   - id: A58
     source: specs/agent-sidebar-token-metrics/spec.md
     text: "A6: 窄终端继续折叠侧栏，宽侧栏和最小高度布局不溢出，不泄漏正文、隐藏推理、凭据或 opaque ID。"
-    result: pending
-    reason: null
+    result: passed
+    reason:
+      text: 既有窄终端、断点、最小高度和行宽回归通过；新增侧栏值不含正文、推理、凭据或 ID。
+      truncated: false
   - id: A59
     source: specs/agent-sidebar-token-metrics/spec.md
     text: modelclient 使用 fake OpenAI-compatible HTTP/SSE server 覆盖嵌套 cached
       token、DeepSeek cache hit token、usage 缺失、零命中和非法计数。Agent loop 使用 fake model
       覆盖计划估算、实际 usage 覆盖、Session 累计命中率、字段缺失不污染累计与 ContextEvent 更新。TUI fake
       conversation 覆盖 token 格式、估算标记、累计缓存命中率、不可用状态、compact 侧栏和窄终端折叠。
-    result: pending
-    reason: null
+    result: failed
+    reason:
+      text: 正式验证合同要求 fake HTTP/SSE、agent loop 和 TUI 覆盖显式零命中；候选测试中没有任何
+        cached_tokens=0、prompt_cache_hit_tokens=0 或 CacheHitRateAvailable=true 且
+        rate=0 的用例。现有测试无法证伪零值被误当成字段缺失、未加入分母或未显示 0.0% 的回归。
+      truncated: false
   - id: A60
     source: specs/agent-sidebar-token-metrics/spec.md
     text: 实现期间运行受影响 package 的具名测试和 package 测试；稳定批次运行受影响 package 的 vet、error-level
       diagnostics、CLI build 和 `git diff --check`。不需要
       PostgreSQL、Compose、OpenAPI、数据库 migration、race 全仓或服务端黑盒证据，除非实现意外扩大到对应边界。
-    result: pending
-    reason: null
-builder_handoff: null
+    result: passed
+    reason:
+      text: 已提供并通过具名回归、三个受影响 package 测试、受影响 package vet、LSP error-level
+        diagnostics、CLI build、gofmt 与 git diff --check；Runtime 又独立复核了
+        package、vet、build 和 diff 检查。
+      truncated: false
+builder_handoff:
+  candidate_id: db199aeb-6bff-47bc-99a6-d3e445369b6d
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:a12c80bb-ff85-40e8-966f-5044c54d7c18
+  iteration: 1
+  summary:
+    text: 实现 Go CLI Agent 侧栏 token 指标：ContextStatus 同步展示计划估算或 provider 实际 prompt
+      token 与 context window；解析 OpenAI/OpenRouter cached_tokens 和 DeepSeek
+      prompt_cache_hit_tokens；按当前 Agent Session 中明确报告缓存明细的已完成请求累计缓存命中率；未报告时显示
+      —。补充流式/非流式协议校验、Agent loop 状态累计、TUI 响应式布局测试，并更新设计与正式规格。候选提交为 b3c0d8a。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+    - A13
+    - A14
+    - A15
+    - A16
+    - A17
+    - A18
+    - A19
+    - A20
+    - A21
+    - A22
+    - A23
+    - A24
+    - A25
+    - A26
+    - A27
+    - A28
+    - A29
+    - A30
+    - A31
+    - A32
+    - A33
+    - A34
+    - A35
+    - A36
+    - A37
+    - A38
+    - A39
+    - A40
+    - A41
+    - A42
+    - A43
+    - A44
+    - A45
+    - A46
+    - A47
+    - A48
+    - A49
+    - A50
+    - A51
+    - A52
+    - A53
+    - A54
+    - A55
+    - A56
+    - A57
+    - A58
+    - A59
+    - A60
+  checks:
+    - name:
+        text: modelclient prompt-cache regression tests
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go test -count=1 ./internal/modelclient -run
+          '^(TestCompleteSendsOpenAICompatibleToolRequest|TestCompleteParsesDeepSeekPromptCacheUsage|TestCompleteRejectsInvalidPromptCacheUsage|TestStreamSendsCompatibleRequestAndAssemblesTextUsage|TestStreamRejectsInvalidPromptCacheUsage)$'
+        truncated: false
+    - name:
+        text: agent loop token/cache regression tests
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go test -count=1 ./internal/agentloop -run
+          '^(TestSessionPublishesActualContextTokensAndCumulativeCacheHitRate|TestTwentyPlusTurnCompactionRecallAndFallbackVisibility)$'
+        truncated: false
+    - name:
+        text: agent UI sidebar regression tests
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go test -count=1 ./internal/agentui -run
+          '^(TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate|TestAgentUISidebarCollapsesBeforeMainTranscriptGetsTooNarrow|TestAgentUIRightSidebarShowsAuthoritativeLearningStatus|TestAgentUIContextHeaderUpdatesAndStructuredCards)$'
+        truncated: false
+    - name:
+        text: affected package tests
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go test -count=1 ./internal/modelclient
+          ./internal/agentloop ./internal/agentui
+        truncated: false
+    - name:
+        text: agentloop package after gofmt
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go test -count=1 ./internal/agentloop
+        truncated: false
+    - name:
+        text: affected package vet
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go vet ./internal/modelclient ./internal/agentloop
+          ./internal/agentui
+        truncated: false
+    - name:
+        text: CLI build
+        truncated: false
+      result: passed
+      note:
+        text: cd clients/cli-go && go build ./cmd/edu-agent; generated local binary
+          removed after the check
+        truncated: false
+    - name:
+        text: LSP diagnostics
+        truncated: false
+      result: passed
+      note:
+        text: Primary Go diagnostics reported no errors for all changed Go files
+        truncated: false
+    - name:
+        text: diff and formatting checks
+        truncated: false
+      result: passed
+      note:
+        text: gofmt -l returned empty after formatting; git diff --check passed
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: No live external provider request was made; deterministic fake
+        OpenAI-compatible HTTP/SSE servers cover the supported usage fields.
+      truncated: false
+    - text: Providers that omit both supported cache fields intentionally show — and
+        do not enter the cumulative cache denominator.
+      truncated: false
+  known_limits_truncated: false
+  submitted_at: 2026-09-01T03:10:54.221Z
 blockers: []
-verification: null
-history: []
+verification:
+  candidate_id: db199aeb-6bff-47bc-99a6-d3e445369b6d
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:4058784d-26cb-4b0d-9e91-8fba8c8c3f0d
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: fail
+  checks:
+    - id: modelclient-tests
+      name:
+        text: Model usage decoding regression suite
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./internal/modelclient
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 552
+    - id: agentloop-tests
+      name:
+        text: Session context metrics regression suite
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./internal/agentloop
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 659
+    - id: agentui-tests
+      name:
+        text: Sidebar rendering regression suite
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./internal/agentui
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 542
+    - id: affected-vet
+      name:
+        text: Vet affected CLI packages
+        truncated: false
+      argv_display:
+        - text: vet
+          truncated: false
+        - text: ./internal/modelclient
+          truncated: false
+        - text: ./internal/agentloop
+          truncated: false
+        - text: ./internal/agentui
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 153
+    - id: cli-build
+      name:
+        text: Build edu-agent CLI
+        truncated: false
+      argv_display:
+        - text: build
+          truncated: false
+        - text: ./cmd/edu-agent
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 755
+    - id: commit-diff-check
+      name:
+        text: Validate committed patch whitespace
+        truncated: false
+      argv_display:
+        - text: diff
+          truncated: false
+        - text: --check
+          truncated: false
+        - text: b3c0d8a^
+          truncated: false
+        - text: b3c0d8a
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 11
+  summary:
+    text: 候选 b3c0d8a 的生产实现经静态审查能够满足 token 解码、合法性校验、Session
+      累计、实际值覆盖、ContextEvent、响应式侧栏和隐私边界，A1-A58 及 A60 可判定通过。但 A59
+      明确要求的显式零命中自动化覆盖完全缺失，这一缺口直接关系到“—”与真实“0.0%”的用户可见诚实性，故本次 Verifier verdict 为
+      fail，应返回 Build 补充 modelclient、agent loop/TUI 中至少一条贯通零命中分母和 0.0% 展示的回归证据。
+    truncated: false
+  risks:
+    - text: 显式零缓存命中是“未知”与“真实 0.0%”之间的关键诚实性边界，但候选没有任何自动化回归覆盖该路径；因此 A59 构成正式验收失败。
+      truncated: false
+    - text: 同一用户 turn
+        内多次工具模型响应以及取消、协议无效响应不污染累计的语义可由代码路径静态确认，但缺少聚合这些边界的专门端到端回归，后续重构仍有回归风险。
+      truncated: false
+    - text: 紧凑 token 格式测试主要覆盖千级示例，未专门覆盖小整数、M 单位及单位舍入边界。
+      truncated: false
+    - text: 未连接真实外部 provider；当前协议证据来自确定性的 fake OpenAI-compatible HTTP/SSE server。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-01T03:23:14.558Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A59
+    summary:
+      text: 候选 b3c0d8a 的生产实现经静态审查能够满足 token 解码、合法性校验、Session
+        累计、实际值覆盖、ContextEvent、响应式侧栏和隐私边界，A1-A58 及 A60 可判定通过。但 A59
+        明确要求的显式零命中自动化覆盖完全缺失，这一缺口直接关系到“—”与真实“0.0%”的用户可见诚实性，故本次 Verifier verdict 为
+        fail，应返回 Build 补充 modelclient、agent loop/TUI 中至少一条贯通零命中分母和 0.0% 展示的回归证据。
+      truncated: false
+    completed_at: 2026-09-01T03:23:14.558Z
 history_overflow:
   dropped_entries: 0
   first_dropped_at: null
@@ -375,7 +798,7 @@ history_overflow:
     blocked: 0
     execution-error: 0
     recovery: 0
-verification_result: pending
-verification_report: null
+verification_result: fail
+verification_report: verification.md
 archived: false
 created_at: 2026-09-01T02:40:04.842Z

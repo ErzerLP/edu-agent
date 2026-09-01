@@ -676,11 +676,27 @@ func TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate(t *testing.T)
 		Kind: agentloop.ContextEventStatus,
 		Status: agentloop.ContextStatus{
 			WindowPercent: 37, CurrentTokens: 12000, ContextWindow: 32768,
-			CachePromptTokens: 20000, CacheReadTokens: 12000, CacheHitRate: 60, CacheHitRateAvailable: true,
+			CachePromptTokens: 12000, CacheReadTokens: 0, CacheHitRate: 0, CacheHitRateAvailable: true,
 			RecentCompleteTurns: 3, MemoryItemCount: 4,
 		},
 	}
 	message := waitContextCmd(value.ctx, conversation.updates)().(contextMsg)
+	updated, _ = value.Update(message)
+	value = updated.(model)
+	view = value.View()
+	if !strings.Contains(view, "上下文 12k/32.8k") || !strings.Contains(view, "缓存命中 0.0%") {
+		t.Fatalf("explicit zero cache-hit metrics missing: %s", view)
+	}
+
+	conversation.updates <- agentloop.ContextEvent{
+		Kind: agentloop.ContextEventStatus,
+		Status: agentloop.ContextStatus{
+			WindowPercent: 37, CurrentTokens: 12000, ContextWindow: 32768,
+			CachePromptTokens: 20000, CacheReadTokens: 12000, CacheHitRate: 60, CacheHitRateAvailable: true,
+			RecentCompleteTurns: 3, MemoryItemCount: 4,
+		},
+	}
+	message = waitContextCmd(value.ctx, conversation.updates)().(contextMsg)
 	updated, _ = value.Update(message)
 	value = updated.(model)
 	view = value.View()

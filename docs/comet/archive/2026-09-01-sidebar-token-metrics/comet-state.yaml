@@ -28,7 +28,8 @@ loop:
 acceptance:
   - id: A1
     source: brief.md
-    text: "A1: 当 context window 为 `32768`、当前请求估算输入为约 `12340` tokens 时，宽终端侧栏显示类似 `上下文
+    text:
+      "A1: 当 context window 为 `32768`、当前请求估算输入为约 `12340` tokens 时，宽终端侧栏显示类似 `上下文
       约12.3k/32.8k`，而不是只显示 `约38%`。"
     result: passed
     reason:
@@ -36,7 +37,8 @@ acceptance:
       truncated: false
   - id: A2
     source: brief.md
-    text: "A2: 当 provider 随已完成响应返回 `prompt_tokens=12000` 时，侧栏更新为实际
+    text:
+      "A2: 当 provider 随已完成响应返回 `prompt_tokens=12000` 时，侧栏更新为实际
       `12k/32.8k`，并同步更新既有上下文百分比计算。"
     result: passed
     reason:
@@ -44,7 +46,8 @@ acceptance:
       truncated: false
   - id: A3
     source: brief.md
-    text: "A3: 当 Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000`
+    text:
+      "A3: 当 Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000`
       时，侧栏显示累计缓存命中率 `60.0%`；OpenAI-compatible 的
       `prompt_tokens_details.cached_tokens` 与 DeepSeek 的
       `prompt_cache_hit_tokens` 使用同一累计口径。"
@@ -54,7 +57,8 @@ acceptance:
       truncated: false
   - id: A4
     source: brief.md
-    text: "A4: 当 provider 尚未对任何请求返回可识别的缓存 token 明细时，侧栏显示 `缓存命中 —`，不显示误导性的
+    text:
+      "A4: 当 provider 尚未对任何请求返回可识别的缓存 token 明细时，侧栏显示 `缓存命中 —`，不显示误导性的
       `0%`；明确报告零命中的请求则进入累计分母并可显示真实 `0.0%`。"
     result: passed
     reason:
@@ -62,7 +66,8 @@ acceptance:
       truncated: false
   - id: A5
     source: brief.md
-    text: "A5: 多轮工具调用中的每个已完成模型响应都可以更新指标；上下文 token 反映最近一次请求，缓存命中率反映当前 Session
+    text:
+      "A5: 多轮工具调用中的每个已完成模型响应都可以更新指标；上下文 token 反映最近一次请求，缓存命中率反映当前 Session
       内所有已报告缓存明细请求的累计结果。"
     result: passed
     reason:
@@ -70,7 +75,8 @@ acceptance:
       truncated: false
   - id: A6
     source: brief.md
-    text: "A6: 侧栏仍只在满足现有宽度合同的终端显示；窄终端继续完全折叠侧栏，所有渲染行不得超过终端宽度，也不得暴露 prompt
+    text:
+      "A6: 侧栏仍只在满足现有宽度合同的终端显示；窄终端继续完全折叠侧栏，所有渲染行不得超过终端宽度，也不得暴露 prompt
       正文、工具参数、隐藏推理、凭据或 opaque ID。"
     result: passed
     reason:
@@ -78,7 +84,8 @@ acceptance:
       truncated: false
   - id: A7
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 交互式 Go CLI Agent 在宽终端右侧栏中提供可读、诚实且有界的模型上下文指标。用户可以看到当前模型请求占用了多少上下文
+    text:
+      交互式 Go CLI Agent 在宽终端右侧栏中提供可读、诚实且有界的模型上下文指标。用户可以看到当前模型请求占用了多少上下文
       token、配置的上下文窗口上限，以及当前 Agent Session 的累计提示缓存命中率，从而判断上下文压力与缓存是否持续生效。
     result: passed
     reason:
@@ -100,7 +107,8 @@ acceptance:
       truncated: false
   - id: A10
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 当前上下文 token 在模型请求发出前来自 Context Planner 的 `EstimatedInput`。如果 provider
+    text:
+      当前上下文 token 在模型请求发出前来自 Context Planner 的 `EstimatedInput`。如果 provider
       对该请求返回合法 `usage.prompt_tokens`，该实际值覆盖当前请求的估算展示；usage
       缺失时继续保留保守估算，不能把未知值显示为零。
     result: passed
@@ -119,7 +127,8 @@ acceptance:
     text: OpenAI/OpenRouter 风格端点读取 `usage.prompt_tokens_details.cached_tokens`；
     result: passed
     reason:
-      text: OpenAI/OpenRouter prompt_tokens_details.cached_tokens 解码保持通过；新增 HTTP
+      text:
+        OpenAI/OpenRouter prompt_tokens_details.cached_tokens 解码保持通过；新增 HTTP
         零值测试进一步验证字段存在性。
       truncated: false
   - id: A13
@@ -206,12 +215,14 @@ acceptance:
     text: 根据上述累计值计算的缓存命中率及其是否可用。
     result: passed
     reason:
-      text: 新增 Session 测试同时断言 CacheHitRateAvailable=true、CacheHitRate=0 及对应
+      text:
+        新增 Session 测试同时断言 CacheHitRateAvailable=true、CacheHitRate=0 及对应
         ContextEvent。
       truncated: false
   - id: A25
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 每次 Context Planner 完成计划后，状态先发布估算 token、窗口上限与按估算值计算的窗口百分比。每次前台模型响应通过协议校验并返回
+    text:
+      每次 Context Planner 完成计划后，状态先发布估算 token、窗口上限与按估算值计算的窗口百分比。每次前台模型响应通过协议校验并返回
       usage 后，状态再使用实际 prompt token 更新当前 token 数值和窗口百分比；如果 usage
       同时包含合法缓存明细，则把该请求的 prompt token 与 cache read token 加入 Session
       累计值并重新计算缓存命中率。
@@ -221,7 +232,8 @@ acceptance:
       truncated: false
   - id: A26
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 工具调用导致同一用户 turn 内存在多次模型请求时，每个已完成且报告缓存明细的响应都进入 Session
+    text:
+      工具调用导致同一用户 turn 内存在多次模型请求时，每个已完成且报告缓存明细的响应都进入 Session
       累计。失败、取消、协议无效或尚未完成的响应不得改变累计值；未报告缓存字段的完整响应只更新当前上下文 token，不改变缓存累计。
     result: passed
     reason:
@@ -229,7 +241,8 @@ acceptance:
       truncated: false
   - id: A27
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 状态更新沿用现有 ContextRuntime 锁和有界 ContextEvent 通道。该 capability 不创建后台
+    text:
+      状态更新沿用现有 ContextRuntime 锁和有界 ContextEvent 通道。该 capability 不创建后台
       worker、不增加无界队列，也不持久化 usage。
     result: passed
     reason:
@@ -272,7 +285,8 @@ acceptance:
       truncated: false
   - id: A33
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 只有满足全部条件的请求才进入 Session 缓存累计。provider 明确报告零缓存 token 的合法请求进入累计分母，因此可以形成真实的
+    text:
+      只有满足全部条件的请求才进入 Session 缓存累计。provider 明确报告零缓存 token 的合法请求进入累计分母，因此可以形成真实的
       `0.0%`；字段完全缺失的请求不进入缓存累计。
     result: passed
     reason:
@@ -289,11 +303,13 @@ acceptance:
       truncated: false
   - id: A35
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 流式 Chat Completions 的最终 usage chunk 与非流式响应使用同一 Usage 类型和校验语义。缺失 usage
+    text:
+      流式 Chat Completions 的最终 usage chunk 与非流式响应使用同一 Usage 类型和校验语义。缺失 usage
       仍是兼容行为，不得因此使原本可用的 provider 请求失败。
     result: passed
     reason:
-      text: 新增 DeepSeek SSE 零值用例与 OpenAI HTTP 零值用例使用同一 Usage/CacheReadTokens 语义；缺失
+      text:
+        新增 DeepSeek SSE 零值用例与 OpenAI HTTP 零值用例使用同一 Usage/CacheReadTokens 语义；缺失
         usage 兼容测试仍在。
       truncated: false
   - id: A36
@@ -347,7 +363,8 @@ acceptance:
       truncated: false
   - id: A43
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 命中率显示一位小数并限定在 `0.0%` 到 `100.0%`；数值由当前 Session 的累计 cache read/prompt token
+    text:
+      命中率显示一位小数并限定在 `0.0%` 到 `100.0%`；数值由当前 Session 的累计 cache read/prompt token
       计算。
     result: passed
     reason:
@@ -355,7 +372,8 @@ acceptance:
       truncated: false
   - id: A44
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 侧栏仍可显示公开运行状态、模型名、最近轮次和会话记忆计数；为满足现有最小高度，次要行可以沿用现有 compact 策略，但上下文 token 对是
+    text:
+      侧栏仍可显示公开运行状态、模型名、最近轮次和会话记忆计数；为满足现有最小高度，次要行可以沿用现有 compact 策略，但上下文 token 对是
       `AGENT` 区核心信息。
     result: passed
     reason:
@@ -370,7 +388,8 @@ acceptance:
       truncated: false
   - id: A46
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 本 capability 不要求把缓存命中率复制到底部 footer。既有底部上下文百分比可继续保留，用于窄终端降级；宽侧栏则提供具体 token
+    text:
+      本 capability 不要求把缓存命中率复制到底部 footer。既有底部上下文百分比可继续保留，用于窄终端降级；宽侧栏则提供具体 token
       数值。
     result: passed
     reason:
@@ -420,7 +439,8 @@ acceptance:
       truncated: false
   - id: A53
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: "A1: context window 为 `32768` 且当前计划估算输入约 `12340` tokens 时，宽侧栏显示类似 `上下文
+    text:
+      "A1: context window 为 `32768` 且当前计划估算输入约 `12340` tokens 时，宽侧栏显示类似 `上下文
       约12.3k/32.8k`，不再只显示百分比。"
     result: passed
     reason:
@@ -436,7 +456,8 @@ acceptance:
       truncated: false
   - id: A55
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: "A3: Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000`
+    text:
+      "A3: Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000`
       时，OpenAI/OpenRouter 或 DeepSeek 字段均产生累计缓存命中率 `60.0%`。"
     result: passed
     reason:
@@ -444,7 +465,8 @@ acceptance:
       truncated: false
   - id: A56
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: "A4: provider 尚未对任何请求返回受支持缓存字段时显示 `—` 而不是 `0%`；明确返回零命中的请求进入累计分母并可显示真实
+    text:
+      "A4: provider 尚未对任何请求返回受支持缓存字段时显示 `—` 而不是 `0%`；明确返回零命中的请求进入累计分母并可显示真实
       `0.0%`。"
     result: passed
     reason:
@@ -452,7 +474,8 @@ acceptance:
       truncated: false
   - id: A57
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: "A5: 同一 turn 的多次模型请求逐次更新当前上下文 token；所有合法且报告缓存明细的完整响应累计更新 Session
+    text:
+      "A5: 同一 turn 的多次模型请求逐次更新当前上下文 token；所有合法且报告缓存明细的完整响应累计更新 Session
       命中率，失败、取消、协议无效或字段缺失的响应不污染累计。"
     result: passed
     reason:
@@ -467,7 +490,8 @@ acceptance:
       truncated: false
   - id: A59
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: modelclient 使用 fake OpenAI-compatible HTTP/SSE server 覆盖嵌套 cached
+    text:
+      modelclient 使用 fake OpenAI-compatible HTTP/SSE server 覆盖嵌套 cached
       token、DeepSeek cache hit token、usage 缺失、零命中和非法计数。Agent loop 使用 fake model
       覆盖计划估算、实际 usage 覆盖、Session 累计命中率、字段缺失不污染累计与 ContextEvent 更新。TUI fake
       conversation 覆盖 token 格式、估算标记、累计缓存命中率、不可用状态、compact 侧栏和窄终端折叠。
@@ -480,12 +504,14 @@ acceptance:
       truncated: false
   - id: A60
     source: specs/agent-sidebar-token-metrics/spec.md
-    text: 实现期间运行受影响 package 的具名测试和 package 测试；稳定批次运行受影响 package 的 vet、error-level
+    text:
+      实现期间运行受影响 package 的具名测试和 package 测试；稳定批次运行受影响 package 的 vet、error-level
       diagnostics、CLI build 和 `git diff --check`。不需要
       PostgreSQL、Compose、OpenAPI、数据库 migration、race 全仓或服务端黑盒证据，除非实现意外扩大到对应边界。
     result: passed
     reason:
-      text: 上一候选的具名测试、package、vet、LSP、build、gofmt 和 diff-check 证据仍有效；修复仅改测试，Runtime
+      text:
+        上一候选的具名测试、package、vet、LSP、build、gofmt 和 diff-check 证据仍有效；修复仅改测试，Runtime
         iteration 2 又通过三项零值具名检查、三个受影响 package、affected vet 和 repair diff check。
       truncated: false
 builder_handoff:
@@ -494,7 +520,8 @@ builder_handoff:
   builder_execution_ref: skill-coordinated:builder:917bf517-95ec-41f2-a02a-d6752e5a8ca1
   iteration: 2
   summary:
-    text: 修复 Verifier 指出的 A59 测试覆盖缺口：为非流式 OpenAI cached_tokens=0、流式 DeepSeek
+    text:
+      修复 Verifier 指出的 A59 测试覆盖缺口：为非流式 OpenAI cached_tokens=0、流式 DeepSeek
       prompt_cache_hit_tokens=0、Agent Session 零命中累计与 ContextEvent，以及 TUI 从不可用到真实
       0.0% 再到累计 60.0% 的展示增加回归测试。修复候选提交为 5aa1ba8。
     truncated: false
@@ -526,7 +553,8 @@ builder_handoff:
         truncated: false
       result: passed
       note:
-        text: cd clients/cli-go && go vet ./internal/modelclient ./internal/agentloop
+        text:
+          cd clients/cli-go && go vet ./internal/modelclient ./internal/agentloop
           ./internal/agentui
         truncated: false
     - name:
@@ -534,7 +562,8 @@ builder_handoff:
         truncated: false
       result: passed
       note:
-        text: Primary and full error-level diagnostics reported no errors for all four
+        text:
+          Primary and full error-level diagnostics reported no errors for all four
           repaired test files
         truncated: false
     - name:
@@ -546,10 +575,12 @@ builder_handoff:
         truncated: false
   checks_truncated: false
   known_limits:
-    - text: No live external provider request was made; deterministic fake HTTP/SSE
+    - text:
+        No live external provider request was made; deterministic fake HTTP/SSE
         servers cover explicit zero cache usage.
       truncated: false
-    - text: The repair changes tests and Comet verification artifacts only; production
+    - text:
+        The repair changes tests and Comet verification artifacts only; production
         behavior remains the previously reviewed implementation.
       truncated: false
   known_limits_truncated: false
@@ -681,7 +712,8 @@ verification:
       exit_code: 0
       duration_ms: 6
   summary:
-    text: 修复提交 5aa1ba8 针对上一轮唯一失败项 A59 增加了有效而非默认零值式的回归：HTTP 和 SSE
+    text:
+      修复提交 5aa1ba8 针对上一轮唯一失败项 A59 增加了有效而非默认零值式的回归：HTTP 和 SSE
       测试通过指针存在性断言区分缺失字段与显式零值，Session 测试确认零命中请求进入 prompt 分母、命中率可用且发布
       ContextEvent，TUI 测试确认从不可用“—”切换到真实“0.0%”并可继续累计到“60.0%”。修复只增加测试，没有改变 b3c0d8a
       的生产实现或使 A1-A58、A60 的既有结论失效；结合 Runtime iteration 2 的独立检查，完整候选满足
@@ -705,7 +737,8 @@ history:
     unresolved_ids:
       - A59
     summary:
-      text: 候选 b3c0d8a 的生产实现经静态审查能够满足 token 解码、合法性校验、Session
+      text:
+        候选 b3c0d8a 的生产实现经静态审查能够满足 token 解码、合法性校验、Session
         累计、实际值覆盖、ContextEvent、响应式侧栏和隐私边界，A1-A58 及 A60 可判定通过。但 A59
         明确要求的显式零命中自动化覆盖完全缺失，这一缺口直接关系到“—”与真实“0.0%”的用户可见诚实性，故本次 Verifier verdict 为
         fail，应返回 Build 补充 modelclient、agent loop/TUI 中至少一条贯通零命中分母和 0.0% 展示的回归证据。
@@ -717,7 +750,8 @@ history:
     outcome: pass
     unresolved_ids: []
     summary:
-      text: 修复提交 5aa1ba8 针对上一轮唯一失败项 A59 增加了有效而非默认零值式的回归：HTTP 和 SSE
+      text:
+        修复提交 5aa1ba8 针对上一轮唯一失败项 A59 增加了有效而非默认零值式的回归：HTTP 和 SSE
         测试通过指针存在性断言区分缺失字段与显式零值，Session 测试确认零命中请求进入 prompt 分母、命中率可用且发布
         ContextEvent，TUI 测试确认从不可用“—”切换到真实“0.0%”并可继续累计到“60.0%”。修复只增加测试，没有改变
         b3c0d8a 的生产实现或使 A1-A58、A60 的既有结论失效；结合 Runtime iteration 2 的独立检查，完整候选满足

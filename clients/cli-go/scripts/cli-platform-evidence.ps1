@@ -315,7 +315,8 @@ try {
         }
         $logText = [string]::Join("", [string[]] @($logLines))
         $marker = if ($check.ContainsKey("Marker")) { [string] $check.Marker } else { "" }
-        $measurement = Measure-GoTestEvidence ([object[]] @($events)) $expectedTests $marker $logText
+        $eventArray = $events.ToArray()
+        $measurement = Measure-GoTestEvidence -Events $eventArray -ExpectedTests $expectedTests -SuccessMarker $marker -LogText $logText
         $failures = New-Object System.Collections.Generic.List[string]
         foreach ($failure in @($parseFailures)) { $failures.Add($failure) }
         foreach ($failure in @($measurement.Failures)) { $failures.Add($failure) }

@@ -36,6 +36,26 @@ func CheckPrivateFile(path string) error {
 	return checkPrivateWindowsPath(path, false)
 }
 
+// EnsurePrivateFileDACL protects the DACL of an already-open or shared lock
+// file without changing its owner. It still verifies that the existing owner is
+// the current user, so a foreign-owned file fails closed.
+func EnsurePrivateFileDACL(path string) error {
+	handle, err := openWindowsSecurityPath(path, false, windows.READ_CONTROL|windows.WRITE_DAC)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+	descriptor, _, dacl, err := privateWindowsSecurityDescriptor(false)
+	if err != nil {
+		return err
+	}
+	if err := setPrivateWindowsDACL(handle, dacl); err != nil {
+		return err
+	}
+	runtime.KeepAlive(descriptor)
+	return checkPrivateWindowsHandle(handle, false)
+}
+
 func ensurePrivateWindowsPath(path string, directory bool) error {
 	handle, err := openWindowsSecurityPath(path, directory, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER)
 	if err != nil {
@@ -104,6 +124,14 @@ func ensurePrivateWindowsHandle(handle windows.Handle, directory bool) error {
 	); err != nil {
 		return fmt.Errorf("%w: set private Windows owner: %v", ErrPermission, err)
 	}
+	if err := setPrivateWindowsDACL(handle, dacl); err != nil {
+		return err
+	}
+	runtime.KeepAlive(descriptor)
+	return checkPrivateWindowsHandle(handle, directory)
+}
+
+func setPrivateWindowsDACL(handle windows.Handle, dacl *windows.ACL) error {
 	if err := windows.SetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
@@ -115,8 +143,7 @@ func ensurePrivateWindowsHandle(handle windows.Handle, directory bool) error {
 	); err != nil {
 		return fmt.Errorf("%w: set private Windows DACL: %v", ErrPermission, err)
 	}
-	runtime.KeepAlive(descriptor)
-	return checkPrivateWindowsHandle(handle, directory)
+	return nil
 }
 
 func checkPrivateWindowsHandle(handle windows.Handle, directory bool) error {

@@ -27,5 +27,5 @@ func enforcePrivateSessionDirectory(path string, _ os.FileInfo) error {
 // inherit the protected current-user-only ACL from the Session root; existing
 // files fail closed if that invariant does not hold.
 func validatePrivateSessionLock(path string) error {
-	return securefile.CheckPrivateFile(path)
+	return securefile.EnsurePrivateFileDACL(path)
 }

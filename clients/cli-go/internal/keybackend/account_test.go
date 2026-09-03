@@ -38,6 +38,7 @@ exit 1
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/edu-agent-keybackend-test")
 	t.Setenv("EDU_AGENT_SECRET_TOOL_MODE", "missing")
 	if _, err := Load("account"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing entry error=%v", err)

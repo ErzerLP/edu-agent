@@ -71,6 +71,7 @@ type Session struct {
 	pendingRejectOperationID     string
 	pendingCandidateID           string
 	pendingCandidateRevision     int64
+	pendingPreferenceValidUntil  time.Time
 	pendingPreferenceFailureCode string
 	activitySequence             int
 }
@@ -241,6 +242,7 @@ func (s *Session) clearPreferenceWriteStateLocked() {
 	s.pendingRejectOperationID = ""
 	s.pendingCandidateID = ""
 	s.pendingCandidateRevision = 0
+	s.pendingPreferenceValidUntil = time.Time{}
 	s.pendingPreferenceFailureCode = ""
 }
 
@@ -314,6 +316,7 @@ func (s *Session) finishSuccessfulTurnLocked() {
 		turnID = s.currentTurnID
 	}
 	if turn, exists := s.turns[turnID]; exists {
+		s.normalizeCompletedToolArgumentsLocked(turnID)
 		turn.Completed = true
 		if !turn.OutcomeUnknown {
 			turn.Protected = false
@@ -323,6 +326,26 @@ func (s *Session) finishSuccessfulTurnLocked() {
 		s.activeTurnID = ""
 	}
 	s.clearPendingLocked()
+}
+
+func (s *Session) normalizeCompletedToolArgumentsLocked(turnID string) {
+	completed := make(map[string]struct{})
+	for index, message := range s.messages {
+		if s.messageTurnIDs[index] == turnID && message.Role == "tool" {
+			completed[message.ToolCallID] = struct{}{}
+		}
+	}
+	for messageIndex := range s.messages {
+		message := &s.messages[messageIndex]
+		if s.messageTurnIDs[messageIndex] != turnID || message.Role != "assistant" {
+			continue
+		}
+		for callIndex := range message.ToolCalls {
+			if _, exists := completed[message.ToolCalls[callIndex].ID]; exists {
+				message.ToolCalls[callIndex].Function.Arguments = `{}`
+			}
+		}
+	}
 }
 
 func (s *Session) afterSuccessfulTurn() {
@@ -466,6 +489,166 @@ func (s *Session) ContextStatus() ContextStatus { return s.contextRuntime.Contex
 
 func (s *Session) ContextUpdates() <-chan ContextEvent { return s.contextRuntime.ContextUpdates() }
 
+func (s *Session) SubscribeContextUpdates() (<-chan ContextEvent, func()) {
+	return s.contextRuntime.SubscribeContextUpdates()
+}
+
+func (s *Session) SwitchState() SessionSwitchState {
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	return SessionSwitchState{
+		ActiveTurn:          s.activeTurnID != "",
+		PendingQuestion:     s.pendingQuestion != nil,
+		PendingPreference:   s.pendingKind == pendingPreference,
+		PendingFileMutation: s.pendingFileMutation != nil || s.pendingPreparedMutation != nil,
+		Resolving:           s.pendingResolving,
+		Closed:              s.contextRuntime.isClosed(),
+	}
+}
+
+func (s *Session) SetDurabilitySink(sink DurabilitySink) error {
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	if s.contextRuntime.isClosed() || s.activeTurnID != "" || s.pendingResolving {
+		return ErrActiveTurn
+	}
+	s.options.Durability = sink
+	return nil
+}
+
+func (s *Session) QuarantineHistoricalServerEvidence() {
+	invalidation := s.contextRuntime.invalidateServerEvidenceForAppend(nil, true, false)
+	s.appendMu.Lock()
+	if len(invalidation.ToolCallIDs) == 0 {
+		calls := make(map[string]struct{}, len(s.toolReferences))
+		turns := make(map[string]struct{})
+		for callID := range s.toolReferences {
+			calls[callID] = struct{}{}
+			for index, message := range s.messages {
+				if message.Role == "tool" && message.ToolCallID == callID && index < len(s.messageTurnIDs) {
+					turns[s.messageTurnIDs[index]] = struct{}{}
+				}
+			}
+		}
+		for callID := range calls {
+			invalidation.ToolCallIDs = append(invalidation.ToolCallIDs, callID)
+		}
+		for turnID := range turns {
+			invalidation.TurnIDs = append(invalidation.TurnIDs, turnID)
+		}
+	}
+	s.replaceQuarantinedToolResultsLocked(invalidation)
+	s.appendMu.Unlock()
+}
+
+// InvalidateWorkspaceEvidence makes historical evidence for one relative
+// workspace path unusable after an uncertain file publication. It intentionally
+// exposes no internal maps and cannot authorize or replay a mutation.
+func (s *Session) InvalidateWorkspaceEvidence(reference WorkspaceReference) error {
+	if reference.Kind != "file" || reference.Path == "" || reference.ContentHash != "" || !reference.InvalidateObserved ||
+		!validCheckpointWorkspaceReference(reference) {
+		return errors.New("工作区证据失效引用无效")
+	}
+	placeholderData, err := json.Marshal(map[string]any{
+		"code":                FilePublicationUnknownCode,
+		"publication_outcome": string(workspace.PublicationUnknown),
+		"path":                reference.Path,
+		"kind":                reference.Kind,
+		"stale":               true,
+		"requires_reread":     true,
+	})
+	if err != nil || len(placeholderData) > maxToolOutputBytes {
+		return errors.New("工作区证据失效占位符无效")
+	}
+	placeholder := string(placeholderData)
+	identity := reference.Identity()
+
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
+	if s.contextRuntime.isClosed() {
+		return ErrSessionClosed
+	}
+	affectedCalls := make(map[string]struct{})
+	for callID, previous := range s.workspaceReferences {
+		if previous == nil || previous.Identity() != identity {
+			continue
+		}
+		affectedCalls[callID] = struct{}{}
+		copyReference := reference
+		s.workspaceReferences[callID] = &copyReference
+		s.toolHistory[callID] = placeholder
+	}
+	for index := range s.messages {
+		message := &s.messages[index]
+		if message.Role != "tool" {
+			continue
+		}
+		if _, affected := affectedCalls[message.ToolCallID]; affected {
+			message.Content = placeholder
+		}
+	}
+
+	runtime := s.contextRuntime
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.closed {
+		return ErrSessionClosed
+	}
+	affectedSources := make(map[string]struct{})
+	for _, sourceID := range runtime.ledger.SourceOrder {
+		source := runtime.ledger.Sources[sourceID]
+		previous := source.WorkspaceReference
+		if previous == nil || previous.Identity() != identity {
+			continue
+		}
+		source.WorkspaceReference = cloneWorkspaceReference(&reference)
+		source.Freshness = FreshnessWorkspaceSuperseded
+		source.SourceAvailable = false
+		source.RecallText = ""
+		source.Retention = RetentionMetadata
+		source.TokenEstimate = 0
+		if source.HasModelMessage && source.ModelMessage.Role == "tool" {
+			source.ModelMessage.Content = placeholder
+		}
+		runtime.ledger.Sources[sourceID] = source
+		affectedSources[sourceID] = struct{}{}
+	}
+	if len(affectedSources) == 0 {
+		return nil
+	}
+	const unavailableEvidence = "历史工作区证据已因文件发布结果未知而不可用。"
+	affectedObservations := make(map[string]struct{})
+	for _, observationID := range runtime.ledger.ObservationOrder {
+		observation := runtime.ledger.Observations[observationID]
+		for _, sourceID := range observation.SourceEntryIDs {
+			if _, affected := affectedSources[sourceID]; !affected {
+				continue
+			}
+			observation.Freshness = FreshnessWorkspaceSuperseded
+			observation.Content = unavailableEvidence
+			observation.TokenEstimate = runtime.estimator.EstimateText(unavailableEvidence)
+			runtime.ledger.Observations[observationID] = observation
+			affectedObservations[observationID] = struct{}{}
+			break
+		}
+	}
+	for _, reflectionID := range runtime.ledger.ReflectionOrder {
+		reflection := runtime.ledger.Reflections[reflectionID]
+		for _, support := range reflection.Support {
+			if _, affected := affectedObservations[support.ObservationID]; !affected {
+				continue
+			}
+			reflection.Freshness = FreshnessWorkspaceSuperseded
+			reflection.Content = unavailableEvidence
+			reflection.TokenEstimate = runtime.estimator.EstimateText(unavailableEvidence)
+			runtime.ledger.Reflections[reflectionID] = reflection
+			break
+		}
+	}
+	runtime.refreshMemoryCountsLocked()
+	return nil
+}
+
 func (s *Session) WorkspaceStatus() WorkspaceStatus { return s.workspaceStatus }
 
 // LearningStatus reads the current authoritative server projection for presentation.
@@ -523,6 +706,22 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 	}
 	if len(input) > maxUserInputBytes || utf8.RuneCountInString(input) > maxUserInputRunes || containsUnsafeControl(input) {
 		return Result{}, errors.New("输入内容过长或包含不支持的控制字符")
+	}
+	if s.options.Durability != nil {
+		s.appendMu.Lock()
+		if s.contextRuntime.isClosed() {
+			s.appendMu.Unlock()
+			return Result{}, ErrSessionClosed
+		}
+		if s.activeTurnID != "" {
+			s.appendMu.Unlock()
+			return Result{}, ErrActiveTurn
+		}
+		intent := DirtyIntent{TurnSequence: uint64(s.turnSequence) + 1, OperationClass: "agent-turn", MayHaveSideEffect: false}
+		s.appendMu.Unlock()
+		if err := s.options.Durability.BeginTurn(ctx, intent); err != nil {
+			return Result{}, fmt.Errorf("无法在模型调用前发布会话恢复标记: %w", err)
+		}
 	}
 	s.trimRawHistory()
 	turnID, err := s.startTurn()
@@ -618,20 +817,48 @@ func containsUnsafeControl(value string) bool {
 	return false
 }
 
-func (s *Session) createPreference(ctx context.Context, args preferenceArgs, createOperationID, decisionOperationID string) (any, error) {
+func (s *Session) persistPreferenceWriteAhead(ctx context.Context, value PreferenceWriteAhead, effectMayHaveOccurred bool) error {
+	if s.options.Durability == nil {
+		return nil
+	}
+	if err := s.options.Durability.BeforePreferenceWrite(ctx, value); err != nil {
+		if effectMayHaveOccurred {
+			return fmt.Errorf("%w，偏好恢复状态未能持久化", ErrPreferenceOutcomeUnknown)
+		}
+		return errors.New("无法在偏好写入前持久化恢复凭据")
+	}
+	return nil
+}
+
+func (s *Session) createPreference(ctx context.Context, toolCallID string, args preferenceArgs, createOperationID, admitOperationID string) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	s.appendMu.Lock()
+	validUntil := s.pendingPreferenceValidUntil
+	rejectOperationID := s.pendingRejectOperationID
+	if validUntil.IsZero() {
+		validUntil = s.options.Now().UTC().Add(90 * 24 * time.Hour)
+		if args.Stability == "stable" {
+			validUntil = s.options.Now().UTC().AddDate(10, 0, 0)
+		}
+		s.pendingPreferenceValidUntil = validUntil
+	}
+	s.appendMu.Unlock()
+	writeAhead := PreferenceWriteAhead{
+		ToolCallID: toolCallID, CreateOperationID: createOperationID, AdmitOperationID: admitOperationID, RejectOperationID: rejectOperationID,
+		Payload: PreferencePayload{Content: args.Content, Reason: args.Reason, Category: args.Category, Sensitivity: args.Sensitivity, Stability: args.Stability, ValidUntil: validUntil},
+		Stage:   PreferenceStageCreate, StableCode: "preference_create_pending",
+	}
 	if s.preferenceCompensationPending() {
-		failureCode, err := s.rejectPendingPreferenceCandidate(ctx)
+		failureCode, err := s.rejectPendingPreferenceCandidate(ctx, writeAhead)
 		if err != nil {
 			return nil, err
 		}
 		return nil, preferenceSaveFailure(failureCode)
 	}
-	validUntil := s.options.Now().UTC().Add(90 * 24 * time.Hour)
-	if args.Stability == "stable" {
-		validUntil = s.options.Now().UTC().AddDate(10, 0, 0)
+	if err := s.persistPreferenceWriteAhead(ctx, writeAhead, false); err != nil {
+		return nil, err
 	}
 	result, err := s.server.CreateMemoryCandidate(ctx, api.MemoryCandidateRequest{
 		OperationID: createOperationID, PayloadSchemaVersion: 1, Content: args.Content, Reason: args.Reason,
@@ -643,6 +870,11 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 {
+			writeAhead.Outcome = PreferenceOutcomeRejected
+			writeAhead.StableCode = stablePreferenceCode(apiErr.Code, "preference_create_rejected")
+			if persistErr := s.persistPreferenceWriteAhead(ctx, writeAhead, true); persistErr != nil {
+				return nil, persistErr
+			}
 			return nil, preferenceSaveFailure(apiErr.Code)
 		}
 		return nil, fmt.Errorf("%w，请使用相同操作ID重试核对", ErrPreferenceOutcomeUnknown)
@@ -654,8 +886,15 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 	if candidate.ID == "" {
 		return nil, fmt.Errorf("%w，服务端成功响应缺少候选身份", ErrPreferenceOutcomeUnknown)
 	}
+	writeAhead.CandidateID = candidate.ID
+	writeAhead.CandidateRevision = candidate.Revision
 	switch candidate.Status {
 	case "admitted":
+		writeAhead.StableCode = "preference_saved"
+		writeAhead.Outcome = PreferenceOutcomeCompleted
+		if err := s.persistPreferenceWriteAhead(ctx, writeAhead, true); err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"submitted": true, "saved": true, "candidate_id": candidate.ID,
 			"status": candidate.Status, "replayed": result.Replayed,
@@ -664,14 +903,24 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 		if candidate.Revision < 1 {
 			return nil, fmt.Errorf("%w，待确认候选缺少有效身份或修订", ErrPreferenceOutcomeUnknown)
 		}
+		writeAhead.Stage = PreferenceStageAdmit
+		writeAhead.StableCode = "preference_admit_pending"
+		if err := s.persistPreferenceWriteAhead(ctx, writeAhead, true); err != nil {
+			return nil, err
+		}
 	case "rejected", "expired":
-		return nil, preferenceSaveFailure("candidate_" + candidate.Status)
+		writeAhead.StableCode = "candidate_" + candidate.Status
+		writeAhead.Outcome = PreferenceOutcomeRejected
+		if err := s.persistPreferenceWriteAhead(ctx, writeAhead, true); err != nil {
+			return nil, err
+		}
+		return nil, preferenceSaveFailure(writeAhead.StableCode)
 	default:
 		return nil, fmt.Errorf("%w，服务端返回未知候选状态", ErrPreferenceOutcomeUnknown)
 	}
 
 	decisionResult, err := s.server.DecideMemoryCandidate(ctx, candidate.ID, api.MemoryCandidateDecisionRequest{
-		OperationID: decisionOperationID, PayloadSchemaVersion: 1, ExpectedRevision: candidate.Revision,
+		OperationID: admitOperationID, PayloadSchemaVersion: 1, ExpectedRevision: candidate.Revision,
 		Decision: "admit", Reason: "user_confirmed_preference_save",
 	})
 	if ctx.Err() != nil {
@@ -681,7 +930,7 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Status >= 400 && apiErr.Status < 500 {
 			s.setPreferenceCompensation(candidate.ID, candidate.Revision, apiErr.Code)
-			failureCode, rejectErr := s.rejectPendingPreferenceCandidate(ctx)
+			failureCode, rejectErr := s.rejectPendingPreferenceCandidate(ctx, writeAhead)
 			if rejectErr != nil {
 				return nil, rejectErr
 			}
@@ -693,10 +942,29 @@ func (s *Session) createPreference(ctx context.Context, args preferenceArgs, cre
 		decisionResult.Candidate.Candidate.Status != "admitted" || decisionResult.Candidate.Candidate.Revision <= candidate.Revision {
 		return nil, fmt.Errorf("%w，服务端未确认长期偏好已接纳", ErrPreferenceOutcomeUnknown)
 	}
+	writeAhead.CandidateRevision = decisionResult.Candidate.Candidate.Revision
+	writeAhead.StableCode = "preference_saved"
+	writeAhead.Outcome = PreferenceOutcomeCompleted
+	if err := s.persistPreferenceWriteAhead(ctx, writeAhead, true); err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"submitted": true, "saved": true, "candidate_id": decisionResult.Candidate.Candidate.ID,
 		"status": decisionResult.Candidate.Candidate.Status, "replayed": result.Replayed || decisionResult.Replayed,
 	}, nil
+}
+
+func stablePreferenceCode(value, fallback string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 128 {
+		return fallback
+	}
+	for _, current := range value {
+		if current != '_' && current != '-' && (current < 'a' || current > 'z') && (current < '0' || current > '9') {
+			return fallback
+		}
+	}
+	return value
 }
 
 func preferenceSaveFailure(code string) error {
@@ -751,7 +1019,7 @@ func (s *Session) ensurePreferenceRejectOperationID() error {
 	return nil
 }
 
-func (s *Session) rejectPendingPreferenceCandidate(ctx context.Context) (string, error) {
+func (s *Session) rejectPendingPreferenceCandidate(ctx context.Context, writeAhead PreferenceWriteAhead) (string, error) {
 	if err := s.ensurePreferenceRejectOperationID(); err != nil {
 		return "", err
 	}
@@ -762,6 +1030,14 @@ func (s *Session) rejectPendingPreferenceCandidate(ctx context.Context) (string,
 	rejectOperationID := s.pendingRejectOperationID
 	s.appendMu.Unlock()
 
+	writeAhead.RejectOperationID = rejectOperationID
+	writeAhead.CandidateID = candidateID
+	writeAhead.CandidateRevision = candidateRevision
+	writeAhead.Stage = PreferenceStageReject
+	writeAhead.StableCode = failureCode
+	if err := s.persistPreferenceWriteAhead(ctx, writeAhead, true); err != nil {
+		return "", err
+	}
 	result, err := s.server.DecideMemoryCandidate(ctx, candidateID, api.MemoryCandidateDecisionRequest{
 		OperationID: rejectOperationID, PayloadSchemaVersion: 1, ExpectedRevision: candidateRevision,
 		Decision: "reject", Reason: "compensate_failed_preference_admission",
@@ -775,6 +1051,11 @@ func (s *Session) rejectPendingPreferenceCandidate(ctx context.Context) (string,
 	if result.Candidate == nil || result.Candidate.Candidate.ID != candidateID ||
 		result.Candidate.Candidate.Status != "rejected" || result.Candidate.Candidate.Revision <= candidateRevision {
 		return "", fmt.Errorf("%w，服务端未确认长期偏好候选已拒绝", ErrPreferenceOutcomeUnknown)
+	}
+	writeAhead.CandidateRevision = result.Candidate.Candidate.Revision
+	writeAhead.Outcome = PreferenceOutcomeRejected
+	if err := s.persistPreferenceWriteAhead(ctx, writeAhead, true); err != nil {
+		return "", err
 	}
 	return failureCode, nil
 }
@@ -984,9 +1265,11 @@ func (s *Session) appendUncapturedToolResult(tool, callID string, value any) err
 }
 
 const (
-	invalidatedToolResultJSON           = `{"invalidated":true,"reason":"server_content_invalidated"}`
-	staleServerGenerationToolResultJSON = `{"invalidated":true,"reason":"stale_server_generation"}`
-	invalidatedAssistantText            = "早期服务端派生内容已失效，需要重新读取。"
+	invalidatedToolResultJSON                = `{"invalidated":true,"reason":"server_content_invalidated"}`
+	privacyRevalidationPendingToolResultJSON = `{"code":"session_privacy_revalidation_pending","invalidated":true,"reason":"session_privacy_revalidation_pending"}`
+	staleServerGenerationToolResultJSON      = `{"invalidated":true,"reason":"stale_server_generation"}`
+	invalidatedAssistantText                 = "早期服务端派生内容已失效，需要重新读取。"
+	privacyRevalidationPendingAssistantText  = "历史服务端证据正在等待隐私代际重新验证，暂不可用。"
 )
 
 func toolResultCode(value any) string {
@@ -1079,10 +1362,18 @@ func (s *Session) incomingServerGenerationStaleLocked(reference *ServerReference
 }
 
 func (s *Session) replaceInvalidatedToolResultsLocked(invalidation serverInvalidation) {
+	s.replaceToolResultsLocked(invalidation, invalidatedToolResultJSON, invalidatedAssistantText)
+}
+
+func (s *Session) replaceQuarantinedToolResultsLocked(invalidation serverInvalidation) {
+	s.replaceToolResultsLocked(invalidation, privacyRevalidationPendingToolResultJSON, privacyRevalidationPendingAssistantText)
+}
+
+func (s *Session) replaceToolResultsLocked(invalidation serverInvalidation, toolResultPlaceholder, assistantPlaceholder string) {
 	invalidatedCalls := make(map[string]struct{}, len(invalidation.ToolCallIDs))
 	for _, callID := range invalidation.ToolCallIDs {
 		invalidatedCalls[callID] = struct{}{}
-		s.toolHistory[callID] = invalidatedToolResultJSON
+		s.toolHistory[callID] = toolResultPlaceholder
 	}
 	invalidatedTurns := make(map[string]struct{}, len(invalidation.TurnIDs))
 	for _, turnID := range invalidation.TurnIDs {
@@ -1092,13 +1383,13 @@ func (s *Session) replaceInvalidatedToolResultsLocked(invalidation serverInvalid
 		message := &s.messages[index]
 		if message.Role == "tool" {
 			if _, affected := invalidatedCalls[message.ToolCallID]; affected {
-				message.Content = invalidatedToolResultJSON
+				message.Content = toolResultPlaceholder
 			}
 			continue
 		}
 		if message.Role == "assistant" && message.Content != "" && index < len(s.messageTurnIDs) {
 			if _, affected := invalidatedTurns[s.messageTurnIDs[index]]; affected {
-				message.Content = invalidatedAssistantText
+				message.Content = assistantPlaceholder
 			}
 		}
 	}

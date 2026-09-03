@@ -31,13 +31,6 @@ func ensureDirectory(path string, private bool) error {
 	return nil
 }
 
-func checkPrivateFile(info os.FileInfo) error {
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("secure file permissions are too broad: %04o", info.Mode().Perm())
-	}
-	return nil
-}
-
 func OpenRoot(path string) (*Root, error) {
 	root, err := openRoot(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -113,9 +106,61 @@ func (r *Root) ReadDir(relative string, limit int) ([]DirEntry, int, bool, error
 			}
 			return nil, skipped, false, fmt.Errorf("inspect secure directory entry: %w", classifyUnixOpenError(err))
 		}
-		entries = append(entries, DirEntry{Name: name, Type: unixEntryType(stat.Mode)})
+		entries = append(entries, DirEntry{Name: name, Type: unixEntryType(uint32(stat.Mode))})
 	}
 	return entries, skipped, complete, nil
+}
+
+// Delete removes a root-confined regular file without following links. Missing
+// files are treated as already deleted.
+func (r *Root) Delete(relative string) error {
+	if r == nil || r.file == nil {
+		return errors.New("secure root is closed")
+	}
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return err
+	}
+	return deleteWithinRoot(r, components)
+}
+
+func deleteWithinRoot(root *Root, components []string) error {
+	parent, _, err := openPublishParentWithinRoot(root, components[:len(components)-1], false)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return classifyUnixOpenError(err)
+	}
+	defer parent.Close()
+	target := components[len(components)-1]
+	var stat unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), target, &stat, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return classifyUnixOpenError(err)
+	}
+	switch uint32(stat.Mode) & unix.S_IFMT {
+	case unix.S_IFLNK:
+		return ErrLink
+	case unix.S_IFREG:
+	default:
+		return ErrNotRegular
+	}
+	if err := verifyUnixPublishParentWithinRoot(int(root.file.Fd()), int(parent.Fd()), 64); err != nil {
+		return err
+	}
+	if err := unix.Unlinkat(int(parent.Fd()), target, 0); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return classifyUnixOpenError(err)
+	}
+	if err := syncDirectoryHandle(int(parent.Fd())); err != nil {
+		return fmt.Errorf("sync secure directory after delete: %w", err)
+	}
+	return nil
 }
 
 func openRoot(path string) (*Root, error) {

@@ -281,7 +281,7 @@ func TestTurnStreamCarriesTerminalWorkspaceActivityAcrossEscCancellation(t *test
 	}
 }
 
-func TestAgentUIWorkspaceFooterAtMinimumWidthKeepsModeAndSanitizedWorkspace(t *testing.T) {
+func TestAgentUIFooterAtMinimumWidthPrioritizesStatusModelAndSafeHints(t *testing.T) {
 	conversation := &fakeConversation{workspaceStatus: agentloop.WorkspaceStatus{
 		Available: true, Label: "/home/private/project-with-a-very-long-workspace-label",
 	}}
@@ -291,15 +291,15 @@ func TestAgentUIWorkspaceFooterAtMinimumWidthKeepsModeAndSanitizedWorkspace(t *t
 	for _, mode := range []agentloop.FileAuthorizationMode{agentloop.FileAuthorizationConfirm, agentloop.FileAuthorizationYOLO} {
 		conversation.fileMode = mode
 		footer := value.renderFooterStatus(value.viewport.Width)
-		wantMode := "文件 确认"
-		if mode == agentloop.FileAuthorizationYOLO {
-			wantMode = "文件 YOLO"
-		}
-		if lipgloss.Width(footer) > value.viewport.Width || !strings.Contains(footer, wantMode) || !strings.Contains(footer, "工作区") || strings.Contains(footer, "/home/") {
+		if lipgloss.Width(footer) > value.viewport.Width || !strings.Contains(footer, "就绪") || !strings.Contains(footer, "模型") || strings.Contains(footer, "/home/") {
 			t.Fatalf("mode=%q width=%d limit=%d footer=%q", mode, lipgloss.Width(footer), value.viewport.Width, footer)
 		}
 	}
-	for _, line := range strings.Split(value.View(), "\n") {
+	view := value.View()
+	if !strings.Contains(view, "Enter") || !strings.Contains(view, "Esc") {
+		t.Fatalf("minimum-width send/exit hints missing: %s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
 		if lipgloss.Width(line) > minimumWidth || strings.Contains(line, "/home/private") {
 			t.Fatalf("minimum-width line width=%d line=%q", lipgloss.Width(line), line)
 		}

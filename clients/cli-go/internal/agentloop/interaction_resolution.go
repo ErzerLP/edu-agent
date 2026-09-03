@@ -62,12 +62,18 @@ func (s *Session) ResolvePreference(ctx context.Context, resolution PreferenceRe
 				s.releasePendingResolution()
 				return Result{}, errors.New("无法生成独立的偏好确认操作ID")
 			}
+			rejectOperationID, rejectErr := s.options.NewUUID()
+			if rejectErr != nil || rejectOperationID == "" || rejectOperationID == createOperationID || rejectOperationID == decisionOperationID {
+				s.releasePendingResolution()
+				return Result{}, errors.New("无法生成独立的偏好拒绝操作ID")
+			}
 			s.appendMu.Lock()
 			s.pendingOperationID = createOperationID
 			s.pendingDecisionOperationID = decisionOperationID
+			s.pendingRejectOperationID = rejectOperationID
 			s.appendMu.Unlock()
 		}
-		value, err := s.createPreference(ctx, args, createOperationID, decisionOperationID)
+		value, err := s.createPreference(ctx, call.ID, args, createOperationID, decisionOperationID)
 		if err != nil {
 			status, code := EventFailed, "preference_write_failed"
 			if errors.Is(err, ErrPreferenceOutcomeUnknown) {

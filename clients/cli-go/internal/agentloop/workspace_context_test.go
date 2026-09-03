@@ -1,8 +1,11 @@
 package agentloop
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -201,6 +204,158 @@ func TestWorkspaceUncertainResultInvalidatesPriorVersionWithoutInventingHash(t *
 		}
 		if source.ModelMessage.ToolCallID == "write-unknown" && (source.Freshness != FreshnessWorkspaceSuperseded || source.WorkspaceReference.ContentHash != "") {
 			t.Fatalf("unknown source=%+v", source)
+		}
+	}
+}
+
+func TestRecoveredUnknownFilePublicationInvalidatesOnlyMatchingWorkspaceEvidence(t *testing.T) {
+	session := newWorkspaceTestSession(t, &fakeModel{}, &fakeWorkspaceExecutor{status: workspace.Status{Available: true, Label: "project"}})
+	defer session.Close()
+
+	targetHash := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	otherHash := "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	turnID, err := session.startTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendTurnMessage(turnID, modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{
+		{ID: "read-target", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md"}`}},
+		{ID: "read-other", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"other.md"}`}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendWorkspaceToolResult(workspace.ToolRead, "read-target", workspace.Result{
+		Value:   map[string]any{"path": "notes.md", "content": "old target body", "content_hash": targetHash, "complete": true},
+		Summary: "target", Reference: &workspace.Reference{Path: "notes.md", Kind: "file", ContentHash: targetHash},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendWorkspaceToolResult(workspace.ToolRead, "read-other", workspace.Result{
+		Value:   map[string]any{"path": "other.md", "content": "other path body", "content_hash": otherHash, "complete": true},
+		Summary: "other", Reference: &workspace.Reference{Path: "other.md", Kind: "file", ContentHash: otherHash},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	session.finishSuccessfulTurn()
+
+	serverTurn, err := session.startTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendTurnMessage(serverTurn, modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{
+		ID: "server-call", Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendToolResult("get_learning_progress", "server-call", map[string]any{"session": map[string]any{"session_id": "server-session", "aggregate_version": 3}}); err != nil {
+		t.Fatal(err)
+	}
+	session.finishSuccessfulTurn()
+
+	runtime := session.contextRuntime
+	runtime.mu.Lock()
+	var targetSourceID, otherSourceID, serverSourceID string
+	for _, sourceID := range runtime.ledger.SourceOrder {
+		source := runtime.ledger.Sources[sourceID]
+		switch source.ModelMessage.ToolCallID {
+		case "read-target":
+			targetSourceID = sourceID
+		case "read-other":
+			otherSourceID = sourceID
+		case "server-call":
+			serverSourceID = sourceID
+		}
+	}
+	createdAt := time.Date(2026, 9, 2, 9, 0, 0, 0, time.UTC)
+	targetObservationID, otherObservationID := "obs_0000000000000101", "obs_0000000000000102"
+	targetReflectionID, otherReflectionID := "ref_0000000000000101", "ref_0000000000000102"
+	runtime.ledger.Observations[targetObservationID] = Observation{ID: targetObservationID, Content: "old target observation body", CreatedAt: createdAt, Relevance: RelevanceHigh, Kind: ObservationToolSnapshot, SourceEntryIDs: []string{targetSourceID}, Authority: AuthorityWorkspaceSnapshot, Freshness: FreshnessWorkspaceObserved}
+	runtime.ledger.Observations[otherObservationID] = Observation{ID: otherObservationID, Content: "other observation body", CreatedAt: createdAt, Relevance: RelevanceHigh, Kind: ObservationToolSnapshot, SourceEntryIDs: []string{otherSourceID}, Authority: AuthorityWorkspaceSnapshot, Freshness: FreshnessWorkspaceObserved}
+	runtime.ledger.ObservationOrder = append(runtime.ledger.ObservationOrder, targetObservationID, otherObservationID)
+	runtime.ledger.Reflections[targetReflectionID] = Reflection{ID: targetReflectionID, Content: "old target reflection body", Kind: ReflectionWorkspaceState, Support: []CoverageEdge{{ObservationID: targetObservationID, Fidelity: CoverageExact}}, Authority: AuthorityWorkspaceSnapshot, Freshness: FreshnessWorkspaceObserved, CreatedAt: createdAt}
+	runtime.ledger.Reflections[otherReflectionID] = Reflection{ID: otherReflectionID, Content: "other reflection body", Kind: ReflectionWorkspaceState, Support: []CoverageEdge{{ObservationID: otherObservationID, Fidelity: CoverageExact}}, Authority: AuthorityWorkspaceSnapshot, Freshness: FreshnessWorkspaceObserved, CreatedAt: createdAt}
+	runtime.ledger.ReflectionOrder = append(runtime.ledger.ReflectionOrder, targetReflectionID, otherReflectionID)
+	for _, id := range []string{targetObservationID, otherObservationID, targetReflectionID, otherReflectionID} {
+		runtime.usedIDs[id] = struct{}{}
+	}
+	runtime.mu.Unlock()
+	if targetSourceID == "" || otherSourceID == "" || serverSourceID == "" {
+		t.Fatalf("missing sources target=%q other=%q server=%q", targetSourceID, otherSourceID, serverSourceID)
+	}
+
+	unknown := WorkspaceReference{Path: "notes.md", Kind: "file", InvalidateObserved: true}
+	if err := session.InvalidateWorkspaceEvidence(unknown); err != nil {
+		t.Fatal(err)
+	}
+	if target := session.workspaceReferences["read-target"]; target == nil || target.ContentHash != "" || !target.InvalidateObserved {
+		t.Fatalf("target reference=%+v", target)
+	}
+	if other := session.workspaceReferences["read-other"]; other == nil || other.ContentHash != otherHash || other.InvalidateObserved {
+		t.Fatalf("other reference=%+v", other)
+	}
+	if strings.Contains(session.toolHistory["read-target"], "old target body") || !strings.Contains(session.toolHistory["read-target"], FilePublicationUnknownCode) {
+		t.Fatalf("target history=%s", session.toolHistory["read-target"])
+	}
+	if !strings.Contains(session.toolHistory["read-other"], "other path body") || session.toolReferences["server-call"] == nil {
+		t.Fatalf("unrelated evidence changed: other=%s server=%+v", session.toolHistory["read-other"], session.toolReferences["server-call"])
+	}
+
+	runtime.mu.Lock()
+	targetSource := runtime.ledger.Sources[targetSourceID]
+	otherSource := runtime.ledger.Sources[otherSourceID]
+	serverSource := runtime.ledger.Sources[serverSourceID]
+	targetObservation := runtime.ledger.Observations[targetObservationID]
+	otherObservation := runtime.ledger.Observations[otherObservationID]
+	targetReflection := runtime.ledger.Reflections[targetReflectionID]
+	otherReflection := runtime.ledger.Reflections[otherReflectionID]
+	runtime.mu.Unlock()
+	if targetSource.Freshness != FreshnessWorkspaceSuperseded || targetSource.SourceAvailable || targetSource.RecallText != "" || strings.Contains(targetSource.ModelMessage.Content, "old target body") {
+		t.Fatalf("target source=%+v", targetSource)
+	}
+	if otherSource.Freshness != FreshnessWorkspaceObserved || !otherSource.SourceAvailable || serverSource.ServerReference == nil || serverSource.Freshness != FreshnessHistorical {
+		t.Fatalf("unrelated sources other=%+v server=%+v", otherSource, serverSource)
+	}
+	if targetObservation.Freshness != FreshnessWorkspaceSuperseded || strings.Contains(targetObservation.Content, "old target") ||
+		targetReflection.Freshness != FreshnessWorkspaceSuperseded || strings.Contains(targetReflection.Content, "old target") {
+		t.Fatalf("target derived evidence observation=%+v reflection=%+v", targetObservation, targetReflection)
+	}
+	if otherObservation.Content != "other observation body" || otherObservation.Freshness != FreshnessWorkspaceObserved ||
+		otherReflection.Content != "other reflection body" || otherReflection.Freshness != FreshnessWorkspaceObserved {
+		t.Fatalf("other derived evidence changed observation=%+v reflection=%+v", otherObservation, otherReflection)
+	}
+	for _, memoryID := range []string{targetObservationID, targetReflectionID} {
+		recalled := fmt.Sprint(runtime.recallMemory(memoryID))
+		if strings.Contains(recalled, "old target") || !strings.Contains(recalled, string(FreshnessWorkspaceSuperseded)) || !strings.Contains(recalled, ContextSourceUnavailable) {
+			t.Fatalf("recalled %s=%s", memoryID, recalled)
+		}
+	}
+
+	checkpoint, err := session.ExportCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeSessionCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "old target body") || strings.Contains(string(encoded), "old target observation body") || strings.Contains(string(encoded), "old target reflection body") {
+		t.Fatalf("stale target body remained in checkpoint: %s", encoded)
+	}
+	restored := newWorkspaceTestSession(t, &fakeModel{}, &fakeWorkspaceExecutor{status: workspace.Status{Available: true, Label: "project"}})
+	defer restored.Close()
+	if err := restored.RestoreCheckpoint(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := restored.ExportCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(checkpoint, roundTrip) {
+		t.Fatal("path-scoped invalidation changed across checkpoint round trip")
+	}
+	for _, memoryID := range []string{targetObservationID, targetReflectionID} {
+		if recalled := fmt.Sprint(restored.contextRuntime.recallMemory(memoryID)); strings.Contains(recalled, "old target") {
+			t.Fatalf("restored exact recall leaked stale body: %s", recalled)
 		}
 	}
 }

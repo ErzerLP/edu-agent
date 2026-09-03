@@ -70,6 +70,7 @@ type PublishOptions struct {
 	Permission    os.FileMode
 	ExpectedHash  string
 	ExpectedLimit int64
+	Private       bool
 }
 
 type PublishResult struct {
@@ -80,6 +81,21 @@ type Root struct {
 	file         *os.File
 	path         string
 	resolvedPath string
+}
+
+func (r *Root) Identity() (string, error) {
+	if r == nil || r.file == nil {
+		return "", errors.New("secure root is closed")
+	}
+	info, err := r.file.Stat()
+	if err != nil {
+		return "", fmt.Errorf("inspect secure root: %w", err)
+	}
+	identity, err := snapshotFileIdentityForPlatform(r.file, info)
+	if err != nil {
+		return "", fmt.Errorf("identify secure root: %w", err)
+	}
+	return identity, nil
 }
 
 func (r *Root) Close() error {
@@ -123,7 +139,7 @@ func readOpenFileSnapshot(file *os.File, info os.FileInfo, limit int64, private 
 		return Snapshot{}, ErrNotRegular
 	}
 	if private {
-		if err := checkPrivateFile(info); err != nil {
+		if err := checkPrivateOpenFile(file, info); err != nil {
 			return Snapshot{}, err
 		}
 	}
@@ -207,7 +223,7 @@ func AtomicWrite(path string, data []byte, private bool) error {
 			return errors.New("secure file target is not a regular file")
 		}
 		if private {
-			if err := checkPrivateFile(info); err != nil {
+			if err := CheckPrivateFile(path); err != nil {
 				return err
 			}
 		}
@@ -230,6 +246,11 @@ func AtomicWrite(path string, data []byte, private bool) error {
 	if err := temp.Chmod(0o600); err != nil {
 		return fmt.Errorf("protect secure temporary file: %w", err)
 	}
+	if private {
+		if err := protectPrivateOpenFile(temp, false); err != nil {
+			return fmt.Errorf("protect secure temporary file ACL: %w", err)
+		}
+	}
 	if _, err := temp.Write(data); err != nil {
 		return fmt.Errorf("write secure temporary file: %w", err)
 	}
@@ -243,6 +264,11 @@ func AtomicWrite(path string, data []byte, private bool) error {
 		return fmt.Errorf("publish secure file: %w", err)
 	}
 	published = true
+	if private {
+		if err := CheckPrivateFile(path); err != nil {
+			return fmt.Errorf("verify published secure file ACL: %w", err)
+		}
+	}
 	if err := syncDirectory(dir); err != nil {
 		return fmt.Errorf("sync secure directory: %w", err)
 	}

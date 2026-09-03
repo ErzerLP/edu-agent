@@ -27,7 +27,7 @@ const (
 	windowsTempAttempts    = 8
 )
 
-func ensureDirectory(path string, _ bool) error {
+func ensureDirectory(path string, private bool) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create secure directory: %w", err)
 	}
@@ -38,10 +38,13 @@ func ensureDirectory(path string, _ bool) error {
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errors.New("secure directory is not a directory")
 	}
+	if private {
+		if err := EnsurePrivateDirectory(path); err != nil {
+			return fmt.Errorf("protect secure directory: %w", err)
+		}
+	}
 	return nil
 }
-
-func checkPrivateFile(os.FileInfo) error { return nil }
 
 func OpenRoot(path string) (*Root, error) {
 	root, err := openRoot(path)
@@ -131,6 +134,60 @@ func (r *Root) ReadDir(relative string, limit int) ([]DirEntry, int, bool, error
 		entries = append(entries, DirEntry{Name: entry.Name(), Type: windowsEntryType(info)})
 	}
 	return entries, skipped, complete, nil
+}
+
+// Delete removes a root-confined regular file without following links. Missing
+// files are treated as already deleted.
+func (r *Root) Delete(relative string) error {
+	if r == nil || r.file == nil {
+		return errors.New("secure root is closed")
+	}
+	components, err := relativeComponents(relative)
+	if err != nil {
+		return err
+	}
+	return deleteWithinRoot(r, components)
+}
+
+func deleteWithinRoot(root *Root, components []string) error {
+	if err := validateWindowsRelativeComponents(components); err != nil {
+		return err
+	}
+	parent, _, err := openWindowsPublishParent(root, components[:len(components)-1], false)
+	if isWindowsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return classifyWindowsOpenError(err)
+	}
+	defer parent.Close()
+	target := components[len(components)-1]
+	handle, err := ntCreateWindowsRelative(
+		windows.Handle(parent.Fd()), target,
+		windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.FILE_OPEN,
+		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_OPEN_FOR_BACKUP_INTENT,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		windowsAllShare,
+	)
+	if isWindowsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return classifyWindowsOpenError(err)
+	}
+	file, info, err := windowsFileFromHandle(handle, target)
+	if err != nil {
+		return classifyWindowsOpenError(err)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return ErrNotRegular
+	}
+	if err := deleteWindowsFileHandle(file); err != nil {
+		return classifyWindowsOpenError(err)
+	}
+	return nil
 }
 
 func openRoot(path string) (*Root, error) {
@@ -280,10 +337,14 @@ func openWindowsDirectoryRelative(parent windows.Handle, name string) (*os.File,
 }
 
 func openWindowsFileRelative(parent windows.Handle, name string, share uint32) (*os.File, os.FileInfo, error) {
+	return openWindowsFileRelativeAccess(parent, name, windows.FILE_GENERIC_READ, share)
+}
+
+func openWindowsFileRelativeAccess(parent windows.Handle, name string, access, share uint32) (*os.File, os.FileInfo, error) {
 	handle, err := ntCreateWindowsRelative(
 		parent,
 		name,
-		windows.FILE_GENERIC_READ,
+		access,
 		windows.FILE_OPEN,
 		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_SYNCHRONOUS_IO_NONALERT|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_OPEN_FOR_BACKUP_INTENT,
 		windows.FILE_ATTRIBUTE_NORMAL,
@@ -457,6 +518,12 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 	if err != nil {
 		return result, classifyWindowsOpenError(err)
 	}
+	if options.Private {
+		if err := protectPrivateOpenFile(temp, false); err != nil {
+			_ = deleteWindowsFileHandle(temp)
+			return result, err
+		}
+	}
 	cleanupTemp := true
 	defer func() {
 		if temp == nil {
@@ -513,6 +580,7 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 			temp,
 			options.ExpectedHash,
 			options.ExpectedLimit,
+			options.Private,
 		); err != nil {
 			return result, err
 		}
@@ -554,8 +622,12 @@ var snapshotFileIdentityForPlatform = func(file *os.File, _ os.FileInfo) (string
 	return fmt.Sprintf("windows:%x:%x", info.VolumeSerialNumber, index), nil
 }
 
-func revalidateWindowsPublishTargetAndCopyDACL(parent windows.Handle, target string, temp *os.File, expectedHash string, limit int64) error {
-	file, info, err := openWindowsFileRelative(parent, target, windowsPinnedReadShare)
+func revalidateWindowsPublishTargetAndCopyDACL(parent windows.Handle, target string, temp *os.File, expectedHash string, limit int64, private bool) error {
+	access := uint32(windows.FILE_GENERIC_READ)
+	if private {
+		access |= windows.READ_CONTROL | windows.WRITE_DAC
+	}
+	file, info, err := openWindowsFileRelativeAccess(parent, target, access, windowsPinnedReadShare)
 	if errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
@@ -577,40 +649,49 @@ func revalidateWindowsPublishTargetAndCopyDACL(parent windows.Handle, target str
 		return ErrChanged
 	}
 
-	securityDescriptor, err := windows.GetSecurityInfo(
-		windows.Handle(file.Fd()),
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION,
-	)
-	if err != nil {
-		return classifyWindowsOpenError(err)
-	}
-	dacl, _, err := securityDescriptor.DACL()
-	if err != nil {
-		return classifyWindowsOpenError(err)
-	}
-	control, _, err := securityDescriptor.Control()
-	if err != nil {
-		return classifyWindowsOpenError(err)
-	}
-	securityInformation := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION)
-	if control&windows.SE_DACL_PROTECTED != 0 {
-		securityInformation |= windows.PROTECTED_DACL_SECURITY_INFORMATION
+	if private {
+		if err := ensurePrivateWindowsHandle(windows.Handle(file.Fd()), false); err != nil {
+			return err
+		}
+		if err := protectPrivateOpenFile(temp, false); err != nil {
+			return err
+		}
 	} else {
-		securityInformation |= windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+		securityDescriptor, err := windows.GetSecurityInfo(
+			windows.Handle(file.Fd()),
+			windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION,
+		)
+		if err != nil {
+			return classifyWindowsOpenError(err)
+		}
+		dacl, _, err := securityDescriptor.DACL()
+		if err != nil {
+			return classifyWindowsOpenError(err)
+		}
+		control, _, err := securityDescriptor.Control()
+		if err != nil {
+			return classifyWindowsOpenError(err)
+		}
+		securityInformation := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION)
+		if control&windows.SE_DACL_PROTECTED != 0 {
+			securityInformation |= windows.PROTECTED_DACL_SECURITY_INFORMATION
+		} else {
+			securityInformation |= windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+		}
+		if err := windows.SetSecurityInfo(
+			windows.Handle(temp.Fd()),
+			windows.SE_FILE_OBJECT,
+			securityInformation,
+			nil,
+			nil,
+			dacl,
+			nil,
+		); err != nil {
+			return classifyWindowsOpenError(err)
+		}
+		runtime.KeepAlive(securityDescriptor)
 	}
-	if err := windows.SetSecurityInfo(
-		windows.Handle(temp.Fd()),
-		windows.SE_FILE_OBJECT,
-		securityInformation,
-		nil,
-		nil,
-		dacl,
-		nil,
-	); err != nil {
-		return classifyWindowsOpenError(err)
-	}
-	runtime.KeepAlive(securityDescriptor)
 	if err := temp.Sync(); err != nil {
 		return err
 	}

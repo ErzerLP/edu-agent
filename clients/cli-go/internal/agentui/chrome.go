@@ -266,6 +266,12 @@ func (m model) renderFooterStatus(width int) string {
 		modelName = "未命名模型"
 	}
 	modelPart := "模型 " + modelName
+	titlePart := ""
+	if provider, ok := m.session.(sessionTitleProvider); ok {
+		if title := strings.TrimSpace(safeSingleLineTerminalText(provider.SessionTitle())); title != "" {
+			titlePart = "Session " + truncateDisplayWidth(title, 28)
+		}
+	}
 	newPart := ""
 	if m.hasNewContent {
 		newPart = newMessageStyle.Render("↓ 有新消息")
@@ -280,12 +286,20 @@ func (m model) renderFooterStatus(width int) string {
 		reasoningPart = fmt.Sprintf("推理 %s → 下一请求 %s", m.activeEffort, effort)
 	}
 	workspacePart := mutedStyle.Render(m.workspaceSummary())
+	persistencePart := mutedStyle.Render(m.persistenceSummary())
 	fileModePart := mutedStyle.Render(m.fileModeSummary())
 	candidates := [][]string{
-		{newPart, m.renderStatus(), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), fileModePart, workspacePart, mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(reasoningPart)},
+		{newPart, m.renderStatus(), persistencePart, mutedStyle.Render(titlePart), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{newPart, m.renderStatusText(m.compactStatus()), persistencePart, mutedStyle.Render(titlePart), fileModePart, workspacePart, mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
 	}
+	if strings.TrimSpace(titlePart) != "" {
+		candidates = append(candidates, []string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(titlePart), mutedStyle.Render(modelPart)})
+	}
+	candidates = append(candidates,
+		[]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), fileModePart, mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(modelPart)},
+		[]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(modelPart)},
+		[]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(modelPart)},
+	)
 	for _, parts := range candidates {
 		line := joinFooterParts(parts)
 		if lipgloss.Width(line) <= width {
@@ -293,14 +307,51 @@ func (m model) renderFooterStatus(width int) string {
 		}
 	}
 
-	if m.workspaceStatus.Available {
-		return m.renderRequiredWorkspaceFooter(width)
-	}
-	fallback := joinFooterParts([]string{newPart, m.renderStatusText(m.compactStatus()), workspacePart})
+	fallback := joinFooterParts([]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render("模型 " + truncateDisplayWidth(modelName, 12))})
 	if lipgloss.Width(fallback) <= width {
 		return fallback
 	}
-	return mutedStyle.Render(truncateDisplayWidth(strings.Join(compactNonEmpty([]string{m.compactStatus(), m.workspaceSummary()}), " · "), width))
+	return mutedStyle.Render(truncateDisplayWidth(strings.Join(compactNonEmpty([]string{m.compactStatus(), m.persistenceCompactSummary(), "模型 " + modelName}), " · "), width))
+}
+
+func (m model) persistenceSummary() string {
+	provider, ok := m.session.(sessionPersistenceProvider)
+	if !ok {
+		return ""
+	}
+	state, _ := provider.SessionPersistenceStatus()
+	switch state {
+	case "saved":
+		return "会话 已加密保存"
+	case "saving":
+		return "会话 正在保存"
+	case "failed":
+		return "会话 保存失败"
+	case "unsaved":
+		return "会话 未保存"
+	default:
+		return ""
+	}
+}
+
+func (m model) persistenceCompactSummary() string {
+	provider, ok := m.session.(sessionPersistenceProvider)
+	if !ok {
+		return ""
+	}
+	state, _ := provider.SessionPersistenceStatus()
+	switch state {
+	case "saved":
+		return "存 已保存"
+	case "saving":
+		return "存 保存中"
+	case "failed":
+		return "存 失败"
+	case "unsaved":
+		return "存 未保存"
+	default:
+		return ""
+	}
 }
 
 func (m model) fileModeSummary() string {
@@ -318,25 +369,6 @@ func (m model) workspaceSummary() string {
 		return "工作区不可用"
 	}
 	return "工作区 " + truncateDisplayWidth(safeWorkspaceLabel(m.workspaceStatus.Label), 24)
-}
-
-func (m model) renderRequiredWorkspaceFooter(width int) string {
-	if width <= 0 {
-		return ""
-	}
-	mode := m.fileModeSummary()
-	label := safeWorkspaceLabel(m.workspaceStatus.Label)
-	separator := footerSeparatorStyle.Render(" · ")
-	workspacePrefix := "工作区 "
-	available := width - lipgloss.Width(mode) - lipgloss.Width(separator) - lipgloss.Width(workspacePrefix)
-	if available < 1 {
-		return mutedStyle.Render(truncateDisplayWidth(mode+" · "+workspacePrefix+label, width))
-	}
-	line := mutedStyle.Render(mode) + separator + mutedStyle.Render(workspacePrefix+truncateDisplayWidth(label, available))
-	if lipgloss.Width(line) <= width {
-		return line
-	}
-	return mutedStyle.Render(truncateDisplayWidth(mode+" · "+workspacePrefix+label, width))
 }
 
 func safeWorkspaceLabel(value string) string {
@@ -404,9 +436,17 @@ func (m model) footerHintVariants() [][]footerHint {
 			{{key: "Ctrl+C", action: "退出整个 Agent"}},
 		}
 	default:
+		hints := []footerHint{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}}
+		if m.manager != nil {
+			hints = append(hints, footerHint{key: "F2", action: "Session"})
+			if len(m.manager.UnknownOutcomes()) > 0 {
+				hints = append(hints, footerHint{key: "Ctrl+P", action: "核对未知结果"})
+			}
+		}
+		hints = append(hints, footerHint{key: "F3", action: "推理强度"}, footerHint{key: "F4", action: "文件模式"}, footerHint{key: "Ctrl+O", action: "活动详情"}, footerHint{key: "Esc", action: "退出"})
 		return [][]footerHint{
-			{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}, {key: "Esc", action: "退出"}},
-			{{key: "Enter", action: "发送"}, {key: "F3", action: "推理"}, {key: "F4", action: "文件模式"}, {key: "Esc", action: "退出"}},
+			hints,
+			{{key: "Enter", action: "发送"}, {key: "F2", action: "Session"}, {key: "Esc", action: "退出"}},
 		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentui"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
@@ -56,6 +57,10 @@ type ModelSecretStore interface {
 
 type AgentUIRunner interface {
 	Run(context.Context, agentui.Conversation, string) error
+}
+
+type AgentSessionPickerRunner interface {
+	Pick(context.Context, agentui.SessionPickerSource, bool) (agentui.PickerChoice, error)
 }
 
 type Terminal interface {
@@ -119,23 +124,25 @@ type dashboardModelKeySource interface {
 }
 
 type App struct {
-	Config       ConfigStore
-	Credentials  CredentialStore
-	ModelSecrets ModelSecretStore
-	Terminal     Terminal
-	Dashboard    DashboardRunner
-	AgentUI      AgentUIRunner
-	InputIsTTY   func() bool
-	OutputIsTTY  func() bool
-	Out          io.Writer
-	Err          io.Writer
-	Getenv       func(string) string
-	NewClient    func(string, string, time.Duration) APIClient
-	NewModel     func(config.AgentConfig, string) (agentloop.Model, error)
-	NewUUID      func() (string, error)
-	OfflineRoot  func() (string, error)
-	OfflineKeys  OfflineKeyStore
-	Build        BuildInfo
+	Config              ConfigStore
+	Credentials         CredentialStore
+	ModelSecrets        ModelSecretStore
+	Terminal            Terminal
+	Dashboard           DashboardRunner
+	AgentUI             AgentUIRunner
+	InputIsTTY          func() bool
+	OutputIsTTY         func() bool
+	Out                 io.Writer
+	Err                 io.Writer
+	Getenv              func(string) string
+	NewClient           func(string, string, time.Duration) APIClient
+	NewModel            func(config.AgentConfig, string) (agentloop.Model, error)
+	NewUUID             func() (string, error)
+	OfflineRoot         func() (string, error)
+	OfflineKeys         OfflineKeyStore
+	AgentSessionRoot    func() (string, error)
+	AgentSessionSecrets agentsession.SecretBackend
+	Build               BuildInfo
 
 	dashboardMode bool
 }
@@ -155,7 +162,8 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), ModelSecrets: modelSecrets, Terminal: terminalIO,
 		Dashboard: &dashboard.Runner{In: in, Out: out}, AgentUI: defaultAgentUIRunner{in: in, out: out},
 		InputIsTTY: terminalIO.InputIsTTY, OutputIsTTY: terminalIO.OutputIsTTY,
-		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{}, Build: build,
+		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{},
+		AgentSessionRoot: agentsession.DefaultRoot, Build: build,
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
 			client := api.NewClient(serverURL, token, timeout, http.DefaultClient)
 			return client
@@ -299,6 +307,7 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		snapshot.AgentContextWindow = value.Agent.ContextWindow
 		snapshot.AgentContextCompaction = safeText(value.Agent.ContextCompaction)
 		snapshot.AgentReasoningEffort = safeText(value.Agent.ReasoningEffort)
+		snapshot.AgentSessionHistory = safeText(value.Agent.SessionHistory)
 		snapshot.AgentTimeout = safeText(value.Agent.Timeout)
 		snapshot.AgentMaxToolRounds = value.Agent.MaxToolRounds
 	}

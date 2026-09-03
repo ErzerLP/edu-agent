@@ -110,6 +110,8 @@ type ContextRuntime struct {
 	hotTurns              map[string]struct{}
 	closeWait             time.Duration
 	updates               chan ContextEvent
+	subscribers           map[uint64]chan ContextEvent
+	nextSubscriber        uint64
 	status                ContextStatus
 	degradedTurns         map[string]struct{}
 }
@@ -137,6 +139,7 @@ func newContextRuntime(model Model, options Options, estimator TokenEstimator) *
 		hotTurns:            make(map[string]struct{}),
 		closeWait:           defaultContextCloseWait,
 		updates:             make(chan ContextEvent, 32),
+		subscribers:         make(map[uint64]chan ContextEvent),
 		status: ContextStatus{
 			Estimated: true, ContextWindow: options.ContextWindow, Mode: options.ContextCompaction, Phase: "idle",
 		},
@@ -1188,6 +1191,10 @@ func (r *ContextRuntime) beginClose() {
 	if !r.closed {
 		r.closed = true
 		r.cancel()
+		for id, subscriber := range r.subscribers {
+			close(subscriber)
+			delete(r.subscribers, id)
+		}
 	}
 	r.mu.Unlock()
 }
@@ -1223,6 +1230,30 @@ func (r *ContextRuntime) ContextStatus() ContextStatus {
 }
 
 func (r *ContextRuntime) ContextUpdates() <-chan ContextEvent { return r.updates }
+
+func (r *ContextRuntime) SubscribeContextUpdates() (<-chan ContextEvent, func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stream := make(chan ContextEvent, 32)
+	if r.closed {
+		close(stream)
+		return stream, func() {}
+	}
+	r.nextSubscriber++
+	id := r.nextSubscriber
+	r.subscribers[id] = stream
+	var once sync.Once
+	return stream, func() {
+		once.Do(func() {
+			r.mu.Lock()
+			if current, ok := r.subscribers[id]; ok {
+				delete(r.subscribers, id)
+				close(current)
+			}
+			r.mu.Unlock()
+		})
+	}
+}
 
 func (r *ContextRuntime) UpdatePlanStatus(plan ContextPlan, currentTurnID string) {
 	r.mu.Lock()
@@ -1345,26 +1376,30 @@ func (r *ContextRuntime) publishLocked(event ContextEvent) {
 	event.ReflectionCount = r.status.ReflectionCount
 	event.MemoryItemCount = r.status.MemoryItemCount
 	important := event.Kind == ContextEventCompacted || event.Kind == ContextEventDegraded || event.Kind == ContextEventSourceUnavailable
-	if !important && len(r.updates) >= cap(r.updates)-4 {
+	publishContextEvent(r.updates, event, important)
+	for _, subscriber := range r.subscribers {
+		publishContextEvent(subscriber, event, important)
+	}
+}
+
+func publishContextEvent(stream chan ContextEvent, event ContextEvent, important bool) {
+	if !important && len(stream) >= cap(stream)-4 {
 		return
 	}
 	select {
-	case r.updates <- event:
+	case stream <- event:
 		return
 	default:
 	}
 	if !important {
 		return
 	}
-	// Routine status updates reserve capacity above, so reaching this path means
-	// the queue is already dominated by important events. Evict one oldest item
-	// rather than block a model or consolidation goroutine.
 	select {
-	case <-r.updates:
+	case <-stream:
 	default:
 	}
 	select {
-	case r.updates <- event:
+	case stream <- event:
 	default:
 	}
 }

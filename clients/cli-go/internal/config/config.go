@@ -28,6 +28,7 @@ const (
 	DefaultAgentMaxToolRounds     = 8
 	DefaultAgentContextCompaction = "auto"
 	DefaultAgentReasoningEffort   = "auto"
+	DefaultAgentSessionHistory    = "auto"
 )
 
 var (
@@ -55,6 +56,7 @@ type AgentConfig struct {
 	MaxToolRounds     int    `json:"max_tool_rounds"`
 	ContextCompaction string `json:"context_compaction,omitempty"`
 	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
+	SessionHistory    string `json:"session_history,omitempty"`
 }
 
 func (c AgentConfig) APIKeyOptional() bool {
@@ -235,6 +237,7 @@ func DefaultAgentConfig(provider string) AgentConfig {
 		Provider: provider, ContextWindow: DefaultAgentContextWindow,
 		Timeout: DefaultAgentTimeout.String(), MaxToolRounds: DefaultAgentMaxToolRounds,
 		ContextCompaction: DefaultAgentContextCompaction, ReasoningEffort: DefaultAgentReasoningEffort,
+		SessionHistory: DefaultAgentSessionHistory,
 	}
 	switch provider {
 	case "openai":
@@ -300,6 +303,13 @@ func (c *AgentConfig) Validate() error {
 	case "auto", "none", "minimal", "low", "medium", "high", "xhigh", "max":
 	default:
 		return errors.New("reasoning effort must be auto, none, minimal, low, medium, high, xhigh, or max")
+	}
+	c.SessionHistory = strings.ToLower(strings.TrimSpace(c.SessionHistory))
+	if c.SessionHistory == "" {
+		c.SessionHistory = DefaultAgentSessionHistory
+	}
+	if c.SessionHistory != "auto" && c.SessionHistory != "off" {
+		return errors.New("session history must be auto or off")
 	}
 	return nil
 }

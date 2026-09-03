@@ -42,6 +42,81 @@ type ContextIDSource func(string) (string, error)
 type WorkspaceStatus = workspace.Status
 type WorkspaceReference = workspace.Reference
 
+type DurabilitySink interface {
+	BeginTurn(context.Context, DirtyIntent) error
+	BeforePreferenceWrite(context.Context, PreferenceWriteAhead) error
+	BeforeFilePublication(context.Context, FileWriteAhead) error
+}
+
+type DirtyIntent struct {
+	TurnSequence      uint64
+	OperationClass    string
+	MayHaveSideEffect bool
+}
+
+type SessionSwitchState struct {
+	ActiveTurn          bool
+	PendingQuestion     bool
+	PendingPreference   bool
+	PendingFileMutation bool
+	Resolving           bool
+	Closed              bool
+}
+
+type PreferenceStage string
+
+const (
+	PreferenceStageCreate PreferenceStage = "create"
+	PreferenceStageAdmit  PreferenceStage = "admit"
+	PreferenceStageReject PreferenceStage = "reject"
+)
+
+type PreferenceOutcome string
+
+const (
+	PreferenceOutcomeUnknown   PreferenceOutcome = "unknown"
+	PreferenceOutcomeCompleted PreferenceOutcome = "completed"
+	PreferenceOutcomeRejected  PreferenceOutcome = "rejected"
+)
+
+type PreferencePayload struct {
+	Content     string
+	Reason      string
+	Category    string
+	Sensitivity string
+	Stability   string
+	ValidUntil  time.Time
+}
+
+type PreferenceWriteAhead struct {
+	ToolCallID        string
+	CreateOperationID string
+	AdmitOperationID  string
+	RejectOperationID string
+	Payload           PreferencePayload
+	CandidateID       string
+	CandidateRevision int64
+	Stage             PreferenceStage
+	StableCode        string
+	Outcome           PreferenceOutcome
+}
+
+const (
+	FilePublicationCompletedCode = "workspace_write_completed"
+	FilePublicationUnknownCode   = "workspace_write_outcome_unknown"
+)
+
+type FileWriteAhead struct {
+	ToolCallID         string
+	Operation          string
+	Path               string
+	Kind               string
+	ContentHash        string
+	InvalidateObserved bool
+	StableCode         string
+	PublicationOutcome workspace.PublicationOutcome
+}
+
 type Options struct {
 	ContextWindow     int
 	MaxToolRounds     int
@@ -54,6 +129,7 @@ type Options struct {
 	ContextIDSource   ContextIDSource
 	Workspace         workspace.Executor
 	WorkspaceStatus   WorkspaceStatus
+	Durability        DurabilitySink
 }
 
 type EventStatus string

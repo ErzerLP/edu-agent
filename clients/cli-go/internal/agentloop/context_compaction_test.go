@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -725,6 +726,175 @@ func TestContentRedactedInvalidatesAllServerBodiesAndDerivedMemory(t *testing.T)
 	}
 }
 
+func TestPrivacyQuarantineUsesDedicatedPlaceholderAcrossCheckpointRestore(t *testing.T) {
+	const (
+		serverBody    = "PRIVACY_REVALIDATION_SERVER_SECRET"
+		assistantBody = "PRIVACY_REVALIDATION_ASSISTANT_SECRET"
+		callID        = "privacy-call"
+		privacyCode   = "session_privacy_revalidation_pending"
+	)
+	session := newTestSession(t, &singleResponseModel{}, &fakeServer{})
+	defer session.Close()
+	turnID, err := session.startTurn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendCapturedMessage(turnID,
+		modelclient.Message{Role: "user", Content: "读取隐私保护的历史证据"},
+		"读取隐私保护的历史证据", SourceUser, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendTurnMessage(turnID, modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{
+		ID: callID, Type: "function", Function: modelclient.ToolFunction{Name: "search_knowledge", Arguments: `{"query":"历史证据"}`},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendToolResult("search_knowledge", callID, map[string]any{
+		"knowledge_revision_id": "knowledge-revision-1", "generation": 4,
+		"hits": []any{map[string]any{"canonical_slice": serverBody}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.appendCapturedMessage(turnID,
+		modelclient.Message{Role: "assistant", Content: assistantBody}, assistantBody,
+		SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
+		t.Fatal(err)
+	}
+	session.finishSuccessfulTurn()
+
+	session.QuarantineHistoricalServerEvidence()
+	if session.toolHistory[callID] != privacyRevalidationPendingToolResultJSON {
+		t.Fatalf("quarantined history=%q, want %q", session.toolHistory[callID], privacyRevalidationPendingToolResultJSON)
+	}
+	var placeholder struct {
+		Code        string `json:"code"`
+		Invalidated bool   `json:"invalidated"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(session.toolHistory[callID]), &placeholder); err != nil {
+		t.Fatalf("quarantine placeholder is not JSON: %v", err)
+	}
+	if placeholder.Code != privacyCode || placeholder.Reason != privacyCode || !placeholder.Invalidated {
+		t.Fatalf("quarantine placeholder=%+v", placeholder)
+	}
+	if len(session.toolHistory[callID]) > maxToolOutputBytes {
+		t.Fatalf("quarantine placeholder exceeds bound: %d", len(session.toolHistory[callID]))
+	}
+
+	foundCall, foundTool, foundAssistant := false, false, false
+	for _, message := range session.messages {
+		if strings.Contains(message.Content, serverBody) || strings.Contains(message.Content, assistantBody) {
+			t.Fatalf("quarantine retained secret model content: %+v", message)
+		}
+		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
+			if message.ToolCalls[0].ID != callID || message.ToolCalls[0].Function.Arguments != `{}` {
+				t.Fatalf("tool call group changed: %+v", message)
+			}
+			foundCall = true
+		}
+		if message.Role == "tool" && message.ToolCallID == callID {
+			if message.Content != privacyRevalidationPendingToolResultJSON {
+				t.Fatalf("model tool result=%q, want %q", message.Content, privacyRevalidationPendingToolResultJSON)
+			}
+			foundTool = true
+		}
+		if message.Role == "assistant" && message.Content == privacyRevalidationPendingAssistantText {
+			foundAssistant = true
+		}
+	}
+	if !foundCall || !foundTool || !foundAssistant {
+		t.Fatalf("quarantine model messages missing call=%t tool=%t assistant=%t: %+v", foundCall, foundTool, foundAssistant, session.messages)
+	}
+	if session.toolReferences[callID] == nil {
+		t.Fatal("quarantine removed the server reference")
+	}
+
+	session.contextRuntime.mu.Lock()
+	for _, sourceID := range session.turns[turnID].SourceIDs {
+		source := session.contextRuntime.ledger.Sources[sourceID]
+		if source.Kind == SourceUser {
+			continue
+		}
+		if source.Freshness != FreshnessInvalidated || source.SourceAvailable || source.RecallText != "" || source.HasModelMessage ||
+			source.ModelMessage.Content != "" {
+			session.contextRuntime.mu.Unlock()
+			t.Fatalf("quarantined source retained body or freshness: %+v", source)
+		}
+	}
+	session.contextRuntime.mu.Unlock()
+
+	checkpoint, err := session.ExportCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeSessionCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), serverBody) || strings.Contains(string(encoded), assistantBody) {
+		t.Fatalf("checkpoint retained quarantined body: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), privacyCode) || !strings.Contains(string(encoded), privacyRevalidationPendingAssistantText) {
+		t.Fatalf("checkpoint omitted quarantine placeholders: %s", encoded)
+	}
+	decoded, err := DecodeSessionCheckpoint(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodedToolHistory := make(map[string]string, len(decoded.ToolHistory))
+	for _, entry := range decoded.ToolHistory {
+		decodedToolHistory[entry.Key] = entry.Value
+	}
+	if decodedToolHistory[callID] != privacyRevalidationPendingToolResultJSON {
+		t.Fatalf("checkpoint history=%q, want %q", decodedToolHistory[callID], privacyRevalidationPendingToolResultJSON)
+	}
+	decodedToolResult, decodedAssistant := false, false
+	for _, message := range decoded.Messages {
+		if message.Role == "tool" && message.ToolCallID == callID && message.Content == privacyRevalidationPendingToolResultJSON {
+			decodedToolResult = true
+		}
+		if message.Role == "assistant" && message.Content == privacyRevalidationPendingAssistantText {
+			decodedAssistant = true
+		}
+	}
+	if !decodedToolResult || !decodedAssistant {
+		t.Fatalf("checkpoint messages omitted quarantine placeholders: tool=%t assistant=%t", decodedToolResult, decodedAssistant)
+	}
+
+	restored := newTestSession(t, &singleResponseModel{}, &fakeServer{})
+	defer restored.Close()
+	if err := restored.RestoreCheckpoint(decoded); err != nil {
+		t.Fatal(err)
+	}
+	if restored.toolHistory[callID] != privacyRevalidationPendingToolResultJSON {
+		t.Fatalf("restored history=%q, want %q", restored.toolHistory[callID], privacyRevalidationPendingToolResultJSON)
+	}
+	for _, message := range restored.messages {
+		if strings.Contains(message.Content, serverBody) || strings.Contains(message.Content, assistantBody) {
+			t.Fatalf("restored messages retained quarantined body: %+v", message)
+		}
+		if message.Role == "tool" && message.ToolCallID == callID && message.Content != privacyRevalidationPendingToolResultJSON {
+			t.Fatalf("restored tool result=%q, want %q", message.Content, privacyRevalidationPendingToolResultJSON)
+		}
+	}
+	planned, err := restored.contextMessages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsMessageContent(planned, privacyRevalidationPendingToolResultJSON) || !containsMessageContent(planned, privacyRevalidationPendingAssistantText) {
+		t.Fatalf("restored model context omitted quarantine placeholders: %+v", planned)
+	}
+}
+
+func containsMessageContent(messages []modelclient.Message, want string) bool {
+	for _, message := range messages {
+		if message.Content == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestPreferenceMemoryGenerationAndPrivacyDegradationInvalidateOldBodies(t *testing.T) {
 	for _, test := range []struct {
 		name            string
@@ -1424,6 +1594,44 @@ func TestTwentyPlusTurnCompactionRecallAndFallbackVisibility(t *testing.T) {
 	status := session.ContextStatus()
 	if status.WindowPercent < 0 || status.WindowPercent > 100 || status.CurrentTokens <= 0 || status.ContextWindow != 4096 || status.RecentCompleteTurns < 2 || status.MemoryItemCount == 0 {
 		t.Fatalf("context status=%+v", status)
+	}
+
+	beforeRecall := session.contextRuntime.recallMemory("obs_0000000000000001")
+	checkpoint, err := session.ExportCheckpoint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeSessionCheckpoint(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "SECRETSECRET") || strings.Contains(string(encoded), systemPrompt) {
+		t.Fatalf("checkpoint leaked raw secret or system prompt")
+	}
+	decoded, err := DecodeSessionCheckpoint(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoredIDCounter atomic.Int64
+	restoredIDCounter.Store(9_000_000_000_000_000)
+	restored, err := New(&fakeModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", Content: "continued"}}}}, &fakeServer{}, Options{
+		ContextWindow: 4096, MaxToolRounds: 4, ContextCompaction: ContextCompactionAuto, Now: time.Now,
+		NewUUID: func() (string, error) { return "unused", nil }, ContextIDSource: func(prefix string) (string, error) {
+			return fmt.Sprintf("%s%016d", prefix, restoredIDCounter.Add(1)), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	if err := restored.RestoreCheckpoint(decoded); err != nil {
+		t.Fatal(err)
+	}
+	if afterRecall := restored.contextRuntime.recallMemory("obs_0000000000000001"); !reflect.DeepEqual(beforeRecall, afterRecall) {
+		t.Fatalf("20+ turn recall changed across checkpoint: before=%+v after=%+v", beforeRecall, afterRecall)
+	}
+	if _, err := restored.Send(t.Context(), "恢复后继续"); err != nil {
+		t.Fatalf("continued restored session: %v", err)
 	}
 
 	fallback := newTestRuntime(&singleResponseModel{})

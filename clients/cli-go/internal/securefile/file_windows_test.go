@@ -17,6 +17,51 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func TestWindowsPrivateACLHelpersTightenAndRejectReparse(t *testing.T) {
+	rootPath := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	setWindowsEveryoneDACL(t, rootPath, true)
+	if err := CheckPrivateDirectory(rootPath); !errors.Is(err, ErrPermission) {
+		t.Fatalf("broad directory ACL check error = %v, want ErrPermission", err)
+	}
+	if err := EnsurePrivateDirectory(rootPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckPrivateDirectory(rootPath); err != nil {
+		t.Fatal(err)
+	}
+
+	filePath := filepath.Join(rootPath, "secret.bin")
+	if err := os.WriteFile(filePath, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	setWindowsEveryoneDACL(t, filePath, false)
+	if err := CheckPrivateFile(filePath); !errors.Is(err, ErrPermission) {
+		t.Fatalf("broad file ACL check error = %v, want ErrPermission", err)
+	}
+	if err := EnsurePrivateFile(filePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckPrivateFile(filePath); err != nil {
+		t.Fatal(err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.bin")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(rootPath, "linked.bin")
+	createWindowsFileSymlinkFixture(t, linkPath, outside)
+	if err := CheckPrivateFile(linkPath); !errors.Is(err, ErrLink) {
+		t.Fatalf("reparse file check error = %v, want ErrLink", err)
+	}
+	if err := EnsurePrivateFile(linkPath); !errors.Is(err, ErrLink) {
+		t.Fatalf("reparse file ensure error = %v, want ErrLink", err)
+	}
+}
+
 func TestWindowsHandleRelativeCreateReplaceAndCleanup(t *testing.T) {
 	rootPath := t.TempDir()
 	root, err := OpenRoot(rootPath)
@@ -267,6 +312,16 @@ const windowsSymbolicLinkFlagAllowUnprivilegedCreate = 0x2
 
 func createWindowsDirectorySymlinkFixture(t *testing.T, linkPath, targetPath string) {
 	t.Helper()
+	createWindowsSymlinkFixture(t, linkPath, targetPath, windows.SYMBOLIC_LINK_FLAG_DIRECTORY|windowsSymbolicLinkFlagAllowUnprivilegedCreate)
+}
+
+func createWindowsFileSymlinkFixture(t *testing.T, linkPath, targetPath string) {
+	t.Helper()
+	createWindowsSymlinkFixture(t, linkPath, targetPath, windowsSymbolicLinkFlagAllowUnprivilegedCreate)
+}
+
+func createWindowsSymlinkFixture(t *testing.T, linkPath, targetPath string, flags uint32) {
+	t.Helper()
 	linkPointer, err := windows.UTF16PtrFromString(linkPath)
 	if err != nil {
 		failWindowsFixture(t, "directory-symlink", "encode-link", err)
@@ -275,12 +330,8 @@ func createWindowsDirectorySymlinkFixture(t *testing.T, linkPath, targetPath str
 	if err != nil {
 		failWindowsFixture(t, "directory-symlink", "encode-target", err)
 	}
-	if err := windows.CreateSymbolicLink(
-		linkPointer,
-		targetPointer,
-		windows.SYMBOLIC_LINK_FLAG_DIRECTORY|windowsSymbolicLinkFlagAllowUnprivilegedCreate,
-	); err != nil {
-		failWindowsFixture(t, "directory-symlink", "create-native", err)
+	if err := windows.CreateSymbolicLink(linkPointer, targetPointer, flags); err != nil {
+		failWindowsFixture(t, "symlink", "create-native", err)
 	}
 }
 
@@ -441,6 +492,43 @@ func assertNoWindowsTemporaryFiles(t *testing.T, directory string) {
 		if strings.HasPrefix(entry.Name(), ".edu-agent-") {
 			t.Fatalf("temporary file was not cleaned up: %s", entry.Name())
 		}
+	}
+}
+
+func setWindowsEveryoneDACL(t *testing.T, path string, directory bool) {
+	t.Helper()
+	inheritance := ""
+	if directory {
+		inheritance = "OICI"
+	}
+	securityDescriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:(A;%s;FA;;;WD)", inheritance))
+	if err != nil {
+		failWindowsFixture(t, "broad-dacl", "build-security-descriptor", err)
+	}
+	dacl, _, err := securityDescriptor.DACL()
+	if err != nil {
+		failWindowsFixture(t, "broad-dacl", "read-descriptor-dacl", err)
+	}
+	handle, err := openWindowsTestSecurityHandle(path, windows.READ_CONTROL|windows.WRITE_DAC)
+	if err != nil {
+		failWindowsFixture(t, "broad-dacl", "open-target", err)
+	}
+	err = windows.SetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		dacl,
+		nil,
+	)
+	runtime.KeepAlive(securityDescriptor)
+	closeErr := windows.CloseHandle(handle)
+	if err != nil {
+		failWindowsFixture(t, "broad-dacl", "apply", err)
+	}
+	if closeErr != nil {
+		failWindowsFixture(t, "broad-dacl", "close-target", closeErr)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,6 +20,10 @@ const (
 	sidebarMinMainWidth = 56
 	sidebarMinWidth     = 26
 	sidebarMaxWidth     = 30
+
+	workspaceSidebarLabelMaxBytes = 96
+	workspaceSidebarLabelMaxRunes = 32
+	workspaceSidebarLabelMaxWidth = 18
 )
 
 var (
@@ -35,14 +41,18 @@ type learningConversation interface {
 	LearningStatus(context.Context) (agentloop.LearningStatus, error)
 }
 
-func loadLearningStatusCmd(ctx context.Context, session Conversation) tea.Cmd {
+func loadLearningStatusCmd(ctx context.Context, session Conversation, generations ...uint64) tea.Cmd {
+	generation := uint64(0)
+	if len(generations) > 0 {
+		generation = generations[0]
+	}
 	provider, ok := session.(learningConversation)
 	if !ok {
 		return nil
 	}
 	return func() tea.Msg {
 		status, err := provider.LearningStatus(ctx)
-		return learningMsg{status: status, err: err}
+		return learningMsg{generation: generation, status: status, err: err}
 	}
 }
 
@@ -58,7 +68,7 @@ func (m *model) startLearningRefresh() tea.Cmd {
 	m.learningLoaded = false
 	m.learningFailed = false
 	m.learningStatus = agentloop.LearningStatus{}
-	return loadLearningStatusCmd(m.ctx, m.session)
+	return loadLearningStatusCmd(m.ctx, m.session, m.generation)
 }
 
 func sidebarLayoutWidths(contentWidth int) (int, int) {
@@ -127,11 +137,125 @@ func (m model) workspaceSidebarSummary() string {
 	if !m.workspaceStatus.Available {
 		return "不可用"
 	}
-	label := strings.TrimSpace(safeSingleLineTerminalText(m.workspaceStatus.Label))
-	if label == "" {
-		return "可用"
+	return safeWorkspaceSidebarLabel(m.workspaceStatus.Label)
+}
+
+const workspaceSidebarFallbackLabel = "可用"
+
+// safeWorkspaceSidebarLabel is a display-only sanitizer. It must never expose
+// the workspace root, drive prefix, or a device namespace in the sidebar.
+func safeWorkspaceSidebarLabel(value string) string {
+	value = sanitizeWorkspaceSidebarText(value)
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, `\`, "/")
+	if workspaceSidebarDevicePath(value) {
+		return workspaceSidebarFallbackLabel
 	}
-	return label
+
+	components := strings.Split(value, "/")
+	for index := len(components) - 1; index >= 0; index-- {
+		component := strings.TrimSpace(components[index])
+		if component == "" {
+			continue
+		}
+		if unsafeWorkspaceSidebarComponent(component) {
+			return workspaceSidebarFallbackLabel
+		}
+		if label := truncateWorkspaceSidebarLabel(component); label != "" {
+			return label
+		}
+		return workspaceSidebarFallbackLabel
+	}
+	return workspaceSidebarFallbackLabel
+}
+
+func sanitizeWorkspaceSidebarText(value string) string {
+	value = strings.ToValidUTF8(value, "�")
+	return strings.Map(func(current rune) rune {
+		switch current {
+		case '\n', '\r', '\t':
+			return ' '
+		}
+		if unicode.IsControl(current) || unicode.Is(unicode.Bidi_Control, current) {
+			return '�'
+		}
+		return current
+	}, value)
+}
+
+func workspaceSidebarDevicePath(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, exact := range []string{"//.", "//?", "//??", "/??", "/device", "/dev"} {
+		if value == exact {
+			return true
+		}
+	}
+	for _, prefix := range []string{"//./", "//?/", "//??/", "/??/", "/device/", "/dev/"} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func unsafeWorkspaceSidebarComponent(value string) bool {
+	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, `/\\:`) {
+		return true
+	}
+	trimmed := strings.TrimRight(value, " .")
+	if trimmed == "" || trimmed == "." || trimmed == ".." {
+		return true
+	}
+
+	deviceName := trimmed
+	if index := strings.IndexByte(deviceName, '.'); index >= 0 {
+		deviceName = deviceName[:index]
+	}
+	deviceName = strings.ToUpper(deviceName)
+	switch deviceName {
+	case "CON", "PRN", "AUX", "NUL", "CLOCK$", "CONIN$", "CONOUT$":
+		return true
+	}
+	if len(deviceName) == 4 && (strings.HasPrefix(deviceName, "COM") || strings.HasPrefix(deviceName, "LPT")) && deviceName[3] >= '1' && deviceName[3] <= '9' {
+		return true
+	}
+	return false
+}
+
+func truncateWorkspaceSidebarLabel(value string) string {
+	value = strings.ToValidUTF8(value, "�")
+	var builder strings.Builder
+	builder.Grow(min(len(value), workspaceSidebarLabelMaxBytes))
+	displayWidth := 0
+	runeCount := 0
+	truncated := false
+	for _, current := range value {
+		currentBytes := utf8.RuneLen(current)
+		currentWidth := lipgloss.Width(string(current))
+		if runeCount >= workspaceSidebarLabelMaxRunes || builder.Len()+currentBytes > workspaceSidebarLabelMaxBytes || displayWidth+currentWidth > workspaceSidebarLabelMaxWidth {
+			truncated = true
+			break
+		}
+		builder.WriteRune(current)
+		runeCount++
+		displayWidth += currentWidth
+	}
+	if !truncated {
+		return builder.String()
+	}
+
+	result := builder.String()
+	for {
+		candidate := result + "…"
+		if len(candidate) <= workspaceSidebarLabelMaxBytes && utf8.RuneCountInString(candidate) <= workspaceSidebarLabelMaxRunes && lipgloss.Width(candidate) <= workspaceSidebarLabelMaxWidth {
+			return candidate
+		}
+		runes := []rune(result)
+		if len(runes) == 0 {
+			return "…"
+		}
+		result = string(runes[:len(runes)-1])
+	}
 }
 
 func (m model) contextTokenSummary() string {

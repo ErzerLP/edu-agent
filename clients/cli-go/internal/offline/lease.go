@@ -3,10 +3,11 @@ package offline
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/filelock"
 )
 
 type LeaseMode uint8
@@ -17,13 +18,14 @@ const (
 )
 
 type Lease struct {
-	file *os.File
-	mode LeaseMode
+	lock *filelock.Lock
+	once sync.Once
+	err  error
 }
 
 func AcquireLease(ctx context.Context, root string, mode LeaseMode, timeout time.Duration) (*Lease, error) {
-	if mode != LeaseShared && mode != LeaseExclusive {
-		return nil, errors.New("invalid offline lease mode")
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if timeout <= 0 {
 		timeout = DefaultLeaseTimeout
@@ -31,55 +33,35 @@ func AcquireLease(ctx context.Context, root string, mode LeaseMode, timeout time
 	if err := ensureRoot(root); err != nil {
 		return nil, err
 	}
-	path, err := managedPath(root, ".lease", true)
+	path, err := managedPath(root, ".lease", false)
 	if err != nil {
 		return nil, err
 	}
-	file, err := openLeaseFile(path)
+	lockMode := filelock.Shared
+	if mode == LeaseExclusive {
+		lockMode = filelock.Exclusive
+	} else if mode != LeaseShared {
+		return nil, errors.New("offline lease mode is invalid")
+	}
+	lock, err := filelock.Acquire(ctx, filepath.Clean(path), lockMode, timeout)
+	if errors.Is(err, filelock.ErrBusy) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, ErrProfileBusy
+	}
 	if err != nil {
-		return nil, fmt.Errorf("open offline profile lease: %w", err)
+		return nil, err
 	}
-	deadline := time.Now().Add(timeout)
-	for {
-		locked, err := tryLockFile(file, mode)
-		if err != nil {
-			_ = file.Close()
-			return nil, fmt.Errorf("acquire offline profile lease: %w", err)
-		}
-		if locked {
-			return &Lease{file: file, mode: mode}, nil
-		}
-		if time.Now().After(deadline) {
-			_ = file.Close()
-			return nil, ErrProfileBusy
-		}
-		select {
-		case <-ctx.Done():
-			_ = file.Close()
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return nil, ErrProfileBusy
-			}
-			return nil, ctx.Err()
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+	return &Lease{lock: lock}, nil
 }
 
 func (l *Lease) Close() error {
-	if l == nil || l.file == nil {
+	if l == nil {
 		return nil
 	}
-	file := l.file
-	l.file = nil
-	unlockErr := unlockFile(file)
-	closeErr := file.Close()
-	if unlockErr != nil {
-		return fmt.Errorf("release offline profile lease: %w", unlockErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close offline profile lease: %w", closeErr)
-	}
-	return nil
+	l.once.Do(func() {
+		if l.lock != nil {
+			l.err = l.lock.Close()
+			l.lock = nil
+		}
+	})
+	return l.err
 }
-
-func leasePath(root string) string { return filepath.Join(root, ".lease") }

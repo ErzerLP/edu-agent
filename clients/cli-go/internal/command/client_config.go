@@ -22,15 +22,16 @@ func (a *App) runClientConfig(args []string) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(a.Out, "Server: %s\nTimeout: %s\nColor: %s\nDevice: %s\n", safeText(value.ServerURL), safeText(value.Timeout), safeText(value.Color), safeText(value.DisplayName))
+		_, err = fmt.Fprintf(a.Out, "Server: %s\nTimeout: %s\nColor: %s\nDevice: %s\nAgent Session History: %s\n", safeText(value.ServerURL), safeText(value.Timeout), safeText(value.Color), safeText(value.DisplayName), agentSessionHistory(value))
 		return err
 	case "set":
 		set := newFlagSet("config set")
-		var timeout, color string
+		var timeout, color, sessionHistory string
 		set.StringVar(&timeout, "timeout", "", "positive request timeout")
 		set.StringVar(&color, "color", "", "never, auto, or always")
-		if err := set.Parse(args[1:]); err != nil || len(set.Args()) != 0 || (strings.TrimSpace(timeout) == "" && strings.TrimSpace(color) == "") {
-			return clientConfigUsage("config set requires --timeout and/or --color")
+		set.StringVar(&sessionHistory, "session-history", "", "auto or off")
+		if err := set.Parse(args[1:]); err != nil || len(set.Args()) != 0 || (strings.TrimSpace(timeout) == "" && strings.TrimSpace(color) == "" && strings.TrimSpace(sessionHistory) == "") {
+			return clientConfigUsage("config set requires --timeout, --color, and/or --session-history")
 		}
 		value, err := a.loadModelConfig()
 		if err != nil {
@@ -42,13 +43,19 @@ func (a *App) runClientConfig(args []string) error {
 		if strings.TrimSpace(color) != "" {
 			value.Color = strings.ToLower(strings.TrimSpace(color))
 		}
+		if strings.TrimSpace(sessionHistory) != "" {
+			if value.Agent == nil {
+				return commandError("agent_not_configured", "AI模型尚未配置，无法保存会话历史设置", "先选择模型提供商，再设置 --session-history", ExitInput)
+			}
+			value.Agent.SessionHistory = strings.ToLower(strings.TrimSpace(sessionHistory))
+		}
 		if err := value.Validate(); err != nil {
 			return commandError("invalid_configuration", "client settings are invalid", "use a positive timeout and color never, auto, or always", ExitInput)
 		}
 		if err := a.Config.Save(value); err != nil {
 			return commandError("configuration_write_failed", "client settings could not be saved", "check configuration directory permissions and retry", ExitInternal)
 		}
-		_, err = fmt.Fprintf(a.Out, "Client settings updated. Timeout: %s Color: %s\n", safeText(value.Timeout), safeText(value.Color))
+		_, err = fmt.Fprintf(a.Out, "Client settings updated. Timeout: %s Color: %s Agent Session History: %s\n", safeText(value.Timeout), safeText(value.Color), agentSessionHistory(value))
 		return err
 	default:
 		return clientConfigUsage("unknown config command " + args[0])
@@ -92,6 +99,13 @@ func (a *App) loadMutableClientConfig() (config.Config, error) {
 	return value, nil
 }
 
+func agentSessionHistory(value config.Config) string {
+	if value.Agent == nil || value.Agent.SessionHistory == "" {
+		return config.DefaultAgentSessionHistory
+	}
+	return safeText(value.Agent.SessionHistory)
+}
+
 func clientConfigUsage(message string) error {
-	return commandError("usage", message, "run edu-agent config show or edu-agent config set --timeout DURATION --color never|auto|always", ExitInput)
+	return commandError("usage", message, "run edu-agent config show or edu-agent config set --timeout DURATION --color never|auto|always --session-history auto|off", ExitInput)
 }

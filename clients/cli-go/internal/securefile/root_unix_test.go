@@ -11,6 +11,42 @@ import (
 	"testing"
 )
 
+func TestRootDeleteIsConfinedAndDoesNotFollowSymlinks(t *testing.T) {
+	rootPath := t.TempDir()
+	inside := filepath.Join(rootPath, "inside.txt")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(inside, []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(rootPath, "link.txt")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatalf("create required symlink fixture: %v", err)
+	}
+	root, err := OpenRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := root.Delete("link.txt"); !errors.Is(err, ErrLink) {
+		t.Fatalf("link delete err=%v", err)
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "outside" {
+		t.Fatalf("outside=%q err=%v", data, err)
+	}
+	if err := root.Delete("inside.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(inside); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inside remains: %v", err)
+	}
+	if err := root.Delete("inside.txt"); err != nil {
+		t.Fatalf("idempotent delete=%v", err)
+	}
+}
+
 func TestRootPublishRevalidatesExpectedHashAtPublicationBoundary(t *testing.T) {
 	rootPath := t.TempDir()
 	target := filepath.Join(rootPath, "notes.txt")
@@ -128,7 +164,7 @@ func TestRootReadDirAndSnapshotDoNotFollowSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(rootPath, "link.txt")); err != nil {
-		t.Skipf("symlink unavailable: %v", err)
+		t.Fatalf("create required symlink fixture: %v", err)
 	}
 	root, err := OpenRoot(rootPath)
 	if err != nil {

@@ -1,187 +1,161 @@
 package keybackend
 
 import (
-	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"runtime"
-	"strings"
-	"time"
-
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/darwinkeychain"
 )
 
-const service = "edu-agent-offline-v1"
+const (
+	// ServiceOfflineV1 is retained for compatibility with the original offline
+	// profile-key API.
+	ServiceOfflineV1 = "edu-agent-offline-v1"
+	maxSecretBytes   = 64 << 10
+)
 
 var (
-	ErrNotFound    = errors.New("offline system key not found")
 	ErrUnavailable = errors.New("offline system key backend unavailable")
+	ErrNotFound    = errors.New("offline system key not found")
 )
 
-// Account returns a non-secret stable keyring account bound to one server and device.
-func Account(normalizedServerURL, deviceID string) string {
-	digest := sha256.Sum256([]byte(normalizedServerURL + "\x00" + deviceID))
-	return "profile-" + hex.EncodeToString(digest[:])
+// Locator is a logical native-secret identity. Service and Account are passed
+// as keychain attributes, never interpolated into a shell command.
+type Locator struct {
+	Service string
+	Account string
 }
 
-func Available(_ string) bool {
-	switch runtime.GOOS {
-	case "linux":
-		_, err := exec.LookPath("secret-tool")
-		return err == nil && strings.TrimSpace(os.Getenv("DBUS_SESSION_BUS_ADDRESS")) != ""
-	case "darwin":
-		return darwinkeychain.Available()
-	case "windows":
-		_, err := exec.LookPath("powershell.exe")
-		return err == nil && strings.TrimSpace(os.Getenv("LOCALAPPDATA")) != ""
-	default:
+func (l Locator) validate() error {
+	if !validLocatorPart(l.Service, 128) || !validLocatorPart(l.Account, 256) {
+		return errors.New("系统密钥定位信息无效")
+	}
+	return nil
+}
+
+func validLocatorPart(value string, max int) bool {
+	if value == "" || len(value) > max {
 		return false
 	}
+	for _, current := range value {
+		if current >= 'a' && current <= 'z' || current >= 'A' && current <= 'Z' || current >= '0' && current <= '9' || current == '-' || current == '_' || current == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
+// Generate returns a fresh 256-bit offline profile key.
 func Generate() ([]byte, error) {
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
 		return nil, fmt.Errorf("generate offline system wrapping key: %w", err)
 	}
-	return secret, nil
+	return value, nil
 }
 
-func Load(account string) ([]byte, error) {
-	encoded, err := loadEncoded(account)
+// Account derives the legacy offline key account from server origin and
+// device identity.
+func Account(normalizedServerURL, deviceID string) string {
+	sum := sha256.Sum256([]byte(normalizedServerURL + "\x00" + deviceID))
+	return "profile-" + hex.EncodeToString(sum[:])
+}
+
+// AvailableSecret reports whether the platform native-secret backend can be
+// used for a locator. It does not create or mutate a secret.
+func AvailableSecret(locator Locator) error {
+	if err := locator.validate(); err != nil {
+		return err
+	}
+	return availableSecret(locator)
+}
+
+// LoadSecret loads and decodes an opaque secret with an explicit plaintext
+// size bound.
+func LoadSecret(locator Locator, maxBytes int) ([]byte, error) {
+	if err := locator.validate(); err != nil {
+		return nil, err
+	}
+	if maxBytes <= 0 || maxBytes > maxSecretBytes {
+		return nil, errors.New("系统密钥大小上限无效")
+	}
+	encoded, err := loadSecret(locator)
 	if err != nil {
 		return nil, err
 	}
-	secret, err := base64.RawURLEncoding.Strict().DecodeString(strings.TrimSpace(encoded))
-	if err != nil || len(secret) != 32 || base64.RawURLEncoding.EncodeToString(secret) != strings.TrimSpace(encoded) {
-		zero(secret)
+	value, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	if err != nil || base64.RawURLEncoding.EncodeToString(value) != encoded {
+		clear(value)
 		return nil, ErrUnavailable
 	}
-	return secret, nil
+	if len(value) == 0 || len(value) > maxBytes {
+		clear(value)
+		return nil, errors.New("系统密钥长度无效")
+	}
+	result := append([]byte(nil), value...)
+	clear(value)
+	return result, nil
 }
 
-func Store(account string, secret []byte) error {
-	if len(secret) != 32 {
-		return ErrUnavailable
+// StoreSecret atomically replaces an opaque native secret.
+func StoreSecret(locator Locator, secret []byte) error {
+	if err := locator.validate(); err != nil {
+		return err
 	}
-	return storeEncoded(account, base64.RawURLEncoding.EncodeToString(secret))
+	if len(secret) == 0 || len(secret) > maxSecretBytes {
+		return errors.New("系统密钥长度无效")
+	}
+	return storeSecret(locator, base64.RawURLEncoding.EncodeToString(secret))
 }
 
-func Delete(account string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "linux":
-		cmd = exec.CommandContext(ctx, "secret-tool", "clear", "service", service, "account", account)
-	case "darwin":
-		err := darwinkeychain.Delete(ctx, service, account)
-		if errors.Is(err, darwinkeychain.ErrNotFound) {
-			return nil
-		}
-		if err != nil {
-			return ErrUnavailable
-		}
-		return nil
-	case "windows":
-		cmd = powershell(ctx, `$path=Join-Path $env:LOCALAPPDATA ('EduAgent\\offline-keys\\'+$env:EDU_AGENT_KEY_ACCOUNT+'.txt'); if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path -Force}`, account)
-	default:
-		return ErrUnavailable
+// DeleteSecret removes a native secret. Deleting an absent secret succeeds.
+func DeleteSecret(locator Locator) error {
+	if err := locator.validate(); err != nil {
+		return err
 	}
-	if err := cmd.Run(); err != nil {
-		if runtime.GOOS != "windows" {
-			if _, loadErr := Load(account); errors.Is(loadErr, ErrNotFound) {
-				return nil
-			}
-		}
-		return ErrUnavailable
-	}
-	return nil
+	return deleteSecret(locator)
 }
 
-func loadEncoded(account string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "linux":
-		cmd = exec.CommandContext(ctx, "secret-tool", "lookup", "service", service, "account", account)
-	case "darwin":
-		value, err := darwinkeychain.Load(ctx, service, account)
-		if errors.Is(err, darwinkeychain.ErrNotFound) {
-			return "", ErrNotFound
-		}
-		if err != nil {
-			return "", ErrUnavailable
-		}
-		return value, nil
-	case "windows":
-		cmd = powershell(ctx, `$path=Join-Path $env:LOCALAPPDATA ('EduAgent\\offline-keys\\'+$env:EDU_AGENT_KEY_ACCOUNT+'.txt'); if(!(Test-Path -LiteralPath $path)){exit 44}; $cipher=[IO.File]::ReadAllText($path); $secure=ConvertTo-SecureString $cipher; $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try{[Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr))}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)}`, account)
-	default:
-		return "", ErrUnavailable
+// Available retains the original offline profile-key API. The account is
+// accepted for interface compatibility but backend availability is global.
+func Available(account string) bool {
+	locator := Locator{Service: ServiceOfflineV1, Account: account}
+	if account == "" {
+		locator.Account = "availability-probe"
 	}
-	output, err := cmd.Output()
+	return AvailableSecret(locator) == nil
+}
+
+// Load retains the original fixed-size offline profile-key API.
+func Load(account string) ([]byte, error) {
+	value, err := LoadSecret(Locator{Service: ServiceOfflineV1, Account: account}, 32)
+	if errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
 	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			switch runtime.GOOS {
-			case "linux":
-				if exit.ExitCode() == 1 && len(bytes.TrimSpace(exit.Stderr)) == 0 {
-					return "", ErrNotFound
-				}
-			case "windows":
-				if exit.ExitCode() == 44 {
-					return "", ErrNotFound
-				}
-			}
-		}
-		return "", ErrUnavailable
+		return nil, ErrUnavailable
 	}
-	if len(bytes.TrimSpace(output)) == 0 {
-		return "", ErrNotFound
+	if len(value) != 32 {
+		return nil, ErrUnavailable
 	}
-	return string(output), nil
+	return value, nil
 }
 
-func storeEncoded(account, encoded string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "linux":
-		cmd = exec.CommandContext(ctx, "secret-tool", "store", "--label=Edu Agent offline key", "service", service, "account", account)
-		cmd.Stdin = strings.NewReader(encoded + "\n")
-	case "darwin":
-		if err := darwinkeychain.Store(ctx, service, account, encoded); err != nil {
-			return ErrUnavailable
-		}
-		return nil
-	case "windows":
-		cmd = powershell(ctx, `$directory=Join-Path $env:LOCALAPPDATA 'EduAgent\\offline-keys'; [IO.Directory]::CreateDirectory($directory) | Out-Null; $secret=[Console]::In.ReadToEnd().Trim(); $secure=ConvertTo-SecureString $secret -AsPlainText -Force; $cipher=ConvertFrom-SecureString $secure; $path=Join-Path $directory ($env:EDU_AGENT_KEY_ACCOUNT+'.txt'); [IO.File]::WriteAllText($path,$cipher); $identity=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object Security.AccessControl.FileSecurity; $acl.SetOwner($identity); $acl.SetAccessRuleProtection($true,$false); $rule=New-Object Security.AccessControl.FileSystemAccessRule($identity,'FullControl','Allow'); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $path -AclObject $acl`, account)
-		cmd.Stdin = strings.NewReader(encoded)
-	default:
+// Store retains the original fixed-size offline profile-key API.
+func Store(account string, key []byte) error {
+	if len(key) != 32 {
 		return ErrUnavailable
 	}
-	if err := cmd.Run(); err != nil {
+	if err := StoreSecret(Locator{Service: ServiceOfflineV1, Account: account}, key); err != nil {
 		return ErrUnavailable
 	}
 	return nil
 }
 
-func powershell(ctx context.Context, script, account string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
-	cmd.Env = append(os.Environ(), "EDU_AGENT_KEY_ACCOUNT="+account)
-	return cmd
-}
-
-func zero(value []byte) {
-	for index := range value {
-		value[index] = 0
-	}
+// Delete retains the original offline profile-key API.
+func Delete(account string) error {
+	return DeleteSecret(Locator{Service: ServiceOfflineV1, Account: account})
 }

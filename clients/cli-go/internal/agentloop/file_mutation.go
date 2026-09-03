@@ -118,6 +118,12 @@ func (s *Session) CancelPendingFileMutation(callID string) (Result, error) {
 
 func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclient.ToolCall, prepared *workspace.PreparedMutation) (workspace.Result, Event, bool, error) {
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: "正在安全发布文件修改", Status: EventRunning}, Phase: ActivityExecutingTool, File: fileActivityDetailFromPrepared(prepared)})
+	if s.options.Durability != nil {
+		presentation := prepared.Presentation
+		if err := s.options.Durability.BeforeFilePublication(ctx, FileWriteAhead{ToolCallID: call.ID, Operation: presentation.Operation, Path: presentation.Path}); err != nil {
+			return workspace.Result{Publication: workspace.PublicationUnchanged}, Event{}, false, errors.New("无法在文件发布前持久化恢复凭据")
+		}
+	}
 	toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
 	result := s.workspace.CommitMutation(toolCtx, prepared)
 	toolErr := toolCtx.Err()

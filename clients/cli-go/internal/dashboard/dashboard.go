@@ -35,6 +35,7 @@ type Snapshot struct {
 	AgentContextWindow         int
 	AgentContextCompaction     string
 	AgentReasoningEffort       string
+	AgentSessionHistory        string
 	AgentTimeout               string
 	AgentMaxToolRounds         int
 	AgentKeyConfigured         bool
@@ -91,6 +92,7 @@ const (
 	screenAgentSettings
 	screenAgentProvider
 	screenAgentReasoning
+	screenAgentPrivacy
 	screenAgentConfig
 	screenAgentKey
 	screenAgentKeyDelete
@@ -169,6 +171,18 @@ func (m model) isForm() bool {
 
 func (m model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if m.screen == screenAgentPrivacy {
+		pages := sessionPrivacyPages()
+		switch key {
+		case "left", "up", "k", "h":
+			m.cursor = (m.cursor - 1 + len(pages)) % len(pages)
+		case "right", "down", "j", "l", "enter":
+			m.cursor = (m.cursor + 1) % len(pages)
+		case "esc", "backspace":
+			m.goBack()
+		}
+		return m, nil
+	}
 	if m.screen == screenRePair || m.screen == screenAgentKeyDelete {
 		switch key {
 		case "y", "Y":
@@ -224,7 +238,7 @@ func (m *model) goBack() {
 		m.screen = screenSettings
 	case screenAgentSettings:
 		m.screen = screenSettings
-	case screenAgentProvider, screenAgentReasoning:
+	case screenAgentProvider, screenAgentReasoning, screenAgentPrivacy:
 		m.screen = screenAgentSettings
 	}
 	m.cursor = 0
@@ -455,8 +469,16 @@ func (m model) items() []menuItem {
 			{key: "p", title: "选择提供商预设", description: "OpenAI、DeepSeek、OpenRouter、Ollama或自定义服务", next: screenAgentProvider},
 			{key: "m", title: "编辑模型参数", description: "Base URL、模型、上下文窗口、压缩模式、超时和工具轮数", next: screenAgentConfig},
 			{key: "r", title: "默认推理强度", description: "为新AI助手会话选择auto到max的默认档位", next: screenAgentReasoning},
-			{key: "u", title: "更新API Key", description: "通过隐藏输入写入系统钥匙串", next: screenAgentKey},
+			{key: "v", title: "Session历史与隐私", description: "查看保存、provider发送、恢复和清除边界", next: screenAgentPrivacy},
 		}
+		if display(m.snapshot.AgentSessionHistory, config.DefaultAgentSessionHistory) == "off" {
+			items = append(items, menuItem{key: "s", title: "开启会话历史", description: "后续新Session默认本机加密保存；自动标题会发送有界对话片段", command: []string{"model", "set", "--session-history", "auto"}})
+		} else {
+			items = append(items, menuItem{key: "s", title: "关闭会话历史", description: "后续新Session仅在当前进程有效；已有历史仍可恢复和删除", command: []string{"model", "set", "--session-history", "off"}})
+		}
+		items = append(items,
+			menuItem{key: "u", title: "更新API Key", description: "通过隐藏输入写入系统钥匙串", next: screenAgentKey},
+		)
 		if m.snapshot.AgentKeyConfigured {
 			items = append(items, menuItem{key: "x", title: "删除API Key", description: "从系统钥匙串删除模型凭据", next: screenAgentKeyDelete})
 		}
@@ -517,19 +539,23 @@ func (m model) items() []menuItem {
 			}
 		}
 	}
-	return []menuItem{
-		agentItem,
-		{key: "l", title: "继续结构化学习", description: "恢复服务端教学状态机中的当前会话", command: []string{"learn"}},
-		{key: "i", title: "导入知识", description: "导入Markdown文件或目录", next: screenImport},
-		{key: "g", title: "设置学习目标", description: "创建或切换当前学习目标", next: screenGoal},
-		{key: "v", title: "查看学习进度", description: "读取当前学习快照", command: []string{"progress"}},
-		{key: "r", title: "查看学习路线", description: "显示当前路线", command: []string{"route"}},
-		{key: "e", title: "查看学习证据", description: "检查已接受的学习证据", command: []string{"evidence"}},
-		{key: "w", title: "查看复习安排", description: "显示待复习内容", command: []string{"reviews"}},
-		{key: "d", title: "设备与服务状态", description: "检查设备绑定和服务就绪状态", command: []string{"device", "status"}},
-		{key: "s", title: "设置", description: "连接、客户端和AI模型设置", next: screenSettings},
-		{key: "q", title: "退出", description: "返回Shell"},
+	items := []menuItem{agentItem}
+	if len(agentItem.command) > 0 {
+		items = append(items, menuItem{key: "y", title: "恢复AI历史会话", description: "打开当前工作区已加密保存的Agent Session选择器", command: []string{"agent", "resume"}})
 	}
+	items = append(items,
+		menuItem{key: "l", title: "继续结构化学习", description: "恢复服务端教学状态机中的当前会话", command: []string{"learn"}},
+		menuItem{key: "i", title: "导入知识", description: "导入Markdown文件或目录", next: screenImport},
+		menuItem{key: "g", title: "设置学习目标", description: "创建或切换当前学习目标", next: screenGoal},
+		menuItem{key: "v", title: "查看学习进度", description: "读取当前学习快照", command: []string{"progress"}},
+		menuItem{key: "r", title: "查看学习路线", description: "显示当前路线", command: []string{"route"}},
+		menuItem{key: "e", title: "查看学习证据", description: "检查已接受的学习证据", command: []string{"evidence"}},
+		menuItem{key: "w", title: "查看复习安排", description: "显示待复习内容", command: []string{"reviews"}},
+		menuItem{key: "d", title: "设备与服务状态", description: "检查设备绑定和服务就绪状态", command: []string{"device", "status"}},
+		menuItem{key: "s", title: "设置", description: "连接、客户端和AI模型设置", next: screenSettings},
+		menuItem{key: "q", title: "退出", description: "返回Shell"},
+	)
+	return items
 }
 
 var (
@@ -579,6 +605,8 @@ func (m model) View() string {
 		body.WriteString("\n" + mutedStyle.Render("密钥只写入操作系统钥匙串，不进入config.json或日志。"))
 		m.renderInputs(&body)
 		body.WriteString("\n" + mutedStyle.Render("Enter保存  Esc取消"))
+	case screenAgentPrivacy:
+		m.renderSessionPrivacy(&body)
 	case screenRePair:
 		body.WriteString(labelStyle.Render("重新配对设备"))
 		body.WriteString("\n\n[Y] 安全注销旧设备\n需要旧服务器在线，会先撤销远端设备。\n\n[F] 仅清除本地配对\n旧服务器不可用时用于恢复；远端设备可能仍有效。\n\n[N] 取消")
@@ -628,9 +656,9 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 	case screenAgentSettings:
 		body.WriteString(labelStyle.Render("AI助手与模型"))
 		body.WriteString("\n")
-		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
+		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
+			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
 		body.WriteString("\n")
@@ -646,6 +674,61 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 		body.WriteString(labelStyle.Render("命令输出颜色"))
 		body.WriteString("\n\n")
 	}
+}
+
+type privacyPage struct {
+	title string
+	lines []string
+}
+
+func sessionPrivacyPages() []privacyPage {
+	return []privacyPage{
+		{
+			title: "保存与保留",
+			lines: []string{
+				"• 默认本机加密保存对话与有界",
+				"  工具/context evidence。",
+				"• 无时间 TTL；需手动 delete/clear。",
+				"• 硬上限不淘汰旧 Session；",
+				"  最近内容可能保存失败并明确提示。",
+			},
+		},
+		{
+			title: "发送与恢复",
+			lines: []string{
+				"• 自动标题会把有界近期片段发送",
+				"  到当前 provider。",
+				"• 恢复后下一请求会把历史发送到",
+				"  当前 provider；endpoint 变化先确认。",
+				"• workspace 正文可能在加密历史中；",
+				"  恢复不代表当前磁盘内容。",
+			},
+		},
+		{
+			title: "降级与清除",
+			lines: []string{
+				"• key backend 不可用绝不落明文；",
+				"  Session 仅当前进程有效。",
+				"• clear 只清本地 Agent Session store。",
+				"• 不清 server/Nocturne/terminal、",
+				"  Shell/provider retention/OS backup。",
+				"• YOLO、旧文件授权和 pending 交互",
+				"  均不恢复。",
+			},
+		},
+	}
+}
+
+func (m model) renderSessionPrivacy(body *strings.Builder) {
+	pages := sessionPrivacyPages()
+	page := m.cursor
+	if page < 0 || page >= len(pages) {
+		page = 0
+	}
+	body.WriteString(labelStyle.Render("Session 历史与隐私"))
+	body.WriteString("\n" + mutedStyle.Render(pages[page].title))
+	body.WriteString("\n\n" + strings.Join(pages[page].lines, "\n"))
+	body.WriteString(fmt.Sprintf("\n\n%s", mutedStyle.Render(fmt.Sprintf("←/→ 或 j/k 翻页  Esc返回  %d/%d", page+1, len(pages)))))
 }
 
 func (m model) terminalTooSmall() bool {
@@ -720,6 +803,13 @@ func colorName(value string) string {
 	default:
 		return "关闭"
 	}
+}
+
+func sessionHistoryName(value string) string {
+	if display(value, config.DefaultAgentSessionHistory) == "off" {
+		return "关闭（后续新Session不保存）"
+	}
+	return "自动（本机加密保存）"
 }
 
 func keyStatus(configured, backendUnavailable bool) string {

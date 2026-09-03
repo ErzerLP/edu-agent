@@ -26,6 +26,14 @@ const (
 	slowTurnThreshold = 8 * time.Second
 )
 
+type sessionPersistenceProvider interface {
+	SessionPersistenceStatus() (state, detail string)
+}
+
+type sessionStartupNoticeProvider interface {
+	SessionStartupNotices() []string
+}
+
 type Conversation interface {
 	Send(context.Context, string) (agentloop.Result, error)
 	ResolvePreference(context.Context, agentloop.PreferenceResolution) (agentloop.Result, error)
@@ -55,6 +63,9 @@ func (r Runner) Run(ctx context.Context) error {
 	}
 	initial := newModel(ctx, r.Session, r.ModelName)
 	defer initial.cancel()
+	if initial.contextCancel != nil {
+		defer initial.contextCancel()
+	}
 	program := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithInput(r.In), tea.WithOutput(r.Out), tea.WithContext(ctx))
 	_, err := program.Run()
 	return err
@@ -116,31 +127,36 @@ func (s *turnStream) popDelta() (agentloop.Activity, bool) {
 }
 
 type turnMsg struct {
-	turnID   uint64
-	kind     turnKind
-	result   agentloop.Result
-	err      error
-	activity *agentloop.Activity
-	stream   *turnStream
-	done     bool
-	tick     bool
+	generation uint64
+	turnID     uint64
+	kind       turnKind
+	result     agentloop.Result
+	err        error
+	activity   *agentloop.Activity
+	stream     *turnStream
+	done       bool
+	tick       bool
 }
 
 type contextMsg struct {
-	event  agentloop.ContextEvent
-	stream <-chan agentloop.ContextEvent
-	closed bool
+	generation uint64
+	event      agentloop.ContextEvent
+	stream     <-chan agentloop.ContextEvent
+	closed     bool
 }
 
 type learningMsg struct {
-	status agentloop.LearningStatus
-	err    error
+	generation uint64
+	status     agentloop.LearningStatus
+	err        error
 }
 
 type model struct {
 	ctx                    context.Context
 	cancel                 context.CancelFunc
 	session                Conversation
+	manager                sessionManager
+	generation             uint64
 	modelName              string
 	width                  int
 	height                 int
@@ -163,6 +179,8 @@ type model struct {
 	shownEventKeys         map[string]struct{}
 	contextStatus          agentloop.ContextStatus
 	contextUpdates         <-chan agentloop.ContextEvent
+	contextCancel          func()
+	sessionPicker          *sessionPickerModel
 	workspaceStatus        agentloop.WorkspaceStatus
 	learningStatus         agentloop.LearningStatus
 	learningLoaded         bool
@@ -191,6 +209,20 @@ type model struct {
 	activeFileDetail      *agentloop.FileActivityDetail
 }
 
+func sessionPersistenceHelp(state string) string {
+	const recoveryBoundary = " 自动标题及恢复后的历史上下文可能发送到当前 provider；endpoint 变化须先确认。YOLO、旧文件授权和 pending 交互不会恢复。"
+	switch state {
+	case "saved":
+		return "当前 Session 会在稳定轮次后本机加密保存。" + recoveryBoundary
+	case "unsaved":
+		return "当前 Session 仅在当前进程有效，退出后不可恢复；即使 key backend 不可用也绝不落明文。" + recoveryBoundary
+	case "failed":
+		return "当前 Session 最近内容保存失败，可能尚未持久化；不会改用明文保存。" + recoveryBoundary
+	default:
+		return ""
+	}
+}
+
 func newModel(ctx context.Context, session Conversation, modelName string) model {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	input := textarea.New()
@@ -210,17 +242,36 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 		workspaceStatus.Code = "workspace_unavailable"
 	}
 	entries := []transcriptEntry{{kind: entryNotice, text: "可以直接提问，也可以让我结合服务端知识库、学习进度和长期偏好帮助你学习。"}}
+	persistenceNotice := ""
+	if provider, ok := session.(sessionPersistenceProvider); ok {
+		state, _ := provider.SessionPersistenceStatus()
+		persistenceNotice = sessionPersistenceHelp(state)
+	}
+	if provider, ok := session.(sessionStartupNoticeProvider); ok {
+		for _, notice := range provider.SessionStartupNotices() {
+			if cleaned := strings.TrimSpace(safeSingleLineTerminalText(notice)); cleaned != "" {
+				entries = append(entries, transcriptEntry{kind: entryNotice, text: cleaned})
+			}
+		}
+	}
 	if workspaceStatus.Available {
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区 %s 已启用。默认对每次文件写入/编辑逐次确认；可按 F4 为当前 Session 切换 YOLO。工作区内所有文件（包括隐藏文件、.git、.comet 和可能包含秘密的文件）都可被读取并发送给当前模型 provider。", safeWorkspaceLabel(workspaceStatus.Label))})
 		input.Placeholder = "输入问题；Agent 可按需读取或修改工作区文件"
 	} else {
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区不可用（%s）；文件工具未启用，普通对话仍可使用。", safeSingleLineTerminalText(workspaceStatus.Code))})
 	}
+	entries = append(entries, durableTranscriptEntries(session)...)
+	if persistenceNotice != "" {
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: persistenceNotice})
+	}
+	generation := sessionGeneration(session)
+	contextUpdates, contextCancel := subscribeSessionContext(session)
+	manager, _ := session.(sessionManager)
 	value := model{
-		ctx: sessionCtx, cancel: cancel, session: session, modelName: safeSingleLineTerminalText(modelName), width: 80, height: 24,
+		ctx: sessionCtx, cancel: cancel, session: session, manager: manager, generation: generation, modelName: safeSingleLineTerminalText(modelName), width: 80, height: 24,
 		viewport: view, input: input, status: "就绪", follow: true, shownEventKeys: map[string]struct{}{},
 		entries:       entries,
-		contextStatus: session.ContextStatus(), contextUpdates: session.ContextUpdates(), workspaceStatus: workspaceStatus, learningProvider: true, learningLoading: true,
+		contextStatus: session.ContextStatus(), contextUpdates: contextUpdates, contextCancel: contextCancel, workspaceStatus: workspaceStatus, learningProvider: true, learningLoading: true,
 	}
 	value.resize()
 	value.refreshTranscript(false)
@@ -228,7 +279,7 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(textarea.Blink, waitContextCmd(m.ctx, m.contextUpdates), loadLearningStatusCmd(m.ctx, m.session))
+	return tea.Batch(textarea.Blink, waitContextCmdForGeneration(m.ctx, m.generation, m.contextUpdates), loadLearningStatusCmd(m.ctx, m.session, m.generation))
 }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -239,22 +290,22 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript(false)
 		return m, nil
 	case turnMsg:
-		if msg.turnID != m.activeTurnID {
+		if msg.generation != 0 && msg.generation != m.generation || msg.turnID != m.activeTurnID {
 			return m, nil
 		}
 		if msg.tick {
 			m.refreshTranscript(false)
-			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
+			return m, waitTurnCmdForGeneration(m.ctx, m.generation, msg.turnID, msg.kind, msg.stream)
 		}
 		if msg.stream != nil && msg.activity == nil && !msg.done {
-			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
+			return m, waitTurnCmdForGeneration(m.ctx, m.generation, msg.turnID, msg.kind, msg.stream)
 		}
 		if msg.activity != nil {
 			if !m.stopping || terminalActivityWhileStopping(*msg.activity) {
 				m.handleActivity(msg.turnID, *msg.activity)
 				m.refreshTranscript(true)
 			}
-			return m, waitTurnCmd(m.ctx, msg.turnID, msg.kind, msg.stream)
+			return m, waitTurnCmdForGeneration(m.ctx, m.generation, msg.turnID, msg.kind, msg.stream)
 		}
 		m.finishTurn(msg.result, msg.err)
 		m.resize()
@@ -262,6 +313,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		learningCmd := m.startLearningRefresh()
 		return m, tea.Batch(textarea.Blink, learningCmd)
 	case learningMsg:
+		if msg.generation != 0 && msg.generation != m.generation {
+			return m, nil
+		}
 		m.learningLoading = false
 		m.learningLoaded = msg.err == nil
 		m.learningFailed = msg.err != nil
@@ -276,6 +330,9 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case contextMsg:
+		if msg.generation != 0 && msg.generation != m.generation {
+			return m, nil
+		}
 		if msg.closed {
 			return m, nil
 		}
@@ -284,11 +341,97 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.entries = append(m.entries, transcriptEntry{kind: entryContext, contextEvent: msg.event})
 			m.refreshTranscript(true)
 		}
-		return m, waitContextCmd(m.ctx, msg.stream)
+		return m, waitContextCmdForGeneration(m.ctx, m.generation, msg.stream)
+	case pickerListMsg:
+		if msg.generation != m.generation || m.sessionPicker == nil || msg.epoch != m.sessionPicker.epoch {
+			return m, nil
+		}
+		m.sessionPicker.setItems(msg.items, msg.err)
+		m.resize()
+		return m, nil
+	case pickerOperationMsg:
+		return m.handlePickerOperation(msg)
+	case preferenceRetryMsg:
+		if msg.generation != m.generation {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.entries = append(m.entries, transcriptEntry{kind: entryError, text: pickerErrorText(msg.err)})
+			m.status = "偏好结果核对失败"
+		} else {
+			m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "已使用原操作 ID 完成长期偏好 retry-only 核对。"})
+			m.status = "偏好结果已核对"
+		}
+		m.refreshTranscript(true)
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+func (m model) handlePickerOperation(msg pickerOperationMsg) (tea.Model, tea.Cmd) {
+	if msg.generation != m.generation || m.sessionPicker == nil {
+		return m, nil
+	}
+	m.sessionPicker.loading = false
+	if msg.err != nil {
+		m.sessionPicker.mode = pickerList
+		m.sessionPicker.status = pickerErrorText(msg.err)
+		m.status = "Session 操作失败；当前 Session 保持不变"
+		return m, nil
+	}
+	switch msg.kind {
+	case pickerIntentRename, pickerIntentDelete:
+		m.sessionPicker.mode = pickerList
+		request, epoch := m.sessionPicker.beginRequest()
+		return m, listSessionsCmd(m.ctx, m.manager, m.generation, epoch, request)
+	case pickerIntentSwitch, pickerIntentNew:
+		if msg.newGeneration <= m.generation {
+			m.sessionPicker = nil
+			m.status = "当前 Session 未改变"
+			m.restoreInputFocus()
+			return m, nil
+		}
+		m.resetAfterSessionSwap(msg.newGeneration)
+		return m, tea.Batch(textarea.Blink, waitContextCmdForGeneration(m.ctx, m.generation, m.contextUpdates), loadLearningStatusCmd(m.ctx, m.session, m.generation))
+	default:
+		return m, nil
+	}
+}
+
+func (m *model) resetAfterSessionSwap(generation uint64) {
+	if m.activeTurnCancel != nil {
+		m.activeTurnCancel()
+	}
+	if m.contextCancel != nil {
+		m.contextCancel()
+	}
+	m.generation = generation
+	m.contextUpdates, m.contextCancel = subscribeSessionContext(m.session)
+	m.workspaceStatus = m.session.WorkspaceStatus()
+	m.contextStatus = m.session.ContextStatus()
+	m.entries = []transcriptEntry{{kind: entryNotice, text: "已安全切换 Session；文件授权模式已重置为逐次确认，旧 YOLO、草稿和 pending 交互未恢复。"}}
+	if provider, ok := m.session.(sessionStartupNoticeProvider); ok {
+		for _, notice := range provider.SessionStartupNotices() {
+			if cleaned := strings.TrimSpace(safeSingleLineTerminalText(notice)); cleaned != "" {
+				m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: cleaned})
+			}
+		}
+	}
+	m.entries = append(m.entries, durableTranscriptEntries(m.session)...)
+	m.pending, m.pendingQuestion, m.pendingFileMutation, m.selector, m.sessionPicker = nil, nil, nil, nil, nil
+	m.busy, m.stopping = false, false
+	m.turnSeq, m.activeTurnID, m.pendingFileTurnID = 0, 0, 0
+	m.clearActiveTurn()
+	m.input.Reset()
+	m.input.Focus()
+	m.follow, m.hasNewContent = true, false
+	m.shownEventKeys = map[string]struct{}{}
+	m.learningLoading, m.learningLoaded, m.learningFailed, m.learningRefreshPending = true, false, false, false
+	m.status = "已切换 Session"
+	m.resize()
+	m.refreshTranscript(true)
 }
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -298,6 +441,42 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if m.terminalTooSmall() {
+		return m, nil
+	}
+	if m.sessionPicker != nil {
+		intent := m.sessionPicker.handleKey(msg, m.manager)
+		return m.handleSessionPickerIntent(intent)
+	}
+	if key == "f2" {
+		if m.manager == nil {
+			m.status = "Session 选择器不可用"
+			return m, nil
+		}
+		gate := m.manager.SwitchGate()
+		if !gate.Allowed {
+			m.status = truncateDisplayWidth(gate.Reason, 80)
+			return m, nil
+		}
+		m.sessionPicker = newSessionPickerModel(false)
+		m.input.Blur()
+		m.resize()
+		request, epoch := m.sessionPicker.beginRequest()
+		return m, listSessionsCmd(m.ctx, m.manager, m.generation, epoch, request)
+	}
+	if key == "ctrl+p" && m.manager != nil {
+		for _, outcome := range m.manager.UnknownOutcomes() {
+			if outcome.Kind == "preference" {
+				m.status = "正在使用原操作 ID 核对偏好结果"
+				return m, retryPreferenceCmd(m.ctx, m.manager, m.generation, outcome.ReceiptID)
+			}
+		}
+		for _, outcome := range m.manager.UnknownOutcomes() {
+			if outcome.Kind == "file" {
+				m.status = "未知文件结果不能重放；请重新读取、预览并授权"
+				return m, nil
+			}
+		}
+		m.status = "没有待核对的未知偏好结果"
 		return m, nil
 	}
 	if key == "ctrl+r" && m.sidebarWidth > 0 {
@@ -401,6 +580,32 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript(false)
 	}
 	return m, command
+}
+
+func (m model) handleSessionPickerIntent(intent pickerIntent) (tea.Model, tea.Cmd) {
+	if m.sessionPicker == nil || m.manager == nil {
+		return m, nil
+	}
+	switch intent.kind {
+	case pickerIntentNone:
+		m.resize()
+		return m, nil
+	case pickerIntentCancel:
+		m.sessionPicker = nil
+		m.status = "已返回当前 Session"
+		m.restoreInputFocus()
+		m.resize()
+		return m, nil
+	case pickerIntentRefresh:
+		request, epoch := m.sessionPicker.beginRequest()
+		return m, listSessionsCmd(m.ctx, m.manager, m.generation, epoch, request)
+	case pickerIntentSwitch, pickerIntentNew, pickerIntentRename, pickerIntentDelete:
+		m.sessionPicker.loading = true
+		m.status = "正在安全处理 Session"
+		return m, pickerOperationCmd(m.ctx, m.manager, m.generation, intent)
+	default:
+		return m, nil
+	}
 }
 
 func (m model) handleFileModeKey() (tea.Model, tea.Cmd) {
@@ -581,7 +786,7 @@ func (m model) beginTurn(kind turnKind, cancelable bool, input string, question 
 		m.activeTurnCancel = nil
 	}
 	m.resize()
-	return m, startTurnCmd(m.ctx, turnCtx, m.activeTurnID, kind, run)
+	return m, startTurnCmdForGeneration(m.ctx, turnCtx, m.generation, m.activeTurnID, kind, run)
 }
 
 func (m *model) finishTurn(result agentloop.Result, err error) {
@@ -610,7 +815,12 @@ func (m *model) finishTurn(result agentloop.Result, err error) {
 			m.restoreInputFocus()
 			return
 		}
-		m.markAssistantDraft(turnID, "failed")
+		committedText := strings.TrimSpace(result.Text) != ""
+		if committedText {
+			m.finalizeAssistantDraft(turnID, result.Text)
+		} else {
+			m.markAssistantDraft(turnID, "failed")
+		}
 		m.handleTurnError(err)
 		if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
 			if m.pending == nil {
@@ -621,16 +831,16 @@ func (m *model) finishTurn(result agentloop.Result, err error) {
 			}
 			m.selector = newPreferenceRetrySelector()
 		} else {
-			if kind == turnPreference && (activeResolution == agentloop.PreferenceSave || activeResolution == agentloop.PreferenceRetry) {
+			if !committedText && kind == turnPreference && (activeResolution == agentloop.PreferenceSave || activeResolution == agentloop.PreferenceRetry) {
 				if activePreference != nil {
 					activePreference.RetryOnly = false
 				}
 				m.restorePending(kind, nil, activePreference)
 			}
-			if kind == turnSend {
+			if kind == turnSend && !committedText {
 				m.input.SetValue(activeInput)
 			}
-			if kind == turnFileMutation && activeFileMutation != nil {
+			if !committedText && kind == turnFileMutation && activeFileMutation != nil {
 				m.pendingFileMutation = activeFileMutation
 				m.selector = newFileMutationSelector(activeFileMutation)
 			}
@@ -845,6 +1055,10 @@ func (m *model) updateFollowAfterScroll() {
 }
 
 func startTurnCmd(deliveryCtx, turnCtx context.Context, turnID uint64, kind turnKind, run func(context.Context) (agentloop.Result, error)) tea.Cmd {
+	return startTurnCmdForGeneration(deliveryCtx, turnCtx, 0, turnID, kind, run)
+}
+
+func startTurnCmdForGeneration(deliveryCtx, turnCtx context.Context, generation, turnID uint64, kind turnKind, run func(context.Context) (agentloop.Result, error)) tea.Cmd {
 	return func() tea.Msg {
 		stream := &turnStream{
 			activities: make(chan agentloop.Activity, turnStreamBuffer),
@@ -856,13 +1070,13 @@ func startTurnCmd(deliveryCtx, turnCtx context.Context, turnID uint64, kind turn
 				stream.publish(turnCtx, deliveryCtx, activity)
 			})
 			result, err := run(activityCtx)
-			stream.completion <- turnMsg{turnID: turnID, kind: kind, result: result, err: err, stream: stream, done: true}
+			stream.completion <- turnMsg{generation: generation, turnID: turnID, kind: kind, result: result, err: err, stream: stream, done: true}
 		}()
-		return turnMsg{turnID: turnID, kind: kind, stream: stream}
+		return turnMsg{generation: generation, turnID: turnID, kind: kind, stream: stream}
 	}
 }
 
-func waitTurnCmd(ctx context.Context, turnID uint64, kind turnKind, stream *turnStream) tea.Cmd {
+func waitTurnCmdForGeneration(ctx context.Context, generation, turnID uint64, kind turnKind, stream *turnStream) tea.Cmd {
 	return func() tea.Msg {
 		timer := time.NewTimer(time.Second)
 		defer timer.Stop()
@@ -870,11 +1084,11 @@ func waitTurnCmd(ctx context.Context, turnID uint64, kind turnKind, stream *turn
 			select {
 			case activity := <-stream.activities:
 				value := activity
-				return turnMsg{turnID: turnID, kind: kind, activity: &value, stream: stream}
+				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &value, stream: stream}
 			default:
 			}
 			if activity, ok := stream.popDelta(); ok {
-				return turnMsg{turnID: turnID, kind: kind, activity: &activity, stream: stream}
+				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &activity, stream: stream}
 			}
 			select {
 			case message := <-stream.completion:
@@ -882,29 +1096,33 @@ func waitTurnCmd(ctx context.Context, turnID uint64, kind turnKind, stream *turn
 				case activity := <-stream.activities:
 					stream.completion <- message
 					value := activity
-					return turnMsg{turnID: turnID, kind: kind, activity: &value, stream: stream}
+					return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &value, stream: stream}
 				default:
 				}
 				if activity, ok := stream.popDelta(); ok {
 					stream.completion <- message
-					return turnMsg{turnID: turnID, kind: kind, activity: &activity, stream: stream}
+					return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &activity, stream: stream}
 				}
 				return message
 			case activity := <-stream.activities:
 				value := activity
-				return turnMsg{turnID: turnID, kind: kind, activity: &value, stream: stream}
+				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &value, stream: stream}
 			case <-stream.wake:
 				continue
 			case <-timer.C:
-				return turnMsg{turnID: turnID, kind: kind, stream: stream, tick: true}
+				return turnMsg{generation: generation, turnID: turnID, kind: kind, stream: stream, tick: true}
 			case <-ctx.Done():
-				return turnMsg{turnID: turnID, kind: kind, err: ctx.Err(), done: true}
+				return turnMsg{generation: generation, turnID: turnID, kind: kind, err: ctx.Err(), done: true}
 			}
 		}
 	}
 }
 
 func waitContextCmd(ctx context.Context, stream <-chan agentloop.ContextEvent) tea.Cmd {
+	return waitContextCmdForGeneration(ctx, 0, stream)
+}
+
+func waitContextCmdForGeneration(ctx context.Context, generation uint64, stream <-chan agentloop.ContextEvent) tea.Cmd {
 	if stream == nil {
 		return nil
 	}
@@ -912,11 +1130,11 @@ func waitContextCmd(ctx context.Context, stream <-chan agentloop.ContextEvent) t
 		select {
 		case event, ok := <-stream:
 			if !ok {
-				return contextMsg{closed: true}
+				return contextMsg{generation: generation, closed: true}
 			}
-			return contextMsg{event: event, stream: stream}
+			return contextMsg{generation: generation, event: event, stream: stream}
 		case <-ctx.Done():
-			return contextMsg{closed: true}
+			return contextMsg{generation: generation, closed: true}
 		}
 	}
 }
@@ -925,6 +1143,12 @@ func (m *model) resize() {
 	contentWidth := max(20, m.width-horizontalPadding)
 	m.contentWidth = contentWidth
 	mainWidth, sidebarWidth := sidebarLayoutWidths(contentWidth)
+	if m.sessionPicker != nil {
+		m.sidebarWidth = 0
+		m.viewport.Width = contentWidth
+		m.viewport.Height = max(5, m.height-4)
+		return
+	}
 	m.sidebarWidth = sidebarWidth
 	m.sanitizeComposer()
 	m.input.SetWidth(composerInnerWidth(mainWidth))
@@ -974,6 +1198,15 @@ func (m *model) refreshTranscript(newContent bool) {
 func (m model) View() string {
 	if m.terminalTooSmall() {
 		return smallTerminalView(m.width, m.height)
+	}
+	if m.sessionPicker != nil {
+		contentWidth := max(minimumWidth, m.width-horizontalPadding)
+		body := lipgloss.JoinVertical(lipgloss.Left,
+			m.renderHeader(contentWidth),
+			dividerStyle.Render(strings.Repeat("─", contentWidth)),
+			m.sessionPicker.render(contentWidth, m.height-3),
+		)
+		return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
 	}
 	mainWidth := max(20, m.viewport.Width)
 	contentWidth := max(mainWidth, m.contentWidth)

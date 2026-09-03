@@ -23,6 +23,9 @@ jobs:
     steps:
       - name: Check out candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
       - name: Install exact Go toolchain
         uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
         with:
@@ -34,6 +37,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y dbus-x11 gnome-keyring libsecret-tools
+      - name: Validate native evidence parser
+        shell: pwsh
+        env:
+          EDU_AGENT_EVIDENCE_SELF_TEST: "1"
+        run: ./clients/cli-go/scripts/cli-platform-evidence.ps1
       - name: Run Linux native CLI evidence checks
         if: runner.os == 'Linux'
         shell: bash
@@ -43,7 +51,20 @@ jobs:
           RUNNER_ARCH_NAME: ${{ runner.arch }}
         run: |
           dbus-run-session -- bash -euo pipefail -c '
-            eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)"
+            evidence_home="$(mktemp -d)"
+            cleanup_evidence_home() { chmod -R u+w "$evidence_home" 2>/dev/null || true; rm -rf "$evidence_home"; }
+            trap cleanup_evidence_home EXIT
+            export GOMODCACHE="$(go env GOMODCACHE)"
+            export GOCACHE="$(go env GOCACHE)"
+            export GOPATH="$(go env GOPATH)"
+            export HOME="$evidence_home/home"
+            export XDG_DATA_HOME="$evidence_home/data"
+            export XDG_CONFIG_HOME="$evidence_home/config"
+            export XDG_CACHE_HOME="$evidence_home/cache"
+            export XDG_RUNTIME_DIR="$evidence_home/runtime"
+            mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            eval "$(printf "edu-agent-native-evidence\n" | gnome-keyring-daemon --unlock --components=secrets)"
             pwsh -NoProfile -File ./clients/cli-go/scripts/cli-platform-evidence.ps1
           '
       - name: Run native CLI evidence checks
@@ -59,6 +80,6 @@ jobs:
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: cli-native-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          path: clients/cli-go/platform-evidence/${{ runner.os }}-${{ runner.arch }}/
+          path: clients/cli-go/platform-evidence/${{ github.sha }}/${{ runner.os }}-${{ runner.arch }}/
           if-no-files-found: error
           retention-days: 14

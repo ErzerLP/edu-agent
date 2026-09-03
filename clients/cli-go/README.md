@@ -31,6 +31,8 @@ make cli-build
 
 “AI 学习助手”使用客户端本地配置的 OpenAI 兼容模型，不读取或修改服务端教学模型配置。模型自身不持久化学习状态；Agent Loop 通过受限工具从服务端读取知识目录、学习进度、路线、复习和已接纳的长期偏好。用户输入、模型回答、单轮和单次工具调用、工具参数、工具结果及每次发给模型的上下文均有独立硬上限；越界响应会失败关闭，不会放大为无界服务端读取或模型流量。所有模型、工具、错误和确认文本在渲染前都会移除终端及双向文本控制字符。
 
+新 Agent Session 默认在稳定轮次后使用系统钥匙串保护的本地密钥自动加密保存，可通过 `edu-agent agent resume` 打开共享 picker，或用 `resume --last`、`resume <UUID|标题>` 恢复；运行中的 TUI 空闲时按 `F2` 可打开同一套 picker，并支持当前/全部工作区范围、搜索、恢复、重命名、二次确认删除和新建 Session。provider endpoint 变化时，确认面板中 `Enter` 允许向新 provider 发送历史上下文，`L` 只在本地打开并继续阻止模型请求和自动标题，`Esc` 取消切换；仅本地打开后仍可查看 transcript、重命名或删除。工作台“AI助手与模型”设置以及 `edu-agent model set --session-history auto|off`/`config set --session-history auto|off` 只控制后续新 Session；`off` 会跳过存储打开，但不影响恢复和删除已有历史。`--no-save` 仅让当前新 Session 不落盘且不修改配置；历史不会按时间自动删除，达到硬上限也不会自动淘汰，可用 `agent sessions delete <UUID> --confirmed` 删除普通或可定位的损坏 Session；极端损坏且无可信 UUID 时，只能在明确选择后使用 UI 显示的 `storage:<id>` locator。已认证的未来版本必须升级客户端处理，当前版本不会恢复、修改或删除。`agent sessions clear --confirmed` 可清理全部本地 Session。自动标题会额外向当前模型提供商发送有界、清理后的已提交用户文本和安全最终回答，不包含工具调用或结果、工具参数、workspace/server 来源、回执、错误原文或推理；恢复后的下一模型请求会把历史上下文发送到当前 provider，端点身份变化时必须先明确确认。恢复继续绑定保存的工作区；旧 root 不可用或不安全时只恢复本地对话并禁用全部文件工具，绝不回退到当前目录，历史文件正文也不代表磁盘当前内容。跨进程恢复和 TUI 切换都会把 YOLO、旧文件授权与未完成交互重置为安全默认。平台钥匙服务不可用时不会回退到明文，而是明确降级为不可恢复的未保存会话。`agent sessions clear` 只清除本地 Agent Session store，不清除服务端事件、Nocturne、终端 scrollback、Shell history、provider retention 或 OS backup。
+
 Agent TUI 顶部只显示产品标识，把运行状态、估算上下文、模型名称和键位帮助放在消息输入区下方。输入区是按内容增长的有界多行 composer：`Enter` 发送，`Ctrl+J` 或 `Alt+Enter` 换行，字符计数显示 `8000` 上限；暂停跟随 transcript 时，底部状态会提示有新消息并保留回到底部的快捷键。宽终端还会在右侧显示学习概览：当前 Agent 状态、服务端权威学习目标、会话状态、路线进度、当前 Activity 与估算活跃时间；它在启动、完整 turn 结束或 `Ctrl+R` 时刷新，读取失败不阻断对话，窄终端会完全折叠侧栏。侧栏不显示任何 opaque ID、凭据、隐藏推理或原始工具参数，也不持久化学习状态副本。
 
 ### 本地工作区与文件工具
@@ -57,13 +59,16 @@ edu-agent progress [--all]
 edu-agent evidence [--node ID] [--limit N] [--cursor CURSOR]
 edu-agent reviews [--due-before RFC3339] [--limit N] [--cursor CURSOR]
 edu-agent config show
-edu-agent config set [--timeout DURATION] [--color never|auto|always]
+edu-agent config set [--timeout DURATION] [--color never|auto|always] [--session-history auto|off]
 edu-agent model show
 edu-agent model preset openai|deepseek|openrouter|ollama|custom
-edu-agent model set [--base-url URL] [--model NAME] [--context-window N] [--timeout DURATION] [--max-tool-rounds N]
+edu-agent model set [--base-url URL] [--model NAME] [--context-window N] [--context-compaction auto|recent-only|off] [--reasoning-effort auto|none|minimal|low|medium|high|xhigh|max] [--session-history auto|off] [--timeout DURATION] [--max-tool-rounds N]
 edu-agent model test
 edu-agent model key delete --confirmed
-edu-agent agent [--workspace PATH]
+edu-agent agent [--workspace PATH] [--no-save]
+edu-agent agent resume [SESSION] [--last] [--all]
+edu-agent agent sessions delete SESSION --confirmed
+edu-agent agent sessions clear --confirmed
 edu-agent clear
 edu-agent version
 ```

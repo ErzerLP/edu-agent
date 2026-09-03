@@ -44,6 +44,17 @@ type fakeConversation struct {
 	workspaceStatus    agentloop.WorkspaceStatus
 	learningStatus     agentloop.LearningStatus
 	learningErr        error
+	persistenceState   string
+	persistenceDetail  string
+	startupNotices     []string
+}
+
+func (c *fakeConversation) SessionStartupNotices() []string {
+	return append([]string(nil), c.startupNotices...)
+}
+
+func (c *fakeConversation) SessionPersistenceStatus() (string, string) {
+	return c.persistenceState, c.persistenceDetail
 }
 
 func (c *fakeConversation) Send(ctx context.Context, input string) (agentloop.Result, error) {
@@ -176,6 +187,62 @@ func TestAgentUIIsChineseAndSendsInput(t *testing.T) {
 	value = runTurn(t, value, command)
 	if conversation.sent != "解释图论" || value.busy || !strings.Contains(value.viewport.View(), "这是回答") {
 		t.Fatalf("sent=%q busy=%t viewport=%s", conversation.sent, value.busy, value.viewport.View())
+	}
+}
+
+func TestAgentUIPresentsBoundedSessionPersistenceHelp(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		state string
+		want  []string
+	}{
+		{
+			name:  "saved",
+			state: "saved",
+			want:  []string{"本机加密保存", "自动标题", "恢复后的历史上下文", "当前 provider", "endpoint 变化须先确认", "YOLO", "旧文件授权", "pending 交互", "不会恢复"},
+		},
+		{
+			name:  "unsaved",
+			state: "unsaved",
+			want:  []string{"仅在当前进程有效", "退出后不可恢复", "key backend", "绝不落明文", "当前 provider", "endpoint 变化须先确认", "YOLO", "pending 交互"},
+		},
+		{
+			name:  "failed",
+			state: "failed",
+			want:  []string{"最近内容保存失败", "可能尚未持久化", "不会改用明文", "当前 provider", "endpoint 变化须先确认", "旧文件授权", "不会恢复"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			help := sessionPersistenceHelp(test.state)
+			for _, topic := range test.want {
+				if !strings.Contains(help, topic) {
+					t.Fatalf("%s help missing topic %q: %q", test.name, topic, help)
+				}
+			}
+			if strings.Contains(help, "https://") || strings.Contains(help, "/home/") || strings.Contains(help, "opaque-id") {
+				t.Fatalf("%s help leaked endpoint, path, or internal ID: %q", test.name, help)
+			}
+
+			value := newModel(t.Context(), &fakeConversation{
+				persistenceState:  test.state,
+				persistenceDetail: "https://private.example/v1 /home/user/session opaque-id-123",
+			}, "model")
+			updated, _ := value.Update(tea.WindowSizeMsg{Width: minimumWidth, Height: minimumHeight})
+			view := updated.(model).View()
+			if !strings.Contains(view, test.want[0]) {
+				t.Fatalf("%s first 46x18 view does not show persistence help: %s", test.name, view)
+			}
+			if strings.Contains(view, "private.example") || strings.Contains(view, "/home/user") || strings.Contains(view, "opaque-id-123") {
+				t.Fatalf("%s first view leaked persistence detail: %s", test.name, view)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if width := lipgloss.Width(line); width > minimumWidth {
+					t.Fatalf("%s 46x18 line width=%d: %q", test.name, width, line)
+				}
+			}
+		})
 	}
 }
 
@@ -819,6 +886,21 @@ func TestAgentUIScrollPauseShowsNewContentIndicator(t *testing.T) {
 	value = updated.(model)
 	if value.hasNewContent || !value.follow || !value.viewport.AtBottom() {
 		t.Fatalf("Ctrl+G did not restore follow mode: follow=%t new=%t bottom=%t", value.follow, value.hasNewContent, value.viewport.AtBottom())
+	}
+}
+
+func TestAgentUIPreservesCommittedAnswerWhenSessionPublicationFails(t *testing.T) {
+	conversation := &fakeConversation{
+		result:  agentloop.Result{Text: "模型已经提交的正文"},
+		sendErr: errors.New("session_save_failed: checkpoint publication failed"),
+	}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("不要重放这条输入")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	transcript := value.viewport.View()
+	if !strings.Contains(transcript, "模型已经提交的正文") || !strings.Contains(transcript, "checkpoint publication failed") || value.input.Value() != "" {
+		t.Fatalf("committed result was not preserved safely: input=%q transcript=%s", value.input.Value(), transcript)
 	}
 }
 

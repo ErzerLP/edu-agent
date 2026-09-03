@@ -522,7 +522,11 @@ func newPreferenceTestSession(t *testing.T, model Model, server Server) *Session
 	t.Helper()
 	var mu sync.Mutex
 	next := 0
-	ids := []string{"70000000-0000-4000-8000-000000000001", "70000000-0000-4000-8000-000000000002"}
+	ids := []string{
+		"70000000-0000-4000-8000-000000000001",
+		"70000000-0000-4000-8000-000000000002",
+		"70000000-0000-4000-8000-000000000003",
+	}
 	session, err := New(model, server, Options{
 		ContextWindow: 32768,
 		MaxToolRounds: 8,

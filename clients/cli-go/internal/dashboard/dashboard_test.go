@@ -79,6 +79,91 @@ func TestAgentShortcutRequiresCompleteLocalModelSetup(t *testing.T) {
 	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"agent"}) {
 		t.Fatalf("optional-key agent command = %#v", got)
 	}
+	updated, _ = newModel(ollama).Update(key("y"))
+	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"agent", "resume"}) {
+		t.Fatalf("resume agent command = %#v", got)
+	}
+}
+
+func TestAgentSettingsToggleFutureSessionHistory(t *testing.T) {
+	t.Parallel()
+	base := Snapshot{
+		LocalState: LocalStatePaired, AgentProvider: "ollama", AgentBaseURL: "http://127.0.0.1:11434/v1",
+		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6,
+		AgentSessionHistory: "auto",
+	}
+	updated, _ := newModel(base).Update(key("s"))
+	updated, _ = updated.(model).Update(key("a"))
+	settings := updated.(model)
+	if settings.screen != screenAgentSettings || !strings.Contains(settings.View(), "自动（本机加密保存）") {
+		t.Fatalf("agent settings screen=%d view=%q", settings.screen, settings.View())
+	}
+	updated, _ = settings.Update(key("s"))
+	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"model", "set", "--session-history", "off"}) {
+		t.Fatalf("disable history command=%#v", got)
+	}
+	base.AgentSessionHistory = "off"
+	updated, _ = newModel(base).Update(key("s"))
+	updated, _ = updated.(model).Update(key("a"))
+	updated, _ = updated.(model).Update(key("s"))
+	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"model", "set", "--session-history", "auto"}) {
+		t.Fatalf("enable history command=%#v", got)
+	}
+}
+
+func TestAgentSettingsSessionPrivacyDisclosure(t *testing.T) {
+	t.Parallel()
+	snapshot := Snapshot{
+		LocalState: LocalStatePaired, AgentProvider: "custom", AgentBaseURL: "https://private.example/v1",
+		AgentModel: "model", AgentSessionHistory: "auto",
+	}
+	updated, _ := newModel(snapshot).Update(key("s"))
+	updated, _ = updated.(model).Update(key("a"))
+	settings := updated.(model)
+	if !strings.Contains(settings.View(), "Session历史与隐私") {
+		t.Fatalf("privacy entry missing from agent settings: %q", settings.View())
+	}
+	updated, _ = settings.Update(key("v"))
+	privacy := updated.(model)
+	if privacy.screen != screenAgentPrivacy {
+		t.Fatalf("privacy screen=%d", privacy.screen)
+	}
+
+	pages := []struct {
+		want []string
+	}{
+		{want: []string{"本机加密保存", "工具/context evidence", "无时间 TTL", "手动 delete/clear", "硬上限不淘汰", "保存失败"}},
+		{want: []string{"自动标题", "当前 provider", "恢复后下一请求", "endpoint 变化先确认", "workspace 正文", "不代表当前磁盘内容"}},
+		{want: []string{"key backend", "绝不落明文", "仅当前进程", "clear 只清本地", "server/Nocturne/terminal", "Shell/provider retention/OS backup", "YOLO", "旧文件授权", "pending 交互", "不恢复"}},
+	}
+	for index, page := range pages {
+		privacy.width, privacy.height = 46, 18
+		view := privacy.View()
+		for _, topic := range page.want {
+			if !strings.Contains(view, topic) {
+				t.Fatalf("page %d missing topic %q: %q", index+1, topic, view)
+			}
+		}
+		if strings.Contains(view, snapshot.AgentBaseURL) || strings.Contains(view, "/home/") || strings.Contains(view, "opaque-id") {
+			t.Fatalf("page %d leaked endpoint, path, or internal ID: %q", index+1, view)
+		}
+		if lines := strings.Count(view, "\n") + 1; lines > 18 {
+			t.Fatalf("page %d uses %d lines at 46x18: %q", index+1, lines, view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if width := lipgloss.Width(line); width > 46 {
+				t.Fatalf("page %d line width=%d: %q", index+1, width, line)
+			}
+		}
+		if index+1 < len(pages) {
+			updated, _ = privacy.Update(key("j"))
+			privacy = updated.(model)
+		}
+	}
+	updated, _ = privacy.Update(key("esc"))
+	if got := updated.(model).screen; got != screenAgentSettings {
+		t.Fatalf("privacy back screen=%d", got)
+	}
 }
 
 func TestMenuNavigationAndFormsReturnExistingArgv(t *testing.T) {

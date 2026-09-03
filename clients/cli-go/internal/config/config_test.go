@@ -139,6 +139,27 @@ func TestAgentContextCompactionDefaultsAndValidatesStrictly(t *testing.T) {
 	}
 }
 
+func TestAgentSessionHistoryDefaultsAndValidatesStrictly(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []string{"auto", "off"} {
+		value := DefaultAgentConfig("openai")
+		value.SessionHistory = mode
+		if err := value.Validate(); err != nil || value.SessionHistory != mode {
+			t.Fatalf("session history %q rejected or changed: %+v err=%v", mode, value, err)
+		}
+	}
+	missing := DefaultAgentConfig("openai")
+	missing.SessionHistory = ""
+	if err := missing.Validate(); err != nil || missing.SessionHistory != DefaultAgentSessionHistory {
+		t.Fatalf("missing session history did not normalize to auto: %+v err=%v", missing, err)
+	}
+	invalid := DefaultAgentConfig("openai")
+	invalid.SessionHistory = "enabled"
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("invalid session history was accepted")
+	}
+}
+
 func TestAgentReasoningEffortDefaultsAndValidatesStrictly(t *testing.T) {
 	t.Parallel()
 	for _, effort := range []string{"auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
@@ -174,7 +195,7 @@ func TestStoreLoadsLegacyAgentJSONWithAutoReasoningEffort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Agent == nil || loaded.Agent.ReasoningEffort != DefaultAgentReasoningEffort {
+	if loaded.Agent == nil || loaded.Agent.ReasoningEffort != DefaultAgentReasoningEffort || loaded.Agent.SessionHistory != DefaultAgentSessionHistory {
 		t.Fatalf("legacy agent config = %+v", loaded.Agent)
 	}
 }

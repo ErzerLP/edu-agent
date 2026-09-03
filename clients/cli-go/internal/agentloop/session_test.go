@@ -1283,6 +1283,8 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 				"60000000-0000-4000-8000-000000000002",
 				"60000000-0000-4000-8000-000000000003",
 				"60000000-0000-4000-8000-000000000004",
+				"60000000-0000-4000-8000-000000000005",
+				"60000000-0000-4000-8000-000000000006",
 			}
 			if uuidCalls >= len(ids) {
 				return "", errors.New("unexpected UUID request")
@@ -1315,7 +1317,7 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 		t.Fatalf("ambiguous write allowed decline: %v", err)
 	}
 	result, err = session.ResolvePreference(t.Context(), PreferenceRetry)
-	if err != nil || result.Pending != nil || server.createCalls != 2 || server.decisionCalls != 1 || uuidCalls != 2 {
+	if err != nil || result.Pending != nil || server.createCalls != 2 || server.decisionCalls != 1 || uuidCalls != 3 {
 		t.Fatalf("retry result=%+v create=%d decision=%d uuidCalls=%d err=%v", result, server.createCalls, server.decisionCalls, uuidCalls, err)
 	}
 	if len(server.createRequests) != 2 || server.createRequests[0].OperationID == "" || server.createRequests[0].OperationID != server.createRequests[1].OperationID {
@@ -1333,7 +1335,7 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 	if _, err := session.ResolvePreference(t.Context(), PreferenceSave); err != nil {
 		t.Fatal(err)
 	}
-	if uuidCalls != 4 || len(server.createRequests) != 3 || len(server.decisionRequests) != 2 ||
+	if uuidCalls != 6 || len(server.createRequests) != 3 || len(server.decisionRequests) != 2 ||
 		server.createRequests[2].OperationID == server.createRequests[0].OperationID ||
 		server.decisionRequests[1].OperationID == server.decisionRequests[0].OperationID {
 		t.Fatalf("subsequent preference create=%+v decisions=%+v uuidCalls=%d", server.createRequests, server.decisionRequests, uuidCalls)

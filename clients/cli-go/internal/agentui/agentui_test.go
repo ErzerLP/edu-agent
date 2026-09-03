@@ -1054,6 +1054,10 @@ func TestAgentUITypedContextErrorsHaveDistinctGuidance(t *testing.T) {
 	if !strings.Contains(legacy, "对话上下文") || !strings.Contains(legacy, "开启新会话") {
 		t.Fatalf("legacy fallback=%q", legacy)
 	}
+	deadline := errorCardText(context.DeadlineExceeded, false)
+	if !strings.Contains(deadline, "模型响应") || !strings.Contains(deadline, "无响应超时") || !strings.Contains(deadline, "model set --timeout") {
+		t.Fatalf("deadline guidance=%q", deadline)
+	}
 }
 
 func TestAgentUIRecallDisplayName(t *testing.T) {
@@ -1596,7 +1600,7 @@ func TestAgentUIActivityDetailsShowPhaseElapsedAndSlowHint(t *testing.T) {
 	value.toolsExpanded = true
 	value.refreshTranscript(false)
 	view := value.View()
-	if !strings.Contains(view, "等待模型响应") || !strings.Contains(view, "用时：") || !strings.Contains(view, "已等待") || !strings.Contains(view, "超时预算 1m30s") || !strings.Contains(view, "超时预算：1m30s") || !strings.Contains(view, "Esc") {
+	if !strings.Contains(view, "等待模型响应") || !strings.Contains(view, "用时：") || !strings.Contains(view, "已运行") || !strings.Contains(view, "无响应超时 1m30s") || !strings.Contains(view, "无响应超时：1m30s") || !strings.Contains(view, "Esc") {
 		t.Fatalf("lifecycle details missing: %s", view)
 	}
 }

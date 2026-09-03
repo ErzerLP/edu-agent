@@ -380,7 +380,7 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	updated, _ := newModel(snapshot).Update(key("s"))
 	updated, _ = updated.(model).Update(key("a"))
 	settings := updated.(model)
-	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "默认推理强度：high", "API Key：已存入系统钥匙串") {
+	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "默认推理强度：high", "无响应超时：90s", "API Key：已存入系统钥匙串") {
 		t.Fatalf("agent settings=%q", settings.View())
 	}
 
@@ -392,7 +392,7 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	form.inputs[3].SetValue("recent-only")
 	form.inputs[4].SetValue("2m")
 	form.inputs[5].SetValue("60")
-	if !strings.Contains(form.View(), "最大工具轮数（1-60）") {
+	if !strings.Contains(form.View(), "模型无响应超时") || !strings.Contains(form.View(), "最大工具轮数（1-60）") {
 		t.Fatalf("tool-round range missing from form: %q", form.View())
 	}
 	updated, _ = form.Update(key("enter"))

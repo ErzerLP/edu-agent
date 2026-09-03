@@ -154,7 +154,7 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"model", "show"}); exit != ExitOK {
 		t.Fatalf("show exit=%d err=%q", exit, errOut.String())
 	}
-	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") || !strings.Contains(out.String(), "默认推理强度：high") {
+	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") || !strings.Contains(out.String(), "默认推理强度：high") || !strings.Contains(out.String(), "无响应超时：2m") {
 		t.Fatalf("secret leaked or status missing: %q", out.String())
 	}
 	deletesBefore := secrets.deletes

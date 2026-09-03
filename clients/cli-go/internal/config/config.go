@@ -284,7 +284,7 @@ func (c *AgentConfig) Validate() error {
 	}
 	timeout, err := ParseTimeout(c.Timeout)
 	if err != nil || timeout > 10*time.Minute {
-		return errors.New("agent timeout must be a positive duration no greater than 10m")
+		return errors.New("agent inactivity timeout must be a positive duration no greater than 10m")
 	}
 	if !agentlimits.ValidToolRounds(c.MaxToolRounds) {
 		return fmt.Errorf("max tool rounds must be between %d and %d", MinAgentMaxToolRounds, MaxAgentMaxToolRounds)

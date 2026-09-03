@@ -341,7 +341,7 @@ func agentTimeouts(value config.Config) (requestTimeout, modelTimeout time.Durat
 	}
 	modelTimeout, err = config.ParseTimeout(value.Agent.Timeout)
 	if err != nil {
-		return 0, 0, commandError("invalid_configuration", "模型请求超时配置无效", "在设置中修复模型配置", ExitInput)
+		return 0, 0, commandError("invalid_configuration", "模型无响应超时配置无效", "在设置中修复模型配置", ExitInput)
 	}
 	return requestTimeout, modelTimeout, nil
 }
@@ -662,7 +662,7 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 		if _, keyErr := a.ModelSecrets.Load(binding); keyErr == nil {
 			keyStatus = "已存入系统钥匙串"
 		}
-		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n请求超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
+		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
 			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow,
 			safeText(value.Agent.ContextCompaction), safeText(value.Agent.ReasoningEffort), safeText(value.Agent.SessionHistory), safeText(value.Agent.Timeout), value.Agent.MaxToolRounds, keyStatus)
 		return err
@@ -748,7 +748,7 @@ func (a *App) runModelSet(args []string) error {
 	set.StringVar(&contextCompaction, "context-compaction", "", "auto, recent-only, or off")
 	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
 	set.StringVar(&sessionHistory, "session-history", "", "auto or off")
-	set.StringVar(&timeout, "timeout", "", "model timeout")
+	set.StringVar(&timeout, "timeout", "", "model inactivity timeout")
 	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, fmt.Sprintf("maximum tool rounds (%d-%d)", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds))
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return modelUsage("模型参数格式无效")

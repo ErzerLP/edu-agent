@@ -311,10 +311,10 @@ func (m *model) open(next screen) {
 			newInput("模型名称", agentConfig.AgentModel),
 			newInput("32768", contextWindow),
 			newInput("auto", display(agentConfig.AgentContextCompaction, config.DefaultAgentContextCompaction)),
-			newInput("90s", display(agentConfig.AgentTimeout, "90s")),
+			newInput(config.DefaultAgentTimeout.String(), display(agentConfig.AgentTimeout, config.DefaultAgentTimeout.String())),
 			newInput("6", toolRounds),
 		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型请求超时", fmt.Sprintf("最大工具轮数（%d-%d）", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds)}
+		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", fmt.Sprintf("最大工具轮数（%d-%d）", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds)}
 	case screenAgentKey:
 		input := newInput("输入不会显示", "")
 		input.EchoMode = textinput.EchoPassword
@@ -656,9 +656,9 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 	case screenAgentSettings:
 		body.WriteString(labelStyle.Render("AI助手与模型"))
 		body.WriteString("\n")
-		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n模型超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
+		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, "90s"), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
+			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, config.DefaultAgentTimeout.String()), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
 		body.WriteString("\n")

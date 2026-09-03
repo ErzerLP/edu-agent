@@ -462,12 +462,84 @@ func TestStreamRejectsIncompleteFinishReasonsAfterDeliveringDeltas(t *testing.T)
 	}
 }
 
+func TestStreamInactivityTimeoutResetsOnAnyResponseBytes(t *testing.T) {
+	const timeout = 500 * time.Millisecond
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher := w.(http.Flusher)
+		parts := []string{
+			": keepalive\n\n",
+			`data: {"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"`,
+			`hidden"},"finish_reason":null}]}` + "\n\n",
+			": keepalive\n\n",
+			": keepalive\n\n",
+			sse(`{"choices":[{"index":0,"delta":{"content":"完成"},"finish_reason":null}]}`),
+			sse(`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`) + sse(`[DONE]`),
+		}
+		for index, part := range parts {
+			if _, err := io.WriteString(w, part); err != nil {
+				return
+			}
+			flusher.Flush()
+			if index < len(parts)-1 {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, "test-model", "token", timeout, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	var events []StreamEvent
+	response, err := client.Stream(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(started) <= timeout {
+		t.Fatalf("stream completed before proving timeout renewal: elapsed=%s timeout=%s", time.Since(started), timeout)
+	}
+	if response.Message.Content != "完成" || len(events) != 2 || events[0].Kind != StreamEventResponseStarted || events[1] != (StreamEvent{Kind: StreamEventTextDelta, Text: "完成"}) {
+		t.Fatalf("response=%+v events=%+v", response, events)
+	}
+}
+
+func TestStreamConfiguredInactivityTimeoutRequiresResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL, "test-model", "token", 80*time.Millisecond, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []StreamEvent
+	_, err = client.Stream(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}}, func(event StreamEvent) error {
+		events = append(events, event)
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("response headers incorrectly started SSE presentation: %+v", events)
+	}
+}
+
 func TestStreamCancellationAndObserverErrorArePreserved(t *testing.T) {
 	t.Run("context cancellation", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(http.StatusOK)
-			w.(http.Flusher).Flush()
+			writeSSE(t, w, `{"choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`)
 			<-r.Context().Done()
 		}))
 		defer server.Close()

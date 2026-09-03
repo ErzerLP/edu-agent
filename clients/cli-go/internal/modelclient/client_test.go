@@ -1,7 +1,9 @@
 package modelclient
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +43,25 @@ func TestCompleteSendsOpenAICompatibleToolRequest(t *testing.T) {
 	cacheRead, cacheReported := response.Usage.CacheReadTokens()
 	if received.Model != "test-model" || received.Stream || received.MaxTokens != 2048 || len(response.Message.ToolCalls) != 1 || response.Usage.PromptTokens != 123 || response.Usage.CompletionTokens != 17 || response.Usage.TotalTokens != 140 || !cacheReported || cacheRead != 90 {
 		t.Fatalf("request=%+v response=%+v cache-read=%d reported=%t", received, response, cacheRead, cacheReported)
+	}
+}
+
+func TestCompleteUsesConfiguredTimeoutAndPreservesDeadline(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-release
+	}))
+	defer func() {
+		close(release)
+		server.Close()
+	}()
+	client, err := New(server.URL, "model", "", 80*time.Millisecond, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Complete(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v", err)
 	}
 }
 

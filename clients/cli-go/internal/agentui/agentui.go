@@ -1265,6 +1265,9 @@ func (m model) compactStatus() string {
 			return fmt.Sprintf("已等待 %s · 读取 %s/%d 字节", visibleDuration(time.Since(started)), safeSingleLineTerminalText(m.activeFileDetail.Path), m.activeFileDetail.Bytes)
 		}
 		if m.activeTimeoutBudget > 0 {
+			if m.activePhase == agentloop.ActivityWaitingModel || m.activePhase == agentloop.ActivityReceivingStream {
+				return fmt.Sprintf("已运行 %s · 无响应超时 %s", visibleDuration(time.Since(started)), visibleDuration(m.activeTimeoutBudget))
+			}
 			return fmt.Sprintf("已等待 %s / 超时预算 %s", visibleDuration(time.Since(started)), visibleDuration(m.activeTimeoutBudget))
 		}
 		return "耗时较长"
@@ -1315,6 +1318,9 @@ func (m model) slowTurnDetail() string {
 		return detail + "，可按 Esc 停止"
 	}
 	if m.activeTimeoutBudget > 0 {
+		if m.activePhase == agentloop.ActivityWaitingModel || m.activePhase == agentloop.ActivityReceivingStream {
+			return fmt.Sprintf("已运行 %s，无响应超时 %s，可按 Esc 停止", elapsed, visibleDuration(m.activeTimeoutBudget))
+		}
 		return fmt.Sprintf("已等待 %s / 超时预算 %s，可按 Esc 停止", elapsed, visibleDuration(m.activeTimeoutBudget))
 	}
 	return fmt.Sprintf("已等待 %s，耗时较长，可按 Esc 停止", elapsed)
@@ -1342,6 +1348,9 @@ func errorCardText(err error, preference bool) string {
 	} else if code == string(modelclient.ErrorCodeReasoningEffortUnsupported) {
 		stage = "模型请求"
 		suggestion = "当前提供商不支持所选推理强度；按 F3 选择 auto 或受支持档位后重试。"
+	} else if code == "context_deadline_exceeded" {
+		stage = "模型响应"
+		suggestion = "模型在配置的无响应超时内没有返回数据；请检查网络，或使用 model set --timeout 调大等待时间后重试。"
 	} else if code == string(modelclient.ErrorCodeResponseTruncated) {
 		stage = "模型输出"
 		suggestion = "回答达到长度上限；已保留安全的可见部分但未写入会话历史，请缩小问题或分步请求。"

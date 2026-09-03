@@ -112,7 +112,7 @@ func renderThinkingActivity(activity agentloop.Activity, width int, expanded boo
 			detail += " · 用时：" + elapsed
 		}
 		if activity.TimeoutBudget > 0 {
-			detail += " · 超时预算：" + visibleDuration(activity.TimeoutBudget)
+			detail += " · 无响应超时：" + visibleDuration(activity.TimeoutBudget)
 		}
 		if activity.StableCode != "" {
 			detail += " · 代码：" + safeTerminalText(activity.StableCode)

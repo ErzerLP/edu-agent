@@ -161,22 +161,28 @@ func (c *Client) streamAttempt(
 	if err != nil {
 		return Response{}, streamCompatibilityNone, fmt.Errorf("编码模型请求: %w", err)
 	}
-	httpRequest, err := c.newRequest(ctx, body, "text/event-stream")
+	requestCtx, inactivity := newInactivityTimeout(ctx, c.timeout)
+	defer inactivity.Stop()
+	httpRequest, err := c.newRequest(requestCtx, body, "text/event-stream")
 	if err != nil {
 		return Response{}, streamCompatibilityNone, err
 	}
 	response, err := c.http.Do(httpRequest)
 	if err != nil {
-		if ctx.Err() != nil {
-			return Response{}, streamCompatibilityNone, ctx.Err()
+		if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+			return Response{}, streamCompatibilityNone, contextErr
 		}
 		return Response{}, streamCompatibilityNone, errors.New("无法连接模型服务")
 	}
 	defer response.Body.Close()
+	responseBody := activityReader{reader: response.Body, touch: inactivity.Touch}
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		data, readErr := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
+		data, readErr := io.ReadAll(io.LimitReader(responseBody, maxResponseBytes+1))
 		if readErr != nil {
+			if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+				return Response{}, streamCompatibilityNone, contextErr
+			}
 			return Response{}, streamCompatibilityNone, errors.New("读取模型响应失败")
 		}
 		if int64(len(data)) > maxResponseBytes {
@@ -198,26 +204,20 @@ func (c *Client) streamAttempt(
 	if parseErr != nil || !strings.EqualFold(mediaType, "text/event-stream") {
 		return Response{}, streamCompatibilityNone, clientError(ErrorCodeStreamProtocol, "模型服务返回了非 SSE 响应")
 	}
-	if !*responseStarted {
-		if err := observe(StreamEvent{Kind: StreamEventResponseStarted}); err != nil {
-			return Response{}, streamCompatibilityNone, err
-		}
-		*responseStarted = true
-	}
-	if ctx.Err() != nil {
-		return Response{}, streamCompatibilityNone, ctx.Err()
+	if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+		return Response{}, streamCompatibilityNone, contextErr
 	}
 
-	reader := &sseReader{reader: bufio.NewReaderSize(io.LimitReader(response.Body, maxResponseBytes+1), 32<<10)}
+	reader := &sseReader{reader: bufio.NewReaderSize(io.LimitReader(responseBody, maxResponseBytes+1), 32<<10)}
 	assembler := streamAssembler{tools: make(map[int]*assembledToolCall)}
 	for {
-		if ctx.Err() != nil {
-			return Response{}, streamCompatibilityNone, ctx.Err()
+		if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+			return Response{}, streamCompatibilityNone, contextErr
 		}
 		event, readErr := reader.next()
 		if readErr != nil {
-			if ctx.Err() != nil {
-				return Response{}, streamCompatibilityNone, ctx.Err()
+			if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+				return Response{}, streamCompatibilityNone, contextErr
 			}
 			if errors.Is(readErr, io.EOF) {
 				return Response{}, streamCompatibilityNone, clientError(ErrorCodeStreamProtocol, "模型流式响应在完成前中断")
@@ -250,12 +250,18 @@ func (c *Client) streamAttempt(
 		if applyErr != nil {
 			return Response{}, streamCompatibilityNone, applyErr
 		}
+		if !*responseStarted {
+			if err := observe(StreamEvent{Kind: StreamEventResponseStarted}); err != nil {
+				return Response{}, streamCompatibilityNone, err
+			}
+			*responseStarted = true
+		}
 		if text != "" {
 			if err := observe(StreamEvent{Kind: StreamEventTextDelta, Text: text}); err != nil {
 				return Response{}, streamCompatibilityNone, err
 			}
-			if ctx.Err() != nil {
-				return Response{}, streamCompatibilityNone, ctx.Err()
+			if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+				return Response{}, streamCompatibilityNone, contextErr
 			}
 		}
 	}

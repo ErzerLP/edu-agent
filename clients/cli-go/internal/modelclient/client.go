@@ -20,6 +20,7 @@ type Client struct {
 	baseURL string
 	model   string
 	apiKey  string
+	timeout time.Duration
 	http    *http.Client
 }
 
@@ -69,17 +70,17 @@ func New(baseURL, model, apiKey string, timeout time.Duration, source *http.Clie
 		return nil, errors.New("模型名称不能为空")
 	}
 	if timeout <= 0 {
-		return nil, errors.New("模型请求超时必须为正数")
+		return nil, errors.New("模型无响应超时必须为正数")
 	}
 	transport := http.DefaultTransport
 	if source != nil && source.Transport != nil {
 		transport = source.Transport
 	}
 	httpClient := &http.Client{
-		Transport: transport, Timeout: timeout,
+		Transport:     transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &Client{baseURL: strings.TrimSuffix(parsed.String(), "/"), model: model, apiKey: apiKey, http: httpClient}, nil
+	return &Client{baseURL: strings.TrimSuffix(parsed.String(), "/"), model: model, apiKey: apiKey, timeout: timeout, http: httpClient}, nil
 }
 
 func (c *Client) Complete(ctx context.Context, request Request) (Response, error) {
@@ -101,20 +102,25 @@ func (c *Client) Complete(ctx context.Context, request Request) (Response, error
 	if err != nil {
 		return Response{}, fmt.Errorf("编码模型请求: %w", err)
 	}
-	httpRequest, err := c.newRequest(ctx, body, "application/json")
+	requestCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	httpRequest, err := c.newRequest(requestCtx, body, "application/json")
 	if err != nil {
 		return Response{}, err
 	}
 	response, err := c.http.Do(httpRequest)
 	if err != nil {
-		if ctx.Err() != nil {
-			return Response{}, ctx.Err()
+		if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+			return Response{}, contextErr
 		}
 		return Response{}, errors.New("无法连接模型服务")
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
+		if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
+			return Response{}, contextErr
+		}
 		return Response{}, errors.New("读取模型响应失败")
 	}
 	if int64(len(data)) > maxResponseBytes {

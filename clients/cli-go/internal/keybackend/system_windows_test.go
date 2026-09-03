@@ -4,6 +4,7 @@ package keybackend
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -18,7 +19,15 @@ import (
 
 func TestWindowsSecretBroadACLReadFailsClosedAndReplacementTightens(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
 	locator := Locator{Service: "edu-agent-agent-sessions-v1", Account: "windows-acl-replace"}
+	if err := AvailableSecret(locator); err != nil {
+		t.Fatalf("Session native DPAPI unexpectedly depends on powershell.exe: %v", err)
+	}
+	legacyLocator := Locator{Service: ServiceOfflineV1, Account: Account("https://offline.example", "windows-test-device")}
+	if err := AvailableSecret(legacyLocator); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("legacy offline availability without powershell.exe = %v, want ErrUnavailable", err)
+	}
 	defer DeleteSecret(locator)
 	first := []byte("first-secret")
 	if err := StoreSecret(locator, first); err != nil {
@@ -55,6 +64,37 @@ func TestWindowsSecretBroadACLReadFailsClosedAndReplacementTightens(t *testing.T
 	}
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("deleted DPAPI file remains: %v", err)
+	}
+}
+
+func TestWindowsSessionSecretRejectsInvalidDPAPIPlaintextAndBounds(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+	locator := Locator{Service: "edu-agent-agent-sessions-v1", Account: "windows-dpapi-validation"}
+	path, err := secretPath(locator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureWindowsSecretDirectory(filepath.Dir(path)); err != nil {
+		t.Fatal(err)
+	}
+	invalidUTF8, err := protectWindowsCurrentUser([]byte{0xff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWindowsSecretWrite(path, invalidUTF8); err != nil {
+		clear(invalidUTF8)
+		t.Fatal(err)
+	}
+	clear(invalidUTF8)
+	if _, err := LoadSecret(locator, 1024); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("invalid UTF-8 DPAPI plaintext load error = %v, want ErrUnavailable", err)
+	}
+	if _, err := unprotectWindowsCurrentUser(make([]byte, maxWindowsSecretBlobBytes+1)); err == nil {
+		t.Fatal("oversized DPAPI ciphertext was accepted")
+	}
+	if _, err := protectWindowsCurrentUser(make([]byte, base64.RawURLEncoding.EncodedLen(maxSecretBytes)+1)); err == nil {
+		t.Fatal("oversized DPAPI plaintext was accepted")
 	}
 }
 

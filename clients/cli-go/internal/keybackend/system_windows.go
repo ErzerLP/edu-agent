@@ -5,23 +5,36 @@ package keybackend
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
+	"unicode/utf8"
+	"unsafe"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 	"golang.org/x/sys/windows"
 )
 
-const nativeSecretTimeout = 5 * time.Second
+const (
+	nativeSecretTimeout       = 5 * time.Second
+	maxWindowsSecretBlobBytes = maxSecretBytes * 3
+)
 
-func availableSecret(Locator) error {
-	if _, err := exec.LookPath("powershell.exe"); err != nil || strings.TrimSpace(os.Getenv("LOCALAPPDATA")) == "" {
+func availableSecret(locator Locator) error {
+	if strings.TrimSpace(os.Getenv("LOCALAPPDATA")) == "" {
 		return ErrUnavailable
+	}
+	if locator.Service == ServiceOfflineV1 {
+		if _, err := exec.LookPath("powershell.exe"); err != nil {
+			return ErrUnavailable
+		}
 	}
 	return nil
 }
@@ -79,7 +92,7 @@ func loadSecret(locator Locator) (string, error) {
 		}
 		return "", ErrUnavailable
 	}
-	stored, err := readWindowsSecretFile(path, maxSecretBytes*3)
+	stored, err := readWindowsSecretFile(path, maxWindowsSecretBlobBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", ErrNotFound
 	}
@@ -87,20 +100,21 @@ func loadSecret(locator Locator) (string, error) {
 		return "", ErrUnavailable
 	}
 	defer clear(stored)
-	var script string
 	if locator.Service == ServiceOfflineV1 {
-		script = `$ErrorActionPreference='Stop'; $cipher=[Console]::In.ReadToEnd().Trim(); $secure=ConvertTo-SecureString $cipher; $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try{[Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr))}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)}`
-	} else {
-		script = `$ErrorActionPreference='Stop'; $b=[Convert]::FromBase64String([Console]::In.ReadToEnd().Trim()); $d=[Security.Cryptography.ProtectedData]::Unprotect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Text.Encoding]::UTF8.GetString($d))`
+		script := `$ErrorActionPreference='Stop'; $cipher=[Console]::In.ReadToEnd().Trim(); $secure=ConvertTo-SecureString $cipher; $ptr=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure); try{[Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr))}finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)}`
+		value, err := runPowerShell(script, string(stored))
+		if err != nil || value == "" {
+			return "", ErrUnavailable
+		}
+		return value, nil
 	}
-	input := string(stored)
-	if locator.Service != ServiceOfflineV1 {
-		input = strings.TrimSpace(input)
-	}
-	value, err := runPowerShell(script, input)
-	if err != nil || value == "" {
+	plaintext, err := unprotectWindowsCurrentUser(stored)
+	if err != nil || len(plaintext) == 0 || len(plaintext) > base64.RawURLEncoding.EncodedLen(maxSecretBytes) || !utf8.Valid(plaintext) {
+		clear(plaintext)
 		return "", ErrUnavailable
 	}
+	value := string(plaintext)
+	clear(plaintext)
 	return value, nil
 }
 
@@ -118,21 +132,81 @@ func storeSecret(locator Locator, encoded string) error {
 	if _, err := windowsSecretTargetSafe(path); err != nil {
 		return ErrUnavailable
 	}
-	var protect string
 	if locator.Service == ServiceOfflineV1 {
-		protect = `$ErrorActionPreference='Stop'; $secret=[Console]::In.ReadToEnd().Trim(); $secure=ConvertTo-SecureString $secret -AsPlainText -Force; [Console]::Out.Write((ConvertFrom-SecureString $secure))`
-	} else {
-		protect = `$ErrorActionPreference='Stop'; $d=[Text.Encoding]::UTF8.GetBytes([Console]::In.ReadToEnd().Trim()); $b=[Security.Cryptography.ProtectedData]::Protect($d,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($b))`
+		protect := `$ErrorActionPreference='Stop'; $secret=[Console]::In.ReadToEnd().Trim(); $secure=ConvertTo-SecureString $secret -AsPlainText -Force; [Console]::Out.Write((ConvertFrom-SecureString $secure))`
+		protected, err := runPowerShell(protect, encoded)
+		if err != nil || protected == "" {
+			return ErrUnavailable
+		}
+		defer func() { protected = "" }()
+		if err := atomicWindowsSecretWrite(path, []byte(protected)); err != nil {
+			return ErrUnavailable
+		}
+		return nil
 	}
-	protected, err := runPowerShell(protect, encoded)
-	if err != nil || protected == "" {
+	if encoded == "" || len(encoded) > base64.RawURLEncoding.EncodedLen(maxSecretBytes) || !utf8.ValidString(encoded) {
 		return ErrUnavailable
 	}
-	defer func() { protected = "" }()
-	if err := atomicWindowsSecretWrite(path, []byte(protected)); err != nil {
+	plaintext := []byte(encoded)
+	protected, err := protectWindowsCurrentUser(plaintext)
+	clear(plaintext)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer clear(protected)
+	if err := atomicWindowsSecretWrite(path, protected); err != nil {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+func protectWindowsCurrentUser(value []byte) ([]byte, error) {
+	if len(value) == 0 || len(value) > base64.RawURLEncoding.EncodedLen(maxSecretBytes) {
+		return nil, errors.New("DPAPI plaintext length is invalid")
+	}
+	input := windows.DataBlob{Size: uint32(len(value)), Data: &value[0]}
+	var output windows.DataBlob
+	if err := windows.CryptProtectData(&input, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output); err != nil {
+		runtime.KeepAlive(value)
+		return nil, err
+	}
+	runtime.KeepAlive(value)
+	return copyAndFreeWindowsDataBlob(&output, maxWindowsSecretBlobBytes)
+}
+
+func unprotectWindowsCurrentUser(value []byte) ([]byte, error) {
+	if len(value) == 0 || len(value) > maxWindowsSecretBlobBytes {
+		return nil, errors.New("DPAPI ciphertext length is invalid")
+	}
+	input := windows.DataBlob{Size: uint32(len(value)), Data: &value[0]}
+	var output windows.DataBlob
+	if err := windows.CryptUnprotectData(&input, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output); err != nil {
+		runtime.KeepAlive(value)
+		return nil, err
+	}
+	runtime.KeepAlive(value)
+	return copyAndFreeWindowsDataBlob(&output, base64.RawURLEncoding.EncodedLen(maxSecretBytes))
+}
+
+func copyAndFreeWindowsDataBlob(blob *windows.DataBlob, limit int) (result []byte, err error) {
+	if blob == nil || blob.Data == nil {
+		return nil, errors.New("DPAPI returned an empty data pointer")
+	}
+	pointer := blob.Data
+	defer func() {
+		if _, freeErr := windows.LocalFree(windows.Handle(uintptr(unsafe.Pointer(pointer)))); freeErr != nil && err == nil {
+			clear(result)
+			result = nil
+			err = fmt.Errorf("free DPAPI output: %w", freeErr)
+		}
+	}()
+	if blob.Size == 0 || uint64(blob.Size) > uint64(limit) {
+		return nil, errors.New("DPAPI returned an invalid data length")
+	}
+	source := unsafe.Slice(pointer, int(blob.Size))
+	result = append([]byte(nil), source...)
+	clear(source)
+	return result, nil
 }
 
 func deleteSecret(locator Locator) error {

@@ -11,30 +11,33 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// EnsurePrivateDirectory replaces an existing directory DACL with a protected,
-// current-user-only DACL whose single ACE is inheritable by children.
+// EnsurePrivateDirectory replaces an existing directory owner and DACL with the
+// current user and a protected current-user-only DACL whose single ACE is
+// inheritable by children.
 func EnsurePrivateDirectory(path string) error {
 	return ensurePrivateWindowsPath(path, true)
 }
 
-// EnsurePrivateFile replaces an existing regular-file DACL with a protected,
-// current-user-only DACL.
+// EnsurePrivateFile replaces an existing regular-file owner and DACL with the
+// current user and a protected current-user-only DACL.
 func EnsurePrivateFile(path string) error {
 	return ensurePrivateWindowsPath(path, false)
 }
 
-// CheckPrivateDirectory verifies a protected current-user-only directory DACL.
+// CheckPrivateDirectory verifies a current-user owner and protected
+// current-user-only directory DACL.
 func CheckPrivateDirectory(path string) error {
 	return checkPrivateWindowsPath(path, true)
 }
 
-// CheckPrivateFile verifies a protected current-user-only regular-file DACL.
+// CheckPrivateFile verifies a current-user owner and protected
+// current-user-only regular-file DACL.
 func CheckPrivateFile(path string) error {
 	return checkPrivateWindowsPath(path, false)
 }
 
 func ensurePrivateWindowsPath(path string, directory bool) error {
-	handle, err := openWindowsSecurityPath(path, directory, windows.READ_CONTROL|windows.WRITE_DAC)
+	handle, err := openWindowsSecurityPath(path, directory, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER)
 	if err != nil {
 		return err
 	}
@@ -86,20 +89,20 @@ func openWindowsSecurityPath(path string, directory bool, access uint32) (window
 }
 
 func ensurePrivateWindowsHandle(handle windows.Handle, directory bool) error {
-	descriptor, _, dacl, err := privateWindowsSecurityDescriptor(directory)
+	descriptor, owner, dacl, err := privateWindowsSecurityDescriptor(directory)
 	if err != nil {
 		return err
 	}
 	if err := windows.SetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner,
 		nil,
 		dacl,
 		nil,
 	); err != nil {
-		return fmt.Errorf("%w: set private Windows DACL: %v", ErrPermission, err)
+		return fmt.Errorf("%w: set private Windows owner and DACL: %v", ErrPermission, err)
 	}
 	runtime.KeepAlive(descriptor)
 	return checkPrivateWindowsHandle(handle, directory)

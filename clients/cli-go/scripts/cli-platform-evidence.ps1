@@ -16,6 +16,29 @@ function Write-Utf8Lines([string] $Path, [System.Management.Automation.AllowEmpt
     [System.IO.File]::WriteAllLines($Path, [string[]] @($Lines), $encoding)
 }
 
+function Set-PrivateEvidenceTempDirectory([string] $Path) {
+    if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $security = [System.Security.AccessControl.DirectorySecurity]::new()
+        $security.SetOwner($identity.User)
+        $inheritance = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $identity.User,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            $inheritance,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $security.SetAccessRuleProtection($true, $false)
+        [System.IO.FileSystemAclExtensions]::SetAccessControl([System.IO.DirectoryInfo]::new($Path), $security)
+        return
+    }
+    & chmod 700 $Path
+    if ($LASTEXITCODE -ne 0) {
+        throw "failed to make native evidence temp directory private"
+    }
+}
+
 function Add-Evidence([string] $Line) {
     $Line | Tee-Object -FilePath $script:evidenceFile -Append
 }
@@ -203,6 +226,18 @@ New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 $script:evidenceFile = Join-Path $outputDirectory "evidence.txt"
 Write-Utf8Lines $script:evidenceFile @()
 
+$platformTempRoot = Join-Path $moduleRoot (".native-evidence-temp-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $platformTempRoot | Out-Null
+Set-PrivateEvidenceTempDirectory $platformTempRoot
+$previousTempEnvironment = @{
+    TMPDIR = [Environment]::GetEnvironmentVariable("TMPDIR", "Process")
+    TMP = [Environment]::GetEnvironmentVariable("TMP", "Process")
+    TEMP = [Environment]::GetEnvironmentVariable("TEMP", "Process")
+}
+[Environment]::SetEnvironmentVariable("TMPDIR", $platformTempRoot, "Process")
+[Environment]::SetEnvironmentVariable("TMP", $platformTempRoot, "Process")
+[Environment]::SetEnvironmentVariable("TEMP", $platformTempRoot, "Process")
+
 Add-Evidence "candidate_sha=$candidateSHA"
 Add-Evidence "checkout_sha=$checkoutSHA"
 Add-Evidence "runner_os=$env:RUNNER_OS_NAME"
@@ -215,6 +250,7 @@ Add-Evidence "gohostos=$gohostos"
 Add-Evidence "gohostarch=$gohostarch"
 Add-Evidence "go_version=$goVersion"
 Add-Evidence "evidence_mode=fresh-json-exact-run-pass-zero-skip"
+Add-Evidence "test_temp=repo-private-fresh"
 
 switch ($env:RUNNER_OS_NAME) {
     "Linux" {
@@ -239,50 +275,76 @@ switch ($env:RUNNER_OS_NAME) {
 
 $env:EDU_AGENT_NATIVE_KEYBACKEND_TEST = "1"
 $checks = @(
-    @{ Name = "agent-session-keybackend-round-trip-delete"; Package = "./internal/keybackend"; Expected = @("TestNativePlatformSecretRoundTripCleanup"); Method = $systemKeyMethod },
-    @{ Name = "agent-session-encrypted-round-trip-delete"; Package = "./internal/agentsession"; Expected = @("TestStoreRoundTripIndexRebuildDirtyRecoveryAndDeletion"); Method = "per-session-aead+wrapped-key+atomic-index-rebuild+delete" },
-    @{ Name = "agent-session-single-writer-lock"; Package = "./internal/agentsession"; Expected = @("TestAgentSessionProcessSingleWriter"); Method = "native-process-exclusive-session-lock"; Marker = "AGENT_SESSION_LOCK_HELPER_SUCCESS" },
-    @{ Name = "agent-session-atomic-recovery"; Package = "./internal/agentsession"; Expected = @("TestCreateReconcilesPublicationAndNeverDeletesUnconfirmedEnvelope", "TestSaveAndDirtyMarkerReconcilePublicationFaults"); Method = "native-filesystem-atomic-publication+dirty-recovery" },
-    @{ Name = "agent-session-tamper"; Package = "./internal/agentsession"; Expected = @("TestContainerRejectsWrongKeyTamperTruncationAndRecordSwap", "TestRecordSwapIsIsolatedAsCorrupt"); Method = "aead-tamper+truncate+record-swap-rejection" },
-    @{ Name = "agent-session-privacy-clear"; Package = "./internal/agentsession"; Expected = @("TestNativePlatformAgentSessionPrivacyClear", "TestClearReconcilesNativeSecretAndRejectsOldGenerationRegistration", "TestStoreQuotaDoesNotEvictAndPrivacyClearInvalidatesOpenWriter"); Method = "native-key-rotation+cryptographic-clear+generation-fence" },
-    @{ Name = "filelock-cross-process"; Package = "./internal/filelock"; Expected = @("TestFileLockProcessExclusion"); Method = "native-process-file-lock"; Marker = "FILELOCK_PROCESS_HELPER_SUCCESS" },
-    @{ Name = "importer-root-confinement"; Package = "./internal/importer"; Expected = @("TestReadDocumentRejectsDeterministicIntermediateDirectorySwap"); Method = $rootConfinementMethod },
-    @{ Name = "offline-root-confinement"; Package = "./internal/offline"; Expected = @("TestSymlinkAndRootEscapeAreRejected"); Method = $rootConfinementMethod },
-    @{ Name = "offline-lease-contention"; Package = "./internal/offline"; Expected = @("TestLeaseContentionAndSharedReaders"); Method = "native-filesystem-lock+shared-exclusive-lease" },
-    @{ Name = "offline-key-migration-crash-recovery"; Package = "./internal/offline"; Expected = @("TestKeyMigrationCrashRecoveryAtEveryDurableBoundary"); Method = "native-filesystem-atomic-key-migration-recovery" },
-    @{ Name = "offline-system-key-migrate-purge"; Package = "./internal/offline"; Expected = @("TestNativeSystemKeyMigrationAndPurgeCleanup"); Method = $systemKeyMethod },
-    @{ Name = "credential-round-trip-cleanup"; Package = "./internal/credentials"; Expected = @("TestPlatformCredentialRoundTripCleanup"); Method = "native-platform-credential-store" },
-    @{ Name = "pair-hidden-input"; Package = "./internal/terminal"; Expected = @("TestPlatformPairSecretInput"); Method = $hiddenInputMethod; CaptureRaw = $false },
-    @{ Name = "pair-line-input"; Package = "./internal/terminal"; Expected = @("TestPlatformPairLineInput"); Method = "production-readsecret-non-tty-line" },
-    @{ Name = "ctrl-l"; Package = "./internal/terminal"; Expected = @("TestPlatformControlL"); Method = "native-go-test" },
-    @{ Name = "clear"; Package = "./internal/terminal"; Expected = @("TestPlatformClear"); Method = $clearMethod }
+    @{ Name = "agent-session-keybackend-round-trip-delete"; Package = "./internal/keybackend"; Expected = @("TestNativePlatformSecretRoundTripCleanup"); Method = $systemKeyMethod; RequiredForSession = $true },
+    @{ Name = "agent-session-encrypted-round-trip-delete"; Package = "./internal/agentsession"; Expected = @("TestStoreRoundTripIndexRebuildDirtyRecoveryAndDeletion"); Method = "per-session-aead+wrapped-key+atomic-index-rebuild+delete"; RequiredForSession = $true },
+    @{ Name = "agent-session-single-writer-lock"; Package = "./internal/agentsession"; Expected = @("TestAgentSessionProcessSingleWriter"); Method = "native-process-exclusive-session-lock"; Marker = "AGENT_SESSION_LOCK_HELPER_SUCCESS"; RequiredForSession = $true },
+    @{ Name = "agent-session-atomic-recovery"; Package = "./internal/agentsession"; Expected = @("TestCreateReconcilesPublicationAndNeverDeletesUnconfirmedEnvelope", "TestSaveAndDirtyMarkerReconcilePublicationFaults"); Method = "native-filesystem-atomic-publication+dirty-recovery"; RequiredForSession = $true },
+    @{ Name = "agent-session-tamper"; Package = "./internal/agentsession"; Expected = @("TestContainerRejectsWrongKeyTamperTruncationAndRecordSwap", "TestRecordSwapIsIsolatedAsCorrupt"); Method = "aead-tamper+truncate+record-swap-rejection"; RequiredForSession = $true },
+    @{ Name = "agent-session-privacy-clear"; Package = "./internal/agentsession"; Expected = @("TestNativePlatformAgentSessionPrivacyClear", "TestClearReconcilesNativeSecretAndRejectsOldGenerationRegistration", "TestStoreQuotaDoesNotEvictAndPrivacyClearInvalidatesOpenWriter"); Method = "native-key-rotation+cryptographic-clear+generation-fence"; RequiredForSession = $true },
+    @{ Name = "filelock-cross-process"; Package = "./internal/filelock"; Expected = @("TestFileLockProcessExclusion"); Method = "native-process-file-lock"; Marker = "FILELOCK_PROCESS_HELPER_SUCCESS"; RequiredForSession = $true },
+    @{ Name = "importer-root-confinement"; Package = "./internal/importer"; Expected = @("TestReadDocumentRejectsDeterministicIntermediateDirectorySwap"); Method = $rootConfinementMethod; RequiredForSession = $false },
+    @{ Name = "offline-root-confinement"; Package = "./internal/offline"; Expected = @("TestSymlinkAndRootEscapeAreRejected"); Method = $rootConfinementMethod; RequiredForSession = $false },
+    @{ Name = "offline-lease-contention"; Package = "./internal/offline"; Expected = @("TestLeaseContentionAndSharedReaders"); Method = "native-filesystem-lock+shared-exclusive-lease"; RequiredForSession = $false },
+    @{ Name = "offline-key-migration-crash-recovery"; Package = "./internal/offline"; Expected = @("TestKeyMigrationCrashRecoveryAtEveryDurableBoundary"); Method = "native-filesystem-atomic-key-migration-recovery"; RequiredForSession = $false },
+    @{ Name = "offline-system-key-migrate-purge"; Package = "./internal/offline"; Expected = @("TestNativeSystemKeyMigrationAndPurgeCleanup"); Method = $systemKeyMethod; RequiredForSession = $false },
+    @{ Name = "credential-round-trip-cleanup"; Package = "./internal/credentials"; Expected = @("TestPlatformCredentialRoundTripCleanup"); Method = "native-platform-credential-store"; RequiredForSession = $false },
+    @{ Name = "pair-hidden-input"; Package = "./internal/terminal"; Expected = @("TestPlatformPairSecretInput"); Method = $hiddenInputMethod; CaptureRaw = $false; RequiredForSession = $false },
+    @{ Name = "pair-line-input"; Package = "./internal/terminal"; Expected = @("TestPlatformPairLineInput"); Method = "production-readsecret-non-tty-line"; RequiredForSession = $false },
+    @{ Name = "ctrl-l"; Package = "./internal/terminal"; Expected = @("TestPlatformControlL"); Method = "native-go-test"; RequiredForSession = $false },
+    @{ Name = "clear"; Package = "./internal/terminal"; Expected = @("TestPlatformClear"); Method = $clearMethod; RequiredForSession = $false }
 )
 
 if ($env:RUNNER_OS_NAME -eq "Windows") {
     $checks += @(
-        @{ Name = "agent-session-windows-private-storage"; Package = "./internal/agentsession"; Expected = @("TestAgentSessionWindowsPrivateACLAndAtomicReplace", "TestAgentSessionWindowsTightensBroadRootACLAndFailsClosedOnBroadRecord", "TestAgentSessionWindowsRejectsReparseRootAndParent"); Method = "protected-current-user-dacl+atomic-replace+reparse-rejection" },
-        @{ Name = "agent-session-windows-dpapi-acl-reparse"; Package = "./internal/keybackend"; Expected = @("TestWindowsSecretBroadACLReadFailsClosedAndReplacementTightens", "TestWindowsSecretRejectsReparseParentAndTarget"); Method = "dpapi-current-user+protected-current-user-dacl+atomic-replace+reparse-rejection" },
-        @{ Name = "filelock-windows-reparse"; Package = "./internal/filelock"; Expected = @("TestFileLockWindowsRejectsFileAndDirectoryReparse"); Method = "lockfileex+open-reparse-point+file-and-directory-reparse-fixtures" },
-        @{ Name = "securefile-windows-private-publication"; Package = "./internal/securefile"; Expected = @("TestWindowsPrivateACLHelpersTightenAndRejectReparse", "TestWindowsHandleRelativeCreateReplaceAndCleanup", "TestWindowsRejectsReparseAndInvalidPaths", "TestWindowsReplacePreservesProtectedDACL", "TestWindowsRootAndParentHandlesPinNamespace", "TestWindowsHardlinkAliasesShareFileIdentity"); Method = $rootConfinementMethod }
+        @{ Name = "agent-session-windows-private-storage"; Package = "./internal/agentsession"; Expected = @("TestAgentSessionWindowsPrivateACLAndAtomicReplace", "TestAgentSessionWindowsTightensBroadRootACLAndFailsClosedOnBroadRecord", "TestAgentSessionWindowsRejectsReparseRootAndParent"); Method = "protected-current-user-owner-dacl+atomic-replace+reparse-rejection"; RequiredForSession = $true },
+        @{ Name = "agent-session-windows-dpapi-acl-reparse"; Package = "./internal/keybackend"; Expected = @("TestWindowsSecretBroadACLReadFailsClosedAndReplacementTightens", "TestWindowsSessionSecretRejectsInvalidDPAPIPlaintextAndBounds", "TestWindowsSecretRejectsReparseParentAndTarget"); Method = "native-dpapi-current-user+protected-current-user-owner-dacl+atomic-replace+reparse-rejection"; RequiredForSession = $true },
+        @{ Name = "filelock-windows-reparse"; Package = "./internal/filelock"; Expected = @("TestFileLockWindowsRejectsFileAndDirectoryReparse"); Method = "lockfileex+open-reparse-point+file-and-directory-reparse-fixtures"; RequiredForSession = $true },
+        @{ Name = "securefile-windows-private-publication"; Package = "./internal/securefile"; Expected = @("TestWindowsPrivateACLHelpersTightenAndRejectReparse", "TestWindowsHandleRelativeCreateReplaceAndCleanup", "TestWindowsRejectsReparseAndInvalidPaths", "TestWindowsReplacePreservesProtectedDACL", "TestWindowsRootAndParentHandlesPinNamespace", "TestWindowsHardlinkAliasesShareFileIdentity"); Method = $rootConfinementMethod; RequiredForSession = $true }
     )
 } else {
     $checks += @(
-        @{ Name = "agent-session-unix-symlink-root"; Package = "./internal/agentsession"; Expected = @("TestStoreRejectsSymlinkedRootAndProfileQuotaDoesNotPublish"); Method = $rootConfinementMethod },
-        @{ Name = "agent-session-unix-storage-mode"; Package = "./internal/agentsession"; Expected = @("TestAgentSessionUnixStorageModes"); Method = "unix-directory-0700+files-0600" },
-        @{ Name = "filelock-unix-symlink-mode"; Package = "./internal/filelock"; Expected = @("TestFileLockUnixRejectsSymlinkAndUsesPrivateMode"); Method = "flock+o_nofollow+0600" },
-        @{ Name = "securefile-unix-link-confinement"; Package = "./internal/securefile"; Expected = @("TestRootDeleteIsConfinedAndDoesNotFollowSymlinks", "TestRootReadDirAndSnapshotDoNotFollowSymlinks"); Method = $rootConfinementMethod }
+        @{ Name = "agent-session-unix-symlink-root"; Package = "./internal/agentsession"; Expected = @("TestStoreRejectsSymlinkedRootAndProfileQuotaDoesNotPublish"); Method = $rootConfinementMethod; RequiredForSession = $true },
+        @{ Name = "agent-session-unix-storage-mode"; Package = "./internal/agentsession"; Expected = @("TestAgentSessionUnixStorageModes"); Method = "unix-directory-0700+files-0600"; RequiredForSession = $true },
+        @{ Name = "filelock-unix-symlink-mode"; Package = "./internal/filelock"; Expected = @("TestFileLockUnixRejectsSymlinkAndUsesPrivateMode"); Method = "flock+o_nofollow+0600"; RequiredForSession = $true },
+        @{ Name = "securefile-unix-link-confinement"; Package = "./internal/securefile"; Expected = @("TestRootDeleteIsConfinedAndDoesNotFollowSymlinks", "TestRootReadDirAndSnapshotDoNotFollowSymlinks"); Method = $rootConfinementMethod; RequiredForSession = $true }
     )
 }
 
 $failed = $false
+$sessionFailed = $false
 $expectedLines = New-Object System.Collections.Generic.List[string]
 $executedLines = New-Object System.Collections.Generic.List[string]
 $skippedLines = New-Object System.Collections.Generic.List[string]
+$sessionRequiredChecks = New-Object System.Collections.Generic.List[string]
+$sessionFailedChecks = New-Object System.Collections.Generic.List[string]
+$sessionSkippedTests = New-Object System.Collections.Generic.List[string]
 $manifestChecks = New-Object System.Collections.Generic.List[object]
 
 Push-Location $moduleRoot
 try {
+    $setupLogName = "setup-go-mod-download.log"
+    $setupLines = @(& go mod download 2>&1 | ForEach-Object { [string] $_ })
+    $setupExitCode = $LASTEXITCODE
+    Write-Utf8Lines (Join-Path $outputDirectory $setupLogName) ([string[]] @($setupLines))
+    Add-Evidence "setup[go-mod-download]=go mod download"
+    Add-Evidence "setup_raw[go-mod-download]=$setupLogName"
+    Add-Evidence "setup_required_for_session[go-mod-download]=true"
+    Add-Evidence "setup_exit_code[go-mod-download]=$setupExitCode"
+    if ($setupExitCode -eq 0) {
+        Add-Evidence "setup_result[go-mod-download]=pass"
+    } else {
+        Add-Evidence "setup_result[go-mod-download]=fail"
+        Write-FailureAnnotation "go-mod-download" @("go-mod-download-exit:$setupExitCode") $setupExitCode
+        $failed = $true
+        $sessionFailed = $true
+        $sessionFailedChecks.Add("go-mod-download")
+    }
+
     foreach ($check in $checks) {
+        $requiredForSession = [bool] $check.RequiredForSession
+        if ($requiredForSession) {
+            $sessionRequiredChecks.Add([string] $check.Name)
+        }
         $expectedTests = [string[]] @($check.Expected)
         foreach ($expected in $expectedTests) {
             $expectedLines.Add("$($check.Name)`:$expected")
@@ -290,6 +352,7 @@ try {
         $escapedTests = @($expectedTests | ForEach-Object { [regex]::Escape($_) })
         $pattern = "^(" + [string]::Join("|", $escapedTests) + ")$"
         $commandText = "go test $($check.Package) -run '$pattern' -count=1 -json"
+        Add-Evidence "required_for_session[$($check.Name)]=$($requiredForSession.ToString().ToLowerInvariant())"
         Add-Evidence "method[$($check.Name)]=$($check.Method)"
         Add-Evidence "command[$($check.Name)]=$commandText"
         Add-Evidence "expected[$($check.Name)]=$([string]::Join(',', $expectedTests))"
@@ -327,6 +390,9 @@ try {
         }
         foreach ($skipped in @($measurement.Skipped)) {
             $skippedLines.Add("$($check.Name)`:$skipped")
+            if ($requiredForSession) {
+                $sessionSkippedTests.Add("$($check.Name)`:$skipped")
+            }
         }
 
         $safeName = $check.Name -replace '[^A-Za-z0-9_.-]', '_'
@@ -352,9 +418,14 @@ try {
             Add-Evidence "result[$($check.Name)]=fail exit_code=$exitCode failures=$([string]::Join(',', @($failures)))"
             Write-FailureAnnotation $check.Name ([string[]] @($failures)) $exitCode
             $failed = $true
+            if ($requiredForSession) {
+                $sessionFailed = $true
+                $sessionFailedChecks.Add([string] $check.Name)
+            }
         }
         $manifestChecks.Add([PSCustomObject]@{
             name = $check.Name
+            required_for_session = $requiredForSession
             package = $check.Package
             method = $check.Method
             pattern = $pattern
@@ -371,13 +442,32 @@ try {
     }
 } finally {
     Pop-Location
+    foreach ($name in @("TMPDIR", "TMP", "TEMP")) {
+        [Environment]::SetEnvironmentVariable($name, $previousTempEnvironment[$name], "Process")
+    }
+    if (Test-Path -LiteralPath $platformTempRoot) {
+        try {
+            Remove-Item -LiteralPath $platformTempRoot -Recurse -Force
+        } catch {
+            Write-Warning "failed to remove native evidence temp directory"
+        }
+    }
 }
 
 Write-Utf8Lines (Join-Path $outputDirectory "expected-tests.txt") ([string[]] @($expectedLines))
 Write-Utf8Lines (Join-Path $outputDirectory "executed-tests.txt") ([string[]] @($executedLines))
 Write-Utf8Lines (Join-Path $outputDirectory "skipped-tests.txt") ([string[]] @($skippedLines))
+Write-Utf8Lines (Join-Path $outputDirectory "session-required-checks.txt") ([string[]] @($sessionRequiredChecks))
+Write-Utf8Lines (Join-Path $outputDirectory "session-skipped-tests.txt") ([string[]] @($sessionSkippedTests))
+$overallVerdict = if ($failed) { "fail" } else { "pass" }
+$sessionVerdict = if ($sessionFailed) { "fail" } else { "pass" }
+Add-Evidence "overall_verdict=$overallVerdict"
+Add-Evidence "session_verdict=$sessionVerdict"
+Add-Evidence "session_required_checks=$([string]::Join(',', @($sessionRequiredChecks)))"
+Add-Evidence "session_failed_checks=$([string]::Join(',', @($sessionFailedChecks)))"
+Add-Evidence "session_skipped_tests=$([string]::Join(',', @($sessionSkippedTests)))"
 $manifest = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     candidate_sha = $candidateSHA
     checkout_sha = $checkoutSHA
     runner_os = $env:RUNNER_OS_NAME
@@ -389,11 +479,25 @@ $manifest = [ordered]@{
     gohostos = $gohostos
     gohostarch = $gohostarch
     go_version = $goVersion
+    setup = [ordered]@{
+        name = "go-mod-download"
+        command = "go mod download"
+        raw_log = $setupLogName
+        required_for_session = $true
+        exit_code = $setupExitCode
+        passed = $setupExitCode -eq 0
+    }
     expected_tests = [string[]] @($expectedLines)
     executed_events = [string[]] @($executedLines)
     skipped_tests = [string[]] @($skippedLines)
+    session_required_checks = [string[]] @($sessionRequiredChecks)
+    session_failed_checks = [string[]] @($sessionFailedChecks)
+    session_skipped_tests = [string[]] @($sessionSkippedTests)
     checks = [object[]] @($manifestChecks)
+    overall_verdict = $overallVerdict
+    session_verdict = $sessionVerdict
     passed = -not $failed
+    session_passed = -not $sessionFailed
 }
 $manifestJSON = $manifest | ConvertTo-Json -Depth 10
 Write-Utf8Lines (Join-Path $outputDirectory "manifest.json") @($manifestJSON)

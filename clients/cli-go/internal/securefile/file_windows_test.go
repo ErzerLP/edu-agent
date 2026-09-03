@@ -593,13 +593,17 @@ func openWindowsTestSecurityHandle(path string, access uint32) (windows.Handle, 
 	if err != nil {
 		return windows.InvalidHandle, err
 	}
+	flags := uint32(windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT)
+	if attributes, attributeErr := windows.GetFileAttributes(pathPointer); attributeErr == nil && attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
 	return windows.CreateFile(
 		pathPointer,
 		access,
 		windowsAllShare,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		flags,
 		0,
 	)
 }

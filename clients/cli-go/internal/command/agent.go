@@ -749,9 +749,18 @@ func (a *App) runModelSet(args []string) error {
 	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
 	set.StringVar(&sessionHistory, "session-history", "", "auto or off")
 	set.StringVar(&timeout, "timeout", "", "model timeout")
-	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, "maximum tool rounds")
+	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, fmt.Sprintf("maximum tool rounds (%d-%d)", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds))
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return modelUsage("模型参数格式无效")
+	}
+	maxToolRoundsSet := false
+	set.Visit(func(current *flag.Flag) {
+		if current.Name == "max-tool-rounds" {
+			maxToolRoundsSet = true
+		}
+	})
+	if maxToolRoundsSet && (maxToolRounds < config.MinAgentMaxToolRounds || maxToolRounds > config.MaxAgentMaxToolRounds) {
+		return commandError("invalid_configuration", "最大工具轮数无效", fmt.Sprintf("请输入%d到%d之间的整数", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds), ExitInput)
 	}
 	value, err := a.loadModelConfig()
 	if err != nil {
@@ -793,7 +802,7 @@ func (a *App) runModelSet(args []string) error {
 	if strings.TrimSpace(timeout) != "" {
 		candidate.Timeout = strings.TrimSpace(timeout)
 	}
-	if maxToolRounds != 0 {
+	if maxToolRoundsSet {
 		candidate.MaxToolRounds = maxToolRounds
 	}
 	if err := candidate.Validate(); err != nil {

@@ -391,9 +391,12 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	form.inputs[2].SetValue("65536")
 	form.inputs[3].SetValue("recent-only")
 	form.inputs[4].SetValue("2m")
-	form.inputs[5].SetValue("8")
+	form.inputs[5].SetValue("60")
+	if !strings.Contains(form.View(), "最大工具轮数（1-60）") {
+		t.Fatalf("tool-round range missing from form: %q", form.View())
+	}
 	updated, _ = form.Update(key("enter"))
-	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "8"}
+	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "60"}
 	if got := updated.(model).command; !reflect.DeepEqual(got, want) {
 		t.Fatalf("model command=%#v want=%#v", got, want)
 	}

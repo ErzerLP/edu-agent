@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -23,8 +24,7 @@ const (
 	maxUserInputBytes         = 8 << 10
 	maxUserInputRunes         = 8000
 	maxAssistantTextBytes     = 64 << 10
-	maxToolCallsPerResponse   = 4
-	maxToolCallsPerTurn       = 16
+	maxToolCallsPerResponse   = agentlimits.MaxToolCallsPerResponse
 	maxToolCallArgumentsBytes = 8 << 10
 	maxToolCallArgumentsTotal = 16 << 10
 )
@@ -100,7 +100,7 @@ func New(model Model, server Server, options Options) (*Session, error) {
 	if model == nil || server == nil || options.NewUUID == nil {
 		return nil, errors.New("agent loop dependencies are incomplete")
 	}
-	if options.ContextWindow < 4096 || options.MaxToolRounds < 1 || options.MaxToolRounds > 16 {
+	if options.ContextWindow < 4096 || !agentlimits.ValidToolRounds(options.MaxToolRounds) {
 		return nil, errors.New("agent loop limits are invalid")
 	}
 	if options.ContextCompaction == "" {
@@ -740,7 +740,7 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 	s.activitySequence = 0
 	s.currentToolResultTokens = 0
 	s.remaining = s.options.MaxToolRounds
-	s.toolCallsRemaining = maxToolCallsPerTurn
+	s.toolCallsRemaining = agentlimits.MaxToolCalls(s.options.MaxToolRounds)
 	result, runErr := s.run(ctx, nil)
 	if runErr != nil {
 		runErr = preferContextError(ctx, runErr)

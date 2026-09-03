@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 )
 
@@ -26,6 +27,8 @@ const (
 	DefaultAgentContextWindow     = 32768
 	DefaultAgentTimeout           = 60 * time.Second
 	DefaultAgentMaxToolRounds     = 8
+	MinAgentMaxToolRounds         = agentlimits.MinToolRounds
+	MaxAgentMaxToolRounds         = agentlimits.MaxToolRounds
 	DefaultAgentContextCompaction = "auto"
 	DefaultAgentReasoningEffort   = "auto"
 	DefaultAgentSessionHistory    = "auto"
@@ -283,8 +286,8 @@ func (c *AgentConfig) Validate() error {
 	if err != nil || timeout > 10*time.Minute {
 		return errors.New("agent timeout must be a positive duration no greater than 10m")
 	}
-	if c.MaxToolRounds < 1 || c.MaxToolRounds > 16 {
-		return errors.New("max tool rounds must be between 1 and 16")
+	if !agentlimits.ValidToolRounds(c.MaxToolRounds) {
+		return fmt.Errorf("max tool rounds must be between %d and %d", MinAgentMaxToolRounds, MaxAgentMaxToolRounds)
 	}
 	c.ContextCompaction = strings.ToLower(strings.TrimSpace(c.ContextCompaction))
 	if c.ContextCompaction == "" {

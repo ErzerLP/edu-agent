@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -258,6 +259,33 @@ func (s *fakeServer) DecideMemoryCandidate(_ context.Context, candidateID string
 		status = "rejected"
 	}
 	return api.MemoryOperationResponse{Candidate: &api.MemoryCandidateView{Candidate: api.MemoryCandidate{ID: candidateID, Status: status, Revision: request.ExpectedRevision + 1}}}, nil
+}
+
+func TestSessionAcceptsConfiguredMaximumAndScalesToolCallBudget(t *testing.T) {
+	t.Parallel()
+	model := &fakeModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", Content: "完成"}}}}
+	session, err := New(model, &fakeServer{}, Options{
+		ContextWindow: 4096, MaxToolRounds: agentlimits.MaxToolRounds, Now: time.Now,
+		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
+	})
+	if err != nil {
+		t.Fatalf("maximum tool rounds rejected: %v", err)
+	}
+	if _, err := session.Send(t.Context(), "测试最大工具轮数"); err != nil {
+		t.Fatalf("maximum tool rounds send failed: %v", err)
+	}
+	if got, want := session.toolCallsRemaining, agentlimits.MaxToolCalls(agentlimits.MaxToolRounds); got != want {
+		t.Fatalf("tool call budget=%d want=%d", got, want)
+	}
+
+	for _, value := range []int{0, agentlimits.MaxToolRounds + 1} {
+		if _, err := New(&fakeModel{}, &fakeServer{}, Options{
+			ContextWindow: 4096, MaxToolRounds: value, Now: time.Now,
+			NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
+		}); err == nil {
+			t.Fatalf("MaxToolRounds=%d accepted", value)
+		}
+	}
 }
 
 func TestSessionLearningStatusUsesAuthoritativeCurrentSession(t *testing.T) {

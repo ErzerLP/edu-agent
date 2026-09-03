@@ -1,0 +1,296 @@
+schema: comet.native.v4
+name: max-tool-rounds-60
+language: zh-CN
+phase: archive
+status: done
+state_version: 8
+brief: brief.md
+spec_changes:
+  - capability: client-agent-tool-budget
+    operation: create
+    source: specs/client-agent-tool-budget/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/max-tool-rounds-60
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1：在隔离配置目录中选择任一合法模型预设后，执行 `edu-agent model set --max-tool-rounds 60`
+      成功，配置文件持久化 `max_tool_rounds: 60`，不再产生 `error[invalid_configuration]`。"
+    result: passed
+    reason:
+      text: Runtime 隔离 CLI smoke 使用临时 XDG_CONFIG_HOME 构建并运行真实入口，确认 model set
+        --max-tool-rounds 60 成功且配置持久化为 60；未出现 invalid_configuration。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2：中文设置页提交最大工具轮数 60 时生成等价命令并成功保存；界面明确提示合法范围，避免用户只能从通用错误中猜测边界。
+    result: passed
+    reason:
+      text: 静态审查确认中文设置页显示“最大工具轮数（1-60）”，提交值 60 时生成等价 model set 命令；dashboard 与 command
+        受影响 package 测试通过，命令保存路径及真实 CLI 保存均已验证。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "A3：使用 `MaxToolRounds: 60` 创建 Agent Loop 成功；单次用户 turn
+      的模型轮次与工具调用预算按用户确认的方案保持一致且仍有确定上界。"
+    result: passed
+    reason:
+      text: 静态审查确认配置层与 agentloop.New 共享 agentlimits 的 1..60 边界，Send 使用 MaxToolRounds
+        初始化模型轮次，并以 MaxToolRounds×4 初始化有限总调用预算；60 对应 240。agentloop package 测试通过。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4：0、负数和超过确认上界的值仍被配置层与运行时层拒绝；失败不会覆盖上一次有效配置。
+    result: passed
+    reason:
+      text: 配置与运行时静态审查确认拒绝 0、负数和 61；Runtime smoke 进一步确认真实 CLI 对 0、-1、61 均返回
+        invalid_configuration 和 1到60 范围提示，且原有有效值 60 未被覆盖。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5：默认最大工具轮数仍为 8，原有 1..16 配置继续有效；单响应最多 4 个工具调用、参数/输出/上下文限制、超时、取消和写工具授权保持不变。
+    result: passed
+    reason:
+      text: 默认值仍为 8，边界测试覆盖 1、16 和 60；每响应上限仍为共享常量 4，工具参数、输出、上下文、超时、取消及写授权路径未被改动。受影响
+        package 测试和 vet 全部通过。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: A6：修改不触及 Agent Session 加密存储、自动标题、provider 摘要发送或会话恢复格式；现有加密会话保持可读和可恢复。
+    result: passed
+    reason:
+      text: 候选差异未修改 Session 加密存储、自动标题、provider 摘要发送或 checkpoint/恢复格式；session.go
+        的改动仅限运行时范围校验和每 turn 工具调用预算初始化。相关 agentloop 测试通过，diff-check 通过。
+      truncated: false
+builder_handoff:
+  candidate_id: acf7a521-ca76-499d-a16a-3821b1c93d9a
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:cda46d85-693a-4b97-a69f-2d3db61a5d94
+  iteration: 1
+  summary:
+    text: 统一客户端最大工具轮数边界为1..60：新增共享agentlimits策略，配置保存与Agent
+      Loop共同校验；显式0/61返回明确invalid_configuration且不覆盖旧值；单turn总工具调用预算按轮数×4扩展，60对应240；设置页、CLI帮助、README、设计和正式change文档同步。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+  checks:
+    - name:
+        text: Focused max-tool-rounds regression tests
+        truncated: false
+      result: passed
+      note:
+        text: go test -count=1 ./internal/config ./internal/command ./internal/dashboard
+          ./internal/agentloop -run
+          '^(TestAgentMaxToolRoundsBoundaries|TestModelSetAcceptsSixtyToolRoundsAndPreservesLastValidValue|TestAgentSettingsCommandsHideSecretsAndRequireConfirmation|TestSessionAcceptsConfiguredMaximumAndScalesToolCallBudget)$'
+        truncated: false
+    - name:
+        text: Affected Go package tests
+        truncated: false
+      result: passed
+      note:
+        text: go test -count=1 ./internal/agentlimits ./internal/config
+          ./internal/command ./internal/dashboard ./internal/agentloop
+        truncated: false
+    - name:
+        text: Isolated CLI boundary reproduction
+        truncated: false
+      result: passed
+      note:
+        text: "Temporary XDG_CONFIG_HOME: model set --max-tool-rounds 60 saved 60; 61
+          returned invalid_configuration and retained 60."
+        truncated: false
+    - name:
+        text: Affected Go package vet
+        truncated: false
+      result: passed
+      note:
+        text: go vet ./internal/agentlimits ./internal/config ./internal/command
+          ./internal/dashboard ./internal/agentloop
+        truncated: false
+    - name:
+        text: CLI build
+        truncated: false
+      result: passed
+      note:
+        text: go build -o <temporary-binary> ./cmd/edu-agent
+        truncated: false
+    - name:
+        text: Primary Go LSP diagnostics
+        truncated: false
+      result: passed
+      note:
+        text: Nine changed Go files checked with zero primary diagnostics.
+        truncated: false
+    - name:
+        text: Working tree whitespace check
+        truncated: false
+      result: passed
+      note:
+        text: git diff --check
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: comet native check was unavailable because the installed check subcommand
+        reported runtime protocol 3 does not support the current comet.native.v4
+        state schema; normal Native continuation commands remained functional.
+        No product verification was skipped because equivalent focused tests,
+        vet, build, LSP, direct CLI reproduction, diff check, and independent
+        review completed.
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: Independent review confirmed one shared 1..60 boundary, rounds×4 total
+        budget with four calls per response, explicit 0/negative/61 rejection
+        without overwriting valid configuration, default 8 compatibility,
+        documentation consistency, and no Session encryption/title/recovery or
+        server boundary changes.
+      truncated: false
+    reviewer_execution_ref: subagent:774c7f93-5897-49d
+  submitted_at: 2026-09-03T08:36:03.129Z
+blockers: []
+verification:
+  candidate_id: acf7a521-ca76-499d-a16a-3821b1c93d9a
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:52d423cd-4823-49b1-a946-04d712007349
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: affected-package-tests
+      name:
+        text: 受影响 Go package 测试
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./internal/config
+          truncated: false
+        - text: ./internal/command
+          truncated: false
+        - text: ./internal/dashboard
+          truncated: false
+        - text: ./internal/agentloop
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 3431
+    - id: affected-package-vet
+      name:
+        text: 受影响 Go package vet
+        truncated: false
+      argv_display:
+        - text: vet
+          truncated: false
+        - text: ./internal/config
+          truncated: false
+        - text: ./internal/command
+          truncated: false
+        - text: ./internal/dashboard
+          truncated: false
+        - text: ./internal/agentloop
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 157
+    - id: isolated-cli-boundary-smoke
+      name:
+        text: 隔离配置下构建并验证 60 成功及越界值不覆盖
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: set -euo pipefail; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT;
+            bin="$tmp/edu-agent"; cfg="$tmp/config/edu-agent/config.json"; go
+            build -o "$bin" ./cmd/edu-agent; export
+            XDG_CONFIG_HOME="$tmp/config"; "$bin" model preset custom
+            >/dev/null; "$bin" model set --max-tool-rounds 60 >/dev/null;
+            python3 -c 'import json,sys; assert json.load(open(sys.argv[1],
+            encoding="utf-8"))["agent"]["max_tool_rounds"] == 60' "$cfg"; for
+            invalid in 0 -1 61; do if "$bin" model set --max-tool-rounds
+            "$invalid" >"$tmp/out" 2>"$tmp/err"; then echo "unexpected success
+            for $invalid" >&2; exit 1; fi; python3 -c 'import json,sys;
+            err=open(sys.argv[1], encoding="utf-8").read(); assert
+            "invalid_configuration" in err and "1到60" in err; assert
+            json.load(open(sys.argv[2],
+            encoding="utf-8"))["agent"]["max_tool_rounds"] == 60' "$tmp/err"
+            "$cfg"; done
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 626
+    - id: diff-check
+      name:
+        text: 候选差异空白与补丁完整性检查
+        truncated: false
+      argv_display:
+        - text: diff
+          truncated: false
+        - text: --check
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 10
+  summary:
+    text: 独立静态审查与四项 Runtime 正式检查共同确认候选统一实现 1..60 配置及运行时边界、60×4
+      有限预算和越界值非破坏性拒绝，同时保持默认值、单响应上限及 Session/安全边界不变；A1-A6 全部通过。
+    truncated: false
+  risks: []
+  risks_truncated: false
+  completed_at: 2026-09-03T08:50:59.255Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立静态审查与四项 Runtime 正式检查共同确认候选统一实现 1..60 配置及运行时边界、60×4
+        有限预算和越界值非破坏性拒绝，同时保持默认值、单响应上限及 Session/安全边界不变；A1-A6 全部通过。
+      truncated: false
+    completed_at: 2026-09-03T08:50:59.255Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-03T06:26:48.851Z

@@ -164,6 +164,29 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	}
 }
 
+func TestModelSetAcceptsSixtyToolRoundsAndPreservesLastValidValue(t *testing.T) {
+	t.Parallel()
+	store := &memoryConfigStore{}
+	app, out, errOut := newTestApp(store, &memoryCredentialStore{}, &fakeTerminal{})
+
+	if exit := app.Run(t.Context(), []string{"model", "set", "--provider", "custom", "--max-tool-rounds", "60"}); exit != ExitOK {
+		t.Fatalf("set 60 exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if store.value.Agent == nil || store.value.Agent.MaxToolRounds != 60 {
+		t.Fatalf("saved config=%+v", store.value.Agent)
+	}
+
+	for _, invalid := range []string{"0", "61"} {
+		errOut.Reset()
+		if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", invalid}); exit != ExitInput {
+			t.Fatalf("set %s exit=%d err=%q", invalid, exit, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), "1到60") || store.value.Agent.MaxToolRounds != 60 {
+			t.Fatalf("set %s err=%q saved=%+v", invalid, errOut.String(), store.value.Agent)
+		}
+	}
+}
+
 func TestDashboardModelSetupPersistsBeforeAgentLaunch(t *testing.T) {
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	terminal := &fakeTerminal{lines: []string{""}}

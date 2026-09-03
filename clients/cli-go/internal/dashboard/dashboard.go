@@ -302,7 +302,7 @@ func (m *model) open(next screen) {
 		if agentConfig.AgentContextWindow > 0 {
 			contextWindow = strconv.Itoa(agentConfig.AgentContextWindow)
 		}
-		toolRounds := "6"
+		toolRounds := strconv.Itoa(config.DefaultAgentMaxToolRounds)
 		if agentConfig.AgentMaxToolRounds > 0 {
 			toolRounds = strconv.Itoa(agentConfig.AgentMaxToolRounds)
 		}
@@ -314,7 +314,7 @@ func (m *model) open(next screen) {
 			newInput("90s", display(agentConfig.AgentTimeout, "90s")),
 			newInput("6", toolRounds),
 		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型请求超时", "最大工具轮数"}
+		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型请求超时", fmt.Sprintf("最大工具轮数（%d-%d）", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds)}
 	case screenAgentKey:
 		input := newInput("输入不会显示", "")
 		input.EchoMode = textinput.EchoPassword

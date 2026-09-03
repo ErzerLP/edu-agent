@@ -96,13 +96,24 @@ func ensurePrivateWindowsHandle(handle windows.Handle, directory bool) error {
 	if err := windows.SetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		windows.OWNER_SECURITY_INFORMATION,
 		owner,
+		nil,
+		nil,
+		nil,
+	); err != nil {
+		return fmt.Errorf("%w: set private Windows owner: %v", ErrPermission, err)
+	}
+	if err := windows.SetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
 		nil,
 		dacl,
 		nil,
 	); err != nil {
-		return fmt.Errorf("%w: set private Windows owner and DACL: %v", ErrPermission, err)
+		return fmt.Errorf("%w: set private Windows DACL: %v", ErrPermission, err)
 	}
 	runtime.KeepAlive(descriptor)
 	return checkPrivateWindowsHandle(handle, directory)

@@ -1,0 +1,620 @@
+schema: comet.native.v4
+name: client-session-resume
+language: zh-CN
+phase: archive
+status: done
+state_version: 12
+brief: brief.md
+spec_changes:
+  - capability: client-session-resume
+    operation: create
+    source: specs/client-session-resume/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 2
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: A1：`edu-agent agent` 默认自动保存稳定轮次；退出并运行 `edu-agent agent resume --last`
+      后，下一次模型请求保留退出前的 committed 对话、Context ledger 和 exact-ID recall 能力。
+    result: passed
+    reason:
+      text: Controller 在稳定轮次发布加密 checkpoint，关闭前保存；恢复测试证明 committed
+        对话进入下一模型请求，checkpoint 测试证明 Context ledger 与 exact-ID recall 可往返。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: A2：`edu-agent agent --no-save` 明确显示无持久化状态，退出后不产生可恢复 Session；设置页可以关闭后续新
+      Session 自动保存。
+    result: passed
+    reason:
+      text: --no-save 和 session-history=off 均跳过 store、持续显示未保存状态且不改写配置；Dashboard
+        设置可切换后续新 Session 的默认保存行为。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: A3：`edu-agent agent resume` 无 Session 参数时打开 picker；`resume
+      <uuid|唯一标题>`、`--last` 和 `--all` 具有严格互斥、过滤和错误语义，UUID 解析优先，重名返回可恢复的歧义提示。
+    result: passed
+    reason:
+      text: 命令路径复用共享 picker；参数解析严格拒绝 SESSION+--last、--last+--all、多目标及未知 flag，选择逻辑实施
+        UUID 优先、NFC/case-fold 唯一标题和 workspace scope。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: A4：`F2` 只在 Agent 空闲且没有 pending question、preference、file mutation 或 unknown
+      outcome 时打开选择器；busy/pending 时不丢失当前状态并显示为何不可切换。
+    result: passed
+    reason:
+      text: SwitchGate 覆盖 active/resolving、question、preference、file、unknown
+        outcome、saving、switching 和 closing；F2 被拒时只更新安全原因，不改变当前 Session。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: A5：选择器默认仅显示当前规范化工作区的最近 Session，`--all` 或 scope
+      切换后显示安全工作区标签；有界搜索可匹配标题、Session ID、首条/近期用户摘要和 workspace label，但不建立明文全文索引。
+    result: passed
+    reason:
+      text: 列表默认按加密记录中的规范化 workspace identity 过滤并稳定按更新时间排序；all scope
+        仅显示清理后的标签，搜索有界匹配标题、UUID、首条/近期摘要和 workspace 标签，索引投影由 Session DEK 加密。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: A6：目标 Session 在当前 Session 关闭前完成解密、schema、privacy、workspace
+      和锁验证；损坏、被占用或不兼容的目标不会让当前 Session 丢失或被迟到事件污染。
+    result: passed
+    reason:
+      text: CommitSwitch 先独立取得目标锁并完成解密、schema/checkpoint、privacy、provider 与 workspace
+        预检，再保存当前 Session；损坏、锁冲突、revision 或保存失败均保留当前 ID、generation、transcript
+        和可用性。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: A7：两个进程不能同时写同一 Session；第二个 writer 得到 `session_in_use`，不会 last-writer-wins
+      覆盖 checkpoint 或标题。
+    result: passed
+    reason:
+      text: Session handle 生命周期持有独占跨进程锁，Save 同时校验 expected revision；进程级测试及 Linux/macOS
+        原生零 skip manifest 均验证第二 writer 返回 session_in_use。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: A8：恢复时固定 system prompt、workspace prompt 和工具 Schema 来自当前二进制，历史文件不能注入新的
+      system instruction；当前 provider/model 配置生效且 API key 不落盘。
+    result: passed
+    reason:
+      text: checkpoint 排除 system 消息并把工具参数归一化为 {}，Restore 只安装到当前二进制新建的 Session，保留当前
+        system/workspace prompt、工具面和 provider/model；记录类型不含 API key。
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: A9：provider endpoint identity 变化时，历史正文和自动标题在明确确认前都不发送到新
+      provider；拒绝后仍可查看、重命名或删除本地 Session。
+    result: passed
+    reason:
+      text: endpoint identity 改变会设置 providerBlocked，阻断 Send
+        和标题调度；本地打开、查看、重命名和删除仍可用，测试证明明确确认前新 provider 收到零模型/标题请求。
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: A10：跨工作区恢复先显示原工作区标签并确认；原 root 不可安全打开时仍可恢复对话，但文件工具缺席且有可见
+      `session_workspace_unavailable`，绝不改用当前 cwd。
+    result: passed
+    reason:
+      text: 跨 workspace 计划和 CLI 均要求确认并重开保存的 root、核对 root identity；重开失败时以 Workspace=nil
+        恢复对话、显示 session_workspace_unavailable，测试证明不会回退当前 cwd。
+      truncated: false
+  - id: A11
+    source: brief.md
+    text: A11：每次新进程恢复或 TUI Session 切换均把文件模式重置为逐次确认；旧 YOLO、mutation
+      preview、BaseVersion 和授权 resolver 不可恢复。
+    result: passed
+    reason:
+      text: RestoreCheckpoint 强制 FileAuthorizationConfirm，checkpoint 拒绝 active/pending
+        resolver 且不保存 preview、BaseVersion 或授权；TUI 切换同时清空草稿、selector 和 pending
+        状态。
+      truncated: false
+  - id: A12
+    source: brief.md
+    text: A12：进程在 turn 中崩溃后只恢复最后稳定 checkpoint，并显示“上次轮次中断”；模型请求、兄弟工具和文件/偏好写入不会自动重放。
+    result: passed
+    reason:
+      text: 模型请求前发布加密 dirty marker；恢复仅载入上一稳定 record、生成 session_interrupted notice 并消费
+        marker，不恢复或自动执行在途模型、工具及交互。
+      truncated: false
+  - id: A13
+    source: brief.md
+    text: A13：preference 写入结果未知时恢复原 operation IDs 和 retry-only
+      核对语义；文件发布结果未知时保留相对路径、operation 和 unknown/stale 标记，后续必须重新读取。
+    result: passed
+    reason:
+      text: preference WAL 持久化原 typed payload、阶段和 create/admit/reject operation
+        IDs，retry-only 路径复用原 ID；文件 WAL 仅保存相对路径和 unknown 元数据，恢复会使匹配 workspace
+        evidence stale/unknown。
+      truncated: false
+  - id: A14
+    source: brief.md
+    text: A14：已压缩超过 raw 历史窗口的 Session 往返 checkpoint
+      后，Observation/Reflection、coverage、tombstone、supersession、authority/freshness、ServerReference/WorkspaceReference
+      与 source availability 保持等价。
+    result: passed
+    reason:
+      text: 版本化 checkpoint 显式保存
+        Sources、Observations、Reflections、coverage、水位、tombstone、supersession、authority/freshness、Server/WorkspaceReference、availability
+        和 allocated IDs；20+ turn 压缩测试验证 exact recall 等价。
+      truncated: false
+  - id: A15
+    source: brief.md
+    text: A15：恢复后 server snapshot 仍是历史快照；privacy generation 不匹配会删除旧正文投影，无法核对时只提供
+      placeholder，旧内容不得因本地 Session 文件而复活。
+    result: passed
+    reason:
+      text: 恢复通过认证服务边界核对 privacy generation；不匹配或无法核对时隔离 server-derived 正文并注入协议完整
+        placeholder，同时保留 reference，测试证明旧正文不进入模型、标题或 recall。
+      truncated: false
+  - id: A16
+    source: brief.md
+    text: A16：所有 Session 内容、标题、workspace path 和可搜索 metadata 均使用认证加密；错误
+      key、篡改、symlink、路径逃逸、宽权限、截断 ciphertext 或未知 schema 均 fail closed，且不会被当作空
+      Session。
+    result: passed
+    reason:
+      text: profile key 包装独立 Session DEK，record、dirty、catalog
+        和搜索投影均使用带身份/revision/generation AAD 的 AEAD；源码和测试覆盖错误
+        key、篡改、swap、截断、尾随、schema、symlink、权限及隔离。SHA d179da5 的 Linux X64 与 macOS
+        ARM64 manifests 均 session_verdict=pass、failed=[]、skipped=[]。
+      truncated: false
+  - id: A17
+    source: brief.md
+    text: A17：平台 key backend 不可用时不写明文，Agent 明确降级为 unsaved；resume、delete 和 clear
+      返回稳定恢复动作。
+    result: passed
+    reason:
+      text: key backend 或安全 root 不可用时普通 Agent 降级为持续可见的 unsaved
+        模式且不产生明文；resume、delete、clear 映射为稳定 session_store_unavailable 和恢复动作。
+      truncated: false
+  - id: A18
+    source: brief.md
+    text: A18：标题在首个稳定轮次后由无工具的有界模型请求生成，并按节流随 committed
+      对话更新；非法、多行、过长或含控制字符输出被拒绝，失败回退不阻塞 Session。
+    result: passed
+    reason:
+      text: 首个稳定 committed turn 后异步调度无工具、字节/token/超时有界的标题请求；后续受轮次、时间及单并发节流，严格解析拒绝
+        malformed、多行、控制字符、过长和 opaque/credential 样式，失败保留本地摘要且不阻塞对话。
+      truncated: false
+  - id: A19
+    source: brief.md
+    text: A19：用户在 picker 手动改名后模型不再覆盖；清空人工标题恢复自动模式。标题重复允许存在，但 CLI 按名称恢复时必须唯一。
+    result: passed
+    reason:
+      text: 人工 rename 递增 title revision、取消在途标题并设置 manual；空标题恢复 auto
+        并重置调度边界，迟到标题不能覆盖；重复标题允许而 CLI 唯一匹配检查会返回 session_name_ambiguous。
+      truncated: false
+  - id: A20
+    source: brief.md
+    text: A20：永久删除移除 Session ciphertext 和 wrapped data key；全量 clear 推进本地 privacy
+      generation 并使旧 generation 的 index、temp 或备份 ciphertext 不可重新载入。
+    result: passed
+    reason:
+      text: 单项删除先移除并复核 wrapped DEK，再清理 record、projection、dirty 和 catalog；clear 先原子替换平台
+        secret、推进 generation，再清扫密文和临时文件，旧 writer/旧 generation 无法重新注册。
+      truncated: false
+  - id: A21
+    source: brief.md
+    text: A21：不按时间自动删除 Session，也不因达到数量/空间上限静默淘汰；达到硬上限时现有 Session 保持可读并提示显式清理。
+    result: passed
+    reason:
+      text: 实现不存在 TTL/LRU 淘汰路径；数量、单 Session 和 profile 密文硬上限返回
+        session_store_full，配额测试证明既有 Session 保持可列出和读取且不会被自动删除。
+      truncated: false
+  - id: A22
+    source: brief.md
+    text: A22：恢复 transcript 只包含稳定、清理后的用户/assistant/terminal activity/error/context
+      事件；running card、原始工具参数、provider reasoning、绝对路径泄漏和未清理错误不会出现。
+    result: passed
+    reason:
+      text: durable transcript 使用独立严格 DTO，仅允许稳定 user/assistant/tool
+        summary/error/context/notice；unknown
+        field、running/tick、原始工具内容、preview、provider body、reasoning、绝对路径及不安全终端文本均
+        fail closed。
+      truncated: false
+  - id: A23
+    source: brief.md
+    text: A23：Session 标题生成、保存、切换或删除失败不会篡改 Agent 模型历史；成功切换后旧 Session 的 context
+      channel、turn event 和后台 worker 不能污染新 Session。
+    result: passed
+    reason:
+      text: 标题和持久化只修改 Session record/projection，不改写 agentloop 模型历史；切换失败保留当前状态，成功切换递增
+        controller generation，TUI 对旧 turn、context、learning、picker 和 title 结果实施
+        generation fence。
+      truncated: false
+  - id: A24
+    source: brief.md
+    text: A24：`clients/cli-go/README.md`、Agent help、设置页和 TUI
+      明确说明默认本地加密保存、无时间自动删除、手动清除、provider 发送、workspace 恢复、YOLO 重置和 key-backend
+      降级。
+    result: passed
+    reason:
+      text: README、非 TTY Agent help、Dashboard 设置/隐私页及 TUI 首屏/footer
+        均披露默认本机加密保存、无时间自动删除、手动 delete/clear、provider 发送、workspace 恢复、YOLO/授权重置及
+        key-backend 明文禁降级。
+      truncated: false
+builder_handoff:
+  candidate_id: a0d19d3b-0079-44fd-a50e-ae3955870cec
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:f3f9fd20-71b6-41a6-a902-c2f3718d39a6
+  iteration: 1
+  summary:
+    text: 完成加密本地 Agent Session 自动保存与恢复：提供 CLI resume/last/all、F2 picker
+      和安全切换、重命名与加密删除/clear、稳定 checkpoint 与 transcript、崩溃 dirty marker 和副作用
+      receipt、provider/workspace/privacy 门禁、模型自动标题、严格
+      schema/migration/配额及明确降级。按用户最新确认，当前版本仅支持并验收 Linux 与 macOS；README、正式
+      brief/spec、设计和原生 CI 矩阵已同步，Windows 延期且不作为阻塞项。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+    - A13
+    - A14
+    - A15
+    - A16
+    - A17
+    - A18
+    - A19
+    - A20
+    - A21
+    - A22
+    - A23
+    - A24
+  checks:
+    - name:
+        text: Full Go client tests
+        truncated: false
+      result: passed
+      note:
+        text: go test -count=1 ./... passed on candidate d179da5.
+        truncated: false
+    - name:
+        text: Go vet
+        truncated: false
+      result: passed
+      note:
+        text: go vet ./... passed on candidate d179da5.
+        truncated: false
+    - name:
+        text: Targeted race tests
+        truncated: false
+      result: passed
+      note:
+        text: agentsession, agentcontroller, agentloop, agentui, command, filelock,
+          keybackend and securefile targeted race suites passed; relevant
+          production inputs are unchanged.
+        truncated: false
+    - name:
+        text: Native Linux CLI build and help
+        truncated: false
+      result: passed
+      note:
+        text: Native Linux CLI build plus non-TTY agent/resume/sessions help paths
+          passed.
+        truncated: false
+    - name:
+        text: Native Linux Session security evidence
+        truncated: false
+      result: passed
+      note:
+        text: "GitHub Actions run 33714998803 artifact for d179da5, Linux X64:
+          session_verdict=pass, no failed checks, zero skipped tests."
+        truncated: false
+    - name:
+        text: Native macOS Session security evidence
+        truncated: false
+      result: passed
+      note:
+        text: "GitHub Actions run 33714998803 artifact for d179da5, macOS ARM64:
+          session_verdict=pass, no failed checks, zero skipped tests."
+        truncated: false
+    - name:
+        text: Git whitespace validation
+        truncated: false
+      result: passed
+      note:
+        text: git diff --check passed.
+        truncated: false
+    - name:
+        text: Diagnostics
+        truncated: false
+      result: passed
+      note:
+        text: Edited formal artifacts and workflow have no blocking diagnostics.
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: Current product support and acceptance are limited to Linux and macOS.
+        Windows runtime, credentials, ACL, lock and Session behavior are
+        explicitly deferred to a future change.
+      truncated: false
+    - text: Session persistence is local per server profile and does not provide cloud
+        sync, fork, archive, import/export or workspace relocation.
+      truncated: false
+    - text: A restored provider endpoint change requires confirmation before
+        historical text is transmitted; an unavailable historical workspace
+        restores conversation without file tools.
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: The existing independent read-only iteration-2 audit found no remaining
+        source or local production-path failures for the Session recovery
+        implementation. The only subsequent product-scope change removes Windows
+        from the current contract; candidate-bound Linux and macOS native
+        evidence now passes with zero skips.
+      truncated: false
+    reviewer_execution_ref: observational-memory:7e73f1372bfe
+  submitted_at: 2026-09-03T04:28:56.936Z
+blockers: []
+verification:
+  candidate_id: a0d19d3b-0079-44fd-a50e-ae3955870cec
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:129a96eb-d6e7-4e5b-ab35-fb2433af2102
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: client-session-resume-tests
+      name:
+        text: Go client full test suite
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 18954
+    - id: client-session-resume-vet
+      name:
+        text: Go client full vet
+        truncated: false
+      argv_display:
+        - text: vet
+          truncated: false
+        - text: ./...
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 141
+    - id: client-session-resume-race
+      name:
+        text: Session recovery targeted race suites
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+        - text: -race
+          truncated: false
+        - text: -count=1
+          truncated: false
+        - text: ./internal/agentsession
+          truncated: false
+        - text: ./internal/agentcontroller
+          truncated: false
+        - text: ./internal/agentloop
+          truncated: false
+        - text: ./internal/agentui
+          truncated: false
+        - text: ./internal/command
+          truncated: false
+        - text: ./internal/filelock
+          truncated: false
+        - text: ./internal/keybackend
+          truncated: false
+        - text: ./internal/securefile
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 10576
+    - id: client-session-resume-build-help
+      name:
+        text: Native CLI build and non-TTY Session help
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: set -euo pipefail; tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT; go build
+            -o "$tmp/edu-agent" ./cmd/edu-agent; "$tmp/edu-agent" agent --help
+            >/dev/null; "$tmp/edu-agent" agent resume --help >/dev/null;
+            "$tmp/edu-agent" agent sessions --help >/dev/null
+          truncated: false
+      argv_truncated: false
+      cwd_ref: clients/cli-go
+      status: passed
+      exit_code: 0
+      duration_ms: 513
+    - id: client-session-resume-native-linux-macos
+      name:
+        text: Candidate-bound Linux and macOS zero-skip Session evidence
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: "set -euo pipefail; sha=d179da5ab9415d2127f9837329748d85a0760649;
+            run=33714998803; test \"$(git rev-parse HEAD)\" = \"$sha\"; test
+            \"$(gh run view \"$run\" --repo ErzerLP/edu-agent --json
+            headSha,status,conclusion --jq '.headSha + \" \" + .status + \" \" +
+            .conclusion')\" = \"$sha completed success\"; tmp=$(mktemp -d); trap
+            'rm -rf \"$tmp\"' EXIT; gh run download \"$run\" --repo
+            ErzerLP/edu-agent --dir \"$tmp\"; manifests=$(find \"$tmp\" -name
+            manifest.json -type f | sort); test \"$(printf '%s\\n'
+            \"$manifests\" | sed '/^$/d' | wc -l)\" -eq 2; for os in Linux
+            macOS; do file=$(grep -l '\"runner_os\": \"'\"$os\"'\"' $manifests);
+            test -n \"$file\"; jq -e --arg sha \"$sha\" --arg os \"$os\"
+            '.candidate_sha == $sha and .runner_os == $os and .session_verdict
+            == \"pass\" and (.session_failed_checks | length) == 0 and
+            (.session_skipped_tests | length) == 0' \"$file\" >/dev/null; done"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 1821
+    - id: client-session-resume-diff-check
+      name:
+        text: Candidate commit whitespace check
+        truncated: false
+      argv_display:
+        - text: diff
+          truncated: false
+        - text: --check
+          truncated: false
+        - text: origin/main..HEAD
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 17
+  summary:
+    text: 独立只读核对了正式 A1-A24、生产路径、对应测试及 Runtime stateVersion 9 证据。当前 HEAD 为
+      d179da5ab9415d2127f9837329748d85a0760649，Runtime 完整 tests、vet、8 包 targeted
+      race、CLI build/help、whitespace 均通过；GitHub run 33714998803 的 SHA-bound
+      Linux X64 与 macOS ARM64 Session manifests 均零失败、零 skip。当前 Linux/macOS
+      正式合同全部满足，候选 a0d19d3b-0079-44fd-a50e-ae3955870cec 可通过验证。
+    truncated: false
+  risks:
+    - text: 本结论仅适用于正式范围内的 Linux 与 macOS；Windows 构建、运行、凭据、ACL、锁和 Session
+        行为已明确延期，不构成本候选阻塞项。
+      truncated: false
+    - text: Session 可用性依赖平台 Secret Service 或 Keychain；后端不可用时按合同安全降级为未保存会话，而不是提供持久恢复。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-03T04:45:29.152Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A3
+      - A7
+      - A13
+      - A16
+      - A17
+      - A18
+      - A20
+      - A24
+      - A31
+      - A32
+      - A39
+      - A40
+      - A41
+      - A43
+      - A44
+      - A45
+      - A46
+      - A64
+      - A69
+      - A71
+      - A81
+      - A82
+      - A94
+      - A97
+      - A98
+      - A106
+      - A107
+      - A112
+      - A114
+      - A115
+      - A117
+      - A120
+      - A122
+      - A123
+      - A124
+      - A125
+      - A126
+      - A131
+      - A132
+      - A133
+      - A134
+      - A135
+      - A136
+      - A137
+      - A138
+      - A139
+    summary:
+      text: candidate 07978301-912b-428c-b4de-259043b42826，iteration 1 attempt
+        1：passed=93，failed=38，blocked=8。源码存在 Windows ACL、schema
+        version、参数互斥、file recovery、privacy
+        placeholder、title/error/docs/test-matrix 缺陷；原生三平台证据未运行。
+      truncated: false
+    completed_at: 2026-09-02T18:13:35.008Z
+  - goal_cycle: 1
+    iteration: 2
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-09-03T04:14:39.764Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 独立只读核对了正式 A1-A24、生产路径、对应测试及 Runtime stateVersion 9 证据。当前 HEAD 为
+        d179da5ab9415d2127f9837329748d85a0760649，Runtime 完整 tests、vet、8 包
+        targeted race、CLI build/help、whitespace 均通过；GitHub run 33714998803 的
+        SHA-bound Linux X64 与 macOS ARM64 Session manifests 均零失败、零 skip。当前
+        Linux/macOS 正式合同全部满足，候选 a0d19d3b-0079-44fd-a50e-ae3955870cec 可通过验证。
+      truncated: false
+    completed_at: 2026-09-03T04:45:29.152Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-02T00:29:23.931Z

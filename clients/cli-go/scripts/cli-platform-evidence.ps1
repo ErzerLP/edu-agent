@@ -226,17 +226,22 @@ New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 $script:evidenceFile = Join-Path $outputDirectory "evidence.txt"
 Write-Utf8Lines $script:evidenceFile @()
 
-$platformTempRoot = Join-Path $moduleRoot (".native-evidence-temp-" + [Guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Path $platformTempRoot | Out-Null
-Set-PrivateEvidenceTempDirectory $platformTempRoot
-$previousTempEnvironment = @{
-    TMPDIR = [Environment]::GetEnvironmentVariable("TMPDIR", "Process")
-    TMP = [Environment]::GetEnvironmentVariable("TMP", "Process")
-    TEMP = [Environment]::GetEnvironmentVariable("TEMP", "Process")
+$platformTempRoot = ""
+$previousTempEnvironment = @{}
+$usesPrivateEvidenceTemp = -not [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
+if ($usesPrivateEvidenceTemp) {
+    $platformTempRoot = Join-Path $moduleRoot (".native-evidence-temp-" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $platformTempRoot | Out-Null
+    Set-PrivateEvidenceTempDirectory $platformTempRoot
+    $previousTempEnvironment = @{
+        TMPDIR = [Environment]::GetEnvironmentVariable("TMPDIR", "Process")
+        TMP = [Environment]::GetEnvironmentVariable("TMP", "Process")
+        TEMP = [Environment]::GetEnvironmentVariable("TEMP", "Process")
+    }
+    [Environment]::SetEnvironmentVariable("TMPDIR", $platformTempRoot, "Process")
+    [Environment]::SetEnvironmentVariable("TMP", $platformTempRoot, "Process")
+    [Environment]::SetEnvironmentVariable("TEMP", $platformTempRoot, "Process")
 }
-[Environment]::SetEnvironmentVariable("TMPDIR", $platformTempRoot, "Process")
-[Environment]::SetEnvironmentVariable("TMP", $platformTempRoot, "Process")
-[Environment]::SetEnvironmentVariable("TEMP", $platformTempRoot, "Process")
 
 Add-Evidence "candidate_sha=$candidateSHA"
 Add-Evidence "checkout_sha=$checkoutSHA"
@@ -250,7 +255,7 @@ Add-Evidence "gohostos=$gohostos"
 Add-Evidence "gohostarch=$gohostarch"
 Add-Evidence "go_version=$goVersion"
 Add-Evidence "evidence_mode=fresh-json-exact-run-pass-zero-skip"
-Add-Evidence "test_temp=repo-private-fresh"
+Add-Evidence "test_temp=$(if ($usesPrivateEvidenceTemp) { 'repo-private-fresh' } else { 'runner-native' })"
 
 switch ($env:RUNNER_OS_NAME) {
     "Linux" {
@@ -442,23 +447,32 @@ try {
     }
 } finally {
     Pop-Location
-    foreach ($name in @("TMPDIR", "TMP", "TEMP")) {
-        [Environment]::SetEnvironmentVariable($name, $previousTempEnvironment[$name], "Process")
-    }
-    if (Test-Path -LiteralPath $platformTempRoot) {
-        try {
-            Remove-Item -LiteralPath $platformTempRoot -Recurse -Force
-        } catch {
-            Write-Warning "failed to remove native evidence temp directory"
+    if ($usesPrivateEvidenceTemp) {
+        foreach ($name in @("TMPDIR", "TMP", "TEMP")) {
+            [Environment]::SetEnvironmentVariable($name, $previousTempEnvironment[$name], "Process")
+        }
+        if (Test-Path -LiteralPath $platformTempRoot) {
+            try {
+                Remove-Item -LiteralPath $platformTempRoot -Recurse -Force
+            } catch {
+                Write-Warning "failed to remove native evidence temp directory"
+            }
         }
     }
 }
 
-Write-Utf8Lines (Join-Path $outputDirectory "expected-tests.txt") ([string[]] @($expectedLines))
-Write-Utf8Lines (Join-Path $outputDirectory "executed-tests.txt") ([string[]] @($executedLines))
-Write-Utf8Lines (Join-Path $outputDirectory "skipped-tests.txt") ([string[]] @($skippedLines))
-Write-Utf8Lines (Join-Path $outputDirectory "session-required-checks.txt") ([string[]] @($sessionRequiredChecks))
-Write-Utf8Lines (Join-Path $outputDirectory "session-skipped-tests.txt") ([string[]] @($sessionSkippedTests))
+$expectedArray = $expectedLines.ToArray()
+$executedArray = $executedLines.ToArray()
+$skippedArray = $skippedLines.ToArray()
+$sessionRequiredArray = $sessionRequiredChecks.ToArray()
+$sessionFailedArray = $sessionFailedChecks.ToArray()
+$sessionSkippedArray = $sessionSkippedTests.ToArray()
+$manifestCheckArray = $manifestChecks.ToArray()
+Write-Utf8Lines (Join-Path $outputDirectory "expected-tests.txt") $expectedArray
+Write-Utf8Lines (Join-Path $outputDirectory "executed-tests.txt") $executedArray
+Write-Utf8Lines (Join-Path $outputDirectory "skipped-tests.txt") $skippedArray
+Write-Utf8Lines (Join-Path $outputDirectory "session-required-checks.txt") $sessionRequiredArray
+Write-Utf8Lines (Join-Path $outputDirectory "session-skipped-tests.txt") $sessionSkippedArray
 $overallVerdict = if ($failed) { "fail" } else { "pass" }
 $sessionVerdict = if ($sessionFailed) { "fail" } else { "pass" }
 Add-Evidence "overall_verdict=$overallVerdict"
@@ -487,13 +501,13 @@ $manifest = [ordered]@{
         exit_code = $setupExitCode
         passed = $setupExitCode -eq 0
     }
-    expected_tests = [string[]] @($expectedLines)
-    executed_events = [string[]] @($executedLines)
-    skipped_tests = [string[]] @($skippedLines)
-    session_required_checks = [string[]] @($sessionRequiredChecks)
-    session_failed_checks = [string[]] @($sessionFailedChecks)
-    session_skipped_tests = [string[]] @($sessionSkippedTests)
-    checks = [object[]] @($manifestChecks)
+    expected_tests = $expectedArray
+    executed_events = $executedArray
+    skipped_tests = $skippedArray
+    session_required_checks = $sessionRequiredArray
+    session_failed_checks = $sessionFailedArray
+    session_skipped_tests = $sessionSkippedArray
+    checks = $manifestCheckArray
     overall_verdict = $overallVerdict
     session_verdict = $sessionVerdict
     passed = -not $failed

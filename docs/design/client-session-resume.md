@@ -1,8 +1,8 @@
 # 客户端历史 Session 恢复实现设计
 
-> 状态：Build 实施设计，目标 change 为 `client-session-resume`，Shape state version 2。
+> 状态：Build 实施设计，目标 change 为 `client-session-resume`，当前版本支持与验收平台为 Linux 和 macOS。
 >
-> 正式用户合同见 `docs/comet/changes/client-session-resume/brief.md` 与 `specs/client-session-resume/spec.md`。本文只细化实现，不改变默认自动加密保存、无时间自动删除、模型自动标题、CLI resume + F2、provider/workspace/privacy 门禁等已确认行为。
+> 正式用户合同见 `docs/comet/changes/client-session-resume/brief.md` 与 `specs/client-session-resume/spec.md`。本文只细化实现，不改变默认自动加密保存、无时间自动删除、模型自动标题、CLI resume + F2、provider/workspace/privacy 门禁等已确认行为。Windows 条件代码可作为后续兼容性准备保留，但不构成本版本的支持或验收承诺。
 
 ## 1. 结论
 
@@ -154,7 +154,7 @@ func DeleteSecret(Locator) error
 func AvailableSecret(Locator) bool
 ```
 
-Session 使用独立 service `edu-agent-agent-sessions-v1`。Linux 使用 Secret Service，macOS 使用 Keychain，Windows 使用 current-user DPAPI。Windows 路径按 service/account 的不可逆 digest 分槽，写入采用同目录临时文件、flush、原子 replace 与 current-user-only ACL；secret 仍通过 stdin/内存传递，不进入 argv。
+Session 使用独立 service `edu-agent-agent-sessions-v1`。当前支持平台中 Linux 使用 Secret Service，macOS 使用 Keychain；secret 通过 stdin/内存传递，不进入 argv。仓库中的 Windows DPAPI 路径属于后续支持准备，不参与当前产品合同或候选验收。
 
 平台 secret 是固定二进制结构：
 
@@ -199,7 +199,7 @@ Profile root：
 
 文件名只含公开 profile hash 或随机 storage ID，不含 Session UUID、title、workspace、provider 或正文。`profile.index.enc` 是 profile key 加密的 locator catalog，只允许保存 schema、privacy generation、catalog revision 和随机 SessionID/StorageID 定位符；title、workspace、provider、时间、计数、lifecycle、搜索摘要和 record revision 只能进入由各 Session DEK 加密的 `index-<storage-id>.enc` projection 或权威 record。
 
-从 `offline` 抽取 `internal/filelock`：Unix 使用 `flock`，Windows 使用 `LockFileEx`。offline lease 继续委托该包，复用原有行为与测试。
+从 `offline` 抽取 `internal/filelock`：Linux 与 macOS 使用 `flock`。offline lease 继续委托该包，复用原有行为与测试；Windows `LockFileEx` 条件代码不属于当前支持合同。
 
 `securefile.Root` 增加只针对 root 内 opaque 文件的有界 `List` 与 handle-relative `Delete`，并保留 publication outcome。Index rebuild 和 cryptographic delete 不使用不受保护的 `filepath.Join(root, modelData)`；所有相对名先经过封闭格式验证。
 
@@ -645,7 +645,7 @@ Individual delete 使用结构化 `{SessionID, StorageID, ExpectedRecordRevision
 
 Full clear：profile lock 下生成 `{generation+1,new wrapping key}` 并原子替换平台 secret；成功是 cryptographic clear 线性化点。随后删除旧 envelope/record/dirty/index/temp并建立空 index。若替换前失败，旧 store 保持有效且不能宣称 clear；替换后崩溃，旧 ciphertext 因 key/generation 不匹配只能清扫，不能恢复。
 
-Windows Session root 使用 protected current-user-only DACL，目录 ACE 向 record/projection/dirty/key/lock 子项继承，private read 和 publication 还会按 handle 复核 owner、protected 标志与精确 ACE；reparse root、parent或target fail closed。Windows keybackend 通过 current-user DPAPI，secret目录和原子替换后的`.dpapi`文件同样使用原生 current-user-only ACL。Unix继续要求目录 `0700`、文件/lock `0600`并拒绝 symlink。
+Linux 与 macOS Session root 继续要求目录 `0700`、文件/lock `0600`并拒绝 symlink。仓库中现存的 Windows protected-DACL、DPAPI 与 reparse 防护实现仅作为后续支持准备保留，不作为当前版本已经支持 Windows 的声明。
 
 ## 21. Stable Errors
 
@@ -665,7 +665,7 @@ Windows Session root 使用 protected current-user-only DACL，目录 ACE 向 re
 - wrong key、swap、bit flip、truncate、trailing、unknown schema fail closed；
 - two writer 返回 `session_in_use`；
 - quota 不淘汰，index 可重建；
-- Unix focused native test 与 Windows cross-compile通过。
+- Linux 与 macOS focused native test 通过。
 
 对应主要 acceptance：A1、A6-A7、A12-A17、A20-A23、A25-A71、A79-A85、A98-A115、A128-A135。
 
@@ -695,7 +695,7 @@ Windows Session root 使用 protected current-user-only DACL，目录 ACE 向 re
 - target corrupt/in-use/provider/workspace failure保留当前 Session；
 - old turn/context/learning/title/save event不污染新 Session；
 - 46×18 可操作；
-- Linux/macOS/Windows required key/ACL/lock/atomic/tamper/clear cases零 skip；
+- Linux/macOS required key/permission/lock/atomic/tamper/clear cases零 skip；
 - 完整 CLI gate通过。
 
 对应主要 acceptance：A4-A6、A18-A24、A29-A33、A72-A78、A83-A92、A127、A133、A137、A139。
@@ -709,7 +709,6 @@ Windows Session root 使用 protected current-user-only DACL，目录 ACE 向 re
 ```text
 go test ./internal/agentsession ./internal/agentloop ./internal/securefile ./internal/filelock ./internal/keybackend ./internal/offline
 go test -race ./internal/agentsession ./internal/agentloop
-GOOS=windows GOARCH=amd64 go test -c ./internal/agentsession
 ```
 
 批次 2 最小矩阵：
@@ -733,11 +732,10 @@ go test -count=1 ./...
 go test -race -count=1 ./...
 go vet ./...
 go build ./cmd/edu-agent
-GOOS=windows GOARCH=amd64 go build ./cmd/edu-agent
 git diff --check
 ```
 
-`.github/workflows/cli-platform.yml` 在 candidate SHA 上运行 native Linux/macOS/Windows Session matrix。证据脚本核对 `git rev-parse HEAD`、runner/GOOS/GOARCH，使用 fresh `go test -json -count=1` output逐个确认 manifest 中每个精确 expected test 恰好出现 run/pass、没有 failure或嵌套 skip，并验证跨进程 helper success marker；artifact包含 expected/executed/skipped清单和原始JSONL/log。Required symlink/reparse、ACL/mode、key backend round-trip/delete、two-writer lock、atomic recovery、tamper 和 privacy clear 不允许 skip；cross-build只算编译证据。实现完成不代表原生证据已通过，只有绑定最终候选SHA的三平台artifact可关闭A133/A139。
+`.github/workflows/cli-platform.yml` 在 candidate SHA 上运行 native Linux/macOS Session matrix。证据脚本核对 `git rev-parse HEAD`、runner/GOOS/GOARCH，使用 fresh `go test -json -count=1` output逐个确认 manifest 中每个精确 expected test 恰好出现 run/pass、没有 failure或嵌套 skip，并验证跨进程 helper success marker；artifact包含 expected/executed/skipped清单和原始JSONL/log。Required symlink/no-follow、私有 mode、key backend round-trip/delete、two-writer lock、atomic recovery、tamper 和 privacy clear 不允许 skip；交叉编译只算编译证据。实现完成不代表原生证据已通过，只有绑定最终候选 SHA 的 Linux 与 macOS artifact 可关闭支持平台验收项。
 
 ## 24. 候选与 Git 流程
 
@@ -760,7 +758,7 @@ git diff --cached --check
 ## 25. 已知风险
 
 - 泛化 keybackend 会影响现有 offline key 路径，必须保留兼容 wrappers 和回归证据。
-- Windows profile-secret 原子替换、ACL 与 DPAPI 是 native acceptance；Linux cross-compile不能证明。
+- Linux 与 macOS 的平台 secret、权限、原子替换和跨进程锁是 native acceptance；交叉编译不能替代支持平台证据。Windows 支持已明确延期。
 - `ExportMemory(...,1)` privacy fence依赖 Memory read可用性；不可用时会安全地 quarantine server evidence，用户仍可恢复本地对话但上下文降级。
 - Session record 最大 48 MiB 明文，每轮完整 rewrite 有写放大；首版接受，后续若有实际性能证据再引入 append journal。
 - 文件 publication 与 Session checkpoint 无跨资源事务；dirty/receipt只能诚实避免重放并标记 unknown，不能承诺 exactly-once。

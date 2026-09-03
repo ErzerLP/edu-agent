@@ -24,7 +24,9 @@ Session 标题默认由当前配置的 Agent 模型在稳定轮次后异步生�
 
 服务端 revision/generation 和 workspace reference 在恢复后仍是历史 evidence。受 privacy generation 保护的服务端正文及其派生来源必须先通过现有认证边界重新验证；generation 不匹配时立即失效，无法验证时以有界 placeholder 替代而不是重新注入模型。普通历史文本不能授权工具、切换 YOLO、绕过 Assessment/Memory admission 或扩展 workspace authority。
 
-本 change 以一个用户结果推进，因为加密 store、checkpoint、resume 命令、F2 切换和动态标题共享同一个 Session record、锁、workspace/provider 绑定、privacy fence 与 UI controller。实现分为三个串行垂直批次：安全 store 与 checkpoint round-trip；命令恢复、崩溃/隐私语义和模型标题；F2 选择器、切换、删除、文档与三平台证据。
+本 change 以一个用户结果推进，因为加密 store、checkpoint、resume 命令、F2 切换和动态标题共享同一个 Session record、锁、workspace/provider 绑定、privacy fence 与 UI controller。实现分为三个串行垂直批次：安全 store 与 checkpoint round-trip；命令恢复、崩溃/隐私语义和模型标题；F2 选择器、切换、删除、文档与 Linux/macOS 原生证据。
+
+当前版本只支持并验收 Linux 与 macOS。仓库中可能保留能够编译的 Windows 条件代码或实验性安全原语，但它们不构成本版本的产品支持、兼容性承诺或验收证据；Windows 支持留给后续独立 change。
 
 # Non-goals
 
@@ -35,6 +37,7 @@ Session 标题默认由当前配置的 Agent 模型在稳定轮次后异步生�
 - 不把恢复 Session 静默绑定到新的 server profile、provider endpoint 或 workspace；首版不提供 workspace relocation 或跨 server profile 迁移。
 - 不承诺 workspace 文件发布与 Session checkpoint 跨资源 exactly-once；崩溃窗口必须诚实标记 unknown，且不得自动重放。
 - 不在第一版复制 Pi 的 threaded/regex/full-transcript 搜索、可配置 keybinding 系统，或 Codex 的 fork/archive/agents daemon。
+- 当前版本不提供 Windows 产品支持，也不以 Windows 原生运行、ACL、DPAPI、reparse point 或 LockFileEx 行为作为发布承诺；这些能力延期到后续独立 change。
 
 # Acceptance examples
 
@@ -53,7 +56,7 @@ Session 标题默认由当前配置的 Agent 模型在稳定轮次后异步生�
 - A13：preference 写入结果未知时恢复原 operation IDs 和 retry-only 核对语义；文件发布结果未知时保留相对路径、operation 和 unknown/stale 标记，后续必须重新读取。
 - A14：已压缩超过 raw 历史窗口的 Session 往返 checkpoint 后，Observation/Reflection、coverage、tombstone、supersession、authority/freshness、ServerReference/WorkspaceReference 与 source availability 保持等价。
 - A15：恢复后 server snapshot 仍是历史快照；privacy generation 不匹配会删除旧正文投影，无法核对时只提供 placeholder，旧内容不得因本地 Session 文件而复活。
-- A16：所有 Session 内容、标题、workspace path 和可搜索 metadata 均使用认证加密；错误 key、篡改、symlink/reparse、宽权限、截断 ciphertext 或未知 schema 均 fail closed，且不会被当作空 Session。
+- A16：所有 Session 内容、标题、workspace path 和可搜索 metadata 均使用认证加密；错误 key、篡改、symlink、路径逃逸、宽权限、截断 ciphertext 或未知 schema 均 fail closed，且不会被当作空 Session。
 - A17：平台 key backend 不可用时不写明文，Agent 明确降级为 unsaved；resume、delete 和 clear 返回稳定恢复动作。
 - A18：标题在首个稳定轮次后由无工具的有界模型请求生成，并按节流随 committed 对话更新；非法、多行、过长或含控制字符输出被拒绝，失败回退不阻塞 Session。
 - A19：用户在 picker 手动改名后模型不再覆盖；清空人工标题恢复自动模式。标题重复允许存在，但 CLI 按名称恢复时必须唯一。
@@ -74,7 +77,7 @@ Session 标题默认由当前配置的 Agent 模型在稳定轮次后异步生�
 - 默认无时间自动淘汰；任何永久删除和 privacy generation 变化都必须可验证且不能被 stale index/temp 恢复。
 - 恢复历史到新 provider endpoint、跨 workspace 或 privacy generation 未核对时，必须先维持最小权限并取得必要确认/验证。
 - 文件权限、workspace confinement、Assessment acceptance、Memory admission 和普通问询权限隔离不因 Session 恢复而改变。
-- Native Linux、macOS、Windows 证据必须验证 key backend、锁、ACL/权限、symlink/reparse、原子保存、篡改拒绝和删除；cross-build 只证明编译。
+- Native Linux 与 macOS 证据必须验证 key backend、跨进程锁、私有权限、symlink/no-follow、原子保存、篡改拒绝和删除；交叉编译只证明编译，不属于当前版本的原生行为证据。
 
 # Decisions
 
@@ -87,6 +90,7 @@ Session 标题默认由当前配置的 Agent 模型在稳定轮次后异步生�
 - 恢复使用当前 provider/model 与当前安全规则；provider endpoint identity 变化需要一次明确确认。
 - 文件 YOLO、旧 mutation authorization 和普通 pending interaction 不跨进程或 Session switch 恢复。
 - 首版使用一个 Native change 和三个串行垂直批次，不建立 Supervisor children；原因是所有交付共享同一 checkpoint/store/controller 与隐私边界。
+- 当前版本的支持与验收平台固定为 Linux 和 macOS；Windows 明确延期，不作为当前候选、Verifier 或 Archive 的阻塞项。
 
 # Open questions
 
@@ -99,5 +103,5 @@ Session 标题默认由当前配置的 Agent 模型在稳定轮次后异步生�
 - `internal/command` fake 依赖覆盖新建、`--no-save`、picker、UUID/标题/歧义、`--last`、`--all`、workspace unavailable、store unavailable、delete/clear、help 和 Dashboard 复用。
 - `internal/agentui` fake conversation/store 覆盖 F2 idle gate、搜索/scope、rename/delete、目标预验证、safe switch、late event isolation、恢复 transcript、provider/workspace confirmation和 `46×18` 最小终端。
 - fake OpenAI-compatible server 覆盖标题请求无工具、输入/输出边界、节流、失败回退、provider endpoint 变化确认前零发送，以及恢复后的下一次请求上下文等价。
-- 受影响 Go 包运行最小测试、定向 race、vet 和 build；稳定候选再运行完整 CLI test/race/vet/build、Windows cross-build、non-TTY help 和 `git diff --check`。
-- `.github/workflows/cli-platform.yml` 绑定 candidate SHA，在 native Linux、macOS、Windows 上运行 Session key backend、ACL/权限、锁、symlink/reparse、原子恢复、篡改拒绝和 clear/delete matrix，并上传原始命令、Go 版本、skip count 与结果；任何 required case skip 都是 blocked。
+- 受影响 Go 包运行最小测试、定向 race、vet 和 build；稳定候选再运行完整 CLI test/race/vet/build、non-TTY help 和 `git diff --check`。
+- `.github/workflows/cli-platform.yml` 绑定 candidate SHA，在 native Linux 与 macOS 上运行 Session key backend、私有权限、跨进程锁、symlink/no-follow、原子恢复、篡改拒绝和 clear/delete matrix，并上传原始命令、Go 版本、skip count 与结果；任何 required case skip 都是 blocked。

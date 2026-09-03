@@ -43,11 +43,11 @@ workspace identity 使用平台正确的规范化与文件身份策略。默认 
 
 新增独立 `internal/agentsession` store。它不得把 Session 内容放入 `config.json`、workspace、日志、Shell history、模型 credential、设备 credential、Nocturne 或服务端数据库。
 
-每个 server profile 具有独立随机 profile wrapping key，由现有平台 key backend 保护：Linux Secret Service、macOS Keychain、Windows current-user data protection。每个 Session 再生成独立 data-encryption key；Session key 由 profile key 认证包装，metadata、checkpoint、transcript/index cache 均使用 per-Session key 的认证加密。名称、用户/assistant 文本、workspace path、provider 标签和搜索摘要都是敏感数据，不得以明文 sidecar 保存。
+每个 server profile 具有独立随机 profile wrapping key，由当前支持平台的 key backend 保护：Linux Secret Service 与 macOS Keychain。每个 Session 再生成独立 data-encryption key；Session key 由 profile key 认证包装，metadata、checkpoint、transcript/index cache 均使用 per-Session key 的认证加密。名称、用户/assistant 文本、workspace path、provider 标签和搜索摘要都是敏感数据，不得以明文 sidecar 保存。
 
 认证加密容器必须绑定 schema、profile fingerprint、local privacy generation、Session UUID、record kind、record revision 和 nonce。nonce 永不复用；错误 key、header 不匹配、ciphertext 篡改、截断、尾随数据或 record swap 均 fail closed。生产随机源失败时不创建 Session 或 key。
 
-存储 root 位于 `os.UserConfigDir()/edu-agent/agent-sessions` 或等价用户私有数据目录，根目录在 Unix 为 `0700`、文件为 `0600`；Windows 使用当前用户 ACL。所有安全读取和发布拒绝 symlink、junction、reparse point、非普通文件、路径逃逸和过宽权限，使用同目录临时文件、file sync、原子 replace 与 directory sync。Windows 原生验证必须覆盖 ACL、reparse 与 replace 行为；cross-build 不算原生安全证据。
+存储 root 位于 `os.UserConfigDir()/edu-agent/agent-sessions` 或等价用户私有数据目录，在 Linux 与 macOS 上目录必须为 `0700`、文件必须为 `0600`。所有安全读取和发布拒绝 symlink、非普通文件、路径逃逸和过宽权限，使用同目录临时文件、file sync、原子 replace 与 directory sync。Native Linux/macOS 验证必须覆盖私有权限、no-follow、replace 和删除行为；交叉编译不算原生安全证据。
 
 profile manifest 与 index 只可作为版本化、认证的数据结构。index 不是唯一数据源；丢失或损坏时可以扫描仍可解密、schema 合法的 Session records 重建。单个损坏 Session 被隔离并在 picker 标记 `corrupt`，不能让其他 Session 消失，也不能被静默当作空记录。
 
@@ -237,15 +237,15 @@ clients/cli-go/internal/agentsession/lock_windows.go
 
 交付 `agent resume`、`--last`、`--all`、`--no-save`、workspace/provider gate、privacy generation revalidation、unknown receipt 和模型自动标题。退出标准是 fake model/server 下退出重启后下一请求等价，provider 改变零发送直到确认，标题无工具且失败不影响主线。
 
-### 批次 3：F2 切换与平台闭环
+### 批次 3：F2 切换与支持平台闭环
 
-交付 F2 picker、搜索/scope、rename/delete/new/switch、late-event isolation、Dashboard/help/settings/README、hard quota UI 和 native Linux/macOS/Windows evidence。退出标准是繁忙/unknown 状态无法切换、目标失败保留当前 Session、三平台 required security cases 零 skip。
+交付 F2 picker、搜索/scope、rename/delete/new/switch、late-event isolation、Dashboard/help/settings/README、hard quota UI 和 native Linux/macOS evidence。退出标准是繁忙/unknown 状态无法切换、目标失败保留当前 Session、两个支持平台的 required security cases 零 skip。
 
 ## 验收与验证
 
 Agent-loop 测试必须覆盖：普通与取消 turn 的 checkpoint 线性化、20+ turn raw trim 后 round-trip、exact-ID recall、DropExactCoverage provenance、server/workspace authority/freshness、tombstone/supersession、redaction/generation invalidation、unknown preference receipt、unknown file publication、YOLO reset、system/tool regeneration和 active/pending export 拒绝。
 
-Store 测试必须覆盖：create/list/load/save/delete/clear、per-Session key isolation、wrong key、record swap、bit flip、truncate/trailing bytes、unknown schema、duplicate IDs、broken references、nonce uniqueness、atomic crash points、temporary residue、index rebuild、expected revision、two-process lock、quota no-eviction、Unix mode/no-follow 和 Windows ACL/reparse/replace。
+Store 测试必须覆盖：create/list/load/save/delete/clear、per-Session key isolation、wrong key、record swap、bit flip、truncate/trailing bytes、unknown schema、duplicate IDs、broken references、nonce uniqueness、atomic crash points、temporary residue、index rebuild、expected revision、two-process lock、quota no-eviction，以及 Linux/macOS 的私有 mode、no-follow、原子 replace 和删除。
 
 Command 测试必须覆盖：new auto-save、`--no-save`、empty Session cleanup、picker、UUID/name/ambiguous、`--last`、`--all`、scope、server mismatch、workspace unavailable、provider confirmation、store unavailable、delete/clear confirmation、non-TTY help、Dashboard mapping 和稳定退出码。
 
@@ -253,8 +253,10 @@ TUI 测试必须覆盖：F2 idle gate、busy/pending/unknown refusal、scope/sea
 
 Title fake provider 必须证明请求没有工具或 tool schema，不含 raw tool/workspace/server evidence、credentials、hidden reasoning 或 unknown receipt；覆盖节流、并发、timeout、malformed/multiline/control/oversize、manual-name race、provider change gate 和 fallback。
 
-候选 gate 运行完整 Go CLI test/race/vet/build、Windows cross-build、non-TTY help、`git diff --check` 与 diagnostics。原生 workflow 在绑定 candidate SHA 的 Linux、macOS、Windows 上执行 key backend round-trip/delete、ACL/mode、symlink/reparse、single-writer lock、atomic recovery、tamper、privacy clear 和 required skip-count 检查；cross-build 或静态源码审查不能替代原生平台行为证据。
+候选 gate 运行完整 Go CLI test/race/vet/build、non-TTY help、`git diff --check` 与 diagnostics。原生 workflow 在绑定 candidate SHA 的 Linux 与 macOS 上执行 key backend round-trip/delete、私有 mode、symlink/no-follow、single-writer lock、atomic recovery、tamper、privacy clear 和 required skip-count 检查；交叉编译或静态源码审查不能替代支持平台的原生行为证据。
 
 ## 非目标
 
 首版不实现云/服务端 Session 同步、跨设备恢复、共享、多用户、Web Session UI、fork/branch、archive/trash、undo、import/export、workspace relocation、跨 server profile migration、full-transcript/regex/threaded search、自定义 Session keybindings、非交互 Agent history、模型 chain-of-thought 持久化或旧 provider continuation 恢复。
+
+当前版本只支持 Linux 与 macOS。Windows 构建、运行、凭据后端、文件权限、锁和 Session 恢复行为不在本规格的产品支持或验收范围内；仓库中存在的 Windows 条件代码仅为非承诺的兼容性准备，后续支持必须通过独立 change 重新 Shape 和验收。

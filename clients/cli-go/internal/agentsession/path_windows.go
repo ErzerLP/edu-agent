@@ -22,6 +22,10 @@ func enforcePrivateSessionDirectory(path string, _ os.FileInfo) error {
 	return securefile.EnsurePrivateDirectory(path)
 }
 
-func enforcePrivateSessionFile(path string) error {
-	return securefile.EnsurePrivateFile(path)
+// validatePrivateSessionLock checks an already-open lock file without trying to
+// rewrite its owner or DACL while LockFileEx is holding the file. New lock files
+// inherit the protected current-user-only ACL from the Session root; existing
+// files fail closed if that invariant does not hold.
+func validatePrivateSessionLock(path string) error {
+	return securefile.CheckPrivateFile(path)
 }

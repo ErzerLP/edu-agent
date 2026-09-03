@@ -43,3 +43,7 @@ func enforcePrivateSessionFile(path string) error {
 	}
 	return nil
 }
+
+func validatePrivateSessionLock(path string) error {
+	return enforcePrivateSessionFile(path)
+}

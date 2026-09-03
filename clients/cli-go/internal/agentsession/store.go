@@ -1605,7 +1605,7 @@ func (s *Store) acquireProfileLock(ctx context.Context) (*filelock.Lock, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := enforcePrivateSessionFile(path); err != nil {
+	if err := validatePrivateSessionLock(path); err != nil {
 		_ = lock.Close()
 		return nil, err
 	}
@@ -1624,7 +1624,7 @@ func (s *Store) acquireSessionLock(ctx context.Context, storageID string) (*file
 	if err != nil {
 		return nil, err
 	}
-	if err := enforcePrivateSessionFile(path); err != nil {
+	if err := validatePrivateSessionLock(path); err != nil {
 		_ = lock.Close()
 		return nil, err
 	}

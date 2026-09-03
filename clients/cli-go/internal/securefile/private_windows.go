@@ -11,17 +11,15 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// EnsurePrivateDirectory replaces an existing directory DACL with a protected,
-// current-user-only DACL whose single ACE is inheritable by children. The
-// directory must already be owned by the current user and is verified after
-// the change.
+// EnsurePrivateDirectory replaces an existing directory owner and DACL with the
+// current user and a protected current-user-only DACL whose single ACE is
+// inheritable by children.
 func EnsurePrivateDirectory(path string) error {
 	return ensurePrivateWindowsPath(path, true)
 }
 
-// EnsurePrivateFile replaces an existing regular-file DACL with a protected,
-// current-user-only DACL. The file must already be owned by the current user
-// and is verified after the change.
+// EnsurePrivateFile replaces an existing regular-file owner and DACL with the
+// current user and a protected current-user-only DACL.
 func EnsurePrivateFile(path string) error {
 	return ensurePrivateWindowsPath(path, false)
 }
@@ -39,7 +37,7 @@ func CheckPrivateFile(path string) error {
 }
 
 func ensurePrivateWindowsPath(path string, directory bool) error {
-	handle, err := openWindowsSecurityPath(path, directory, windows.READ_CONTROL|windows.WRITE_DAC)
+	handle, err := openWindowsSecurityPath(path, directory, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER)
 	if err != nil {
 		return err
 	}
@@ -91,20 +89,20 @@ func openWindowsSecurityPath(path string, directory bool, access uint32) (window
 }
 
 func ensurePrivateWindowsHandle(handle windows.Handle, directory bool) error {
-	descriptor, _, dacl, err := privateWindowsSecurityDescriptor(directory)
+	descriptor, owner, dacl, err := privateWindowsSecurityDescriptor(directory)
 	if err != nil {
 		return err
 	}
 	if err := windows.SetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner,
 		nil,
 		dacl,
 		nil,
 	); err != nil {
-		return fmt.Errorf("%w: set private Windows DACL: %v", ErrPermission, err)
+		return fmt.Errorf("%w: set private Windows owner and DACL: %v", ErrPermission, err)
 	}
 	runtime.KeepAlive(descriptor)
 	return checkPrivateWindowsHandle(handle, directory)

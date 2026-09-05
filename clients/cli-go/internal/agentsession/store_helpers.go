@@ -26,15 +26,12 @@ import (
 )
 
 func (s *Store) hasEncryptedData() (bool, error) {
-	entries, _, complete, err := s.root.ReadDir(".", s.limits.DirectoryEntries)
+	entries, err := s.readRootEntries()
 	if err != nil {
 		return false, err
 	}
-	if !complete {
-		return false, ErrStoreFull
-	}
 	for _, entry := range entries {
-		if entry.Type == securefile.EntryFile && isEncryptedDataName(entry.Name) {
+		if isEncryptedDataName(entry.Name) {
 			return true, nil
 		}
 	}
@@ -60,16 +57,13 @@ func (s *Store) sessionCiphertextBytesLocked(storageID string) (int64, error) {
 }
 
 func (s *Store) profileCiphertextBytesLocked() (int64, error) {
-	entries, _, complete, err := s.root.ReadDir(".", s.limits.DirectoryEntries)
+	entries, err := s.readRootEntries()
 	if err != nil {
 		return 0, err
 	}
-	if !complete {
-		return 0, ErrStoreFull
-	}
 	var total int64
 	for _, entry := range entries {
-		if entry.Type != securefile.EntryFile || !isEncryptedDataName(entry.Name) {
+		if entry.Type != securefile.EntryFile || !isEncryptedDataName(entry.Name) || isArtifactDataName(entry.Name) {
 			continue
 		}
 		limit := max(s.limits.SessionCiphertextBytes, s.limits.SessionPlaintextBytes+containerHeaderSize+32)
@@ -1097,6 +1091,15 @@ func normalizedLimits(value Limits) Limits {
 	if value.SessionCiphertextBytes <= 0 {
 		value.SessionCiphertextBytes = defaults.SessionCiphertextBytes
 	}
+	if value.ArtifactSessionCiphertextBytes <= 0 {
+		value.ArtifactSessionCiphertextBytes = defaults.ArtifactSessionCiphertextBytes
+	}
+	if value.ArtifactProfileCiphertextBytes <= 0 {
+		value.ArtifactProfileCiphertextBytes = defaults.ArtifactProfileCiphertextBytes
+	}
+	if value.ArtifactFiles <= 0 {
+		value.ArtifactFiles = defaults.ArtifactFiles
+	}
 	if value.DirtyMarkerBytes <= 0 {
 		value.DirtyMarkerBytes = defaults.DirtyMarkerBytes
 	}
@@ -1284,7 +1287,7 @@ func indexProjectionName(storageID string) string { return "index-" + storageID 
 func dirtyName(storageID string) string           { return "dirty-" + storageID + ".enc" }
 func sessionLockName(storageID string) string     { return "session-" + storageID + ".lock" }
 func isEncryptedDataName(name string) bool {
-	return name == indexName || strings.HasSuffix(name, ".enc") && (strings.HasPrefix(name, "key-") || strings.HasPrefix(name, "record-") || strings.HasPrefix(name, "index-") || strings.HasPrefix(name, "dirty-"))
+	return isArtifactDataName(name) || name == indexName || strings.HasSuffix(name, ".enc") && (strings.HasPrefix(name, "key-") || strings.HasPrefix(name, "record-") || strings.HasPrefix(name, "index-") || strings.HasPrefix(name, "dirty-"))
 }
 func isSessionCleanupName(name string) bool {
 	if isEncryptedDataName(name) {

@@ -36,6 +36,27 @@ func TestLocalExecutionResourceOptionsRejectInvalidInput(t *testing.T) {
 	}
 }
 
+func TestLocalOutputSavedResourceOptions(t *testing.T) {
+	remaining, options, err := parseLocalExecutionOptions([]string{"--task-saved-output-limit=4096", "--no-save"})
+	if err != nil || options.SavedOutputBytesPerTask != 4096 || !reflect.DeepEqual(remaining, []string{"--no-save"}) {
+		t.Fatalf("options=%+v remaining=%v err=%v", options, remaining, err)
+	}
+	_, defaults, err := parseLocalExecutionOptions(nil)
+	if err != nil || defaults.SavedOutputBytesPerTask != localexec.DefaultSavedOutputBytesPerTask {
+		t.Fatalf("defaults=%+v err=%v", defaults, err)
+	}
+	for _, args := range [][]string{{"--task-saved-output-limit=0"}, {"--task-saved-output-limit=-1"}, {"--task-saved-output-limit=1", "--task-saved-output-limit=2"}} {
+		if _, _, err := parseLocalExecutionOptions(args); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+	for _, text := range []string{"--task-saved-output-limit", "task search", "PTY 尚未交付"} {
+		if !strings.Contains(agentHelpText, text) {
+			t.Fatalf("help missing %q", text)
+		}
+	}
+}
+
 func TestLocalExecutionHelpDisclosesTaskScope(t *testing.T) {
 	for _, text := range []string{"--task-max-records", "--task-max-running", "--task-output-limit", "--task-total-output-limit", "Shell", "F5", "不受文件确认模式限制", "PTY 尚未交付"} {
 		if !strings.Contains(agentHelpText, text) {

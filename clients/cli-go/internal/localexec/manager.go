@@ -1,5 +1,6 @@
-// Package localexec manages non-interactive local shells and memory-only output.
-// It deliberately provides no workspace sandbox, persistence, PTY, or credentials.
+// Package localexec manages non-interactive local shells and bounded output.
+// Optional opaque archives provide persistence without exposing keys or paths.
+// It deliberately provides no workspace sandbox, PTY, or credentials.
 package localexec
 
 import (
@@ -16,13 +17,14 @@ import (
 )
 
 const (
-	DefaultMaxTasks           = 256
-	DefaultMaxConcurrent      = 16
-	DefaultOutputBytesPerTask = 8 << 20
-	DefaultOutputBytesTotal   = 64 << 20
-	DefaultStopGrace          = 2 * time.Second
-	MaxInputBytes             = 64 << 10
-	MaxReadBytes              = 64 << 10
+	DefaultMaxTasks                      = 256
+	DefaultMaxConcurrent                 = 16
+	DefaultOutputBytesPerTask            = 8 << 20
+	DefaultOutputBytesTotal              = 64 << 20
+	DefaultSavedOutputBytesPerTask int64 = 128 << 20
+	DefaultStopGrace                     = 2 * time.Second
+	MaxInputBytes                        = 64 << 10
+	MaxReadBytes                         = 64 << 10
 
 	StateStarting  = "starting"
 	StateRunning   = "running"
@@ -51,11 +53,12 @@ func failure(code string) error { return &Error{Code: code} }
 
 // Nonpositive option values select the documented defaults.
 type Options struct {
-	MaxTasks           int
-	MaxConcurrent      int
-	OutputBytesPerTask int
-	OutputBytesTotal   int
-	StopGrace          time.Duration
+	MaxTasks                int
+	MaxConcurrent           int
+	OutputBytesPerTask      int
+	OutputBytesTotal        int
+	SavedOutputBytesPerTask int64
+	StopGrace               time.Duration
 }
 
 type StartArgs struct {
@@ -85,23 +88,42 @@ type Snapshot struct {
 	StdoutRetained    int64
 	StderrRetained    int64
 	OutputState       string
+	StdoutSaved       int64
+	StderrSaved       int64
+	Persistence       string
+	PersistenceError  string
+	Restored          bool
 }
 
 type callKey struct{ owner, id string }
 
 type task struct {
-	owner            string
-	snapshot         Snapshot
-	startError       string
-	active           bool
-	reaped           bool
-	terminal         bool
-	stopReason       string
-	stop             chan struct{}
-	done             chan struct{}
-	stdout           outputStream
-	stderr           outputStream
-	outputIncomplete bool
+	owner             string
+	snapshot          Snapshot
+	startError        string
+	active            bool
+	reaped            bool
+	terminal          bool
+	settling          bool
+	stopReason        string
+	stop              chan struct{}
+	done              chan struct{}
+	stdout            outputStream
+	stderr            outputStream
+	outputIncomplete  bool
+	callDigest        string
+	binding           *archiveBinding
+	journal           bool
+	archiveStopped    bool
+	archiveUnreadable bool
+	persistenceError  string
+	drainStarted      time.Time
+
+	// archiveMu serializes segment+metadata transactions, never process control.
+	// Its lock order is archiveMu -> binding.mu -> Manager.mu. Tails are guarded
+	// by archiveMu; all other task/output bookkeeping uses Manager.mu.
+	archiveMu              sync.Mutex
+	stdoutTail, stderrTail []byte
 
 	// Input is independently synchronized; never hold Manager.mu across pipe I/O.
 	inputMu     sync.Mutex
@@ -119,6 +141,7 @@ type Manager struct {
 	sequence  uint64
 	tasks     map[string]*task
 	calls     map[callKey]*task
+	bindings  map[string]*archiveBinding
 	active    int
 	retained  int64
 	closed    bool
@@ -138,10 +161,13 @@ func New(options Options) *Manager {
 	if options.OutputBytesTotal <= 0 {
 		options.OutputBytesTotal = DefaultOutputBytesTotal
 	}
+	if options.SavedOutputBytesPerTask <= 0 {
+		options.SavedOutputBytesPerTask = DefaultSavedOutputBytesPerTask
+	}
 	if options.StopGrace <= 0 {
 		options.StopGrace = DefaultStopGrace
 	}
-	return &Manager{options: options, prefix: rand.Text(), tasks: make(map[string]*task), calls: make(map[callKey]*task), closeDone: make(chan struct{})}
+	return &Manager{options: options, prefix: rand.Text(), tasks: make(map[string]*task), calls: make(map[callKey]*task), bindings: make(map[string]*archiveBinding), closeDone: make(chan struct{})}
 }
 
 // Start uses ctx only until launch. Once launched, only TimeoutMS, Stop, or Close
@@ -153,7 +179,7 @@ func (m *Manager) Start(ctx context.Context, owner, callID string, args StartArg
 		return Snapshot{}, failure("invalid_identity")
 	}
 	m.mu.Lock()
-	key := callKey{owner, callID}
+	key := callKey{owner, digestCall(callID)}
 	if existing := m.calls[key]; existing != nil {
 		snapshot := m.snapshotLocked(existing)
 		code := existing.startError
@@ -172,7 +198,7 @@ func (m *Manager) Start(ctx context.Context, owner, callID string, args StartArg
 		return Snapshot{}, failure("task_limit")
 	}
 	m.sequence++
-	t := &task{owner: owner, snapshot: Snapshot{TaskID: m.prefix + "-" + strconv.FormatUint(m.sequence, 10), State: StateStarting}, stop: make(chan struct{}), done: make(chan struct{}), inputGate: make(chan struct{}, 1)}
+	t := &task{owner: owner, callDigest: key.id, binding: m.bindingLocked(owner), snapshot: Snapshot{TaskID: m.prefix + "-" + strconv.FormatUint(m.sequence, 10), State: StateStarting}, stop: make(chan struct{}), done: make(chan struct{}), inputGate: make(chan struct{}, 1)}
 	t.inputClosed = !args.Stdin
 	t.inputGate <- struct{}{}
 	m.tasks[t.snapshot.TaskID], m.calls[key] = t, t
@@ -184,18 +210,27 @@ func (m *Manager) Start(ctx context.Context, owner, callID string, args StartArg
 		code = "start_canceled"
 	case m.active >= m.options.MaxConcurrent:
 		code = "concurrency_limit"
-	case m.retained >= int64(m.options.OutputBytesTotal):
+	case m.retained >= int64(m.options.OutputBytesTotal) && !t.binding.available:
 		code = "output_limit"
 	}
-	if code != "" {
-		m.failLocked(t, code)
-		snapshot := m.snapshotLocked(t)
-		m.mu.Unlock()
-		return snapshot, failure(code)
+	if code == "" {
+		t.active = true
+		m.active++
 	}
-	t.active = true
-	m.active++
 	m.mu.Unlock()
+
+	// Publish a non-executable record before any launch-side OS effects. A
+	// storage failure does not block execution while memory remains available.
+	m.initializeArchive(t)
+	if code != "" {
+		return m.startFailed(t, code)
+	}
+	m.mu.Lock()
+	noOutputRoom := m.retained >= int64(m.options.OutputBytesTotal) && (!t.journal || t.archiveStopped || !t.binding.available)
+	m.mu.Unlock()
+	if noOutputRoom {
+		return m.startFailed(t, "output_limit")
+	}
 
 	cmd, code := prepare(args)
 	if code != "" {
@@ -334,21 +369,30 @@ func mergedEnvironment(overrides map[string]*string) []string {
 
 func (m *Manager) startFailed(t *task, code string) (Snapshot, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.failLocked(t, code)
-	return m.snapshotLocked(t), failure(code)
-}
-
-func (m *Manager) failLocked(t *task, code string) {
 	t.startError = code
-	t.snapshot.State, t.snapshot.Reason = StateFailed, code
+	t.settling = true
+	final := t.snapshot
+	final.State, final.Reason = StateFailed, code
 	if code == "start_canceled" || code == "manager_closed" {
-		t.snapshot.State = StateCanceled
+		final.State = StateCanceled
 	}
-	t.snapshot.FinishedAt = time.Now()
+	final.FinishedAt = time.Now()
+	m.mu.Unlock()
+	m.finalizeArchive(t, final)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	applyFinalLocked(t, final)
 	t.terminal = true
 	m.releaseActiveLocked(t)
 	close(t.done)
+	return m.snapshotLocked(t), failure(code)
+}
+
+// Preserve immutable task identity fields, which also name journal blobs.
+func applyFinalLocked(t *task, final Snapshot) {
+	t.snapshot.State, t.snapshot.Reason, t.snapshot.ExitCode = final.State, final.Reason, final.ExitCode
+	t.snapshot.FinishedAt, t.snapshot.CleanupIncomplete = final.FinishedAt, final.CleanupIncomplete
+	t.snapshot.Controllable = false
 }
 
 func (m *Manager) releaseActiveLocked(t *task) {
@@ -373,12 +417,14 @@ func (m *Manager) snapshotLocked(t *task) Snapshot {
 		s.ExitCode = &exitCode
 	}
 	s.StdoutBytes, s.StderrBytes = t.stdout.received, t.stderr.received
-	s.StdoutRetained, s.StderrRetained = t.stdout.retained, t.stderr.retained
+	s.StdoutRetained, s.StderrRetained = m.readableLocked(t, &t.stdout), m.readableLocked(t, &t.stderr)
+	s.StdoutSaved, s.StderrSaved = t.stdout.saved, t.stderr.saved
+	s.Persistence, s.PersistenceError = m.persistenceLocked(t), m.persistenceErrorLocked(t)
 	s.OutputState = "collecting"
 	if t.terminal {
 		s.OutputState = "complete"
 	}
-	if t.stdout.truncated || t.stderr.truncated {
+	if s.StdoutRetained < s.StdoutBytes || s.StderrRetained < s.StderrBytes {
 		s.OutputState = "truncated"
 	}
 	if t.outputIncomplete {
@@ -438,7 +484,7 @@ func (m *Manager) Wait(ctx context.Context, owner, taskID string, duration time.
 }
 
 func (m *Manager) requestStopLocked(t *task, reason string) {
-	if t.terminal || t.stopReason != "" {
+	if t.terminal || t.settling || t.stopReason != "" {
 		return
 	}
 	t.stopReason = reason

@@ -231,6 +231,7 @@ func (c *Controller) installPreparedTarget(target *Controller, baseGeneration ui
 	c.persistent, c.degradedReason, c.providerBlocked, c.resumed, c.prepared = target.persistent, target.degradedReason, target.providerBlocked, true, false
 	c.notices, c.pendingUser, c.saveFailed = append([]string(nil), target.notices...), "", target.saveFailed
 	c.generation++
+	c.bindLocalOutputLocked()
 	c.switching = false
 	generation := c.generation
 

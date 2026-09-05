@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1 已实现并通过 Linux 批次门禁；C2–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1/C2 已实现并通过各自 Linux 批次门禁；C3–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -96,4 +96,32 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 - 不保证主动setsid脱离进程组的进程被清理；孤儿僵尸或无法确认EOF明确报告cleanup/output不完整，不制造成功。
 - C1自动采集输出仅内存保留；重启控制/输出不可访问不代表旧进程仍运行或已成功结束。当前F5明确显示该限制，不自动重跑。
 - 未运行服务端、PostgreSQL、Compose、付费模型、全平台矩阵或最终独立Verifier；本批次没有相关服务端/数据库改动，macOS及整体验收证据仍待对应边界。
-- 下一写入批次为C2（加密完整输出、分页检索与恢复）；PTY和文件能力仍按上表逐批实现。
+- C1 当时的下一写入批次为C2；其实际交付记录见下。
+
+## C2：完整输出留存与检索
+
+结果：持久Session中，模型的`task read/search`与F5可读超出内存预算的保存范围，并在重启后访问已认证输出；保存状态和执行结果分开。范围为Session-owned加密blob、任务journal、恢复绑定、模型投影与F5检索；延期PTY、通用上传、全文索引与最终多平台验收。
+
+### 实现边界
+
+- `agentsession.Handle`新增ReadArtifact/WriteArtifact/ListArtifacts；不增加横向数据库或导出key。flat私有文件名绑定storageID/opaque name，独立kindArtifact v1与HKDF域隔离、随机revision/nonce、原子CAS发布。单blob最大512KiB；独立密文配额Session256MiB/profile1GiB/8192文件。根目录总扫描扩展但原核心目录预算仍单独校验；产物不计入对话64MiB预算。
+- `localexec`的journal使用256KiB原始分段和严格18字段v1 metadata；只重写末段，先保存数据再发布可恢复prefix。保存原调用身份的一向摘要用于拒重，不保存原命令/env/stdin/PID。失败或不确定发布不推进已确认prefix，不重试、不扫描孤儿段冒认成功；最终执行结算是独立的一次保存尝试。
+- BindArchive在目标预检完成/切换提交后绑定owner；原manager已有任务不会被历史覆盖。后台任务直到最终保存尝试结束才释放lease。已保存终态只读恢复；无final的记录恢复unknown。零已提交轮次但存在任务产物/目录加载失败的Session不误当空Session自动删除。
+- 保存采用有界同步分段IO，不持有manager全局锁或回调controller；普通quota/返回的IO失败后继续排空，不因保存失败杀命令。OS底层不可中断IO不宣称可强制取消；未结算时保留资源并报告实际状态。原内存上限保持；新`--task-saved-output-limit`默认128MiB/任务。
+- 有界、区分大小写的字面search支持512字节needle、最多100命中/页、单次1MiB扫描及跨段/重叠匹配。投影删去命中时游标回退到真正返回的范围；原始输出不进入stable checkpoint/ledger/title。F5的`/`检索、`n`继续，不使用模型或其游标；返回消息按Session generation和面板epoch隔离。
+- delete保持wrapped-key-first并清理关联产物；clear推进generation后撤销旧handle读取。no-save完全不绑定产物backend。目录损坏在模型list的history_error和F5中可见，不把失败加载伪装为无历史。
+
+### C2 验证记录
+
+环境Go1.26.6、Linux/amd64；Go命令目录`clients/cli-go`。
+
+- 叶子单元：`go test -count=1 -timeout=90s ./internal/agentsession -run '^TestArtifact'`（0.404s）与`go test -count=1 -timeout=90s ./internal/localexec -run '^TestPersistentOutput'`（0.440s）通过。
+- 真实加密store/Shell→关闭重开→超内存分页和尾部检索、provider变更零发送、no-save零文件、clear撤销、未提交任务归档存活，以及模型/面板检索与投影的`go test -count=1 -timeout=90s ./internal/agentcontroller ./internal/agentloop ./internal/agentui ./internal/command -run '^TestLocalOutput'`通过。
+- 额外不确定发布回归`TestPersistentOutputUncertainMetadataDoesNotReplay`通过；修正文档中错误的“写失败一定未提交”假设，真实后端允许unknown。
+- 新schema/说明曾使4096窗口完成首次Shell后无法续答；仅精简冗余系统说明，不删工具/约束或提高配置。`TestLocalExecutionSmallContextKeepsCompleteToolSet`修正后通过。
+- L4：`go test -count=1 -timeout=120s ./internal/localexec ./internal/agentsession ./internal/agentloop ./internal/agentcontroller ./internal/agentui ./internal/command`全部通过，对应六包vet通过。
+- 定向race：`go test -race -count=1 -timeout=120s ./internal/localexec ./internal/agentcontroller ./internal/agentsession -run '^(TestPersistentOutput|TestLocalOutput|TestLocalSessionLease|TestArtifact)'`全部通过。
+- Linux完整CLI构建/version运行及Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c2-build.IlaSqQ`不纳入仓库。`git diff --check`通过；会话已诊断103文件的mode=all error检查为0，不是全项目扫描。
+- 清除一个原先未引用且持续被增量诊断阻塞的私有publicationOutcome方法，不改DTO字段/编码/版本；现有agentsession全包回归通过。
+
+上述六包Go文件和go.mod/go.sum按路径排序后的sha256列表汇总：`6118c3b1e6afd7303372076ea8450c9fcc31783bd9cd20be17eb2eed8079b037`。macOS仍缺原生运行证据，未做服务端/数据库/Compose/付费模型或最终Verifier；当前批次没有相关输入。下一写入批次C3：PTY交互、中断/EOF与resize。

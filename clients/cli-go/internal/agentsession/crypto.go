@@ -29,6 +29,7 @@ const (
 	kindRecord
 	kindDirty
 	kindProjection
+	kindArtifact
 )
 
 type containerHeader struct {
@@ -58,7 +59,7 @@ type containerExpectation struct {
 // sealContainer authenticates the fixed header as AAD and encrypts one
 // versioned session-store payload.
 func sealContainer(key []byte, header containerHeader, plaintext []byte) ([]byte, error) {
-	if len(key) != 32 || header.SchemaVersion == 0 || header.Kind < kindIndex || header.Kind > kindProjection || header.Generation == 0 || header.Revision == 0 {
+	if len(key) != 32 || header.SchemaVersion == 0 || header.Kind < kindIndex || header.Kind > kindArtifact || header.Generation == 0 || header.Revision == 0 {
 		return nil, ErrInvalid
 	}
 	header.ContainerVersion = containerVersion
@@ -87,7 +88,7 @@ func sealContainer(key []byte, header containerHeader, plaintext []byte) ([]byte
 
 // openContainer authenticates identity bindings before returning plaintext.
 func openContainer(key, encoded []byte, expected containerExpectation) ([]byte, containerHeader, error) {
-	if len(key) != 32 || expected.SchemaVersion == 0 || expected.Kind < kindIndex || expected.Kind > kindProjection || len(encoded) < containerHeaderSize {
+	if len(key) != 32 || expected.SchemaVersion == 0 || expected.Kind < kindIndex || expected.Kind > kindArtifact || len(encoded) < containerHeaderSize {
 		return nil, containerHeader{}, ErrCorrupt
 	}
 	header, err := unmarshalHeader(encoded[:containerHeaderSize])
@@ -114,6 +115,13 @@ func openContainer(key, encoded []byte, expected containerExpectation) ([]byte, 
 	if err != nil {
 		return nil, containerHeader{}, ErrCorrupt
 	}
+	// Erase authenticated plaintext on all identity/version/size failures.
+	accepted := false
+	defer func() {
+		if !accepted {
+			zero(plaintext)
+		}
+	}()
 	// Identity and compatibility are classified only after successful AEAD
 	// authentication. Header bit flips therefore remain corruption, while an
 	// authentically written future version stays distinguishable.
@@ -132,6 +140,7 @@ func openContainer(key, encoded []byte, expected containerExpectation) ([]byte, 
 	if expected.MaxPayload >= 0 && int64(len(plaintext)) > expected.MaxPayload {
 		return nil, containerHeader{}, ErrStoreFull
 	}
+	accepted = true
 	return plaintext, header, nil
 }
 
@@ -214,7 +223,7 @@ func unmarshalHeader(value []byte) (containerHeader, error) {
 	if err := binary.Read(reader, binary.BigEndian, &header.CipherLength); err != nil || reader.Len() != 0 {
 		return header, ErrCorrupt
 	}
-	if header.SchemaVersion == 0 || header.Kind < kindIndex || header.Kind > kindProjection || header.Generation == 0 || header.Revision == 0 || binary.BigEndian.Uint64(header.Nonce[4:]) != header.Revision {
+	if header.SchemaVersion == 0 || header.Kind < kindIndex || header.Kind > kindArtifact || header.Generation == 0 || header.Revision == 0 || binary.BigEndian.Uint64(header.Nonce[4:]) != header.Revision {
 		return header, fmt.Errorf("%w: invalid header fields", ErrCorrupt)
 	}
 	return header, nil

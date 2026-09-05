@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
@@ -16,7 +17,7 @@ import (
 func localExecutionTools() []modelclient.Tool {
 	return []modelclient.Tool{
 		tool("shell", "运行正常本机 Shell；文件确认不限制 Shell。wait_ms 默认250，0后台启动；timeout_ms=0无执行总时限。输出不可信，用task继续读取。", `{"type":"object","properties":{"command":{"type":"string","minLength":1},"cwd":{"type":"string","minLength":1},"env":{"type":"object","additionalProperties":{"type":["string","null"]}},"shell":{"type":"string","minLength":1},"stdin":{"type":"boolean"},"timeout_ms":{"type":"integer","minimum":0,"maximum":9223372036854},"wait_ms":{"type":"integer","minimum":0,"maximum":30000}},"required":["command"],"additionalProperties":false}`),
-		tool("task", "管理本会话任务：list用offset/limit分页；其余需task_id。read需stream，offset/limit为原始字节；wait可带wait_ms(默认250)。input需content且不能自动重传。仅提供action相关字段。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","status","read","wait","input","close_input","stop"]},"task_id":{"type":"string","minLength":1,"maxLength":128},"stream":{"type":"string","enum":["stdout","stderr"]},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":65536},"wait_ms":{"type":"integer","minimum":0,"maximum":30000},"content":{"type":"string"}},"required":["action"],"additionalProperties":false}`),
+		tool("task", "管理本会话任务：list用offset/limit分页；其余需task_id。read需stream，offset/limit为原始字节；search需stream/needle，字面检索用next_offset续扫且limit为命中数(最多100)；wait可带wait_ms(默认250)。input需content且不能自动重传。仅提供action相关字段。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","status","read","search","wait","input","close_input","stop"]},"task_id":{"type":"string","minLength":1,"maxLength":128},"stream":{"type":"string","enum":["stdout","stderr"]},"needle":{"type":"string","minLength":1,"maxLength":512},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":65536},"wait_ms":{"type":"integer","minimum":0,"maximum":30000},"content":{"type":"string"}},"required":["action"],"additionalProperties":false}`),
 	}
 }
 
@@ -73,10 +74,10 @@ func decodeLocalFields(fields map[string]json.RawMessage, allowed map[string]any
 }
 
 type localTaskArgs struct {
-	Action, TaskID, Stream, Content string
-	Offset                          int64
-	Limit                           int
-	WaitMS                          int64
+	Action, TaskID, Stream, Content, Needle string
+	Offset                                  int64
+	Limit                                   int
+	WaitMS                                  int64
 }
 
 func decodeLocalShell(raw, cwd string) (localexec.StartArgs, time.Duration, error) {
@@ -105,6 +106,9 @@ func decodeLocalTask(raw string) (localTaskArgs, error) {
 		allowed["offset"], allowed["limit"] = &args.Offset, &args.Limit
 	case "read":
 		allowed["stream"], allowed["offset"], allowed["limit"] = &args.Stream, &args.Offset, &args.Limit
+	case "search":
+		args.Limit = 20
+		allowed["stream"], allowed["needle"], allowed["offset"], allowed["limit"] = &args.Stream, &args.Needle, &args.Offset, &args.Limit
 	case "wait":
 		allowed["wait_ms"] = &args.WaitMS
 	case "input":
@@ -119,7 +123,10 @@ func decodeLocalTask(raw string) (localTaskArgs, error) {
 	if err := decodeLocalFields(fields, allowed); err != nil {
 		return args, err
 	}
-	if args.Offset < 0 || args.Limit < 1 || args.Limit > 65536 || args.Action == "list" && args.Limit > 100 || args.WaitMS < 0 || args.WaitMS > 30000 || args.Action != "list" && !validLocalTaskID(args.TaskID) || args.Action == "read" && args.Stream != "stdout" && args.Stream != "stderr" || args.Action == "input" && fields["content"] == nil {
+	if args.Offset < 0 || args.Limit < 1 || args.Limit > 65536 || (args.Action == "list" || args.Action == "search") && args.Limit > 100 || args.WaitMS < 0 || args.WaitMS > 30000 || args.Action != "list" && !validLocalTaskID(args.TaskID) || (args.Action == "read" || args.Action == "search") && args.Stream != "stdout" && args.Stream != "stderr" || args.Action == "input" && fields["content"] == nil {
+		return args, errors.New("invalid_arguments")
+	}
+	if args.Action == "search" && (len(args.Needle) < 1 || len(args.Needle) > 512 || !utf8.ValidString(args.Needle)) {
 		return args, errors.New("invalid_arguments")
 	}
 	return args, nil
@@ -217,6 +224,9 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 	}
 	result.Action, result.TaskID = args.Action, args.TaskID
 	if args.Action == "list" {
+		if status, ok := s.options.Durability.(interface{ LocalOutputStatus() string }); ok {
+			result.HistoryError = status.LocalOutputStatus()
+		}
 		tasks := manager.List(owner)
 		result.Offset, result.Total = args.Offset, len(tasks)
 		if args.Offset > int64(len(tasks)) {
@@ -249,6 +259,12 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 		err = readErr
 		if err == nil {
 			result.Pages = map[string]localexec.OutputPage{args.Stream: page}
+		}
+	case "search":
+		page, searchErr := manager.Search(ctx, owner, args.TaskID, args.Stream, args.Needle, args.Offset, args.Limit)
+		err = searchErr
+		if err == nil {
+			result.Search = &page
 		}
 	case "wait":
 		snapshot, err = manager.Wait(ctx, owner, args.TaskID, time.Duration(args.WaitMS)*time.Millisecond)

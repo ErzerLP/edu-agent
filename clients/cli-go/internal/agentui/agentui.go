@@ -272,7 +272,7 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区不可用（%s）；文件工具未启用，普通对话仍可使用。", safeSingleLineTerminalText(workspaceStatus.Code))})
 	}
 	if source, ok := session.(localTaskSource); ok && source.LocalExecutionAvailable() {
-		entries = append(entries, transcriptEntry{kind: entryNotice, text: "已启用正常本机 Shell：使用启动用户权限，可访问工作区外路径和网络，文件逐次确认/YOLO 不约束 Shell。F5 查看输出并停止任务；当前自动采集的输出仅保留在内存，退出后不可恢复。"})
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: "已启用正常本机 Shell：使用启动用户权限，可访问工作区外路径和网络，文件逐次确认/YOLO 不约束 Shell。F5 查看输出并停止任务；持久 Session 可加密保留输出，实际保存范围和缺口单独报告，--no-save 仍仅内存保留、退出不可恢复。"})
 		input.Placeholder = "输入问题；可使用文件工具或正常本机 Shell"
 	}
 	entries = append(entries, durableTranscriptEntries(session)...)
@@ -307,10 +307,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshTranscript(false)
 		return m, nil
+	case localTaskSearchMsg:
+		return m.handleLocalTaskSearchMessage(msg)
 	case localTaskMsg:
 		return m.handleLocalTaskMessage(msg)
 	case localTaskTick:
-		if m.taskPanel == nil || msg.generation != m.generation || msg.epoch != m.taskPanel.epoch || m.taskPanel.stopping {
+		if m.taskPanel == nil || msg.generation != m.generation || msg.epoch != m.taskPanel.epoch || m.taskPanel.stopping || m.taskPanel.searchBusy || m.taskPanel.queryMode {
 			return m, nil
 		}
 		return m, m.refreshLocalTasks()

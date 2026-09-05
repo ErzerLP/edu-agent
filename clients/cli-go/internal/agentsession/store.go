@@ -611,6 +611,9 @@ func (s *Store) Delete(ctx context.Context, target DeleteTarget) error {
 			cleanupFailed = true
 		}
 	}
+	if artifactErr := s.deleteArtifactsLocked(entry.StorageID); artifactErr != nil {
+		cleanupFailed = true
+	}
 	index.Entries = removeIndexLocator(index.Entries, entry.StorageID)
 	if indexErr := s.persistIndexLocked(ctx, currentKey, generation, index, snapshot); indexErr != nil {
 		degraded = true
@@ -678,14 +681,18 @@ func (s *Store) Clear(ctx context.Context) error {
 	// the new wrapping key/generation.
 	s.setProfileState(newGeneration, newKey)
 	defer zero(newKey)
-	entries, _, complete, readErr := s.root.ReadDir(".", s.limits.DirectoryEntries)
-	if readErr != nil || !complete {
+	entries, readErr := s.readRootEntries()
+	if readErr != nil {
 		s.setIndexDegraded(true)
 		return ErrDeleteFailed
 	}
 	cleanupFailed := false
 	for _, entry := range entries {
-		if entry.Type != securefile.EntryFile || !isSessionCleanupName(entry.Name) {
+		if !isSessionCleanupName(entry.Name) {
+			continue
+		}
+		if entry.Type != securefile.EntryFile {
+			cleanupFailed = true
 			continue
 		}
 		if deleteErr := s.deleteFile(entry.Name); deleteErr != nil {
@@ -1174,12 +1181,9 @@ func (s *Store) rebuildIndexLocked(ctx context.Context, profileKey []byte, gener
 		return index, nil, nil, false, err
 	}
 
-	directoryEntries, _, complete, err := s.root.ReadDir(".", s.limits.DirectoryEntries)
+	directoryEntries, err := s.readRootEntries()
 	if err != nil {
 		return index, nil, snapshot, false, err
-	}
-	if !complete {
-		return index, nil, snapshot, false, ErrStoreFull
 	}
 	storageIDs := make([]string, 0)
 	for _, entry := range directoryEntries {

@@ -15,12 +15,15 @@ func parseLocalExecutionOptions(args []string) ([]string, localexec.Options, err
 	options := localexec.Options{
 		MaxTasks: localexec.DefaultMaxTasks, MaxConcurrent: localexec.DefaultMaxConcurrent,
 		OutputBytesPerTask: localexec.DefaultOutputBytesPerTask, OutputBytesTotal: localexec.DefaultOutputBytesTotal,
+		SavedOutputBytesPerTask: localexec.DefaultSavedOutputBytesPerTask,
 	}
+	savedLimit := int(localexec.DefaultSavedOutputBytesPerTask)
 	values := map[string]*int{
 		"--task-max-records":        &options.MaxTasks,
 		"--task-max-running":        &options.MaxConcurrent,
 		"--task-output-limit":       &options.OutputBytesPerTask,
 		"--task-total-output-limit": &options.OutputBytesTotal,
+		"--task-saved-output-limit": &savedLimit,
 	}
 	remaining := make([]string, 0, len(args))
 	seen := make(map[string]bool, len(values))
@@ -58,6 +61,7 @@ func parseLocalExecutionOptions(args []string) ([]string, localexec.Options, err
 		}
 		*target = n
 	}
+	options.SavedOutputBytesPerTask = int64(savedLimit)
 	if options.MaxConcurrent > options.MaxTasks {
 		return nil, options, errors.New("concurrent task limit exceeds task record limit")
 	}

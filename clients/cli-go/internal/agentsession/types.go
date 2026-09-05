@@ -24,44 +24,50 @@ const (
 )
 
 type Limits struct {
-	Sessions                     int
-	ProfileCiphertextBytes       int64
-	SessionPlaintextBytes        int64
-	SessionCiphertextBytes       int64
-	DirtyMarkerBytes             int64
-	DirectoryEntries             int
-	TranscriptEntries            int
-	TranscriptBytes              int64
-	TranscriptEntryBytes         int
-	TranscriptAssistantBytes     int
-	TranscriptAssistantJSONBytes int
-	TranscriptEventBytes         int
-	TranscriptEntryLines         int
-	TranscriptLineColumns        int
-	TranscriptTools              int
-	PickerQueryRunes             int
-	PickerResults                int
-	SearchSummaryRunes           int
-	SearchSummaryBytes           int
-	ManualTitleBytes             int
-	ManualTitleRunes             int
-	ManualTitleColumns           int
-	AutoTitleInputBytes          int
-	AutoTitlePartBytes           int
-	AutoTitleResponseBytes       int
-	AutoTitleMaxTokens           int
-	AutoTitleTurnInterval        uint64
-	AutoTitleMinInterval         time.Duration
-	AutoTitleRequestTimeout      time.Duration
-	AutoTitleSaveTimeout         time.Duration
-	NoticeCount                  int
-	ReceiptCount                 int
+	Sessions               int
+	ProfileCiphertextBytes int64
+	SessionPlaintextBytes  int64
+	SessionCiphertextBytes int64
+	// Artifacts have independent ciphertext quotas; they never consume the
+	// conversation's session/profile byte budgets. ArtifactFiles is per profile.
+	ArtifactSessionCiphertextBytes int64
+	ArtifactProfileCiphertextBytes int64
+	ArtifactFiles                  int
+	DirtyMarkerBytes               int64
+	DirectoryEntries               int
+	TranscriptEntries              int
+	TranscriptBytes                int64
+	TranscriptEntryBytes           int
+	TranscriptAssistantBytes       int
+	TranscriptAssistantJSONBytes   int
+	TranscriptEventBytes           int
+	TranscriptEntryLines           int
+	TranscriptLineColumns          int
+	TranscriptTools                int
+	PickerQueryRunes               int
+	PickerResults                  int
+	SearchSummaryRunes             int
+	SearchSummaryBytes             int
+	ManualTitleBytes               int
+	ManualTitleRunes               int
+	ManualTitleColumns             int
+	AutoTitleInputBytes            int
+	AutoTitlePartBytes             int
+	AutoTitleResponseBytes         int
+	AutoTitleMaxTokens             int
+	AutoTitleTurnInterval          uint64
+	AutoTitleMinInterval           time.Duration
+	AutoTitleRequestTimeout        time.Duration
+	AutoTitleSaveTimeout           time.Duration
+	NoticeCount                    int
+	ReceiptCount                   int
 }
 
 func DefaultLimits() Limits {
 	return Limits{
 		Sessions: 256, ProfileCiphertextBytes: 1 << 30,
 		SessionPlaintextBytes: 48 << 20, SessionCiphertextBytes: 64 << 20,
+		ArtifactSessionCiphertextBytes: 256 << 20, ArtifactProfileCiphertextBytes: 1 << 30, ArtifactFiles: 8192,
 		DirtyMarkerBytes: 16 << 10, DirectoryEntries: 2048,
 		TranscriptEntries: 2048, TranscriptBytes: 16 << 20,
 		TranscriptAssistantBytes:     agentlimits.MaxAssistantTextBytes,
@@ -162,8 +168,6 @@ type fileReceiptV3 struct {
 	StableCode         string `json:"stable_code"`
 	Outcome            string `json:"publication_outcome"`
 }
-
-func (value FileReceipt) publicationOutcome() string { return value.Outcome }
 
 type PreferenceWriteAhead struct {
 	ToolCallID        string            `json:"tool_call_id"`

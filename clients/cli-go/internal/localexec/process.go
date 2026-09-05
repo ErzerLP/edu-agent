@@ -16,8 +16,8 @@ type exitResult struct {
 // This avoids the killpg-after-Wait PID-reuse race. No signal is sent after reap.
 func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout time.Duration) {
 	stdoutDone, stderrDone := make(chan struct{}), make(chan struct{})
-	go m.capture(t, &t.stdout, pipes.stdoutReader, stdoutDone)
-	go m.capture(t, &t.stderr, pipes.stderrReader, stderrDone)
+	go m.capture(t, &t.stdout, "stdout", pipes.stdoutReader, stdoutDone)
+	go m.capture(t, &t.stderr, "stderr", pipes.stderrReader, stderrDone)
 	pid := cmd.Process.Pid
 	observations := make(chan error, 1)
 	reap := make(chan struct{})
@@ -152,52 +152,46 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		cleanupIncomplete = cleanupIncomplete || err != nil || exists
 	}
 
-	// A detached descendant may keep a pipe open even when our group is gone.
-	// Bound drainage separately and label the observed output as incomplete.
-	drainTimer := time.NewTimer(outputDrainLimit)
-	outC, errC := (<-chan struct{})(stdoutDone), (<-chan struct{})(stderrDone)
-	for outC != nil || errC != nil {
-		select {
-		case <-outC:
-			outC = nil
-		case <-errC:
-			errC = nil
-		case <-drainTimer.C:
-			m.mu.Lock()
-			t.outputIncomplete = true
-			m.mu.Unlock()
-			closeFile(pipes.stdoutReader)
-			closeFile(pipes.stderrReader)
-			<-stdoutDone
-			<-stderrDone
-			outC, errC = nil, nil
-		}
-	}
-	drainTimer.Stop()
+	// Bound pipe waiting independently from journal I/O. Each capture spends
+	// at most outputDrainLimit actually reading after this point; synchronous
+	// storage has its own bounded settlement window and per-call deadlines.
+	m.mu.Lock()
+	t.drainStarted = time.Now()
+	deadline := t.drainStarted.Add(outputDrainLimit)
+	_ = pipes.stdoutReader.SetReadDeadline(deadline)
+	_ = pipes.stderrReader.SetReadDeadline(deadline)
+	m.mu.Unlock()
+	<-stdoutDone
+	<-stderrDone
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	t.snapshot.Controllable = false
-	t.snapshot.CleanupIncomplete = cleanupIncomplete
-	t.snapshot.FinishedAt = time.Now()
-	t.snapshot.State, t.snapshot.Reason = StateUnknown, "exit_unknown"
+	t.settling = true
+	final := t.snapshot
+	final.CleanupIncomplete = cleanupIncomplete
+	final.FinishedAt = time.Now()
+	final.State, final.Reason = StateUnknown, "exit_unknown"
 	if haveResult && result.state != nil && observationError == nil {
-		t.snapshot.State, t.snapshot.Reason = StateExited, "completed"
+		final.State, final.Reason = StateExited, "completed"
 		exitCode := result.state.ExitCode()
 		if exitCode >= 0 {
-			t.snapshot.ExitCode = &exitCode
+			final.ExitCode = &exitCode
 			if exitCode != 0 {
-				t.snapshot.Reason = "nonzero_exit"
+				final.Reason = "nonzero_exit"
 			}
 		} else {
-			t.snapshot.Reason = "signaled"
+			final.Reason = "signaled"
 		}
 		if executionReason == "execution_timeout" {
-			t.snapshot.State, t.snapshot.Reason = StateTimedOut, executionReason
+			final.State, final.Reason = StateTimedOut, executionReason
 		} else if executionReason != "" {
-			t.snapshot.State, t.snapshot.Reason = StateCanceled, executionReason
+			final.State, final.Reason = StateCanceled, executionReason
 		}
 	}
+	m.mu.Unlock()
+	m.finalizeArchive(t, final)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	applyFinalLocked(t, final)
 	t.terminal = true
 	// An unkillable kernel task keeps its concurrency reservation until the
 	// one existing reaper eventually returns. Repeated calls create no goroutines.

@@ -21,15 +21,19 @@ type localTaskSource interface {
 }
 
 type localTaskPanel struct {
-	epoch    uint64
-	tasks    []localexec.Snapshot
-	taskID   string
-	stream   string
-	offsets  map[string]int64
-	page     localexec.OutputPage
-	output   viewport.Model
-	notice   string
-	stopping bool
+	epoch                 uint64
+	tasks                 []localexec.Snapshot
+	taskID                string
+	stream                string
+	offsets               map[string]int64
+	page                  localexec.OutputPage
+	output                viewport.Model
+	notice                string
+	stopping              bool
+	query                 string
+	queryMode, searchBusy bool
+	searchNext            int64
+	historyError          string
 }
 
 type localTaskMsg struct {
@@ -39,6 +43,7 @@ type localTaskMsg struct {
 	page              localexec.OutputPage
 	err               error
 	stopped           bool
+	historyError      string
 }
 
 type localTaskTick struct{ generation, epoch uint64 }
@@ -65,6 +70,9 @@ func localTaskLoadCmd(ctx context.Context, source localTaskSource, generation, e
 		if ctx.Err() != nil {
 			message.err = ctx.Err()
 			return message
+		}
+		if status, ok := source.(interface{ LocalOutputStatus() string }); ok {
+			message.historyError = status.LocalOutputStatus()
 		}
 		message.tasks, message.err = source.LocalTasks()
 		if message.err != nil {
@@ -123,6 +131,7 @@ func (m model) handleLocalTaskMessage(msg localTaskMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.refreshLocalTasks()
 	}
+	p.historyError = msg.historyError
 	if msg.err != nil {
 		p.notice = localTaskError(msg.err)
 	} else {
@@ -145,12 +154,15 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	key := msg.String()
+	if p.queryMode {
+		return m.handleLocalTaskQueryKey(msg)
+	}
 	if key == "esc" || key == "f5" {
 		m.taskPanel = nil
 		m.restoreInputFocus()
 		return m, nil
 	}
-	if p.stopping {
+	if p.stopping || p.searchBusy {
 		return m, nil
 	}
 	index := 0
@@ -161,6 +173,14 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch key {
+	case "/":
+		m.taskEpoch++
+		p.epoch = m.taskEpoch
+		p.queryMode, p.query, p.searchNext = true, "", 0
+		p.notice = "输入字面检索文本；Enter 检索，Esc 取消"
+		return m, nil
+	case "n":
+		return m.searchLocalTask()
 	case "up", "down":
 		if len(p.tasks) == 0 {
 			return m, nil
@@ -171,8 +191,10 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			index = min(len(p.tasks)-1, index+1)
 		}
 		p.taskID = p.tasks[index].TaskID
+		p.searchNext = 0
 		p.output.GotoTop()
 	case "tab":
+		p.searchNext = 0
 		if p.stream == "stdout" {
 			p.stream = "stderr"
 		} else {
@@ -228,7 +250,7 @@ func localTaskError(err error) string {
 
 func (p *localTaskPanel) render(width, height int) string {
 	width = max(20, width-4)
-	lines := []string{titleStyle.Render("本地任务 · Shell 不受文件确认模式限制"), "当前 Session · 输出仅内存保留，退出后不可恢复"}
+	lines := []string{titleStyle.Render("本地任务 · Shell 不受文件确认模式限制"), "当前 Session · 执行状态与输出保存分别报告"}
 	selected := 0
 	for i, task := range p.tasks {
 		if task.TaskID == p.taskID {
@@ -246,10 +268,18 @@ func (p *localTaskPanel) render(width, height int) string {
 		lines = append(lines, prefix+task.TaskID+" "+task.State)
 	}
 	if len(p.tasks) == 0 {
-		lines = append(lines, "当前进程无可访问任务；历史状态不代表当前状态", "重启后的旧任务控制/输出不可用；不自动重跑")
+		lines = append(lines, "当前进程无可访问任务；历史状态不代表当前状态", "未保存的旧任务控制/输出不可用；不自动重跑")
 	}
 	if len(p.tasks) > 0 {
 		task := p.tasks[selected]
+		if task.Persistence == "" || task.Persistence == "memory_only" {
+			lines = append(lines, "未保存输出仅内存保留，退出后不可恢复")
+		} else {
+			lines = append(lines, fmt.Sprintf("输出保存：%s stdout=%d stderr=%d %s", task.Persistence, task.StdoutSaved, task.StderrSaved, task.PersistenceError))
+		}
+		if task.Restored {
+			lines = append(lines, "历史结算/输出；无进程控制，不重跑")
+		}
 		lines = append(lines, "状态："+task.State+" / "+task.Reason)
 		if task.ExitCode != nil {
 			lines[len(lines)-1] += fmt.Sprintf(" exit=%d", *task.ExitCode)
@@ -259,12 +289,21 @@ func (p *localTaskPanel) render(width, height int) string {
 		}
 	}
 	lines = append(lines, fmt.Sprintf("%s [%d,%d) 已接收=%d", p.stream, p.page.Offset, p.page.NextOffset, p.page.Received), fmt.Sprintf("已保留=%d 更多=%t 缺口=%t 未确认EOF=%t", p.page.Retained, p.page.More, p.page.Truncated, p.page.Incomplete))
+	if p.page.Availability != "" {
+		lines = append(lines, fmt.Sprintf("本页来源=%s 已加密保存=%d %s", p.page.Availability, p.page.Saved, p.page.PersistenceError))
+	}
+	if p.historyError != "" {
+		lines = append(lines, "历史目录不可完整访问："+p.historyError)
+	}
+	if p.query != "" || p.queryMode {
+		lines = append(lines, "检索："+safeTerminalText(p.query))
+	}
 	lines = append(lines, p.notice)
 	for i, line := range lines {
 		lines[i] = truncateDisplayWidth(line, width)
 	}
 	view := p.output
 	view.Height = max(1, height-len(lines)-2)
-	lines = append(lines, view.View(), truncateDisplayWidth("↑↓选任务 Tab流 PgUp/Dn页 Ctrl↑↓滚动", width), truncateDisplayWidth("s停止 Home从头 Esc/F5返回 · 安全文本呈现", width))
+	lines = append(lines, view.View(), truncateDisplayWidth("↑↓选任务 Tab流 PgUp/Dn页 Ctrl↑↓滚动", width), truncateDisplayWidth("/检索 n继续 s停止 Home从头 Esc/F5返回", width))
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }

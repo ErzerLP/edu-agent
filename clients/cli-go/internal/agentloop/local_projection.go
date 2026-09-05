@@ -15,6 +15,8 @@ import (
 type localToolResult struct {
 	Action, TaskID, Code string
 	Snapshot             *localexec.Snapshot
+	HistoryError         string
+	Search               *localexec.SearchPage
 	Stdin                *bool
 	Input                *localexec.InputResult
 	NotSaved             bool
@@ -28,6 +30,16 @@ func localSnapshotValue(snapshot localexec.Snapshot, minimal bool) map[string]an
 	value := map[string]any{
 		"task_id": snapshot.TaskID, "state": snapshot.State,
 		"controllable": snapshot.Controllable, "output_state": snapshot.OutputState,
+	}
+	if snapshot.Persistence != "" && snapshot.Persistence != "memory_only" {
+		value["persistence"] = snapshot.Persistence
+		value["stdout_saved"], value["stderr_saved"] = snapshot.StdoutSaved, snapshot.StderrSaved
+	}
+	if snapshot.PersistenceError != "" {
+		value["persistence_error"] = snapshot.PersistenceError
+	}
+	if snapshot.Restored {
+		value["historical"] = true
 	}
 	if snapshot.Reason != "" {
 		value["reason"] = snapshot.Reason
@@ -75,6 +87,18 @@ func localPageValue(page localexec.OutputPage, payloadLimit int, minimal bool) m
 		value["received"], value["retained"] = page.Received, page.Retained
 		value["truncated"], value["incomplete"] = page.Truncated, page.Incomplete
 	}
+	if page.Saved > 0 {
+		value["saved"] = page.Saved
+	}
+	if page.Availability == "saved" || page.Availability == "unavailable" {
+		value["availability"] = page.Availability
+	}
+	if page.PersistenceError != "" {
+		value["persistence_error"] = page.PersistenceError
+	}
+	if page.Historical {
+		value["historical"] = true
+	}
 	if gap {
 		value["gap"] = true
 	}
@@ -95,6 +119,12 @@ func localPageValue(page localexec.OutputPage, payloadLimit int, minimal bool) m
 
 func (result localToolResult) value(payloadLimit, itemLimit int, minimal, history bool) map[string]any {
 	value := map[string]any{"action": result.Action, "availability": "memory_only"}
+	if result.HistoryError != "" {
+		value["history_error"] = result.HistoryError
+	}
+	if result.Snapshot != nil && result.Snapshot.Persistence != "" && result.Snapshot.Persistence != "memory_only" {
+		value["availability"] = "see_retention"
+	}
 	if history {
 		value["historical"] = true
 	}
@@ -128,7 +158,33 @@ func (result localToolResult) value(payloadLimit, itemLimit int, minimal, histor
 	for stream, page := range result.Pages {
 		value[stream] = localPageValue(page, payloadLimit, minimal)
 	}
+	if result.Search != nil {
+		page := result.Search
+		count := min(len(page.Offsets), itemLimit)
+		next := page.NextOffset
+		if count < len(page.Offsets) {
+			next = page.Offset
+			if count > 0 {
+				next = page.Offsets[count-1] + 1
+			}
+		}
+		search := map[string]any{"offset": page.Offset, "next_offset": next, "more": page.More || count < len(page.Offsets), "matches": page.Offsets[:count]}
+		if !minimal {
+			search["scanned"], search["received"], search["retained"] = page.Scanned, page.Received, page.Retained
+		}
+		if page.Truncated {
+			search["truncated"] = true
+		}
+		if page.Incomplete {
+			search["incomplete"] = true
+		}
+		if count < len(page.Offsets) {
+			search["projection_omitted"] = true
+		}
+		value["search"] = search
+	}
 	if result.Action == "list" && result.Code == "" {
+		value["availability"] = "per_task"
 		count := min(len(result.Tasks), itemLimit)
 		tasks := make([]any, 0, count)
 		for _, snapshot := range result.Tasks[:count] {
@@ -152,6 +208,9 @@ func localResultJSON(value map[string]any) string {
 func (result localToolResult) project(maxBytes int, fits func(string) bool, history bool) string {
 	accepts := func(value string) bool { return len(value) <= maxBytes && (fits == nil || fits(value)) }
 	payload, items := 65536, len(result.Tasks)
+	if result.Search != nil {
+		items = max(items, len(result.Search.Offsets))
+	}
 	if history {
 		payload = 0
 	}

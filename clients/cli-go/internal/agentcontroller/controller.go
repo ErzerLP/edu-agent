@@ -92,16 +92,17 @@ type Controller struct {
 	transcript agentsession.TranscriptV1
 	dirty      *agentsession.DirtyMarker
 
-	model         agentloop.Model
-	server        agentloop.Server
-	provider      Provider
-	limits        agentsession.Limits
-	now           func() time.Time
-	loopOptions   agentloop.Options
-	workspaceRoot string
-	localExec     *localexec.Manager
-	localOwner    string
-	ownsLocalExec bool
+	model          agentloop.Model
+	server         agentloop.Server
+	provider       Provider
+	limits         agentsession.Limits
+	now            func() time.Time
+	loopOptions    agentloop.Options
+	workspaceRoot  string
+	localExec      *localexec.Manager
+	localOwner     string
+	localOutputErr string
+	ownsLocalExec  bool
 
 	localSessionLease      *localSessionLease
 	parkedLocalSessions    map[string]*localSessionLease
@@ -235,6 +236,9 @@ func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Contro
 		}
 	}
 	controller.persistent = true
+	if !dependencies.LocalExecShared {
+		controller.bindLocalOutputLocked()
+	}
 	controller.startContextWorker()
 	return controller, nil
 }
@@ -428,6 +432,7 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 	}
 	closeOnError = false
 	if !options.PrepareOnly {
+		controller.bindLocalOutputLocked()
 		controller.startContextWorker()
 	}
 	return controller, nil
@@ -929,6 +934,9 @@ func (c *Controller) degradeNewSessionAfterSaveFailureLocked(cause error) error 
 	}
 	lease := c.localSessionLease
 	c.localSessionLease = nil
+	if c.localExec != nil {
+		_ = c.localExec.BindArchive(c.localOwner, nil)
+	}
 	if closeErr := releaseLocalSessionResources(lease, c.handle, c.store); closeErr != nil {
 		return closeErr
 	}
@@ -1174,7 +1182,7 @@ func (c *Controller) recordRecoveryUnknownLocked(marker agentsession.DirtyMarker
 	}
 	if len(marker.LocalEffects) != 0 {
 		c.appendNoticeLocked("session_interrupted", agentsession.NoticeOutcomeInterrupted,
-			fmt.Sprintf("上次中断前有 %d 次本地任务操作；执行结果未知，进程内输出已不可访问。不会重跑命令或重传输入，也不会向旧 PID 发信号。", len(marker.LocalEffects)))
+			fmt.Sprintf("上次中断前有 %d 次本地任务操作；未确认的执行结果仍未知，仅可读取已认证保存的输出范围。不会重跑命令或重传输入，也不会向旧 PID 发信号。", len(marker.LocalEffects)))
 	}
 	return c.mergeFileJournalLocked(marker)
 }
@@ -1776,7 +1784,8 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 		c.contextCancel()
 		c.contextCancel = nil
 	}
-	empty := c.persistent && c.dirty == nil && c.record.CommittedUserTurns == 0 && len(c.record.PreferenceReceipts) == 0 && len(c.record.FileReceipts) == 0 && c.record.TitleSource != "manual"
+	hasLocalTaskEvidence := c.localExec != nil && len(c.localExec.List(c.localOwner)) != 0 || c.localOutputErr != ""
+	empty := c.persistent && !hasLocalTaskEvidence && c.dirty == nil && c.record.CommittedUserTurns == 0 && len(c.record.PreferenceReceipts) == 0 && len(c.record.FileReceipts) == 0 && c.record.TitleSource != "manual"
 	var shutdownErr error
 	if c.ownsLocalExec && c.localExec != nil {
 		shutdownErr = closeLocalExecutionManager(ctx, c.localExec)

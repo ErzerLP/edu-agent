@@ -59,6 +59,10 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if localErr != nil {
 		return commandError("usage", "本地任务资源预算无效", "运行 edu-agent agent --help 查看任务资源参数", ExitInput)
 	}
+	args, fileReadBytes, fileReadErr := parseFileReadOptions(args)
+	if fileReadErr != nil {
+		return commandError("usage", "文件读取预算无效", "运行 edu-agent agent --help 查看 --file-read-limit", ExitInput)
+	}
 	set := newFlagSet("agent")
 	var workspacePath string
 	var noSave bool
@@ -92,7 +96,9 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	workspaceStatus := workspace.Status{Code: workspace.CodeWorkspaceUnavailable}
 	var workspaceExecutor *workspace.Workspace
 	if workspacePathErr == nil {
-		workspaceExecutor, err = workspace.Open(workspacePath)
+		limits := workspace.DefaultLimits()
+		limits.ReadFileBytes = fileReadBytes
+		workspaceExecutor, err = workspace.OpenWithLimits(workspacePath, limits)
 		if err == nil {
 			workspaceStatus = workspaceExecutor.Status()
 		}
@@ -116,7 +122,8 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
 			Workspace: workspaceExecutor, WorkspaceStatus: workspaceStatus,
-			LocalExec: localexec.New(localOptions),
+			WorkspaceReadFileBytes: fileReadBytes,
+			LocalExec:              localexec.New(localOptions),
 		},
 	}, effectiveNoSave)
 	if err != nil {
@@ -146,6 +153,10 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	args, localOptions, localErr := parseLocalExecutionOptions(args)
 	if localErr != nil {
 		return commandError("usage", "本地任务资源预算无效", "运行 edu-agent agent resume --help 查看任务资源参数", ExitInput)
+	}
+	args, fileReadBytes, fileReadErr := parseFileReadOptions(args)
+	if fileReadErr != nil {
+		return commandError("usage", "文件读取预算无效", "运行 edu-agent agent resume --help 查看 --file-read-limit", ExitInput)
 	}
 	target, last, all, workspacePath, err := parseAgentResumeArgs(args)
 	if err != nil {
@@ -196,7 +207,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			}
 			if pickerChoice.New {
 				_ = store.Close()
-				return a.runNewAgent(ctx, nil)
+				return a.runNewAgent(ctx, []string{"--file-read-limit", strconv.FormatInt(fileReadBytes, 10)})
 			}
 			summaries, err = store.List(ctx)
 			if err == nil {
@@ -221,7 +232,8 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
-			LocalExec: localexec.New(localOptions),
+			WorkspaceReadFileBytes: fileReadBytes,
+			LocalExec:              localexec.New(localOptions),
 		},
 	}, agentcontroller.ResumeOptions{
 		SessionID: selected.SessionID, CurrentWorkspace: workspacePath,
@@ -649,6 +661,7 @@ const agentHelpText = `用法：
   --no-save         仅当前新 Session 不保存；不会改变默认设置
   --last            恢复当前工作区范围内最近更新且可恢复的 Session；不能与 SESSION 或 --all 合用
   --all             关闭当前工作区过滤；仅用于打开 picker 或配合显式 SESSION
+  --file-read-limit BYTES      完整读取预算，默认67108864；适用于新建/resume/F2切换
   --task-max-records N         当前客户端保留的任务记录数，默认256
   --task-max-running N         同时运行的任务数，默认16
   --task-output-limit BYTES    每任务 stdout+stderr 保留上限，默认8388608
@@ -659,6 +672,7 @@ const agentHelpText = `用法：
 Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
 
 文件工具：stat、find、list、read、search、write、edit、mkdir、copy、move、archive。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
+read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。
 本地 Shell：正常 OS 用户权限，可访问工作区外路径和网络，不受文件确认模式限制。shell/task 支持长任务、stdin 和停止；默认不设置执行总超时。F5 查看内存输出、切换 stdout/stderr、翻页和停止，退出客户端会收尾受管任务。
 持久Session的输出独立加密保存，可用task search或F5的/检索、n继续，并在重启后读取已保存范围；恢复不重跑旧命令、不恢复进程控制。--no-save输出仅内存保留，退出不可恢复；配额/保存失败和缺口明确显示。PTY交互：shell指定pty=true（默认24行80列，可用rows/cols设置1..4096）；合并流为stdout。task interrupt/eof发送终端控制字节，resize调整尺寸，close_input仍仅用于pipe。F5按i进入不回显草稿的行式输入，Enter送行，Ctrl+C中断，Ctrl+D终端EOF，Ctrl+Q退出；程序回显可能作为输出保存，不是全屏终端模拟器。上述任务资源参数同时适用于新建和 resume，不改变命令权限。`
 

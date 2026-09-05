@@ -1644,7 +1644,7 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 				Summary: "已列出工作区", Reference: &workspace.Reference{Path: ".", ContentHash: hash, Kind: "directory_listing"},
 			},
 			workspace.ToolRead: {
-				Value:   map[string]any{"path": "notes.md", "content": strings.Repeat("工作区内容", 1200), "content_hash": hash, "complete": false, "next_offset": 20, "next_byte_offset": 0, "truncation_reason": "result_bytes"},
+				Value:   map[string]any{"path": "notes.md", "content": strings.Repeat("工作区内容", 1200), "content_hash": hash, "offset": 1, "byte_offset": 0, "complete": false, "next_offset": 1, "next_byte_offset": len(strings.Repeat("工作区内容", 1200)), "truncation_reason": "result_bytes"},
 				Summary: "已读取 notes.md", Reference: &workspace.Reference{Path: "notes.md", ContentHash: hash, Kind: "file"},
 			},
 			workspace.ToolSearch: {
@@ -1657,7 +1657,7 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 		{ID: "list-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolList, Arguments: `{}`}},
 		{ID: "read-one", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md"}`}},
 		{ID: "search-call", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolSearch, Arguments: `{"query":"工作区"}`}},
-		{ID: "read-two", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md","offset":20}`}},
+		{ID: "read-two", Type: "function", Function: modelclient.ToolFunction{Name: workspace.ToolRead, Arguments: `{"path":"notes.md","offset":1}`}},
 	}
 	model := &fakeModel{responses: []modelclient.Response{
 		{Message: modelclient.Message{Role: "assistant", ToolCalls: calls}},
@@ -1695,7 +1695,7 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 	}
 	for callID, required := range map[string][]string{
 		"list-call":   {`"entries"`, `"next_offset":2`, `"path":"."`},
-		"read-one":    {`"content"`, `"content_hash"`, `"next_offset":20`},
+		"read-one":    {`"content"`, `"content_hash"`, `"next_offset":1`},
 		"search-call": {`"matches"`, `"scanned_files":30`, `"path":"."`},
 		"read-two":    {`"content"`, `"next_byte_offset":0`, `"truncation_reason"`},
 	} {

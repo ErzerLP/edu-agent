@@ -13,6 +13,8 @@
 7. 明确测试恰好边界、超一字节、UTF-8及JSON转义、多个工具累计预算。
 8. 已完成长参数在历史投影中可按现有机制收敛，但授权前/未执行调用不得截断或改写。
 9. 旧会话可恢复，执行过的新长度调用也能恢复，恢复不重放修改。
-10. 1 MiB文本文件、32处edit、约6KiB结果/预览的原限制不被本能力放宽；实际内容容量受所有独立预算约束。
+10. 1 MiB文本文件、32处edit、约6KiB结果/预览的原限制不被本能力放宽；实际内容容量受所有独立预算约束。后续read的独立文件预算由[大文件范围读取合同](../client-large-file-read/spec.md)维护，不能将其扩大到write/edit、stat.hash或search。
+
+后续Shell/task的参数预算由[本地执行合同](../client-local-execution/spec.md)维护，不改变read等其余工具的8KiB参数预算。
 
 延期：分块写入、append、patch、超大文件、其他新工具。实施区域：agentlimits、workspace definitions、agentloop实时与checkpoint校验及直接测试。

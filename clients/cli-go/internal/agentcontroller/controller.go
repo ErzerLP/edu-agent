@@ -290,7 +290,7 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 		}
 		actual, bindErr := BindWorkspace(storedWorkspace.Root)
 		if bindErr == nil && (storedWorkspace.RootIdentityHash == "" || actual.RootIdentityHash == storedWorkspace.RootIdentityHash) {
-			opened, openErr := workspace.Open(storedWorkspace.Root)
+			opened, openErr := openWorkspaceForClient(storedWorkspace.Root, loopOptions.WorkspaceReadFileBytes)
 			if openErr == nil {
 				loopOptions.Workspace = opened
 				loopOptions.WorkspaceStatus = opened.Status()

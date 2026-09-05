@@ -23,12 +23,15 @@ const (
 	ToolArchive = "archive"
 )
 
+const DefaultReadFileBytes int64 = 64 << 20
+
 type Limits struct {
 	ListEntries          int
 	DirectoryScanEntries int
 	ResultBytes          int
 	ReadLines            int
 	FileBytes            int64
+	ReadFileBytes        int64
 	SearchMatches        int
 	SearchFiles          int
 	SearchBytes          int64
@@ -42,7 +45,7 @@ type Limits struct {
 func DefaultLimits() Limits {
 	return Limits{
 		ListEntries: 200, DirectoryScanEntries: 2000, ResultBytes: 6 << 10,
-		ReadLines: 200, FileBytes: 1 << 20,
+		ReadLines: 200, FileBytes: 1 << 20, ReadFileBytes: DefaultReadFileBytes,
 		SearchMatches: 100, SearchFiles: 2000, SearchBytes: 16 << 20,
 		SearchDepth: 64, SearchPreviewBytes: 512, SearchEntries: 10000,
 		MutationPreviewBytes: 6 << 10, EditReplacements: 32,

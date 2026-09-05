@@ -320,6 +320,9 @@ func historyValue(tool string, value any) any {
 	if !ok {
 		return compactProjectionValue(value, 0, 6, 256)
 	}
+	if tool == workspace.ToolRead {
+		return compactReadProjection(object, 256, "history_projection_limit")
+	}
 	if workspace.IsMutationTool(tool) {
 		if effect, ok := object["file_effect"]; ok {
 			return map[string]any{"file_effect": effect, "operation": object["operation"], "path": object["path"], "publication_outcome": object["publication_outcome"], "error": object["error"], "code": object["code"]}
@@ -355,6 +358,9 @@ func historyValue(tool string, value any) any {
 }
 
 func boundedProjectionJSON(tool string, value any, limit int, reason string) string {
+	if tool == workspace.ToolRead {
+		return boundedReadProjectionJSON(value, limit, reason)
+	}
 	// Copy/move endpoints and metadata versions are never recursively shortened.
 	if tool == workspace.ToolCopy || tool == workspace.ToolMove {
 		if data, err := json.Marshal(value); err == nil && len(data) <= limit {
@@ -513,6 +519,11 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 			candidates = append(candidates, string(data))
 		}
 	}
+	if tool == workspace.ToolRead {
+		if data, err := json.Marshal(minimalReadProjection(object, "current_turn_budget")); err == nil {
+			candidates = append(candidates, string(data))
+		}
+	}
 	if tool == workspace.ToolSearch {
 		if _, failed := object["error"]; !failed {
 			data, err := json.Marshal(minimalSearchProjection(object, "current_turn_budget"))
@@ -525,6 +536,9 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 }
 
 func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit int) map[string]any {
+	if tool == workspace.ToolRead {
+		return compactReadProjection(object, payloadLimit, "current_turn_budget")
+	}
 	if tool == workspace.ToolSearch {
 		if _, failed := object["error"]; !failed {
 			return compactSearchProjection(object, 1, payloadLimit, "current_turn_budget")

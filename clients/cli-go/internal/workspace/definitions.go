@@ -13,7 +13,7 @@ func Definitions() []modelclient.Tool {
 		workspaceTool(ToolFind, "Find workspace paths (*, ?, **); no content or links.", `{"type":"object","properties":{"path":{"type":"string"},"pattern":{"type":"string","minLength":1,"maxLength":256},"type":{"type":"string","enum":["file","directory","any"]},"limit":{"type":"integer","minimum":1,"maximum":200},"respect_gitignore":{"type":"boolean","default":false}},"required":["pattern"],"additionalProperties":false}`),
 		workspaceTool(ToolStat, "Inspect metadata; hash=true reads at most 1MiB, no links.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"hash":{"type":"boolean"}},"required":["path"],"additionalProperties":false}`),
 		workspaceTool(ToolList, "List one workspace directory; no links.", `{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"maximum":2000}},"additionalProperties":false}`),
-		workspaceTool(ToolRead, "Read bounded workspace UTF-8 text; no links.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"offset":{"type":"integer","minimum":1,"maximum":1000000},"limit":{"type":"integer","minimum":1,"maximum":200},"byte_offset":{"type":"integer","minimum":0,"maximum":1048576},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path"],"additionalProperties":false}`),
+		readDefinition(DefaultLimits()),
 		workspaceTool(ToolSearch, "Search bounded workspace UTF-8 text; no links.", `{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":1000},"path":{"type":"string"},"mode":{"type":"string","enum":["literal","regex"]},"case":{"type":"string","enum":["smart","sensitive","insensitive"]},"glob":{"type":"string","minLength":1,"maxLength":256},"respect_gitignore":{"type":"boolean","default":false},"output":{"type":"string","enum":["content","files","count"],"default":"content"},"context":{"type":"integer","minimum":0,"maximum":3,"default":0},"include":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}},"exclude":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}},"required":["query"],"additionalProperties":false,"anyOf":[{"properties":{"output":{"const":"content"}}},{"properties":{"context":{"const":0}}}]}`),
 		workspaceTool(ToolWrite, "Create absent or hash-replace workspace UTF-8 text.", fmt.Sprintf(`{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"mode":{"type":"string","enum":["create","replace"]},"content":{"type":"string","maxLength":%d},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path","mode","content"],"additionalProperties":false}`, agentlimits.MaxFileMutationArgumentsBytes)),
 		workspaceTool(ToolEdit, "Apply exact unique non-overlapping edits to one hash.", fmt.Sprintf(`{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":%d},"new_text":{"type":"string","maxLength":%d}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`, agentlimits.MaxFileMutationArgumentsBytes, agentlimits.MaxFileMutationArgumentsBytes)),
@@ -24,7 +24,23 @@ func Definitions() []modelclient.Tool {
 	}
 }
 
-func (w *Workspace) Definitions() []modelclient.Tool { return Definitions() }
+func (w *Workspace) Definitions() []modelclient.Tool {
+	definitions := Definitions()
+	if w != nil {
+		for index := range definitions {
+			if definitions[index].Function.Name == ToolRead {
+				definitions[index] = readDefinition(w.limits)
+			}
+		}
+	}
+	return definitions
+}
+
+func readDefinition(limits Limits) modelclient.Tool {
+	return workspaceTool(ToolRead,
+		fmt.Sprintf("Read UTF-8 up to %d bytes; whole-file hash; line/byte continuation; no links.", limits.ReadFileBytes),
+		fmt.Sprintf(`{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"offset":{"type":"integer","minimum":1,"maximum":%d},"limit":{"type":"integer","minimum":1,"maximum":%d},"byte_offset":{"type":"integer","minimum":0,"maximum":%d},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path"],"additionalProperties":false}`, readOffsetLimit(limits), limits.ReadLines, limits.ReadFileBytes))
+}
 
 func workspaceTool(name, description, schema string) modelclient.Tool {
 	return modelclient.Tool{Type: "function", Function: modelclient.ToolDefinition{

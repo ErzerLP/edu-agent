@@ -141,10 +141,13 @@ type Options struct {
 	ContextIDSource   ContextIDSource
 	Workspace         workspace.Executor
 	WorkspaceStatus   WorkspaceStatus
-	Durability        DurabilitySink
-	LocalExec         *localexec.Manager
-	LocalExecOwner    string
-	LocalExecCWD      string
+	// WorkspaceReadFileBytes is a client-process resource setting, not saved
+	// workspace identity or a permission. Zero selects the current default.
+	WorkspaceReadFileBytes int64
+	Durability             DurabilitySink
+	LocalExec              *localexec.Manager
+	LocalExecOwner         string
+	LocalExecCWD           string
 }
 
 type EventStatus string

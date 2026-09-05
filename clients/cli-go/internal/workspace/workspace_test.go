@@ -299,6 +299,7 @@ func TestWorkspaceReadRejectsBinaryInvalidUTF8OversizeAndLink(t *testing.T) {
 	linkCreated := os.Symlink(filepath.Join(root, "binary.dat"), filepath.Join(root, "link.txt")) == nil
 	limits := DefaultLimits()
 	limits.FileBytes = 32
+	limits.ReadFileBytes = 32
 	limits.SearchBytes = 64
 	workspace, err := OpenWithLimits(root, limits)
 	if err != nil {

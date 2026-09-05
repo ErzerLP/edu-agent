@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1–C3 已实现并通过各自 Linux 批次门禁；C4–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C4 已实现并通过各自 Linux 批次门禁；C5–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -170,3 +170,21 @@ Go1.26.6/Linux amd64；以下Go命令在clients/cli-go运行。
 `go test -count=1 -timeout=120s ./internal/agentcontroller ./internal/agentloop`、两包vet及`go test -race -count=1 -timeout=90s ./internal/agentcontroller ./internal/agentloop -run '^(TestLocalRecovery|TestLocalSessionLease|TestPTY)'`均通过。Linux完整CLI构建/version运行通过，产物`/tmp/edu-agent-recovery-build.etq5GY/edu-agent`不提交；无新增平台接口，C3平台机制证据复用，不宣称本次运行了macOS原生。mode=all检查本会话39个已诊断文件无error，diff检查通过。
 
 两包Go文件及go.mod/go.sum排序sha256列表汇总：`5b43fafb6879f4236f4ee814498a095b3a5b9125ef4acbfe85e6128326a66f03`。后续继续C4，不将此修正扩成独立测试基础设施项目。
+
+## C4：大文件范围读取
+
+已交付既有read入口的独立文件预算，默认64MiB、CLI `--file-read-limit BYTES`。新建、resume、picker新建及同客户端F2切换都使用当前客户端设置；不将其保存成Session权限或旧资源配置。write/edit、stat.hash、search的1MiB预算及原参数/结果预算保持，C5尚未实现。
+
+实现仍是securefile安全全文snapshot、全文件UTF8/binary检查和原始SHA256（包括BOM/换行）；仅保留所选行窗口引用，不再创建全部行切片。内存/IO仍随文件大小增长，不能冒称流式或GB级低IO。超预算明确给出限制与调参/Shell替代，不返回局部hash。行/行内字节范围匹配实例预算，支持>1MiB长行和>百万行定位；零ReadFileBytes的旧完整Limits配置继承原FileBytes。
+
+read专用live/history/recall和当前轮预算投影保留真实UTF8字节前缀，重算行/字节游标，保留完整hash及截断原因。路径无法放入有界投影时显式省略而非生成截短路径。原始起点恰在线尾时，先规范化实际正文起点（不扩大请求行窗口）；修正了缩短后指回上一行的可复现缺陷。完整结果元数据/一个rune都无法放入workspace结果预算时明确失败，不制造永久空成功页。
+
+Linux验证（Go1.26.6，命令目录clients/cli-go）：
+
+- `go test -count=1 -timeout=90s ./internal/workspace ./internal/agentloop -run '^TestLargeFileRead'` 与command/controller的同前缀定向测试通过。覆盖真实大文件后段、长行/百万行、完整hash/版本变化、UTF8及预算、模型按投影cursor读取下一页、客户端活动、CLI预算实际限制、resume/F2新建与切回配置。
+- 首个内核测试将链接父目录拒绝固定为link_not_allowed；Linux O_DIRECTORY|O_NOFOLLOW实际返回not_directory。仅允许这两种拒绝码，保留不返回正文/路径泄漏的断言；定向重验通过。
+- `go test -count=1 -timeout=120s ./internal/workspace ./internal/agentloop ./internal/agentcontroller ./internal/command`：workspace/controller/command通过，发现agentloop最小投影漏保留truncation_reason；补齐并移除冗余起始坐标，保持续读坐标。旧四调用budget fixture同时把无换行长行错误标作next_offset=20，修成同一行真实字节终点及按返回前缀推进的断言；agentloop全包重验通过，未提高模型预算或隐藏工具。
+- 四个受影响包 `go vet` 通过；`go test -race -count=1 -timeout=90s ./internal/agentcontroller ./internal/agentloop -run '^TestLargeFileRead'`通过。
+- Linux完整CLI构建/version运行、Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c4-build.pHxlfs`不提交；仍无macOS原生运行证据。diff检查通过，mode=all对本会话已诊断75文件无error，不是全项目扫描。
+
+四包Go文件及go.mod/go.sum排序sha256列表汇总：`a85e257f5a91900898d59873feebb57609c4eca86010a756f6b6e46c1f3bd895`。未运行数据库、Compose、全仓/全平台矩阵或付费模型；下一垂直批次C5大文本局部edit。

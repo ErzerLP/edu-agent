@@ -4,7 +4,7 @@
 
 本计划把完整离线能力拆成五个顺序阶段。每次只推进一个阶段；当前阶段退出标准未满足前，不进入下一阶段，也不运行最终候选的全量验证。正式产品合同位于 Comet brief/spec，字段级细节位于 `offline-sync-technical-reference.md`。
 
-S1 **权威基础**、S2 **服务端 Objective 闭环**、S3 **安全 CLI 闭环**、S4 **评估与竞争**和 S5 **隐私与平台加固**已形成最终 Builder candidate；当前阶段是 **Runtime Verify handoff**。S1 遗留的真实 PostgreSQL ingest 与 migration upgrade 证据已在 S2 的最终 L4 门禁中补齐。
+S1 **权威基础**、S2 **服务端 Objective 闭环**、S3 **安全 CLI 闭环**、S4 **评估与竞争**和 S5 **隐私与平台加固**已形成最终 Builder candidate，并于 **2026-08-27 完成 Runtime Verify 并归档**；当前没有进行中的 Offline Sync Build/Verify 阶段。macOS Keychain 与 Windows DPAPI/ACL 的原生验证仍作为不阻塞归档的外部 follow-up，未运行项不得标记为通过。S1 遗留的真实 PostgreSQL ingest 与 migration upgrade 证据已在 S2 的最终 L4 门禁中补齐。
 
 ## 阶段总览
 

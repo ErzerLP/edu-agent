@@ -141,9 +141,10 @@ type Options struct {
 	ContextIDSource   ContextIDSource
 	Workspace         workspace.Executor
 	WorkspaceStatus   WorkspaceStatus
-	// WorkspaceReadFileBytes is a client-process resource setting, not saved
-	// workspace identity or a permission. Zero selects the current default.
+	// File processing budgets are client-process resource settings, not saved
+	// workspace identity or permissions. Zero selects the current defaults.
 	WorkspaceReadFileBytes int64
+	WorkspaceEditFileBytes int64
 	Durability             DurabilitySink
 	LocalExec              *localexec.Manager
 	LocalExecOwner         string

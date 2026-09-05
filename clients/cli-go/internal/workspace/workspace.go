@@ -20,9 +20,12 @@ func Open(path string) (*Workspace, error) {
 }
 
 func OpenWithLimits(path string, limits Limits) (*Workspace, error) {
-	// Preserve the read budget of callers supplying pre-ReadFileBytes limits.
+	// Preserve the legacy file budget for callers omitting independent budgets.
 	if limits.ReadFileBytes == 0 {
 		limits.ReadFileBytes = limits.FileBytes
+	}
+	if limits.EditFileBytes == 0 {
+		limits.EditFileBytes = limits.FileBytes
 	}
 	if err := validateLimits(limits); err != nil {
 		return nil, err
@@ -47,8 +50,9 @@ func OpenWithLimits(path string, limits Limits) (*Workspace, error) {
 
 func validateLimits(limits Limits) error {
 	// ReadSnapshot reads limit+1 bytes; cursors and string lengths use int.
-	maxReadFileBytes := int64(^uint(0)>>1) - 1
-	if limits.ReadFileBytes < 1 || limits.ReadFileBytes > maxReadFileBytes ||
+	maxFileBytes := int64(^uint(0)>>1) - 1
+	if limits.ReadFileBytes < 1 || limits.ReadFileBytes > maxFileBytes ||
+		limits.EditFileBytes < 1 || limits.EditFileBytes > maxFileBytes ||
 		limits.ListEntries < 1 || limits.DirectoryScanEntries < limits.ListEntries || limits.ResultBytes < 1024 ||
 		limits.ReadLines < 1 || limits.FileBytes < 1 || limits.SearchMatches < 1 || limits.SearchFiles < 1 ||
 		limits.SearchBytes < limits.FileBytes || limits.SearchDepth < 1 || limits.SearchPreviewBytes < 32 || limits.SearchEntries < limits.SearchFiles ||

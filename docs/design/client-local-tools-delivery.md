@@ -188,3 +188,22 @@ Linux验证（Go1.26.6，命令目录clients/cli-go）：
 - Linux完整CLI构建/version运行、Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c4-build.pHxlfs`不提交；仍无macOS原生运行证据。diff检查通过，mode=all对本会话已诊断75文件无error，不是全项目扫描。
 
 四包Go文件及go.mod/go.sum排序sha256列表汇总：`a85e257f5a91900898d59873feebb57609c4eca86010a756f6b6e46c1f3bd895`。未运行数据库、Compose、全仓/全平台矩阵或付费模型；下一垂直批次C5大文本局部edit。
+
+## C5：大文本局部编辑
+
+已交付既有edit入口的独立原文/候选预算，默认64MiB，CLI `--file-edit-limit BYTES`；新建、resume、F2新建/切回沿用当前客户端设置，不保存为Session权限或旧预算。read继续独立配置，write/stat.hash/search保持1MiB，参数仍64KiB整JSON/批128KiB和最多32处精确替换。
+
+- prepareEdit安全全文读取与完整原始SHA256校验不变。所有old_text对同一原文精确唯一匹配、排序拒绝重叠；先减全部旧范围，再累计归一后new_text，含BOM核查实际候选字节与溢出。顺序Builder构造候选，不为每次替换重新复制全文，不增加fuzzy。
+- write和edit各自冻结其处理预算；commit的入口身份读取、版本读取及securefile.Publish最终ExpectedLimit复核都使用同一预算，避免prepare支持大文件而发布仍受1MiB限制。路径/归档/链接保护、候选/预览hash、授权、取消、权限、临时文件/fsync/原子发布及WAL/实际结算保持。
+- 当前diff算法未改成完整多hunk或流式算法；只限制变化块预览正文构造为约limit+1字节，保留既有截断前缀和marker，避免分配必然丢弃的完整变化块字符串。仍有全文行数组、候选与IO，不宣称固定内存GB级编辑。完整diff及patch由C6交付，不新增逐页审批。
+- 错误明确原文/候选处理预算及调参/Shell替代。CLI读取和编辑旗标共用数值解析器，但资源配置相互独立，当前实例工具说明显示实际edit额度。
+
+Linux验证（Go1.26.6，命令目录clients/cli-go）：
+
+- 叶子 `go test -count=1 -timeout=90s ./internal/workspace -run '^TestLargeFileEdit'`通过0.389s，覆盖>1MiB跨边界/远端32处替换、完整hash、预算冻结、成长/缩小、BOM/换行/权限、取消/拒绝/冲突/篡改及预览兼容。旧C4不扩大其他工具测试显式配置edit为旧额度，schema测试更新额度描述。
+- 父代理 `go test -count=1 -timeout=90s ./internal/agentloop ./internal/agentcontroller ./internal/command -run '^TestLargeFileEdit'`通过，验证模型→授权→真实大文件发布→客户端成功活动、拒绝/取消/WAL失败不修改、外部变化拒绝、已修改后模型失败保留、真实加密store结算/恢复、CLI独立小read大edit预算、resume/F2实际执行不绕过当前小edit预算。
+- `go test -count=1 -timeout=120s ./internal/workspace ./internal/agentloop ./internal/agentcontroller ./internal/command`四包全过，同四包vet通过。
+- `go test -race -count=1 -timeout=90s ./internal/workspace ./internal/agentloop ./internal/agentcontroller -run '^(TestLargeFileEdit|TestLargeFileRead)'`三包通过。
+- Linux完整CLI构建/version运行和Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c5-build.CBxxzC`不提交；仍无macOS原生运行证据。diff检查通过，mode=all对本会话已诊断81文件无error，不是全项目扫描。
+
+四包Go文件及go.mod/go.sum排序sha256列表汇总：`57c091477ba78cdfb220cbf3b381dc1a9763f5330d8e2d4e8a312a9482d38fdd`。C6–C10和整体恢复/隐私独立复核仍待完成，未扩大测试为数据库、Compose或全平台矩阵。

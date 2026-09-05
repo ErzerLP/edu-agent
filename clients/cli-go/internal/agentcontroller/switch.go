@@ -117,7 +117,7 @@ func (c *Controller) NewSession(ctx context.Context) (uint64, error) {
 	loopOptions.WorkspaceStatus = workspace.Status{Code: workspace.CodeWorkspaceUnavailable}
 	if binding.Root != "" {
 		if actual, bindErr := BindWorkspace(binding.Root); bindErr == nil && (binding.RootIdentityHash == "" || actual.RootIdentityHash == binding.RootIdentityHash) {
-			if opened, openErr := openWorkspaceForClient(binding.Root, loopOptions.WorkspaceReadFileBytes); openErr == nil {
+			if opened, openErr := openWorkspaceForClient(binding.Root, loopOptions.WorkspaceReadFileBytes, loopOptions.WorkspaceEditFileBytes); openErr == nil {
 				loopOptions.Workspace = opened
 				loopOptions.WorkspaceStatus = opened.Status()
 				binding.Available = true

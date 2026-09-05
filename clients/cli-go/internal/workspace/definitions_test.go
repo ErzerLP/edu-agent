@@ -32,7 +32,7 @@ func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 		ToolRead:    "Read UTF-8 up to 67108864 bytes; whole-file hash; line/byte continuation; no links.",
 		ToolSearch:  "Search bounded workspace UTF-8 text; no links.",
 		ToolWrite:   "Create absent or hash-replace workspace UTF-8 text.",
-		ToolEdit:    "Apply exact unique non-overlapping edits to one hash.",
+		ToolEdit:    "Exact unique non-overlapping edits to one hash; original/candidate up to 67108864 bytes.",
 	}
 
 	definitions := Definitions()

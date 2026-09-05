@@ -63,6 +63,10 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if fileReadErr != nil {
 		return commandError("usage", "文件读取预算无效", "运行 edu-agent agent --help 查看 --file-read-limit", ExitInput)
 	}
+	args, fileEditBytes, fileEditErr := parseFileEditOptions(args)
+	if fileEditErr != nil {
+		return commandError("usage", "文件编辑预算无效", "运行 edu-agent agent --help 查看 --file-edit-limit", ExitInput)
+	}
 	set := newFlagSet("agent")
 	var workspacePath string
 	var noSave bool
@@ -97,7 +101,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	var workspaceExecutor *workspace.Workspace
 	if workspacePathErr == nil {
 		limits := workspace.DefaultLimits()
-		limits.ReadFileBytes = fileReadBytes
+		limits.ReadFileBytes, limits.EditFileBytes = fileReadBytes, fileEditBytes
 		workspaceExecutor, err = workspace.OpenWithLimits(workspacePath, limits)
 		if err == nil {
 			workspaceStatus = workspaceExecutor.Status()
@@ -123,6 +127,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
 			Workspace: workspaceExecutor, WorkspaceStatus: workspaceStatus,
 			WorkspaceReadFileBytes: fileReadBytes,
+			WorkspaceEditFileBytes: fileEditBytes,
 			LocalExec:              localexec.New(localOptions),
 		},
 	}, effectiveNoSave)
@@ -157,6 +162,10 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	args, fileReadBytes, fileReadErr := parseFileReadOptions(args)
 	if fileReadErr != nil {
 		return commandError("usage", "文件读取预算无效", "运行 edu-agent agent resume --help 查看 --file-read-limit", ExitInput)
+	}
+	args, fileEditBytes, fileEditErr := parseFileEditOptions(args)
+	if fileEditErr != nil {
+		return commandError("usage", "文件编辑预算无效", "运行 edu-agent agent resume --help 查看 --file-edit-limit", ExitInput)
 	}
 	target, last, all, workspacePath, err := parseAgentResumeArgs(args)
 	if err != nil {
@@ -207,7 +216,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			}
 			if pickerChoice.New {
 				_ = store.Close()
-				return a.runNewAgent(ctx, []string{"--file-read-limit", strconv.FormatInt(fileReadBytes, 10)})
+				return a.runNewAgent(ctx, []string{"--file-read-limit", strconv.FormatInt(fileReadBytes, 10), "--file-edit-limit", strconv.FormatInt(fileEditBytes, 10)})
 			}
 			summaries, err = store.List(ctx)
 			if err == nil {
@@ -233,6 +242,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
 			WorkspaceReadFileBytes: fileReadBytes,
+			WorkspaceEditFileBytes: fileEditBytes,
 			LocalExec:              localexec.New(localOptions),
 		},
 	}, agentcontroller.ResumeOptions{
@@ -662,6 +672,7 @@ const agentHelpText = `用法：
   --last            恢复当前工作区范围内最近更新且可恢复的 Session；不能与 SESSION 或 --all 合用
   --all             关闭当前工作区过滤；仅用于打开 picker 或配合显式 SESSION
   --file-read-limit BYTES      完整读取预算，默认67108864；适用于新建/resume/F2切换
+  --file-edit-limit BYTES      局部edit原文/候选预算，默认67108864；独立于read/write
   --task-max-records N         当前客户端保留的任务记录数，默认256
   --task-max-running N         同时运行的任务数，默认16
   --task-output-limit BYTES    每任务 stdout+stderr 保留上限，默认8388608
@@ -673,6 +684,7 @@ Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持
 
 文件工具：stat、find、list、read、search、write、edit、mkdir、copy、move、archive。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。
+局部edit在独立预算内支持大于1MiB文本，保留精确唯一匹配、完整expected_hash、授权、WAL和原子发布；原文/候选仍全文处理，参数仍64KiB。预览可以截断且明确标记，完整diff留C6，不新增逐页审批。编辑预算随当前客户端的新建/resume/F2切换生效，不扩大write/stat.hash/search的1MiB预算。
 本地 Shell：正常 OS 用户权限，可访问工作区外路径和网络，不受文件确认模式限制。shell/task 支持长任务、stdin 和停止；默认不设置执行总超时。F5 查看内存输出、切换 stdout/stderr、翻页和停止，退出客户端会收尾受管任务。
 持久Session的输出独立加密保存，可用task search或F5的/检索、n继续，并在重启后读取已保存范围；恢复不重跑旧命令、不恢复进程控制。--no-save输出仅内存保留，退出不可恢复；配额/保存失败和缺口明确显示。PTY交互：shell指定pty=true（默认24行80列，可用rows/cols设置1..4096）；合并流为stdout。task interrupt/eof发送终端控制字节，resize调整尺寸，close_input仍仅用于pipe。F5按i进入不回显草稿的行式输入，Enter送行，Ctrl+C中断，Ctrl+D终端EOF，Ctrl+Q退出；程序回显可能作为输出保存，不是全屏终端模拟器。上述任务资源参数同时适用于新建和 resume，不改变命令权限。`
 

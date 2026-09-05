@@ -26,25 +26,47 @@ func buildMutationPreview(path, oldText, newText, kind string, limit int) (strin
 	oldEnd := min(len(oldLines), oldSuffix+2)
 	newEnd := min(len(newLines), newSuffix+2)
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "--- %s\n+++ %s\n@@ -%d,%d +%d,%d @@\n", path, path, start+1, oldEnd-start, start+1, newEnd-start)
+	// Only retain enough bytes to detect truncation. Line arrays and the
+	// prefix/suffix scan still scale with the file; this is not streaming diff.
+	previewBytes := limit
+	if previewBytes < int(^uint(0)>>1) {
+		previewBytes++
+	}
+	write := func(text string) {
+		remaining := max(0, previewBytes-builder.Len())
+		builder.WriteString(text[:min(len(text), remaining)])
+	}
+	finish := func() (string, bool, int) {
+		preview, truncated := boundedPreview(builder.String(), limit)
+		return preview, truncated, prefix + 1
+	}
+	write(fmt.Sprintf("--- %s\n+++ %s\n@@ -%d,%d +%d,%d @@\n", path, path, start+1, oldEnd-start, start+1, newEnd-start))
+	writeLine := func(marker, line string) bool {
+		write(marker)
+		write(line)
+		return builder.Len() < previewBytes
+	}
 	for index := start; index < prefix; index++ {
-		builder.WriteString(" ")
-		builder.WriteString(oldLines[index])
+		if !writeLine(" ", oldLines[index]) {
+			return finish()
+		}
 	}
 	for index := prefix; index < oldSuffix; index++ {
-		builder.WriteString("-")
-		builder.WriteString(oldLines[index])
+		if !writeLine("-", oldLines[index]) {
+			return finish()
+		}
 	}
 	for index := prefix; index < newSuffix; index++ {
-		builder.WriteString("+")
-		builder.WriteString(newLines[index])
+		if !writeLine("+", newLines[index]) {
+			return finish()
+		}
 	}
 	for index := oldSuffix; index < oldEnd; index++ {
-		builder.WriteString(" ")
-		builder.WriteString(oldLines[index])
+		if !writeLine(" ", oldLines[index]) {
+			return finish()
+		}
 	}
-	preview, truncated := boundedPreview(builder.String(), limit)
-	return preview, truncated, prefix + 1
+	return finish()
 }
 
 func splitPreviewLines(value string) []string {

@@ -65,9 +65,11 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 `search` 现在支持 `output=content|files|count`：文件列表/统计模式不返回正文，不完整时以 `counts_partial` 标记局部结果；`context=1..3` 可为content附加去重、有界邻近行。新 `glob` 支持组件 `**`，不改变旧include/exclude语义。`find/search` 可显式设置 `respect_gitignore=true` 读取工作区内有界分层规则；默认仍不启用，错误规则不会被当作空规则扩大范围，ignore也不是权限保护。详见 [检索增强设计](../../docs/design/client-file-search-enhancement.md)。
 
-`write`/`edit`/`shell`/`task` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。`write`/`edit` 仍限制为 1 MiB，预览/结果另有预算；后续 C5 扩展局部 edit，不提供通用分块上传协议。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
+`write`/`edit`/`shell`/`task` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。`write` 仍限制为1MiB，预览/结果另有预算；不提供通用分块上传协议。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
 
-`read` 已采用独立的完整读取预算，默认64MiB，可在新建或 `resume` 时传 `--file-read-limit BYTES`，F2切换/新建沿用当前客户端预算。例如 `edu-agent agent --workspace PATH --file-read-limit 134217728`。仍是安全全文读取、完整原始SHA256与有界行窗口，不是GB级固定内存/低IO实现；超过预算明确失败，可调预算或使用Shell。`offset/limit` 定位行，`byte_offset` 续读长行；恰在线尾的输入可规范化为下一行实际起点。必须按实际返回的 `next_offset/next_byte_offset` 并携带 `expected_hash` 连续读取；模型投影进一步缩短时也重算游标，不跳过未返回字节。`content_hash` 包含原始BOM/换行，`hash_scope=whole_file` 明确不是片段hash。读取预算不改变stat.hash/search/write/edit的1MiB上限，也不扩大模型参数/结果预算；新旧版本不能静默混读。详见 [C4合同](../../docs/comet/specs/client-large-file-read/spec.md)。
+局部 `edit` 已支持独立预算内的大文本，默认原文件和完整候选各64MiB，可用 `--file-edit-limit BYTES` 配置，新建/resume/F2切换使用当前客户端设置。模型只提交最多32处精确唯一且不重叠的old_text/new_text及完整expected_hash；保留BOM、未修改原字节、替换换行、权限、授权、版本复核、WAL及原子发布。候选顺序构造，预算包含BOM和归一后的真实字节；仍全文读取/候选/发布，不承诺固定内存GB级编辑。超限可调预算或改用Shell脚本，write/stat.hash/search不随之扩大。预览仍有界且明确截断，不新增逐页审批；完整diff留C6。详见 [C5合同](../../docs/comet/specs/client-large-file-edit/spec.md)。
+
+`read` 已采用独立的完整读取预算，默认64MiB，可在新建或 `resume` 时传 `--file-read-limit BYTES`，F2切换/新建沿用当前客户端预算。例如 `edu-agent agent --workspace PATH --file-read-limit 134217728`。仍是安全全文读取、完整原始SHA256与有界行窗口，不是GB级固定内存/低IO实现；超过预算明确失败，可调预算或使用Shell。`offset/limit` 定位行，`byte_offset` 续读长行；恰在线尾的输入可规范化为下一行实际起点。必须按实际返回的 `next_offset/next_byte_offset` 并携带 `expected_hash` 连续读取；模型投影进一步缩短时也重算游标，不跳过未返回字节。`content_hash` 包含原始BOM/换行，`hash_scope=whole_file` 明确不是片段hash。读取预算不改变stat.hash/search/write的1MiB上限或edit的独立预算，也不扩大模型参数/结果预算；新旧版本不能静默混读。详见 [C4合同](../../docs/comet/specs/client-large-file-read/spec.md)。
 
 `mkdir` 可创建空目录，或显式使用 `parents=true` 创建冻结的缺失目录链；已有普通目录返回未变更，不覆盖其他入口。中途失败不删除回滚，已知创建前缀随统一回执保存；只有WAL的崩溃会明确说明计划路径可能已创建，恢复不重放。详见 [mkdir设计](../../docs/design/client-file-mkdir.md)。
 

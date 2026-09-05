@@ -143,7 +143,7 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 			Preview: preview, Truncated: truncated, BaseVersion: baseVersion,
 		},
 		path: path, candidate: append([]byte(nil), candidate...), candidateHash: contentHash(candidate),
-		baseVersion: baseVersion, basePermission: uint32(permission.Perm()), create: create,
+		baseVersion: baseVersion, basePermission: uint32(permission.Perm()), fileBytes: w.limits.FileBytes, create: create,
 		previewHash: hashProjection(preview), firstChangeLine: firstLine,
 	}
 	return prepared, Result{}
@@ -167,8 +167,11 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 	if err := ctx.Err(); err != nil {
 		return nil, mutationContextFailure(err)
 	}
-	snapshot, readErr := w.root.ReadSnapshot(path, w.limits.FileBytes, false)
+	snapshot, readErr := w.root.ReadSnapshot(path, w.limits.EditFileBytes, false)
 	if readErr != nil {
+		if errors.Is(readErr, securefile.ErrTooLarge) {
+			return nil, editFileTooLarge(w.limits.EditFileBytes)
+		}
 		return nil, mutationFailureForSecureError(readErr, "文件无法安全编辑")
 	}
 	decoded, decodeErr := decodeText(snapshot.Data)
@@ -202,17 +205,31 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 			return nil, mutationFailure(CodeReplacementOverlap, "文件编辑替换区域重叠")
 		}
 	}
-	candidateText := decoded.Text
-	for index := len(ranges) - 1; index >= 0; index-- {
-		current := ranges[index]
-		candidateText = candidateText[:current.start] + current.text + candidateText[current.end:]
+	// Subtract every old range before adding normalized replacements: an early
+	// growth may be offset by a later deletion. Count the original BOM as well.
+	candidateBytes := int64(len(snapshot.Data))
+	for _, current := range ranges {
+		candidateBytes -= int64(current.end - current.start)
 	}
+	for _, current := range ranges {
+		if int64(len(current.text)) > w.limits.EditFileBytes-candidateBytes {
+			return nil, editFileTooLarge(w.limits.EditFileBytes)
+		}
+		candidateBytes += int64(len(current.text))
+	}
+	var builder strings.Builder
+	builder.Grow(int(candidateBytes) - (len(snapshot.Data) - len(decoded.Text)))
+	previousEnd := 0
+	for _, current := range ranges {
+		builder.WriteString(decoded.Text[previousEnd:current.start])
+		builder.WriteString(current.text)
+		previousEnd = current.end
+	}
+	builder.WriteString(decoded.Text[previousEnd:])
+	candidateText := builder.String()
 	candidate := withOriginalBOM(candidateText, snapshot.Data)
 	if bytes.Equal(candidate, snapshot.Data) {
 		return nil, mutationFailure(CodeNoChanges, "文件编辑不包含实际变化")
-	}
-	if int64(len(candidate)) > w.limits.FileBytes {
-		return nil, mutationFailure(CodeFileTooLarge, "文件编辑候选内容超过安全上限")
 	}
 	preview, truncated, firstLine := buildMutationPreview(path, decoded.Text, candidateText, "diff", w.limits.MutationPreviewBytes)
 	prepared := &PreparedMutation{
@@ -220,8 +237,8 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 			Tool: ToolEdit, Operation: "edit", Path: path, PreviewKind: "diff",
 			Preview: preview, Truncated: truncated, BaseVersion: decoded.Hash,
 		},
-		path: path, candidate: append([]byte(nil), candidate...), candidateHash: contentHash(candidate),
-		baseVersion: decoded.Hash, basePermission: uint32(snapshot.Mode.Perm()),
+		path: path, candidate: candidate, candidateHash: contentHash(candidate),
+		baseVersion: decoded.Hash, basePermission: uint32(snapshot.Mode.Perm()), fileBytes: w.limits.EditFileBytes,
 		previewHash: hashProjection(preview), firstChangeLine: firstLine, replacements: len(args.Edits),
 	}
 	return prepared, Result{}
@@ -273,7 +290,7 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	}
 	queueKey := "create:" + strings.ToLower(prepared.path)
 	if !prepared.create {
-		identitySnapshot, readErr := w.root.ReadSnapshot(prepared.path, w.limits.FileBytes, false)
+		identitySnapshot, readErr := w.root.ReadSnapshot(prepared.path, prepared.fileBytes, false)
 		if readErr != nil {
 			return mutationFailureForSecureError(readErr, "文件身份无法安全检查")
 		}
@@ -292,7 +309,7 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	}
 	permission := os.FileMode(prepared.basePermission)
 	if prepared.create {
-		_, readErr := w.root.ReadSnapshot(prepared.path, w.limits.FileBytes, false)
+		_, readErr := w.root.ReadSnapshot(prepared.path, prepared.fileBytes, false)
 		switch {
 		case readErr == nil, errors.Is(readErr, securefile.ErrNotRegular):
 			return mutationFailure(CodeAlreadyExists, "文件目标已经存在")
@@ -305,7 +322,7 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 			return mutationFailureForSecureError(readErr, "文件目标无法安全检查")
 		}
 	} else {
-		snapshot, readErr := w.root.ReadSnapshot(prepared.path, w.limits.FileBytes, false)
+		snapshot, readErr := w.root.ReadSnapshot(prepared.path, prepared.fileBytes, false)
 		if readErr != nil {
 			return mutationFailureForSecureError(readErr, "文件内容版本无法重新验证")
 		}
@@ -326,7 +343,7 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 		mode = securefile.PublishCreate
 	}
 	publish, publishErr := w.root.Publish(ctx, prepared.path, prepared.candidate, securefile.PublishOptions{
-		Mode: mode, Permission: permission, ExpectedHash: prepared.baseVersion, ExpectedLimit: w.limits.FileBytes,
+		Mode: mode, Permission: permission, ExpectedHash: prepared.baseVersion, ExpectedLimit: prepared.fileBytes,
 		ProtectArchive: true,
 	})
 	if publish.Outcome == securefile.PublishUnknown || errors.Is(publishErr, securefile.ErrOutcomeUnknown) {
@@ -342,6 +359,14 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 		return mutationFailure(CodeInternalError, "文件修改未完成")
 	}
 	return mutationSuccess(prepared)
+}
+
+func editFileTooLarge(limit int64) Result {
+	result := mutationFailure(CodeFileTooLarge, fmt.Sprintf("文件编辑原文或候选超过 %d 字节处理上限", limit))
+	value := result.Value.(map[string]any)
+	value["edit_byte_limit"] = limit
+	value["suggestion"] = "由用户调整 --file-edit-limit，或使用 Shell/脚本处理更大的文件"
+	return result
 }
 
 func MutationDenied(prepared *PreparedMutation) Result {

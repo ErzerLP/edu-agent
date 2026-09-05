@@ -263,7 +263,9 @@ func TestLargeFileReadIndependentLimitsAndSchemas(t *testing.T) {
 
 func TestLargeFileReadDoesNotWidenOtherTools(t *testing.T) {
 	body := strings.Repeat("x", (1<<20)+1)
-	w, _ := largeReadWorkspace(t, DefaultLimits(), "large.txt", body)
+	limits := DefaultLimits()
+	limits.EditFileBytes = limits.FileBytes
+	w, _ := largeReadWorkspace(t, limits, "large.txt", body)
 	largeReadPage(t, w, map[string]any{"path": "large.txt"})
 	if code := resultCode(t, w.Execute(t.Context(), ToolStat, `{"path":"large.txt","hash":true}`)); code != CodeFileTooLarge {
 		t.Fatalf("stat.hash budget changed: code=%q", code)

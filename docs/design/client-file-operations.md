@@ -1,6 +1,6 @@
 # 客户端本地文件操作设计
 
-本文件记录五个文本工具的基础设计；新增文件/目录安全归档、归档目录保护与会话恢复扩展见 [client-file-archive.md](client-file-archive.md)。归档不是通用 move/delete，不改变下述文本工具的内容合同。
+本文件记录五个文本工具的基础设计；当前扩展见 [归档](client-file-archive.md)、[大参数](client-file-large-arguments.md)、[stat](client-file-stat.md)、[find](client-file-find.md)、[检索增强](client-file-search-enhancement.md)、[mkdir](client-file-mkdir.md)、[copy](client-file-copy.md) 和 [move](client-file-move.md)。完整工具集合已为十一项；下文“首版不复制/移动”等为历史范围，以对应后续合同覆盖。归档仍只接受固定归档目标，不因通用move而放宽保护；文本工具的UTF-8内容合同不变。
 
 ## 目标与边界
 
@@ -135,7 +135,7 @@ Unix 使用 root FD、逐组件 `openat`、`O_NOFOLLOW`、发布前 parent ances
 | mutation preview/diff | 6 KiB |
 | 工具时间 | `Options.ToolTimeout` |
 
-当前模型 tool arguments 单调用上限为 8 KiB，因此首版 `write` 正文天然受该边界约束；schema 仍显式限制并返回稳定错误。
+模型 tool arguments 按 [大参数合同](../comet/specs/client-file-large-arguments/spec.md) 执行：write/edit 单次整 JSON 上限 64 KiB，其他/未知工具 8 KiB，一次响应累计 128 KiB。路径、字段与转义都计入字节预算；schema 字段长度提示不能替代 Agent 实时和 checkpoint 的整 JSON 校验。文件/预览等独立限制不变。
 
 ## 内容和版本
 

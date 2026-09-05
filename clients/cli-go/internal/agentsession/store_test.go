@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/keybackend"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 )
@@ -116,7 +117,7 @@ func TestCreateRejectsUnsafeMetadataText(t *testing.T) {
 
 func TestDefaultLimitsMatchSessionDesign(t *testing.T) {
 	limits := DefaultLimits()
-	if limits.Sessions != 256 || limits.ProfileCiphertextBytes != 1<<30 || limits.SessionPlaintextBytes != 48<<20 || limits.SessionCiphertextBytes != 64<<20 || limits.DirtyMarkerBytes != 16<<10 || limits.TranscriptEntries != 2048 || limits.TranscriptBytes != 4<<20 || limits.TranscriptEntryBytes != 64<<10 || limits.TranscriptEventBytes != 16<<10 ||
+	if limits.Sessions != 256 || limits.ProfileCiphertextBytes != 1<<30 || limits.SessionPlaintextBytes != 48<<20 || limits.SessionCiphertextBytes != 64<<20 || limits.DirtyMarkerBytes != 16<<10 || limits.TranscriptEntries != 2048 || limits.TranscriptBytes != 16<<20 || limits.TranscriptEntryBytes != 64<<10 || limits.TranscriptEventBytes != 16<<10 ||
 		limits.PickerQueryRunes != 128 || limits.PickerResults != 256 || limits.SearchSummaryRunes != 160 || limits.SearchSummaryBytes != 512 ||
 		limits.ManualTitleBytes != 256 || limits.ManualTitleRunes != 80 || limits.ManualTitleColumns != 60 || limits.AutoTitleInputBytes != 6000 || limits.AutoTitlePartBytes != 1600 || limits.AutoTitleResponseBytes != 256 || limits.AutoTitleMaxTokens != 96 || limits.AutoTitleTurnInterval != 3 || limits.AutoTitleMinInterval != 10*time.Minute || limits.AutoTitleRequestTimeout != 15*time.Second || limits.AutoTitleSaveTimeout != 5*time.Second || limits.NoticeCount != 32 || limits.ReceiptCount != 32 {
 		t.Fatalf("limits=%+v", limits)
@@ -602,14 +603,14 @@ func TestDirtyMarkerAndFileReceiptsUseStrictBoundedRecoverySchema(t *testing.T) 
 	}
 	invalid := marker
 	invalid.File = &FileWriteAhead{
-		ToolCallID: "write-call", Operation: "write_replace", Path: "notes.md", Kind: "file",
+		ToolCallID: "write-call", Effect: fileeffects.New("write_replace", "", "notes.md", "file"),
 		InvalidateObserved: true, StableCode: FilePublicationUnknownCode, PublicationOutcome: NoticeOutcomeUnknown,
 	}
 	if _, err := handle.UpdateDirty(t.Context(), invalid); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("file marker without side-effect bit error=%v", err)
 	}
 	invalid.MayHaveSideEffect = true
-	invalid.File.Path = filepath.Join(root, "notes.md")
+	invalid.File.Effect.Target.Path = filepath.Join(root, "notes.md")
 	if _, err := handle.UpdateDirty(t.Context(), invalid); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("absolute path accepted: %v", err)
 	}
@@ -617,7 +618,7 @@ func TestDirtyMarkerAndFileReceiptsUseStrictBoundedRecoverySchema(t *testing.T) 
 	candidate := marker
 	candidate.MayHaveSideEffect = true
 	candidate.File = &FileWriteAhead{
-		ToolCallID: "write-call", Operation: "write_replace", Path: "notes.md", Kind: "file",
+		ToolCallID: "write-call", Effect: fileeffects.New("write_replace", "", "notes.md", "file"),
 		InvalidateObserved: true, StableCode: FilePublicationUnknownCode, PublicationOutcome: NoticeOutcomeUnknown,
 	}
 	updated, err := handle.UpdateDirty(t.Context(), candidate)
@@ -658,8 +659,8 @@ func TestDirtyMarkerAndFileReceiptsUseStrictBoundedRecoverySchema(t *testing.T) 
 	}
 	recordCandidate := loaded.Record
 	recordCandidate.FileReceipts = []FileReceipt{
-		{ToolCallID: "write-call", Operation: "write_replace", Path: "notes.md", Kind: "file", InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown},
-		{ToolCallID: "write-completed", Operation: "write_replace", Path: "done.md", Kind: "file", ContentHash: "sha256:" + strings.Repeat("d", 64), StableCode: FilePublicationCompletedCode, Outcome: NoticeOutcomeCompleted},
+		upcastFileReceipt(fileReceiptV3{ToolCallID: "write-call", Operation: "write_replace", Path: "notes.md", Kind: "file", InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown}),
+		upcastFileReceipt(fileReceiptV3{ToolCallID: "write-completed", Operation: "write_replace", Path: "done.md", Kind: "file", ContentHash: "sha256:" + strings.Repeat("d", 64), StableCode: FilePublicationCompletedCode, Outcome: NoticeOutcomeCompleted}),
 	}
 	recordCandidate.LastConsumedDirtyID = updated.DirtyID
 	saved, err := reopened.Save(t.Context(), record.RecordRevision, recordCandidate)
@@ -1560,7 +1561,7 @@ func TestRecordPayloadMigrationRejectsMalformedAndBoundsVersions(t *testing.T) {
 		t.Fatalf("missing required v1 field error=%v", err)
 	}
 
-	if recordMigrationMaxSteps != 2 {
+	if recordMigrationMaxSteps != 5 {
 		t.Fatalf("migration bound=%d", recordMigrationMaxSteps)
 	}
 	if recordPayloadSchemaVersion-recordMigrationMaxSteps != 1 {
@@ -1606,6 +1607,8 @@ func withRecordSchema(record SessionRecord, schema int) SessionRecord {
 // relying on a struct conversion that would couple it to new receipt fields.
 func legacyRecordPayloadV1ForTest(t *testing.T, record SessionRecord) recordPayloadV1 {
 	t.Helper()
+	receipts := record.FileReceipts
+	record.FileReceipts = nil
 	plain, err := encodeStrict(record)
 	if err != nil {
 		t.Fatal(err)
@@ -1613,6 +1616,9 @@ func legacyRecordPayloadV1ForTest(t *testing.T, record SessionRecord) recordPayl
 	var payload recordPayloadV1
 	if err := decodeStrict(plain, &payload, int64(len(plain))); err != nil {
 		t.Fatal(err)
+	}
+	for _, r := range receipts {
+		payload.FileReceipts = append(payload.FileReceipts, fileReceiptV1{ToolCallID: r.ToolCallID, Operation: r.Effect.Operation, Path: r.Effect.ReferencePath(), Kind: r.Effect.Target.Kind, ContentHash: r.Effect.Target.Version, InvalidateObserved: r.InvalidateObserved, StableCode: r.StableCode, Outcome: r.Outcome})
 	}
 	return payload
 }
@@ -1629,6 +1635,19 @@ func writeRecordPayloadForTest(t *testing.T, store *Store, dataKey []byte, recor
 		} else {
 			payload = recordPayloadV2(legacy)
 		}
+	case 3:
+		legacy := legacyRecordPayloadV1ForTest(t, record)
+		legacy.SchemaVersion = 3
+		legacy.FileReceipts = nil
+		v3 := recordPayloadV3{recordPayloadV1: legacy}
+		for _, r := range record.FileReceipts {
+			v := fileReceiptV3{ToolCallID: r.ToolCallID, Operation: r.Effect.Operation, Path: r.Effect.ReferencePath(), Kind: r.Effect.Target.Kind, ContentHash: r.Effect.Target.Version, InvalidateObserved: r.InvalidateObserved, StableCode: r.StableCode, Outcome: r.Outcome}
+			if r.Effect.Operation == "archive" {
+				v.ArchivePath = r.Effect.Target.Path
+			}
+			v3.FileReceipts = append(v3.FileReceipts, v)
+		}
+		payload = v3
 	default:
 		current := cloneRecord(record)
 		current.SchemaVersion = version

@@ -641,7 +641,7 @@ func TestStreamEnforcesLineEventTextArgumentAndToolBounds(t *testing.T) {
 		}
 	})
 	t.Run("response", func(t *testing.T) {
-		reader := &sseReader{reader: bufio.NewReader(strings.NewReader("x\n")), total: maxResponseBytes}
+		reader := &sseReader{reader: bufio.NewReader(strings.NewReader("x\n")), total: maxStreamResponseBytes}
 		_, err := reader.next()
 		if StableErrorCode(err) != ErrorCodeStreamResponseTooLarge {
 			t.Fatalf("error=%v", err)

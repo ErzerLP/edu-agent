@@ -250,19 +250,50 @@ func validatePreferenceOperationIDs(createID, admitID, rejectID string) error {
 }
 
 func validateFileReceipt(value FileReceipt) error {
+	if value.Effect.Validate() != nil || strings.TrimSpace(value.ToolCallID) == "" || !safeText(value.ToolCallID, 256) {
+		return ErrInvalid
+	}
+	if value.Effect.Operation == "copy" && value.Outcome == NoticeOutcomeCompleted && !validSHA256Tag(value.Effect.Target.Version) {
+		return ErrInvalid
+	}
+	if value.Effect.Operation == "mkdir" {
+		if !value.InvalidateObserved || value.Outcome == NoticeOutcomeCompleted && value.Effect.Directories.Created != value.Effect.Directories.Count {
+			return ErrInvalid
+		}
+		switch value.Outcome {
+		case NoticeOutcomeCompleted:
+			if value.StableCode != FilePublicationCompletedCode {
+				return ErrInvalid
+			}
+		case NoticeOutcomeUnknown:
+			if value.StableCode != FilePublicationUnknownCode {
+				return ErrInvalid
+			}
+		default:
+			return ErrInvalid
+		}
+		return nil
+	}
+	return validateFileOutcome(value.Effect.Operation, value.Effect.Target.Version, value.InvalidateObserved, value.StableCode, value.Outcome)
+}
+
+func validateLegacyFileReceipt(value fileReceiptV3) error {
+	if value.Operation == "copy" || value.Operation == "move" {
+		return ErrInvalid
+	}
 	if err := validateFileReference(value.ToolCallID, value.Operation, value.Path, value.ArchivePath, value.Kind, value.ContentHash); err != nil {
 		return err
 	}
-	return validateFileOutcome(value.Operation, value.ContentHash, value.InvalidateObserved, value.StableCode, value.publicationOutcome())
+	return validateFileOutcome(value.Operation, value.ContentHash, value.InvalidateObserved, value.StableCode, value.Outcome)
 }
 
 func validateFileOutcome(operation, contentHash string, invalidateObserved bool, stableCode, outcome string) error {
-	if !validStableToken(stableCode, 128) || operation == "archive" && !invalidateObserved {
+	if !validStableToken(stableCode, 128) || (operation == "archive" || operation == "move") && !invalidateObserved {
 		return ErrInvalid
 	}
 	switch outcome {
 	case NoticeOutcomeCompleted:
-		if stableCode != FilePublicationCompletedCode || operation != "archive" && invalidateObserved {
+		if stableCode != FilePublicationCompletedCode || operation != "archive" && operation != "move" && invalidateObserved {
 			return ErrInvalid
 		}
 	case NoticeOutcomeUnknown:
@@ -276,6 +307,16 @@ func validateFileOutcome(operation, contentHash string, invalidateObserved bool,
 }
 
 func validateFileWriteAhead(value FileWriteAhead) error {
+	if value.Effect.Operation != "archive" && value.PublicationOutcome != NoticeOutcomeUnknown {
+		return ErrInvalid
+	}
+	return validateFileReceipt(FileReceipt{ToolCallID: value.ToolCallID, Effect: value.Effect, InvalidateObserved: value.InvalidateObserved, StableCode: value.StableCode, Outcome: value.PublicationOutcome})
+}
+
+func validateLegacyFileWriteAhead(value fileWriteAheadV2) error {
+	if value.Operation == "copy" || value.Operation == "move" {
+		return ErrInvalid
+	}
 	if err := validateFileReference(value.ToolCallID, value.Operation, value.Path, value.ArchivePath, value.Kind, value.ContentHash); err != nil {
 		return err
 	}
@@ -386,8 +427,8 @@ func validateDirtyMarker(marker DirtyMarker) error {
 		return ErrInvalid
 	}
 	if marker.BaseRevision == 0 || marker.TurnSequence == 0 || !validStableToken(marker.OperationClass, 128) ||
-		marker.StartedAt.IsZero() || !timeIsCanonical(marker.StartedAt) || marker.Preference != nil && marker.File != nil ||
-		marker.MayHaveSideEffect != (marker.Preference != nil || marker.File != nil) {
+		marker.StartedAt.IsZero() || !timeIsCanonical(marker.StartedAt) ||
+		marker.MayHaveSideEffect != (marker.Preference != nil || marker.File != nil || len(marker.FileJournal) != 0) {
 		return ErrInvalid
 	}
 	if marker.Preference != nil && validatePreferenceWriteAhead(*marker.Preference) != nil {
@@ -396,7 +437,7 @@ func validateDirtyMarker(marker DirtyMarker) error {
 	if marker.File != nil && validateFileWriteAhead(*marker.File) != nil {
 		return ErrInvalid
 	}
-	return nil
+	return validateFileJournal(marker, DefaultLimits().ReceiptCount)
 }
 
 // validateRecordReceiptIdentities keeps the stable identity namespaces
@@ -638,13 +679,57 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 		if err := decodeStrict(data, &payload, limit); err != nil {
 			return record, version, err
 		}
+		if err := validateLegacyV1Receipts(payload.FileReceipts); err != nil {
+			return record, version, err
+		}
 		record = recordFromPayloadV2(recordPayloadV2(payload))
 	case 2:
 		var payload recordPayloadV2
 		if err := decodeStrict(data, &payload, limit); err != nil {
 			return record, version, err
 		}
+		if err := validateLegacyV1Receipts(payload.FileReceipts); err != nil {
+			return record, version, err
+		}
 		record = recordFromPayloadV2(payload)
+	case 3:
+		var payload recordPayloadV3
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
+		}
+		record = recordFromPayloadV2(recordPayloadV2(payload.recordPayloadV1))
+		for _, receipt := range payload.FileReceipts {
+			if validateLegacyFileReceipt(receipt) != nil {
+				return record, version, ErrCorrupt
+			}
+			record.FileReceipts = append(record.FileReceipts, upcastFileReceipt(receipt))
+		}
+	case 4:
+		var payload recordPayloadV4
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
+		}
+		record = recordFromPayloadV2(recordPayloadV2(payload.recordPayloadV1))
+		for _, receipt := range payload.FileReceipts {
+			converted, err := upcastReceiptV4(receipt)
+			if err != nil {
+				return record, version, err
+			}
+			record.FileReceipts = append(record.FileReceipts, converted)
+		}
+	case 5:
+		var payload recordPayloadV5
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
+		}
+		record = recordFromPayloadV2(recordPayloadV2(payload.recordPayloadV1))
+		for _, receipt := range payload.FileReceipts {
+			converted, err := upcastReceiptV5(receipt)
+			if err != nil {
+				return record, version, err
+			}
+			record.FileReceipts = append(record.FileReceipts, converted)
+		}
 	case recordPayloadSchemaVersion:
 		if err := decodeStrict(data, &record, limit); err != nil {
 			return record, version, err
@@ -666,6 +751,12 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			// Legacy receipts have no archive destination; preserve every old
 			// field without inventing a source hash or an archive outcome.
 			record.SchemaVersion = 3
+		case 3:
+			record.SchemaVersion = 4
+		case 4:
+			record.SchemaVersion = 5
+		case 5:
+			record.SchemaVersion = 6
 		default:
 			return SessionRecord{}, version, ErrVersionUnsupported
 		}
@@ -694,11 +785,12 @@ func recordFromPayloadV2(value recordPayloadV2) SessionRecord {
 	if value.FileReceipts != nil {
 		record.FileReceipts = make([]FileReceipt, len(value.FileReceipts))
 		for index, receipt := range value.FileReceipts {
-			record.FileReceipts[index] = FileReceipt{
+			legacy := fileReceiptV3{
 				ToolCallID: receipt.ToolCallID, Operation: receipt.Operation, Path: receipt.Path, Kind: receipt.Kind,
 				ContentHash: receipt.ContentHash, InvalidateObserved: receipt.InvalidateObserved,
 				StableCode: receipt.StableCode, Outcome: receipt.Outcome,
 			}
+			record.FileReceipts[index] = upcastFileReceipt(legacy)
 		}
 	}
 	return record
@@ -732,11 +824,80 @@ func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
 		}
 		if payload.File != nil {
 			value := payload.File
-			marker.File = &FileWriteAhead{
+			legacy := fileWriteAheadV2{
 				ToolCallID: value.ToolCallID, Operation: value.Operation, Path: value.Path, Kind: value.Kind,
 				ContentHash: value.ContentHash, InvalidateObserved: value.InvalidateObserved,
 				StableCode: value.StableCode, PublicationOutcome: value.PublicationOutcome,
 			}
+			if validateLegacyFileWriteAhead(legacy) != nil {
+				return marker, ErrCorrupt
+			}
+			converted := upcastFileWriteAhead(legacy)
+			marker.File = &converted
+		}
+	case 2:
+		var payload dirtyPayloadV2
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		if payload.SchemaVersion != version {
+			return marker, ErrCorrupt
+		}
+		marker = DirtyMarker{SchemaVersion: dirtySchemaVersion, DirtyID: payload.DirtyID, SessionID: payload.SessionID, StorageID: payload.StorageID, BaseRevision: payload.BaseRevision, TurnSequence: payload.TurnSequence, OperationClass: payload.OperationClass, MayHaveSideEffect: payload.MayHaveSideEffect, StartedAt: payload.StartedAt, Preference: payload.Preference}
+		if payload.File != nil {
+			if validateLegacyFileWriteAhead(*payload.File) != nil {
+				return marker, ErrCorrupt
+			}
+			converted := upcastFileWriteAhead(*payload.File)
+			marker.File = &converted
+		}
+	case 3:
+		var payload dirtyPayloadV3
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		if payload.SchemaVersion != version {
+			return marker, ErrCorrupt
+		}
+		marker = DirtyMarker{SchemaVersion: dirtySchemaVersion, DirtyID: payload.DirtyID, SessionID: payload.SessionID, StorageID: payload.StorageID, BaseRevision: payload.BaseRevision, TurnSequence: payload.TurnSequence, OperationClass: payload.OperationClass, MayHaveSideEffect: payload.MayHaveSideEffect, StartedAt: payload.StartedAt, Preference: payload.Preference}
+		if payload.File != nil {
+			converted, err := upcastWriteAheadV3(*payload.File)
+			if err != nil {
+				return marker, err
+			}
+			marker.File = &converted
+		}
+	case 4:
+		var payload dirtyPayloadV4
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		if payload.SchemaVersion != version {
+			return marker, ErrCorrupt
+		}
+		marker = DirtyMarker{SchemaVersion: dirtySchemaVersion, DirtyID: payload.DirtyID, SessionID: payload.SessionID, StorageID: payload.StorageID, BaseRevision: payload.BaseRevision, TurnSequence: payload.TurnSequence, OperationClass: payload.OperationClass, MayHaveSideEffect: payload.MayHaveSideEffect, StartedAt: payload.StartedAt, Preference: payload.Preference}
+		if payload.File != nil {
+			converted, err := upcastWriteAheadV4(*payload.File)
+			if err != nil {
+				return marker, err
+			}
+			marker.File = &converted
+		}
+	case 5:
+		var payload dirtyPayloadV5
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		if payload.SchemaVersion != version {
+			return marker, ErrCorrupt
+		}
+		marker = DirtyMarker{SchemaVersion: dirtySchemaVersion, DirtyID: payload.DirtyID, SessionID: payload.SessionID, StorageID: payload.StorageID, BaseRevision: payload.BaseRevision, TurnSequence: payload.TurnSequence, OperationClass: payload.OperationClass, MayHaveSideEffect: payload.MayHaveSideEffect, StartedAt: payload.StartedAt, Preference: payload.Preference}
+		if payload.File != nil {
+			converted, err := upcastWriteAheadV5(*payload.File)
+			if err != nil {
+				return marker, err
+			}
+			marker.File = &converted
 		}
 	case dirtySchemaVersion:
 		if err := decodeStrict(data, &marker, limit); err != nil {
@@ -747,6 +908,9 @@ func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
 		}
 	default:
 		return marker, ErrCorrupt
+	}
+	if version < dirtySchemaVersion && marker.Preference != nil && marker.File != nil {
+		return DirtyMarker{}, ErrCorrupt // The old single-slot contract was exclusive.
 	}
 	return marker, nil
 }
@@ -930,6 +1094,12 @@ func normalizedLimits(value Limits) Limits {
 	}
 	if value.TranscriptBytes <= 0 {
 		value.TranscriptBytes = defaults.TranscriptBytes
+	}
+	if value.TranscriptAssistantBytes <= 0 {
+		value.TranscriptAssistantBytes = defaults.TranscriptAssistantBytes
+	}
+	if value.TranscriptAssistantJSONBytes <= 0 {
+		value.TranscriptAssistantJSONBytes = defaults.TranscriptAssistantJSONBytes
 	}
 	if value.TranscriptEntryBytes <= 0 {
 		value.TranscriptEntryBytes = defaults.TranscriptEntryBytes

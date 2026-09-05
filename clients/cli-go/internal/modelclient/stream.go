@@ -12,16 +12,19 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 )
 
 const (
 	maxSSELineBytes            = 512 << 10
 	maxSSEEventBytes           = 512 << 10
-	maxSSELines                = 8192
-	maxSSEEvents               = 4096
+	maxSSELines                = 4 * maxSSEEvents
+	maxSSEEvents               = agentlimits.MaxAssistantTextBytes + 4096
+	maxStreamResponseBytes     = int64(256 << 20)
 	maxStreamTextDeltaBytes    = 64 << 10
 	maxStreamHiddenReasoning   = 64 << 10
-	maxStreamTextBytes         = 1 << 20
+	maxStreamTextBytes         = agentlimits.MaxAssistantTextBytes
 	maxStreamToolIDBytes       = 512
 	maxStreamToolNameBytes     = 256
 	maxStreamArgumentDelta     = 128 << 10
@@ -78,6 +81,7 @@ type streamAssembler struct {
 	finishSeen   bool
 	usage        *Usage
 	sawIncrement bool
+	emptyDeltas  int
 }
 
 type sseEvent struct {
@@ -207,7 +211,7 @@ func (c *Client) streamAttempt(
 		return Response{}, streamCompatibilityNone, contextErr
 	}
 
-	reader := &sseReader{reader: bufio.NewReaderSize(io.LimitReader(responseBody, maxResponseBytes+1), 32<<10)}
+	reader := &sseReader{reader: bufio.NewReaderSize(io.LimitReader(responseBody, maxStreamResponseBytes+1), 32<<10)}
 	assembler := streamAssembler{tools: make(map[int]*assembledToolCall)}
 	for {
 		if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
@@ -362,7 +366,7 @@ func (r *sseReader) readLine() ([]byte, error) {
 	for {
 		fragment, err := r.reader.ReadSlice('\n')
 		r.total += int64(len(fragment))
-		if r.total > maxResponseBytes {
+		if r.total > maxStreamResponseBytes {
 			return nil, clientError(ErrorCodeStreamResponseTooLarge, "模型流式响应超过大小限制")
 		}
 		if len(line)+len(fragment) > maxSSELineBytes {
@@ -433,8 +437,9 @@ func (a *streamAssembler) apply(data []byte) (string, error) {
 		a.roleSeen = true
 		a.sawIncrement = true
 	}
-	if hidden, err := validateHiddenReasoning(choice.Delta); err != nil {
-		return "", err
+	hidden, hiddenErr := validateHiddenReasoning(choice.Delta)
+	if hiddenErr != nil {
+		return "", hiddenErr
 	} else if hidden {
 		a.sawIncrement = true
 	}
@@ -452,6 +457,14 @@ func (a *streamAssembler) apply(data []byte) (string, error) {
 			return "", err
 		}
 		a.sawIncrement = true
+	}
+	if text == "" && len(choice.Delta.ToolCalls) == 0 && choice.Delta.Role == "" && !hidden && choice.FinishReason == nil {
+		a.emptyDeltas++
+		if a.emptyDeltas > 4096 {
+			return "", clientError(ErrorCodeStreamProtocol, "模型流式空增量数量超过限制")
+		}
+	} else {
+		a.emptyDeltas = 0
 	}
 	if choice.FinishReason != nil {
 		reason := strings.TrimSpace(*choice.FinishReason)

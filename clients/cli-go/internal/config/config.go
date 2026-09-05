@@ -24,7 +24,8 @@ const (
 	DefaultColor     = "never"
 
 	DefaultAgentProvider          = "openai"
-	DefaultAgentContextWindow     = 32768
+	DefaultAgentContextWindow     = agentlimits.DefaultContextWindow
+	DefaultAgentMaxTokens         = agentlimits.MaxOutputTokens
 	DefaultAgentTimeout           = 60 * time.Second
 	DefaultAgentMaxToolRounds     = agentlimits.UnlimitedToolRounds
 	MinAgentMaxToolRounds         = agentlimits.UnlimitedToolRounds
@@ -54,6 +55,7 @@ type AgentConfig struct {
 	BaseURL           string `json:"base_url"`
 	Model             string `json:"model"`
 	ContextWindow     int    `json:"context_window"`
+	MaxTokens         int    `json:"max_tokens"`
 	Timeout           string `json:"timeout"`
 	MaxToolRounds     int    `json:"max_tool_rounds"`
 	ContextCompaction string `json:"context_compaction,omitempty"`
@@ -107,6 +109,19 @@ func (s Store) Load() (Config, error) {
 	var value Config
 	if err := decodeStrict(data, &value); err != nil {
 		return Config{}, fmt.Errorf("decode configuration: %w", err)
+	}
+	// Distinguish legacy omission from an explicit zero/null. Internal Go
+	// zero-value configs retain their existing normalization behavior.
+	var explicit struct {
+		Agent *struct {
+			MaxTokens json.RawMessage `json:"max_tokens"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(data, &explicit); err != nil {
+		return Config{}, fmt.Errorf("decode configuration presence: %w", err)
+	}
+	if explicit.Agent != nil && len(explicit.Agent.MaxTokens) != 0 && (value.Agent == nil || !agentlimits.ValidMaxTokens(value.Agent.MaxTokens)) {
+		return Config{}, errors.New("agent configuration: explicit max tokens must be between 1 and 128000")
 	}
 	if err := value.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate configuration: %w", err)
@@ -236,7 +251,7 @@ func (c Config) WithoutPairing() Config {
 func DefaultAgentConfig(provider string) AgentConfig {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	value := AgentConfig{
-		Provider: provider, ContextWindow: DefaultAgentContextWindow,
+		Provider: provider, ContextWindow: DefaultAgentContextWindow, MaxTokens: DefaultAgentMaxTokens,
 		Timeout: DefaultAgentTimeout.String(), MaxToolRounds: DefaultAgentMaxToolRounds,
 		ContextCompaction: DefaultAgentContextCompaction, ReasoningEffort: DefaultAgentReasoningEffort,
 		SessionHistory: DefaultAgentSessionHistory,
@@ -274,6 +289,12 @@ func (c *AgentConfig) Validate() error {
 	c.Model = strings.TrimSpace(c.Model)
 	if c.Model == "" || len(c.Model) > 256 || strings.IndexFunc(c.Model, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return errors.New("model name is invalid")
+	}
+	if c.MaxTokens == 0 {
+		c.MaxTokens = DefaultAgentMaxTokens
+	}
+	if !agentlimits.ValidMaxTokens(c.MaxTokens) {
+		return errors.New("max tokens must be between 1 and 128000")
 	}
 	if c.ContextWindow < 4096 || c.ContextWindow > 1_000_000 {
 		return errors.New("context window must be between 4096 and 1000000")

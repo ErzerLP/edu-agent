@@ -1,6 +1,6 @@
 # Agent 会话上下文压缩优化设计
 
-> 状态：已实现并通过本地候选门禁；用户可见合同已同步到 `docs/design/operator-interfaces.md` 与 `docs/comet/specs/learning-agent/spec.md`。
+> 状态：以下为原始上下文压缩设计及其历史验收。后续 Session 持久化由 [client-session-resume](../comet/specs/client-session-resume/spec.md) 覆盖；272k/128k 预算、长回答与最近轮次投影由已批准的 [client-agent-large-context](../comet/specs/client-agent-large-context/spec.md) 覆盖，当前交付进度见 [分批计划](client-agent-expansion-delivery.md)。本文旧的只在内存、8192 输出上限及最近两轮硬保留不能覆盖后续正式合同。
 >
 > 参考：[`pi-observational-memory` V3.0.4](https://github.com/elpapi42/pi-observational-memory/tree/ce9fc982b3a219a7839f07c9f4a3e054e81a2b21)，基准提交 `ce9fc982b3a219a7839f07c9f4a3e054e81a2b21`。
 

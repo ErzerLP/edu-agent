@@ -12,9 +12,11 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 )
 
-const maxResponseBytes = int64(4 << 20)
+const maxResponseBytes = int64(6*agentlimits.MaxAssistantTextBytes + (1 << 20))
 
 type Client struct {
 	baseURL string
@@ -148,6 +150,9 @@ func (c *Client) Complete(ctx context.Context, request Request) (Response, error
 		return Response{}, err
 	}
 	message := envelope.Choices[0].Message
+	if len(message.Content) > agentlimits.MaxAssistantTextBytes {
+		return Response{}, clientError(ErrorCodeResponseProtocol, "模型回答超过客户端安全上限")
+	}
 	if message.Role == "" {
 		message.Role = "assistant"
 	}

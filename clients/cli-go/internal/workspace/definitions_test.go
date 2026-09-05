@@ -9,14 +9,24 @@ import (
 
 func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 	expectedSchemas := map[string]string{
+		ToolMove:    `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`,
+		ToolCopy:    `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`,
+		ToolMkdir:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"parents":{"type":"boolean","default":false}},"required":["path"],"additionalProperties":false}`,
+		ToolFind:    `{"type":"object","properties":{"path":{"type":"string"},"pattern":{"type":"string","minLength":1,"maxLength":256},"type":{"type":"string","enum":["file","directory","any"]},"limit":{"type":"integer","minimum":1,"maximum":200},"respect_gitignore":{"type":"boolean","default":false}},"required":["pattern"],"additionalProperties":false}`,
+		ToolStat:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"hash":{"type":"boolean"}},"required":["path"],"additionalProperties":false}`,
 		ToolArchive: `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096}},"required":["path"],"additionalProperties":false}`,
 		ToolList:    `{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"maximum":2000}},"additionalProperties":false}`,
 		ToolRead:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"offset":{"type":"integer","minimum":1,"maximum":1000000},"limit":{"type":"integer","minimum":1,"maximum":200},"byte_offset":{"type":"integer","minimum":0,"maximum":1048576},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path"],"additionalProperties":false}`,
-		ToolSearch:  `{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":1000},"path":{"type":"string"},"mode":{"type":"string","enum":["literal","regex"]},"case":{"type":"string","enum":["smart","sensitive","insensitive"]},"include":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}},"exclude":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}},"required":["query"],"additionalProperties":false}`,
-		ToolWrite:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"mode":{"type":"string","enum":["create","replace"]},"content":{"type":"string","maxLength":8192},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path","mode","content"],"additionalProperties":false}`,
-		ToolEdit:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":8192},"new_text":{"type":"string","maxLength":8192}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`,
+		ToolSearch:  `{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":1000},"path":{"type":"string"},"mode":{"type":"string","enum":["literal","regex"]},"case":{"type":"string","enum":["smart","sensitive","insensitive"]},"glob":{"type":"string","minLength":1,"maxLength":256},"respect_gitignore":{"type":"boolean","default":false},"output":{"type":"string","enum":["content","files","count"],"default":"content"},"context":{"type":"integer","minimum":0,"maximum":3,"default":0},"include":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}},"exclude":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}},"required":["query"],"additionalProperties":false,"anyOf":[{"properties":{"output":{"const":"content"}}},{"properties":{"context":{"const":0}}}]}`,
+		ToolWrite:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"mode":{"type":"string","enum":["create","replace"]},"content":{"type":"string","maxLength":65536},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path","mode","content"],"additionalProperties":false}`,
+		ToolEdit:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":65536},"new_text":{"type":"string","maxLength":65536}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`,
 	}
 	expectedDescriptions := map[string]string{
+		ToolMove:    "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.",
+		ToolCopy:    "Stream-copy a stat-versioned regular file up to 32MiB, including binary; keep source; absent destination, existing parent; no archive or links.",
+		ToolMkdir:   "Create a workspace directory; parents requires explicit true; no archive or links.",
+		ToolFind:    "Find workspace paths (*, ?, **); no content or links.",
+		ToolStat:    "Inspect metadata; hash=true reads at most 1MiB, no links.",
 		ToolArchive: "Archive a file or directory; never permanently delete.",
 		ToolList:    "List one workspace directory; no links.",
 		ToolRead:    "Read bounded workspace UTF-8 text; no links.",
@@ -66,6 +76,11 @@ func TestWorkspaceAllToolParsersRejectUnknownTrailingAndNonObjectJSON(t *testing
 	defer workspace.Close()
 
 	valid := map[string]string{
+		ToolMove:    `{"source":"missing","destination":"moved","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		ToolCopy:    `{"source":"missing","destination":"copy","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		ToolMkdir:   `{"path":"new-dir"}`,
+		ToolFind:    `{"pattern":"*.go"}`,
+		ToolStat:    `{"path":"missing.txt"}`,
 		ToolArchive: `{"path":"missing.txt"}`,
 		ToolList:    `{}`,
 		ToolRead:    `{"path":"missing.txt"}`,
@@ -74,6 +89,11 @@ func TestWorkspaceAllToolParsersRejectUnknownTrailingAndNonObjectJSON(t *testing
 		ToolEdit:    `{"path":"missing.txt","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}]}`,
 	}
 	withUnknown := map[string]string{
+		ToolMove:    `{"source":"missing","destination":"moved","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","force":true}`,
+		ToolCopy:    `{"source":"missing","destination":"copy","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","force":true}`,
+		ToolMkdir:   `{"path":"new-dir","unknown":true}`,
+		ToolFind:    `{"pattern":"*.go","unknown":true}`,
+		ToolStat:    `{"path":"missing.txt","unknown":true}`,
 		ToolArchive: `{"path":"missing.txt","unknown":true}`,
 		ToolList:    `{"unknown":true}`,
 		ToolRead:    `{"path":"missing.txt","unknown":true}`,
@@ -105,12 +125,17 @@ func TestWorkspaceToolSchemaBoundaryContracts(t *testing.T) {
 		encoded[definition.Function.Name] = string(definition.Function.Parameters)
 	}
 	checks := map[string][]string{
+		ToolMove:    {`"required":["source","destination","expected_version"]`, `"pattern":"^entry-v1:[0-9a-f]{64}$"`, `"additionalProperties":false`},
+		ToolCopy:    {`"required":["source","destination","expected_version"]`, `"pattern":"^entry-v1:[0-9a-f]{64}$"`, `"additionalProperties":false`},
+		ToolMkdir:   {`"parents":{"type":"boolean","default":false}`, `"required":["path"]`, `"additionalProperties":false`},
+		ToolFind:    {`"respect_gitignore":{"type":"boolean","default":false}`, `"required":["pattern"]`, `"maximum":200`, `"additionalProperties":false`},
+		ToolStat:    {`"hash":{"type":"boolean"}`, `"required":["path"]`, `"additionalProperties":false`},
 		ToolArchive: {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"required":["path"]`, `"additionalProperties":false`},
 		ToolList:    {`"offset":{"type":"integer","minimum":0,"maximum":2000}`},
 		ToolRead:    {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"offset":{"type":"integer","minimum":1,"maximum":1000000}`, `"limit":{"type":"integer","minimum":1,"maximum":200}`, `"byte_offset":{"type":"integer","minimum":0,"maximum":1048576}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
-		ToolSearch:  {`"query":{"type":"string","minLength":1,"maxLength":1000}`, `"mode":{"type":"string","enum":["literal","regex"]}`, `"case":{"type":"string","enum":["smart","sensitive","insensitive"]}`, `"include":{"type":"array","maxItems":16`, `"exclude":{"type":"array","maxItems":16`, `"maxLength":256`},
-		ToolWrite:   {`"mode":{"type":"string","enum":["create","replace"]}`, `"content":{"type":"string","maxLength":8192}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
-		ToolEdit:    {`"edits":{"type":"array","minItems":1,"maxItems":32`, `"old_text":{"type":"string","minLength":1,"maxLength":8192}`, `"new_text":{"type":"string","maxLength":8192}`, `"additionalProperties":false`},
+		ToolSearch:  {`"respect_gitignore":{"type":"boolean","default":false}`, `"output":{"type":"string","enum":["content","files","count"],"default":"content"}`, `"context":{"type":"integer","minimum":0,"maximum":3,"default":0}`, `"anyOf":[{"properties":{"output":{"const":"content"}}},{"properties":{"context":{"const":0}}}]`, `"query":{"type":"string","minLength":1,"maxLength":1000}`, `"mode":{"type":"string","enum":["literal","regex"]}`, `"case":{"type":"string","enum":["smart","sensitive","insensitive"]}`, `"include":{"type":"array","maxItems":16`, `"exclude":{"type":"array","maxItems":16`, `"maxLength":256`},
+		ToolWrite:   {`"mode":{"type":"string","enum":["create","replace"]}`, `"content":{"type":"string","maxLength":65536}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
+		ToolEdit:    {`"edits":{"type":"array","minItems":1,"maxItems":32`, `"old_text":{"type":"string","minLength":1,"maxLength":65536}`, `"new_text":{"type":"string","maxLength":65536}`, `"additionalProperties":false`},
 	}
 	for tool, fragments := range checks {
 		for _, fragment := range fragments {

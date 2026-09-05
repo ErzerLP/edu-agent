@@ -217,6 +217,8 @@ func openReadWithinRoot(root *Root, components []string) (*os.File, os.FileInfo,
 		flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
 		if index < len(components)-1 {
 			flags |= unix.O_DIRECTORY
+		} else {
+			flags |= unix.O_NONBLOCK // Reject a replaced FIFO at fstat without blocking open.
 		}
 		fd, err := unix.Openat(parentFD, component, flags, 0)
 		if ownedParent {

@@ -4,16 +4,22 @@ import (
 	"context"
 	"sync"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 )
 
 const (
+	ToolStat    = "stat"
+	ToolFind    = "find"
 	ToolList    = "list"
 	ToolRead    = "read"
 	ToolSearch  = "search"
 	ToolWrite   = "write"
 	ToolEdit    = "edit"
+	ToolMove    = "move"
+	ToolCopy    = "copy"
+	ToolMkdir   = "mkdir"
 	ToolArchive = "archive"
 )
 
@@ -64,6 +70,12 @@ func (r *Reference) Identity() string {
 }
 
 func (r *Reference) Supersedes(previous *Reference) bool {
+	if previous.IsOperation() {
+		return false
+	}
+	if metadataReferenceSupersedes(r, previous) {
+		return true
+	}
 	if r != nil && previous != nil && r.InvalidateObserved && r.IsArchive() {
 		return archiveAffectsReference(r.Path, r.Kind == "archive_directory", previous)
 	}
@@ -85,15 +97,16 @@ const (
 )
 
 type MutationPresentation struct {
-	Tool        string
-	Operation   string
-	Path        string
-	PreviewKind string
-	Preview     string
-	Truncated   bool
-	BaseVersion string
-	ArchivePath string
-	EntryKind   string
+	Tool            string
+	Operation       string
+	Path            string
+	PreviewKind     string
+	Preview         string
+	Truncated       bool
+	BaseVersion     string
+	DestinationPath string
+	ArchivePath     string
+	EntryKind       string
 }
 
 type PreparedMutation struct {
@@ -109,12 +122,16 @@ type PreparedMutation struct {
 	firstChangeLine int
 	replacements    int
 	archivePath     string
+	movePlan        *securefile.MovePlan
+	copyPlan        *securefile.CopyPlan
+	mkdirPlan       *securefile.MkdirPlan
 	archiveEntry    *securefile.ArchiveEntry
 	commitMu        sync.Mutex
 	committed       bool
 }
 
 type Result struct {
+	Effect      *fileeffects.Effect
 	Value       any
 	Summary     string
 	Reference   *Reference

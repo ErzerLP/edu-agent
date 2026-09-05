@@ -37,6 +37,10 @@ func (s *durabilitySink) BeforeFilePublication(_ context.Context, receipt FileWr
 	return s.fileErr
 }
 
+func (s *durabilitySink) AfterFilePublication(_ context.Context, _ string, _ workspace.Result) error {
+	return nil
+}
+
 func newDurableTestSession(t *testing.T, model Model, server Server, executor workspace.Executor, sink DurabilitySink) *Session {
 	t.Helper()
 	sequence := 0
@@ -159,7 +163,7 @@ func TestFileWriteAheadFailsClosedBeforePublication(t *testing.T) {
 	if _, err := session.ResolveFileMutation(t.Context(), "write-call", FileMutationApprove); err == nil {
 		t.Fatal("file publication succeeded despite WAL failure")
 	}
-	if len(sink.files) != 1 || sink.files[0].Path != "notes.md" || len(executor.commitCalls) != 0 {
+	if len(sink.files) != 1 || sink.files[0].Effect.Target.Path != "notes.md" || len(executor.commitCalls) != 0 {
 		t.Fatalf("receipts=%+v commits=%v", sink.files, executor.commitCalls)
 	}
 }
@@ -234,7 +238,7 @@ func TestCancelledFileEffectCheckpointRoundTripPreservesReceiptHistoryWithoutPen
 			}
 
 			sink := session.options.Durability.(*durabilitySink)
-			if sink.begins != 1 || len(sink.files) != 1 || sink.files[0].ToolCallID != "write-call" || sink.files[0].Operation != "write_create" || sink.files[0].Path != "notes.md" {
+			if sink.begins != 1 || len(sink.files) != 1 || sink.files[0].ToolCallID != "write-call" || sink.files[0].Effect.Operation != "write_create" || sink.files[0].Effect.Target.Path != "notes.md" {
 				t.Fatalf("durability receipt=%+v begins=%d", sink.files, sink.begins)
 			}
 			checkpoint := exportAndDecodeDurabilityCheckpoint(t, session)

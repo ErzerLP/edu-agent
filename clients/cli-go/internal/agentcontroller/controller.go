@@ -108,6 +108,7 @@ type Controller struct {
 	notices         []string
 	pendingUser     string
 	saveFailed      error
+	fileJournalErr  error // Failed WAL/settlement blocks further effects and dirty consumption.
 	saving          atomic.Bool
 	titleCancel     context.CancelFunc
 	titleJob        uint64
@@ -334,17 +335,14 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 		controller.abort()
 		return nil, checkpointLoadError(err)
 	}
-	if loaded.Interrupted != nil && loaded.Interrupted.File != nil {
-		file := loaded.Interrupted.File
-		kind := file.Kind
-		if file.Operation == workspace.ToolArchive {
-			kind = "archive_" + kind
-		}
-		if err := controller.loop.InvalidateWorkspaceEvidence(agentloop.WorkspaceReference{
-			Path: file.Path, Kind: kind, ContentHash: file.ContentHash, InvalidateObserved: file.InvalidateObserved,
-		}); err != nil {
-			controller.abort()
-			return nil, checkpointLoadError(err)
+	if loaded.Interrupted != nil {
+		for _, entry := range dirtyFileEntries(*loaded.Interrupted) {
+			if receipt, ok := journalReceipt(entry); ok {
+				if err := controller.loop.InvalidateFileEffect(receipt.Effect); err != nil {
+					controller.abort()
+					return nil, checkpointLoadError(err)
+				}
+			}
 		}
 	}
 	if privacyQuarantine {
@@ -357,7 +355,10 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 	}
 	if loaded.Interrupted != nil {
 		controller.dirty = loaded.Interrupted
-		controller.recordRecoveryUnknownLocked(*loaded.Interrupted)
+		if err := controller.recordRecoveryUnknownLocked(*loaded.Interrupted); err != nil {
+			controller.abort()
+			return nil, err
+		}
 		controller.appendNoticeLocked("session_interrupted", agentsession.NoticeOutcomeInterrupted, "上次运行在稳定检查点之后中断；未重放任何模型或工具操作。")
 		if !options.PrepareOnly {
 			if err := controller.saveCheckpointLocked(ctx, true); err != nil {
@@ -367,8 +368,10 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 			privacyNeedsSave = false
 		}
 		controller.appendStatusNoticeLocked("[session_interrupted] 已从最后一个稳定检查点恢复；上次未完成操作没有重放")
-		if file := loaded.Interrupted.File; file != nil && file.Operation == workspace.ToolArchive {
-			controller.appendStatusNoticeLocked("[session_archive_outcome_unknown] 请检查源 " + file.Path + " 与归档目标 " + file.ArchivePath + "；归档不会自动重试或清理。")
+		for _, entry := range dirtyFileEntries(*loaded.Interrupted) {
+			if receipt, ok := journalReceipt(entry); ok {
+				controller.appendStatusNoticeLocked(fileJournalRecoveryLabel(receipt))
+			}
 		}
 	}
 	if privacyNeedsSave && !options.PrepareOnly {
@@ -449,6 +452,9 @@ func (c *Controller) appendDurableContextLocked(event agentloop.ContextEvent) {
 	case agentloop.ContextEventDegraded:
 		typeName = agentsession.ContextEventDegraded
 		message = "上下文整理已降级；较早展示可能已收起。"
+		if event.Code == "context_history_projected" {
+			message = "[context_history_projected] 较早助手正文已使用带来源的有界节选；用户陈述和工具事实保持完整。"
+		}
 	case agentloop.ContextEventSourceUnavailable:
 		typeName = agentsession.ContextEventSourceUnavailable
 		message = "历史证据来源不可用。"
@@ -458,7 +464,7 @@ func (c *Controller) appendDurableContextLocked(event agentloop.ContextEvent) {
 		turn = 1
 	}
 	c.transcript.Entries = append(c.transcript.Entries, agentsession.TranscriptEntryV1{
-		Sequence: c.nextSequenceLocked(), PresentationTurn: turn, Kind: agentsession.TranscriptKindContext, CreatedAt: c.now().UTC(), PresentationOnly: true,
+		Sequence: c.nextSequenceLocked(), PresentationTurn: turn, Kind: agentsession.TranscriptKindContext, CreatedAt: c.now().UTC(),
 		Context: &agentsession.StableContextEventV1{Type: typeName, Message: message},
 	})
 }
@@ -640,9 +646,11 @@ func (c *Controller) BeforePreferenceWrite(ctx context.Context, receipt agentloo
 	if err := c.ensureDirtyLocked(); err != nil {
 		return err
 	}
+	if c.fileCallExistsLocked(receipt.ToolCallID) {
+		return c.failFileJournalLocked(agentsession.ErrCheckpointConflict)
+	}
 	candidate := *c.dirty
 	candidate.MayHaveSideEffect = true
-	candidate.File = nil
 	candidate.Preference = &agentsession.PreferenceWriteAhead{
 		ToolCallID: receipt.ToolCallID, CreateOperationID: receipt.CreateOperationID, AdmitOperationID: receipt.AdmitOperationID,
 		RejectOperationID: receipt.RejectOperationID,
@@ -655,6 +663,9 @@ func (c *Controller) BeforePreferenceWrite(ctx context.Context, receipt agentloo
 	}
 	updated, err := c.handle.UpdateDirty(ctx, candidate)
 	if err != nil {
+		if len(dirtyFileEntries(*c.dirty)) != 0 {
+			return c.failFileJournalLocked(err)
+		}
 		return err
 	}
 	c.dirty = &updated
@@ -670,27 +681,31 @@ func (c *Controller) BeforeFilePublication(ctx context.Context, receipt agentloo
 	if err := c.ensureDirtyLocked(); err != nil {
 		return err
 	}
+	if c.fileCallExistsLocked(receipt.ToolCallID) || c.dirty.Preference != nil && c.dirty.Preference.ToolCallID == receipt.ToolCallID {
+		return c.failFileJournalLocked(agentsession.ErrCheckpointConflict)
+	}
+	for _, previous := range c.record.PreferenceReceipts {
+		if previous.ToolCallID == receipt.ToolCallID {
+			return c.failFileJournalLocked(agentsession.ErrCheckpointConflict)
+		}
+	}
+	if len(dirtyFileEntries(*c.dirty)) >= c.limits.ReceiptCount {
+		return c.failFileJournalLocked(agentsession.ErrStoreFull)
+	}
 	candidate := *c.dirty
 	candidate.MayHaveSideEffect = true
-	candidate.Preference = nil
-	kind := receipt.Kind
-	if kind == "" {
-		kind = "file"
-	}
+	candidate.FileJournal = dirtyFileEntries(candidate)
 	candidate.File = &agentsession.FileWriteAhead{
-		ToolCallID: receipt.ToolCallID, Operation: receipt.Operation, Path: receipt.Path, Kind: kind,
-		ArchivePath:        receipt.ArchivePath,
+		ToolCallID: receipt.ToolCallID, Effect: receipt.Effect,
 		InvalidateObserved: true, StableCode: agentsession.FilePublicationUnknownCode, PublicationOutcome: agentsession.NoticeOutcomeUnknown,
 	}
-	updated, err := c.handle.UpdateDirty(ctx, candidate)
-	if err != nil {
-		return err
-	}
-	c.dirty = &updated
-	return nil
+	return c.updateFileJournalLocked(ctx, candidate)
 }
 
 func (c *Controller) ensureDirtyLocked() error {
+	if c.fileJournalErr != nil {
+		return c.fileJournalErr
+	}
 	if c.dirty == nil {
 		return agentsession.ErrCheckpointConflict
 	}
@@ -748,7 +763,12 @@ func (c *Controller) ResolvePreference(ctx context.Context, resolution agentloop
 	if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
 		c.mu.Lock()
 		if c.dirty != nil {
-			c.recordRecoveryUnknownLocked(*c.dirty)
+			recoverySaveErr = c.recordRecoveryUnknownLocked(*c.dirty)
+			if recoverySaveErr != nil {
+				c.mu.Unlock()
+				c.endRuntimeOperation()
+				return result, errors.Join(err, recoverySaveErr)
+			}
 			c.appendPendingUserLocked()
 			c.appendTypedNoticeLocked(agentsession.TranscriptKindPreferenceNotice, c.record.CommittedUserTurns+1, "preference_outcome_unknown", agentsession.NoticeOutcomeUnknown, "长期偏好写入结果未知；仅可使用原操作ID重试核对。")
 			c.record.CommittedUserTurns++
@@ -806,6 +826,9 @@ func (c *Controller) finishOperation(ctx context.Context, result agentloop.Resul
 	if !c.persistent || c.dirty == nil {
 		return result, operationErr
 	}
+	if c.fileJournalErr != nil {
+		return result, errors.Join(operationErr, c.fileJournalErr)
+	}
 	if errors.Is(operationErr, agentloop.ErrPreferenceOutcomeUnknown) && c.dirty == nil {
 		return result, operationErr
 	}
@@ -828,17 +851,6 @@ func (c *Controller) finishOperation(ctx context.Context, result agentloop.Resul
 		c.saveFailed = persistenceErr
 		return result, persistenceErr
 	}
-	if c.dirty.File != nil && operationErr == nil {
-		receipt, completed, receiptErr := fileReceiptFromCheckpoint(*c.dirty.File, checkpoint, result.Events)
-		if receiptErr != nil {
-			persistenceErr := checkpointPersistenceError(receiptErr)
-			c.saveFailed = persistenceErr
-			return result, persistenceErr
-		}
-		if completed {
-			c.record.FileReceipts = appendBoundedFile(c.record.FileReceipts, receipt, c.limits.ReceiptCount)
-		}
-	}
 	encoded, encodeErr := agentloop.EncodeSessionCheckpoint(checkpoint)
 	if encodeErr != nil {
 		persistenceErr := checkpointPersistenceError(encodeErr)
@@ -860,6 +872,11 @@ func (c *Controller) finishOperation(ctx context.Context, result agentloop.Resul
 
 func (c *Controller) degradeNewSessionAfterSaveFailureLocked(cause error) error {
 	if c.resumed || !c.persistent || cause == nil {
+		return nil
+	}
+	// A failed save must not turn an effect-bearing persistent session into a
+	// non-persistent writer. Keep the dirty evidence and the save-failure gate.
+	if c.dirty != nil && len(dirtyFileEntries(*c.dirty)) != 0 {
 		return nil
 	}
 	var closeErr error
@@ -932,6 +949,14 @@ func (c *Controller) saveExistingCheckpointLocked(ctx context.Context) error {
 }
 
 func (c *Controller) saveRecordLocked(ctx context.Context, consumeDirty bool) error {
+	if consumeDirty && c.dirty != nil {
+		if c.fileJournalErr != nil {
+			return c.fileJournalErr
+		}
+		if err := c.mergeFileJournalLocked(*c.dirty); err != nil {
+			return err
+		}
+	}
 	c.saving.Store(true)
 	defer c.saving.Store(false)
 	transcript, err := agentsession.EncodeTranscript(c.transcript, c.limits)
@@ -973,7 +998,7 @@ func (c *Controller) appendOperationTranscriptLocked(result agentloop.Result, op
 	}
 	state := agentsession.AssistantStateFinal
 	modelCommitted := true
-	text := strings.TrimSpace(result.Text)
+	text := result.Text
 	if operationErr != nil {
 		modelCommitted = false
 		if errors.Is(operationErr, context.Canceled) || errors.Is(operationErr, context.DeadlineExceeded) {
@@ -1000,25 +1025,15 @@ func (c *Controller) appendOperationTranscriptLocked(result agentloop.Result, op
 	if c.dirty != nil && c.dirty.Preference != nil && operationErr == nil {
 		c.appendTypedNoticeLocked(agentsession.TranscriptKindPreferenceNotice, turn, "preference_saved", agentsession.NoticeOutcomeCompleted, "长期偏好写入已完成。")
 	}
-	if c.dirty != nil && c.dirty.File != nil && operationErr == nil {
-		outcome := ""
-		message := ""
-		for _, event := range result.Events {
-			if event.ID != c.dirty.File.ToolCallID {
-				continue
+	if c.dirty != nil {
+		for _, entry := range dirtyFileEntries(*c.dirty) {
+			if receipt, ok := journalReceipt(entry); ok {
+				message := "文件发布已完成。"
+				if receipt.Outcome == agentsession.NoticeOutcomeUnknown {
+					message = "文件发布结果未知；后续修改前必须重新读取和授权。"
+				}
+				c.appendTypedNoticeLocked(agentsession.TranscriptKindFileNotice, turn, "file_publication", receipt.Outcome, message)
 			}
-			switch event.Status {
-			case agentloop.EventSucceeded:
-				outcome = agentsession.NoticeOutcomeCompleted
-				message = "文件发布已完成。"
-			case agentloop.EventOutcomeUnknown:
-				outcome = agentsession.NoticeOutcomeUnknown
-				message = "文件发布结果未知；后续修改前必须重新读取和授权。"
-			}
-			break
-		}
-		if outcome != "" {
-			c.appendTypedNoticeLocked(agentsession.TranscriptKindFileNotice, turn, "file_publication", outcome, message)
 		}
 	}
 	c.record.CommittedUserTurns++
@@ -1106,7 +1121,7 @@ func (c *Controller) nextSequenceLocked() uint64 {
 	return c.transcript.Entries[len(c.transcript.Entries)-1].Sequence + 1
 }
 
-func (c *Controller) recordRecoveryUnknownLocked(marker agentsession.DirtyMarker) {
+func (c *Controller) recordRecoveryUnknownLocked(marker agentsession.DirtyMarker) error {
 	if marker.Preference != nil {
 		outcome := marker.Preference.Outcome
 		if outcome == "" {
@@ -1114,14 +1129,7 @@ func (c *Controller) recordRecoveryUnknownLocked(marker agentsession.DirtyMarker
 		}
 		c.record.PreferenceReceipts = appendBoundedPreference(c.record.PreferenceReceipts, preferenceReceiptFromWriteAhead(*marker.Preference, outcome), c.limits.ReceiptCount)
 	}
-	if marker.File != nil {
-		c.record.FileReceipts = appendBoundedFile(c.record.FileReceipts, agentsession.FileReceipt{
-			ToolCallID: marker.File.ToolCallID, Operation: marker.File.Operation, Path: marker.File.Path, Kind: marker.File.Kind,
-			ArchivePath: marker.File.ArchivePath,
-			ContentHash: marker.File.ContentHash, InvalidateObserved: true,
-			StableCode: agentsession.FilePublicationUnknownCode, Outcome: agentsession.NoticeOutcomeUnknown,
-		}, c.limits.ReceiptCount)
-	}
+	return c.mergeFileJournalLocked(marker)
 }
 
 func hasUnknownPreferenceReceipt(values []agentsession.PreferenceReceipt) bool {
@@ -1164,11 +1172,11 @@ func fileReceiptFromCheckpoint(writeAhead agentsession.FileWriteAhead, checkpoin
 			break
 		}
 	}
-	expectedKind := writeAhead.Kind
-	if writeAhead.Operation == workspace.ToolArchive {
-		expectedKind = "archive_" + expectedKind
+	expectedKind := writeAhead.Effect.ReferenceKind()
+	if reference != nil && expectedKind == "file" && reference.Kind == "file_effect" {
+		expectedKind = "file_effect"
 	}
-	if reference == nil || reference.Path != writeAhead.Path || reference.Kind != expectedKind {
+	if reference == nil || reference.Path != writeAhead.Effect.ReferencePath() || reference.Kind != expectedKind {
 		return agentsession.FileReceipt{}, false, errors.New("文件发布回执缺少匹配的稳定工作区引用")
 	}
 	matchedEvent := false
@@ -1182,14 +1190,30 @@ func fileReceiptFromCheckpoint(writeAhead agentsession.FileWriteAhead, checkpoin
 	if !matchedEvent {
 		return agentsession.FileReceipt{}, false, errors.New("文件发布回执缺少匹配的稳定事件")
 	}
+	effect := writeAhead.Effect
+	if observed, found := checkpointFileEffect(checkpoint, writeAhead.ToolCallID); found {
+		if observed.Validate() != nil || !effect.SamePlan(observed) {
+			return agentsession.FileReceipt{}, false, errors.New("文件副作用结果与预写计划不一致")
+		}
+		effect = observed
+	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove {
+		return agentsession.FileReceipt{}, false, errors.New("文件回执缺少完整副作用事实")
+	}
+	if effect.Operation == workspace.ToolCopy && !unknown && (effect.Target.Version == "" || effect.Target.Version != reference.ContentHash) {
+		return agentsession.FileReceipt{}, false, errors.New("复制回执缺少匹配的实际目标哈希")
+	}
+	if effect.Operation == workspace.ToolMove && (reference.ContentHash != "" || !reference.InvalidateObserved) {
+		return agentsession.FileReceipt{}, false, errors.New("移动回执不能伪造目标版本或省略双端失效")
+	}
+	if !unknown && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
+		effect.Target.Version = reference.ContentHash
+	}
 	receipt := agentsession.FileReceipt{
-		ToolCallID: writeAhead.ToolCallID, Operation: writeAhead.Operation, Path: reference.Path, Kind: writeAhead.Kind,
-		ArchivePath: writeAhead.ArchivePath,
-		ContentHash: reference.ContentHash, InvalidateObserved: reference.InvalidateObserved,
+		ToolCallID: writeAhead.ToolCallID, Effect: effect, InvalidateObserved: reference.InvalidateObserved,
 		StableCode: agentsession.FilePublicationCompletedCode, Outcome: agentsession.NoticeOutcomeCompleted,
 	}
 	if unknown {
-		receipt.ContentHash = ""
+		receipt.Effect.Target.Version = ""
 		receipt.InvalidateObserved = true
 		receipt.StableCode = agentsession.FilePublicationUnknownCode
 		receipt.Outcome = agentsession.NoticeOutcomeUnknown
@@ -1220,17 +1244,13 @@ func appendBoundedPreference(values []agentsession.PreferenceReceipt, value agen
 }
 
 func appendBoundedFile(values []agentsession.FileReceipt, value agentsession.FileReceipt, limit int) []agentsession.FileReceipt {
-	filtered := values[:0]
-	for _, existing := range values {
-		if value.Outcome == agentsession.NoticeOutcomeCompleted && existing.Outcome == agentsession.NoticeOutcomeUnknown &&
-			existing.Path == value.Path && existing.Kind == value.Kind &&
-			(existing.Operation != workspace.ToolArchive && value.Operation != workspace.ToolArchive ||
-				existing.Operation == value.Operation && existing.ArchivePath == value.ArchivePath) {
-			continue
+	for index, existing := range values {
+		if existing.ToolCallID == value.ToolCallID {
+			values[index] = value
+			return values
 		}
-		filtered = append(filtered, existing)
 	}
-	values = append(filtered, value)
+	values = append(values, value)
 	if len(values) > limit {
 		values = values[len(values)-limit:]
 	}

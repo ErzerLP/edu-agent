@@ -86,6 +86,9 @@ func renderContextEvent(event agentloop.ContextEvent, width int) string {
 		label = "上下文整理降级"
 		detail = fmt.Sprintf("仅保留最近完整轮次 · 已丢弃 %d 轮 · 代码：%s", event.DroppedTurns, safeTerminalText(event.Code))
 		style = contextDangerStyle
+		if strings.Contains(event.Code, "context_history_projected") {
+			detail = "较早助手正文已使用带来源的有界节选；用户陈述与工具调用/结果保持完整。"
+		}
 	case agentloop.ContextEventSourceUnavailable:
 		label = "会话证据来源不可用"
 		detail = "指定来源正文已回收或失效 · 代码：" + safeTerminalText(event.Code)
@@ -215,9 +218,25 @@ func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) 
 	if detail.Path != "" {
 		appendLine("路径：" + safeSingleLineTerminalText(detail.Path))
 	}
+	if detail.DestinationPath != "" && detail.Operation == "move" {
+		appendLine("移动目标：" + safeSingleLineTerminalText(detail.DestinationPath))
+		appendLine("整体移动；不覆盖、不永久删除。")
+		if detail.PublicationOutcome == "unknown" {
+			appendLine("核查源与目标；不会自动重试、恢复重放或删除回滚。")
+		}
+	} else if detail.DestinationPath != "" {
+		appendLine("复制目标：" + safeSingleLineTerminalText(detail.DestinationPath))
+		appendLine("本操作未修改源；不覆盖目标。")
+		if detail.PublicationOutcome == "unknown" {
+			appendLine("核查目标及临时项；不会自动重试或恢复重放。")
+		}
+	}
 	if detail.ArchivePath != "" {
 		appendLine("归档目标：" + safeSingleLineTerminalText(detail.ArchivePath))
 		appendLine("对象类型：" + safeSingleLineTerminalText(detail.EntryKind) + " · 由用户手动恢复或清理")
+	}
+	if detail.ArchivePath == "" && detail.EntryKind != "" {
+		appendLine("对象类型：" + safeSingleLineTerminalText(detail.EntryKind))
 	}
 	operation := make([]string, 0, 3)
 	if detail.Operation != "" {
@@ -231,6 +250,12 @@ func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) 
 	}
 	if len(operation) > 0 {
 		appendLine(strings.Join(operation, " · "))
+	}
+	if detail.HasDirectoryPlan {
+		appendLine(fmt.Sprintf("创建范围：锚点 %s → 目标 %s，共 %d 层；已知创建 %d 层（按冻结路径顺序）。", safeSingleLineTerminalText(detail.CreationAnchor), safeSingleLineTerminalText(detail.Path), detail.PlannedDirectories, detail.CreatedDirectories))
+		if detail.PublicationOutcome == "unknown" {
+			appendLine("其余计划路径可能已创建；保留目录，不自动重试或删除回滚。")
+		}
 	}
 	if detail.HasReturned {
 		appendLine(fmt.Sprintf("返回：%d 项", detail.Returned))
@@ -374,10 +399,15 @@ func toolDisplayName(name string) string {
 		"recall_session_memory":      "回查会话证据",
 		"ask_user_question":          "询问用户",
 		"remember_preference":        "保存长期偏好",
+		"find":                       "查找文件或目录",
+		"stat":                       "检查入口元数据",
 		"list":                       "列出工作区",
 		"read":                       "读取文件",
 		"search":                     "搜索文件",
 		"write":                      "写入文件",
+		"move":                       "移动文件或目录",
+		"copy":                       "复制文件",
+		"mkdir":                      "创建目录",
 		"archive":                    "归档文件或目录",
 		"edit":                       "编辑文件",
 	}

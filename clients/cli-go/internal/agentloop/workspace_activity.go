@@ -7,6 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
@@ -31,13 +32,13 @@ func workspaceToolContextFailureEvent(id, tool string, err error) Event {
 }
 
 func fileActivityDetailFromProgress(progress workspace.Progress) *FileActivityDetail {
-	path := safeActivityWorkspacePath(progress.Path)
+	path := activityPathForTool(progress.Tool, progress.Path)
 	if path == "" {
 		return nil
 	}
-	detail := &FileActivityDetail{Path: path, Operation: safeActivityToken(progress.Operation, 64)}
+	detail := &FileActivityDetail{Path: path, DestinationPath: activityPathForTool(workspace.ToolCopy, progress.DestinationPath), Operation: safeActivityToken(progress.Operation, 64)}
 	switch progress.Tool {
-	case workspace.ToolList:
+	case workspace.ToolList, workspace.ToolFind:
 		detail.Returned, detail.HasReturned = progress.Returned, true
 	case workspace.ToolRead:
 		detail.Bytes, detail.HasBytes = progress.Bytes, true
@@ -61,7 +62,14 @@ func fileActivityDetailFromResult(tool string, result workspace.Result) *FileAct
 		return nil
 	}
 	detail := &FileActivityDetail{}
-	detail.Path = safeActivityWorkspacePath(stringValue(value["path"]))
+	if result.Effect != nil && result.Effect.Operation == workspace.ToolMkdir {
+		detail.CreationAnchor = result.Effect.Directories.Anchor
+		detail.PlannedDirectories = result.Effect.Directories.Count
+		detail.CreatedDirectories = result.Effect.Directories.Created
+		detail.HasDirectoryPlan = true
+	}
+	detail.Path = activityPathForTool(tool, stringValue(value["path"]))
+	detail.DestinationPath = activityPathForTool(workspace.ToolCopy, stringValue(value["destination"]))
 	detail.ArchivePath = safeActivityWorkspacePath(stringValue(value["archive_path"]))
 	detail.EntryKind = safeActivityToken(stringValue(value["entry_type"]), 32)
 	detail.Operation = safeActivityToken(stringValue(value["operation"]), 64)
@@ -90,7 +98,13 @@ func fileActivityDetailFromResult(tool string, result workspace.Result) *FileAct
 		}
 	}
 	if tool == workspace.ToolSearch {
-		if matches, exists := activityInt(value["returned"]); exists {
+		// Count output reports matching lines; files output's returned value
+		// is the number of listed files, never an inferred body occurrence.
+		matches, exists := activityInt(value["matched_lines"])
+		if !exists {
+			matches, exists = activityInt(value["returned"])
+		}
+		if exists {
 			detail.Matches, detail.HasMatches = matches, true
 		}
 	}
@@ -114,8 +128,9 @@ func fileActivityDetailFromPrepared(prepared *workspace.PreparedMutation) *FileA
 	}
 	presentation := prepared.Presentation
 	return &FileActivityDetail{
-		Path: safeActivityWorkspacePath(presentation.Path), Operation: safeActivityToken(presentation.Operation, 64),
-		ArchivePath: safeActivityWorkspacePath(presentation.ArchivePath), EntryKind: safeActivityToken(presentation.EntryKind, 32),
+		Path: activityPathForTool(presentation.Tool, presentation.Path), Operation: safeActivityToken(presentation.Operation, 64),
+		DestinationPath: activityPathForTool(workspace.ToolCopy, presentation.DestinationPath),
+		ArchivePath:     safeActivityWorkspacePath(presentation.ArchivePath), EntryKind: safeActivityToken(presentation.EntryKind, 32),
 		PreviewKind: safeActivityToken(presentation.PreviewKind, 32), Preview: safeActivityPreview(presentation.Preview),
 		PreviewTruncated: presentation.Truncated,
 	}
@@ -134,6 +149,9 @@ func mergePreparedFileActivity(detail *FileActivityDetail, prepared *workspace.P
 	}
 	if detail.Operation == "" {
 		detail.Operation = preparedDetail.Operation
+	}
+	if detail.DestinationPath == "" {
+		detail.DestinationPath = preparedDetail.DestinationPath
 	}
 	if detail.ArchivePath == "" {
 		detail.ArchivePath = preparedDetail.ArchivePath
@@ -166,8 +184,13 @@ func mergeFileActivityDetail(detail, fallback *FileActivityDetail) *FileActivity
 	if detail.Operation == "" {
 		detail.Operation = fallback.Operation
 	}
+	if detail.DestinationPath == "" {
+		detail.DestinationPath = fallback.DestinationPath
+	}
 	if detail.ArchivePath == "" {
 		detail.ArchivePath = fallback.ArchivePath
+	}
+	if detail.EntryKind == "" {
 		detail.EntryKind = fallback.EntryKind
 	}
 	if !detail.HasReturned && fallback.HasReturned {
@@ -201,8 +224,16 @@ func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 			return "正在读取 " + detail.Path + " 第 " + intText(detail.StartLine) + " 行起"
 		}
 		return "正在读取 " + detail.Path
+	case workspace.ToolStat:
+		return "正在检查 " + detail.Path
 	case workspace.ToolSearch:
 		return "正在搜索 " + detail.Path + "：已扫描 " + intText(detail.ScannedFiles) + " 个文件"
+	case workspace.ToolMove:
+		return "正在准备移动 " + detail.Path + " → " + detail.DestinationPath
+	case workspace.ToolCopy:
+		return "正在准备复制 " + detail.Path + " → " + detail.DestinationPath
+	case workspace.ToolMkdir:
+		return "正在准备创建目录 " + detail.Path
 	case workspace.ToolArchive:
 		return "正在准备归档 " + detail.Path
 	case workspace.ToolList:
@@ -210,6 +241,16 @@ func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 	default:
 		return toolRunningSummary(tool)
 	}
+}
+
+func activityPathForTool(tool, value string) string {
+	if tool == workspace.ToolCopy || tool == workspace.ToolMove {
+		if fileeffects.ValidPath(value, false) {
+			return value
+		}
+		return ""
+	}
+	return safeActivityWorkspacePath(value)
 }
 
 func safeActivityWorkspacePath(value string) string {
@@ -230,7 +271,7 @@ func safeActivityWorkspacePath(value string) string {
 			return ""
 		}
 	}
-	return truncateActivityUTF8(value, 512)
+	return value
 }
 
 func safeActivityToken(value string, limit int) string {

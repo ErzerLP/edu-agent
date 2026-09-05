@@ -393,7 +393,7 @@ func TestSessionExecutesWorkspaceToolWithLocalAuthorityBeforeAnswer(t *testing.T
 	for _, definition := range model.requests[0].Tools {
 		toolNames[definition.Function.Name] = true
 	}
-	for _, expected := range []string{workspace.ToolList, workspace.ToolRead, workspace.ToolSearch, workspace.ToolWrite, workspace.ToolEdit} {
+	for _, expected := range []string{workspace.ToolFind, workspace.ToolStat, workspace.ToolList, workspace.ToolRead, workspace.ToolSearch, workspace.ToolWrite, workspace.ToolEdit, workspace.ToolArchive} {
 		if !toolNames[expected] {
 			t.Fatalf("workspace tool %q missing from request: %+v", expected, toolNames)
 		}
@@ -1559,7 +1559,7 @@ func TestContextPlannerProjectsHistoryAndKeepsToolGroupsAtomic(t *testing.T) {
 	assertContextCode(t, err, ContextRecentTurnsTooLarge)
 }
 
-func TestContextPlannerFailsClosedWhenMandatoryRecentTurnsDoNotFit(t *testing.T) {
+func TestContextPlannerShrinksOutputBeforeProjectingRecentTurns(t *testing.T) {
 	t.Parallel()
 	estimator := NewTokenEstimator()
 	for _, test := range []struct {
@@ -1583,8 +1583,14 @@ func TestContextPlannerFailsClosedWhenMandatoryRecentTurnsDoNotFit(t *testing.T)
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := (ContextPlanner{ContextWindow: 4096, Mode: ContextCompactionAuto, Estimator: estimator}).Plan(test.messages, nil, nil)
-			assertContextCode(t, err, ContextRecentTurnsTooLarge)
+			plan, err := (ContextPlanner{ContextWindow: 4096, Mode: ContextCompactionAuto, Estimator: estimator}).Plan(test.messages, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertLargeContextBudget(t, plan, 4096)
+			if plan.DroppedTurns != 0 {
+				t.Fatal("recent turns dropped instead of reducing output")
+			}
 		})
 	}
 }
@@ -1594,7 +1600,7 @@ func TestContextPlannerOffAndTypedBudgetFailures(t *testing.T) {
 	planner := ContextPlanner{ContextWindow: 4096, Mode: ContextCompactionOff, Estimator: estimator}
 	_, err := planner.Plan([]modelclient.Message{
 		{Role: "system", Content: "rules"},
-		{Role: "user", Content: strings.Repeat("x", 9<<10)},
+		{Role: "user", Content: strings.Repeat("x", 12<<10)},
 		{Role: "assistant", Content: "old"},
 		{Role: "user", Content: "current"},
 	}, nil, nil)
@@ -1606,7 +1612,7 @@ func TestContextPlannerOffAndTypedBudgetFailures(t *testing.T) {
 	assertContextCode(t, err, ContextBudgetInvalid)
 
 	_, err = (ContextPlanner{ContextWindow: 4096, Mode: ContextCompactionAuto, Estimator: estimator}).Plan(
-		[]modelclient.Message{{Role: "system", Content: "rules"}, {Role: "user", Content: strings.Repeat("x", 9<<10)}}, nil, nil)
+		[]modelclient.Message{{Role: "system", Content: "rules"}, {Role: "user", Content: strings.Repeat("x", 12<<10)}}, nil, nil)
 	assertContextCode(t, err, ContextTurnTooLarge)
 }
 

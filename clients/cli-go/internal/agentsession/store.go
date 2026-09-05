@@ -978,6 +978,12 @@ func (h *Handle) UpdateDirty(ctx context.Context, candidate DirtyMarker) (DirtyM
 		current.MayHaveSideEffect && !candidate.MayHaveSideEffect || validateDirtyMarker(candidate) != nil {
 		return DirtyMarker{}, ErrInvalid
 	}
+	if err := validateFileJournal(candidate, h.store.limits.ReceiptCount); err != nil {
+		return DirtyMarker{}, err
+	}
+	if err := validateFileJournalTransition(current, candidate); err != nil {
+		return DirtyMarker{}, err
+	}
 	plain, err := encodeStrict(candidate)
 	if err != nil || int64(len(plain)) > h.store.limits.DirtyMarkerBytes {
 		return DirtyMarker{}, ErrStoreFull

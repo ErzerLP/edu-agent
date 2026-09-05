@@ -305,6 +305,7 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		snapshot.AgentBaseURL = safeText(value.Agent.BaseURL)
 		snapshot.AgentModel = safeText(value.Agent.Model)
 		snapshot.AgentContextWindow = value.Agent.ContextWindow
+		snapshot.AgentMaxTokens = value.Agent.MaxTokens
 		snapshot.AgentContextCompaction = safeText(value.Agent.ContextCompaction)
 		snapshot.AgentReasoningEffort = safeText(value.Agent.ReasoningEffort)
 		snapshot.AgentSessionHistory = safeText(value.Agent.SessionHistory)

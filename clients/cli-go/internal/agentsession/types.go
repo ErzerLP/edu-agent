@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/keybackend"
 )
 
@@ -11,47 +13,49 @@ const (
 	profileSecretService         = "edu-agent-agent-sessions-v1"
 	profileSecretVersion         = 1
 	recordContainerSchemaVersion = 1
-	recordPayloadSchemaVersion   = 3
-	recordMigrationMaxSteps      = 2
+	recordPayloadSchemaVersion   = 6
+	recordMigrationMaxSteps      = 5
 	indexSchemaVersion           = 1
 	projectionSchemaVersion      = 1
 	dirtyContainerSchemaVersion  = 1
-	dirtySchemaVersion           = 2
+	dirtySchemaVersion           = 6
 	transcriptSchemaVersion      = 1
 	envelopeSchemaVersion        = 1
 )
 
 type Limits struct {
-	Sessions                int
-	ProfileCiphertextBytes  int64
-	SessionPlaintextBytes   int64
-	SessionCiphertextBytes  int64
-	DirtyMarkerBytes        int64
-	DirectoryEntries        int
-	TranscriptEntries       int
-	TranscriptBytes         int64
-	TranscriptEntryBytes    int
-	TranscriptEventBytes    int
-	TranscriptEntryLines    int
-	TranscriptLineColumns   int
-	TranscriptTools         int
-	PickerQueryRunes        int
-	PickerResults           int
-	SearchSummaryRunes      int
-	SearchSummaryBytes      int
-	ManualTitleBytes        int
-	ManualTitleRunes        int
-	ManualTitleColumns      int
-	AutoTitleInputBytes     int
-	AutoTitlePartBytes      int
-	AutoTitleResponseBytes  int
-	AutoTitleMaxTokens      int
-	AutoTitleTurnInterval   uint64
-	AutoTitleMinInterval    time.Duration
-	AutoTitleRequestTimeout time.Duration
-	AutoTitleSaveTimeout    time.Duration
-	NoticeCount             int
-	ReceiptCount            int
+	Sessions                     int
+	ProfileCiphertextBytes       int64
+	SessionPlaintextBytes        int64
+	SessionCiphertextBytes       int64
+	DirtyMarkerBytes             int64
+	DirectoryEntries             int
+	TranscriptEntries            int
+	TranscriptBytes              int64
+	TranscriptEntryBytes         int
+	TranscriptAssistantBytes     int
+	TranscriptAssistantJSONBytes int
+	TranscriptEventBytes         int
+	TranscriptEntryLines         int
+	TranscriptLineColumns        int
+	TranscriptTools              int
+	PickerQueryRunes             int
+	PickerResults                int
+	SearchSummaryRunes           int
+	SearchSummaryBytes           int
+	ManualTitleBytes             int
+	ManualTitleRunes             int
+	ManualTitleColumns           int
+	AutoTitleInputBytes          int
+	AutoTitlePartBytes           int
+	AutoTitleResponseBytes       int
+	AutoTitleMaxTokens           int
+	AutoTitleTurnInterval        uint64
+	AutoTitleMinInterval         time.Duration
+	AutoTitleRequestTimeout      time.Duration
+	AutoTitleSaveTimeout         time.Duration
+	NoticeCount                  int
+	ReceiptCount                 int
 }
 
 func DefaultLimits() Limits {
@@ -59,8 +63,10 @@ func DefaultLimits() Limits {
 		Sessions: 256, ProfileCiphertextBytes: 1 << 30,
 		SessionPlaintextBytes: 48 << 20, SessionCiphertextBytes: 64 << 20,
 		DirtyMarkerBytes: 16 << 10, DirectoryEntries: 2048,
-		TranscriptEntries: 2048, TranscriptBytes: 4 << 20,
-		TranscriptEntryBytes: 64 << 10, TranscriptEventBytes: 16 << 10,
+		TranscriptEntries: 2048, TranscriptBytes: 16 << 20,
+		TranscriptAssistantBytes:     agentlimits.MaxAssistantTextBytes,
+		TranscriptAssistantJSONBytes: 6*agentlimits.MaxAssistantTextBytes + (16 << 10),
+		TranscriptEntryBytes:         64 << 10, TranscriptEventBytes: 16 << 10,
 		TranscriptEntryLines: 1024, TranscriptLineColumns: 4096, TranscriptTools: 64,
 		PickerQueryRunes: 128, PickerResults: 256,
 		SearchSummaryRunes: 160, SearchSummaryBytes: 512,
@@ -137,6 +143,15 @@ type PreferenceReceipt struct {
 }
 
 type FileReceipt struct {
+	ToolCallID         string             `json:"tool_call_id"`
+	Effect             fileeffects.Effect `json:"effect"`
+	InvalidateObserved bool               `json:"invalidate_observed"`
+	StableCode         string             `json:"stable_code"`
+	Outcome            string             `json:"publication_outcome"`
+}
+
+// Frozen record-v3 nested DTO, never decode old data using the live type.
+type fileReceiptV3 struct {
 	ToolCallID         string `json:"tool_call_id"`
 	Operation          string `json:"operation"`
 	Path               string `json:"path"`
@@ -164,6 +179,15 @@ type PreferenceWriteAhead struct {
 }
 
 type FileWriteAhead struct {
+	ToolCallID         string             `json:"tool_call_id"`
+	Effect             fileeffects.Effect `json:"effect"`
+	InvalidateObserved bool               `json:"invalidate_observed"`
+	StableCode         string             `json:"stable_code"`
+	PublicationOutcome string             `json:"publication_outcome"`
+}
+
+// Frozen dirty-v2 nested DTO.
+type fileWriteAheadV2 struct {
 	ToolCallID         string `json:"tool_call_id"`
 	Operation          string `json:"operation"`
 	Path               string `json:"path"`
@@ -290,6 +314,16 @@ type recordPayloadV1 struct {
 // frozen independently of the current SessionRecord and FileReceipt types.
 type recordPayloadV2 recordPayloadV1
 
+// The embedded base is also frozen; the explicit field shadows legacy receipts.
+type recordPayloadV3 struct {
+	recordPayloadV1
+	FileReceipts []fileReceiptV3 `json:"file_receipts,omitempty"`
+}
+type dirtyPayloadV2 struct {
+	dirtyPayloadV1
+	File *fileWriteAheadV2 `json:"file,omitempty"`
+}
+
 // dirtyPayloadV1 must remain independent of the evolving DirtyMarker/File types.
 type dirtyPayloadV1 struct {
 	SchemaVersion     int                   `json:"schema_version"`
@@ -317,6 +351,16 @@ type DirtyMarker struct {
 	StartedAt         time.Time             `json:"started_at"`
 	Preference        *PreferenceWriteAhead `json:"preference,omitempty"`
 	File              *FileWriteAhead       `json:"file,omitempty"`
+	FileJournal       []FileJournalEntry    `json:"file_journal,omitempty"`
+}
+
+// FileJournalEntry retains an earlier WAL and, when available, its executor
+// settlement. Neither a missing result nor a zero created prefix means no effect.
+// Unchanged is a terminal no-effect settlement, not a completed receipt.
+type FileJournalEntry struct {
+	WriteAhead FileWriteAhead `json:"write_ahead"`
+	Result     *FileReceipt   `json:"result,omitempty"`
+	Unchanged  bool           `json:"unchanged,omitempty"`
 }
 
 type Loaded struct {

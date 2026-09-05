@@ -9,6 +9,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
@@ -57,7 +58,7 @@ func TestControllerArchiveCompletedReceiptSurvivesResume(t *testing.T) {
 			controller.mu.Lock()
 			receipts := append([]agentsession.FileReceipt(nil), controller.record.FileReceipts...)
 			controller.mu.Unlock()
-			if len(receipts) != 1 || receipts[0].Operation != workspace.ToolArchive || receipts[0].Path != "notes" || receipts[0].ArchivePath != destination || receipts[0].Kind != kind || receipts[0].Outcome != agentsession.NoticeOutcomeCompleted || !receipts[0].InvalidateObserved || receipts[0].ContentHash != "" {
+			if len(receipts) != 1 || receipts[0].Effect.Operation != workspace.ToolArchive || receipts[0].Effect.Source.Path != "notes" || receipts[0].Effect.Target.Path != destination || receipts[0].Effect.Target.Kind != kind || receipts[0].Outcome != agentsession.NoticeOutcomeCompleted || !receipts[0].InvalidateObserved || receipts[0].Effect.Target.Version != "" {
 				controller.abort()
 				t.Fatalf("receipts=%+v", receipts)
 			}
@@ -125,7 +126,7 @@ func TestControllerArchiveCrashRecoveryKeepsBothPathsWithoutReplay(t *testing.T)
 		t.Fatal(err)
 	}
 	const destination = ".edu-agent-archive/20260905-test/notes"
-	if err := controller.BeforeFilePublication(t.Context(), agentloop.FileWriteAhead{ToolCallID: "archive-crash", Operation: workspace.ToolArchive, Path: "notes", ArchivePath: destination, Kind: "directory"}); err != nil {
+	if err := controller.BeforeFilePublication(t.Context(), agentloop.FileWriteAhead{ToolCallID: "archive-crash", Effect: fileeffects.New(workspace.ToolArchive, "notes", destination, "directory")}); err != nil {
 		controller.abort()
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestControllerArchiveCrashRecoveryKeepsBothPathsWithoutReplay(t *testing.T)
 	resumed.mu.Lock()
 	receipts := append([]agentsession.FileReceipt(nil), resumed.record.FileReceipts...)
 	resumed.mu.Unlock()
-	if len(receipts) != 1 || receipts[0].ArchivePath != destination || receipts[0].Kind != "directory" || receipts[0].Outcome != agentsession.NoticeOutcomeUnknown {
+	if len(receipts) != 1 || receipts[0].Effect.Target.Path != destination || receipts[0].Effect.Target.Kind != "directory" || receipts[0].Outcome != agentsession.NoticeOutcomeUnknown {
 		t.Fatalf("recovery receipts=%+v", receipts)
 	}
 	if _, err := os.Stat(filepath.Join(root, "notes", "a.md")); err != nil {

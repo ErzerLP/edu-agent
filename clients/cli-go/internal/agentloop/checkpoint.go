@@ -14,12 +14,13 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 const (
 	SessionCheckpointSchemaVersion = 1
-	MaxSessionCheckpointBytes      = 8 << 20
+	MaxSessionCheckpointBytes      = 24 << 20
 	maxCheckpointTurns             = 4096
 	maxCheckpointMessages          = 16384
 	maxCheckpointSources           = 32768
@@ -791,15 +792,24 @@ func sortedCheckpointKeys(values map[string]string) []string {
 	return keys
 }
 func validateCheckpointMessage(message modelclient.Message) error {
-	if !safeCheckpointText(message.Content, maxAssistantTextBytes, false) ||
+	textLimit := 64 << 10
+	if message.Role == "assistant" {
+		textLimit = maxAssistantTextBytes
+	}
+	if !safeCheckpointText(message.Content, textLimit, false) ||
 		(message.ToolCallID != "" && !safeCheckpointString(message.ToolCallID, 512, true)) {
 		return errors.New("Agent检查点消息文本无效")
 	}
+	totalArguments := 0
 	for _, call := range message.ToolCalls {
 		if !safeCheckpointString(call.ID, 512, true) || !safeCheckpointString(call.Type, 64, true) ||
-			!safeCheckpointString(call.Function.Name, 256, true) || !safeCheckpointText(call.Function.Arguments, maxToolCallArgumentsBytes, true) {
+			!safeCheckpointString(call.Function.Name, 256, true) || !safeCheckpointText(call.Function.Arguments, agentlimits.ToolArgumentsBytes(call.Function.Name), true) {
 			return errors.New("Agent检查点工具调用文本无效")
 		}
+		totalArguments += len(call.Function.Arguments)
+	}
+	if totalArguments > agentlimits.MaxToolCallArgumentsTotal {
+		return errors.New("Agent检查点单轮工具参数总量超过安全上限")
 	}
 	switch message.Role {
 	case "user":

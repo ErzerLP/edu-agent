@@ -29,17 +29,20 @@ type selectorOption struct {
 }
 
 type selectorModel struct {
-	kind       selectorKind
-	title      string
-	body       string
-	mode       agentloop.QuestionMode
-	questionID string
-	options    []selectorOption
-	focus      int
-	custom     textarea.Model
-	hasCustom  bool
-	submitted  bool
-	width      int
+	kind                                     selectorKind
+	title                                    string
+	body                                     string
+	mode                                     agentloop.QuestionMode
+	questionID                               string
+	options                                  []selectorOption
+	focus                                    int
+	custom                                   textarea.Model
+	hasCustom                                bool
+	submitted                                bool
+	width                                    int
+	copyReview                               bool
+	copyPage, copyPages, copyWidth, copyRows int
+	copyPageRendered                         bool
 }
 
 type selectorActionKind int
@@ -98,6 +101,11 @@ func newPreferenceRetrySelector() *selectorModel {
 
 func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorModel {
 	body := fmt.Sprintf("操作：%s\n路径：%s\n%s：\n%s", pending.Operation, pending.Path, pending.PreviewKind, pending.Preview)
+	if pending.DestinationPath != "" && pending.Operation == "move" {
+		body = fmt.Sprintf("移动源：%s\n移动目标：%s\n%s", pending.Path, pending.DestinationPath, pending.Preview)
+	} else if pending.DestinationPath != "" {
+		body = fmt.Sprintf("复制源：%s\n复制目标：%s\n%s\n源未修改；不覆盖目标，不创建父目录。", pending.Path, pending.DestinationPath, pending.Preview)
+	}
 	if pending.ArchivePath != "" {
 		body = fmt.Sprintf("源：%s\n归档目标：%s\n类型：%s\n仅整体移动，不永久删除；归档由用户手动恢复或清理。", pending.Path, pending.ArchivePath, pending.EntryKind)
 	}
@@ -105,7 +113,7 @@ func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorMo
 		body += "\n预览已按安全上限截断。"
 	}
 	return &selectorModel{
-		kind: selectorFileMutation, title: "文件修改授权", body: body,
+		kind: selectorFileMutation, title: "文件修改授权", body: body, copyReview: pending.Operation == "copy" || pending.Operation == "move" || pending.Operation == "mkdir",
 		options: []selectorOption{
 			{ID: string(agentloop.FileMutationApprove), Label: "允许此次修改", Description: "重新校验版本后只发布上方已冻结候选"},
 			{ID: string(agentloop.FileMutationDecline), Label: "拒绝此次修改", Description: "文件保持不变，并把 authorization_denied 返回模型"},
@@ -118,8 +126,8 @@ func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel
 		current = agentloop.FileAuthorizationConfirm
 	}
 	options := []selectorOption{
-		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit/archive 都显示冻结预览并等待明确授权"},
-		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit/archive 不再确认，但所有安全校验保持不变"},
+		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit/archive/mkdir/copy/move 都显示冻结预览并等待明确授权"},
+		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit/archive/mkdir/copy/move 不再确认，但所有安全校验保持不变"},
 	}
 	focus := 0
 	for index := range options {
@@ -189,6 +197,22 @@ func (s *selectorModel) handleKey(msg tea.KeyMsg) (selectorAction, tea.Cmd) {
 		return selectorAction{}, nil
 	}
 	key := msg.String()
+	if s.copyReview {
+		if key == "pgdown" || key == "pgup" {
+			if s.copyPageRendered {
+				if key == "pgdown" {
+					s.copyPage = min(s.copyPage+1, max(0, s.copyPages-1))
+				} else {
+					s.copyPage = max(0, s.copyPage-1)
+				}
+				s.copyPageRendered = false
+			}
+			return selectorAction{}, nil
+		}
+		if key == "enter" && s.focus == 0 && (!s.copyPageRendered || s.copyPage != s.copyPages-1) {
+			return selectorAction{}, nil
+		}
+	}
 	if key == "esc" {
 		switch s.kind {
 		case selectorQuestion:
@@ -340,6 +364,9 @@ func (s *selectorModel) helpText() string {
 	case selectorReasoning:
 		return "↑/↓/Tab 或数字 · Enter 应用 · Esc 返回"
 	case selectorFileMutation:
+		if s.copyReview {
+			return "PgUp/PgDn 完整预览 · 末页 Enter 授权 · ↓ 拒绝 · Esc 取消"
+		}
 		return "↑/↓/Tab 或 1-2 · Enter 确认 · Esc 停止当前轮次"
 	case selectorFileMode:
 		return "↑/↓/Tab 或 1-2 · Enter 应用 · Esc 返回"

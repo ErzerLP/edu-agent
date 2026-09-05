@@ -396,7 +396,7 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 		t.Fatalf("tool-round unlimited semantics missing from form: %q", form.View())
 	}
 	updated, _ = form.Update(key("enter"))
-	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "1000000"}
+	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "1000000", "--max-tokens", "128000"}
 	if got := updated.(model).command; !reflect.DeepEqual(got, want) {
 		t.Fatalf("model command=%#v want=%#v", got, want)
 	}

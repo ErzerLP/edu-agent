@@ -275,6 +275,7 @@ type ContextEvent struct {
 }
 
 type ContextPlan struct {
+	ProjectedTurns  int
 	Request         modelclient.Request
 	EstimatedInput  int
 	ReservedOutput  int

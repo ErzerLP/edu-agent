@@ -261,8 +261,10 @@ func validateTranscript(value TranscriptV1, limits Limits, enforceCollectionBoun
 			return err
 		}
 		entryLimit := limits.TranscriptEventBytes
-		if entry.Kind == TranscriptKindUser || entry.Kind == TranscriptKindAssistant {
+		if entry.Kind == TranscriptKindUser {
 			entryLimit = limits.TranscriptEntryBytes
+		} else if entry.Kind == TranscriptKindAssistant {
+			entryLimit = limits.TranscriptAssistantJSONBytes
 		}
 		if len(encoded) > entryLimit {
 			return ErrStoreFull
@@ -281,7 +283,16 @@ func validateTranscript(value TranscriptV1, limits Limits, enforceCollectionBoun
 }
 
 func validateTranscriptEntry(entry TranscriptEntryV1, limits Limits) error {
-	if len(entry.Text) > limits.TranscriptEntryBytes {
+	textLimit := limits.TranscriptEntryBytes
+	textLimits := limits
+	if entry.Kind == TranscriptKindAssistant {
+		textLimit = limits.TranscriptAssistantBytes
+		// A byte-bounded answer may consist entirely of short lines or one
+		// long line. Display wraps it; neither layout may reject valid text.
+		textLimits.TranscriptEntryLines = textLimit + 1
+		textLimits.TranscriptLineColumns = textLimit
+	}
+	if len(entry.Text) > textLimit {
 		return ErrStoreFull
 	}
 	for _, tool := range entry.Tools {
@@ -315,7 +326,7 @@ func validateTranscriptEntry(entry TranscriptEntryV1, limits Limits) error {
 			return ErrInvalid
 		}
 	case TranscriptKindAssistant:
-		if !validTranscriptText(entry.Text, true, limits.TranscriptEntryBytes, limits, false) || len(entry.Tools) != 0 || entry.Error != nil || entry.Context != nil || entry.Notice != nil {
+		if !validTranscriptText(entry.Text, true, textLimit, textLimits, false) || len(entry.Tools) != 0 || entry.Error != nil || entry.Context != nil || entry.Notice != nil {
 			return ErrInvalid
 		}
 		switch entry.AssistantState {

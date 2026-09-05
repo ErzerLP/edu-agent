@@ -55,8 +55,15 @@ func (m model) renderSelector(width int) string {
 		bodyRows = 5
 	}
 	lines := []string{selectorTitleStyle.Render(truncateDisplayWidth(selector.title, innerWidth))}
-	for _, line := range wrapDisplayLines(selector.body, innerWidth, bodyRows) {
+	bodyLines := wrapDisplayLines(selector.body, innerWidth, bodyRows)
+	if selector.copyReview {
+		bodyLines = selector.copyPreviewPage(innerWidth, bodyRows)
+	}
+	for _, line := range bodyLines {
 		lines = append(lines, mutedStyle.Render(line))
+	}
+	if selector.copyReview {
+		lines = append(lines, mutedStyle.Render(fmt.Sprintf("完整预览 %d/%d · 必须查看末页后授权", selector.copyPage+1, selector.copyPages)))
 	}
 
 	maxVisibleOptions, optionLabelRows := 5, 1

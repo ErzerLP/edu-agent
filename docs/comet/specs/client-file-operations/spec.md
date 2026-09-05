@@ -1,6 +1,6 @@
 # 客户端本地文件操作完整规格
 
-当前文件工具还包含 [安全归档](../client-file-archive/spec.md)：文件或目录的删除意图只能移入 `.edu-agent-archive/`，由用户手动清理；该专用目录禁止普通写入、编辑或再次归档。下述五个文本工具的核心合同继续适用；六工具集合、归档保护及整体目录移动以安全归档规格为准，不提供永久删除或通用移动工具。
+本文件保留五个基础文本工具合同。当前十一工具集合由后续 [归档](../client-file-archive/spec.md)、[大参数](../client-file-large-arguments/spec.md)、[stat](../client-file-stat/spec.md)、[find](../client-file-find/spec.md)、[检索增强](../client-file-search-enhancement/spec.md)、[mkdir](../client-file-mkdir/spec.md)、[copy](../client-file-copy/spec.md) 和 [move](../client-file-move/spec.md) 规格扩展；下文首版“不复制/移动”和基础发现过滤等历史限制以对应后续合同覆盖。删除意图仍只能移入 `.edu-agent-archive/`，由用户手动清理；普通写入/编辑/创建/复制/移动和再次归档不能修改归档树。没有永久删除、Shell或多文件patch工具。
 
 ## 产品目标
 
@@ -88,7 +88,7 @@
 
 ## 工具执行与模型循环
 
-文件工具沿用现有 OpenAI-compatible function-calling 协议、每响应工具数量、每 turn 工具总数、参数大小和 tool-call ID 唯一性约束。客户端对模型参数执行独立严格校验，不能仅依赖 JSON Schema。
+文件工具沿用 OpenAI-compatible function-calling 协议与 tool-call ID 唯一性约束。数量/轮数规则由 [client-agent-tool-budget](../client-agent-tool-budget/spec.md) 覆盖；参数大小由 [client-file-large-arguments](../client-file-large-arguments/spec.md) 覆盖：write/edit 单次整 JSON 64 KiB，其他工具 8 KiB，一次响应累计 128 KiB。客户端对模型参数执行独立严格校验，不能仅依赖 JSON Schema。
 
 同一 assistant tool-call 组按现有顺序和暂停语义执行。需要文件授权的调用暂停在其位置，未执行的兄弟工具不得越过授权继续。授权完成后从原 tool call ID 和原位置恢复；拒绝、取消、重复提交和迟到选择必须保持线性化。
 

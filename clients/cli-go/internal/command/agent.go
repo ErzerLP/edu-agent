@@ -106,7 +106,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 		Provider:      agentcontroller.Provider{Name: value.Agent.Provider, Endpoint: value.Agent.BaseURL, Model: value.Agent.Model},
 		WorkspaceRoot: workspacePath,
 		LoopOptions: agentloop.Options{
-			ContextWindow: value.Agent.ContextWindow, MaxToolRounds: value.Agent.MaxToolRounds,
+			ContextWindow: value.Agent.ContextWindow, MaxTokens: value.Agent.MaxTokens, MaxToolRounds: value.Agent.MaxToolRounds,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -207,7 +207,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 		Store: store, Model: model, Server: server,
 		Provider: provider,
 		LoopOptions: agentloop.Options{
-			ContextWindow: value.Agent.ContextWindow, MaxToolRounds: value.Agent.MaxToolRounds,
+			ContextWindow: value.Agent.ContextWindow, MaxTokens: value.Agent.MaxTokens, MaxToolRounds: value.Agent.MaxToolRounds,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -666,8 +666,8 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 		if value.Agent.MaxToolRounds > 0 {
 			toolRounds = strconv.Itoa(value.Agent.MaxToolRounds)
 		}
-		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n最大工具轮数：%s\nAPI Key：%s\n",
-			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow,
+		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n最大输出 tokens：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n最大工具轮数：%s\nAPI Key：%s\n",
+			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow, value.Agent.MaxTokens,
 			safeText(value.Agent.ContextCompaction), safeText(value.Agent.ReasoningEffort), safeText(value.Agent.SessionHistory), safeText(value.Agent.Timeout), toolRounds, keyStatus)
 		return err
 	case "preset":
@@ -744,11 +744,12 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 func (a *App) runModelSet(args []string) error {
 	set := newFlagSet("model set")
 	var provider, baseURL, modelName, timeout, contextCompaction, reasoningEffort, sessionHistory string
-	var contextWindow, maxToolRounds int
+	var contextWindow, maxToolRounds, maxTokens int
 	set.StringVar(&provider, "provider", "", "model provider")
 	set.StringVar(&baseURL, "base-url", "", "OpenAI-compatible base URL")
 	set.StringVar(&modelName, "model", "", "model name")
-	set.IntVar(&contextWindow, "context-window", 0, "context window")
+	set.IntVar(&contextWindow, "context-window", 0, "total context window (default 272000)")
+	set.IntVar(&maxTokens, "max-tokens", 0, "maximum output tokens (1-128000; default 128000)")
 	set.StringVar(&contextCompaction, "context-compaction", "", "auto, recent-only, or off")
 	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
 	set.StringVar(&sessionHistory, "session-history", "", "auto or off")
@@ -757,12 +758,18 @@ func (a *App) runModelSet(args []string) error {
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return modelUsage("模型参数格式无效")
 	}
-	maxToolRoundsSet := false
+	maxToolRoundsSet, maxTokensSet := false, false
 	set.Visit(func(current *flag.Flag) {
+		if current.Name == "max-tokens" {
+			maxTokensSet = true
+		}
 		if current.Name == "max-tool-rounds" {
 			maxToolRoundsSet = true
 		}
 	})
+	if maxTokensSet && (maxTokens <= 0 || maxTokens > config.DefaultAgentMaxTokens) {
+		return commandError("invalid_configuration", "最大输出 tokens 无效", "请输入1到128000的整数", ExitInput)
+	}
 	if maxToolRoundsSet && maxToolRounds < config.MinAgentMaxToolRounds {
 		return commandError("invalid_configuration", "最大工具轮数无效", "请输入0或正整数；0表示不限制", ExitInput)
 	}
@@ -790,6 +797,9 @@ func (a *App) runModelSet(args []string) error {
 	}
 	if strings.TrimSpace(modelName) != "" {
 		candidate.Model = strings.TrimSpace(modelName)
+	}
+	if maxTokensSet {
+		candidate.MaxTokens = maxTokens
 	}
 	if contextWindow != 0 {
 		candidate.ContextWindow = contextWindow

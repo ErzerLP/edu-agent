@@ -264,7 +264,7 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 		}
 	}
 	if workspaceStatus.Available {
-		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区 %s 已启用。\n文件内容可能发送给当前模型 provider。\n默认每次写入/编辑/归档逐次确认，F4 可切换当前 Session 的 YOLO。删除只能归档到 .edu-agent-archive，由用户手动清理；普通工具禁止改写归档。其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护。", safeWorkspaceLabel(workspaceStatus.Label))})
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区 %s 已启用。\n文件内容可能发送给当前模型 provider。\n默认每次写入/编辑/归档/创建目录逐次确认，F4 可切换当前 Session 的 YOLO。删除只能归档到 .edu-agent-archive，由用户手动清理；普通工具禁止改写归档。其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护。", safeWorkspaceLabel(workspaceStatus.Label))})
 		input.Placeholder = "输入问题；Agent 可按需读取或修改工作区文件"
 	} else {
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区不可用（%s）；文件工具未启用，普通对话仍可使用。", safeSingleLineTerminalText(workspaceStatus.Code))})
@@ -646,7 +646,7 @@ func (m *model) applyFileAuthorizationMode(mode agentloop.FileAuthorizationMode)
 	}
 	m.selector = nil
 	if mode == agentloop.FileAuthorizationYOLO {
-		m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "文件模式已切换为 YOLO（仅当前 Session）。后续 write/edit/archive 不再逐次确认；归档目录不能普通写入或清理，其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。"})
+		m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "文件模式已切换为 YOLO（仅当前 Session）。后续 write/edit/archive/mkdir 不再逐次确认；归档目录不能普通写入或清理，其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。"})
 		m.status = "文件模式已切换为 YOLO"
 	} else {
 		m.status = "文件模式已切换为逐次确认"
@@ -698,7 +698,8 @@ func (m model) cancelFileMutation() (tea.Model, tea.Cmd) {
 			Event: agentloop.Event{ID: pending.CallID, Tool: pending.Tool, Summary: "文件修改授权已取消", Status: agentloop.EventFailed, Detail: "cancelled"},
 			File: &agentloop.FileActivityDetail{
 				Path: pending.Path, Operation: pending.Operation, PreviewKind: pending.PreviewKind,
-				ArchivePath: pending.ArchivePath, EntryKind: pending.EntryKind,
+				DestinationPath: pending.DestinationPath,
+				ArchivePath:     pending.ArchivePath, EntryKind: pending.EntryKind,
 				Preview: pending.Preview, PreviewTruncated: pending.Truncated,
 			},
 		}

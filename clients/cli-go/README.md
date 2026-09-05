@@ -21,7 +21,7 @@ make cli-build
 
 在支持全屏控制的交互终端中直接运行 `edu-agent`，即可打开中文主控制台。方向键或 `j/k` 移动，Enter 选择，界面显示的字母可直接打开 AI 学习助手、结构化学习、知识导入、目标、进度、复习、配对和设置等常用流程。
 
-设置页可在配对前管理客户端请求超时、输出颜色和本地 AI 模型。模型配置支持 OpenAI、DeepSeek、OpenRouter、Ollama 及自定义 OpenAI 兼容端点；可调整 Base URL、模型名称、上下文窗口、无响应超时和可选工具轮数保护值。工具轮数默认不限制，配置 `0` 表示持续运行到模型给出最终回答、需要用户交互、用户取消、超时或上下文管理无法继续；正整数只作为用户自选保护值，客户端不设置固定最大值。流式请求的无响应超时从请求发出后开始计算，并在收到任意 SSE 响应字节（包括心跳、隐藏推理、工具增量和跨分片内容）时重置；持续活跃的 SSE 不受固定总时长限制。非流式请求仍以该值限制整次等待。API Key 使用隐藏输入并按“提供商 + Base URL”绑定到独立的系统凭据槽，不会写入 `config.json`、命令输出或日志，也不会在切换端点时发送给另一个服务。Ollama 和无鉴权的自定义 loopback 端点可不配置 API Key；云端预设和远程自定义端点必须读取当前端点绑定的 Key，系统凭据后端不可用时会失败关闭。服务器地址和设备凭据仍通过配对流程变更。
+设置页可在配对前管理客户端请求超时、输出颜色和本地 AI 模型。模型配置支持 OpenAI、DeepSeek、OpenRouter、Ollama 及自定义 OpenAI 兼容端点；可调整 Base URL、模型名称、上下文窗口、最大输出 tokens、无响应超时和可选工具轮数保护值。新模型配置默认总窗口 `272000`、最大输出 `128000` tokens，`--max-tokens` 可设为 `1..128000`；已有显式窗口不自动覆盖。每次请求保留 5% 安全余量，必要时收缩当次输出额度；默认不代表所有 provider/model 支持该容量。工具轮数默认不限制，配置 `0` 表示持续运行到模型给出最终回答、需要用户交互、用户取消、超时或上下文管理无法继续；正整数只作为用户自选保护值，客户端不设置固定最大值。流式请求的无响应超时从请求发出后开始计算，并在收到任意 SSE 响应字节（包括心跳、隐藏推理、工具增量和跨分片内容）时重置；持续活跃的 SSE 不受固定总时长限制。非流式请求仍以该值限制整次等待。API Key 使用隐藏输入并按“提供商 + Base URL”绑定到独立的系统凭据槽，不会写入 `config.json`、命令输出或日志，也不会在切换端点时发送给另一个服务。Ollama 和无鉴权的自定义 loopback 端点可不配置 API Key；云端预设和远程自定义端点必须读取当前端点绑定的 Key，系统凭据后端不可用时会失败关闭。服务器地址和设备凭据仍通过配对流程变更。
 
 已配对客户端更换服务器时有两条明确路径：旧服务器可用时先安全注销并撤销远端设备；旧服务器不可用时可选择“仅清除本地配对”，保留客户端和模型设置，同时明确警告远端设备可能仍有效。损坏或不一致的本地配对状态只显示修复、设置和退出入口；Enter 本身不会确认撤销、删除凭据或保存长期偏好。
 
@@ -35,13 +35,31 @@ make cli-build
 
 Agent TUI 不再设置独立顶部状态栏或全宽分隔线，transcript 直接使用页面顶部空间；产品标识在宽终端合并到右侧概览标题，在窄终端进入消息输入区下方的状态区。输入区是按内容增长的有界多行 composer：`Enter` 发送，`Ctrl+J` 或 `Alt+Enter` 换行，字符计数显示 `8000` 上限。普通对话状态下，鼠标滚轮、`↑/↓` 与 `PgUp/PgDn` 均可滚动 transcript；向上离开底部后暂停自动跟随并提示有新消息，滚回底部后恢复跟随。选择面板激活时 `↑/↓` 仍用于移动选项焦点，`PgUp/PgDn` 和鼠标滚轮继续查看 transcript。宽终端右侧概览显示当前 Agent 状态、服务端权威学习目标、会话状态、路线进度、当前 Activity 与估算活跃时间；它在启动、完整 turn 结束或 `Ctrl+R` 时刷新，读取失败不阻断对话，窄终端会完全折叠侧栏。侧栏不显示任何 opaque ID、凭据、隐藏推理或原始工具参数，也不持久化学习状态副本。
 
+### 大窗口与长回答
+
+主请求默认采用 272k 总窗口和 128k 最大输出；预留完整输出与 5% 安全余量时，输入总预算为 130400 tokens，包含系统规则、工具定义、记忆和消息。普通及流式助手正文上限为 1 MiB（字节不是 token），合法长文本可在有界 Session 配额内完整保存和恢复。长历史优先保留原文，必要时仅对较早助手正文作带来源、哈希和可见降级标记的请求投影，不改写保存原文或拆开工具调用组；`context_compaction=off` 不静默裁剪。标题与后台记忆整理继续使用独立小输出预算。具体资源边界及未验证范围见 [大窗口设计](../../docs/design/client-agent-large-context.md)。
+
 ### 本地工作区与文件工具
 
-Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `list`、`read`、`search`、`write`、`edit` 文本工具，以及 `archive` 文件/目录归档工具；不提供永久 delete、通用 move、copy、patch、shell、进程或网络工具。源链接、junction、reparse point、绝对路径和工作区逃逸会被拒绝。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`mkdir` 目录创建、`copy` 普通文件流式复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供永久 delete、patch、shell、进程或网络工具。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
 
-`write`/`edit`/`archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
+`stat` 默认只读元数据，入口版本不代表文件内容或整个目录快照；可选 `hash=true` 只在1MiB内计算普通文件原始SHA256，不返回正文。`find` 支持basename或工作区相对路径glob，独立`**`跨零或多层；默认保留隐藏文件、跳过归档树、不读正文，并明确标记扫描/结果截断。详见 [stat](../../docs/design/client-file-stat.md) 和 [find](../../docs/design/client-file-find.md)。
 
-删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；用户自行手动恢复或删除归档，磁盘占用不会自动释放。归档树禁止 `write/edit/archive` 修改；`list/read` 可查看，普通 `search` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
+`search` 现在支持 `output=content|files|count`：文件列表/统计模式不返回正文，不完整时以 `counts_partial` 标记局部结果；`context=1..3` 可为content附加去重、有界邻近行。新 `glob` 支持组件 `**`，不改变旧include/exclude语义。`find/search` 可显式设置 `respect_gitignore=true` 读取工作区内有界分层规则；默认仍不启用，错误规则不会被当作空规则扩大范围，ignore也不是权限保护。详见 [检索增强设计](../../docs/design/client-file-search-enhancement.md)。
+
+`write`/`edit` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。文本文件仍限制为 1 MiB，预览/结果仍有独立有界预算；大文件优先使用局部 edit，不提供分块写入。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
+
+`mkdir` 可创建空目录，或显式使用 `parents=true` 创建冻结的缺失目录链；已有普通目录返回未变更，不覆盖其他入口。中途失败不删除回滚，已知创建前缀随统一回执保存；只有WAL的崩溃会明确说明计划路径可能已创建，恢复不重放。详见 [mkdir设计](../../docs/design/client-file-mkdir.md)。
+
+`copy` 使用 `source/destination/expected_version`，支持最多32MiB的普通文件（含二进制），版本来自stat；固定缓冲复制，不经模型传输正文。目标必须不存在、父目录已存在，源目标均不能在归档树。普通权限保留但不传播特殊权限，不承诺ACL等完整复制。确认预览可用PgUp/PgDn分页，完整末页显示后才可批准；结果未知不自动重试，恢复不重放。详见 [copy设计](../../docs/design/client-file-copy.md)。
+
+`move` 使用同样的三个字段，支持普通文件和整个目录（包括非空目录）；不读取正文、不限制为32MiB，内部链接随目录保留但不遍历。仅同文件系统、不覆盖、父目录必须存在；拒绝归档、自身后代和不安全大小写/身份别名，不以复制后删除兜底。入口版本不是子树快照，也不是跨进程CAS。详见 [move设计](../../docs/design/client-file-move.md)。
+
+`write`/`edit`/`mkdir`/`copy`/`move`/`archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
+
+`mkdir`、`copy`、`move` 的冻结预览用PgUp/PgDn完整分页，末页显示后才能批准。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。未进入稳定快照的文件日志受既有16KiB与32项回执容量约束，容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。最终record/dirty payload均为v6，旧格式严格迁移，恢复从不重放文件操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md)。
+
+删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；用户自行手动恢复或删除归档，磁盘占用不会自动释放。归档树禁止 `write/edit/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
 
 归档底层实现支持 Linux/macOS/Windows 的不覆盖移动；当前变更的 macOS/Windows 证据为交叉编译，原生归档运行未验证，这不扩大整客户端既有平台支持范围。
 
@@ -66,7 +84,7 @@ edu-agent config show
 edu-agent config set [--timeout DURATION] [--color never|auto|always] [--session-history auto|off]
 edu-agent model show
 edu-agent model preset openai|deepseek|openrouter|ollama|custom
-edu-agent model set [--base-url URL] [--model NAME] [--context-window N] [--context-compaction auto|recent-only|off] [--reasoning-effort auto|none|minimal|low|medium|high|xhigh|max] [--session-history auto|off] [--timeout DURATION] [--max-tool-rounds N]  # 0=unlimited
+edu-agent model set [--base-url URL] [--model NAME] [--context-window N] [--max-tokens N] [--context-compaction auto|recent-only|off] [--reasoning-effort auto|none|minimal|low|medium|high|xhigh|max] [--session-history auto|off] [--timeout DURATION] [--max-tool-rounds N]  # 0=unlimited
 edu-agent model test
 edu-agent model key delete --confirmed
 edu-agent agent [--workspace PATH] [--no-save]

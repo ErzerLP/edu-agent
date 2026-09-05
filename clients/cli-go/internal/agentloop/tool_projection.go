@@ -33,6 +33,9 @@ func projectWorkspaceToolResult(tool string, result workspace.Result) ToolResult
 	projection := projectToolResult(tool, value)
 	projection.ServerReference = nil
 	projection.WorkspaceReference = cloneWorkspaceReference(result.Reference)
+	if result.Effect != nil && projection.WorkspaceReference != nil && projection.WorkspaceReference.Kind == "file" {
+		projection.WorkspaceReference.Kind = "file_effect"
+	}
 	return projection
 }
 
@@ -317,6 +320,11 @@ func historyValue(tool string, value any) any {
 	if !ok {
 		return compactProjectionValue(value, 0, 6, 256)
 	}
+	if workspace.IsMutationTool(tool) {
+		if effect, ok := object["file_effect"]; ok {
+			return map[string]any{"file_effect": effect, "operation": object["operation"], "path": object["path"], "publication_outcome": object["publication_outcome"], "error": object["error"], "code": object["code"]}
+		}
+	}
 	if _, failed := object["error"]; failed {
 		return preserveOutcomeFields(tool, object, false, "")
 	}
@@ -335,7 +343,9 @@ func historyValue(tool string, value any) any {
 			result["hits"] = compactHits
 		}
 		return result
-	case workspace.ToolArchive:
+	case workspace.ToolSearch:
+		return compactSearchProjection(normalizedProjectionObject(object), 8, 256, "history_projection_limit")
+	case workspace.ToolArchive, workspace.ToolStat, workspace.ToolFind:
 		return workspaceBudgetProjection(tool, object, 256)
 	case "remember_preference":
 		return preserveOutcomeFields(tool, object, false, "")
@@ -345,8 +355,38 @@ func historyValue(tool string, value any) any {
 }
 
 func boundedProjectionJSON(tool string, value any, limit int, reason string) string {
+	// Copy/move endpoints and metadata versions are never recursively shortened.
+	if tool == workspace.ToolCopy || tool == workspace.ToolMove {
+		if data, err := json.Marshal(value); err == nil && len(data) <= limit {
+			return string(data)
+		}
+		if object := normalizedProjectionObject(value); object != nil {
+			fact := preserveFields(object, "file_effect", "operation", "path", "publication_outcome", "error", "code")
+			if data, err := json.Marshal(fact); err == nil && len(data) <= limit {
+				return string(data)
+			}
+		}
+		return `{"operation":"` + tool + `","error":"tool_result_encoding_failed"}`
+	}
 	if data, err := json.Marshal(value); err == nil && len(data) <= limit {
 		return string(data)
+	}
+	if tool == workspace.ToolSearch {
+		object := normalizedProjectionObject(value)
+		if object != nil {
+			if _, failed := object["error"]; !failed {
+				for _, candidate := range []map[string]any{
+					compactSearchProjection(object, 3, 128, reason),
+					compactSearchProjection(object, 1, 32, reason),
+					compactSearchProjection(object, 0, 0, reason),
+					minimalSearchProjection(object, reason),
+				} {
+					if data, err := json.Marshal(candidate); err == nil && len(data) <= limit {
+						return string(data)
+					}
+				}
+			}
+		}
 	}
 	for _, candidate := range []any{
 		compactProjectionValue(value, 0, 5, 256),
@@ -473,16 +513,30 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 			candidates = append(candidates, string(data))
 		}
 	}
+	if tool == workspace.ToolSearch {
+		if _, failed := object["error"]; !failed {
+			data, err := json.Marshal(minimalSearchProjection(object, "current_turn_budget"))
+			if err == nil {
+				candidates = append(candidates, string(data))
+			}
+		}
+	}
 	return candidates
 }
 
 func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit int) map[string]any {
+	if tool == workspace.ToolSearch {
+		if _, failed := object["error"]; !failed {
+			return compactSearchProjection(object, 1, payloadLimit, "current_turn_budget")
+		}
+	}
 	result := map[string]any{"tool": tool}
 	for _, key := range []string{
-		"path", "archive_path", "entry_type", "manual_cleanup", "directories_created", "operation", "error", "code", "message", "suggestion", "publication_outcome",
+		"file_effect", "source", "destination", "source_unchanged", "created_count", "path", "archive_path", "exists", "entry_version", "mtime", "size", "entry_type", "manual_cleanup", "directories_created", "operation", "error", "code", "message", "suggestion", "publication_outcome",
 		"content_hash", "expected_hash", "complete", "truncated", "truncation_reason", "returned",
 		"returned_lines", "next_offset", "next_byte_offset", "first_changed_line", "preview_kind",
-		"preview_truncated", "scanned_files", "scanned_bytes",
+		"preview_truncated", "scanned_files", "scanned_bytes", "visited_entries", "scanned_directories", "skipped", "pattern", "type",
+		"respect_gitignore", "ignore_files", "ignore_bytes", "ignored_entries", "source_truncation_reason",
 	} {
 		if current, ok := object[key]; ok {
 			if text, isText := current.(string); isText && (key == "message" || key == "suggestion") {
@@ -494,7 +548,11 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 
 	payloadKept := false
 	switch tool {
-	case workspace.ToolList:
+	case workspace.ToolStat:
+		// Metadata is the entire payload: never replace its version or mtime
+		// with a generic empty-result summary or a continuation marker.
+		return result
+	case workspace.ToolList, workspace.ToolFind:
 		if entries, ok := object["entries"].([]any); ok && len(entries) > 0 {
 			result["entries"] = []any{compactProjectionValue(entries[0], 0, 3, max(12, payloadLimit))}
 			payloadKept = true
@@ -504,12 +562,7 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 			result["content"] = truncateUTF8(content, payloadLimit)
 			payloadKept = true
 		}
-	case workspace.ToolSearch:
-		if matches, ok := object["matches"].([]any); ok && len(matches) > 0 {
-			result["matches"] = []any{compactProjectionValue(matches[0], 0, 3, max(12, payloadLimit))}
-			payloadKept = true
-		}
-	case workspace.ToolWrite, workspace.ToolEdit, workspace.ToolArchive:
+	case workspace.ToolWrite, workspace.ToolEdit, workspace.ToolArchive, workspace.ToolMkdir, workspace.ToolCopy, workspace.ToolMove:
 		for _, key := range []string{"preview", "diff"} {
 			if preview, ok := object[key].(string); ok && preview != "" {
 				result[key] = truncateUTF8(preview, payloadLimit)
@@ -521,11 +574,14 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 	if _, failed := object["error"]; !failed && !payloadKept {
 		result["payload_summary"] = "结果为空；请依据状态字段继续"
 	}
-	if tool == workspace.ToolList || tool == workspace.ToolRead || tool == workspace.ToolSearch {
+	if tool == workspace.ToolList || tool == workspace.ToolRead || tool == workspace.ToolSearch || tool == workspace.ToolFind {
 		if complete, _ := object["complete"].(bool); complete {
 			result["source_complete"] = true
 		}
 		result["complete"] = false
+		if sourceReason, ok := result["truncation_reason"]; ok {
+			result["source_truncation_reason"] = sourceReason
+		}
 		result["truncation_reason"] = "current_turn_budget"
 		if _, ok := result["suggestion"]; !ok {
 			switch tool {
@@ -533,12 +589,114 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 				result["suggestion"] = "按偏移继续"
 			case workspace.ToolRead:
 				result["suggestion"] = "按偏移并携带哈希继续"
-			case workspace.ToolSearch:
+			case workspace.ToolSearch, workspace.ToolFind:
 				result["suggestion"] = "缩小范围后重试"
 			}
 		}
 	} else if payloadKept {
 		result["preview_truncated"] = true
 	}
+	return result
+}
+
+// Search has mode-specific payloads and completeness semantics. Generic
+// recursive compaction can silently shorten strings while retaining complete
+// or turn arrays into unrelated objects, so it must not handle search data.
+func compactSearchProjection(object map[string]any, maxItems, maxString int, reason string) map[string]any {
+	result := preserveFields(object, "path", "output", "returned", "complete", "truncation_reason", "suggestion",
+		"scanned_files", "scanned_bytes", "visited_entries", "skipped", "matched_lines", "matched_files", "counts_partial",
+		"source_complete", "truncated", "respect_gitignore", "ignore_files", "ignore_bytes", "ignored_entries", "source_truncation_reason")
+	output, _ := object["output"].(string)
+	if output == "" {
+		output = "content" // Historical search results predate output.
+	}
+	result["output"] = output
+	changed := false
+	switch output {
+	case "count":
+		// Scalar counts are the entire payload and need no shortening.
+		return result
+	case "files":
+		files, _ := object["files"].([]any)
+		kept := make([]any, 0, min(len(files), maxItems))
+		for _, file := range files[:min(len(files), maxItems)] {
+			path, ok := file.(string)
+			if ok && len(path) <= maxString {
+				kept = append(kept, path) // Never fabricate a truncated path.
+			}
+		}
+		changed = len(kept) != len(files)
+		result["files"], result["returned"] = kept, len(kept)
+	default:
+		for _, key := range []string{"matches", "context_lines"} {
+			items, exists := object[key].([]any)
+			if !exists {
+				continue
+			}
+			kept := make([]any, 0, min(len(items), maxItems))
+			for _, item := range items[:min(len(items), maxItems)] {
+				entry, ok := item.(map[string]any)
+				if !ok {
+					changed = true
+					continue
+				}
+				projected := preserveFields(entry, "path", "line", "column", "truncated")
+				textKey := "preview"
+				if key == "context_lines" {
+					textKey = "content"
+				}
+				if text, ok := entry[textKey].(string); ok {
+					projected[textKey] = truncateUTF8(text, maxString)
+					if len(text) > maxString {
+						changed = true
+						projected["truncated"] = true
+					}
+				}
+				kept = append(kept, projected)
+			}
+			changed = changed || len(kept) != len(items)
+			result[key] = kept
+			if key == "matches" {
+				result["returned"] = len(kept)
+			}
+		}
+		if context, exists := object["context"]; exists {
+			result["context"] = context
+		}
+	}
+	if changed {
+		markSearchProjectionPartial(result, reason)
+	}
+	return result
+}
+
+func markSearchProjectionPartial(result map[string]any, reason string) {
+	if complete, _ := result["complete"].(bool); complete {
+		result["source_complete"] = true
+	}
+	result["complete"] = false
+	result["truncated"] = true
+	if sourceReason, ok := result["truncation_reason"]; ok && sourceReason != reason {
+		result["source_truncation_reason"] = sourceReason
+	}
+	result["truncation_reason"] = reason
+	if output := result["output"]; output == "files" || output == "count" {
+		result["counts_partial"] = true
+	}
+}
+
+func minimalSearchProjection(object map[string]any, reason string) map[string]any {
+	result := preserveFields(object, "output", "matched_lines", "matched_files", "counts_partial", "scanned_files", "scanned_bytes", "respect_gitignore")
+	if result["output"] == nil {
+		result["output"] = "content"
+	}
+	result["returned"] = 0
+	switch result["output"] {
+	case "files":
+		result["files"] = []any{}
+	case "content":
+		result["matches"] = []any{}
+	}
+	markSearchProjectionPartial(result, reason)
 	return result
 }

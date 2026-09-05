@@ -48,6 +48,12 @@ func (w *Workspace) PrepareMutation(ctx context.Context, toolName, rawArguments 
 		return nil, mutationContextFailure(err)
 	}
 	switch toolName {
+	case ToolMove:
+		return w.prepareMove(ctx, rawArguments)
+	case ToolCopy:
+		return w.prepareCopy(ctx, rawArguments)
+	case ToolMkdir:
+		return w.prepareMkdir(ctx, rawArguments)
 	case ToolArchive:
 		return w.prepareArchive(ctx, rawArguments)
 	case ToolWrite:
@@ -221,7 +227,19 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 	return prepared, Result{}
 }
 
-func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutation) Result {
+func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutation) (result Result) {
+	defer func() {
+		if prepared != nil && (result.Publication == PublicationCompleted || result.Publication == PublicationUnknown) && result.Effect == nil {
+			effect := prepared.FileEffect()
+			if result.Publication == PublicationCompleted && result.Reference != nil && effect.Operation != ToolArchive {
+				effect.Target.Version = result.Reference.ContentHash
+			}
+			result.Effect = &effect
+			if value, ok := result.Value.(map[string]any); ok {
+				value["file_effect"] = effect
+			}
+		}
+	}()
 	if w == nil || w.root == nil {
 		return mutationFailure(CodeWorkspaceUnavailable, "工作区不可用")
 	}
@@ -237,6 +255,15 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	prepared.commitMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return mutationContextFailure(err)
+	}
+	if prepared.Presentation.Tool == ToolMove {
+		return w.commitMove(ctx, prepared)
+	}
+	if prepared.Presentation.Tool == ToolCopy {
+		return w.commitCopy(ctx, prepared)
+	}
+	if prepared.Presentation.Tool == ToolMkdir {
+		return w.commitMkdir(ctx, prepared)
 	}
 	if prepared.Presentation.Tool == ToolArchive {
 		return w.commitArchive(ctx, prepared)
@@ -328,6 +355,14 @@ func MutationDenied(prepared *PreparedMutation) Result {
 	result.Publication = PublicationUnchanged
 	if value, ok := result.Value.(map[string]any); ok {
 		value["path"] = path
+		if prepared != nil && prepared.movePlan != nil {
+			value["source"], value["destination"], value["entry_type"] = path, prepared.movePlan.Destination(), string(prepared.movePlan.Kind())
+		}
+		if prepared != nil && prepared.copyPlan != nil {
+			value["source"] = path
+			value["destination"] = prepared.copyPlan.Destination()
+			value["source_unchanged"] = true
+		}
 		value["operation"] = operation
 		value["publication_outcome"] = string(PublicationUnchanged)
 	}

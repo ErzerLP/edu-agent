@@ -33,6 +33,7 @@ type Snapshot struct {
 	AgentBaseURL               string
 	AgentModel                 string
 	AgentContextWindow         int
+	AgentMaxTokens             int
 	AgentContextCompaction     string
 	AgentReasoningEffort       string
 	AgentSessionHistory        string
@@ -294,13 +295,18 @@ func (m *model) open(next screen) {
 			agentConfig.AgentBaseURL = preset.BaseURL
 			agentConfig.AgentModel = preset.Model
 			agentConfig.AgentContextWindow = preset.ContextWindow
+			agentConfig.AgentMaxTokens = preset.MaxTokens
 			agentConfig.AgentContextCompaction = preset.ContextCompaction
 			agentConfig.AgentTimeout = preset.Timeout
 			agentConfig.AgentMaxToolRounds = preset.MaxToolRounds
 		}
-		contextWindow := "32768"
+		contextWindow := strconv.Itoa(config.DefaultAgentContextWindow)
 		if agentConfig.AgentContextWindow > 0 {
 			contextWindow = strconv.Itoa(agentConfig.AgentContextWindow)
+		}
+		maxTokens := config.DefaultAgentMaxTokens
+		if agentConfig.AgentMaxTokens > 0 {
+			maxTokens = agentConfig.AgentMaxTokens
 		}
 		toolRounds := strconv.Itoa(config.DefaultAgentMaxToolRounds)
 		if agentConfig.AgentMaxToolRounds > 0 {
@@ -309,12 +315,13 @@ func (m *model) open(next screen) {
 		m.inputs = []textinput.Model{
 			newInput("https://api.openai.com/v1", agentConfig.AgentBaseURL),
 			newInput("模型名称", agentConfig.AgentModel),
-			newInput("32768", contextWindow),
+			newInput(strconv.Itoa(config.DefaultAgentContextWindow), contextWindow),
 			newInput("auto", display(agentConfig.AgentContextCompaction, config.DefaultAgentContextCompaction)),
 			newInput(config.DefaultAgentTimeout.String(), display(agentConfig.AgentTimeout, config.DefaultAgentTimeout.String())),
 			newInput("0", toolRounds),
+			newInput(strconv.Itoa(config.DefaultAgentMaxTokens), strconv.Itoa(maxTokens)),
 		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", "最大工具轮数（0=不限制，无固定上界）"}
+		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", "最大工具轮数（0=不限制，无固定上界）", "最大输出 tokens（1-128000）"}
 	case screenAgentKey:
 		input := newInput("输入不会显示", "")
 		input.EchoMode = textinput.EchoPassword
@@ -410,7 +417,7 @@ func (m model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if provider != "" {
 					m.command = append(m.command, "--provider", provider)
 				}
-				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--context-compaction", values[3], "--reasoning-effort", reasoningEffort, "--timeout", values[4], "--max-tool-rounds", values[5])
+				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--context-compaction", values[3], "--reasoning-effort", reasoningEffort, "--timeout", values[4], "--max-tool-rounds", values[5], "--max-tokens", values[6])
 				return m, tea.Quit
 			}
 		case screenAgentKey:
@@ -656,9 +663,9 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 	case screenAgentSettings:
 		body.WriteString(labelStyle.Render("AI助手与模型"))
 		body.WriteString("\n")
-		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
+		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n最大输出 tokens：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, config.DefaultAgentTimeout.String()), toolRoundLimit(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
+			positiveNumber(m.snapshot.AgentContextWindow), positiveNumber(m.snapshot.AgentMaxTokens), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, config.DefaultAgentTimeout.String()), toolRoundLimit(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
 		body.WriteString("\n")

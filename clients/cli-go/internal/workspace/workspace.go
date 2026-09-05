@@ -75,6 +75,10 @@ func (w *Workspace) Execute(ctx context.Context, toolName, rawArguments string) 
 		return contextFailure(err)
 	}
 	switch toolName {
+	case ToolFind:
+		return w.executeFind(ctx, rawArguments)
+	case ToolStat:
+		return w.executeStat(ctx, rawArguments)
 	case ToolList:
 		return w.executeList(ctx, rawArguments)
 	case ToolRead:

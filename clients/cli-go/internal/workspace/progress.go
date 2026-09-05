@@ -12,6 +12,7 @@ const maxSearchProgressReports = 64
 // normalized relative paths and aggregate counters; it never contains tool
 // arguments, hashes, file contents, or operating-system errors.
 type Progress struct {
+	DestinationPath  string
 	Tool             string
 	Path             string
 	Operation        string
@@ -39,6 +40,21 @@ func InitialProgress(toolName, rawArguments string) (Progress, bool) {
 	var path string
 	var err error
 	switch toolName {
+	case ToolFind:
+		args, decodeErr := decodeFindArguments(rawArguments)
+		if decodeErr != nil {
+			return Progress{}, false
+		}
+		if args.Path == "" {
+			args.Path = "."
+		}
+		path, err = normalizeModelPath(args.Path, true)
+	case ToolStat:
+		var args statArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Path, true)
 	case ToolList:
 		var args listArguments
 		if decodeArguments(rawArguments, &args) != nil {
@@ -59,8 +75,8 @@ func InitialProgress(toolName, rawArguments string) (Progress, bool) {
 		}
 		progress.StartLine = args.Offset
 	case ToolSearch:
-		var args searchArguments
-		if decodeArguments(rawArguments, &args) != nil {
+		args, decodeErr := decodeSearchArguments(rawArguments)
+		if decodeErr != nil {
 			return Progress{}, false
 		}
 		if args.Path == "" {
@@ -74,6 +90,24 @@ func InitialProgress(toolName, rawArguments string) (Progress, bool) {
 		}
 		path, err = normalizeModelPath(args.Path, false)
 		progress.Operation = "write_" + args.Mode
+	case ToolCopy, ToolMove:
+		args, decodeErr := decodeCopyArguments(rawArguments)
+		if decodeErr != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Source, false)
+		if err != nil {
+			return Progress{}, false
+		}
+		progress.DestinationPath, err = normalizeModelPath(args.Destination, false)
+		progress.Operation = toolName
+	case ToolMkdir:
+		args, decodeErr := decodeMkdirArguments(rawArguments)
+		if decodeErr != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Path, false)
+		progress.Operation = ToolMkdir
 	case ToolArchive:
 		var args archiveArguments
 		if decodeArguments(rawArguments, &args) != nil {
@@ -128,8 +162,19 @@ func safeProgress(progress Progress) bool {
 	if !IsReadTool(progress.Tool) && !IsMutationTool(progress.Tool) {
 		return false
 	}
-	allowRoot := progress.Tool == ToolList || progress.Tool == ToolSearch
-	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" && progress.Operation != ToolArchive {
+	if progress.Tool == ToolCopy || progress.Tool == ToolMove {
+		destination, err := normalizeModelPath(progress.DestinationPath, false)
+		if err != nil || destination != progress.DestinationPath {
+			return false
+		}
+		for _, r := range destination {
+			if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
+				return false
+			}
+		}
+	}
+	allowRoot := progress.Tool == ToolFind || progress.Tool == ToolStat || progress.Tool == ToolList || progress.Tool == ToolSearch
+	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" && progress.Operation != ToolArchive && progress.Operation != ToolMkdir && progress.Operation != ToolCopy && progress.Operation != ToolMove {
 		return false
 	}
 	normalized, err := normalizeModelPath(progress.Path, allowRoot)
@@ -212,5 +257,12 @@ func (e *searchProgressEmitter) publish(state searchState, final, force bool) {
 }
 
 func (s searchState) matchesCount() int {
-	return len(s.matches)
+	switch s.output {
+	case "files":
+		return len(s.files)
+	case "count":
+		return s.matchedLines
+	default:
+		return len(s.matches)
+	}
 }

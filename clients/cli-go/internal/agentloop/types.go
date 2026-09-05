@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
@@ -46,6 +47,9 @@ type DurabilitySink interface {
 	BeginTurn(context.Context, DirtyIntent) error
 	BeforePreferenceWrite(context.Context, PreferenceWriteAhead) error
 	BeforeFilePublication(context.Context, FileWriteAhead) error
+	// AfterFilePublication receives the executor result, never model text. It
+	// must settle the matching WAL before another side effect can be started.
+	AfterFilePublication(context.Context, string, workspace.Result) error
 }
 
 type DirtyIntent struct {
@@ -107,19 +111,13 @@ const (
 )
 
 type FileWriteAhead struct {
-	ArchivePath        string
-	ToolCallID         string
-	Operation          string
-	Path               string
-	Kind               string
-	ContentHash        string
-	InvalidateObserved bool
-	StableCode         string
-	PublicationOutcome workspace.PublicationOutcome
+	ToolCallID string
+	Effect     fileeffects.Effect
 }
 
 type Options struct {
 	ContextWindow     int
+	MaxTokens         int
 	MaxToolRounds     int
 	ContextCompaction string
 	ReasoningEffort   modelclient.ReasoningEffort
@@ -184,6 +182,11 @@ type ActivityProgress struct {
 // data. It never contains raw tool arguments, hashes, provider reasoning,
 // absolute workspace roots, or operating-system errors.
 type FileActivityDetail struct {
+	CreationAnchor     string
+	PlannedDirectories int
+	CreatedDirectories int
+	HasDirectoryPlan   bool
+	DestinationPath    string
 	ArchivePath        string
 	EntryKind          string
 	Path               string
@@ -267,16 +270,17 @@ const (
 )
 
 type PendingFileMutation struct {
-	ArchivePath string
-	EntryKind   string
-	CallID      string
-	Tool        string
-	Operation   string
-	Path        string
-	PreviewKind string
-	Preview     string
-	Truncated   bool
-	BaseVersion string
+	DestinationPath string
+	ArchivePath     string
+	EntryKind       string
+	CallID          string
+	Tool            string
+	Operation       string
+	Path            string
+	PreviewKind     string
+	Preview         string
+	Truncated       bool
+	BaseVersion     string
 }
 
 type PreferenceConfirmation struct {

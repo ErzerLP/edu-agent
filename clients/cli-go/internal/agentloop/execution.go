@@ -79,8 +79,8 @@ func (s *Session) runOnce(ctx context.Context, events []Event) (Result, error) {
 		s.contextRuntime.UpdateUsageStatus(*response.Usage)
 	}
 	if len(response.Message.ToolCalls) == 0 {
-		text := strings.TrimSpace(response.Message.Content)
-		if text == "" {
+		text := response.Message.Content
+		if strings.TrimSpace(text) == "" {
 			return Result{}, errors.New("模型没有返回可显示的回答")
 		}
 		if err := s.commitFinalAnswer(ctx, response.Message, text); err != nil {

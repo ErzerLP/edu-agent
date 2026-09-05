@@ -84,13 +84,13 @@ func TestArchiveToolAuthorizationAndWriteAhead(t *testing.T) {
 				}
 				return
 			}
-			if len(sink.files) != 1 || sink.files[0].Operation != workspace.ToolArchive || sink.files[0].Kind != "directory" || sink.files[0].ArchivePath == "" {
+			if len(sink.files) != 1 || sink.files[0].Effect.Operation != workspace.ToolArchive || sink.files[0].Effect.Target.Kind != "directory" || sink.files[0].Effect.Target.Path == "" {
 				t.Fatalf("write-ahead: %+v", sink.files)
 			}
-			if destination != "" && sink.files[0].ArchivePath != destination {
+			if destination != "" && sink.files[0].Effect.Target.Path != destination {
 				t.Fatal("WAL destination differs from approval")
 			}
-			destination = sink.files[0].ArchivePath
+			destination = sink.files[0].Effect.Target.Path
 			if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(destination), "data.bin")); err != nil {
 				t.Fatal(err)
 			}

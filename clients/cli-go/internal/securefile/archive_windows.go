@@ -5,7 +5,6 @@ package securefile
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 
@@ -59,16 +58,8 @@ func windowsArchiveEntry(file *os.File) (ArchiveEntry, error) {
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return ArchiveEntry{}, ErrLink
 	}
-	kind := EntryFile
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		kind = EntryDirectory
-	}
-	identity := fmt.Sprintf("windows:%x:%x", info.VolumeSerialNumber, uint64(info.FileIndexHigh)<<32|uint64(info.FileIndexLow))
-	size := int64(uint64(info.FileSizeHigh)<<32 | uint64(info.FileSizeLow))
-	version := archiveMetadataVersion(fmt.Sprintf("%s|%s|%d|%d|%d:%d|%d:%d|%d", identity, kind, size,
-		info.FileAttributes, info.LastWriteTime.HighDateTime, info.LastWriteTime.LowDateTime,
-		info.CreationTime.HighDateTime, info.CreationTime.LowDateTime, info.NumberOfLinks))
-	return ArchiveEntry{Kind: kind, Size: size, Identity: identity, Version: version}, nil
+	entry := windowsEntryInfo(info)
+	return ArchiveEntry{Kind: entry.Kind, Size: entry.Size, Identity: entry.Identity, Version: entry.Version}, nil
 }
 
 func windowsArchiveSame(a, b *os.File) (bool, error) {

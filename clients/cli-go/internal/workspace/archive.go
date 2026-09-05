@@ -144,12 +144,16 @@ func archiveFailure(ctx context.Context, prepared *PreparedMutation, err error) 
 	return result
 }
 
+func (r *Reference) IsOperation() bool {
+	return r != nil && (r.IsArchive() || r.Kind == "mkdir" || r.Kind == "copy" || r.Kind == "move_file" || r.Kind == "move_directory" || r.Kind == "file_effect")
+}
+
 func (r *Reference) IsArchive() bool {
 	return r != nil && (r.Kind == "archive_file" || r.Kind == "archive_directory")
 }
 
 func archiveAffectsReference(source string, directory bool, previous *Reference) bool {
-	if previous.IsArchive() {
+	if previous.IsOperation() {
 		return false // Operation receipts remain historical facts, not file contents.
 	}
 	path := previous.Path
@@ -158,10 +162,14 @@ func archiveAffectsReference(source string, directory bool, previous *Reference)
 	}
 	insideSource := path == source || directory && strings.HasPrefix(path, source+"/")
 	switch previous.Kind {
+	case "entry_metadata":
+		return insideSource || path == "." || strings.HasPrefix(source, path+"/") || isArchivePath(path)
 	case "file":
 		return insideSource
 	case "directory_listing":
 		return insideSource || path == pathpkg.Dir(source) || path == "."
+	case "find_result":
+		return insideSource || path == "." || strings.HasPrefix(source, path+"/") || isArchivePath(path)
 	case "search_result":
 		return insideSource || path == "." || strings.HasPrefix(source, path+"/")
 	default:

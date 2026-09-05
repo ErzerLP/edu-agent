@@ -374,7 +374,7 @@ func (r *ContextRuntime) supersedeWorkspaceEvidence(reference *WorkspaceReferenc
 	for _, sourceID := range r.ledger.SourceOrder {
 		source := r.ledger.Sources[sourceID]
 		previous := source.WorkspaceReference
-		if source.Authority != AuthorityWorkspaceSnapshot || previous == nil || !reference.Supersedes(previous) || source.Freshness != FreshnessWorkspaceObserved {
+		if source.Authority != AuthorityWorkspaceSnapshot || previous == nil || !reference.Supersedes(previous) || source.Freshness != FreshnessWorkspaceObserved || fileOperationFact(source.RecallText) || fileOperationFact(source.ModelMessage.Content) {
 			continue
 		}
 		source.Freshness = FreshnessWorkspaceSuperseded
@@ -1265,7 +1265,7 @@ func (r *ContextRuntime) UpdatePlanStatus(plan ContextPlan, currentTurnID string
 	if r.contextWindow > 0 {
 		percent = clampInt(divideRoundUp(plan.EstimatedInput*100, r.contextWindow), 0, 100)
 	}
-	degraded := r.mode == ContextCompactionAuto && plan.DroppedTurns > 0 && !plan.UsedMemory
+	degraded := plan.ProjectedTurns > 0 || r.mode == ContextCompactionAuto && plan.DroppedTurns > 0 && !plan.UsedMemory
 	r.status.Estimated = true
 	r.status.CurrentTokens = plan.EstimatedInput
 	r.status.ContextWindow = r.contextWindow
@@ -1275,6 +1275,9 @@ func (r *ContextRuntime) UpdatePlanStatus(plan ContextPlan, currentTurnID string
 	if degraded {
 		r.status.Degraded = true
 		r.status.DegradedCode = ContextCompactionDegraded
+		if plan.ProjectedTurns > 0 {
+			r.status.DegradedCode = "context_history_projected"
+		}
 		r.status.Phase = "fallback"
 	} else if r.status.Degraded {
 		r.status.Degraded = false
@@ -1289,7 +1292,7 @@ func (r *ContextRuntime) UpdatePlanStatus(plan ContextPlan, currentTurnID string
 		if _, published := r.degradedTurns[currentTurnID]; !published {
 			r.degradedTurns[currentTurnID] = struct{}{}
 			r.publishLocked(ContextEvent{
-				Kind: ContextEventDegraded, Code: ContextCompactionDegraded, Phase: "fallback",
+				Kind: ContextEventDegraded, Code: r.status.DegradedCode, Phase: "fallback",
 				TotalTurns: plan.TotalTurns, SelectedTurns: plan.SelectedTurns, DroppedTurns: plan.DroppedTurns,
 			})
 		}

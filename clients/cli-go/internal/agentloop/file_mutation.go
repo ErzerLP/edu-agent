@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
@@ -17,7 +20,8 @@ func pendingFileMutationFrom(callID string, prepared *workspace.PreparedMutation
 	value := prepared.Presentation
 	return &PendingFileMutation{
 		CallID: callID, Tool: value.Tool, Operation: value.Operation, Path: value.Path,
-		ArchivePath: value.ArchivePath, EntryKind: value.EntryKind,
+		DestinationPath: value.DestinationPath,
+		ArchivePath:     value.ArchivePath, EntryKind: value.EntryKind,
 		PreviewKind: value.PreviewKind, Preview: value.Preview, Truncated: value.Truncated, BaseVersion: value.BaseVersion,
 	}
 }
@@ -73,8 +77,10 @@ func (s *Session) ResolveFileMutation(ctx context.Context, callID string, resolu
 
 	result, event, stop, err := s.commitPreparedFileMutation(ctx, call, prepared)
 	if err != nil {
-		s.discardTurn(turnID)
-		return Result{}, err
+		if event.ID != "" {
+			events = append(events, event)
+		}
+		return s.finishAfterTurnFailure(turnID, events, err)
 	}
 	events = append(events, event)
 	s.clearPendingAfterResolution()
@@ -121,14 +127,8 @@ func (s *Session) CancelPendingFileMutation(callID string) (Result, error) {
 func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclient.ToolCall, prepared *workspace.PreparedMutation) (workspace.Result, Event, bool, error) {
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: "正在安全发布文件修改", Status: EventRunning}, Phase: ActivityExecutingTool, File: fileActivityDetailFromPrepared(prepared)})
 	if s.options.Durability != nil {
-		presentation := prepared.Presentation
-		kind := presentation.EntryKind
-		if kind == "" {
-			kind = "file"
-		}
 		if err := s.options.Durability.BeforeFilePublication(ctx, FileWriteAhead{
-			ToolCallID: call.ID, Operation: presentation.Operation, Path: presentation.Path,
-			ArchivePath: presentation.ArchivePath, Kind: kind,
+			ToolCallID: call.ID, Effect: prepared.FileEffect(),
 		}); err != nil {
 			return workspace.Result{Publication: workspace.PublicationUnchanged}, Event{}, false, errors.New("无法在文件发布前持久化恢复凭据")
 		}
@@ -137,6 +137,14 @@ func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclie
 	result := s.workspace.CommitMutation(toolCtx, prepared)
 	toolErr := toolCtx.Err()
 	cancel()
+	// Disk publication can outlive foreground cancellation. Persist its actual
+	// result with a bounded independent context before any continuation.
+	var settlementErr error
+	if s.options.Durability != nil {
+		settleCtx, settleCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		settlementErr = s.options.Durability.AfterFilePublication(settleCtx, call.ID, result)
+		settleCancel()
+	}
 	if result.Publication == workspace.PublicationUnchanged && toolErr != nil {
 		event := workspaceToolContextFailureEvent(call.ID, call.Function.Name, toolErr)
 		s.publishActivity(ctx, Activity{
@@ -161,6 +169,9 @@ func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclie
 		Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail,
 		File: mergePreparedFileActivity(fileActivityDetailFromResult(call.Function.Name, result), prepared),
 	})
+	if settlementErr != nil {
+		return result, event, true, fmt.Errorf("文件结果持久化失败；已停止后续操作: %w", settlementErr)
+	}
 	stop := result.Publication == workspace.PublicationUnknown || result.Publication == workspace.PublicationCompleted && (ctx.Err() != nil || toolErr != nil)
 	return result, event, stop, nil
 }
@@ -218,9 +229,32 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 			continue
 		}
 		var effect struct {
-			Operation   string `json:"operation"`
-			ArchivePath string `json:"archive_path"`
-			Path        string `json:"path"`
+			FileEffect  fileeffects.Effect `json:"file_effect"`
+			Operation   string             `json:"operation"`
+			ArchivePath string             `json:"archive_path"`
+			Path        string             `json:"path"`
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolMove && effect.FileEffect.Validate() == nil {
+			text = "已移动：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；未永久删除；后续处理已停止。"
+			if unknown {
+				text = "移动结果未知：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；请核查两端；不会自动重试、恢复重放或删除回滚。"
+			}
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolCopy && effect.FileEffect.Validate() == nil {
+			text = "已复制：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；本操作未修改源；后续处理已停止。"
+			if unknown {
+				text = "复制结果未知：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；本操作未修改源；请核查目标及临时项，不会自动重试或恢复重放。"
+			}
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolMkdir {
+			text = "目录创建已完成：" + effect.Path + "；后续处理已停止。"
+			if unknown {
+				text = "目录创建结果未知：" + effect.Path + "；请核查冻结计划及已知创建前缀，保留实际目录；不会自动重试或删除回滚。"
+				if effect.FileEffect.Validate() == nil {
+					chain := effect.FileEffect.Directories
+					text = "目录创建结果未知：" + effect.FileEffect.Target.Path + "；父锚点 " + chain.Anchor + "，已知创建 " + intText(chain.Created) + "/" + intText(chain.Count) + " 层（按冻结路径顺序）。其余计划路径可能已创建；不会自动重试或删除回滚。"
+				}
+			}
 		}
 		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolArchive {
 			if unknown {

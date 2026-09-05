@@ -16,23 +16,23 @@ import (
 
 const archiveTargetForTest = ".edu-agent-archive/20260721T120000.000000000Z-0123456789abcdef/notes/topic.md"
 
-func archiveReceiptForTest(kind, outcome string) FileReceipt {
+func archiveReceiptForTest(kind, outcome string) fileReceiptV3 {
 	code := FilePublicationUnknownCode
 	if outcome == NoticeOutcomeCompleted {
 		code = FilePublicationCompletedCode
 	}
-	return FileReceipt{
+	return fileReceiptV3{
 		ToolCallID: "archive-call", Operation: "archive", Path: "notes/topic.md", ArchivePath: archiveTargetForTest,
 		Kind: kind, InvalidateObserved: true, StableCode: code, Outcome: outcome,
 	}
 }
 
-func archiveWriteAheadForTest(value FileReceipt) FileWriteAhead {
-	return FileWriteAhead{
+func archiveWriteAheadForTest(value fileReceiptV3) FileWriteAhead {
+	return upcastFileWriteAhead(fileWriteAheadV2{
 		ToolCallID: value.ToolCallID, Operation: value.Operation, Path: value.Path, ArchivePath: value.ArchivePath,
 		Kind: value.Kind, ContentHash: value.ContentHash, InvalidateObserved: value.InvalidateObserved,
 		StableCode: value.StableCode, PublicationOutcome: value.Outcome,
-	}
+	})
 }
 
 func TestArchiveFileEffectsRoundTrip(t *testing.T) {
@@ -63,17 +63,17 @@ func TestArchiveFileEffectsRoundTrip(t *testing.T) {
 				}
 				plain, header := dirtyPayloadOnDiskForTest(t, store, handle.dataKey, record)
 				version, err := probeRecordPayloadSchema(plain, store.limits.DirtyMarkerBytes)
-				if err != nil || version != 2 || header.SchemaVersion != 1 || bytes.Contains(plain, []byte("content_hash")) {
+				if err != nil || version != dirtySchemaVersion || header.SchemaVersion != 1 || bytes.Contains(plain, []byte("content_hash")) {
 					t.Fatalf("dirty version=%d header=%d payload=%s err=%v", version, header.SchemaVersion, plain, err)
 				}
 				candidate := loaded.Record
-				candidate.FileReceipts = []FileReceipt{receipt}
+				candidate.FileReceipts = []FileReceipt{upcastFileReceipt(receipt)}
 				candidate.LastConsumedDirtyID = updated.DirtyID
 				saved, err := handle.Save(t.Context(), record.RecordRevision, candidate)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if version, header := recordPayloadVersionOnDiskForTest(t, store, handle.dataKey, saved); version != 3 || header.SchemaVersion != 1 {
+				if version, header := recordPayloadVersionOnDiskForTest(t, store, handle.dataKey, saved); version != recordPayloadSchemaVersion || header.SchemaVersion != 1 {
 					t.Fatalf("record payload=%d container=%d", version, header.SchemaVersion)
 				}
 				if err := handle.Close(); err != nil {
@@ -84,7 +84,7 @@ func TestArchiveFileEffectsRoundTrip(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer reopened.Close()
-				if final.Interrupted != nil || !reflect.DeepEqual(final.Record.FileReceipts, []FileReceipt{receipt}) {
+				if final.Interrupted != nil || !reflect.DeepEqual(final.Record.FileReceipts, []FileReceipt{upcastFileReceipt(receipt)}) {
 					t.Fatalf("receipt round trip=%+v", final)
 				}
 			})
@@ -94,86 +94,86 @@ func TestArchiveFileEffectsRoundTrip(t *testing.T) {
 
 func TestArchiveFileEffectsRejectInvalidReferences(t *testing.T) {
 	for _, outcome := range []string{NoticeOutcomeCompleted, NoticeOutcomeUnknown} {
-		for name, mutate := range map[string]func(*FileReceipt){
-			"missing destination":   func(v *FileReceipt) { v.ArchivePath = "" },
-			"absolute destination":  func(v *FileReceipt) { v.ArchivePath = "/private/notes/topic.md" },
-			"drive destination":     func(v *FileReceipt) { v.ArchivePath = "C:/notes/topic.md" },
-			"backslash destination": func(v *FileReceipt) { v.ArchivePath = `.edu-agent-archive\stamp-id\notes\topic.md` },
-			"escaping destination":  func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive/stamp-id/../../notes/topic.md" },
-			"wrong root":            func(v *FileReceipt) { v.ArchivePath = "archive/stamp-id/notes/topic.md" },
-			"root only":             func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive" },
-			"missing container":     func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive/notes/topic.md" },
-			"missing random ID":     func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive/20260721T120000Z-/notes/topic.md" },
-			"extra prefix":          func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive/stamp-id/extra/notes/topic.md" },
-			"forged source suffix":  func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive/stamp-id/other.md" },
-			"destination control":   func(v *FileReceipt) { v.ArchivePath = ".edu-agent-archive/stamp\t-id/notes/topic.md" },
-			"source control": func(v *FileReceipt) {
+		for name, mutate := range map[string]func(*fileReceiptV3){
+			"missing destination":   func(v *fileReceiptV3) { v.ArchivePath = "" },
+			"absolute destination":  func(v *fileReceiptV3) { v.ArchivePath = "/private/notes/topic.md" },
+			"drive destination":     func(v *fileReceiptV3) { v.ArchivePath = "C:/notes/topic.md" },
+			"backslash destination": func(v *fileReceiptV3) { v.ArchivePath = `.edu-agent-archive\stamp-id\notes\topic.md` },
+			"escaping destination":  func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive/stamp-id/../../notes/topic.md" },
+			"wrong root":            func(v *fileReceiptV3) { v.ArchivePath = "archive/stamp-id/notes/topic.md" },
+			"root only":             func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive" },
+			"missing container":     func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive/notes/topic.md" },
+			"missing random ID":     func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive/20260721T120000Z-/notes/topic.md" },
+			"extra prefix":          func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive/stamp-id/extra/notes/topic.md" },
+			"forged source suffix":  func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive/stamp-id/other.md" },
+			"destination control":   func(v *fileReceiptV3) { v.ArchivePath = ".edu-agent-archive/stamp\t-id/notes/topic.md" },
+			"source control": func(v *fileReceiptV3) {
 				v.Path = "notes/to\npic.md"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"source root": func(v *FileReceipt) { v.Path = "."; v.ArchivePath = ".edu-agent-archive/stamp-id/." },
-			"source escape": func(v *FileReceipt) {
+			"source root": func(v *fileReceiptV3) { v.Path = "."; v.ArchivePath = ".edu-agent-archive/stamp-id/." },
+			"source escape": func(v *fileReceiptV3) {
 				v.Path = "../topic.md"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/../topic.md"
 			},
-			"source already archived": func(v *FileReceipt) {
+			"source already archived": func(v *fileReceiptV3) {
 				v.Path = ".edu-agent-archive/old-id/topic.md"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"source archive alias": func(v *FileReceipt) {
+			"source archive alias": func(v *fileReceiptV3) {
 				v.Path = ".EDU-AGENT-ARCHIVE"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"source trailing dot alias": func(v *FileReceipt) {
+			"source trailing dot alias": func(v *fileReceiptV3) {
 				v.Path = ".edu-agent-archive./topic.md"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"source alternate stream": func(v *FileReceipt) {
+			"source alternate stream": func(v *fileReceiptV3) {
 				v.Path = "notes/topic.md:stream"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"destination depth": func(v *FileReceipt) {
+			"destination depth": func(v *fileReceiptV3) {
 				v.Path = strings.Repeat("d/", 62) + "topic.md"
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"destination bytes": func(v *FileReceipt) {
+			"destination bytes": func(v *fileReceiptV3) {
 				v.Path = strings.Repeat("x", 4090)
 				v.ArchivePath = ".edu-agent-archive/stamp-id/" + v.Path
 			},
-			"fake source hash":         func(v *FileReceipt) { v.ContentHash = "sha256:" + strings.Repeat("a", 64) },
-			"special entry":            func(v *FileReceipt) { v.Kind = "symlink" },
-			"missing invalidation":     func(v *FileReceipt) { v.InvalidateObserved = false },
-			"wrong stable code":        func(v *FileReceipt) { v.StableCode = "archive_succeeded" },
-			"invalid outcome":          func(v *FileReceipt) { v.Outcome = "rejected" },
-			"write with archive field": func(v *FileReceipt) { v.Operation = "write_replace" },
-			"ordinary directory write": func(v *FileReceipt) { v.Operation = "write_replace"; v.Kind = "directory"; v.ArchivePath = "" },
+			"fake source hash":         func(v *fileReceiptV3) { v.ContentHash = "sha256:" + strings.Repeat("a", 64) },
+			"special entry":            func(v *fileReceiptV3) { v.Kind = "symlink" },
+			"missing invalidation":     func(v *fileReceiptV3) { v.InvalidateObserved = false },
+			"wrong stable code":        func(v *fileReceiptV3) { v.StableCode = "archive_succeeded" },
+			"invalid outcome":          func(v *fileReceiptV3) { v.Outcome = "rejected" },
+			"write with archive field": func(v *fileReceiptV3) { v.Operation = "write_replace" },
+			"ordinary directory write": func(v *fileReceiptV3) { v.Operation = "write_replace"; v.Kind = "directory"; v.ArchivePath = "" },
 		} {
 			t.Run(outcome+"/"+name, func(t *testing.T) {
 				value := archiveReceiptForTest("file", outcome)
 				mutate(&value)
-				if err := validateFileReceipt(value); !errors.Is(err, ErrInvalid) {
+				if err := validateLegacyFileReceipt(value); !errors.Is(err, ErrInvalid) {
 					t.Fatalf("receipt error=%v", err)
 				}
-				if err := validateFileWriteAhead(archiveWriteAheadForTest(value)); !errors.Is(err, ErrInvalid) {
+				if err := validateLegacyFileWriteAhead(fileWriteAheadV2{ToolCallID: value.ToolCallID, Operation: value.Operation, Path: value.Path, ArchivePath: value.ArchivePath, Kind: value.Kind, ContentHash: value.ContentHash, InvalidateObserved: value.InvalidateObserved, StableCode: value.StableCode, PublicationOutcome: value.Outcome}); !errors.Is(err, ErrInvalid) {
 					t.Fatalf("write-ahead error=%v", err)
 				}
 			})
 		}
 	}
 	// Archive's completed invalidation must not weaken write/edit's contract.
-	legacy := FileReceipt{ToolCallID: "write", Operation: "edit", Path: "topic.md", Kind: "file", ContentHash: "sha256:" + strings.Repeat("b", 64), StableCode: FilePublicationCompletedCode, Outcome: NoticeOutcomeCompleted}
-	if err := validateFileReceipt(legacy); err != nil {
+	legacy := fileReceiptV3{ToolCallID: "write", Operation: "edit", Path: "topic.md", Kind: "file", ContentHash: "sha256:" + strings.Repeat("b", 64), StableCode: FilePublicationCompletedCode, Outcome: NoticeOutcomeCompleted}
+	if err := validateFileReceipt(upcastFileReceipt(legacy)); err != nil {
 		t.Fatalf("legacy completed receipt: %v", err)
 	}
 	if err := validateFileWriteAhead(archiveWriteAheadForTest(legacy)); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("legacy completed write-ahead error=%v", err)
 	}
 	legacy.InvalidateObserved = true
-	if err := validateFileReceipt(legacy); !errors.Is(err, ErrInvalid) {
+	if err := validateFileReceipt(upcastFileReceipt(legacy)); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("legacy completed invalidation error=%v", err)
 	}
 	legacy.ContentHash, legacy.StableCode, legacy.Outcome = "", FilePublicationUnknownCode, NoticeOutcomeUnknown
-	if err := validateFileReceipt(legacy); err != nil {
+	if err := validateFileReceipt(upcastFileReceipt(legacy)); err != nil {
 		t.Fatalf("legacy unknown receipt: %v", err)
 	}
 	if err := validateFileWriteAhead(archiveWriteAheadForTest(legacy)); err != nil {
@@ -192,8 +192,8 @@ func TestArchivePayloadLegacyMigration(t *testing.T) {
 			}
 			defer handle.Close()
 			record.FileReceipts = []FileReceipt{
-				{ToolCallID: "write-completed", Operation: "write_replace", Path: "done.md", Kind: "file", ContentHash: "sha256:" + strings.Repeat("c", 64), StableCode: FilePublicationCompletedCode, Outcome: NoticeOutcomeCompleted},
-				{ToolCallID: "edit-unknown", Operation: "edit", Path: "notes.md", Kind: "file", InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown},
+				upcastFileReceipt(fileReceiptV3{ToolCallID: "write-completed", Operation: "write_replace", Path: "done.md", Kind: "file", ContentHash: "sha256:" + strings.Repeat("c", 64), StableCode: FilePublicationCompletedCode, Outcome: NoticeOutcomeCompleted}),
+				upcastFileReceipt(fileReceiptV3{ToolCallID: "edit-unknown", Operation: "edit", Path: "notes.md", Kind: "file", InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown}),
 			}
 			record.FirstUserSummary, record.RecentUserSummary = "first", "recent"
 			record.AutoTitleTurns, record.CommittedUserTurns = 3, 5
@@ -216,7 +216,7 @@ func TestArchivePayloadLegacyMigration(t *testing.T) {
 			if err != nil || !recordsEqual(loaded.Record, record) || loaded.Interrupted == nil {
 				t.Fatalf("legacy load=%+v err=%v", loaded, err)
 			}
-			if loaded.Interrupted.SchemaVersion != dirtySchemaVersion || loaded.Interrupted.DirtyID != legacy.DirtyID || loaded.Interrupted.File == nil || loaded.Interrupted.File.Path != legacyFile.Path || loaded.Interrupted.File.ArchivePath != "" || !loaded.Interrupted.MayHaveSideEffect {
+			if loaded.Interrupted.SchemaVersion != dirtySchemaVersion || loaded.Interrupted.DirtyID != legacy.DirtyID || loaded.Interrupted.File == nil || loaded.Interrupted.File.Effect.Target.Path != legacyFile.Path || loaded.Interrupted.File.Effect.Source.Path != "" || !loaded.Interrupted.MayHaveSideEffect {
 				t.Fatalf("migrated dirty=%+v", loaded.Interrupted)
 			}
 			if !bytes.Equal(before, readSessionArtifactForTest(t, store, dirtyName(record.StorageID))) {
@@ -229,11 +229,16 @@ func TestArchivePayloadLegacyMigration(t *testing.T) {
 			ahead := archiveWriteAheadForTest(receipt)
 			candidateDirty := *loaded.Interrupted
 			candidateDirty.File = &ahead
+			if _, err := handle.UpdateDirty(t.Context(), candidateDirty); !errors.Is(err, ErrCheckpointConflict) {
+				t.Fatalf("migration allowed an earlier WAL to disappear: %v", err)
+			}
+			candidateDirty.FileJournal = []FileJournalEntry{{WriteAhead: *loaded.Interrupted.File}}
 			if _, err := handle.UpdateDirty(t.Context(), candidateDirty); err != nil {
 				t.Fatalf("update migrated dirty: %v", err)
 			}
 			candidate := loaded.Record
-			candidate.FileReceipts = append(candidate.FileReceipts, receipt)
+			old := loaded.Interrupted.File
+			candidate.FileReceipts = append(candidate.FileReceipts, FileReceipt{ToolCallID: old.ToolCallID, Effect: old.Effect, InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown}, upcastFileReceipt(receipt))
 			candidate.LastConsumedDirtyID = candidateDirty.DirtyID
 			if _, err := handle.Save(t.Context(), record.RecordRevision, candidate); err != nil {
 				t.Fatalf("save migrated session with archive: %v", err)
@@ -254,7 +259,7 @@ func TestArchivePayloadLegacyRejectsNewFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer handle.Close()
-	record.FileReceipts = []FileReceipt{{ToolCallID: "old-write", Operation: "write_replace", Path: "notes/topic.md", Kind: "file", InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown}}
+	record.FileReceipts = []FileReceipt{upcastFileReceipt(fileReceiptV3{ToolCallID: "old-write", Operation: "write_replace", Path: "notes/topic.md", Kind: "file", InvalidateObserved: true, StableCode: FilePublicationUnknownCode, Outcome: NoticeOutcomeUnknown})}
 	for _, version := range []int{1, 2} {
 		writeRecordPayloadForTest(t, store, handle.dataKey, record, version, func(plain []byte) []byte {
 			return append(plain[:len(plain)-1], []byte(`,"SCHEMA_VERSION":3}`)...)

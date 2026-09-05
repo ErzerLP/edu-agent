@@ -47,11 +47,8 @@ func unixArchiveEntry(stat unix.Stat_t) (ArchiveEntry, error) {
 	if kind != EntryFile && kind != EntryDirectory {
 		return ArchiveEntry{}, ErrNotRegular
 	}
-	identity := fmt.Sprintf("unix:%x:%x", uint64(stat.Dev), uint64(stat.Ino))
-	version := archiveMetadataVersion(fmt.Sprintf("%s|%s|%d|%d|%d:%d|%d:%d|%d|%d|%d",
-		identity, kind, stat.Size, stat.Mode, stat.Mtim.Sec, stat.Mtim.Nsec,
-		stat.Ctim.Sec, stat.Ctim.Nsec, stat.Nlink, stat.Uid, stat.Gid))
-	return ArchiveEntry{Kind: kind, Size: stat.Size, Identity: identity, Version: version}, nil
+	info := unixEntryInfo(stat)
+	return ArchiveEntry{Kind: info.Kind, Size: info.Size, Identity: info.Identity, Version: info.Version}, nil
 }
 
 func unixArchiveSame(stat unix.Stat_t, file *os.File) (bool, error) {

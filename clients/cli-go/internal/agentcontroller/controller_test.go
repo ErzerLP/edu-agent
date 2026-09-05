@@ -16,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/filelock"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/keybackend"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
@@ -642,7 +643,7 @@ func TestControllerSavePublicationFullDegradesNewSessionAndPreservesResult(t *te
 	}
 	sessionID := controller.SessionID()
 	result, err := controller.Send(t.Context(), "产生较长回答")
-	if !errors.Is(err, agentsession.ErrStoreFull) || result.Text != strings.TrimSpace(longAnswer) {
+	if !errors.Is(err, agentsession.ErrStoreFull) || result.Text != longAnswer {
 		t.Fatalf("publication result bytes=%d err=%v", len(result.Text), err)
 	}
 	status := controller.Status()
@@ -1420,8 +1421,8 @@ func TestControllerFileReceiptsFollowStableCheckpointAndEvents(t *testing.T) {
 				t.Fatalf("receipts=%+v", receipts)
 			}
 			receipt := receipts[0]
-			if receipt.ToolCallID != "write-call" || receipt.Operation != "write_replace" || receipt.Path != "notes.md" || receipt.Kind != "file" ||
-				receipt.Outcome != test.outcome || receipt.StableCode != test.stableCode || receipt.ContentHash != test.hash || receipt.InvalidateObserved != test.invalidate {
+			if receipt.ToolCallID != "write-call" || receipt.Effect.Operation != "write_replace" || receipt.Effect.Target.Path != "notes.md" || receipt.Effect.Target.Kind != "file" ||
+				receipt.Outcome != test.outcome || receipt.StableCode != test.stableCode || receipt.Effect.Target.Version != test.hash || receipt.InvalidateObserved != test.invalidate {
 				t.Fatalf("receipt=%+v", receipt)
 			}
 			sessionID := controller.SessionID()
@@ -1487,8 +1488,7 @@ func TestControllerCrashRecoveryInvalidatesSamePathAndPersistsUnknownReceipt(t *
 		t.Fatalf("ordinary dirty marker=%+v", controller.dirty)
 	}
 	if err := controller.BeforeFilePublication(t.Context(), agentloop.FileWriteAhead{
-		ToolCallID: "write-crash", Operation: "write_replace", Path: "notes.md", Kind: "file",
-		InvalidateObserved: true, StableCode: agentloop.FilePublicationUnknownCode, PublicationOutcome: workspace.PublicationUnknown,
+		ToolCallID: "write-crash", Effect: fileeffects.New("write_replace", "", "notes.md", "file"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1507,7 +1507,7 @@ func TestControllerCrashRecoveryInvalidatesSamePathAndPersistsUnknownReceipt(t *
 	resumed.mu.Lock()
 	receipts := append([]agentsession.FileReceipt(nil), resumed.record.FileReceipts...)
 	resumed.mu.Unlock()
-	if len(receipts) != 1 || receipts[0].Path != "notes.md" || receipts[0].Kind != "file" ||
+	if len(receipts) != 1 || receipts[0].Effect.Target.Path != "notes.md" || receipts[0].Effect.Target.Kind != "file" ||
 		receipts[0].Outcome != agentsession.NoticeOutcomeUnknown || receipts[0].StableCode != agentsession.FilePublicationUnknownCode || !receipts[0].InvalidateObserved {
 		t.Fatalf("recovery receipts=%+v", receipts)
 	}

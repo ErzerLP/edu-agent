@@ -170,7 +170,7 @@ OpenAPI 是 HTTP 契约。M1 的服务端教学模型 profile 明确约定 Chat 
 
 M1 Go CLI 支持配对、设备状态、注销、导入知识、设置目标、开始或继续教学、回答、查看 rubric 评估、确认或覆盖 provisional 结果、自由提问、显式转为测验、恢复 focus，以及查看路线、证据和复习。
 
-交互式客户端 Agent 在单次进程内维护有界、来源可追踪的会话 Observation 与 Reflection，用于在模型窗口受限时保留用户意图、约束、纠正、已完成结果和未解决事项。该会话记忆不落盘、不自动进入 Nocturne，也不成为 Knowledge、Learning、Review 或长期偏好的权威副本；服务端快照必须携带 revision/generation 并在当前状态相关操作前重新读取。压缩预算必须包含系统提示、工具 Schema、当前完整工具调用组、最近至少两个已完成完整轮次、输出预留和安全余量；工具调用组不得拆分，无法同时保留当前轮次与这两个最近轮次时必须拒绝请求而不是静默丢弃，降级到最近完整轮次时必须向用户可见。精确会话记忆可以按 opaque ID 回查，但不提供模糊聊天搜索，也不暴露隐藏推理、原始工具参数或凭据。只有经用户明确确认并通过既有 Memory admission 的偏好才可成为长期记忆。
+交互式客户端 Agent 维护有界、来源可追踪的会话 Observation 与 Reflection，用于在模型窗口受限时保留用户意图、约束、纠正、已完成结果和未解决事项。跨进程保存与恢复遵循 [client-session-resume](../client-session-resume/spec.md)，该会话记忆不自动进入 Nocturne，也不成为 Knowledge、Learning、Review 或长期偏好的权威副本；服务端快照必须携带 revision/generation 并在当前状态相关操作前重新读取。默认模型预算与长输出遵循 [client-agent-large-context](../client-agent-large-context/spec.md)：总窗口 272000 tokens、最大输出 128000 tokens，预算包含系统提示、工具 Schema、当前完整工具调用组、输出额度和至少 5% 安全余量；最近完整原始轮次优先保留，预算不足时允许带来源、对用户可见的整轮投影，不再无条件强留最近两个原始轮次。工具调用组不得拆分，当前不可压缩轮次无法容纳时必须拒绝；context_compaction=off 不静默裁剪。精确会话记忆可以按 opaque ID 回查，但不提供模糊聊天搜索，也不暴露隐藏推理、原始工具参数或凭据。只有经用户明确确认并通过既有 Memory admission 的偏好才可成为长期记忆。
 
 普通 Agent turn 使用独立于 TUI 生命周期的可取消 context 和唯一 turn identity。模型分析、只读工具或工具结果后的继续生成正在运行时，`Esc` 只停止当前普通 turn，不退出 TUI；界面立即进入“正在停止”，停止接收该 turn 的后续可见增量，并在 worker 确认退出后恢复输入。取消必须传播到模型 HTTP、当前只读工具和剩余工具列表，不得继续下一次模型请求。取消或协议失败的 turn 必须原子移除不完整的用户/assistant/tool 模型消息、工具调用组和会话来源，迟到事件不得污染后续 turn；用户问题、已完成工具摘要和已经显示的部分回答可以留在 transcript，并明确标记为“本轮已停止”，但部分回答不得作为完整 assistant 消息进入模型历史。`Ctrl+C`/`Ctrl+Q` 继续退出整个 Agent。
 

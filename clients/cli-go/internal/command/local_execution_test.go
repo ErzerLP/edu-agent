@@ -50,7 +50,7 @@ func TestLocalOutputSavedResourceOptions(t *testing.T) {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	for _, text := range []string{"--task-saved-output-limit", "task search", "PTY 尚未交付"} {
+	for _, text := range []string{"--task-saved-output-limit", "task search", "PTY交互"} {
 		if !strings.Contains(agentHelpText, text) {
 			t.Fatalf("help missing %q", text)
 		}
@@ -58,7 +58,7 @@ func TestLocalOutputSavedResourceOptions(t *testing.T) {
 }
 
 func TestLocalExecutionHelpDisclosesTaskScope(t *testing.T) {
-	for _, text := range []string{"--task-max-records", "--task-max-running", "--task-output-limit", "--task-total-output-limit", "Shell", "F5", "不受文件确认模式限制", "PTY 尚未交付"} {
+	for _, text := range []string{"--task-max-records", "--task-max-running", "--task-output-limit", "--task-total-output-limit", "Shell", "F5", "不受文件确认模式限制", "PTY交互"} {
 		if !strings.Contains(agentHelpText, text) {
 			t.Fatalf("help missing %q", text)
 		}

@@ -17,7 +17,7 @@ import (
 const (
 	archiveSegmentBytes  = 256 << 10
 	archiveMetadataBytes = 32 << 10
-	archiveVersion       = 1
+	archiveVersion       = 2
 	archiveCallLimit     = 2 * time.Second
 	archiveBindLimit     = 5 * time.Second
 	archiveSettleLimit   = 4 * archiveCallLimit
@@ -63,6 +63,9 @@ type archiveMetadata struct {
 	Incomplete        bool      `json:"incomplete"`
 	PersistenceError  string    `json:"persistence_error"`
 	StartError        string    `json:"start_error"`
+	PTY               bool      `json:"pty"`
+	Rows              int       `json:"rows"`
+	Cols              int       `json:"cols"`
 }
 
 func digestCall(id string) string {
@@ -235,7 +238,7 @@ func decodeMetadata(data []byte, id string) (archiveMetadata, error) {
 	if version.Version > archiveVersion {
 		return meta, failure("output_version_unsupported")
 	}
-	if version.Version != archiveVersion {
+	if version.Version != 1 && version.Version != archiveVersion {
 		return meta, failure("output_corrupt")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -259,6 +262,10 @@ func decodeMetadata(data []byte, id string) (archiveMetadata, error) {
 		seen[key] = true
 		switch key {
 		case "version", "task_id", "call_digest", "state", "reason", "exit_code", "shell", "started_at", "finished_at", "final", "cleanup_incomplete", "stdout_received", "stderr_received", "stdout_saved", "stderr_saved", "incomplete", "persistence_error", "start_error":
+		case "pty", "rows", "cols":
+			if version.Version == 1 {
+				return meta, failure("output_corrupt")
+			}
 		default:
 			return meta, failure("output_corrupt")
 		}
@@ -267,7 +274,11 @@ func decodeMetadata(data []byte, id string) (archiveMetadata, error) {
 			return meta, failure("output_corrupt")
 		}
 	}
-	if len(seen) != 18 || meta.TaskID != id || !validArtifactID(id) || len(meta.CallDigest) != 64 {
+	wantKeys := 18
+	if version.Version == 2 {
+		wantKeys = 21
+	}
+	if len(seen) != wantKeys || meta.TaskID != id || !validArtifactID(id) || len(meta.CallDigest) != 64 {
 		return meta, failure("output_corrupt")
 	}
 	if digest, err := hex.DecodeString(meta.CallDigest); err != nil || len(digest) != sha256.Size || strings.ToLower(meta.CallDigest) != meta.CallDigest {
@@ -277,6 +288,16 @@ func decodeMetadata(data []byte, id string) (archiveMetadata, error) {
 		return meta, failure("output_corrupt")
 	}
 	if !validStartError(meta.StartError) || !validReason(meta.Reason) {
+		return meta, failure("output_corrupt")
+	}
+	if version.Version == 1 && (newPTYStartError(meta.StartError) || newPTYStartError(meta.Reason)) {
+		return meta, failure("output_corrupt")
+	}
+	if meta.PTY {
+		if !validTerminalSize(meta.Rows, meta.Cols) || meta.StderrReceived != 0 || meta.StderrSaved != 0 {
+			return meta, failure("output_corrupt")
+		}
+	} else if meta.Rows != 0 || meta.Cols != 0 {
 		return meta, failure("output_corrupt")
 	}
 	switch meta.State {
@@ -297,7 +318,14 @@ func decodeMetadata(data []byte, id string) (archiveMetadata, error) {
 	return meta, nil
 }
 
+func newPTYStartError(code string) bool {
+	return code == "invalid_terminal_size" || code == "pty_failed"
+}
+
 func validStartError(code string) bool {
+	if newPTYStartError(code) {
+		return true
+	}
 	switch code {
 	case "", "unsupported_platform", "start_canceled", "concurrency_limit", "output_limit", "manager_closed", "invalid_cwd", "cwd_unavailable", "invalid_argument", "invalid_timeout", "invalid_env", "shell_unavailable", "pipe_failed", "start_failed":
 		return true
@@ -324,7 +352,8 @@ func restoredTask(owner string, binding *archiveBinding, meta archiveMetadata) *
 		outputIncomplete: !meta.Final || meta.Incomplete,
 		snapshot: Snapshot{TaskID: meta.TaskID, State: meta.State, Reason: meta.Reason,
 			ExitCode: meta.ExitCode, Shell: meta.Shell, StartedAt: meta.StartedAt,
-			FinishedAt: meta.FinishedAt, CleanupIncomplete: meta.CleanupIncomplete, Restored: true},
+			FinishedAt: meta.FinishedAt, CleanupIncomplete: meta.CleanupIncomplete, Restored: true,
+			PTY: meta.PTY, Rows: meta.Rows, Cols: meta.Cols},
 	}
 	t.stdout.received, t.stdout.saved = meta.StdoutReceived, meta.StdoutSaved
 	t.stderr.received, t.stderr.saved = meta.StderrReceived, meta.StderrSaved
@@ -379,7 +408,8 @@ func (m *Manager) metadataLocked(t *task, final bool) archiveMetadata {
 		FinishedAt: t.snapshot.FinishedAt, Final: final, CleanupIncomplete: t.snapshot.CleanupIncomplete,
 		StdoutReceived: t.stdout.received, StderrReceived: t.stderr.received,
 		StdoutSaved: t.stdout.saved, StderrSaved: t.stderr.saved, Incomplete: t.outputIncomplete,
-		PersistenceError: t.persistenceError, StartError: t.startError}
+		PersistenceError: t.persistenceError, StartError: t.startError,
+		PTY: t.snapshot.PTY, Rows: t.snapshot.Rows, Cols: t.snapshot.Cols}
 }
 
 func writeMetadata(backend ArtifactStore, meta archiveMetadata) error {

@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Written is the number of bytes synchronously acknowledged by the pipe write,
+// Written is the number of bytes synchronously acknowledged by the input write,
 // NOT a claim that the child processed them. Outcome is written, partial, or
 // not_written. We never queue an asynchronous write or retry an ambiguous input;
 // the synchronous pollable OS pipe reports the exact count even on cancellation.
@@ -22,6 +22,10 @@ type InputResult struct {
 // Each call is capped at MaxInputBytes and 30s (or its earlier context deadline).
 // No helper goroutine can continue writing after this method returns.
 func (m *Manager) WriteInput(ctx context.Context, owner, taskID string, data []byte) (InputResult, error) {
+	return m.writeInput(ctx, owner, taskID, data, "")
+}
+
+func (m *Manager) writeInput(ctx context.Context, owner, taskID string, data []byte, control string) (InputResult, error) {
 	result := InputResult{Outcome: "not_written"}
 	m.mu.Lock()
 	t, err := m.taskLocked(owner, taskID)
@@ -45,7 +49,18 @@ func (m *Manager) WriteInput(ctx context.Context, owner, taskID string, data []b
 	}
 	t.inputMu.Lock()
 	file, closed := t.input, t.inputClosed
+	if control != "" {
+		file, err = terminalInputLocked(t)
+		if err == nil {
+			var value byte
+			value, err = terminalControlByte(file, control)
+			data = []byte{value}
+		}
+	}
 	t.inputMu.Unlock()
+	if err != nil {
+		return result, err
+	}
 	if closed {
 		return result, failure("stdin_closed")
 	}
@@ -93,6 +108,9 @@ func (m *Manager) CloseInput(owner, taskID string) error {
 	m.mu.Unlock()
 	if err != nil {
 		return err
+	}
+	if t.snapshot.PTY {
+		return failure("pty_use_send_eof")
 	}
 	closeTaskInput(t)
 	return nil

@@ -31,6 +31,10 @@ func localSnapshotValue(snapshot localexec.Snapshot, minimal bool) map[string]an
 		"task_id": snapshot.TaskID, "state": snapshot.State,
 		"controllable": snapshot.Controllable, "output_state": snapshot.OutputState,
 	}
+	if snapshot.PTY {
+		value["output_mode"] = "pty_merged"
+		value["rows"], value["cols"] = snapshot.Rows, snapshot.Cols
+	}
 	if snapshot.Persistence != "" && snapshot.Persistence != "memory_only" {
 		value["persistence"] = snapshot.Persistence
 		value["stdout_saved"], value["stderr_saved"] = snapshot.StdoutSaved, snapshot.StderrSaved
@@ -150,6 +154,9 @@ func (result localToolResult) value(payloadLimit, itemLimit int, minimal, histor
 		value["stdin_mode"] = "eof"
 		if *result.Stdin {
 			value["stdin_mode"] = "pipe"
+			if result.Snapshot != nil && result.Snapshot.PTY {
+				value["stdin_mode"] = "pty"
+			}
 		}
 	}
 	if result.Input != nil {

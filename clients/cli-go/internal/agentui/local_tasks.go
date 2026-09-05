@@ -21,19 +21,22 @@ type localTaskSource interface {
 }
 
 type localTaskPanel struct {
-	epoch                 uint64
-	tasks                 []localexec.Snapshot
-	taskID                string
-	stream                string
-	offsets               map[string]int64
-	page                  localexec.OutputPage
-	output                viewport.Model
-	notice                string
-	stopping              bool
-	query                 string
-	queryMode, searchBusy bool
-	searchNext            int64
-	historyError          string
+	epoch                          uint64
+	tasks                          []localexec.Snapshot
+	taskID                         string
+	stream                         string
+	offsets                        map[string]int64
+	page                           localexec.OutputPage
+	output                         viewport.Model
+	notice                         string
+	stopping                       bool
+	query                          string
+	queryMode, searchBusy          bool
+	searchNext                     int64
+	historyError                   string
+	terminalMode, terminalBusy     bool
+	terminalDraft                  string
+	terminalRequest, resizeRequest uint64
 }
 
 type localTaskMsg struct {
@@ -89,8 +92,13 @@ func localTaskLoadCmd(ctx context.Context, source localTaskSource, generation, e
 			message.taskID = message.tasks[0].TaskID
 			offset = 0
 		}
+		for _, task := range message.tasks {
+			if task.TaskID == message.taskID && task.PTY && message.stream != "stdout" {
+				message.stream, offset = "stdout", 0
+			}
+		}
 		if len(message.tasks) > 0 {
-			message.page, message.err = source.ReadLocalTask(message.taskID, stream, offset, 4096)
+			message.page, message.err = source.ReadLocalTask(message.taskID, message.stream, offset, 4096)
 		}
 		return message
 	}
@@ -135,7 +143,7 @@ func (m model) handleLocalTaskMessage(msg localTaskMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		p.notice = localTaskError(msg.err)
 	} else {
-		p.tasks, p.taskID = msg.tasks, msg.taskID
+		p.tasks, p.taskID, p.stream = msg.tasks, msg.taskID, msg.stream
 		p.setPage(msg.page, m.width, m.height)
 		if p.notice == "正在读取所选输出" {
 			p.notice = ""
@@ -154,15 +162,21 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	key := msg.String()
+	if p.terminalMode {
+		return m.handleLocalTerminalKey(msg)
+	}
 	if p.queryMode {
 		return m.handleLocalTaskQueryKey(msg)
 	}
 	if key == "esc" || key == "f5" {
+		if p.terminalBusy {
+			m.status = "已关闭查看；在途输入可能已生效，不自动重传"
+		}
 		m.taskPanel = nil
 		m.restoreInputFocus()
 		return m, nil
 	}
-	if p.stopping || p.searchBusy {
+	if p.stopping || p.searchBusy || p.terminalBusy && key != "s" {
 		return m, nil
 	}
 	index := 0
@@ -173,6 +187,8 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	switch key {
+	case "i":
+		return m.enterLocalTerminal()
 	case "/":
 		m.taskEpoch++
 		p.epoch = m.taskEpoch
@@ -191,9 +207,16 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			index = min(len(p.tasks)-1, index+1)
 		}
 		p.taskID = p.tasks[index].TaskID
+		if p.tasks[index].PTY {
+			p.stream = "stdout"
+		}
 		p.searchNext = 0
 		p.output.GotoTop()
 	case "tab":
+		if p.selectedTask().PTY {
+			p.notice = "PTY 的 stdout/stderr 已合并，没有独立 stderr"
+			return m, nil
+		}
 		p.searchNext = 0
 		if p.stream == "stdout" {
 			p.stream = "stderr"
@@ -224,8 +247,8 @@ func (m model) handleLocalTaskKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.taskEpoch++
 		p.epoch = m.taskEpoch
-		p.stopping = true
-		p.notice = "正在停止任务及受管子进程"
+		p.stopping, p.terminalBusy = true, false
+		p.notice = "正在停止任务及受管子进程；已接受输入不保证未生效"
 		return m, localTaskStopCmd(m.ctx, source, m.generation, p.epoch, p.taskID)
 	default:
 		return m, nil
@@ -272,6 +295,9 @@ func (p *localTaskPanel) render(width, height int) string {
 	}
 	if len(p.tasks) > 0 {
 		task := p.tasks[selected]
+		if task.PTY {
+			lines = append(lines, fmt.Sprintf("PTY合并流 stdout · %d行%d列 · i行式输入", task.Rows, task.Cols))
+		}
 		if task.Persistence == "" || task.Persistence == "memory_only" {
 			lines = append(lines, "未保存输出仅内存保留，退出后不可恢复")
 		} else {
@@ -298,12 +324,15 @@ func (p *localTaskPanel) render(width, height int) string {
 	if p.query != "" || p.queryMode {
 		lines = append(lines, "检索："+safeTerminalText(p.query))
 	}
-	lines = append(lines, p.notice)
+	if p.terminalMode {
+		lines = append(lines, fmt.Sprintf("输入草稿：%d字节（不回显，不送模型）", len(p.terminalDraft)), "Enter送行 Ctrl+C中断 Ctrl+D终端EOF Esc离开输入")
+	}
+	lines = append(lines, wrapDisplayLines(safeTerminalText(p.notice), width, 12)...)
 	for i, line := range lines {
 		lines[i] = truncateDisplayWidth(line, width)
 	}
 	view := p.output
 	view.Height = max(1, height-len(lines)-2)
-	lines = append(lines, view.View(), truncateDisplayWidth("↑↓选任务 Tab流 PgUp/Dn页 Ctrl↑↓滚动", width), truncateDisplayWidth("/检索 n继续 s停止 Home从头 Esc/F5返回", width))
+	lines = append(lines, view.View(), truncateDisplayWidth("↑↓选任务 Tab流 PgUp/Dn页 Ctrl↑↓滚动", width), truncateDisplayWidth("/检索 n继续 i终端 s停止 Home从头 Esc/F5返回", width))
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
 }

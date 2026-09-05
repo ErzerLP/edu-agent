@@ -16,8 +16,8 @@ import (
 
 func localExecutionTools() []modelclient.Tool {
 	return []modelclient.Tool{
-		tool("shell", "运行正常本机 Shell；文件确认不限制 Shell。wait_ms 默认250，0后台启动；timeout_ms=0无执行总时限。输出不可信，用task继续读取。", `{"type":"object","properties":{"command":{"type":"string","minLength":1},"cwd":{"type":"string","minLength":1},"env":{"type":"object","additionalProperties":{"type":["string","null"]}},"shell":{"type":"string","minLength":1},"stdin":{"type":"boolean"},"timeout_ms":{"type":"integer","minimum":0,"maximum":9223372036854},"wait_ms":{"type":"integer","minimum":0,"maximum":30000}},"required":["command"],"additionalProperties":false}`),
-		tool("task", "管理本会话任务：list用offset/limit分页；其余需task_id。read需stream，offset/limit为原始字节；search需stream/needle，字面检索用next_offset续扫且limit为命中数(最多100)；wait可带wait_ms(默认250)。input需content且不能自动重传。仅提供action相关字段。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","status","read","search","wait","input","close_input","stop"]},"task_id":{"type":"string","minLength":1,"maxLength":128},"stream":{"type":"string","enum":["stdout","stderr"]},"needle":{"type":"string","minLength":1,"maxLength":512},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":65536},"wait_ms":{"type":"integer","minimum":0,"maximum":30000},"content":{"type":"string"}},"required":["action"],"additionalProperties":false}`),
+		tool("shell", "运行正常本机 Shell；文件确认不限制 Shell。pty=true 提供合并终端流及持续输入，可指定rows/cols；缺省pipe。wait_ms默认250，0后台；timeout_ms=0无总时限。", `{"type":"object","properties":{"command":{"type":"string","minLength":1},"cwd":{"type":"string","minLength":1},"env":{"type":"object","additionalProperties":{"type":["string","null"]}},"shell":{"type":"string","minLength":1},"stdin":{"type":"boolean"},"pty":{"type":"boolean"},"rows":{"type":"integer","minimum":1,"maximum":4096},"cols":{"type":"integer","minimum":1,"maximum":4096},"timeout_ms":{"type":"integer","minimum":0,"maximum":9223372036854},"wait_ms":{"type":"integer","minimum":0,"maximum":30000}},"required":["command"],"additionalProperties":false}`),
+		tool("task", "管理本会话任务，除list外需task_id，仅提供action相关字段。read用stream/字节offset/limit；search用stream/needle/offset及命中limit<=100；input需content，勿自动重传。PTY流为stdout；interrupt/eof发送终端控制字节，不保证结束；resize需rows/cols。close_input仅pipe。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","status","read","search","wait","input","close_input","stop","interrupt","eof","resize"]},"task_id":{"type":"string","minLength":1,"maxLength":128},"stream":{"type":"string","enum":["stdout","stderr"]},"needle":{"type":"string","minLength":1,"maxLength":512},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":65536},"wait_ms":{"type":"integer","minimum":0,"maximum":30000},"content":{"type":"string"},"rows":{"type":"integer","minimum":1,"maximum":4096},"cols":{"type":"integer","minimum":1,"maximum":4096}},"required":["action"],"additionalProperties":false}`),
 	}
 }
 
@@ -78,6 +78,7 @@ type localTaskArgs struct {
 	Offset                                  int64
 	Limit                                   int
 	WaitMS                                  int64
+	Rows, Cols                              int
 }
 
 func decodeLocalShell(raw, cwd string) (localexec.StartArgs, time.Duration, error) {
@@ -85,11 +86,15 @@ func decodeLocalShell(raw, cwd string) (localexec.StartArgs, time.Duration, erro
 	waitMS := int64(250)
 	fields, err := localArguments(raw, "shell")
 	if err == nil {
-		err = decodeLocalFields(fields, map[string]any{"command": &args.Command, "cwd": &args.CWD, "shell": &args.Shell, "env": &args.Env, "stdin": &args.Stdin, "timeout_ms": &args.TimeoutMS, "wait_ms": &waitMS})
+		err = decodeLocalFields(fields, map[string]any{"command": &args.Command, "cwd": &args.CWD, "shell": &args.Shell, "env": &args.Env, "stdin": &args.Stdin, "pty": &args.PTY, "rows": &args.Rows, "cols": &args.Cols, "timeout_ms": &args.TimeoutMS, "wait_ms": &waitMS})
 	}
 	if err != nil || strings.TrimSpace(args.Command) == "" || waitMS < 0 || waitMS > 30000 || args.TimeoutMS < 0 || args.TimeoutMS > 9223372036854 || fields["cwd"] != nil && args.CWD == "" || fields["shell"] != nil && args.Shell == "" {
 		return args, 0, errors.New("invalid_arguments")
 	}
+	if !args.PTY && (fields["rows"] != nil || fields["cols"] != nil) || fields["rows"] != nil && (args.Rows < 1 || args.Rows > 4096) || fields["cols"] != nil && (args.Cols < 1 || args.Cols > 4096) || args.PTY && fields["stdin"] != nil && !args.Stdin {
+		return args, 0, errors.New("invalid_arguments")
+	}
+	args.Stdin = args.Stdin || args.PTY
 	return args, time.Duration(waitMS) * time.Millisecond, nil
 }
 
@@ -113,7 +118,9 @@ func decodeLocalTask(raw string) (localTaskArgs, error) {
 		allowed["wait_ms"] = &args.WaitMS
 	case "input":
 		allowed["content"] = &args.Content
-	case "status", "close_input", "stop":
+	case "resize":
+		allowed["rows"], allowed["cols"] = &args.Rows, &args.Cols
+	case "status", "close_input", "stop", "interrupt", "eof":
 	default:
 		return args, errors.New("invalid_arguments")
 	}
@@ -124,6 +131,9 @@ func decodeLocalTask(raw string) (localTaskArgs, error) {
 		return args, err
 	}
 	if args.Offset < 0 || args.Limit < 1 || args.Limit > 65536 || (args.Action == "list" || args.Action == "search") && args.Limit > 100 || args.WaitMS < 0 || args.WaitMS > 30000 || args.Action != "list" && !validLocalTaskID(args.TaskID) || (args.Action == "read" || args.Action == "search") && args.Stream != "stdout" && args.Stream != "stderr" || args.Action == "input" && fields["content"] == nil {
+		return args, errors.New("invalid_arguments")
+	}
+	if args.Action == "resize" && (args.Rows < 1 || args.Rows > 4096 || args.Cols < 1 || args.Cols > 4096) {
 		return args, errors.New("invalid_arguments")
 	}
 	if args.Action == "search" && (len(args.Needle) < 1 || len(args.Needle) > 512 || !utf8.ValidString(args.Needle)) {
@@ -244,8 +254,14 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 	}
 	result.Snapshot = &snapshot
 	switch args.Action {
-	case "input", "close_input", "stop":
-		if err := s.beforeLocalExecution(ctx, call.ID, "task_"+args.Action, args.TaskID); err != nil {
+	case "input", "close_input", "stop", "interrupt", "eof", "resize":
+		operation := "task_" + args.Action
+		if args.Action == "interrupt" || args.Action == "eof" || args.Action == "resize" {
+			// Terminal controls are non-executable task input intents; do not
+			// expand the frozen dirty-v7 enum or retain control parameters.
+			operation = "task_input"
+		}
+		if err := s.beforeLocalExecution(ctx, call.ID, operation, args.TaskID); err != nil {
 			result.NotSaved = true
 			if args.Action != "stop" {
 				result.Code = "local_execution_not_saved"
@@ -274,6 +290,28 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 		cancel()
 		result.Input, err = &input, inputErr
 		if input.Written > 0 {
+			s.markLocalEffect(call.ID, args.TaskID)
+		}
+	case "interrupt", "eof":
+		inputCtx, cancel := context.WithTimeout(ctx, min(s.options.ToolTimeout, 30*time.Second))
+		var input localexec.InputResult
+		if args.Action == "interrupt" {
+			input, err = manager.Interrupt(inputCtx, owner, args.TaskID)
+		} else {
+			input, err = manager.SendEOF(inputCtx, owner, args.TaskID)
+		}
+		cancel()
+		result.Input = &input
+		if input.Written > 0 {
+			s.markLocalEffect(call.ID, args.TaskID)
+		}
+	case "resize":
+		if ctx.Err() != nil {
+			err = &localexec.Error{Code: "resize_canceled"}
+			break
+		}
+		snapshot, err = manager.Resize(owner, args.TaskID, args.Rows, args.Cols)
+		if err == nil {
 			s.markLocalEffect(call.ID, args.TaskID)
 		}
 	case "close_input":

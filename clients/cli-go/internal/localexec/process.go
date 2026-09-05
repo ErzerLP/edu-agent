@@ -17,7 +17,11 @@ type exitResult struct {
 func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout time.Duration) {
 	stdoutDone, stderrDone := make(chan struct{}), make(chan struct{})
 	go m.capture(t, &t.stdout, "stdout", pipes.stdoutReader, stdoutDone)
-	go m.capture(t, &t.stderr, "stderr", pipes.stderrReader, stderrDone)
+	if t.snapshot.PTY {
+		close(stderrDone) // One merged terminal stream, never a fake stderr pipe.
+	} else {
+		go m.capture(t, &t.stderr, "stderr", pipes.stderrReader, stderrDone)
+	}
 	pid := cmd.Process.Pid
 	observations := make(chan error, 1)
 	reap := make(chan struct{})
@@ -89,6 +93,10 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		if !observed || observationError != nil {
 			return false
 		}
+		if t.snapshot.PTY {
+			live, err := sessionHasMembers(pid, true)
+			return err == nil && !live
+		}
 		live, err := groupHasLiveMembers(pid)
 		return err == nil && !live
 	}
@@ -120,11 +128,26 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		}
 		settled = awaitSettlement(m.options.StopGrace)
 		if !settled && observationError == nil {
+			if t.snapshot.PTY {
+				// Last-master close invokes the kernel's terminal hangup, which
+				// targets its actual foreground group without a numeric PID race.
+				// Only escalate after the normal output/TERM grace; forced close
+				// cannot establish EOF and capture reports incomplete honestly.
+				closeFile(pipes.stdoutReader)
+			}
 			if err := signalProcessGroup(pid, true); err != nil {
 				signalFailed = true
 			}
 			settled = awaitSettlement(killSettleLimit)
 		}
+	}
+	// Query the whole terminal session (including zombies) BEFORE releasing
+	// the leader. Do not chase old numeric identities after reap. A detached
+	// session is outside this contract; a remaining job-control pgrp is not.
+	sessionIncomplete := false
+	if t.snapshot.PTY {
+		exists, err := sessionHasMembers(pid, false)
+		sessionIncomplete = exists || err != nil
 	}
 	// Ownership of the leader ends here. Even if it is stuck in kernel I/O,
 	// retirement never signals a later incarnation of its numeric PID/PGID.
@@ -146,8 +169,8 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		default:
 		}
 	}
-	cleanupIncomplete := !settled || signalFailed || !haveResult || observationError != nil
-	if haveResult {
+	cleanupIncomplete := !settled || signalFailed || !haveResult || observationError != nil || sessionIncomplete
+	if haveResult && !t.snapshot.PTY {
 		exists, err := processGroupExists(pid)
 		cleanupIncomplete = cleanupIncomplete || err != nil || exists
 	}
@@ -159,7 +182,9 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	t.drainStarted = time.Now()
 	deadline := t.drainStarted.Add(outputDrainLimit)
 	_ = pipes.stdoutReader.SetReadDeadline(deadline)
-	_ = pipes.stderrReader.SetReadDeadline(deadline)
+	if pipes.stderrReader != nil {
+		_ = pipes.stderrReader.SetReadDeadline(deadline)
+	}
 	m.mu.Unlock()
 	<-stdoutDone
 	<-stderrDone

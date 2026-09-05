@@ -26,6 +26,40 @@ func observeExit(pid int) error {
 	}
 }
 
+func getTerminalAttributes(fd int) (*unix.Termios, error) {
+	return unix.IoctlGetTermios(fd, unix.TIOCGETA)
+}
+
+const disabledTerminalByte = 0xff // Darwin _POSIX_VDISABLE.
+
+// Darwin returns ordinary EOF on terminal hangup; other errors stay incomplete.
+func terminalEOF(error) bool { return false }
+
+// All entries from one sysctl snapshot share the same session-pointer identity.
+// The unreaped leader must still be present; otherwise cleanup is unprovable.
+func sessionHasMembers(sid int, liveOnly bool) (bool, error) {
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return false, err
+	}
+	var session uintptr
+	for _, process := range processes {
+		if int(process.Proc.P_pid) == sid {
+			session = process.Eproc.Sess
+			break
+		}
+	}
+	if session == 0 {
+		return false, unix.ESRCH
+	}
+	for _, process := range processes {
+		if int(process.Proc.P_pid) != sid && process.Eproc.Sess == session && (!liveOnly || process.Proc.P_stat != 5) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func groupHasLiveMembers(pgid int) (bool, error) {
 	processes, err := unix.SysctlKinfoProcSlice("kern.proc.pgrp", pgid)
 	if err != nil {

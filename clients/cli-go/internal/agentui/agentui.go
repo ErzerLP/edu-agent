@@ -272,7 +272,7 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区不可用（%s）；文件工具未启用，普通对话仍可使用。", safeSingleLineTerminalText(workspaceStatus.Code))})
 	}
 	if source, ok := session.(localTaskSource); ok && source.LocalExecutionAvailable() {
-		entries = append(entries, transcriptEntry{kind: entryNotice, text: "已启用正常本机 Shell：使用启动用户权限，可访问工作区外路径和网络，文件逐次确认/YOLO 不约束 Shell。F5 查看输出并停止任务；持久 Session 可加密保留输出，实际保存范围和缺口单独报告，--no-save 仍仅内存保留、退出不可恢复。"})
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: "已启用正常本机 Shell：使用启动用户权限，可访问工作区外路径和网络，文件逐次确认/YOLO 不约束 Shell。F5 查看输出并停止任务；PTY可按i进入行式输入，Ctrl+Q始终退出。持久 Session 可加密保留输出，实际保存范围和缺口单独报告，--no-save 仍仅内存保留、退出不可恢复。"})
 		input.Placeholder = "输入问题；可使用文件工具或正常本机 Shell"
 	}
 	entries = append(entries, durableTranscriptEntries(session)...)
@@ -306,13 +306,15 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskPanel.setPage(m.taskPanel.page, m.width, m.height)
 		}
 		m.refreshTranscript(false)
-		return m, nil
+		return m, m.resizeLocalTerminal()
+	case localTerminalMsg:
+		return m.handleLocalTerminalMessage(msg)
 	case localTaskSearchMsg:
 		return m.handleLocalTaskSearchMessage(msg)
 	case localTaskMsg:
 		return m.handleLocalTaskMessage(msg)
 	case localTaskTick:
-		if m.taskPanel == nil || msg.generation != m.generation || msg.epoch != m.taskPanel.epoch || m.taskPanel.stopping || m.taskPanel.searchBusy || m.taskPanel.queryMode {
+		if m.taskPanel == nil || msg.generation != m.generation || msg.epoch != m.taskPanel.epoch || m.taskPanel.stopping || m.taskPanel.searchBusy || m.taskPanel.queryMode || m.taskPanel.terminalBusy {
 			return m, nil
 		}
 		return m, m.refreshLocalTasks()
@@ -472,6 +474,9 @@ func (m *model) resetAfterSessionSwap(generation uint64) {
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
+	if key == "ctrl+c" && m.taskPanel != nil && m.taskPanel.terminalMode {
+		return m.handleLocalTerminalKey(msg)
+	}
 	if key == "ctrl+c" || key == "ctrl+q" {
 		m.cancel()
 		return m, tea.Quit

@@ -58,6 +58,9 @@ func taskStream(t *task, name string) (*outputStream, error) {
 	case "stdout":
 		return &t.stdout, nil
 	case "stderr":
+		if t.snapshot.PTY {
+			return nil, failure("pty_merged_output")
+		}
 		return &t.stderr, nil
 	default:
 		return nil, failure("invalid_stream")
@@ -245,7 +248,7 @@ func (m *Manager) capture(t *task, stream *outputStream, name string, reader *os
 			m.saveOutput(t, stream, name, offset, buffer[:n])
 		}
 		if err != nil {
-			if !errors.Is(err, io.EOF) {
+			if !errors.Is(err, io.EOF) && !(t.snapshot.PTY && terminalEOF(err)) {
 				m.mu.Lock()
 				t.outputIncomplete = true
 				m.mu.Unlock()

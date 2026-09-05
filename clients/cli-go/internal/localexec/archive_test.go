@@ -385,7 +385,7 @@ func TestPersistentOutputStrictMetadataAndTransactionalBind(t *testing.T) {
 			code := "output_corrupt"
 			switch mutation {
 			case "future":
-				fields["version"] = json.RawMessage("2")
+				fields["version"] = json.RawMessage("3")
 				code = "output_version_unsupported"
 			case "unknown":
 				fields["command"] = json.RawMessage(`"must-not-execute"`)

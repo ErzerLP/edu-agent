@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1/C2 已实现并通过各自 Linux 批次门禁；C3–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C3 已实现并通过各自 Linux 批次门禁；C4–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -124,4 +124,32 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 - Linux完整CLI构建/version运行及Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c2-build.IlaSqQ`不纳入仓库。`git diff --check`通过；会话已诊断103文件的mode=all error检查为0，不是全项目扫描。
 - 清除一个原先未引用且持续被增量诊断阻塞的私有publicationOutcome方法，不改DTO字段/编码/版本；现有agentsession全包回归通过。
 
-上述六包Go文件和go.mod/go.sum按路径排序后的sha256列表汇总：`6118c3b1e6afd7303372076ea8450c9fcc31783bd9cd20be17eb2eed8079b037`。macOS仍缺原生运行证据，未做服务端/数据库/Compose/付费模型或最终Verifier；当前批次没有相关输入。下一写入批次C3：PTY交互、中断/EOF与resize。
+上述六包Go文件和go.mod/go.sum按路径排序后的sha256列表汇总：`6118c3b1e6afd7303372076ea8450c9fcc31783bd9cd20be17eb2eed8079b037`。macOS仍缺原生运行证据，未做服务端/数据库/Compose/付费模型或最终Verifier；当前批次没有相关输入。C2当时的下一批次为C3，交付记录见下。
+
+## C3：PTY交互
+
+结果：正常Shell可选择真正PTY；模型与F5可持续输入、发送当前VINTR/VEOF及resize，输出明确合并，历史模式可恢复但不能控制。生产入口已实现并通过Linux批次检查，仍缺macOS原生及最终Verifier证据。
+
+### 实现与边界
+
+- `localexec.StartArgs/Snapshot`增加PTY/Rows/Cols；24×80默认，1..4096。复用已有creack/pty分配slave，但cmd.Start仍受manager启动屏障；使用Setsid+Setctty、CLOEXEC/nonblocking master副本，read/write独立关闭。ioctl通过SyscallConn保护FD身份。
+- 复用原调度、输入gate、输出journal和Session lease。PTY只映射stdout，独立stderr请求明确拒绝；Linux正常末slave关闭EIO视为EOF，强制关闭/超时不能冒称完整。
+- 中断/EOF发送当前termios字节，不等于保证信号生效/退出/永久关闭stdin；disabled/raw/canonical分别保持OS语义。CloseInput只支持pipe。显式交互Shell同task保留cd/export，新task不继承。
+- Stop在未reap leader固定身份期间使用原root pgrp TERM/KILL；额外检查整个PTY session和必要的terminal hangup。不能证明job-control成员结束或存在僵尸时报告CleanupIncomplete，不追杀已释放PID/PGID。主动setsid脱离仍不保证收尾。
+- 输出metadata v2严格21字段，增加PTY/Rows/Cols；v1严格保留18字段/原枚举并转换为pipe。加密容器与record v6/dirty v7不变。resize经原journal保存尺寸；保存失败与已发生的终端操作分开报告。
+- 模型增加shell pty/rows/cols及task interrupt/eof/resize；严格拒绝action无关字段/不合法组合，沿用task_input无正文意图，不放宽WAL失败门禁。取消已发生前的resize不继续执行。
+- F5的i为显式行式输入，草稿4096字节且不回显；Enter送行、Ctrl+C终端控制、空草稿Ctrl+D终端EOF、Esc离开输入、Ctrl+Q退出。人工输入按owner直接发送，不进入模型工具/重放队列，不借用当前model turn的WAL；程序回显仍可能保存并被后续模型读取。尺寸只在显式输入模式随窗口同步，单纯查看不会调整程序终端。
+- 消息以Session generation、面板epoch和独立请求序号隔离；关闭面板不撤销已发出输入，部分输入只报告接受数、不自动重传。不是全屏终端模拟器。
+
+### C3验证记录
+
+Go1.26.6/Linux amd64；以下Go命令在clients/cli-go运行。
+
+- 叶子内核：`go test -count=1 -timeout=90s ./internal/localexec -run '^TestPTY'`通过（0.681s）。
+- 父代理新增模型schema/resize/input/merged read、控制WAL/取消、F5隐私/中断/EOF/resize/迟到回复、真实store/controller恢复及交互Shell状态隔离的定向测试通过。4096窗口新增schema曾挤占续答预算；仅精简冗余说明，未删工具或schema约束，原小窗口闭环回归已通过。
+- L4：`go test -count=1 -timeout=120s ./internal/localexec ./internal/agentloop ./internal/agentcontroller ./internal/agentui ./internal/command`五包全过，同五包vet通过。
+- race：`go test -race -count=1 -timeout=120s ./internal/localexec ./internal/agentcontroller ./internal/agentloop ./internal/agentui -run '^(TestPTY|TestLocalSessionLease)'`四包全过。
+- Linux完整CLI构建和version运行、Darwin/arm64完整CLI及localexec测试二进制交叉构建、Windows/amd64 CLI交叉构建通过。后者不增加平台支持；macOS测试二进制未原生运行。产物`/tmp/edu-agent-c3-build.cTiXuO`不提交。
+- `git diff --check`通过；mode=all的本会话86个已诊断文件无error，不是项目全扫。开发时缺失定义的旧告警经重读、primary LSP和实际编译确认已解决，没有以重复定义或忽略真实错误通过门禁。
+
+上述五包Go文件及go.mod/go.sum按路径排序的sha256列表汇总：`4d60f6fa0ef56e365f68b81f905b4514e9fb990bd23081ce349d23ed4a9c17a5`。C4–C10尚未交付，最终整体恢复/隐私复核与macOS原生证据仍待完成。

@@ -43,15 +43,19 @@ Agent TUI 不再设置独立顶部状态栏或全宽分隔线，transcript 直�
 
 Linux/macOS Agent 现在提供 `shell` 和 `task`。Shell 使用启动客户端的 OS 用户权限，可访问工作区外路径、网络和已安装工具，支持管道、重定向及脚本；**文件工具的逐次确认和 YOLO 均不约束 Shell**。默认 cwd 是保存的工作区/启动目录，但不是路径围栏；不可用时须显式指定有效 cwd，不自动回退。可指定 Shell 和环境变量覆盖/删除；默认选可用的启动环境 `$SHELL`，否则 `/bin/sh`，不额外注入钥匙串凭据。
 
-每次 `shell` 都是独立的非 login、非交互进程，不继承前次的 `cd/export/alias`。`wait_ms` 默认250毫秒、最多30000毫秒，0表示立即后台返回；它不是执行超时，`timeout_ms=0` 默认不限制执行总时长。`task` 支持 `list/status/read/search/wait/input/close_input/stop`；任务ID、真实状态、退出码和输出可用性分别返回。取消已存在任务的等待只停止等待，取消新 Shell 首次前台等待会发起停止；后台返回后的模型错误或轮次结束不会杀任务。正常退出客户端先停止任务和普通组内子进程，再关闭会话；主动脱离进程组的进程不保证收尾，清理不完整会明确报告。
+每次 `shell` 均独立，默认以 `shell -c` 启动，不自动附加 login/交互参数，也不继承前次的 `cd/export/alias`。`wait_ms` 默认250毫秒、最多30000毫秒，0表示立即后台返回；它不是执行超时，`timeout_ms=0` 默认不限制执行总时长。`task` 支持 `list/status/read/search/wait/input/close_input/stop/interrupt/eof/resize`；任务ID、真实状态、退出码和输出可用性分别返回。取消已存在任务的等待只停止等待，取消新 Shell 首次前台等待会发起停止；后台返回后的模型错误或轮次结束不会杀任务。正常退出客户端先停止任务和普通组内子进程，再关闭会话；主动脱离进程组的进程不保证收尾，清理不完整会明确报告。
 
 `stdin=true` 保持输入管道，可多次 `task input` 后显式 `close_input`，累计内容可超过64KiB；它可用于通过脚本完整写入超过单次参数预算的文件。单次 `shell/task` 的整 JSON 参数仍不超过64KiB，输入结果说明管道已接受的字节数，不代表子进程已处理，部分/未知输入不能自动重传。不新增通用分块上传协议。
 
 后台任务在空闲 Session 切换后继续归属原 Session；未收尾期间保留原 Session 在用锁，其他客户端不能恢复/删除。同客户端可安全切回，任务收尾后释放闲置锁。按 **F5** 打开当前 Session 的任务面板，不依赖模型调用成功。`↑/↓` 选任务、`Tab` 切 stdout/stderr、`PgUp/PgDn` 按原始字节翻页、`Ctrl+↑/↓` 滚动、`Home` 回到开头、`/` 输入字面检索、`n` 继续匹配/扫描、`s` 停止；`Esc/F5` 只关闭面板，不取消当前模型轮次。输出安全呈现，不直接回放终端控制序列。模型与 UI 使用独立、非破坏字节游标。
 
-输出 stdout/stderr 各自有序；内存预算保留已有前缀，持久 Session 另以独立加密产物保存完整的可保留范围，超过内存的部分仍可分页读取。达到保存预算或写失败会继续排空管道并标明缺口，不自动淘汰或暗中杀命令。任务状态、当前可读量、已保存量和完整性分别显示，退出码为0不等于完整输出已保存。新建与 `resume` 均可指定 `--task-max-records`（默认256）、`--task-max-running`（默认16）、`--task-output-limit`（每任务内存默认8388608字节）、`--task-total-output-limit`（客户端内存默认67108864字节）和 `--task-saved-output-limit`（每任务保存正文默认134217728字节）。产物另有集中可注入的密文上限：每Session256MiB、每profile1GiB及8192个产物文件；不占用聊天record的64MiB配额。
+`pty=true` 创建真实控制终端并保持输入，默认24行80列，`rows/cols`可指定1..4096；不允许同时显式`stdin=false`。需要持续Shell状态时可显式运行`exec /bin/sh -i`，继续使用同一task_id；新task不继承它的环境或cwd。stdout/stderr合并为stdout流，`task interrupt/eof`发送当前VINTR/VEOF终端字节，受程序termios控制，不保证结束；`resize`要求rows/cols。`close_input`仍仅用于pipe。恢复可读PTY历史，但不能附着或控制旧进程。
 
-`task search` 使用 `stream/needle/offset/limit` 做区分大小写的字面检索，needle最多512字节，limit为命中数（最多100），单次扫描最多1MiB，用 `next_offset` 继续；跨分段匹配和输出缺口都会明确处理。模型与F5检索游标彼此独立。稳定历史仍只保存任务元数据，不保存原始命令/env/stdin或输出正文；原始输出只进入认证加密的独立产物，不自动进入标题/聊天压缩。重启读取已保存范围，不恢复进程控制；缺少最终结算的任务报告未知，不重跑或向旧PID发信号。Session delete/clear同时清理关联产物并遵守原密钥撤销边界；具有任务产物的零已提交轮次Session不会误当空Session自动删除。`--no-save` 不创建自动输出临时文件，Shell 自身的显式写文件仍有效。PTY仍留给C3，本段不表示整个issue#1已交付。见 [实施计划](../../docs/design/client-local-tools-delivery.md)。
+F5按 **i** 进入PTY行式输入（不是原始按键直通/全屏终端模拟器），草稿最多4096字节且不回显、不直接送模型；Enter发送一行，Ctrl+C终端中断，空草稿时Ctrl+D终端EOF，Esc先离开输入，F5关闭查看，Ctrl+Q始终退出客户端。进入输入模式及窗口变化会更新PTY尺寸。输入不加入模型工具或恢复重放队列；**程序回显属于真实输出，可能加密保存并被模型后续读取**。部分输入报告实际接受数，不自动重传；关闭面板不保证撤销在途输入。job-control子进程无法确认收尾时明确报告清理不完整，不冒险向已释放的PID/PGID追发信号。
+
+pipe输出 stdout/stderr 各自有序，PTY为单一合并流；内存预算保留已有前缀，持久 Session 另以独立加密产物保存完整的可保留范围，超过内存的部分仍可分页读取。达到保存预算或写失败会继续排空管道并标明缺口，不自动淘汰或暗中杀命令。任务状态、当前可读量、已保存量和完整性分别显示，退出码为0不等于完整输出已保存。新建与 `resume` 均可指定 `--task-max-records`（默认256）、`--task-max-running`（默认16）、`--task-output-limit`（每任务内存默认8388608字节）、`--task-total-output-limit`（客户端内存默认67108864字节）和 `--task-saved-output-limit`（每任务保存正文默认134217728字节）。产物另有集中可注入的密文上限：每Session256MiB、每profile1GiB及8192个产物文件；不占用聊天record的64MiB配额。
+
+`task search` 使用 `stream/needle/offset/limit` 做区分大小写的字面检索，needle最多512字节，limit为命中数（最多100），单次扫描最多1MiB，用 `next_offset` 继续；跨分段匹配和输出缺口都会明确处理。模型与F5检索游标彼此独立。稳定历史仍只保存任务元数据，不保存原始命令/env/stdin或输出正文；原始输出只进入认证加密的独立产物，不自动进入标题/聊天压缩。重启读取已保存范围，不恢复进程控制；缺少最终结算的任务报告未知，不重跑或向旧PID发信号。Session delete/clear同时清理关联产物并遵守原密钥撤销边界；具有任务产物的零已提交轮次Session不会误当空Session自动删除。`--no-save` 不创建自动输出临时文件，Shell 自身的显式写文件仍有效。C1–C3已提供相应能力，本段不表示整个issue#1已交付。见 [实施计划](../../docs/design/client-local-tools-delivery.md)。
 
 ### 本地工作区与文件工具
 

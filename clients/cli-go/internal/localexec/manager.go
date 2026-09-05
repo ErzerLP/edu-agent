@@ -1,6 +1,6 @@
-// Package localexec manages non-interactive local shells and bounded output.
+// Package localexec manages local shells and bounded output, optionally in a PTY.
 // Optional opaque archives provide persistence without exposing keys or paths.
-// It deliberately provides no workspace sandbox, PTY, or credentials.
+// It deliberately provides no workspace sandbox or credentials.
 package localexec
 
 import (
@@ -67,6 +67,9 @@ type StartArgs struct {
 	Shell     string
 	Env       map[string]*string
 	Stdin     bool
+	PTY       bool
+	Rows      int
+	Cols      int
 	TimeoutMS int64
 }
 
@@ -93,6 +96,9 @@ type Snapshot struct {
 	Persistence       string
 	PersistenceError  string
 	Restored          bool
+	PTY               bool
+	Rows              int
+	Cols              int
 }
 
 type callKey struct{ owner, id string }
@@ -199,13 +205,19 @@ func (m *Manager) Start(ctx context.Context, owner, callID string, args StartArg
 	}
 	m.sequence++
 	t := &task{owner: owner, callDigest: key.id, binding: m.bindingLocked(owner), snapshot: Snapshot{TaskID: m.prefix + "-" + strconv.FormatUint(m.sequence, 10), State: StateStarting}, stop: make(chan struct{}), done: make(chan struct{}), inputGate: make(chan struct{}, 1)}
-	t.inputClosed = !args.Stdin
+	// Always publish valid mode metadata, even for rejected dimensions. Invalid
+	// requested sizes are not execution inputs retained in the journal.
+	rows, cols, sizeCode := terminalSize(args)
+	t.snapshot.PTY, t.snapshot.Rows, t.snapshot.Cols = args.PTY, rows, cols
+	t.inputClosed = !args.Stdin && !args.PTY
 	t.inputGate <- struct{}{}
 	m.tasks[t.snapshot.TaskID], m.calls[key] = t, t
 	code := ""
 	switch {
 	case !platformSupported():
 		code = "unsupported_platform"
+	case sizeCode != "":
+		code = sizeCode
 	case ctx.Err() != nil:
 		code = "start_canceled"
 	case m.active >= m.options.MaxConcurrent:
@@ -239,8 +251,17 @@ func (m *Manager) Start(ctx context.Context, owner, callID string, args StartArg
 	m.mu.Lock()
 	t.snapshot.Shell = cmd.Path
 	m.mu.Unlock()
-	pipes, err := openPipes(cmd, args.Stdin)
+	var pipes *processPipes
+	var err error
+	if args.PTY {
+		pipes, err = openPTY(cmd, rows, cols)
+	} else {
+		pipes, err = openPipes(cmd, args.Stdin)
+	}
 	if err != nil {
+		if args.PTY {
+			return m.startFailed(t, "pty_failed")
+		}
 		return m.startFailed(t, "pipe_failed")
 	}
 	// Serialize the actual launch with shutdown's transition. No published task

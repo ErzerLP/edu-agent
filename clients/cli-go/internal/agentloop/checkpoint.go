@@ -222,7 +222,6 @@ func (s *Session) RestoreCheckpoint(checkpoint SessionCheckpoint) error {
 	s.reasoningEffort = checkpoint.ReasoningEffort
 	s.fileAuthorizationMode = FileAuthorizationConfirm
 	s.remaining = 0
-	s.toolCallsRemaining = 0
 	s.currentToolResultTokens = 0
 	s.clearPendingLocked()
 

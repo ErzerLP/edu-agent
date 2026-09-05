@@ -1,18 +1,9 @@
 package agentlimits
 
-const (
-	MinToolRounds           = 1
-	MaxToolRounds           = 60
-	MaxToolCallsPerResponse = 4
-)
+const UnlimitedToolRounds = 0
 
+// ValidToolRounds accepts the Codex-style unlimited mode (0) and any
+// positive user-selected guard. The runtime does not impose a maximum.
 func ValidToolRounds(value int) bool {
-	return value >= MinToolRounds && value <= MaxToolRounds
-}
-
-func MaxToolCalls(toolRounds int) int {
-	if !ValidToolRounds(toolRounds) {
-		return 0
-	}
-	return toolRounds * MaxToolCallsPerResponse
+	return value >= UnlimitedToolRounds
 }

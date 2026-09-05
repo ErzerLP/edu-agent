@@ -375,12 +375,12 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	t.Parallel()
 	snapshot := Snapshot{
 		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "high", AgentTimeout: "90s", AgentMaxToolRounds: 6, AgentKeyConfigured: true,
+		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "high", AgentTimeout: "90s", AgentMaxToolRounds: 0, AgentKeyConfigured: true,
 	}
 	updated, _ := newModel(snapshot).Update(key("s"))
 	updated, _ = updated.(model).Update(key("a"))
 	settings := updated.(model)
-	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "默认推理强度：high", "无响应超时：90s", "API Key：已存入系统钥匙串") {
+	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "默认推理强度：high", "无响应超时：90s", "工具轮数：不限制", "API Key：已存入系统钥匙串") {
 		t.Fatalf("agent settings=%q", settings.View())
 	}
 
@@ -391,12 +391,12 @@ func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
 	form.inputs[2].SetValue("65536")
 	form.inputs[3].SetValue("recent-only")
 	form.inputs[4].SetValue("2m")
-	form.inputs[5].SetValue("60")
-	if !strings.Contains(form.View(), "模型无响应超时") || !strings.Contains(form.View(), "最大工具轮数（1-60）") {
-		t.Fatalf("tool-round range missing from form: %q", form.View())
+	form.inputs[5].SetValue("1000000")
+	if !strings.Contains(form.View(), "模型无响应超时") || !strings.Contains(form.View(), "最大工具轮数（0=不限制，无固定上界）") {
+		t.Fatalf("tool-round unlimited semantics missing from form: %q", form.View())
 	}
 	updated, _ = form.Update(key("enter"))
-	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "60"}
+	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "1000000"}
 	if got := updated.(model).command; !reflect.DeepEqual(got, want) {
 		t.Fatalf("model command=%#v want=%#v", got, want)
 	}

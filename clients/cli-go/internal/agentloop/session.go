@@ -24,7 +24,7 @@ const (
 	maxUserInputBytes         = 8 << 10
 	maxUserInputRunes         = 8000
 	maxAssistantTextBytes     = 64 << 10
-	maxToolCallsPerResponse   = agentlimits.MaxToolCallsPerResponse
+	toolResultBudgetShares    = 4
 	maxToolCallArgumentsBytes = 8 << 10
 	maxToolCallArgumentsTotal = 16 << 10
 )
@@ -55,8 +55,8 @@ type Session struct {
 	workspaceReferences          map[string]*WorkspaceReference
 	currentToolResultTokens      int
 	currentToolResultBudget      int
+	currentToolResultShares      int
 	remaining                    int
-	toolCallsRemaining           int
 	pendingKind                  pendingInteractionKind
 	pendingCalls                 []modelclient.ToolCall
 	pendingIndex                 int
@@ -211,7 +211,6 @@ func (s *Session) discardTurn(turnID string) {
 		s.activeTurnID = ""
 		s.clearPendingLocked()
 		s.remaining = 0
-		s.toolCallsRemaining = 0
 		s.currentToolResultTokens = 0
 	}
 	if s.currentTurnID == turnID {
@@ -739,8 +738,8 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 	s.activityMu.Unlock()
 	s.activitySequence = 0
 	s.currentToolResultTokens = 0
+	s.currentToolResultShares = toolResultBudgetShares
 	s.remaining = s.options.MaxToolRounds
-	s.toolCallsRemaining = agentlimits.MaxToolCalls(s.options.MaxToolRounds)
 	result, runErr := s.run(ctx, nil)
 	if runErr != nil {
 		runErr = preferContextError(ctx, runErr)
@@ -780,9 +779,6 @@ func cloneResult(value Result) Result {
 func validateModelMessage(message modelclient.Message) error {
 	if len(message.Content) > maxAssistantTextBytes {
 		return errors.New("模型回答超过客户端安全上限")
-	}
-	if len(message.ToolCalls) > maxToolCallsPerResponse {
-		return errors.New("模型单轮请求的工具调用数超过安全上限")
 	}
 	totalArguments := 0
 	seenCallIDs := make(map[string]struct{}, len(message.ToolCalls))
@@ -1135,7 +1131,7 @@ func (s *Session) appendWorkspaceToolResult(tool, callID string, result workspac
 	}
 	live := projection.Live
 	value := workspaceModelVisibleValue(result)
-	perResultBudget := max(32, s.currentToolResultBudget/maxToolCallsPerResponse-30)
+	perResultBudget := max(32, s.currentToolResultBudget/max(1, s.currentToolResultShares)-30)
 	remainingBudget := max(32, s.currentToolResultBudget-s.currentToolResultTokens-6)
 	allowed := min(perResultBudget, remainingBudget)
 	if estimated := s.estimator.EstimateText(live); estimated > allowed {

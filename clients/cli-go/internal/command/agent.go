@@ -662,9 +662,13 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 		if _, keyErr := a.ModelSecrets.Load(binding); keyErr == nil {
 			keyStatus = "已存入系统钥匙串"
 		}
-		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n最大工具轮数：%d\nAPI Key：%s\n",
+		toolRounds := "不限制"
+		if value.Agent.MaxToolRounds > 0 {
+			toolRounds = strconv.Itoa(value.Agent.MaxToolRounds)
+		}
+		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n最大工具轮数：%s\nAPI Key：%s\n",
 			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow,
-			safeText(value.Agent.ContextCompaction), safeText(value.Agent.ReasoningEffort), safeText(value.Agent.SessionHistory), safeText(value.Agent.Timeout), value.Agent.MaxToolRounds, keyStatus)
+			safeText(value.Agent.ContextCompaction), safeText(value.Agent.ReasoningEffort), safeText(value.Agent.SessionHistory), safeText(value.Agent.Timeout), toolRounds, keyStatus)
 		return err
 	case "preset":
 		if len(args) != 2 {
@@ -749,7 +753,7 @@ func (a *App) runModelSet(args []string) error {
 	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
 	set.StringVar(&sessionHistory, "session-history", "", "auto or off")
 	set.StringVar(&timeout, "timeout", "", "model inactivity timeout")
-	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, fmt.Sprintf("maximum tool rounds (%d-%d)", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds))
+	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, "maximum tool rounds (0 means unlimited; positive values set an optional guard)")
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return modelUsage("模型参数格式无效")
 	}
@@ -759,8 +763,8 @@ func (a *App) runModelSet(args []string) error {
 			maxToolRoundsSet = true
 		}
 	})
-	if maxToolRoundsSet && (maxToolRounds < config.MinAgentMaxToolRounds || maxToolRounds > config.MaxAgentMaxToolRounds) {
-		return commandError("invalid_configuration", "最大工具轮数无效", fmt.Sprintf("请输入%d到%d之间的整数", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds), ExitInput)
+	if maxToolRoundsSet && maxToolRounds < config.MinAgentMaxToolRounds {
+		return commandError("invalid_configuration", "最大工具轮数无效", "请输入0或正整数；0表示不限制", ExitInput)
 	}
 	value, err := a.loadModelConfig()
 	if err != nil {

@@ -10,14 +10,35 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
 
+type continueAgentLoopError struct {
+	events []Event
+}
+
+func (*continueAgentLoopError) Error() string {
+	return "continue agent loop"
+}
+
 func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
+	for {
+		result, err := s.runOnce(ctx, events)
+		var continuation *continueAgentLoopError
+		if !errors.As(err, &continuation) {
+			return result, err
+		}
+		events = continuation.events
+	}
+}
+
+func (s *Session) runOnce(ctx context.Context, events []Event) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if s.remaining <= 0 {
-		return Result{}, errors.New("Agent工具轮数已达到上限，请缩小问题范围后重试")
+	if s.options.MaxToolRounds > 0 {
+		if s.remaining <= 0 {
+			return Result{}, errors.New("Agent已达到用户配置的工具轮数保护值；将最大工具轮数设为0可取消该限制")
+		}
+		s.remaining--
 	}
-	s.remaining--
 	reasoningEffort := s.frozenReasoningEffort()
 	thinkingID := s.nextThinkingActivityID()
 	summary := "正在分析问题"
@@ -50,11 +71,6 @@ func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
 		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "模型响应不符合协议", Status: EventFailed, Detail: "invalid_model_response"}, Phase: ActivityValidatingResponse, StableCode: "invalid_model_response"})
 		return Result{}, err
 	}
-	if len(response.Message.ToolCalls) > s.toolCallsRemaining {
-		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "工具调用超过安全上限", Status: EventFailed, Detail: "tool_limit_exceeded"}, Phase: ActivityAssemblingTools, StableCode: "tool_limit_exceeded"})
-		return Result{}, errors.New("模型请求的工具调用总数超过安全上限")
-	}
-	s.toolCallsRemaining -= len(response.Message.ToolCalls)
 	recordUsage := func() {
 		if response.Usage == nil {
 			return
@@ -109,6 +125,7 @@ func (s *Session) foregroundResponse(ctx context.Context, request modelclient.Re
 }
 
 func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall, start int, events []Event) (Result, error) {
+	s.currentToolResultShares = max(s.currentToolResultShares, toolResultBudgetShares, len(calls))
 	for index := start; index < len(calls); index++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
@@ -163,10 +180,10 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 			}
 			pending, allowed := s.registerQuestion(args)
 			if !allowed {
-				if appendErr := s.appendSessionToolResult(call.Function.Name, call.ID, map[string]any{"error": "question_limit_exceeded"}); appendErr != nil {
+				if appendErr := s.appendSessionToolResult(call.Function.Name, call.ID, map[string]any{"error": "question_id_conflict"}); appendErr != nil {
 					return Result{}, appendErr
 				}
-				event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "当前轮次的用户问询已达到上限", Status: EventInvalid, Detail: "question_limit_exceeded"}
+				event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "用户问询标识重复或当前轮次不可用", Status: EventInvalid, Detail: "question_id_conflict"}
 				s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityValidatingResponse, StableCode: event.Detail})
 				events = append(events, event)
 				continue
@@ -276,14 +293,23 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 		return Result{}, err
 	}
 	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: fmt.Sprintf("continue-%d", s.activitySequence), Summary: "正在结合工具结果继续分析", Status: EventRunning}, Phase: ActivityContinuingAfterTool})
-	return s.run(ctx, events)
+	return Result{}, &continueAgentLoopError{events: events}
+}
+
+func (s *Session) resumeAfterCalls(ctx context.Context, calls []modelclient.ToolCall, start int, events []Event) (Result, error) {
+	result, err := s.processCalls(ctx, calls, start, events)
+	var continuation *continueAgentLoopError
+	if errors.As(err, &continuation) {
+		return s.run(ctx, continuation.events)
+	}
+	return result, err
 }
 
 func (s *Session) registerQuestion(args questionArgs) (*PendingQuestion, bool) {
 	s.appendMu.Lock()
 	defer s.appendMu.Unlock()
 	turn := s.turns[s.activeTurnID]
-	if turn == nil || turn.QuestionsAsked >= 4 {
+	if turn == nil {
 		return nil, false
 	}
 	if _, duplicate := turn.QuestionIDs[args.QuestionID]; duplicate {

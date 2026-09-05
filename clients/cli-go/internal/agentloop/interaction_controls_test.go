@@ -324,19 +324,22 @@ func TestQuestionRejectsConcurrentAndLateResolution(t *testing.T) {
 	}
 }
 
-func TestQuestionLimitIsFourPerTurn(t *testing.T) {
-	responses := make([]modelclient.Response, 0, 6)
-	for index := 1; index <= 5; index++ {
+func TestQuestionSequenceHasNoFixedPerTurnLimit(t *testing.T) {
+	responses := make([]modelclient.Response, 0, 8)
+	for index := 1; index <= 6; index++ {
 		responses = append(responses, modelclient.Response{Message: toolCallsMessage(questionToolCall(t, fmt.Sprintf("call-%d", index), fmt.Sprintf("question-%d", index), QuestionSingle))})
 	}
-	responses = append(responses, modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "四次后继续"}})
+	responses = append(responses,
+		modelclient.Response{Message: toolCallsMessage(questionToolCall(t, "call-7", "question-6", QuestionSingle))},
+		modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "问题完成后继续"}},
+	)
 	model := &fakeModel{responses: responses}
 	session := newTestSession(t, model, &fakeServer{})
 	result, err := session.Send(t.Context(), "连续问题")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index := 1; index <= 4; index++ {
+	for index := 1; index <= 6; index++ {
 		if result.PendingQuestion == nil || result.PendingQuestion.ID != fmt.Sprintf("question-%d", index) {
 			t.Fatalf("pending at %d=%+v", index, result.PendingQuestion)
 		}
@@ -347,15 +350,15 @@ func TestQuestionLimitIsFourPerTurn(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if result.PendingQuestion != nil || result.Text != "四次后继续" {
-		t.Fatalf("fifth ask was not rejected and continued: %+v", result)
+	if result.PendingQuestion != nil || result.Text != "问题完成后继续" {
+		t.Fatalf("result=%+v", result)
 	}
-	if len(model.requests) != 6 {
+	if len(model.requests) != 8 {
 		t.Fatalf("model requests=%d", len(model.requests))
 	}
-	fifth := decodedToolResult(t, model.requests[5].Messages, "call-5")
-	if fifth["error"] != "question_limit_exceeded" {
-		t.Fatalf("fifth question result=%+v", fifth)
+	duplicate := decodedToolResult(t, model.requests[7].Messages, "call-7")
+	if duplicate["error"] != "question_id_conflict" {
+		t.Fatalf("duplicate question result=%+v", duplicate)
 	}
 }
 

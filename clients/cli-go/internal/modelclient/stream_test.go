@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -645,12 +646,20 @@ func TestStreamEnforcesLineEventTextArgumentAndToolBounds(t *testing.T) {
 			t.Fatalf("error=%v", err)
 		}
 	})
-	t.Run("tool count", func(t *testing.T) {
-		assembler := streamAssembler{tools: make(map[int]*assembledToolCall)}
-		index := maxStreamToolCalls
-		err := assembler.applyToolDelta(streamToolCallDelta{Index: &index, ID: "call"})
-		if StableErrorCode(err) != ErrorCodeStreamProtocol {
-			t.Fatalf("error=%v", err)
+	t.Run("many tool calls", func(t *testing.T) {
+		assembler := streamAssembler{tools: make(map[int]*assembledToolCall), finishSeen: true, finishReason: "tool_calls"}
+		for index := 0; index < 64; index++ {
+			err := assembler.applyToolDelta(streamToolCallDelta{
+				Index: &index, ID: fmt.Sprintf("call-%d", index), Type: "function",
+				Function: streamFunctionDelta{Name: "tool", Arguments: `{}`},
+			})
+			if err != nil {
+				t.Fatalf("tool %d: %v", index, err)
+			}
+		}
+		response, err := assembler.response()
+		if err != nil || len(response.Message.ToolCalls) != 64 {
+			t.Fatalf("response calls=%d err=%v", len(response.Message.ToolCalls), err)
 		}
 	})
 }

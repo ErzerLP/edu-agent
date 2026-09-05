@@ -312,9 +312,9 @@ func (m *model) open(next screen) {
 			newInput("32768", contextWindow),
 			newInput("auto", display(agentConfig.AgentContextCompaction, config.DefaultAgentContextCompaction)),
 			newInput(config.DefaultAgentTimeout.String(), display(agentConfig.AgentTimeout, config.DefaultAgentTimeout.String())),
-			newInput("6", toolRounds),
+			newInput("0", toolRounds),
 		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", fmt.Sprintf("最大工具轮数（%d-%d）", config.MinAgentMaxToolRounds, config.MaxAgentMaxToolRounds)}
+		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", "最大工具轮数（0=不限制，无固定上界）"}
 	case screenAgentKey:
 		input := newInput("输入不会显示", "")
 		input.EchoMode = textinput.EchoPassword
@@ -658,7 +658,7 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 		body.WriteString("\n")
 		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
 			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, config.DefaultAgentTimeout.String()), positiveNumber(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
+			positiveNumber(m.snapshot.AgentContextWindow), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, config.DefaultAgentTimeout.String()), toolRoundLimit(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
 	case screenAgentProvider:
 		body.WriteString(labelStyle.Render("选择模型提供商"))
 		body.WriteString("\n")
@@ -762,6 +762,13 @@ func display(value, fallback string) string {
 func positiveNumber(value int) string {
 	if value < 1 {
 		return "未配置"
+	}
+	return strconv.Itoa(value)
+}
+
+func toolRoundLimit(value int) string {
+	if value <= 0 {
+		return "不限制"
 	}
 	return strconv.Itoa(value)
 }

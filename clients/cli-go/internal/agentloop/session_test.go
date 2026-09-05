@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -261,30 +260,54 @@ func (s *fakeServer) DecideMemoryCandidate(_ context.Context, candidateID string
 	return api.MemoryOperationResponse{Candidate: &api.MemoryCandidateView{Candidate: api.MemoryCandidate{ID: candidateID, Status: status, Revision: request.ExpectedRevision + 1}}}, nil
 }
 
-func TestSessionAcceptsConfiguredMaximumAndScalesToolCallBudget(t *testing.T) {
+func TestSessionSupportsUnlimitedToolLoopAndOptionalUserLimit(t *testing.T) {
 	t.Parallel()
-	model := &fakeModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", Content: "完成"}}}}
+	responses := make([]modelclient.Response, 0, 62)
+	for index := 0; index < 61; index++ {
+		responses = append(responses, modelclient.Response{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{
+			ID: fmt.Sprintf("call-%d", index), Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`},
+		}}}})
+	}
+	responses = append(responses, modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "完成长工具循环"}})
+	model := &fakeModel{responses: responses}
+	uuidCalls := 0
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 4096, MaxToolRounds: agentlimits.MaxToolRounds, Now: time.Now,
-		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
+		ContextWindow: 1_000_000, MaxToolRounds: 0, Now: time.Now,
+		NewUUID: func() (string, error) {
+			uuidCalls++
+			return fmt.Sprintf("60000000-0000-4000-8000-%012d", uuidCalls), nil
+		},
 	})
 	if err != nil {
-		t.Fatalf("maximum tool rounds rejected: %v", err)
+		t.Fatalf("unlimited tool loop rejected: %v", err)
 	}
-	if _, err := session.Send(t.Context(), "测试最大工具轮数"); err != nil {
-		t.Fatalf("maximum tool rounds send failed: %v", err)
+	result, err := session.Send(t.Context(), "完成超过旧上限的工具循环")
+	if err != nil {
+		t.Fatalf("unlimited tool loop failed: %v", err)
 	}
-	if got, want := session.toolCallsRemaining, agentlimits.MaxToolCalls(agentlimits.MaxToolRounds); got != want {
-		t.Fatalf("tool call budget=%d want=%d", got, want)
+	if result.Text != "完成长工具循环" || len(model.requests) != 62 {
+		t.Fatalf("result=%+v requests=%d", result, len(model.requests))
 	}
 
-	for _, value := range []int{0, agentlimits.MaxToolRounds + 1} {
-		if _, err := New(&fakeModel{}, &fakeServer{}, Options{
-			ContextWindow: 4096, MaxToolRounds: value, Now: time.Now,
-			NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
-		}); err == nil {
-			t.Fatalf("MaxToolRounds=%d accepted", value)
-		}
+	limitedModel := &fakeModel{responses: []modelclient.Response{
+		{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{ID: "limited-call", Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`}}}}},
+		{Message: modelclient.Message{Role: "assistant", Content: "不应到达"}},
+	}}
+	limited, err := New(limitedModel, &fakeServer{}, Options{
+		ContextWindow: 32768, MaxToolRounds: 1, Now: time.Now,
+		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000999", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := limited.Send(t.Context(), "测试自选保护值"); err == nil || !strings.Contains(err.Error(), "保护值") {
+		t.Fatalf("optional tool-round guard err=%v", err)
+	}
+	if _, err := New(&fakeModel{}, &fakeServer{}, Options{
+		ContextWindow: 4096, MaxToolRounds: -1, Now: time.Now,
+		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000998", nil },
+	}); err == nil {
+		t.Fatal("negative MaxToolRounds accepted")
 	}
 }
 
@@ -1398,20 +1421,40 @@ func TestPreferenceDecisionRetryReusesOperationIDAfterAmbiguousFailure(t *testin
 	}
 }
 
-func TestSessionRejectsExcessiveToolCallsAndOversizedCurrentGroup(t *testing.T) {
-	calls := make([]modelclient.ToolCall, maxToolCallsPerResponse+1)
+func TestSessionAcceptsLargeToolCallGroupAndRejectsOversizedCurrentGroup(t *testing.T) {
+	calls := make([]modelclient.ToolCall, 64)
 	for index := range calls {
-		calls[index] = modelclient.ToolCall{ID: "call", Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`}}
+		calls[index] = modelclient.ToolCall{ID: fmt.Sprintf("call-%d", index), Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`}}
 	}
-	model := &fakeModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", ToolCalls: calls}}}}
+	model := &fakeModel{responses: []modelclient.Response{
+		{Message: modelclient.Message{Role: "assistant", ToolCalls: calls}},
+		{Message: modelclient.Message{Role: "assistant", Content: "已处理全部工具结果"}},
+	}}
 	server := &fakeServer{}
-	session := newTestSession(t, model, server)
-	if _, err := session.Send(t.Context(), "读取进度"); err == nil || !strings.Contains(err.Error(), "单轮") {
-		t.Fatalf("excessive calls err=%v", err)
+	uuidCalls := 0
+	session, err := New(model, server, Options{
+		ContextWindow: 1_000_000, MaxToolRounds: 0, Now: time.Now,
+		NewUUID: func() (string, error) {
+			uuidCalls++
+			return fmt.Sprintf("61000000-0000-4000-8000-%012d", uuidCalls), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.Send(t.Context(), "读取大量工具结果")
+	if err != nil {
+		t.Fatalf("large tool-call group failed: %v", err)
+	}
+	if result.Text != "已处理全部工具结果" || server.currentCalls != len(calls) {
+		t.Fatalf("result=%+v toolCalls=%d", result, server.currentCalls)
+	}
+	if session.currentToolResultShares != len(calls) {
+		t.Fatalf("tool result budget shares=%d want=%d", session.currentToolResultShares, len(calls))
 	}
 
-	session, err := New(&fakeModel{}, server, Options{
-		ContextWindow: 4096, MaxToolRounds: 1, Now: time.Now,
+	session, err = New(&fakeModel{}, server, Options{
+		ContextWindow: 4096, MaxToolRounds: 0, Now: time.Now,
 		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
 	})
 	if err != nil {

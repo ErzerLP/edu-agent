@@ -62,7 +62,7 @@ func (s *Session) ResolveFileMutation(ctx context.Context, callID string, resolu
 		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityContinuingAfterTool, StableCode: event.Detail, File: detail})
 		events = append(events, event)
 		s.clearPendingAfterResolution()
-		resultValue, err := s.processCalls(ctx, calls, index+1, events)
+		resultValue, err := s.resumeAfterCalls(ctx, calls, index+1, events)
 		if err == nil {
 			return cloneResult(resultValue), nil
 		}
@@ -82,7 +82,7 @@ func (s *Session) ResolveFileMutation(ctx context.Context, callID string, resolu
 	if result.Publication == workspace.PublicationUnknown {
 		return s.fileMutationCompletionFallback(turnID, events)
 	}
-	continued, runErr := s.processCalls(ctx, calls, index+1, events)
+	continued, runErr := s.resumeAfterCalls(ctx, calls, index+1, events)
 	if runErr == nil {
 		return cloneResult(continued), nil
 	}

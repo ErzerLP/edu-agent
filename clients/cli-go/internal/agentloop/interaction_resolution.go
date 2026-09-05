@@ -135,7 +135,7 @@ func (s *Session) ResolvePreference(ctx context.Context, resolution PreferenceRe
 		return s.finishAfterTurnFailure(turnID, events, appendErr)
 	}
 	s.clearPendingAfterResolution()
-	result, err := s.processCalls(ctx, calls, index+1, events)
+	result, err := s.resumeAfterCalls(ctx, calls, index+1, events)
 	if err == nil {
 		return cloneResult(result), nil
 	}
@@ -180,7 +180,7 @@ func (s *Session) ResolveQuestion(ctx context.Context, answer QuestionAnswer) (R
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityContinuingAfterTool})
 	events = append(events, event)
 	s.clearPendingAfterResolution()
-	result, err := s.processCalls(ctx, calls, index+1, events)
+	result, err := s.resumeAfterCalls(ctx, calls, index+1, events)
 	if err != nil {
 		err = preferContextError(ctx, err)
 		return s.finishAfterTurnFailure(turnID, events, err)

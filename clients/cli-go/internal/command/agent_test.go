@@ -123,10 +123,10 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 		t.Fatalf("config=%+v", store.value)
 	}
 	out.Reset()
-	if exit := app.Run(t.Context(), []string{"model", "set", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "8"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"model", "set", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "0"}); exit != ExitOK {
 		t.Fatalf("set exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
-	if got := store.value.Agent; got.BaseURL != "https://model.example/v1" || got.Model != "teacher-model" || got.ContextWindow != 65536 || got.ContextCompaction != "recent-only" || got.ReasoningEffort != "high" || got.Timeout != "2m" || got.MaxToolRounds != 8 {
+	if got := store.value.Agent; got.BaseURL != "https://model.example/v1" || got.Model != "teacher-model" || got.ContextWindow != 65536 || got.ContextCompaction != "recent-only" || got.ReasoningEffort != "high" || got.Timeout != "2m" || got.MaxToolRounds != 0 {
 		t.Fatalf("agent config=%+v", got)
 	}
 
@@ -154,7 +154,7 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"model", "show"}); exit != ExitOK {
 		t.Fatalf("show exit=%d err=%q", exit, errOut.String())
 	}
-	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") || !strings.Contains(out.String(), "默认推理强度：high") || !strings.Contains(out.String(), "无响应超时：2m") {
+	if strings.Contains(out.String(), secret) || !strings.Contains(out.String(), "已存入系统钥匙串") || !strings.Contains(out.String(), "上下文压缩：recent-only") || !strings.Contains(out.String(), "默认推理强度：high") || !strings.Contains(out.String(), "无响应超时：2m") || !strings.Contains(out.String(), "最大工具轮数：不限制") {
 		t.Fatalf("secret leaked or status missing: %q", out.String())
 	}
 	deletesBefore := secrets.deletes
@@ -164,26 +164,32 @@ func TestModelConfigurationWorksBeforePairingAndNeverPrintsKey(t *testing.T) {
 	}
 }
 
-func TestModelSetAcceptsSixtyToolRoundsAndPreservesLastValidValue(t *testing.T) {
+func TestModelSetSupportsUnlimitedToolRoundsAndHasNoFixedMaximum(t *testing.T) {
 	t.Parallel()
 	store := &memoryConfigStore{}
 	app, out, errOut := newTestApp(store, &memoryCredentialStore{}, &fakeTerminal{})
 
-	if exit := app.Run(t.Context(), []string{"model", "set", "--provider", "custom", "--max-tool-rounds", "60"}); exit != ExitOK {
-		t.Fatalf("set 60 exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	if exit := app.Run(t.Context(), []string{"model", "set", "--provider", "custom", "--max-tool-rounds", "0"}); exit != ExitOK {
+		t.Fatalf("set unlimited exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
-	if store.value.Agent == nil || store.value.Agent.MaxToolRounds != 60 {
-		t.Fatalf("saved config=%+v", store.value.Agent)
+	if store.value.Agent == nil || store.value.Agent.MaxToolRounds != 0 {
+		t.Fatalf("saved unlimited config=%+v", store.value.Agent)
 	}
 
-	for _, invalid := range []string{"0", "61"} {
-		errOut.Reset()
-		if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", invalid}); exit != ExitInput {
-			t.Fatalf("set %s exit=%d err=%q", invalid, exit, errOut.String())
-		}
-		if !strings.Contains(errOut.String(), "1到60") || store.value.Agent.MaxToolRounds != 60 {
-			t.Fatalf("set %s err=%q saved=%+v", invalid, errOut.String(), store.value.Agent)
-		}
+	out.Reset()
+	if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", "1000000"}); exit != ExitOK {
+		t.Fatalf("set large guard exit=%d out=%q err=%q", exit, out.String(), errOut.String())
+	}
+	if store.value.Agent.MaxToolRounds != 1_000_000 {
+		t.Fatalf("saved large guard=%+v", store.value.Agent)
+	}
+
+	errOut.Reset()
+	if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", "-1"}); exit != ExitInput {
+		t.Fatalf("set negative exit=%d err=%q", exit, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "0表示不限制") || store.value.Agent.MaxToolRounds != 1_000_000 {
+		t.Fatalf("negative err=%q saved=%+v", errOut.String(), store.value.Agent)
 	}
 }
 

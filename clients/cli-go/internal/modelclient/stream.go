@@ -22,7 +22,6 @@ const (
 	maxStreamTextDeltaBytes    = 64 << 10
 	maxStreamHiddenReasoning   = 64 << 10
 	maxStreamTextBytes         = 1 << 20
-	maxStreamToolCalls         = 32
 	maxStreamToolIDBytes       = 512
 	maxStreamToolNameBytes     = 256
 	maxStreamArgumentDelta     = 128 << 10
@@ -483,7 +482,7 @@ func validateHiddenReasoning(delta streamDelta) (bool, error) {
 }
 
 func (a *streamAssembler) applyToolDelta(delta streamToolCallDelta) error {
-	if delta.Index == nil || *delta.Index < 0 || *delta.Index >= maxStreamToolCalls {
+	if delta.Index == nil || *delta.Index < 0 {
 		return clientError(ErrorCodeStreamProtocol, "模型工具调用 index 无效")
 	}
 	if delta.ID == "" && delta.Type == "" && delta.Function.Name == "" && delta.Function.Arguments == "" {
@@ -491,9 +490,6 @@ func (a *streamAssembler) applyToolDelta(delta streamToolCallDelta) error {
 	}
 	call := a.tools[*delta.Index]
 	if call == nil {
-		if len(a.tools) >= maxStreamToolCalls {
-			return clientError(ErrorCodeStreamResponseTooLarge, "模型工具调用数量超过限制")
-		}
 		call = &assembledToolCall{index: *delta.Index}
 		a.tools[*delta.Index] = call
 	}

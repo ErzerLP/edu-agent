@@ -26,9 +26,8 @@ const (
 	DefaultAgentProvider          = "openai"
 	DefaultAgentContextWindow     = 32768
 	DefaultAgentTimeout           = 60 * time.Second
-	DefaultAgentMaxToolRounds     = 8
-	MinAgentMaxToolRounds         = agentlimits.MinToolRounds
-	MaxAgentMaxToolRounds         = agentlimits.MaxToolRounds
+	DefaultAgentMaxToolRounds     = agentlimits.UnlimitedToolRounds
+	MinAgentMaxToolRounds         = agentlimits.UnlimitedToolRounds
 	DefaultAgentContextCompaction = "auto"
 	DefaultAgentReasoningEffort   = "auto"
 	DefaultAgentSessionHistory    = "auto"
@@ -287,7 +286,7 @@ func (c *AgentConfig) Validate() error {
 		return errors.New("agent inactivity timeout must be a positive duration no greater than 10m")
 	}
 	if !agentlimits.ValidToolRounds(c.MaxToolRounds) {
-		return fmt.Errorf("max tool rounds must be between %d and %d", MinAgentMaxToolRounds, MaxAgentMaxToolRounds)
+		return errors.New("max tool rounds must be non-negative; 0 means unlimited")
 	}
 	c.ContextCompaction = strings.ToLower(strings.TrimSpace(c.ContextCompaction))
 	if c.ContextCompaction == "" {

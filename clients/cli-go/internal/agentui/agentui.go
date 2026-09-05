@@ -19,11 +19,13 @@ import (
 )
 
 const (
-	minimumWidth      = 46
-	minimumHeight     = 18
-	horizontalPadding = 6
-	turnStreamBuffer  = 128
-	slowTurnThreshold = 8 * time.Second
+	minimumWidth         = 46
+	minimumHeight        = 18
+	horizontalPadding    = 6
+	turnStreamBuffer     = 128
+	slowTurnThreshold    = 8 * time.Second
+	historyWheelScroll   = 3
+	historyFastKeyScroll = 3
 )
 
 type sessionPersistenceProvider interface {
@@ -66,7 +68,14 @@ func (r Runner) Run(ctx context.Context) error {
 	if initial.contextCancel != nil {
 		defer initial.contextCancel()
 	}
-	program := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithInput(r.In), tea.WithOutput(r.Out), tea.WithContext(ctx))
+	program := tea.NewProgram(
+		initial,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+		tea.WithInput(r.In),
+		tea.WithOutput(r.Out),
+		tea.WithContext(ctx),
+	)
 	_, err := program.Run()
 	return err
 }
@@ -364,6 +373,8 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshTranscript(true)
 		return m, nil
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -1012,30 +1023,60 @@ func (m *model) restoreInputFocus() {
 	}
 }
 
+func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.terminalTooSmall() || m.sessionPicker != nil || msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.viewport.ScrollUp(historyWheelScroll)
+	case tea.MouseButtonWheelDown:
+		m.viewport.ScrollDown(historyWheelScroll)
+	default:
+		return m, nil
+	}
+	m.updateFollowAfterScroll()
+	return m, nil
+}
+
 func (m *model) handleNavigationKey(key string) bool {
 	switch key {
 	case "ctrl+0", "ctrl+o":
 		m.toolsExpanded = !m.toolsExpanded
 		m.refreshTranscript(false)
 		return true
+	case "up":
+		if m.selector != nil {
+			return false
+		}
+		m.viewport.ScrollUp(1)
+		m.updateFollowAfterScroll()
+		return true
 	case "pgup":
 		m.viewport.PageUp()
 		m.updateFollowAfterScroll()
 		return true
 	case "ctrl+up":
-		m.viewport.ScrollUp(3)
+		m.viewport.ScrollUp(historyFastKeyScroll)
 		m.updateFollowAfterScroll()
 		return true
 	case "home", "ctrl+home":
 		m.viewport.GotoTop()
 		m.follow = false
 		return true
+	case "down":
+		if m.selector != nil {
+			return false
+		}
+		m.viewport.ScrollDown(1)
+		m.updateFollowAfterScroll()
+		return true
 	case "pgdown":
 		m.viewport.PageDown()
 		m.updateFollowAfterScroll()
 		return true
 	case "ctrl+down":
-		m.viewport.ScrollDown(3)
+		m.viewport.ScrollDown(historyFastKeyScroll)
 		m.updateFollowAfterScroll()
 		return true
 	case "end", "ctrl+g":
@@ -1159,7 +1200,7 @@ func (m *model) resize() {
 	m.viewport.Width = mainWidth
 	controlHeight := lipgloss.Height(m.renderControl(mainWidth))
 	footerHeight := lipgloss.Height(m.renderFooter(mainWidth))
-	m.viewport.Height = m.height - controlHeight - footerHeight - 2
+	m.viewport.Height = m.height - controlHeight - footerHeight
 	minimumViewport := 5
 	if m.selector != nil {
 		minimumViewport = 2
@@ -1201,15 +1242,10 @@ func (m model) View() string {
 	}
 	if m.sessionPicker != nil {
 		contentWidth := max(minimumWidth, m.width-horizontalPadding)
-		body := lipgloss.JoinVertical(lipgloss.Left,
-			m.renderHeader(contentWidth),
-			dividerStyle.Render(strings.Repeat("─", contentWidth)),
-			m.sessionPicker.render(contentWidth, m.height-3),
-		)
+		body := m.sessionPicker.render(contentWidth, m.height)
 		return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
 	}
 	mainWidth := max(20, m.viewport.Width)
-	contentWidth := max(mainWidth, m.contentWidth)
 	main := lipgloss.JoinVertical(lipgloss.Left,
 		m.viewport.View(),
 		m.renderControl(mainWidth),
@@ -1222,12 +1258,7 @@ func (m model) View() string {
 			m.renderSidebar(m.sidebarWidth, lipgloss.Height(main)),
 		)
 	}
-	body := lipgloss.JoinVertical(lipgloss.Left,
-		m.renderHeader(contentWidth),
-		dividerStyle.Render(strings.Repeat("─", contentWidth)),
-		main,
-	)
-	return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
+	return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(main)
 }
 
 func (m model) renderStatus() string {

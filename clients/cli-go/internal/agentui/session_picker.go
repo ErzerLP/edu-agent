@@ -324,7 +324,7 @@ func (p *sessionPickerModel) render(width, height int) string {
 		scope = "全部工作区"
 	}
 	lines := []string{
-		assistantLabelStyle.Render("Session 选择器"),
+		assistantLabelStyle.Render("◇ edu-agent · Session 选择器"),
 		mutedStyle.Render("范围 " + scope + " · Tab 切换"),
 		"搜索 › " + truncateDisplayWidth(p.query, max(8, inner-9)),
 	}

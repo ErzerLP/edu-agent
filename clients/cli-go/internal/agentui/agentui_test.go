@@ -424,18 +424,35 @@ func TestAgentUIWideTerminalUsesAvailableWidth(t *testing.T) {
 	if value.contentWidth != terminalWidth-horizontalPadding {
 		t.Fatalf("content width=%d want=%d; wide terminal left blank=%q", value.contentWidth, terminalWidth-horizontalPadding, strings.Split(view, "\n")[0])
 	}
-	header := strings.Split(view, "\n")[0]
-	leadingWidth := lipgloss.Width(header) - lipgloss.Width(strings.TrimLeft(header, " "))
+	firstRow := strings.Split(view, "\n")[0]
+	leadingWidth := lipgloss.Width(firstRow) - lipgloss.Width(strings.TrimLeft(firstRow, " "))
 	if leadingWidth > 3 {
-		t.Fatalf("header begins at column %d, want <=3: %q", leadingWidth, header)
+		t.Fatalf("content begins at column %d, want <=3: %q", leadingWidth, firstRow)
 	}
-	if value.sidebarWidth == 0 || value.viewport.Width < sidebarMinMainWidth {
-		t.Fatalf("wide layout sidebar=%d main=%d", value.sidebarWidth, value.viewport.Width)
+	if value.sidebarWidth == 0 || value.viewport.Width < sidebarMinMainWidth || !strings.Contains(firstRow, "◇ edu-agent") {
+		t.Fatalf("wide layout sidebar=%d main=%d first-row=%q", value.sidebarWidth, value.viewport.Width, firstRow)
 	}
 	for _, line := range strings.Split(view, "\n") {
 		if lipgloss.Width(line) > terminalWidth {
 			t.Fatalf("line width=%d limit=%d line=%q", lipgloss.Width(line), terminalWidth, line)
 		}
+	}
+}
+
+func TestAgentUIRemovesDedicatedTopBarAndRelocatesIdentity(t *testing.T) {
+	value := newModel(t.Context(), &fakeConversation{}, "model")
+	updated, _ := value.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	value = updated.(model)
+	view := value.View()
+	firstRow := strings.Split(view, "\n")[0]
+	composer := strings.Index(view, "╭─ 消息")
+	identity := strings.LastIndex(view, "◇ edu-agent")
+	if strings.Contains(firstRow, "◇ edu-agent") || composer < 0 || identity <= composer {
+		t.Fatalf("product identity was not moved below transcript/composer: first=%q view=%s", firstRow, view)
+	}
+	expectedViewportHeight := value.height - lipgloss.Height(value.renderControl(value.viewport.Width)) - lipgloss.Height(value.renderFooter(value.viewport.Width))
+	if value.viewport.Height != expectedViewportHeight {
+		t.Fatalf("viewport height=%d want=%d after removing top bar", value.viewport.Height, expectedViewportHeight)
 	}
 }
 
@@ -468,7 +485,7 @@ func TestAgentUIRightSidebarShowsAuthoritativeLearningStatus(t *testing.T) {
 	updated, _ = value.Update(command())
 	value = updated.(model)
 	view := value.View()
-	for _, expected := range []string{"学习概览", "AGENT", "当前学习", "掌握图论基础", "路线学习中", "2/3", "掌握图的遍历", "练习 · 难度2", "约 32 分钟", "Ctrl+R 刷新"} {
+	for _, expected := range []string{"◇ edu-agent", "AGENT", "当前学习", "掌握图论基础", "路线学习中", "2/3", "掌握图的遍历", "练习 · 难度2", "约 32 分钟", "Ctrl+R 刷新"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("sidebar missing %q: %s", expected, view)
 		}
@@ -521,13 +538,14 @@ func TestAgentUISidebarCollapsesBeforeMainTranscriptGetsTooNarrow(t *testing.T) 
 	value = updated.(model)
 	updated, _ = value.Update(tea.WindowSizeMsg{Width: 91, Height: 24})
 	value = updated.(model)
-	if value.sidebarWidth != 0 || strings.Contains(value.View(), "学习概览") {
+	if value.sidebarWidth != 0 || strings.Contains(value.View(), "当前学习") {
 		t.Fatalf("sidebar did not collapse: width=%d view=%s", value.sidebarWidth, value.View())
 	}
 	updated, _ = value.Update(tea.WindowSizeMsg{Width: 92, Height: minimumHeight})
 	value = updated.(model)
 	view := value.View()
-	if value.sidebarWidth < sidebarMinWidth || value.viewport.Width < sidebarMinMainWidth || !strings.Contains(view, "学习概览") ||
+	if value.sidebarWidth < sidebarMinWidth || value.viewport.Width < sidebarMinMainWidth ||
+		!strings.Contains(strings.Split(view, "\n")[0], "◇ edu-agent") ||
 		!strings.Contains(view, "练习 · 难度2") || !strings.Contains(view, "约 32 分钟") {
 		t.Fatalf("compact sidebar omitted core status: sidebar=%d main=%d view=%s", value.sidebarWidth, value.viewport.Width, view)
 	}
@@ -864,6 +882,68 @@ func TestAgentUIToolTimelineShowsStatusAndDetails(t *testing.T) {
 	value = updated.(model)
 	if value.toolsExpanded || strings.Contains(value.viewport.View(), "protocol_error") {
 		t.Fatalf("Ctrl+0 did not collapse activity details: %s", value.viewport.View())
+	}
+}
+
+func TestAgentUIHistoryScrollSupportsArrowPageAndMouseInputs(t *testing.T) {
+	base := newModel(t.Context(), &fakeConversation{}, "model")
+	base.entries = append(base.entries, transcriptEntry{kind: entryAssistant, text: strings.Repeat("历史内容\n", 120)})
+	base.refreshTranscript(true)
+	if !base.viewport.AtBottom() {
+		t.Fatal("test fixture did not start at transcript bottom")
+	}
+
+	upInputs := []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{name: "arrow up", msg: tea.KeyMsg{Type: tea.KeyUp}},
+		{name: "page up", msg: tea.KeyMsg{Type: tea.KeyPgUp}},
+		{name: "mouse wheel up", msg: tea.MouseMsg{Button: tea.MouseButtonWheelUp, Action: tea.MouseActionPress}},
+	}
+	for _, input := range upInputs {
+		t.Run(input.name, func(t *testing.T) {
+			value := base
+			value.viewport.GotoBottom()
+			value.follow, value.hasNewContent = true, false
+			before := value.viewport.YOffset
+			updated, _ := value.Update(input.msg)
+			value = updated.(model)
+			if value.viewport.YOffset >= before || value.follow {
+				t.Fatalf("input did not scroll history upward: before=%d after=%d follow=%t", before, value.viewport.YOffset, value.follow)
+			}
+		})
+	}
+
+	downInputs := []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{name: "arrow down", msg: tea.KeyMsg{Type: tea.KeyDown}},
+		{name: "page down", msg: tea.KeyMsg{Type: tea.KeyPgDown}},
+		{name: "mouse wheel down", msg: tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress}},
+	}
+	for _, input := range downInputs {
+		t.Run(input.name, func(t *testing.T) {
+			value := base
+			value.viewport.GotoTop()
+			value.follow, value.hasNewContent = false, true
+			before := value.viewport.YOffset
+			updated, _ := value.Update(input.msg)
+			value = updated.(model)
+			if value.viewport.YOffset <= before {
+				t.Fatalf("input did not scroll history downward: before=%d after=%d", before, value.viewport.YOffset)
+			}
+		})
+	}
+
+	value := base
+	value.viewport.GotoBottom()
+	value.follow, value.hasNewContent = false, true
+	updated, _ := value.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	value = updated.(model)
+	if !value.follow || value.hasNewContent {
+		t.Fatalf("scrolling at bottom did not restore follow mode: follow=%t new=%t", value.follow, value.hasNewContent)
 	}
 }
 

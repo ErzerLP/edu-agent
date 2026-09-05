@@ -552,5 +552,4 @@ var (
 	newMessageStyle           = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("3"))
 	keyHintStyle              = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
 	footerSeparatorStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	dividerStyle              = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 )

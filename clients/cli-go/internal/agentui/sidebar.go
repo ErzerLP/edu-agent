@@ -88,7 +88,7 @@ func (m model) renderSidebar(width, height int) string {
 		return ""
 	}
 	innerWidth := width - 4
-	left := sidebarBorderStyle.Render("╭─ ") + sidebarTitleStyle.Render("学习概览") + sidebarBorderStyle.Render(" ")
+	left := sidebarBorderStyle.Render("╭─ ") + sidebarTitleStyle.Render("◇ edu-agent") + sidebarBorderStyle.Render(" ")
 	fill := max(1, width-lipgloss.Width(left)-1)
 	rows := []string{left + sidebarBorderStyle.Render(strings.Repeat("─", fill)+"╮")}
 

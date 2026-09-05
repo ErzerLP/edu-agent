@@ -28,14 +28,8 @@ type footerHint struct {
 	action string
 }
 
-func (m model) renderHeader(width int) string {
-	brand := titleStyle.Render("◇ edu-agent")
-	subtitle := headerSubtitleStyle.Render("AI 学习助手")
-	line := brand + headerSeparatorStyle.Render(" · ") + subtitle
-	if lipgloss.Width(line) <= width {
-		return line
-	}
-	return titleStyle.Render(truncateDisplayWidth("◇ edu-agent", width))
+func renderProductLabel() string {
+	return titleStyle.Render("◇ edu-agent") + headerSeparatorStyle.Render(" · ") + headerSubtitleStyle.Render("AI 学习助手")
 }
 
 func (m model) renderControl(width int) string {
@@ -285,20 +279,28 @@ func (m model) renderFooterStatus(width int) string {
 	if m.busy && m.activeEffort != "" && m.activeEffort != effort {
 		reasoningPart = fmt.Sprintf("推理 %s → 下一请求 %s", m.activeEffort, effort)
 	}
+	productPart, compactProductPart, rawProductPart := "", "", ""
+	if m.sidebarWidth == 0 {
+		productPart = renderProductLabel()
+		compactProductPart = titleStyle.Render("◇ edu-agent")
+		rawProductPart = "◇ edu-agent"
+	}
 	workspacePart := mutedStyle.Render(m.workspaceSummary())
 	persistencePart := mutedStyle.Render(m.persistenceSummary())
 	fileModePart := mutedStyle.Render(m.fileModeSummary())
 	candidates := [][]string{
-		{newPart, m.renderStatus(), persistencePart, mutedStyle.Render(titlePart), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
-		{newPart, m.renderStatusText(m.compactStatus()), persistencePart, mutedStyle.Render(titlePart), fileModePart, workspacePart, mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{productPart, newPart, m.renderStatus(), persistencePart, mutedStyle.Render(titlePart), fileModePart, workspacePart, mutedStyle.Render(m.contextSummary(false)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		{productPart, newPart, m.renderStatusText(m.compactStatus()), persistencePart, mutedStyle.Render(titlePart), fileModePart, workspacePart, mutedStyle.Render(m.contextPercentSummary()), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
 	}
 	if strings.TrimSpace(titlePart) != "" {
-		candidates = append(candidates, []string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(titlePart), mutedStyle.Render(modelPart)})
+		candidates = append(candidates, []string{productPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(titlePart), mutedStyle.Render(modelPart)})
 	}
 	candidates = append(candidates,
-		[]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), fileModePart, mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(modelPart)},
-		[]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(modelPart)},
-		[]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(modelPart)},
+		[]string{productPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), fileModePart, mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		[]string{compactProductPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), fileModePart, mutedStyle.Render(reasoningPart), mutedStyle.Render(modelPart)},
+		[]string{compactProductPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), fileModePart, mutedStyle.Render(modelPart)},
+		[]string{compactProductPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(m.contextSummary(true)), mutedStyle.Render(modelPart)},
+		[]string{compactProductPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render(modelPart)},
 	)
 	for _, parts := range candidates {
 		line := joinFooterParts(parts)
@@ -307,11 +309,11 @@ func (m model) renderFooterStatus(width int) string {
 		}
 	}
 
-	fallback := joinFooterParts([]string{newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render("模型 " + truncateDisplayWidth(modelName, 12))})
+	fallback := joinFooterParts([]string{productPart, newPart, m.renderStatusText(m.compactStatus()), mutedStyle.Render(m.persistenceCompactSummary()), mutedStyle.Render("模型 " + truncateDisplayWidth(modelName, 12))})
 	if lipgloss.Width(fallback) <= width {
 		return fallback
 	}
-	return mutedStyle.Render(truncateDisplayWidth(strings.Join(compactNonEmpty([]string{m.compactStatus(), m.persistenceCompactSummary(), "模型 " + modelName}), " · "), width))
+	return mutedStyle.Render(truncateDisplayWidth(strings.Join(compactNonEmpty([]string{rawProductPart, m.compactStatus(), m.persistenceCompactSummary(), "模型 " + modelName}), " · "), width))
 }
 
 func (m model) persistenceSummary() string {
@@ -419,24 +421,33 @@ func (m model) footerHintVariants() [][]footerHint {
 	switch {
 	case m.selector != nil:
 		return [][]footerHint{
-			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "F4", action: "文件模式"}, {key: "PgUp/PgDn", action: "检查详情"}, {key: "Ctrl+O", action: "活动详情"}},
-			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "F4", action: "文件模式"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "滚轮/PgUp/PgDn", action: "历史"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "滚轮/PgUp/PgDn", action: "历史"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}},
 		}
 	case m.stopping:
-		return [][]footerHint{{{key: "Esc", action: "正在停止"}, {key: "Ctrl+C", action: "退出"}}}
+		return [][]footerHint{
+			{{key: "Esc", action: "正在停止"}, {key: "滚轮/PgUp/PgDn", action: "历史"}, {key: "Ctrl+C", action: "退出"}},
+			{{key: "Esc", action: "正在停止"}, {key: "Ctrl+C", action: "退出"}},
+		}
 	case m.busy && m.activeCancelable:
-		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}}
+		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}}
 		if m.isSlowTurn() {
 			hints = append(hints, footerHint{key: "提示", action: m.slowTurnDetail()})
 		}
-		return [][]footerHint{hints, {{key: "Esc", action: "停止"}, {key: "F3", action: "推理"}, {key: "Ctrl+C", action: "退出"}}}
+		return [][]footerHint{
+			hints,
+			{{key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "Esc", action: "停止"}, {key: "Ctrl+C", action: "退出"}},
+			{{key: "↑/↓", action: "历史"}, {key: "Esc", action: "停止"}, {key: "Ctrl+C", action: "退出"}},
+		}
 	case m.busy:
 		return [][]footerHint{
-			{{key: "长期偏好写入", action: "不可中断"}, {key: "F3", action: "下一请求推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}},
-			{{key: "Ctrl+C", action: "退出整个 Agent"}},
+			{{key: "长期偏好写入", action: "不可中断"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "F3", action: "下一请求推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "Ctrl+C", action: "退出整个 Agent"}},
+			{{key: "↑/↓", action: "历史"}, {key: "Ctrl+C", action: "退出整个 Agent"}},
 		}
 	default:
-		hints := []footerHint{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}}
+		hints := []footerHint{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}}
 		if m.manager != nil {
 			hints = append(hints, footerHint{key: "F2", action: "Session"})
 			if len(m.manager.UnknownOutcomes()) > 0 {
@@ -446,7 +457,8 @@ func (m model) footerHintVariants() [][]footerHint {
 		hints = append(hints, footerHint{key: "F3", action: "推理强度"}, footerHint{key: "F4", action: "文件模式"}, footerHint{key: "Ctrl+O", action: "活动详情"}, footerHint{key: "Esc", action: "退出"})
 		return [][]footerHint{
 			hints,
-			{{key: "Enter", action: "发送"}, {key: "F2", action: "Session"}, {key: "Esc", action: "退出"}},
+			{{key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "Enter", action: "发送"}, {key: "Esc", action: "退出"}},
+			{{key: "↑/↓", action: "历史"}, {key: "Enter", action: "发送"}, {key: "Esc", action: "退出"}},
 		}
 	}
 }

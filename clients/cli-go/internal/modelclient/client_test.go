@@ -111,11 +111,47 @@ func TestCompletePreservesExplicitZeroPromptCacheUsage(t *testing.T) {
 	}
 }
 
+func TestCompleteTreatsCacheMissDetailsAsExplicitZeroCacheRead(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		usage string
+	}{
+		{name: "cache creation", usage: `"prompt_tokens_details":{"cache_creation_tokens":3000}`},
+		{name: "DeepSeek cache miss", usage: `"prompt_cache_miss_tokens":4000`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4000,"completion_tokens":10,"total_tokens":4010,`+test.usage+`}}`)
+			}))
+			defer server.Close()
+			client, err := New(server.URL, "model", "", time.Second, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := client.Complete(t.Context(), Request{Messages: []Message{{Role: "user", Content: "hello"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.Usage == nil {
+				t.Fatal("response usage is nil")
+			}
+			cacheRead, cacheReported := response.Usage.CacheReadTokens()
+			if !cacheReported || cacheRead != 0 {
+				t.Fatalf("usage=%+v cache-read=%d reported=%t", response.Usage, cacheRead, cacheReported)
+			}
+		})
+	}
+}
+
 func TestCompleteRejectsInvalidPromptCacheUsage(t *testing.T) {
 	for _, body := range []string{
 		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":101}}}`,
 		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_cache_hit_tokens":-1}}`,
 		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":50},"prompt_cache_hit_tokens":40}}`,
+		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cache_creation_tokens":-1}}}`,
+		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_tokens_details":{"cached_tokens":80,"cache_write_tokens":30}}}`,
+		`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_cache_hit_tokens":80,"prompt_cache_miss_tokens":30}}`,
 	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")

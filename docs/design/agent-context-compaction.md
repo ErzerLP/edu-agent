@@ -623,7 +623,7 @@ type ContextRuntime struct {
                                           │ AGENT              │
 ╭─ 消息 ───────────────────────────────╮  │ ● 就绪             │
 │ › 帮我继续当前学习任务               │  │ 上下文 约12.3k/32.8k│
-╰──────────────────────────────────────╯  │ 缓存命中 60.0%      │
+╰──────────────────────────────────────╯  │ 缓存 12k/20k 60.0% │
 ◇ edu-agent · ● 就绪 · 上下文约 54%       │                    │
 滚轮/↑/↓/PgUp/PgDn 历史 · Enter 发送       │ 当前学习           │
                                           │ 目标  图论基础       │
@@ -635,7 +635,7 @@ type ContextRuntime struct {
 状态栏分为两个权威边界：
 
 - `AGENT` 区只显示当前 TUI 运行状态、正在执行的可公开 activity 摘要、上下文指标和模型名，不显示隐藏推理、工具参数或凭据；宽侧栏中的上下文指标使用紧凑的 `当前 token/context window`，Context Planner 估算带“约”，provider 返回实际 `prompt_tokens` 后切换为实际值；
-- `AGENT` 区同时显示当前进程 Agent Session 的累计缓存命中率。只累计明确报告缓存明细的完成请求：OpenAI/OpenRouter 使用 `prompt_tokens_details.cached_tokens`，DeepSeek 使用 `prompt_cache_hit_tokens`，按累计 cache-read / 累计 prompt token 计算；尚无可识别缓存明细时显示 `—`，不把未知误报为 `0%`，该指标不复制到底部 footer、不持久化也不注入模型上下文；
+- `AGENT` 区同时显示当前进程 Agent Session 的累计缓存读取量、累计已统计 prompt token 和命中率。OpenAI/OpenRouter 使用 `prompt_tokens_details.cached_tokens`，DeepSeek 使用 `prompt_cache_hit_tokens`；当 provider 省略零值 cache-read、但明确返回 `cache_creation_tokens`、`cache_write_tokens` 或 `prompt_cache_miss_tokens` 时，该完成请求按真实零命中进入累计分母，创建或 miss token 本身不计作 cache read。侧栏按累计 `cache-read/prompt rate` 显示；尚无可识别缓存明细时显示 `—`，不把未知误报为 `0%`，该指标不复制到底部 footer、不持久化也不注入模型上下文；
 - `当前学习` 区由 `Session` 通过既有认证客户端直接读取服务端 `CurrentSession`，显示有界目标文本、会话状态、路线位置、当前 Activity 类型/难度和估算活跃时间；它不是模型回答、会话 Observation/Reflection 或工具结果缓存的派生副本；
 - 启动、完整 Agent turn 结束和用户按 `Ctrl+R` 时刷新；读取失败只把侧栏标记为暂不可用，不阻断对话，不把旧数据冒充当前事实；404 是“尚无进行中的学习会话”的合法状态；
 - 状态栏不显示 session、revision、node、device 等 opaque ID，不持久化快照，也不把展示快照重新注入模型上下文；所有服务端文本在布局前清理终端及双向控制字符；

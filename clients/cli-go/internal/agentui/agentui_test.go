@@ -1006,7 +1006,7 @@ type contextAwareConversation struct {
 func (c *contextAwareConversation) ContextStatus() agentloop.ContextStatus        { return c.status }
 func (c *contextAwareConversation) ContextUpdates() <-chan agentloop.ContextEvent { return c.updates }
 
-func TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate(t *testing.T) {
+func TestAgentUISidebarShowsContextTokensAndCumulativeCacheUsage(t *testing.T) {
 	conversation := &contextAwareConversation{
 		status: agentloop.ContextStatus{
 			Estimated: true, WindowPercent: 38, CurrentTokens: 12340, ContextWindow: 32768,
@@ -1018,7 +1018,7 @@ func TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate(t *testing.T)
 	updated, _ := value.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	value = updated.(model)
 	view := value.View()
-	if !strings.Contains(view, "上下文 约12.3k/32.8k") || !strings.Contains(view, "缓存命中 —") {
+	if !strings.Contains(view, "上下文 约12.3k/32.8k") || !strings.Contains(view, "缓存 —") {
 		t.Fatalf("estimated sidebar metrics missing: %s", view)
 	}
 
@@ -1034,7 +1034,7 @@ func TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate(t *testing.T)
 	updated, _ = value.Update(message)
 	value = updated.(model)
 	view = value.View()
-	if !strings.Contains(view, "上下文 12k/32.8k") || !strings.Contains(view, "缓存命中 0.0%") {
+	if !strings.Contains(view, "上下文 12k/32.8k") || !strings.Contains(view, "缓存 0/12k 0.0%") {
 		t.Fatalf("explicit zero cache-hit metrics missing: %s", view)
 	}
 
@@ -1050,7 +1050,7 @@ func TestAgentUISidebarShowsContextTokensAndCumulativeCacheHitRate(t *testing.T)
 	updated, _ = value.Update(message)
 	value = updated.(model)
 	view = value.View()
-	if !strings.Contains(view, "上下文 12k/32.8k") || !strings.Contains(view, "缓存命中 60.0%") {
+	if !strings.Contains(view, "上下文 12k/32.8k") || !strings.Contains(view, "缓存 12k/20k 60.0%") {
 		t.Fatalf("actual sidebar metrics missing: %s", view)
 	}
 	for _, line := range strings.Split(view, "\n") {

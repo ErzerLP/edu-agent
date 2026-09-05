@@ -891,6 +891,36 @@ drain:
 	}
 }
 
+func TestSessionIncludesCacheCreationMissInCumulativeRate(t *testing.T) {
+	cacheCreation, cacheHit := 8000, 9000
+	model := &fakeModel{responses: []modelclient.Response{
+		{
+			Message: modelclient.Message{Role: "assistant", Content: "cold"},
+			Usage: &modelclient.Usage{
+				PromptTokens: 12000, CompletionTokens: 10, TotalTokens: 12010,
+				PromptTokensDetails: &modelclient.PromptTokensDetails{CacheCreationTokens: &cacheCreation},
+			},
+		},
+		{
+			Message: modelclient.Message{Role: "assistant", Content: "warm"},
+			Usage: &modelclient.Usage{
+				PromptTokens: 12000, CompletionTokens: 10, TotalTokens: 12010,
+				PromptTokensDetails: &modelclient.PromptTokensDetails{CachedTokens: &cacheHit},
+			},
+		},
+	}}
+	session := newTestSession(t, model, &fakeServer{})
+	for _, input := range []string{"cold question", "warm question"} {
+		if _, err := session.Send(t.Context(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status := session.ContextStatus()
+	if status.CachePromptTokens != 24000 || status.CacheReadTokens != 9000 || !status.CacheHitRateAvailable || status.CacheHitRate != 37.5 {
+		t.Fatalf("cache creation miss was not included in cumulative rate: %+v", status)
+	}
+}
+
 func TestSessionPublishesExplicitZeroCacheHitRate(t *testing.T) {
 	zeroCacheHit := 0
 	model := &fakeModel{responses: []modelclient.Response{{

@@ -52,35 +52,67 @@ type Request struct {
 }
 
 type PromptTokensDetails struct {
-	CachedTokens *int `json:"cached_tokens,omitempty"`
+	CachedTokens        *int `json:"cached_tokens,omitempty"`
+	CacheCreationTokens *int `json:"cache_creation_tokens,omitempty"`
+	CacheWriteTokens    *int `json:"cache_write_tokens,omitempty"`
 }
 
 type Usage struct {
-	PromptTokens         int                  `json:"prompt_tokens,omitempty"`
-	CompletionTokens     int                  `json:"completion_tokens,omitempty"`
-	TotalTokens          int                  `json:"total_tokens,omitempty"`
-	PromptTokensDetails  *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
-	PromptCacheHitTokens *int                 `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptTokens          int                  `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int                  `json:"completion_tokens,omitempty"`
+	TotalTokens           int                  `json:"total_tokens,omitempty"`
+	PromptTokensDetails   *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	PromptCacheHitTokens  *int                 `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens *int                 `json:"prompt_cache_miss_tokens,omitempty"`
 }
 
 func (u Usage) CacheReadTokens() (int, bool) {
+	cacheRead, reported, valid := u.normalizedCacheUsage()
+	return cacheRead, reported && valid
+}
+
+func (u Usage) normalizedCacheUsage() (cacheRead int, reported, valid bool) {
+	valid = true
 	var nested *int
-	if u.PromptTokensDetails != nil {
-		nested = u.PromptTokensDetails.CachedTokens
-	}
-	if nested != nil && u.PromptCacheHitTokens != nil {
-		if *nested != *u.PromptCacheHitTokens {
-			return 0, false
+	cacheNonRead := 0
+	if details := u.PromptTokensDetails; details != nil {
+		nested = details.CachedTokens
+		for _, value := range []*int{details.CacheCreationTokens, details.CacheWriteTokens} {
+			if value == nil {
+				continue
+			}
+			reported = true
+			if *value < 0 || *value > u.PromptTokens {
+				return 0, true, false
+			}
+			cacheNonRead = max(cacheNonRead, *value)
 		}
-		return *nested, true
+	}
+	if u.PromptCacheMissTokens != nil {
+		reported = true
+		if *u.PromptCacheMissTokens < 0 || *u.PromptCacheMissTokens > u.PromptTokens {
+			return 0, true, false
+		}
+		cacheNonRead = max(cacheNonRead, *u.PromptCacheMissTokens)
 	}
 	if nested != nil {
-		return *nested, true
+		reported = true
+		cacheRead = *nested
 	}
 	if u.PromptCacheHitTokens != nil {
-		return *u.PromptCacheHitTokens, true
+		reported = true
+		if nested != nil && cacheRead != *u.PromptCacheHitTokens {
+			return 0, true, false
+		}
+		cacheRead = *u.PromptCacheHitTokens
 	}
-	return 0, false
+	if !reported {
+		return 0, false, true
+	}
+	if cacheRead < 0 || cacheRead > u.PromptTokens || cacheRead > u.PromptTokens-cacheNonRead {
+		return 0, true, false
+	}
+	return cacheRead, true, true
 }
 
 type Response struct {

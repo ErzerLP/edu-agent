@@ -120,7 +120,7 @@ func (m model) sidebarContent(width, budget int) []string {
 		sidebarKV("工作区", m.workspaceSidebarSummary()),
 		sidebarKV("文件", m.fileModeSummary()),
 		sidebarKV("上下文", m.contextTokenSummary()),
-		sidebarKV("缓存命中", m.cacheHitSummary()),
+		sidebarKV("缓存", m.cacheSummary()),
 	}
 	if !compact {
 		lines = append(lines,
@@ -266,19 +266,20 @@ func (m model) contextTokenSummary() string {
 	if m.contextStatus.Estimated && m.contextStatus.CurrentTokens > 0 {
 		prefix = "约"
 	}
-	return prefix + formatCompactTokens(m.contextStatus.CurrentTokens) + "/" + formatCompactTokens(m.contextStatus.ContextWindow)
+	return prefix + formatCompactTokens(int64(m.contextStatus.CurrentTokens)) + "/" + formatCompactTokens(int64(m.contextStatus.ContextWindow))
 }
 
-func (m model) cacheHitSummary() string {
-	if !m.contextStatus.CacheHitRateAvailable {
+func (m model) cacheSummary() string {
+	if !m.contextStatus.CacheHitRateAvailable || m.contextStatus.CachePromptTokens <= 0 {
 		return "—"
 	}
-	rate := min(max(m.contextStatus.CacheHitRate, 0), 100)
-	return fmt.Sprintf("%.1f%%", rate)
+	cacheRead := min(max(m.contextStatus.CacheReadTokens, 0), m.contextStatus.CachePromptTokens)
+	rate := float64(cacheRead) / float64(m.contextStatus.CachePromptTokens) * 100
+	return fmt.Sprintf("%s/%s %.1f%%", formatCompactTokens(cacheRead), formatCompactTokens(m.contextStatus.CachePromptTokens), rate)
 }
 
-func formatCompactTokens(value int) string {
-	value = max(0, value)
+func formatCompactTokens(value int64) string {
+	value = max(int64(0), value)
 	switch {
 	case value < 1000:
 		return fmt.Sprintf("%d", value)

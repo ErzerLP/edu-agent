@@ -2,7 +2,7 @@
 
 ## 产品目标
 
-交互式 Go CLI Agent 在宽终端右侧栏中提供可读、诚实且有界的模型上下文指标。用户可以看到当前模型请求占用了多少上下文 token、配置的上下文窗口上限，以及当前 Agent Session 的累计提示缓存命中率，从而判断上下文压力与缓存是否持续生效。
+交互式 Go CLI Agent 在宽终端右侧栏中提供可读、诚实且有界的模型上下文指标。用户可以看到当前模型请求占用了多少上下文 token、配置的上下文窗口上限，以及当前 Agent Session 的累计提示缓存读取量、累计缓存统计输入量和命中率，从而判断上下文压力与缓存是否持续生效。
 
 该 capability 只负责当前进程内的 usage 解析、状态投影和 TUI 展示，不成为服务端遥测、计费或长期历史系统。
 
@@ -16,6 +16,7 @@
 
 - OpenAI/OpenRouter 风格端点读取 `usage.prompt_tokens_details.cached_tokens`；
 - DeepSeek 风格端点读取 `usage.prompt_cache_hit_tokens`；
+- `usage.prompt_tokens_details.cache_creation_tokens`、`cache_write_tokens` 和 DeepSeek 的 `prompt_cache_miss_tokens` 只用于确认 provider 已明确报告缓存统计；当缓存读取字段因零值省略时，该请求按真实零命中进入累计，不把缓存创建量或 miss 量计作 cache read；
 - 其他端点只有在返回上述兼容字段时才提供缓存指标。
 
 缓存命中率按当前 Agent Session 中所有明确报告受支持缓存字段的已完成模型请求累计计算：
@@ -24,7 +25,7 @@
 cache_hit_rate = sum(cache_read_tokens) / sum(prompt_tokens) * 100
 ```
 
-每个纳入累计的 `prompt_tokens` 都是该请求的完整输入 token，总数包含缓存命中与未命中部分。没有报告缓存字段的请求不作为零命中加入分母，避免把“未知/不支持”误算成 cache miss。缓存命中率不跨进程、不跨 Agent Session，也不从价格、响应时间、重复文本或本地估算反推。
+每个纳入累计的 `prompt_tokens` 都是该请求的完整输入 token，总数包含缓存命中与未命中部分。明确报告缓存创建、写入或 miss 明细但省略零值 cache-read 的请求，作为真实零命中加入分母；完全没有受支持缓存字段的请求不作为零命中加入分母，避免把“未知/不支持”误算成 cache miss。缓存命中率不跨进程、不跨 Agent Session，也不从价格、响应时间、重复文本或本地估算反推。
 
 ## 状态与更新语义
 
@@ -48,12 +49,12 @@ cache_hit_rate = sum(cache_read_tokens) / sum(prompt_tokens) * 100
 
 usage 的基本 token 计数必须保持非负。缓存 token 只有满足以下条件时才可用于展示：
 
-- provider 明确返回受支持的缓存字段；
+- provider 明确返回受支持的 cache read 字段，或返回受支持的 cache creation/write/miss 字段以明确表达零读取；
 - `prompt_tokens > 0`；
-- 缓存 token 非负；
-- 缓存 token 不大于 `prompt_tokens`。
+- cache read、cache creation/write 和 cache miss token 均非负且不大于 `prompt_tokens`；
+- cache read 与同一请求明确报告的非读取缓存 token 不得合计超过 `prompt_tokens`。
 
-只有满足全部条件的请求才进入 Session 缓存累计。provider 明确报告零缓存 token 的合法请求进入累计分母，因此可以形成真实的 `0.0%`；字段完全缺失的请求不进入缓存累计。
+只有满足全部条件的请求才进入 Session 缓存累计。provider 明确报告零缓存 token，或通过 cache creation/write/miss 明细明确表达零读取的合法请求，都会进入累计分母并形成真实的 `0.0%`；受支持字段完全缺失的请求不进入缓存累计。
 
 如果 OpenAI 风格和 DeepSeek 风格字段同时存在，优先使用标准嵌套的 `prompt_tokens_details.cached_tokens`；实现必须保持确定性，并对冲突或非法值失败关闭或忽略缓存明细，不能产生超过 `100%` 的命中率。
 
@@ -66,8 +67,8 @@ usage 的基本 token 计数必须保持非负。缓存 token 只有满足以下
 当现有响应式布局启用右侧栏时，`AGENT` 区显示：
 
 ```text
-上下文  约12.3k/32.8k
-缓存命中 75.0%
+上下文 约12.3k/32.8k
+缓存   12k/20k 60.0%
 ```
 
 规则：
@@ -75,9 +76,10 @@ usage 的基本 token 计数必须保持非负。缓存 token 只有满足以下
 - Context Planner 的估算值带“约”；provider 返回实际 prompt usage 后去掉“约”。
 - token 使用紧凑单位：小值可显示整数，千级显示 `k`，必要时显示 `M`；数值不得因为格式化而突破侧栏宽度。
 - 当前 token 和窗口上限始终使用 `当前/上限` 顺序。
-- provider 尚未对当前 Session 的任何请求返回可识别缓存明细时，缓存命中显示不可用标记 `—`，不得显示误导性的 `0%`。
-- provider 明确报告零缓存 token 且 prompt token 大于零时，该请求进入累计分母，缓存命中率可以显示真实 `0.0%`。
-- 命中率显示一位小数并限定在 `0.0%` 到 `100.0%`；数值由当前 Session 的累计 cache read/prompt token 计算。
+- provider 尚未对当前 Session 的任何请求返回可识别缓存明细时，缓存显示不可用标记 `—`，不得显示误导性的 `0%`。
+- 缓存行按 `累计 cache read/累计已统计 prompt token 命中率` 显示，使用户可以同时核对 token 数量与派生命中率。
+- provider 明确报告零缓存 token，或明确报告 cache creation/write/miss 且省略零值 cache-read 时，该请求进入累计分母，缓存命中率可以显示真实 `0.0%`。
+- 命中率显示一位小数并限定在 `0.0%` 到 `100.0%`；数值由同一行的当前 Session 累计 cache read/prompt token 重新计算。
 
 侧栏仍可显示公开运行状态、模型名、最近轮次和会话记忆计数；为满足现有最小高度，次要行可以沿用现有 compact 策略，但上下文 token 对是 `AGENT` 区核心信息。
 
@@ -113,13 +115,13 @@ usage 的基本 token 计数必须保持非负。缓存 token 只有满足以下
 
 - A1: context window 为 `32768` 且当前计划估算输入约 `12340` tokens 时，宽侧栏显示类似 `上下文 约12.3k/32.8k`，不再只显示百分比。
 - A2: provider 返回 `prompt_tokens=12000` 后，侧栏更新为实际 `12k/32.8k`，且窗口百分比按实际值同步更新。
-- A3: Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000` 时，OpenAI/OpenRouter 或 DeepSeek 字段均产生累计缓存命中率 `60.0%`。
-- A4: provider 尚未对任何请求返回受支持缓存字段时显示 `—` 而不是 `0%`；明确返回零命中的请求进入累计分母并可显示真实 `0.0%`。
+- A3: Session 内两个已完成请求分别报告 `cached/prompt=9000/12000` 与 `3000/8000` 时，OpenAI/OpenRouter 或 DeepSeek 字段均产生累计缓存 `12k/20k 60.0%`。
+- A4: provider 尚未对任何请求返回受支持缓存字段时显示 `—` 而不是 `0%`；明确返回零命中，或仅返回 cache creation/write/miss 的请求进入累计分母并可显示类似 `0/12k 0.0%` 的真实零命中。
 - A5: 同一 turn 的多次模型请求逐次更新当前上下文 token；所有合法且报告缓存明细的完整响应累计更新 Session 命中率，失败、取消、协议无效或字段缺失的响应不污染累计。
 - A6: 窄终端继续折叠侧栏，宽侧栏和最小高度布局不溢出，不泄漏正文、隐藏推理、凭据或 opaque ID。
 
 ## 验证策略
 
-modelclient 使用 fake OpenAI-compatible HTTP/SSE server 覆盖嵌套 cached token、DeepSeek cache hit token、usage 缺失、零命中和非法计数。Agent loop 使用 fake model 覆盖计划估算、实际 usage 覆盖、Session 累计命中率、字段缺失不污染累计与 ContextEvent 更新。TUI fake conversation 覆盖 token 格式、估算标记、累计缓存命中率、不可用状态、compact 侧栏和窄终端折叠。
+modelclient 使用 fake OpenAI-compatible HTTP/SSE server 覆盖嵌套 cached token、cache creation/write 零读取、DeepSeek cache hit/miss token、usage 缺失、显式零命中和非法计数。Agent loop 使用 fake model 覆盖计划估算、实际 usage 覆盖、冷请求进入累计分母、Session 累计命中率、字段缺失不污染累计与 ContextEvent 更新。TUI fake conversation 覆盖 token 格式、估算标记、累计 cache-read/prompt 数量及命中率、不可用状态、compact 侧栏和窄终端折叠。
 
 实现期间运行受影响 package 的具名测试和 package 测试；稳定批次运行受影响 package 的 vet、error-level diagnostics、CLI build 和 `git diff --check`。不需要 PostgreSQL、Compose、OpenAPI、数据库 migration、race 全仓或服务端黑盒证据，除非实现意外扩大到对应边界。

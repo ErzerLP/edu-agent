@@ -100,6 +100,31 @@ func TestStreamPreservesExplicitZeroPromptCacheUsage(t *testing.T) {
 	}
 }
 
+func TestStreamTreatsCacheWriteAsExplicitZeroCacheRead(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{"role":"assistant","content":"ok"},"finish_reason":null}]}`)
+		writeSSE(t, w, `{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
+		writeSSE(t, w, `{"choices":[],"usage":{"prompt_tokens":4000,"completion_tokens":10,"total_tokens":4010,"prompt_tokens_details":{"cache_write_tokens":3000}}}`)
+		writeSSE(t, w, `[DONE]`)
+	}))
+	defer server.Close()
+
+	response, err := newTestClient(t, server.URL).Stream(t.Context(), Request{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	}, func(StreamEvent) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Usage == nil {
+		t.Fatal("response usage is nil")
+	}
+	cacheRead, cacheReported := response.Usage.CacheReadTokens()
+	if !cacheReported || cacheRead != 0 || response.Usage.PromptTokensDetails == nil || response.Usage.PromptTokensDetails.CacheWriteTokens == nil {
+		t.Fatalf("usage=%+v cache-read=%d reported=%t", response.Usage, cacheRead, cacheReported)
+	}
+}
+
 func TestStreamRejectsInvalidPromptCacheUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

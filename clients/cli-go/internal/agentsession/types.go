@@ -11,11 +11,12 @@ const (
 	profileSecretService         = "edu-agent-agent-sessions-v1"
 	profileSecretVersion         = 1
 	recordContainerSchemaVersion = 1
-	recordPayloadSchemaVersion   = 2
-	recordMigrationMaxSteps      = 1
+	recordPayloadSchemaVersion   = 3
+	recordMigrationMaxSteps      = 2
 	indexSchemaVersion           = 1
 	projectionSchemaVersion      = 1
-	dirtySchemaVersion           = 1
+	dirtyContainerSchemaVersion  = 1
+	dirtySchemaVersion           = 2
 	transcriptSchemaVersion      = 1
 	envelopeSchemaVersion        = 1
 )
@@ -139,6 +140,7 @@ type FileReceipt struct {
 	ToolCallID         string `json:"tool_call_id"`
 	Operation          string `json:"operation"`
 	Path               string `json:"path"`
+	ArchivePath        string `json:"archive_path,omitempty"`
 	Kind               string `json:"kind"`
 	ContentHash        string `json:"content_hash,omitempty"`
 	InvalidateObserved bool   `json:"invalidate_observed"`
@@ -165,6 +167,7 @@ type FileWriteAhead struct {
 	ToolCallID         string `json:"tool_call_id"`
 	Operation          string `json:"operation"`
 	Path               string `json:"path"`
+	ArchivePath        string `json:"archive_path,omitempty"`
 	Kind               string `json:"kind"`
 	ContentHash        string `json:"content_hash,omitempty"`
 	InvalidateObserved bool   `json:"invalidate_observed"`
@@ -214,6 +217,31 @@ type SessionRecord struct {
 	LastConsumedDirtyID       string              `json:"last_consumed_dirty_id,omitempty"`
 }
 
+// fileReceiptV1 is the frozen file-effect contract shared by record v1/v2.
+// Do not reuse FileReceipt here: new fields must be rejected in old payloads.
+type fileReceiptV1 struct {
+	ToolCallID         string `json:"tool_call_id"`
+	Operation          string `json:"operation"`
+	Path               string `json:"path"`
+	Kind               string `json:"kind"`
+	ContentHash        string `json:"content_hash,omitempty"`
+	InvalidateObserved bool   `json:"invalidate_observed"`
+	StableCode         string `json:"stable_code"`
+	Outcome            string `json:"publication_outcome"`
+}
+
+// fileWriteAheadV1 freezes the nested dirty v1 contract.
+type fileWriteAheadV1 struct {
+	ToolCallID         string `json:"tool_call_id"`
+	Operation          string `json:"operation"`
+	Path               string `json:"path"`
+	Kind               string `json:"kind"`
+	ContentHash        string `json:"content_hash,omitempty"`
+	InvalidateObserved bool   `json:"invalidate_observed"`
+	StableCode         string `json:"stable_code"`
+	PublicationOutcome string `json:"publication_outcome"`
+}
+
 // recordPayloadV1 freezes the complete v1 payload contract. It must not gain
 // fields when SessionRecord evolves; migrations decode this DTO before
 // producing the current payload.
@@ -251,11 +279,30 @@ type recordPayloadV1 struct {
 	CommittedUserTurns        uint64              `json:"committed_user_turns"`
 	TranscriptCount           uint64              `json:"transcript_count"`
 	PreferenceReceipts        []PreferenceReceipt `json:"preference_receipts,omitempty"`
-	FileReceipts              []FileReceipt       `json:"file_receipts,omitempty"`
+	FileReceipts              []fileReceiptV1     `json:"file_receipts,omitempty"`
 	Checkpoint                json.RawMessage     `json:"checkpoint"`
 	QuarantinedCheckpoint     json.RawMessage     `json:"quarantined_checkpoint,omitempty"`
 	Transcript                json.RawMessage     `json:"transcript"`
 	LastConsumedDirtyID       string              `json:"last_consumed_dirty_id,omitempty"`
+}
+
+// v2 changed the payload version but not its fields. Both legacy DTOs are
+// frozen independently of the current SessionRecord and FileReceipt types.
+type recordPayloadV2 recordPayloadV1
+
+// dirtyPayloadV1 must remain independent of the evolving DirtyMarker/File types.
+type dirtyPayloadV1 struct {
+	SchemaVersion     int                   `json:"schema_version"`
+	DirtyID           string                `json:"dirty_id"`
+	SessionID         string                `json:"session_id"`
+	StorageID         string                `json:"storage_id"`
+	BaseRevision      uint64                `json:"base_revision"`
+	TurnSequence      uint64                `json:"turn_sequence"`
+	OperationClass    string                `json:"operation_class"`
+	MayHaveSideEffect bool                  `json:"may_have_side_effect"`
+	StartedAt         time.Time             `json:"started_at"`
+	Preference        *PreferenceWriteAhead `json:"preference,omitempty"`
+	File              *fileWriteAheadV1     `json:"file,omitempty"`
 }
 
 type DirtyMarker struct {

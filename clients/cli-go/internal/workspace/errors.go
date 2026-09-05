@@ -71,6 +71,10 @@ func failureResult(code, summary string) Result {
 
 func failureSuggestion(code string) string {
 	switch code {
+	case CodeArchiveProtected:
+		return "归档目录受保护，只能由用户手动恢复或清理；请选择归档树之外的源"
+	case CodeArchiveCrossDevice, CodeArchiveUnsupported:
+		return "当前文件系统不支持安全归档移动；请由用户手动处理，禁止复制后删除或永久删除"
 	case CodeReplacementMissing:
 		return "重新读取文件，并使用当前内容中存在的精确 old_text 重试"
 	case CodeReplacementNotUnique:
@@ -120,6 +124,12 @@ func resultForError(err error, fallbackSummary string) Result {
 
 func codeForSecureError(err error) string {
 	switch {
+	case errors.Is(err, securefile.ErrArchiveProtected):
+		return CodeArchiveProtected
+	case errors.Is(err, securefile.ErrCrossDevice):
+		return CodeArchiveCrossDevice
+	case errors.Is(err, securefile.ErrArchiveUnsupported):
+		return CodeArchiveUnsupported
 	case errors.Is(err, securefile.ErrNotFound):
 		return CodeNotFound
 	case errors.Is(err, securefile.ErrNotDirectory):

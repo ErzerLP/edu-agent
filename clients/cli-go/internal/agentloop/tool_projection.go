@@ -335,6 +335,8 @@ func historyValue(tool string, value any) any {
 			result["hits"] = compactHits
 		}
 		return result
+	case workspace.ToolArchive:
+		return workspaceBudgetProjection(tool, object, 256)
 	case "remember_preference":
 		return preserveOutcomeFields(tool, object, false, "")
 	default:
@@ -477,7 +479,7 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit int) map[string]any {
 	result := map[string]any{"tool": tool}
 	for _, key := range []string{
-		"path", "operation", "error", "code", "message", "suggestion", "publication_outcome",
+		"path", "archive_path", "entry_type", "manual_cleanup", "directories_created", "operation", "error", "code", "message", "suggestion", "publication_outcome",
 		"content_hash", "expected_hash", "complete", "truncated", "truncation_reason", "returned",
 		"returned_lines", "next_offset", "next_byte_offset", "first_changed_line", "preview_kind",
 		"preview_truncated", "scanned_files", "scanned_bytes",
@@ -507,7 +509,7 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 			result["matches"] = []any{compactProjectionValue(matches[0], 0, 3, max(12, payloadLimit))}
 			payloadKept = true
 		}
-	case workspace.ToolWrite, workspace.ToolEdit:
+	case workspace.ToolWrite, workspace.ToolEdit, workspace.ToolArchive:
 		for _, key := range []string{"preview", "diff"} {
 			if preview, ok := object[key].(string); ok && preview != "" {
 				result[key] = truncateUTF8(preview, payloadLimit)

@@ -479,7 +479,7 @@ func TestWorkspaceDefinitionsExposeFileToolsWithoutShell(t *testing.T) {
 	for _, definition := range Definitions() {
 		names = append(names, definition.Function.Name)
 	}
-	if !reflect.DeepEqual(names, []string{ToolList, ToolRead, ToolSearch, ToolWrite, ToolEdit}) {
+	if !reflect.DeepEqual(names, []string{ToolList, ToolRead, ToolSearch, ToolWrite, ToolEdit, ToolArchive}) {
 		t.Fatalf("definitions=%+v", names)
 	}
 	for _, forbidden := range []string{"delete", "move", "copy", "patch", "shell"} {

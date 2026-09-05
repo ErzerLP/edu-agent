@@ -373,7 +373,11 @@ func (c *Controller) UnknownOutcomes() []UnknownOutcome {
 	}
 	for _, receipt := range c.record.FileReceipts {
 		if receipt.Outcome == agentsession.NoticeOutcomeUnknown {
-			result = append(result, UnknownOutcome{ReceiptID: receipt.Operation, Kind: "file", Label: "文件结果未知：需重新读取、预览并授权"})
+			label := "文件结果未知：需重新读取、预览并授权"
+			if receipt.Operation == "archive" {
+				label = "归档结果未知：检查源 " + receipt.Path + " 与归档目标 " + receipt.ArchivePath + "；不会自动重试或清理"
+			}
+			result = append(result, UnknownOutcome{ReceiptID: receipt.Operation, Kind: "file", Label: label})
 		}
 	}
 	return result

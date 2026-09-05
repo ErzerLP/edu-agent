@@ -215,6 +215,10 @@ func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) 
 	if detail.Path != "" {
 		appendLine("路径：" + safeSingleLineTerminalText(detail.Path))
 	}
+	if detail.ArchivePath != "" {
+		appendLine("归档目标：" + safeSingleLineTerminalText(detail.ArchivePath))
+		appendLine("对象类型：" + safeSingleLineTerminalText(detail.EntryKind) + " · 由用户手动恢复或清理")
+	}
 	operation := make([]string, 0, 3)
 	if detail.Operation != "" {
 		operation = append(operation, "操作："+safeSingleLineTerminalText(detail.Operation))
@@ -374,6 +378,7 @@ func toolDisplayName(name string) string {
 		"read":                       "读取文件",
 		"search":                     "搜索文件",
 		"write":                      "写入文件",
+		"archive":                    "归档文件或目录",
 		"edit":                       "编辑文件",
 	}
 	if label, ok := labels[name]; ok {

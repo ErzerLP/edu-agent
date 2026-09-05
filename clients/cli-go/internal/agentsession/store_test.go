@@ -1560,13 +1560,13 @@ func TestRecordPayloadMigrationRejectsMalformedAndBoundsVersions(t *testing.T) {
 		t.Fatalf("missing required v1 field error=%v", err)
 	}
 
-	if recordMigrationMaxSteps != 1 {
+	if recordMigrationMaxSteps != 2 {
 		t.Fatalf("migration bound=%d", recordMigrationMaxSteps)
 	}
 	if recordPayloadSchemaVersion-recordMigrationMaxSteps != 1 {
 		t.Fatalf("current=%d bound=%d", recordPayloadSchemaVersion, recordMigrationMaxSteps)
 	}
-	v1Payload := recordPayloadV1(record)
+	v1Payload := legacyRecordPayloadV1ForTest(t, record)
 	v1Payload.SchemaVersion = 1
 	v1, err := encodeStrict(v1Payload)
 	if err != nil {
@@ -1602,14 +1602,33 @@ func withRecordSchema(record SessionRecord, schema int) SessionRecord {
 	return record
 }
 
+// Round-trip only legacy-compatible fixtures into the frozen DTO, rather than
+// relying on a struct conversion that would couple it to new receipt fields.
+func legacyRecordPayloadV1ForTest(t *testing.T, record SessionRecord) recordPayloadV1 {
+	t.Helper()
+	plain, err := encodeStrict(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload recordPayloadV1
+	if err := decodeStrict(plain, &payload, int64(len(plain))); err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
 func writeRecordPayloadForTest(t *testing.T, store *Store, dataKey []byte, record SessionRecord, version int, mutate func([]byte) []byte) {
 	t.Helper()
 	var payload any
 	switch version {
-	case 1:
-		v1 := recordPayloadV1(record)
-		v1.SchemaVersion = 1
-		payload = v1
+	case 1, 2:
+		legacy := legacyRecordPayloadV1ForTest(t, record)
+		legacy.SchemaVersion = version
+		if version == 1 {
+			payload = legacy
+		} else {
+			payload = recordPayloadV2(legacy)
+		}
 	default:
 		current := cloneRecord(record)
 		current.SchemaVersion = version

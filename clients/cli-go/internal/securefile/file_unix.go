@@ -302,6 +302,11 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 			err = fmt.Errorf("%w: %v", ErrOutcomeUnknown, err)
 		}
 	}()
+	if options.ProtectArchive {
+		if err := checkArchivePublishParent(ctx, root, parent); err != nil {
+			return result, err
+		}
+	}
 	target := components[len(components)-1]
 	var targetStat unix.Stat_t
 	targetErr := unix.Fstatat(int(parent.Fd()), target, &targetStat, unix.AT_SYMLINK_NOFOLLOW)
@@ -394,6 +399,11 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 		}
 	}
 
+	if options.ProtectArchive {
+		if err := checkArchivePublishParent(ctx, root, parent); err != nil {
+			return result, err
+		}
+	}
 	switch mode {
 	case PublishCreate:
 		if err := unix.Linkat(int(parent.Fd()), tempName, int(parent.Fd()), target, 0); err != nil {

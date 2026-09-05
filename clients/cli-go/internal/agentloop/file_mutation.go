@@ -2,6 +2,7 @@ package agentloop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -16,6 +17,7 @@ func pendingFileMutationFrom(callID string, prepared *workspace.PreparedMutation
 	value := prepared.Presentation
 	return &PendingFileMutation{
 		CallID: callID, Tool: value.Tool, Operation: value.Operation, Path: value.Path,
+		ArchivePath: value.ArchivePath, EntryKind: value.EntryKind,
 		PreviewKind: value.PreviewKind, Preview: value.Preview, Truncated: value.Truncated, BaseVersion: value.BaseVersion,
 	}
 }
@@ -120,7 +122,14 @@ func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclie
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: "正在安全发布文件修改", Status: EventRunning}, Phase: ActivityExecutingTool, File: fileActivityDetailFromPrepared(prepared)})
 	if s.options.Durability != nil {
 		presentation := prepared.Presentation
-		if err := s.options.Durability.BeforeFilePublication(ctx, FileWriteAhead{ToolCallID: call.ID, Operation: presentation.Operation, Path: presentation.Path}); err != nil {
+		kind := presentation.EntryKind
+		if kind == "" {
+			kind = "file"
+		}
+		if err := s.options.Durability.BeforeFilePublication(ctx, FileWriteAhead{
+			ToolCallID: call.ID, Operation: presentation.Operation, Path: presentation.Path,
+			ArchivePath: presentation.ArchivePath, Kind: kind,
+		}); err != nil {
 			return workspace.Result{Publication: workspace.PublicationUnchanged}, Event{}, false, errors.New("无法在文件发布前持久化恢复凭据")
 		}
 	}
@@ -203,6 +212,24 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 	text := "文件修改已完成；后续处理已停止。"
 	if unknown {
 		text = "文件发布结果无法确认；后续处理已停止，请重新读取目标文件。"
+	}
+	for _, message := range s.messages {
+		if message.Role != "tool" || message.ToolCallID != turn.FileEffectCallID {
+			continue
+		}
+		var effect struct {
+			Operation   string `json:"operation"`
+			ArchivePath string `json:"archive_path"`
+			Path        string `json:"path"`
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolArchive {
+			if unknown {
+				text = "归档结果无法确认；后续处理已停止。请检查源 " + effect.Path + " 和归档目标 " + effect.ArchivePath + "；不会自动重试或清理。"
+			} else {
+				text = "已归档到 " + effect.ArchivePath + "；后续处理已停止。归档由用户手动恢复或清理。"
+			}
+		}
+		break
 	}
 	message := modelclient.Message{Role: "assistant", Content: text}
 	if err := s.appendCapturedMessageLocked(turnID, message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {

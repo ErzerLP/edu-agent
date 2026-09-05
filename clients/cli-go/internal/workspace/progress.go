@@ -74,6 +74,13 @@ func InitialProgress(toolName, rawArguments string) (Progress, bool) {
 		}
 		path, err = normalizeModelPath(args.Path, false)
 		progress.Operation = "write_" + args.Mode
+	case ToolArchive:
+		var args archiveArguments
+		if decodeArguments(rawArguments, &args) != nil {
+			return Progress{}, false
+		}
+		path, err = normalizeModelPath(args.Path, false)
+		progress.Operation = ToolArchive
 	case ToolEdit:
 		var args editArguments
 		if decodeArguments(rawArguments, &args) != nil {
@@ -118,11 +125,11 @@ func publishProgress(ctx context.Context, progress Progress) {
 }
 
 func safeProgress(progress Progress) bool {
-	if progress.Tool != ToolList && progress.Tool != ToolRead && progress.Tool != ToolSearch && progress.Tool != ToolWrite && progress.Tool != ToolEdit {
+	if !IsReadTool(progress.Tool) && !IsMutationTool(progress.Tool) {
 		return false
 	}
 	allowRoot := progress.Tool == ToolList || progress.Tool == ToolSearch
-	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" {
+	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" && progress.Operation != ToolArchive {
 		return false
 	}
 	normalized, err := normalizeModelPath(progress.Path, allowRoot)

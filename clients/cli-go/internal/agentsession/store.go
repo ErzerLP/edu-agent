@@ -800,6 +800,9 @@ func (h *Handle) Save(ctx context.Context, expectedRevision uint64, candidate Se
 	}
 	if candidate.LastConsumedDirtyID != "" {
 		marker, _, markerErr := h.store.readDirty(h.storageID, h.sessionID, h.dataKey, h.generation)
+		if errors.Is(markerErr, ErrVersionUnsupported) {
+			return SessionRecord{}, markerErr
+		}
 		if markerErr != nil || marker.DirtyID != candidate.LastConsumedDirtyID || marker.BaseRevision != expectedRevision {
 			return SessionRecord{}, ErrCorrupt
 		}
@@ -915,7 +918,7 @@ func (h *Handle) MarkDirty(ctx context.Context, expectedRevision, turnSequence u
 		return DirtyMarker{}, err
 	}
 	ciphertext, err := sealContainer(h.dataKey, containerHeader{
-		SchemaVersion: dirtySchemaVersion, Kind: kindDirty, Profile: h.store.profile,
+		SchemaVersion: dirtyContainerSchemaVersion, Kind: kindDirty, Profile: h.store.profile,
 		Generation: h.generation, Session: sessionBytes, Storage: storageBytes, Revision: dirtyRevision,
 	}, plain)
 	if err != nil {
@@ -986,7 +989,7 @@ func (h *Handle) UpdateDirty(ctx context.Context, candidate DirtyMarker) (DirtyM
 		return DirtyMarker{}, err
 	}
 	ciphertext, err := sealContainer(h.dataKey, containerHeader{
-		SchemaVersion: dirtySchemaVersion, Kind: kindDirty, Profile: h.store.profile,
+		SchemaVersion: dirtyContainerSchemaVersion, Kind: kindDirty, Profile: h.store.profile,
 		Generation: h.generation, Session: sessionBytes, Storage: storageBytes, Revision: dirtyRevision,
 	}, plain)
 	if err != nil {
@@ -1522,16 +1525,14 @@ func (s *Store) readDirty(storageID, sessionID string, dataKey []byte, generatio
 		return marker, nil, err
 	}
 	plain, header, err := openContainer(dataKey, raw, containerExpectation{
-		SchemaVersion: dirtySchemaVersion, Kind: kindDirty, Profile: s.profile, Generation: generation, Session: sessionBytes, Storage: storageBytes,
+		SchemaVersion: dirtyContainerSchemaVersion, Kind: kindDirty, Profile: s.profile, Generation: generation, Session: sessionBytes, Storage: storageBytes,
 		MaxPayload: s.limits.DirtyMarkerBytes,
 	})
 	if err != nil {
 		return marker, raw, err
 	}
-	if err := decodeStrict(plain, &marker, s.limits.DirtyMarkerBytes); err != nil {
-		return marker, raw, err
-	}
-	if err := persistedSchemaError(marker.SchemaVersion, dirtySchemaVersion); err != nil {
+	marker, err = decodeDirtyPayload(plain, s.limits.DirtyMarkerBytes)
+	if err != nil {
 		return marker, raw, err
 	}
 	if marker.SessionID != sessionID || marker.StorageID != storageID || header.Revision == 0 || validateDirtyMarker(marker) != nil {

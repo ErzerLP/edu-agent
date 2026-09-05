@@ -148,6 +148,9 @@ func (w *Workspace) searchDirectories(ctx context.Context, scope string, matcher
 			case securefile.EntryLink:
 				state.skippedLinks++
 			case securefile.EntryDirectory:
+				if !isArchivePath(scope) && isArchivePath(relative) {
+					continue
+				}
 				if matchesAnyGlob(relative, exclude) {
 					continue
 				}

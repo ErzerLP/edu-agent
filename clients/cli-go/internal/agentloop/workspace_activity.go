@@ -62,6 +62,8 @@ func fileActivityDetailFromResult(tool string, result workspace.Result) *FileAct
 	}
 	detail := &FileActivityDetail{}
 	detail.Path = safeActivityWorkspacePath(stringValue(value["path"]))
+	detail.ArchivePath = safeActivityWorkspacePath(stringValue(value["archive_path"]))
+	detail.EntryKind = safeActivityToken(stringValue(value["entry_type"]), 32)
 	detail.Operation = safeActivityToken(stringValue(value["operation"]), 64)
 	detail.PreviewKind = safeActivityToken(stringValue(value["preview_kind"]), 32)
 	detail.Preview = safeActivityPreview(stringValue(value["preview"]))
@@ -113,6 +115,7 @@ func fileActivityDetailFromPrepared(prepared *workspace.PreparedMutation) *FileA
 	presentation := prepared.Presentation
 	return &FileActivityDetail{
 		Path: safeActivityWorkspacePath(presentation.Path), Operation: safeActivityToken(presentation.Operation, 64),
+		ArchivePath: safeActivityWorkspacePath(presentation.ArchivePath), EntryKind: safeActivityToken(presentation.EntryKind, 32),
 		PreviewKind: safeActivityToken(presentation.PreviewKind, 32), Preview: safeActivityPreview(presentation.Preview),
 		PreviewTruncated: presentation.Truncated,
 	}
@@ -131,6 +134,10 @@ func mergePreparedFileActivity(detail *FileActivityDetail, prepared *workspace.P
 	}
 	if detail.Operation == "" {
 		detail.Operation = preparedDetail.Operation
+	}
+	if detail.ArchivePath == "" {
+		detail.ArchivePath = preparedDetail.ArchivePath
+		detail.EntryKind = preparedDetail.EntryKind
 	}
 	if detail.PreviewKind == "" {
 		detail.PreviewKind = preparedDetail.PreviewKind
@@ -158,6 +165,10 @@ func mergeFileActivityDetail(detail, fallback *FileActivityDetail) *FileActivity
 	}
 	if detail.Operation == "" {
 		detail.Operation = fallback.Operation
+	}
+	if detail.ArchivePath == "" {
+		detail.ArchivePath = fallback.ArchivePath
+		detail.EntryKind = fallback.EntryKind
 	}
 	if !detail.HasReturned && fallback.HasReturned {
 		detail.Returned, detail.HasReturned = fallback.Returned, true
@@ -192,6 +203,8 @@ func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 		return "正在读取 " + detail.Path
 	case workspace.ToolSearch:
 		return "正在搜索 " + detail.Path + "：已扫描 " + intText(detail.ScannedFiles) + " 个文件"
+	case workspace.ToolArchive:
+		return "正在准备归档 " + detail.Path
 	case workspace.ToolList:
 		return "正在列出 " + detail.Path
 	default:

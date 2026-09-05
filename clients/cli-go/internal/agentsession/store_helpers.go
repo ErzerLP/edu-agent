@@ -250,19 +250,23 @@ func validatePreferenceOperationIDs(createID, admitID, rejectID string) error {
 }
 
 func validateFileReceipt(value FileReceipt) error {
-	if err := validateFileReference(value.ToolCallID, value.Operation, value.Path, value.Kind, value.ContentHash); err != nil {
+	if err := validateFileReference(value.ToolCallID, value.Operation, value.Path, value.ArchivePath, value.Kind, value.ContentHash); err != nil {
 		return err
 	}
-	if !validStableToken(value.StableCode, 128) {
+	return validateFileOutcome(value.Operation, value.ContentHash, value.InvalidateObserved, value.StableCode, value.publicationOutcome())
+}
+
+func validateFileOutcome(operation, contentHash string, invalidateObserved bool, stableCode, outcome string) error {
+	if !validStableToken(stableCode, 128) || operation == "archive" && !invalidateObserved {
 		return ErrInvalid
 	}
-	switch value.publicationOutcome() {
+	switch outcome {
 	case NoticeOutcomeCompleted:
-		if value.StableCode != FilePublicationCompletedCode || value.InvalidateObserved {
+		if stableCode != FilePublicationCompletedCode || operation != "archive" && invalidateObserved {
 			return ErrInvalid
 		}
 	case NoticeOutcomeUnknown:
-		if value.StableCode != FilePublicationUnknownCode || !value.InvalidateObserved || value.ContentHash != "" {
+		if stableCode != FilePublicationUnknownCode || !invalidateObserved || contentHash != "" {
 			return ErrInvalid
 		}
 	default:
@@ -272,24 +276,70 @@ func validateFileReceipt(value FileReceipt) error {
 }
 
 func validateFileWriteAhead(value FileWriteAhead) error {
-	if err := validateFileReference(value.ToolCallID, value.Operation, value.Path, value.Kind, value.ContentHash); err != nil {
+	if err := validateFileReference(value.ToolCallID, value.Operation, value.Path, value.ArchivePath, value.Kind, value.ContentHash); err != nil {
 		return err
 	}
-	if value.PublicationOutcome != NoticeOutcomeUnknown || value.StableCode != FilePublicationUnknownCode ||
-		!value.InvalidateObserved || value.ContentHash != "" {
+	if value.Operation != "archive" && value.PublicationOutcome != NoticeOutcomeUnknown {
+		return ErrInvalid
+	}
+	return validateFileOutcome(value.Operation, value.ContentHash, value.InvalidateObserved, value.StableCode, value.PublicationOutcome)
+}
+
+func validateFileReference(toolCallID, operation, valuePath, archivePath, kind, contentHash string) error {
+	if strings.TrimSpace(toolCallID) == "" || !safeText(toolCallID, 256) ||
+		strings.TrimSpace(operation) == "" || !safeText(operation, 128) || operation != strings.TrimSpace(operation) ||
+		!validRelativeWorkspacePath(valuePath) {
+		return ErrInvalid
+	}
+	if operation == "archive" {
+		if (kind != "file" && kind != "directory") || contentHash != "" || !validArchiveReference(valuePath, archivePath) {
+			return ErrInvalid
+		}
+	} else if archivePath != "" || kind != "file" || contentHash != "" && !validSHA256Tag(contentHash) {
 		return ErrInvalid
 	}
 	return nil
 }
 
-func validateFileReference(toolCallID, operation, valuePath, kind, contentHash string) error {
-	if strings.TrimSpace(toolCallID) == "" || !safeText(toolCallID, 256) ||
-		strings.TrimSpace(operation) == "" || !safeText(operation, 128) || operation != strings.TrimSpace(operation) ||
-		kind != "file" || !validRelativeWorkspacePath(valuePath) ||
-		contentHash != "" && !validSHA256Tag(contentHash) {
-		return ErrInvalid
+const archiveDirectory = ".edu-agent-archive"
+
+func validArchiveReference(source, destination string) bool {
+	if !validRelativeWorkspacePath(destination) {
+		return false
 	}
-	return nil
+	// Archive paths must also be safe to display and unambiguous across the
+	// supported platforms. Keep legacy write/edit path validation unchanged.
+	for _, value := range []string{source, destination} {
+		if strings.ContainsAny(value, "\n\t<>:\"|?*") {
+			return false
+		}
+		for _, component := range strings.Split(value, "/") {
+			if component != strings.TrimRight(component, " .") {
+				return false
+			}
+		}
+	}
+	if strings.EqualFold(strings.SplitN(source, "/", 2)[0], archiveDirectory) {
+		return false
+	}
+	parts := strings.SplitN(destination, "/", 3)
+	if len(parts) != 3 || parts[0] != archiveDirectory || parts[2] != source {
+		return false
+	}
+	// The executor owns UTC time/random-ID generation. Persist only its one
+	// safe container component, never an arbitrary destination prefix or a
+	// rewritten source suffix; do not infer entropy or a tree content hash.
+	stamp, id, ok := strings.Cut(parts[1], "-")
+	if !ok || stamp == "" || id == "" {
+		return false
+	}
+	for _, current := range parts[1] {
+		if current != '-' && current != '_' && current != '.' &&
+			(current < '0' || current > '9') && (current < 'A' || current > 'Z') && (current < 'a' || current > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 func validRelativeWorkspacePath(value string) bool {
@@ -579,7 +629,6 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 		return record, version, ErrVersionUnsupported
 	}
 
-	steps := 0
 	switch version {
 	case 1:
 		if err := validateRecordPayloadV1Shape(data); err != nil {
@@ -589,19 +638,13 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 		if err := decodeStrict(data, &payload, limit); err != nil {
 			return record, version, err
 		}
-		record = SessionRecord(payload)
-		for record.SchemaVersion < recordPayloadSchemaVersion {
-			if steps >= recordMigrationMaxSteps {
-				return SessionRecord{}, version, ErrVersionUnsupported
-			}
-			switch record.SchemaVersion {
-			case 1:
-				record.SchemaVersion = 2
-			default:
-				return SessionRecord{}, version, ErrVersionUnsupported
-			}
-			steps++
+		record = recordFromPayloadV2(recordPayloadV2(payload))
+	case 2:
+		var payload recordPayloadV2
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
 		}
+		record = recordFromPayloadV2(payload)
 	case recordPayloadSchemaVersion:
 		if err := decodeStrict(data, &record, limit); err != nil {
 			return record, version, err
@@ -609,7 +652,103 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 	default:
 		return record, version, ErrCorrupt
 	}
+	if record.SchemaVersion != version {
+		return SessionRecord{}, version, ErrCorrupt
+	}
+	for steps := 0; record.SchemaVersion < recordPayloadSchemaVersion; steps++ {
+		if steps >= recordMigrationMaxSteps {
+			return SessionRecord{}, version, ErrVersionUnsupported
+		}
+		switch record.SchemaVersion {
+		case 1:
+			record.SchemaVersion = 2
+		case 2:
+			// Legacy receipts have no archive destination; preserve every old
+			// field without inventing a source hash or an archive outcome.
+			record.SchemaVersion = 3
+		default:
+			return SessionRecord{}, version, ErrVersionUnsupported
+		}
+	}
 	return record, version, nil
+}
+
+func recordFromPayloadV2(value recordPayloadV2) SessionRecord {
+	record := SessionRecord{
+		SchemaVersion: value.SchemaVersion, SessionID: value.SessionID, StorageID: value.StorageID,
+		PrivacyGeneration: value.PrivacyGeneration, RecordRevision: value.RecordRevision, CommitID: value.CommitID,
+		CreatedAt: value.CreatedAt, UpdatedAt: value.UpdatedAt, LastOpenedAt: value.LastOpenedAt,
+		CheckpointRevision: value.CheckpointRevision, ServerProfileFingerprint: value.ServerProfileFingerprint,
+		Lifecycle: value.Lifecycle, Title: value.Title, TitleSource: value.TitleSource,
+		FirstUserSummary: value.FirstUserSummary, RecentUserSummary: value.RecentUserSummary,
+		AutoTitleTurns: value.AutoTitleTurns, TitleRevision: value.TitleRevision, LastTitleAt: value.LastTitleAt,
+		WorkspaceID: value.WorkspaceID, WorkspaceRoot: value.WorkspaceRoot, WorkspaceLabel: value.WorkspaceLabel,
+		WorkspacePathHash: value.WorkspacePathHash, WorkspaceRootIdentityHash: value.WorkspaceRootIdentityHash,
+		ProviderName: value.ProviderName, ProviderEndpoint: value.ProviderEndpoint, ProviderModel: value.ProviderModel,
+		PrivacyLearnerGeneration: value.PrivacyLearnerGeneration, PrivacyMemoryGeneration: value.PrivacyMemoryGeneration,
+		PrivacyVerified: value.PrivacyVerified, CommittedUserTurns: value.CommittedUserTurns,
+		TranscriptCount: value.TranscriptCount, PreferenceReceipts: value.PreferenceReceipts,
+		Checkpoint: value.Checkpoint, QuarantinedCheckpoint: value.QuarantinedCheckpoint,
+		Transcript: value.Transcript, LastConsumedDirtyID: value.LastConsumedDirtyID,
+	}
+	if value.FileReceipts != nil {
+		record.FileReceipts = make([]FileReceipt, len(value.FileReceipts))
+		for index, receipt := range value.FileReceipts {
+			record.FileReceipts[index] = FileReceipt{
+				ToolCallID: receipt.ToolCallID, Operation: receipt.Operation, Path: receipt.Path, Kind: receipt.Kind,
+				ContentHash: receipt.ContentHash, InvalidateObserved: receipt.InvalidateObserved,
+				StableCode: receipt.StableCode, Outcome: receipt.Outcome,
+			}
+		}
+	}
+	return record
+}
+
+// decodeDirtyPayload is called only after container authentication. Probe the
+// version before strict decoding so a future schema with new fields cannot be
+// mistaken for a corrupt (and therefore deletable) marker.
+func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
+	var marker DirtyMarker
+	version, err := probeRecordPayloadSchema(data, limit)
+	if err != nil {
+		return marker, err
+	}
+	if version > dirtySchemaVersion {
+		return marker, ErrVersionUnsupported
+	}
+	switch version {
+	case 1:
+		var payload dirtyPayloadV1
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		if payload.SchemaVersion != version {
+			return marker, ErrCorrupt
+		}
+		marker = DirtyMarker{
+			SchemaVersion: dirtySchemaVersion, DirtyID: payload.DirtyID, SessionID: payload.SessionID, StorageID: payload.StorageID,
+			BaseRevision: payload.BaseRevision, TurnSequence: payload.TurnSequence, OperationClass: payload.OperationClass,
+			MayHaveSideEffect: payload.MayHaveSideEffect, StartedAt: payload.StartedAt, Preference: payload.Preference,
+		}
+		if payload.File != nil {
+			value := payload.File
+			marker.File = &FileWriteAhead{
+				ToolCallID: value.ToolCallID, Operation: value.Operation, Path: value.Path, Kind: value.Kind,
+				ContentHash: value.ContentHash, InvalidateObserved: value.InvalidateObserved,
+				StableCode: value.StableCode, PublicationOutcome: value.PublicationOutcome,
+			}
+		}
+	case dirtySchemaVersion:
+		if err := decodeStrict(data, &marker, limit); err != nil {
+			return marker, err
+		}
+		if marker.SchemaVersion != version {
+			return DirtyMarker{}, ErrCorrupt
+		}
+	default:
+		return marker, ErrCorrupt
+	}
+	return marker, nil
 }
 
 func validateRecordPayloadV1Shape(data []byte) error {

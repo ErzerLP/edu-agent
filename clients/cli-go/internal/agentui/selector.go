@@ -98,6 +98,9 @@ func newPreferenceRetrySelector() *selectorModel {
 
 func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorModel {
 	body := fmt.Sprintf("操作：%s\n路径：%s\n%s：\n%s", pending.Operation, pending.Path, pending.PreviewKind, pending.Preview)
+	if pending.ArchivePath != "" {
+		body = fmt.Sprintf("源：%s\n归档目标：%s\n类型：%s\n仅整体移动，不永久删除；归档由用户手动恢复或清理。", pending.Path, pending.ArchivePath, pending.EntryKind)
+	}
 	if pending.Truncated {
 		body += "\n预览已按安全上限截断。"
 	}
@@ -115,8 +118,8 @@ func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel
 		current = agentloop.FileAuthorizationConfirm
 	}
 	options := []selectorOption{
-		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit 都显示冻结预览并等待明确授权"},
-		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit 不再确认，但所有安全校验保持不变"},
+		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit/archive 都显示冻结预览并等待明确授权"},
+		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit/archive 不再确认，但所有安全校验保持不变"},
 	}
 	focus := 0
 	for index := range options {
@@ -127,7 +130,7 @@ func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel
 	}
 	return &selectorModel{
 		kind: selectorFileMode, title: "文件授权模式",
-		body:    "YOLO 仅当前 Session 有效。隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。",
+		body:    "YOLO 仅当前 Session 有效。归档目录禁止普通写入或清理；其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。",
 		options: options, focus: focus,
 	}
 }

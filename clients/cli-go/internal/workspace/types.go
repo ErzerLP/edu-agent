@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	ToolList   = "list"
-	ToolRead   = "read"
-	ToolSearch = "search"
-	ToolWrite  = "write"
-	ToolEdit   = "edit"
+	ToolList    = "list"
+	ToolRead    = "read"
+	ToolSearch  = "search"
+	ToolWrite   = "write"
+	ToolEdit    = "edit"
+	ToolArchive = "archive"
 )
 
 type Limits struct {
@@ -63,6 +64,9 @@ func (r *Reference) Identity() string {
 }
 
 func (r *Reference) Supersedes(previous *Reference) bool {
+	if r != nil && previous != nil && r.InvalidateObserved && r.IsArchive() {
+		return archiveAffectsReference(r.Path, r.Kind == "archive_directory", previous)
+	}
 	if r == nil || previous == nil || r.Identity() == "" || r.Identity() != previous.Identity() || previous.ContentHash == "" {
 		return false
 	}
@@ -88,6 +92,8 @@ type MutationPresentation struct {
 	Preview     string
 	Truncated   bool
 	BaseVersion string
+	ArchivePath string
+	EntryKind   string
 }
 
 type PreparedMutation struct {
@@ -102,6 +108,8 @@ type PreparedMutation struct {
 	previewHash     string
 	firstChangeLine int
 	replacements    int
+	archivePath     string
+	archiveEntry    *securefile.ArchiveEntry
 	commitMu        sync.Mutex
 	committed       bool
 }

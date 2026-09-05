@@ -9,18 +9,20 @@ import (
 
 func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 	expectedSchemas := map[string]string{
-		ToolList:   `{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"maximum":2000}},"additionalProperties":false}`,
-		ToolRead:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"offset":{"type":"integer","minimum":1,"maximum":1000000},"limit":{"type":"integer","minimum":1,"maximum":200},"byte_offset":{"type":"integer","minimum":0,"maximum":1048576},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path"],"additionalProperties":false}`,
-		ToolSearch: `{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":1000},"path":{"type":"string"},"mode":{"type":"string","enum":["literal","regex"]},"case":{"type":"string","enum":["smart","sensitive","insensitive"]},"include":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}},"exclude":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}},"required":["query"],"additionalProperties":false}`,
-		ToolWrite:  `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"mode":{"type":"string","enum":["create","replace"]},"content":{"type":"string","maxLength":8192},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path","mode","content"],"additionalProperties":false}`,
-		ToolEdit:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":8192},"new_text":{"type":"string","maxLength":8192}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`,
+		ToolArchive: `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096}},"required":["path"],"additionalProperties":false}`,
+		ToolList:    `{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"maximum":2000}},"additionalProperties":false}`,
+		ToolRead:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"offset":{"type":"integer","minimum":1,"maximum":1000000},"limit":{"type":"integer","minimum":1,"maximum":200},"byte_offset":{"type":"integer","minimum":0,"maximum":1048576},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path"],"additionalProperties":false}`,
+		ToolSearch:  `{"type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":1000},"path":{"type":"string"},"mode":{"type":"string","enum":["literal","regex"]},"case":{"type":"string","enum":["smart","sensitive","insensitive"]},"include":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}},"exclude":{"type":"array","maxItems":16,"items":{"type":"string","minLength":1,"maxLength":256}}},"required":["query"],"additionalProperties":false}`,
+		ToolWrite:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"mode":{"type":"string","enum":["create","replace"]},"content":{"type":"string","maxLength":8192},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}},"required":["path","mode","content"],"additionalProperties":false}`,
+		ToolEdit:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":8192},"new_text":{"type":"string","maxLength":8192}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`,
 	}
 	expectedDescriptions := map[string]string{
-		ToolList:   "List one workspace directory; no links.",
-		ToolRead:   "Read bounded workspace UTF-8 text; no links.",
-		ToolSearch: "Search bounded workspace UTF-8 text; no links.",
-		ToolWrite:  "Create absent or hash-replace workspace UTF-8 text.",
-		ToolEdit:   "Apply exact unique non-overlapping edits to one hash.",
+		ToolArchive: "Archive a file or directory; never permanently delete.",
+		ToolList:    "List one workspace directory; no links.",
+		ToolRead:    "Read bounded workspace UTF-8 text; no links.",
+		ToolSearch:  "Search bounded workspace UTF-8 text; no links.",
+		ToolWrite:   "Create absent or hash-replace workspace UTF-8 text.",
+		ToolEdit:    "Apply exact unique non-overlapping edits to one hash.",
 	}
 
 	definitions := Definitions()
@@ -64,18 +66,20 @@ func TestWorkspaceAllToolParsersRejectUnknownTrailingAndNonObjectJSON(t *testing
 	defer workspace.Close()
 
 	valid := map[string]string{
-		ToolList:   `{}`,
-		ToolRead:   `{"path":"missing.txt"}`,
-		ToolSearch: `{"query":"needle"}`,
-		ToolWrite:  `{"path":"new.txt","mode":"create","content":"new"}`,
-		ToolEdit:   `{"path":"missing.txt","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}]}`,
+		ToolArchive: `{"path":"missing.txt"}`,
+		ToolList:    `{}`,
+		ToolRead:    `{"path":"missing.txt"}`,
+		ToolSearch:  `{"query":"needle"}`,
+		ToolWrite:   `{"path":"new.txt","mode":"create","content":"new"}`,
+		ToolEdit:    `{"path":"missing.txt","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}]}`,
 	}
 	withUnknown := map[string]string{
-		ToolList:   `{"unknown":true}`,
-		ToolRead:   `{"path":"missing.txt","unknown":true}`,
-		ToolSearch: `{"query":"needle","unknown":true}`,
-		ToolWrite:  `{"path":"new.txt","mode":"create","content":"new","unknown":true}`,
-		ToolEdit:   `{"path":"missing.txt","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}],"unknown":true}`,
+		ToolArchive: `{"path":"missing.txt","unknown":true}`,
+		ToolList:    `{"unknown":true}`,
+		ToolRead:    `{"path":"missing.txt","unknown":true}`,
+		ToolSearch:  `{"query":"needle","unknown":true}`,
+		ToolWrite:   `{"path":"new.txt","mode":"create","content":"new","unknown":true}`,
+		ToolEdit:    `{"path":"missing.txt","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}],"unknown":true}`,
 	}
 	for tool, base := range valid {
 		t.Run(tool, func(t *testing.T) {
@@ -101,11 +105,12 @@ func TestWorkspaceToolSchemaBoundaryContracts(t *testing.T) {
 		encoded[definition.Function.Name] = string(definition.Function.Parameters)
 	}
 	checks := map[string][]string{
-		ToolList:   {`"offset":{"type":"integer","minimum":0,"maximum":2000}`},
-		ToolRead:   {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"offset":{"type":"integer","minimum":1,"maximum":1000000}`, `"limit":{"type":"integer","minimum":1,"maximum":200}`, `"byte_offset":{"type":"integer","minimum":0,"maximum":1048576}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
-		ToolSearch: {`"query":{"type":"string","minLength":1,"maxLength":1000}`, `"mode":{"type":"string","enum":["literal","regex"]}`, `"case":{"type":"string","enum":["smart","sensitive","insensitive"]}`, `"include":{"type":"array","maxItems":16`, `"exclude":{"type":"array","maxItems":16`, `"maxLength":256`},
-		ToolWrite:  {`"mode":{"type":"string","enum":["create","replace"]}`, `"content":{"type":"string","maxLength":8192}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
-		ToolEdit:   {`"edits":{"type":"array","minItems":1,"maxItems":32`, `"old_text":{"type":"string","minLength":1,"maxLength":8192}`, `"new_text":{"type":"string","maxLength":8192}`, `"additionalProperties":false`},
+		ToolArchive: {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"required":["path"]`, `"additionalProperties":false`},
+		ToolList:    {`"offset":{"type":"integer","minimum":0,"maximum":2000}`},
+		ToolRead:    {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"offset":{"type":"integer","minimum":1,"maximum":1000000}`, `"limit":{"type":"integer","minimum":1,"maximum":200}`, `"byte_offset":{"type":"integer","minimum":0,"maximum":1048576}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
+		ToolSearch:  {`"query":{"type":"string","minLength":1,"maxLength":1000}`, `"mode":{"type":"string","enum":["literal","regex"]}`, `"case":{"type":"string","enum":["smart","sensitive","insensitive"]}`, `"include":{"type":"array","maxItems":16`, `"exclude":{"type":"array","maxItems":16`, `"maxLength":256`},
+		ToolWrite:   {`"mode":{"type":"string","enum":["create","replace"]}`, `"content":{"type":"string","maxLength":8192}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
+		ToolEdit:    {`"edits":{"type":"array","minItems":1,"maxItems":32`, `"old_text":{"type":"string","minLength":1,"maxLength":8192}`, `"new_text":{"type":"string","maxLength":8192}`, `"additionalProperties":false`},
 	}
 	for tool, fragments := range checks {
 		for _, fragment := range fragments {

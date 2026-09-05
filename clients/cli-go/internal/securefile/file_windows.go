@@ -491,14 +491,29 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 		return result, err
 	}
 	mode := options.Mode
-	parent, parentsCreated, err := openWindowsPublishParent(root, components[:len(components)-1], mode == PublishCreate)
+	var parent *os.File
+	var parentsCreated bool
+	if options.ProtectArchive {
+		var pinned []*os.File
+		parent, parentsCreated, pinned, err = openWindowsProtectedPublishParent(ctx, root, components[:len(components)-1], mode == PublishCreate)
+		defer func() {
+			archiveResult := ArchiveResult{Outcome: result.Outcome, DirectoriesCreated: parentsCreated}
+			closeArchiveHandles(pinned, &archiveResult, &err)
+			finishArchive(&archiveResult, &err)
+			result.Outcome = archiveResult.Outcome
+		}()
+	} else {
+		parent, parentsCreated, err = openWindowsPublishParent(root, components[:len(components)-1], mode == PublishCreate)
+		if parent != nil {
+			defer parent.Close()
+		}
+	}
 	if err != nil {
 		if parentsCreated {
 			return PublishResult{Outcome: PublishUnknown}, fmt.Errorf("%w: %v", ErrOutcomeUnknown, classifyWindowsOpenError(err))
 		}
 		return result, classifyWindowsOpenError(err)
 	}
-	defer parent.Close()
 	defer func() {
 		if err != nil && result.Outcome == PublishUnchanged && parentsCreated {
 			result.Outcome = PublishUnknown
@@ -506,6 +521,11 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 		}
 	}()
 
+	if options.ProtectArchive {
+		if err := checkArchivePublishParent(ctx, root, parent); err != nil {
+			return result, err
+		}
+	}
 	target := components[len(components)-1]
 	if err := inspectWindowsPublishTarget(windows.Handle(parent.Fd()), target, mode); err != nil {
 		return result, err
@@ -589,6 +609,11 @@ func publishWithinRootOptions(ctx context.Context, root *Root, components []stri
 		return result, err
 	}
 
+	if options.ProtectArchive {
+		if err := checkArchivePublishParent(ctx, root, parent); err != nil {
+			return result, err
+		}
+	}
 	renameErr := renameWindowsFileHandle(
 		windows.Handle(temp.Fd()),
 		windows.Handle(parent.Fd()),

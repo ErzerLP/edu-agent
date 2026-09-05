@@ -71,6 +71,9 @@ type PublishOptions struct {
 	ExpectedHash  string
 	ExpectedLimit int64
 	Private       bool
+	// ProtectArchive reserves the archive tree for the dedicated Archive API.
+	// It is opt-in so internal credentials and session publication stay compatible.
+	ProtectArchive bool
 }
 
 type PublishResult struct {
@@ -204,6 +207,11 @@ func (r *Root) Publish(ctx context.Context, relative string, data []byte, option
 	components, err := relativeComponents(relative)
 	if err != nil {
 		return PublishResult{Outcome: PublishUnchanged}, err
+	}
+	if options.ProtectArchive {
+		if err := r.CheckArchiveWritePath(ctx, relative); err != nil {
+			return PublishResult{Outcome: PublishUnchanged}, err
+		}
 	}
 	return publishWithinRootOptions(ctx, r, components, data, options)
 }

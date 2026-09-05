@@ -1,5 +1,7 @@
 # 客户端本地文件操作设计
 
+本文件记录五个文本工具的基础设计；新增文件/目录安全归档、归档目录保护与会话恢复扩展见 [client-file-archive.md](client-file-archive.md)。归档不是通用 move/delete，不改变下述文本工具的内容合同。
+
 ## 目标与边界
 
 本设计实现 `client-file-operations` 正式规格：交互式 Go CLI Agent 在单个固定工作区内使用结构化 `list`、`read`、`search`、`write`、`edit` 工具处理 UTF-8 文本文件。工作区、参数、资源、链接、版本、原子发布和取消由客户端执行器强制；system prompt 只指导模型，不承担安全控制。

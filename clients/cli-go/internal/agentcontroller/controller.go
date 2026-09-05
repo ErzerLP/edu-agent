@@ -336,8 +336,12 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 	}
 	if loaded.Interrupted != nil && loaded.Interrupted.File != nil {
 		file := loaded.Interrupted.File
+		kind := file.Kind
+		if file.Operation == workspace.ToolArchive {
+			kind = "archive_" + kind
+		}
 		if err := controller.loop.InvalidateWorkspaceEvidence(agentloop.WorkspaceReference{
-			Path: file.Path, Kind: file.Kind, ContentHash: file.ContentHash, InvalidateObserved: file.InvalidateObserved,
+			Path: file.Path, Kind: kind, ContentHash: file.ContentHash, InvalidateObserved: file.InvalidateObserved,
 		}); err != nil {
 			controller.abort()
 			return nil, checkpointLoadError(err)
@@ -363,6 +367,9 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 			privacyNeedsSave = false
 		}
 		controller.appendStatusNoticeLocked("[session_interrupted] 已从最后一个稳定检查点恢复；上次未完成操作没有重放")
+		if file := loaded.Interrupted.File; file != nil && file.Operation == workspace.ToolArchive {
+			controller.appendStatusNoticeLocked("[session_archive_outcome_unknown] 请检查源 " + file.Path + " 与归档目标 " + file.ArchivePath + "；归档不会自动重试或清理。")
+		}
 	}
 	if privacyNeedsSave && !options.PrepareOnly {
 		if err := controller.saveCheckpointLocked(ctx, false); err != nil {
@@ -666,8 +673,13 @@ func (c *Controller) BeforeFilePublication(ctx context.Context, receipt agentloo
 	candidate := *c.dirty
 	candidate.MayHaveSideEffect = true
 	candidate.Preference = nil
+	kind := receipt.Kind
+	if kind == "" {
+		kind = "file"
+	}
 	candidate.File = &agentsession.FileWriteAhead{
-		ToolCallID: receipt.ToolCallID, Operation: receipt.Operation, Path: receipt.Path, Kind: "file",
+		ToolCallID: receipt.ToolCallID, Operation: receipt.Operation, Path: receipt.Path, Kind: kind,
+		ArchivePath:        receipt.ArchivePath,
 		InvalidateObserved: true, StableCode: agentsession.FilePublicationUnknownCode, PublicationOutcome: agentsession.NoticeOutcomeUnknown,
 	}
 	updated, err := c.handle.UpdateDirty(ctx, candidate)
@@ -1105,6 +1117,7 @@ func (c *Controller) recordRecoveryUnknownLocked(marker agentsession.DirtyMarker
 	if marker.File != nil {
 		c.record.FileReceipts = appendBoundedFile(c.record.FileReceipts, agentsession.FileReceipt{
 			ToolCallID: marker.File.ToolCallID, Operation: marker.File.Operation, Path: marker.File.Path, Kind: marker.File.Kind,
+			ArchivePath: marker.File.ArchivePath,
 			ContentHash: marker.File.ContentHash, InvalidateObserved: true,
 			StableCode: agentsession.FilePublicationUnknownCode, Outcome: agentsession.NoticeOutcomeUnknown,
 		}, c.limits.ReceiptCount)
@@ -1151,7 +1164,11 @@ func fileReceiptFromCheckpoint(writeAhead agentsession.FileWriteAhead, checkpoin
 			break
 		}
 	}
-	if reference == nil || reference.Path != writeAhead.Path || reference.Kind != writeAhead.Kind {
+	expectedKind := writeAhead.Kind
+	if writeAhead.Operation == workspace.ToolArchive {
+		expectedKind = "archive_" + expectedKind
+	}
+	if reference == nil || reference.Path != writeAhead.Path || reference.Kind != expectedKind {
 		return agentsession.FileReceipt{}, false, errors.New("文件发布回执缺少匹配的稳定工作区引用")
 	}
 	matchedEvent := false
@@ -1166,7 +1183,8 @@ func fileReceiptFromCheckpoint(writeAhead agentsession.FileWriteAhead, checkpoin
 		return agentsession.FileReceipt{}, false, errors.New("文件发布回执缺少匹配的稳定事件")
 	}
 	receipt := agentsession.FileReceipt{
-		ToolCallID: writeAhead.ToolCallID, Operation: writeAhead.Operation, Path: reference.Path, Kind: reference.Kind,
+		ToolCallID: writeAhead.ToolCallID, Operation: writeAhead.Operation, Path: reference.Path, Kind: writeAhead.Kind,
+		ArchivePath: writeAhead.ArchivePath,
 		ContentHash: reference.ContentHash, InvalidateObserved: reference.InvalidateObserved,
 		StableCode: agentsession.FilePublicationCompletedCode, Outcome: agentsession.NoticeOutcomeCompleted,
 	}
@@ -1205,7 +1223,9 @@ func appendBoundedFile(values []agentsession.FileReceipt, value agentsession.Fil
 	filtered := values[:0]
 	for _, existing := range values {
 		if value.Outcome == agentsession.NoticeOutcomeCompleted && existing.Outcome == agentsession.NoticeOutcomeUnknown &&
-			existing.Path == value.Path && existing.Kind == value.Kind {
+			existing.Path == value.Path && existing.Kind == value.Kind &&
+			(existing.Operation != workspace.ToolArchive && value.Operation != workspace.ToolArchive ||
+				existing.Operation == value.Operation && existing.ArchivePath == value.ArchivePath) {
 			continue
 		}
 		filtered = append(filtered, existing)

@@ -48,6 +48,8 @@ func (w *Workspace) PrepareMutation(ctx context.Context, toolName, rawArguments 
 		return nil, mutationContextFailure(err)
 	}
 	switch toolName {
+	case ToolArchive:
+		return w.prepareArchive(ctx, rawArguments)
 	case ToolWrite:
 		return w.prepareWrite(ctx, rawArguments)
 	case ToolEdit:
@@ -65,6 +67,9 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 	path, err := normalizeModelPath(args.Path, false)
 	if err != nil {
 		return nil, mutationFailureForError(err, "文件写入路径无效")
+	}
+	if err := w.checkArchiveWritePath(ctx, path); err != nil {
+		return nil, mutationFailureForSecureError(err, "归档目录仅允许专用归档工具新增条目")
 	}
 	if args.Mode != "create" && args.Mode != "replace" {
 		return nil, mutationFailure(CodeInvalidArguments, "文件写入模式无效")
@@ -146,6 +151,9 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 	path, err := normalizeModelPath(args.Path, false)
 	if err != nil {
 		return nil, mutationFailureForError(err, "文件编辑路径无效")
+	}
+	if err := w.checkArchiveWritePath(ctx, path); err != nil {
+		return nil, mutationFailureForSecureError(err, "归档目录内容不能编辑，请由用户手动管理")
 	}
 	if !validContentHash(args.ExpectedHash) || len(args.Edits) < 1 || len(args.Edits) > w.limits.EditReplacements {
 		return nil, mutationFailure(CodeInvalidArguments, "文件编辑版本或替换数量无效")
@@ -230,6 +238,12 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	if err := ctx.Err(); err != nil {
 		return mutationContextFailure(err)
 	}
+	if prepared.Presentation.Tool == ToolArchive {
+		return w.commitArchive(ctx, prepared)
+	}
+	if err := w.checkArchiveWritePath(ctx, prepared.path); err != nil {
+		return mutationFailureForSecureError(err, "归档目录不允许普通文件写入")
+	}
 	queueKey := "create:" + strings.ToLower(prepared.path)
 	if !prepared.create {
 		identitySnapshot, readErr := w.root.ReadSnapshot(prepared.path, w.limits.FileBytes, false)
@@ -286,6 +300,7 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	}
 	publish, publishErr := w.root.Publish(ctx, prepared.path, prepared.candidate, securefile.PublishOptions{
 		Mode: mode, Permission: permission, ExpectedHash: prepared.baseVersion, ExpectedLimit: w.limits.FileBytes,
+		ProtectArchive: true,
 	})
 	if publish.Outcome == securefile.PublishUnknown || errors.Is(publishErr, securefile.ErrOutcomeUnknown) {
 		return mutationOutcomeUnknown(prepared)

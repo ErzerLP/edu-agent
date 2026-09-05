@@ -107,6 +107,7 @@ const (
 )
 
 type FileWriteAhead struct {
+	ArchivePath        string
 	ToolCallID         string
 	Operation          string
 	Path               string
@@ -183,6 +184,8 @@ type ActivityProgress struct {
 // data. It never contains raw tool arguments, hashes, provider reasoning,
 // absolute workspace roots, or operating-system errors.
 type FileActivityDetail struct {
+	ArchivePath        string
+	EntryKind          string
 	Path               string
 	Operation          string
 	Returned           int
@@ -264,6 +267,8 @@ const (
 )
 
 type PendingFileMutation struct {
+	ArchivePath string
+	EntryKind   string
 	CallID      string
 	Tool        string
 	Operation   string

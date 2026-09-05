@@ -167,7 +167,7 @@ func TestJournalDirtyV5MigrationFreezesOldShapeAndPreservesBytes(t *testing.T) {
 	writeDirtyPayloadForTest(t, s, h.dataKey, record, plain)
 	before := readSessionArtifactForTest(t, s, dirtyName(record.StorageID))
 	loaded, err := h.Load()
-	if err != nil || loaded.Interrupted == nil || loaded.Interrupted.SchemaVersion != 6 || loaded.Interrupted.File == nil || loaded.Interrupted.File.ToolCallID != "alpha" || len(loaded.Interrupted.FileJournal) != 0 {
+	if err != nil || loaded.Interrupted == nil || loaded.Interrupted.SchemaVersion != dirtySchemaVersion || loaded.Interrupted.File == nil || loaded.Interrupted.File.ToolCallID != "alpha" || len(loaded.Interrupted.FileJournal) != 0 {
 		t.Fatal(loaded, err)
 	}
 	if !bytes.Equal(before, readSessionArtifactForTest(t, s, dirtyName(record.StorageID))) {
@@ -198,7 +198,7 @@ func TestJournalDirtyV5MigrationFreezesOldShapeAndPreservesBytes(t *testing.T) {
 			}
 		}
 	}
-	// Updating a migrated marker explicitly writes v6, preserving the real
+	// Updating a migrated marker explicitly writes the current dirty schema, preserving the real
 	// legacy singleton rather than inventing any already-lost earlier fact.
 	migrated := *loaded.Interrupted
 	beta := journalAhead("beta")
@@ -209,7 +209,7 @@ func TestJournalDirtyV5MigrationFreezesOldShapeAndPreservesBytes(t *testing.T) {
 		t.Fatal(updated, err)
 	}
 	b, header := dirtyPayloadOnDiskForTest(t, s, h.dataKey, record)
-	if !bytes.Contains(b, []byte(`"schema_version":6`)) || header.SchemaVersion != 1 {
+	if !bytes.Contains(b, []byte(fmt.Sprintf(`"schema_version":%d`, dirtySchemaVersion))) || header.SchemaVersion != 1 {
 		t.Fatal(string(b), header)
 	}
 }

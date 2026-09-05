@@ -7,6 +7,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
@@ -50,6 +51,18 @@ type DurabilitySink interface {
 	// AfterFilePublication receives the executor result, never model text. It
 	// must settle the matching WAL before another side effect can be started.
 	AfterFilePublication(context.Context, string, workspace.Result) error
+}
+
+// LocalExecutionDurability is optional so existing file/preference sinks remain
+// compatible. Persistent controllers implement it before enabling local tools.
+type LocalExecutionDurability interface {
+	BeforeLocalExecution(context.Context, LocalExecutionIntent) error
+}
+
+type LocalExecutionIntent struct {
+	ToolCallID string
+	Operation  string
+	TaskID     string
 }
 
 type DirtyIntent struct {
@@ -129,6 +142,9 @@ type Options struct {
 	Workspace         workspace.Executor
 	WorkspaceStatus   WorkspaceStatus
 	Durability        DurabilitySink
+	LocalExec         *localexec.Manager
+	LocalExecOwner    string
+	LocalExecCWD      string
 }
 
 type EventStatus string

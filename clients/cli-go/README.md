@@ -39,15 +39,27 @@ Agent TUI 不再设置独立顶部状态栏或全宽分隔线，transcript 直�
 
 主请求默认采用 272k 总窗口和 128k 最大输出；预留完整输出与 5% 安全余量时，输入总预算为 130400 tokens，包含系统规则、工具定义、记忆和消息。普通及流式助手正文上限为 1 MiB（字节不是 token），合法长文本可在有界 Session 配额内完整保存和恢复。长历史优先保留原文，必要时仅对较早助手正文作带来源、哈希和可见降级标记的请求投影，不改写保存原文或拆开工具调用组；`context_compaction=off` 不静默裁剪。标题与后台记忆整理继续使用独立小输出预算。具体资源边界及未验证范围见 [大窗口设计](../../docs/design/client-agent-large-context.md)。
 
+### 本地 Shell 与受管任务
+
+Linux/macOS Agent 现在提供 `shell` 和 `task`。Shell 使用启动客户端的 OS 用户权限，可访问工作区外路径、网络和已安装工具，支持管道、重定向及脚本；**文件工具的逐次确认和 YOLO 均不约束 Shell**。默认 cwd 是保存的工作区/启动目录，但不是路径围栏；不可用时须显式指定有效 cwd，不自动回退。可指定 Shell 和环境变量覆盖/删除；默认选可用的启动环境 `$SHELL`，否则 `/bin/sh`，不额外注入钥匙串凭据。
+
+每次 `shell` 都是独立的非 login、非交互进程，不继承前次的 `cd/export/alias`。`wait_ms` 默认250毫秒、最多30000毫秒，0表示立即后台返回；它不是执行超时，`timeout_ms=0` 默认不限制执行总时长。`task` 支持 `list/status/read/wait/input/close_input/stop`；任务ID、真实状态、退出码和输出可用性分别返回。取消已存在任务的等待只停止等待，取消新 Shell 首次前台等待会发起停止；后台返回后的模型错误或轮次结束不会杀任务。正常退出客户端先停止任务和普通组内子进程，再关闭会话；主动脱离进程组的进程不保证收尾，清理不完整会明确报告。
+
+`stdin=true` 保持输入管道，可多次 `task input` 后显式 `close_input`，累计内容可超过64KiB；它可用于通过脚本完整写入超过单次参数预算的文件。单次 `shell/task` 的整 JSON 参数仍不超过64KiB，输入结果说明管道已接受的字节数，不代表子进程已处理，部分/未知输入不能自动重传。不新增通用分块上传协议。
+
+后台任务在空闲 Session 切换后继续归属原 Session；未收尾期间保留原 Session 在用锁，其他客户端不能恢复/删除。同客户端可安全切回，任务收尾后释放闲置锁。按 **F5** 打开当前 Session 的任务面板，不依赖模型调用成功。`↑/↓` 选任务、`Tab` 切 stdout/stderr、`PgUp/PgDn` 按原始字节翻页、`Ctrl+↑/↓` 滚动、`Home` 回到开头、`s` 停止；`Esc/F5` 只关闭面板，不取消当前模型轮次。输出安全呈现，不直接回放终端控制序列。模型与 UI 使用独立、非破坏字节游标。
+
+当前 C1 输出只保留在内存，stdout/stderr 各自有序；达到预算保留已有前缀、继续排空管道并标明缺口，不自动淘汰或暗中杀命令。新建与 `resume` 均可指定 `--task-max-records`（默认256）、`--task-max-running`（默认16）、`--task-output-limit`（每任务默认8388608字节）和 `--task-total-output-limit`（客户端默认67108864字节）。稳定历史只保存任务元数据，不保存原始命令/env/stdin或采集输出正文；重启后进程内输出不可恢复，不能确认的执行结果报告未知，不重跑或向旧PID发信号。`--no-save` 不创建自动输出临时文件，Shell 自身的显式写文件仍有效。持久完整输出/检索与 PTY 分别留给 C2/C3，本段不表示整个 issue #1 已交付。见 [实施计划](../../docs/design/client-local-tools-delivery.md)。
+
 ### 本地工作区与文件工具
 
-Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`mkdir` 目录创建、`copy` 普通文件流式复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供永久 delete、patch、shell、进程或网络工具。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`mkdir` 目录创建、`copy` 普通文件流式复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供结构化永久 delete 或 patch。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
 
 `stat` 默认只读元数据，入口版本不代表文件内容或整个目录快照；可选 `hash=true` 只在1MiB内计算普通文件原始SHA256，不返回正文。`find` 支持basename或工作区相对路径glob，独立`**`跨零或多层；默认保留隐藏文件、跳过归档树、不读正文，并明确标记扫描/结果截断。详见 [stat](../../docs/design/client-file-stat.md) 和 [find](../../docs/design/client-file-find.md)。
 
 `search` 现在支持 `output=content|files|count`：文件列表/统计模式不返回正文，不完整时以 `counts_partial` 标记局部结果；`context=1..3` 可为content附加去重、有界邻近行。新 `glob` 支持组件 `**`，不改变旧include/exclude语义。`find/search` 可显式设置 `respect_gitignore=true` 读取工作区内有界分层规则；默认仍不启用，错误规则不会被当作空规则扩大范围，ignore也不是权限保护。详见 [检索增强设计](../../docs/design/client-file-search-enhancement.md)。
 
-`write`/`edit` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。文本文件仍限制为 1 MiB，预览/结果仍有独立有界预算；大文件优先使用局部 edit，不提供分块写入。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
+`write`/`edit`/`shell`/`task` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。结构化文本文件工具当前仍限制为 1 MiB，预览/结果仍有独立有界预算；大文件可使用 Shell，后续 C4/C5 扩展范围读取和局部 edit，不提供通用分块上传协议。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
 
 `mkdir` 可创建空目录，或显式使用 `parents=true` 创建冻结的缺失目录链；已有普通目录返回未变更，不覆盖其他入口。中途失败不删除回滚，已知创建前缀随统一回执保存；只有WAL的崩溃会明确说明计划路径可能已创建，恢复不重放。详见 [mkdir设计](../../docs/design/client-file-mkdir.md)。
 
@@ -57,7 +69,7 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 `write`/`edit`/`mkdir`/`copy`/`move`/`archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
 
-`mkdir`、`copy`、`move` 的冻结预览用PgUp/PgDn完整分页，末页显示后才能批准。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。未进入稳定快照的文件日志受既有16KiB与32项回执容量约束，容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。最终record/dirty payload均为v6，旧格式严格迁移，恢复从不重放文件操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md)。
+`mkdir`、`copy`、`move` 的冻结预览用PgUp/PgDn完整分页，末页显示后才能批准。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。未进入稳定快照的文件日志受既有16KiB与32项回执容量约束，容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。record payload 保持v6，dirty payload升级为v7以记录不含可执行正文的本地任务操作意图；旧v6严格迁移并继续拒绝新字段，恢复从不重放文件或本地任务操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md)。
 
 删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；用户自行手动恢复或删除归档，磁盘占用不会自动释放。归档树禁止 `write/edit/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
 

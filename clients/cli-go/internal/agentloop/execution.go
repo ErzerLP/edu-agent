@@ -141,6 +141,20 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 		}
 		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: runningSummary, Status: EventRunning}, Phase: ActivityExecutingTool, File: initialFile})
 		switch call.Function.Name {
+		case "shell", "task":
+			output := s.executeLocalTool(ctx, call)
+			if err := s.appendLocalToolResult(call.ID, output); err != nil {
+				return Result{}, err
+			}
+			event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "本地任务操作已返回；请依据任务状态继续", Status: EventSucceeded}
+			if output.Code != "" {
+				event.Status, event.Detail = EventFailed, output.Code
+			}
+			if output.Snapshot != nil {
+				event.Summary = "本地任务 " + output.Snapshot.TaskID + "：" + output.Snapshot.State
+			}
+			s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail})
+			events = append(events, event)
 		case "remember_preference":
 			args, err := decodePreferenceArgs(call.Function.Arguments)
 			if err != nil {

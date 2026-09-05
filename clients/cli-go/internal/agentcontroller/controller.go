@@ -3,6 +3,7 @@ package agentcontroller
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -62,6 +64,7 @@ type Dependencies struct {
 	WorkspaceRoot    string
 	WorkspaceBinding *WorkspaceBinding
 	Now              func() time.Time
+	LocalExecShared  bool // Prepared switch targets borrow the client-owned manager.
 }
 
 type ResumeOptions struct {
@@ -96,6 +99,13 @@ type Controller struct {
 	now           func() time.Time
 	loopOptions   agentloop.Options
 	workspaceRoot string
+	localExec     *localexec.Manager
+	localOwner    string
+	ownsLocalExec bool
+
+	localSessionLease      *localSessionLease
+	parkedLocalSessions    map[string]*localSessionLease
+	localLeaseReaperCancel context.CancelFunc
 
 	persistent      bool
 	degradedReason  string
@@ -215,7 +225,15 @@ func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Contro
 		return controller, nil
 	}
 	controller.handle = handle
+	controller.localSessionLease = newLocalSessionLease(handle, dependencies.Store, record.StorageID)
 	controller.record = record
+	if controller.localExec != nil {
+		controller.localOwner = record.SessionID
+		if err := controller.loop.SetLocalExecutionIdentity(record.SessionID, binding.Root); err != nil {
+			controller.abort()
+			return nil, err
+		}
+	}
 	controller.persistent = true
 	controller.startContextWorker()
 	return controller, nil
@@ -230,11 +248,16 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 		_ = dependencies.Store.Close()
 		return nil, sessionStoreLoadError(err)
 	}
+	return resumeWithLocalSessionLease(ctx, dependencies, options, loaded, newLocalSessionLease(handle, dependencies.Store, loaded.Record.StorageID))
+}
+
+// The incoming reference belongs to this preparation, not to the parked owner.
+// Every failure releases only that reference; the normal preflight is shared.
+func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies, options ResumeOptions, loaded agentsession.Loaded, lease *localSessionLease) (*Controller, error) {
 	closeOnError := true
 	defer func() {
 		if closeOnError {
-			_ = handle.Close()
-			_ = dependencies.Store.Close()
+			_ = lease.release()
 		}
 	}()
 
@@ -271,12 +294,20 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 			}
 		}
 	}
+	loopOptions.LocalExecOwner = loaded.Record.SessionID
+	loopOptions.LocalExecCWD = loaded.Record.WorkspaceRoot
+	dependencies.WorkspaceRoot = loaded.Record.WorkspaceRoot
 	dependencies.LoopOptions = loopOptions
 	controller, err := newController(dependencies)
 	if err != nil {
+		if loopOptions.Workspace != nil {
+			_ = loopOptions.Workspace.Close()
+		}
 		return nil, err
 	}
-	controller.handle = handle
+	controller.handle = lease.handle
+	controller.localSessionLease = lease
+	closeOnError = false // Subsequent failures clean up through controller.abort.
 	controller.record = loaded.Record
 	controller.resumed = true
 	controller.prepared = options.PrepareOnly
@@ -405,6 +436,8 @@ func Resume(ctx context.Context, dependencies Dependencies, options ResumeOption
 func baseLoopOptions(options agentloop.Options) agentloop.Options {
 	options.Workspace = nil
 	options.Durability = nil
+	options.LocalExecOwner = ""
+	options.LocalExecCWD = ""
 	return options
 }
 
@@ -478,8 +511,18 @@ func newController(dependencies Dependencies) (*Controller, error) {
 	if dependencies.Store != nil {
 		limits = dependencies.Store.Limits()
 	}
+	if dependencies.LoopOptions.LocalExec != nil {
+		if dependencies.LoopOptions.LocalExecOwner == "" {
+			dependencies.LoopOptions.LocalExecOwner = "unsaved-" + rand.Text()
+		}
+		if dependencies.LoopOptions.LocalExecCWD == "" {
+			dependencies.LoopOptions.LocalExecCWD = dependencies.WorkspaceRoot
+		}
+	}
 	controller := &Controller{
-		store: dependencies.Store, model: dependencies.Model, server: dependencies.Server, provider: dependencies.Provider, limits: limits, now: now, generation: 1,
+		localExec: dependencies.LoopOptions.LocalExec, localOwner: dependencies.LoopOptions.LocalExecOwner,
+		ownsLocalExec: dependencies.LoopOptions.LocalExec != nil && !dependencies.LocalExecShared,
+		store:         dependencies.Store, model: dependencies.Model, server: dependencies.Server, provider: dependencies.Provider, limits: limits, now: now, generation: 1,
 		loopOptions: baseLoopOptions(dependencies.LoopOptions), workspaceRoot: dependencies.WorkspaceRoot,
 		transcript: agentsession.TranscriptV1{SchemaVersion: 1, Entries: []agentsession.TranscriptEntryV1{}},
 	}
@@ -876,17 +919,17 @@ func (c *Controller) degradeNewSessionAfterSaveFailureLocked(cause error) error 
 	}
 	// A failed save must not turn an effect-bearing persistent session into a
 	// non-persistent writer. Keep the dirty evidence and the save-failure gate.
-	if c.dirty != nil && len(dirtyFileEntries(*c.dirty)) != 0 {
+	if c.dirty != nil && (len(dirtyFileEntries(*c.dirty)) != 0 || len(c.dirty.LocalEffects) != 0) {
 		return nil
 	}
-	var closeErr error
-	if c.handle != nil {
-		closeErr = errors.Join(closeErr, c.handle.Close())
+	// A prior turn may already own a background task even if this turn has no
+	// local WAL entry. Save degradation must not release that owner's lock.
+	if c.localOwnerUnsettledLocked(c.localOwner) {
+		return nil
 	}
-	if c.store != nil {
-		closeErr = errors.Join(closeErr, c.store.Close())
-	}
-	if closeErr != nil {
+	lease := c.localSessionLease
+	c.localSessionLease = nil
+	if closeErr := releaseLocalSessionResources(lease, c.handle, c.store); closeErr != nil {
 		return closeErr
 	}
 	c.persistent = false
@@ -1128,6 +1171,10 @@ func (c *Controller) recordRecoveryUnknownLocked(marker agentsession.DirtyMarker
 			outcome = agentsession.NoticeOutcomeUnknown
 		}
 		c.record.PreferenceReceipts = appendBoundedPreference(c.record.PreferenceReceipts, preferenceReceiptFromWriteAhead(*marker.Preference, outcome), c.limits.ReceiptCount)
+	}
+	if len(marker.LocalEffects) != 0 {
+		c.appendNoticeLocked("session_interrupted", agentsession.NoticeOutcomeInterrupted,
+			fmt.Sprintf("上次中断前有 %d 次本地任务操作；执行结果未知，进程内输出已不可访问。不会重跑命令或重传输入，也不会向旧 PID 发信号。", len(marker.LocalEffects)))
 	}
 	return c.mergeFileJournalLocked(marker)
 }
@@ -1617,16 +1664,21 @@ func (c *Controller) abort() {
 		c.contextCancel = nil
 	}
 	loop, handle, store := c.loop, c.handle, c.store
-	c.handle, c.store = nil, nil
+	lease, parked := c.localSessionLease, c.takeParkedLocalSessionsLocked()
+	manager, ownsManager := c.localExec, c.ownsLocalExec
+	c.handle, c.store, c.localSessionLease = nil, nil, nil
 	c.mu.Unlock()
+	if ownsManager && manager != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = closeLocalExecutionManager(ctx, manager)
+		cancel()
+	}
 	if loop != nil {
 		loop.Close()
 	}
-	if handle != nil {
-		_ = handle.Close()
-	}
-	if store != nil {
-		_ = store.Close()
+	_ = releaseLocalSessionResources(lease, handle, store)
+	for _, retained := range parked {
+		_ = retained.release()
 	}
 }
 
@@ -1726,37 +1778,40 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 	}
 	empty := c.persistent && c.dirty == nil && c.record.CommittedUserTurns == 0 && len(c.record.PreferenceReceipts) == 0 && len(c.record.FileReceipts) == 0 && c.record.TitleSource != "manual"
 	var shutdownErr error
+	if c.ownsLocalExec && c.localExec != nil {
+		shutdownErr = closeLocalExecutionManager(ctx, c.localExec)
+	}
 	if c.persistent && !empty {
 		previousLifecycle := c.record.Lifecycle
 		c.record.Lifecycle = "closed"
 		if err := c.saveCheckpointLocked(ctx, c.dirty != nil); err != nil {
 			c.record.Lifecycle = previousLifecycle
-			shutdownErr = checkpointPersistenceError(err)
+			shutdownErr = errors.Join(shutdownErr, checkpointPersistenceError(err))
 			c.saveFailed = shutdownErr
 		}
 	}
 	loop, handle, store := c.loop, c.handle, c.store
+	lease, parked := c.localSessionLease, c.takeParkedLocalSessionsLocked()
 	sessionID, storageID, revision := c.record.SessionID, c.record.StorageID, c.record.RecordRevision
-	c.handle, c.store = nil, nil
+	c.handle, c.store, c.localSessionLease = nil, nil, nil
 	c.mu.Unlock()
 
 	if loop != nil {
 		loop.Close()
 	}
-	if handle != nil {
-		if err := handle.Close(); err != nil && shutdownErr == nil {
-			shutdownErr = err
-		}
-	}
 	if empty && store != nil {
-		if err := store.Delete(ctx, agentsession.DeleteTarget{SessionID: sessionID, StorageID: storageID, ExpectedRecordRevision: revision}); err != nil && shutdownErr == nil {
-			shutdownErr = err
+		// Empty Sessions have no prepared borrower: unlock before deletion, but
+		// keep their store alive until Delete has completed.
+		if err := handle.Close(); err != nil {
+			shutdownErr = errors.Join(shutdownErr, err)
+		}
+		if err := store.Delete(ctx, agentsession.DeleteTarget{SessionID: sessionID, StorageID: storageID, ExpectedRecordRevision: revision}); err != nil {
+			shutdownErr = errors.Join(shutdownErr, err)
 		}
 	}
-	if store != nil {
-		if err := store.Close(); err != nil && shutdownErr == nil {
-			shutdownErr = err
-		}
+	shutdownErr = errors.Join(shutdownErr, releaseLocalSessionResources(lease, handle, store))
+	for _, retained := range parked {
+		shutdownErr = errors.Join(shutdownErr, retained.release())
 	}
 	c.mu.Lock()
 	c.shutdownErr = shutdownErr

@@ -181,7 +181,20 @@ func (c *Controller) ListSessions(ctx context.Context, request SessionListReques
 	if !gate.Allowed && gate.Code != SwitchBlockUnknownOutcome {
 		return nil, ErrSwitchUnavailable
 	}
-	return listSessionItems(ctx, store, workspaceID, currentID, currentStorageID, request, c.limits)
+	items, err := listSessionItems(ctx, store, workspaceID, currentID, currentStorageID, request, c.limits)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := range items {
+		// Locked means unavailable to this picker. Our parked owner is resumable
+		// without reacquiring its lock; external selectors still see it locked.
+		if c.parkedLocalSessions[items[i].Summary.SessionID] != nil {
+			items[i].Summary.Locked = false
+		}
+	}
+	return items, nil
 }
 
 func listSessionItems(ctx context.Context, store *agentsession.Store, workspaceID, currentID, currentStorageID string, request SessionListRequest, limits agentsession.Limits) ([]SessionListItem, error) {
@@ -333,6 +346,12 @@ func (c *Controller) DeleteSession(ctx context.Context, target agentsession.Dele
 	if target.SessionID != "" && target.SessionID == c.record.SessionID || target.StorageID != "" && target.StorageID == c.record.StorageID {
 		c.mu.Unlock()
 		return ErrCurrentSession
+	}
+	for owner, lease := range c.parkedLocalSessions {
+		if target.SessionID == owner || target.StorageID != "" && target.StorageID == lease.storageID {
+			c.mu.Unlock()
+			return agentsession.ErrInUse
+		}
 	}
 	store := c.store
 	c.mu.Unlock()

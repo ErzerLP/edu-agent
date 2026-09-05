@@ -3,6 +3,7 @@ package agentloop
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
@@ -202,11 +203,22 @@ func (s *Session) clearPendingAfterResolution() {
 }
 
 func (s *Session) preferenceCompletionFallback(events []Event, _ error) (Result, error) {
+	s.appendMu.Lock()
+	s.sanitizeIncompleteToolCallsLocked(s.currentTurnID)
 	text := "长期偏好已保存；Agent后续回答暂时失败，你可以继续提问。"
+	if turn := s.turns[s.currentTurnID]; turn != nil && len(turn.LocalTaskIDs) > 0 {
+		text += " 本轮还操作了本地任务：" + strings.Join(turn.LocalTaskIDs, "、") + "；请查询真实状态，不会自动重跑。"
+	}
 	message := modelclient.Message{Role: "assistant", Content: text}
-	if err := s.appendCapturedMessage(s.currentTurnID, message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
+	if err := s.appendCapturedMessageLocked(s.currentTurnID, message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {
+		s.appendMu.Unlock()
+		if s.hasLocalEffects(s.currentTurnID) {
+			return s.localExecutionCompletionFallback(s.currentTurnID, events)
+		}
 		return Result{}, err
 	}
-	s.finishSuccessfulTurn()
+	s.finishSuccessfulTurnLocked()
+	s.appendMu.Unlock()
+	s.afterSuccessfulTurn()
 	return Result{Events: events, Text: text}, nil
 }

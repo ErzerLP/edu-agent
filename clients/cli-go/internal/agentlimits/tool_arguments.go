@@ -10,7 +10,7 @@ const (
 // and metadata. Unknown tools keep the smaller limit, not the file-write limit.
 func ToolArgumentsBytes(name string) int {
 	switch name {
-	case "write", "edit":
+	case "write", "edit", "shell", "task":
 		return MaxFileMutationArgumentsBytes
 	default:
 		return MaxToolCallArgumentsBytes

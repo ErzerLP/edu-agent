@@ -28,7 +28,7 @@ func groupHasSideEffects(group []modelclient.Message) bool {
 	for _, message := range group {
 		for _, call := range message.ToolCalls {
 			switch call.Function.Name {
-			case "write", "edit", "archive", "mkdir", "copy", "move", "remember_preference":
+			case "shell", "task", "write", "edit", "archive", "mkdir", "copy", "move", "remember_preference":
 				return true
 			}
 		}

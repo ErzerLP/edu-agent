@@ -3,9 +3,9 @@ package agentlimits
 import "testing"
 
 func TestLargeArgumentsToolPolicy(t *testing.T) {
-	for _, name := range []string{"write", "edit", "read", "archive", "remember_preference", "WRITE", "unknown", ""} {
+	for _, name := range []string{"write", "edit", "shell", "task", "read", "archive", "remember_preference", "WRITE", "unknown", ""} {
 		want := 8192
-		if name == "write" || name == "edit" {
+		if name == "write" || name == "edit" || name == "shell" || name == "task" {
 			want = 65536
 		}
 		if got := ToolArgumentsBytes(name); got != want {

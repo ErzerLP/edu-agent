@@ -19,6 +19,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentui"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelsecret"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -54,6 +55,10 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 }
 
 func (a *App) runNewAgent(ctx context.Context, args []string) error {
+	args, localOptions, localErr := parseLocalExecutionOptions(args)
+	if localErr != nil {
+		return commandError("usage", "本地任务资源预算无效", "运行 edu-agent agent --help 查看任务资源参数", ExitInput)
+	}
 	set := newFlagSet("agent")
 	var workspacePath string
 	var noSave bool
@@ -111,6 +116,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
 			Workspace: workspaceExecutor, WorkspaceStatus: workspaceStatus,
+			LocalExec: localexec.New(localOptions),
 		},
 	}, effectiveNoSave)
 	if err != nil {
@@ -136,6 +142,10 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 		_, err := io.WriteString(a.Out, agentHelpText+"\n")
 		return err
+	}
+	args, localOptions, localErr := parseLocalExecutionOptions(args)
+	if localErr != nil {
+		return commandError("usage", "本地任务资源预算无效", "运行 edu-agent agent resume --help 查看任务资源参数", ExitInput)
 	}
 	target, last, all, workspacePath, err := parseAgentResumeArgs(args)
 	if err != nil {
@@ -211,6 +221,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
+			LocalExec: localexec.New(localOptions),
 		},
 	}, agentcontroller.ResumeOptions{
 		SessionID: selected.SessionID, CurrentWorkspace: workspacePath,
@@ -255,6 +266,10 @@ func (a *App) runAgentController(ctx context.Context, controller *agentcontrolle
 	shutdownErr := controller.Shutdown(shutdownCtx)
 	cancel()
 	if shutdownErr != nil {
+		var taskErr *localexec.Error
+		if errors.As(shutdownErr, &taskErr) {
+			return commandError(taskErr.Code, "本地任务清理未能确认完成", "检查相关进程；不要将此状态当作已全部停止，也不要自动重跑历史命令", ExitUnavailable)
+		}
 		return sessionCommandError(shutdownErr)
 	}
 	return uiErr
@@ -634,11 +649,17 @@ const agentHelpText = `用法：
   --no-save         仅当前新 Session 不保存；不会改变默认设置
   --last            恢复当前工作区范围内最近更新且可恢复的 Session；不能与 SESSION 或 --all 合用
   --all             关闭当前工作区过滤；仅用于打开 picker 或配合显式 SESSION
+  --task-max-records N         当前客户端保留的任务记录数，默认256
+  --task-max-running N         同时运行的任务数，默认16
+  --task-output-limit BYTES    每任务 stdout+stderr 保留上限，默认8388608
+  --task-total-output-limit B  客户端总输出保留上限，默认67108864
   -h, --help        显示此帮助
 
 Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
 
-文件工具：list、read、search、write、edit。write/edit 默认逐次确认；在 TUI 中按 F4 可切换仅当前 Session 生效的 YOLO 模式。`
+文件工具：stat、find、list、read、search、write、edit、mkdir、copy、move、archive。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
+本地 Shell：正常 OS 用户权限，可访问工作区外路径和网络，不受文件确认模式限制。shell/task 支持长任务、stdin 和停止；默认不设置执行总超时。F5 查看内存输出、切换 stdout/stderr、翻页和停止，退出客户端会收尾受管任务。
+当前任务输出仅在进程内保留，配额缺口会标明，退出后不可恢复；持久完整输出及 PTY 尚未交付。上述任务资源参数同时适用于新建和 resume，不改变命令权限。`
 
 func (a *App) runModel(ctx context.Context, args []string) error {
 	if len(args) == 0 {

@@ -24,6 +24,9 @@ func (s *Session) tools() []modelclient.Tool {
 	if s.workspace != nil && s.workspaceStatus.Available {
 		result = append(result, s.workspace.Definitions()...)
 	}
+	if s.options.LocalExec != nil {
+		result = append(result, localExecutionTools()...)
+	}
 	if s.options.ContextWindow <= 8192 {
 		result = compactToolProse(result)
 	}

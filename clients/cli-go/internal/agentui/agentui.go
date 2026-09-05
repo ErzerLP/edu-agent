@@ -190,6 +190,8 @@ type model struct {
 	contextUpdates         <-chan agentloop.ContextEvent
 	contextCancel          func()
 	sessionPicker          *sessionPickerModel
+	taskPanel              *localTaskPanel
+	taskEpoch              uint64
 	workspaceStatus        agentloop.WorkspaceStatus
 	learningStatus         agentloop.LearningStatus
 	learningLoaded         bool
@@ -269,6 +271,10 @@ func newModel(ctx context.Context, session Conversation, modelName string) model
 	} else {
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: fmt.Sprintf("工作区不可用（%s）；文件工具未启用，普通对话仍可使用。", safeSingleLineTerminalText(workspaceStatus.Code))})
 	}
+	if source, ok := session.(localTaskSource); ok && source.LocalExecutionAvailable() {
+		entries = append(entries, transcriptEntry{kind: entryNotice, text: "已启用正常本机 Shell：使用启动用户权限，可访问工作区外路径和网络，文件逐次确认/YOLO 不约束 Shell。F5 查看输出并停止任务；当前自动采集的输出仅保留在内存，退出后不可恢复。"})
+		input.Placeholder = "输入问题；可使用文件工具或正常本机 Shell"
+	}
 	entries = append(entries, durableTranscriptEntries(session)...)
 	if persistenceNotice != "" {
 		entries = append(entries, transcriptEntry{kind: entryNotice, text: persistenceNotice})
@@ -296,8 +302,18 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
+		if m.taskPanel != nil {
+			m.taskPanel.setPage(m.taskPanel.page, m.width, m.height)
+		}
 		m.refreshTranscript(false)
 		return m, nil
+	case localTaskMsg:
+		return m.handleLocalTaskMessage(msg)
+	case localTaskTick:
+		if m.taskPanel == nil || msg.generation != m.generation || msg.epoch != m.taskPanel.epoch || m.taskPanel.stopping {
+			return m, nil
+		}
+		return m, m.refreshLocalTasks()
 	case turnMsg:
 		if msg.generation != 0 && msg.generation != m.generation || msg.turnID != m.activeTurnID {
 			return m, nil
@@ -374,6 +390,11 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript(true)
 		return m, nil
 	case tea.MouseMsg:
+		if m.taskPanel != nil {
+			var cmd tea.Cmd
+			m.taskPanel.output, cmd = m.taskPanel.output.Update(msg)
+			return m, cmd
+		}
 		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -432,6 +453,8 @@ func (m *model) resetAfterSessionSwap(generation uint64) {
 	}
 	m.entries = append(m.entries, durableTranscriptEntries(m.session)...)
 	m.pending, m.pendingQuestion, m.pendingFileMutation, m.selector, m.sessionPicker = nil, nil, nil, nil, nil
+	m.taskPanel = nil
+	m.taskEpoch++
 	m.busy, m.stopping = false, false
 	m.turnSeq, m.activeTurnID, m.pendingFileTurnID = 0, 0, 0
 	m.clearActiveTurn()
@@ -457,6 +480,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.sessionPicker != nil {
 		intent := m.sessionPicker.handleKey(msg, m.manager)
 		return m.handleSessionPickerIntent(intent)
+	}
+	if m.taskPanel != nil {
+		return m.handleLocalTaskKey(msg)
+	}
+	if key == "f5" {
+		if source, ok := m.session.(localTaskSource); ok && source.LocalExecutionAvailable() {
+			m.taskEpoch++
+			m.taskPanel = newLocalTaskPanel(m.taskEpoch, m.width, m.height)
+			m.input.Blur()
+			return m, m.refreshLocalTasks()
+		}
+		m.status = "本地任务管理不可用"
+		return m, nil
 	}
 	if key == "f2" {
 		if m.manager == nil {
@@ -1246,6 +1282,9 @@ func (m model) View() string {
 		contentWidth := max(minimumWidth, m.width-horizontalPadding)
 		body := m.sessionPicker.render(contentWidth, m.height)
 		return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
+	}
+	if m.taskPanel != nil {
+		return m.taskPanel.render(m.width, m.height)
 	}
 	mainWidth := max(20, m.viewport.Width)
 	main := lipgloss.JoinVertical(lipgloss.Left,

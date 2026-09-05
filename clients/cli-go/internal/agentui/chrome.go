@@ -415,6 +415,14 @@ func (m model) contextPercentSummary() string {
 
 func (m model) renderFooterHints(width int) string {
 	variants := m.footerHintVariants()
+	if source, ok := m.session.(localTaskSource); ok && source.LocalExecutionAvailable() {
+		for _, hints := range variants {
+			withTasks := append([]footerHint{{key: "F5", action: "任务"}}, hints...)
+			if line := renderHints(withTasks); lipgloss.Width(line) <= width {
+				return line
+			}
+		}
+	}
 	for _, hints := range variants {
 		line := renderHints(hints)
 		if lipgloss.Width(line) <= width {

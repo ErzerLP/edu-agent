@@ -57,8 +57,7 @@ func (s *Session) ResolveFileMutation(ctx context.Context, callID string, resolu
 	if resolution == FileMutationDecline {
 		result := workspace.MutationDenied(prepared)
 		if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, result); err != nil {
-			s.discardTurn(turnID)
-			return Result{}, err
+			return s.finishAfterTurnFailure(turnID, events, err)
 		}
 		event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "用户拒绝了文件修改", Status: EventFailed, Detail: workspace.CodeAuthorizationDenied}
 		detail := fileActivityDetailFromPrepared(prepared)
@@ -119,6 +118,9 @@ func (s *Session) CancelPendingFileMutation(callID string) (Result, error) {
 	s.appendMu.Unlock()
 	if hasEffect {
 		return s.fileMutationCompletionFallback(turnID, events)
+	}
+	if s.hasLocalEffects(turnID) {
+		return s.localExecutionCompletionFallback(turnID, events)
 	}
 	s.discardTurn(turnID)
 	return Result{}, nil
@@ -197,6 +199,9 @@ func (s *Session) finishAfterTurnFailure(turnID string, events []Event, err erro
 	if effect, _ := s.fileEffectState(turnID); effect {
 		return s.fileMutationCompletionFallback(turnID, events)
 	}
+	if s.hasLocalEffects(turnID) {
+		return s.localExecutionCompletionFallback(turnID, events)
+	}
 	s.discardTurn(turnID)
 	return Result{}, err
 }
@@ -264,6 +269,9 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 			}
 		}
 		break
+	}
+	if len(turn.LocalTaskIDs) > 0 {
+		text += " 本轮还操作了本地任务：" + strings.Join(turn.LocalTaskIDs, "、") + "；请查询真实状态，不会自动重跑。"
 	}
 	message := modelclient.Message{Role: "assistant", Content: text}
 	if err := s.appendCapturedMessageLocked(turnID, message, text, SourceAssistant, AuthoritySessionStatement, FreshnessSessionCurrent, nil); err != nil {

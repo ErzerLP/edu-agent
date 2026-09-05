@@ -34,18 +34,11 @@ func (c *Controller) CommitSwitch(ctx context.Context, plan SwitchPlan, confirma
 	currentWorkspace := c.record.WorkspaceRoot
 	dependencies := Dependencies{
 		Model: c.model, Server: c.server, Provider: c.provider, LoopOptions: c.loopOptions,
-		WorkspaceRoot: currentWorkspace, Now: c.now,
+		WorkspaceRoot: currentWorkspace, Now: c.now, LocalExecShared: true,
 	}
-	store := c.store
 	c.mu.Unlock()
 
-	peer, err := store.Reopen(ctx)
-	if err != nil {
-		c.resetSwitching(baseGeneration)
-		return 0, err
-	}
-	dependencies.Store = peer
-	target, err := Resume(ctx, dependencies, ResumeOptions{
+	target, err := c.prepareSwitchTarget(ctx, dependencies, ResumeOptions{
 		SessionID: plan.SessionID, CurrentWorkspace: currentWorkspace, PrepareOnly: true,
 		ConfirmWorkspace: func(WorkspaceBinding) (bool, error) { return confirmation.Workspace, nil },
 	})
@@ -154,7 +147,7 @@ func (c *Controller) NewSession(ctx context.Context) (uint64, error) {
 	}
 	dependencies := Dependencies{
 		Store: peer, Model: c.model, Server: c.server, Provider: c.provider, LoopOptions: loopOptions,
-		WorkspaceRoot: binding.Root, WorkspaceBinding: &binding, Now: c.now,
+		WorkspaceRoot: binding.Root, WorkspaceBinding: &binding, Now: c.now, LocalExecShared: true,
 	}
 	c.mu.Unlock()
 
@@ -219,11 +212,22 @@ func (c *Controller) installPreparedTarget(target *Controller, baseGeneration ui
 		c.contextCancel = nil
 	}
 	oldLoop, oldHandle, oldStore := c.loop, c.handle, c.store
+	oldLease := c.localSessionLease
 	oldLoop.Close()
+	if oldLease != nil && c.localOwnerUnsettledLocked(c.localOwner) {
+		c.parkLocalSessionLocked(c.localOwner, oldLease)
+		oldLease, oldHandle, oldStore = nil, nil, nil
+	}
+	if parked := c.parkedLocalSessions[target.localOwner]; parked == target.localSessionLease && parked != nil {
+		delete(c.parkedLocalSessions, target.localOwner)
+		_ = parked.release() // The target's borrowed reference becomes active.
+	}
 
 	c.loop, c.handle, c.store = newLoop, target.handle, target.store
+	c.localSessionLease = target.localSessionLease
 	c.record, c.transcript, c.dirty = target.record, target.transcript, target.dirty
 	c.loopOptions, c.workspaceRoot = target.loopOptions, target.record.WorkspaceRoot
+	c.localExec, c.localOwner = target.localExec, target.localOwner
 	c.persistent, c.degradedReason, c.providerBlocked, c.resumed, c.prepared = target.persistent, target.degradedReason, target.providerBlocked, true, false
 	c.notices, c.pendingUser, c.saveFailed = append([]string(nil), target.notices...), "", target.saveFailed
 	c.generation++
@@ -231,17 +235,13 @@ func (c *Controller) installPreparedTarget(target *Controller, baseGeneration ui
 	generation := c.generation
 
 	target.loop, target.handle, target.store = nil, nil, nil
+	target.localSessionLease = nil
 	target.persistent = false
 	target.closed = true
 	target.mu.Unlock()
 	c.mu.Unlock()
 
-	if oldHandle != nil {
-		_ = oldHandle.Close()
-	}
-	if oldStore != nil {
-		_ = oldStore.Close()
-	}
+	_ = releaseLocalSessionResources(oldLease, oldHandle, oldStore)
 	c.startContextWorker()
 	return generation, nil
 }

@@ -428,7 +428,7 @@ func validateDirtyMarker(marker DirtyMarker) error {
 	}
 	if marker.BaseRevision == 0 || marker.TurnSequence == 0 || !validStableToken(marker.OperationClass, 128) ||
 		marker.StartedAt.IsZero() || !timeIsCanonical(marker.StartedAt) ||
-		marker.MayHaveSideEffect != (marker.Preference != nil || marker.File != nil || len(marker.FileJournal) != 0) {
+		marker.MayHaveSideEffect != (marker.Preference != nil || marker.File != nil || len(marker.FileJournal) != 0 || len(marker.LocalEffects) != 0) {
 		return ErrInvalid
 	}
 	if marker.Preference != nil && validatePreferenceWriteAhead(*marker.Preference) != nil {
@@ -436,6 +436,11 @@ func validateDirtyMarker(marker DirtyMarker) error {
 	}
 	if marker.File != nil && validateFileWriteAhead(*marker.File) != nil {
 		return ErrInvalid
+	}
+	// V7 local intents share the file/preference call-ID namespace. Their
+	// validator and frozen V6 decoder live in payload_local_execution.go.
+	if err := validateLocalEffects(marker, DefaultLimits().ReceiptCount); err != nil {
+		return err
 	}
 	return validateFileJournal(marker, DefaultLimits().ReceiptCount)
 }
@@ -899,6 +904,15 @@ func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
 			}
 			marker.File = &converted
 		}
+	case 6:
+		var payload dirtyPayloadV6
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		marker, err = upcastDirtyV6(payload)
+		if err != nil {
+			return DirtyMarker{}, err
+		}
 	case dirtySchemaVersion:
 		if err := decodeStrict(data, &marker, limit); err != nil {
 			return marker, err
@@ -909,7 +923,7 @@ func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
 	default:
 		return marker, ErrCorrupt
 	}
-	if version < dirtySchemaVersion && marker.Preference != nil && marker.File != nil {
+	if version < 6 && marker.Preference != nil && marker.File != nil {
 		return DirtyMarker{}, ErrCorrupt // The old single-slot contract was exclusive.
 	}
 	return marker, nil

@@ -1,0 +1,99 @@
+# Issue #1：本地工具能力交付计划（v2）
+
+状态：用户已确认方案并授权实施；本文件是实施设计，不表示各批次已经完成或通过验收。本次 ambient resume probe 返回 `none`，不自行启动或切换 Comet workflow；后续若进入 Runtime，以其正式 continuation 为准。
+
+## 用户结果与不变量
+
+补齐完整本机 Shell、可管理长任务/stdin/PTY、可继续访问的大输出、大文件范围读取与局部修改、多文件文本补丁和完整 diff、目录检索续页、递归复制、归档恢复与主动清理。支持 Linux/macOS，不扩大 Windows 承诺。
+
+Shell 使用启动客户端的 OS 用户权限，不增设命令白名单、工作区围栏、网络限制或默认逐命令审批。结构化文件工具原有 root/no-follow/expected_hash/授权/原子发布合同保持。文件确认模式不约束 Shell，工具说明与 TUI 必须披露。
+
+一次等待结束不等于命令结束；执行状态、控制能力和输出可用性分别报告。正常退出先停止受管任务并结算，再关闭资源；重启不重放命令、不向旧 PID 发信号。模型请求失败不能撤销或抹掉已发生的本地副作用。
+
+持久 Session 的长结果采用独立版本化加密记录，归属原 Session 并遵守其删除/密钥边界；不塞入 transcript、不保存原始调用参数、环境或 stdin。`--no-save` 自动采集的输出仅在内存保留，不创建临时历史文件；Shell 显式写文件不受此开关限制。
+
+## 优化决策
+
+- 普通较大文本采用完整读取、局部精确替换、完整候选和既有安全原子发布；预算与单次参数预算分离。超大文件使用 Shell/脚本，不先建设通用流式编辑引擎。
+- `write(content)` 保持兼容；超过单次参数预算的内容通过受管 Shell 的多次 stdin 输入或本地生成路径构造，验证必须覆盖累计输入超过 64 KiB，而不只验证短命令生成大文件。
+- patch 使用严格文本上下文和版本，不静默 fuzzy fallback。逐文件发布，不承诺跨文件原子事务或自动回滚；删除沿用归档。
+- 长结果存储仅负责追加、范围分页、检索、保留状态；不承担内容上传、执行或持久查询数据库。
+- 目录查询保存遍历状态，可限定游标仅在当前进程有效；失效、扫描不完整和结果未返回完不能混淆。
+- 不新增强制逐页审批，不默认自动清理历史或归档，不绕过已有文件副作用日志容量/持久化失败门禁。
+
+## 垂直交付单元
+
+| 单元 | 结果与范围 | 延期 | 退出标准 |
+| --- | --- | --- | --- |
+| C1 | Shell、客户端级受管任务、管道 stdin、状态/等待/停止、进程内输出分页、模型与 TUI 接入 | 持久完整输出、PTY | 正常管道/重定向/外部 cwd/env；等待返回不杀进程；直接 UI 可看/停任务；>64 KiB 多次输入；子进程取消；失败 turn 不遗失任务事实 |
+| C2 | 完整输出加密留存、分页检索、恢复事实与可用性 | PTY 重附着/守护进程 | 长结果不依赖 transcript；配额/缺口可见；重启读已保存范围，未知不重跑；no-save 零自动输出落盘 |
+| C3 | PTY 输入、中断、EOF、resize | Windows、跨进程重附着 | 真实终端程序持续交互和结束，终端流与管道区别正确 |
+| C4 | >1 MiB 范围读与长行续读 | GB 级低 I/O 承诺 | 后半文件可读，版本变化可见，完整 hash 不冒充局部 hash |
+| C5 | 大文本局部 edit | 通用流式替换引擎 | 多处精确替换、失败不发布、版本复核和 BOM/换行/权限兼容 |
+| C6 | 多文件 patch 与全部修改工具完整 diff | 二进制 patch、Git index、跨文件事务 | 多 hunk 可续览；逐文件结果完整；无新增逐页审批 |
+| C7 | list/find/search 续扫续页 | 持久查询数据库、全局快照 | >2000 项可继续；扫描/结果/遗漏/失效准确 |
+| C8 | 递归和较大二进制 copy | 跟随源链接、完整 ACL/xattr | >32 MiB 文件可复制；冲突/源变化/部分完成可核对 |
+| C9 | 定位并恢复已有归档 | 自动推断不可信原路径 | 默认不覆盖，可信回执或显式目标，实际位置清楚 |
+| C10 | 用户发起归档清理 | 自动过期、后台清理 | 不跟随链接、逐项真实结算，不将逻辑大小冒称释放空间 |
+
+C2/C3 依赖 C1；C5 复用 C4；C6 复用 C2/C5；C8/C9 复用 C7；C10 复用归档定位。默认一次一个写入批次，不能以底层函数或 mock 代替完整生产入口。
+
+## C1 管理器边界
+
+`internal/localexec` 只拥有本机进程和进程内输出，不导入 agentloop/controller/workspace/store。controller 注入客户端级 manager 和稳定 owner；Session 关闭/切换不直接销毁共享 manager。实际客户端 shutdown 才 Close。
+
+计划 API：
+
+- `New(Options) *Manager`
+- `Start(ctx, owner, callID, StartArgs) (Snapshot, error)`：同 owner+callID 去重；ctx 只约束启动/调用等待，不作为进程生命期。
+- `Status(owner, taskID) (Snapshot, error)`、`List(owner) []Snapshot`
+- `Wait(ctx, owner, taskID, duration) (Snapshot, error)`：等待取消不停止任务。
+- `Read(owner, taskID, stream, offset, limit) (OutputPage, error)`：stdout/stderr 独立字节偏移，非破坏读取。
+- `WriteInput(ctx, owner, taskID, data) (InputResult, error)`、`CloseInput(owner, taskID) error`
+- `Stop(ctx, owner, taskID) (Snapshot, error)`、`Close(ctx) error`
+
+StartArgs 包含 command/cwd/shell/env（覆盖或删除）/stdin（是否保持管道打开）/timeout_ms（0 无总超时）。非交互非 login，正常 OS 路径/权限，无客户端额外围栏。失败返回稳定 code，不把 raw OS error/命令/env 放入错误或日志。仅支持 Linux/macOS，其他平台明确 unsupported。
+
+Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/时间/控制能力/输出已接收与保留量/缺口/清理不完整标志；没有可恢复执行对象。OutputPage 保留原字节对应的 offset/next_offset（模型对非法 UTF-8/不安全控制字符使用 base64；TUI 安全文本呈现），工具投影若缩短必须同步调整游标或返回原位置。读取水位随运行增长；配额后保留已有前缀并继续排空，不能无限增长或自动删旧数据。默认预算集中可注入：256 个任务记录、16 个并发任务、每任务 8 MiB 输出、总 64 MiB 输出；拒绝额外启动前无副作用。停止宽限默认 2 秒，所有等待和输入受有界调用 context 控制。
+
+进程组独立，停止先 TERM 再 KILL，报告可证明的 group 清理结果；主动脱离组的进程不作绝对清理承诺。主进程退出与输出 EOF/组内子进程收尾分开，不让继承管道的子进程造成无限 Wait。stdin 默认关闭，显式 stdin=true 后才保持输入以支持多次写入；取消输入不能谎称全部已写或自动重传。
+
+## 验证与证据
+
+按 docs/development/testing-strategy.md，从相关具名测试开始，通过后继续生产接入。稳定 C1 才运行受影响包与定向 race/端到端；不运行服务端、PostgreSQL、Compose 或付费模型。Linux 本机子进程证据不替代 macOS 原生证据。未运行/失败/环境限制如实记录，不连续重跑无变化命令。
+
+## 实施记录
+
+- 初始工作区：main@b65ad72，干净。
+- C1 已实现并通过 Linux 批次门禁；C2–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+
+### C1：已实现的垂直路径
+
+`command` 创建客户端级 localexec manager → `agentcontroller` 绑定 Session owner/写入 dirty v7 意图 → `agentloop` 注册并执行 shell/task、专用预算投影 → 模型获得任务状态和非破坏输出字节页；F5 经 controller 直接读/停，不依赖 provider。原始调用参数及输出正文不写入稳定 history/context ledger。失败轮次保留任务事实，后台任务不会随模型失败被撤销。
+
+切走仍有未收尾任务的 Session 时，以引用计数 lease 同时保留原 handle/store 及跨进程锁；切回借用 `Handle.Load` 并重新走正常预检，不解锁重开。失败目标只释放借用引用。每客户端至多一个按需 reaper，在任务 supervisor 退休后释放闲置 lease；退出先完成任务收尾，再释放当前/parked 资源。外部恢复/删除保持拒绝，本客户端可安全切回。无后台任务时保持既有切换路径。
+
+小窗口保持所有工具及完整 schema，仅采用更紧凑的系统说明；不提高用户的4096配置或削弱参数/授权校验。实际覆盖4096窗口中的真实Shell调用及后续模型回复。
+
+### C1：运行证据与修正
+
+环境：Go1.26.6，Linux/amd64。以下 Go 命令在 `clients/cli-go` 执行：
+
+- 全包门禁：`go test -count=1 -timeout=120s ./internal/localexec ./internal/agentlimits ./internal/agentsession ./internal/agentloop ./internal/agentcontroller ./internal/agentui ./internal/command`。首次 localexec/agentlimits/agentloop/agentcontroller/agentui 通过；发现两处本次引入的兼容问题：v5迁移测试仍固定期待v6，以及新增系统说明挤满4096窗口。
+- 修正保留旧payload字节和严格旧字段验证，只将迁移后的目标版本断言改为当前dirty版本；小窗口缩短冗余说明而不删工具或改schema/预算。分别通过 `TestJournalDirtyV5MigrationFreezesOldShapeAndPreservesBytes`、`TestLocalExecutionSmallContextKeepsCompleteToolSet`、`TestAgentLaunchPassesContextCompactionMode`。
+- 受影响包重验：`go test -count=1 -timeout=120s ./internal/agentsession ./internal/agentloop ./internal/agentcontroller ./internal/command` 全部通过；复用未失效的内核/agentlimits证据。任务面板补充空历史可用性说明后，具名测试及 `go test -count=1 -timeout=60s ./internal/agentui` 通过。
+- `go vet` 上述七个包通过；UI最后一处呈现变更后单独重验vet通过。
+- `go test -race -count=1 -timeout=90s ./internal/agentloop ./internal/agentcontroller -run '^(TestLocalExecution|TestLocalSessionLease)'` 通过；复用内核未变动时的 `go test -race -count=1 -timeout=60s ./internal/localexec` 通过证据，不重跑全仓race。
+- 真实进程场景覆盖管道/重定向、外部cwd、环境覆盖/删除、非零退出、启动失败、超时、子进程停止、配额和分页、累计160KiB stdin、取消等待、模型失败保留事实，以及加密Session中后台任务跨Session往返/锁/删除/退出。UI测试覆盖provider忙时直接读停、独立游标、安全呈现及过期响应隔离。
+- Linux完整CLI构建及 `version` 运行通过；Darwin/arm64完整CLI交叉构建通过。构建产物位于 `/tmp/edu-agent-c1-build.7dpDCk`，不纳入仓库。
+- `git diff --check` 通过；会话范围 `lens_diagnostics(mode=all,severity=error)` 对已诊断85文件报告0错误，不是全项目扫描。旧store_helpers增量undefined告警已核实为陈旧诊断，相关定义/迁移测试及最新文件检查均有效。
+
+相关七个包全部Go文件与go.mod/go.sum按路径排序后sha256列表的汇总摘要：`3dd077fa2065d88147e6fb6ae93fab68f899833f9b2345e45943529339f186c1`。最终文档/解释性注释不改变已验证运行行为。
+
+### C1：保留限制与后续
+
+- macOS尚无原生运行证据，Darwin waitid/进程组机制必须在受支持macOS runner完成原生验证；交叉构建不是运行通过。未扩大Windows支持。
+- 不保证主动setsid脱离进程组的进程被清理；孤儿僵尸或无法确认EOF明确报告cleanup/output不完整，不制造成功。
+- C1自动采集输出仅内存保留；重启控制/输出不可访问不代表旧进程仍运行或已成功结束。当前F5明确显示该限制，不自动重跑。
+- 未运行服务端、PostgreSQL、Compose、付费模型、全平台矩阵或最终独立Verifier；本批次没有相关服务端/数据库改动，macOS及整体验收证据仍待对应边界。
+- 下一写入批次为C2（加密完整输出、分页检索与恢复）；PTY和文件能力仍按上表逐批实现。

@@ -18,7 +18,7 @@ const (
 	indexSchemaVersion           = 1
 	projectionSchemaVersion      = 1
 	dirtyContainerSchemaVersion  = 1
-	dirtySchemaVersion           = 6
+	dirtySchemaVersion           = 7
 	transcriptSchemaVersion      = 1
 	envelopeSchemaVersion        = 1
 )
@@ -352,6 +352,15 @@ type DirtyMarker struct {
 	Preference        *PreferenceWriteAhead `json:"preference,omitempty"`
 	File              *FileWriteAhead       `json:"file,omitempty"`
 	FileJournal       []FileJournalEntry    `json:"file_journal,omitempty"`
+	LocalEffects      []LocalEffectIntent   `json:"local_effects,omitempty"`
+}
+
+// LocalEffectIntent is a non-executable write-ahead fact. It never contains
+// command text, arguments, environment, stdin, credentials or a reusable PID.
+type LocalEffectIntent struct {
+	ToolCallID string `json:"tool_call_id"`
+	Operation  string `json:"operation"`
+	TaskID     string `json:"task_id,omitempty"`
 }
 
 // FileJournalEntry retains an earlier WAL and, when available, its executor

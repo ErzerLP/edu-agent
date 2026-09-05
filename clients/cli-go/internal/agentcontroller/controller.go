@@ -1007,6 +1007,9 @@ func (c *Controller) saveRecordLocked(ctx context.Context, consumeDirty bool) er
 		if err := c.mergeFileJournalLocked(*c.dirty); err != nil {
 			return err
 		}
+		if err := c.preserveLocalCallIdentitiesLocked(ctx, c.dirty.LocalEffects); err != nil {
+			return err
+		}
 	}
 	c.saving.Store(true)
 	defer c.saving.Store(false)
@@ -1786,6 +1789,10 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 	}
 	hasLocalTaskEvidence := c.localExec != nil && len(c.localExec.List(c.localOwner)) != 0 || c.localOutputErr != ""
 	empty := c.persistent && !hasLocalTaskEvidence && c.dirty == nil && c.record.CommittedUserTurns == 0 && len(c.record.PreferenceReceipts) == 0 && len(c.record.FileReceipts) == 0 && c.record.TitleSource != "manual"
+	if empty {
+		identities, err := c.handle.ListArtifacts(ctx, localCallPrefix)
+		empty = err == nil && len(identities) == 0
+	}
 	var shutdownErr error
 	if c.ownsLocalExec && c.localExec != nil {
 		shutdownErr = closeLocalExecutionManager(ctx, c.localExec)

@@ -163,6 +163,9 @@ func (s *Session) beforeLocalExecution(ctx context.Context, callID, operation, t
 		return errors.New("local_execution_not_saved")
 	}
 	if err := sink.BeforeLocalExecution(ctx, LocalExecutionIntent{ToolCallID: callID, Operation: operation, TaskID: taskID}); err != nil {
+		if errors.Is(err, ErrLocalCallRecorded) {
+			return ErrLocalCallRecorded
+		}
 		return errors.New("local_execution_not_saved")
 	}
 	return nil
@@ -197,6 +200,9 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 		}
 		if err := s.beforeLocalExecution(ctx, call.ID, "shell", ""); err != nil {
 			result.Code = "local_execution_not_saved"
+			if errors.Is(err, ErrLocalCallRecorded) {
+				result.Code = "local_execution_outcome_unknown"
+			}
 			return result
 		}
 		snapshot, err := manager.Start(ctx, owner, call.ID, args)
@@ -262,6 +268,10 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 			operation = "task_input"
 		}
 		if err := s.beforeLocalExecution(ctx, call.ID, operation, args.TaskID); err != nil {
+			if errors.Is(err, ErrLocalCallRecorded) && args.Action != "stop" {
+				result.Code = "local_execution_outcome_unknown"
+				return result
+			}
 			result.NotSaved = true
 			if args.Action != "stop" {
 				result.Code = "local_execution_not_saved"

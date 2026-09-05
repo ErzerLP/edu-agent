@@ -22,6 +22,9 @@ func (c *Controller) BeforeLocalExecution(ctx context.Context, intent agentloop.
 	if c.saveFailed != nil {
 		return c.saveFailed
 	}
+	if err := c.checkLocalCallIdentityLocked(ctx, intent.ToolCallID); err != nil {
+		return err
+	}
 	if err := c.ensureDirtyLocked(); err != nil {
 		return err
 	}

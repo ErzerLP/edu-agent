@@ -55,7 +55,7 @@ F5按 **i** 进入PTY行式输入（不是原始按键直通/全屏终端模拟�
 
 pipe输出 stdout/stderr 各自有序，PTY为单一合并流；内存预算保留已有前缀，持久 Session 另以独立加密产物保存完整的可保留范围，超过内存的部分仍可分页读取。达到保存预算或写失败会继续排空管道并标明缺口，不自动淘汰或暗中杀命令。任务状态、当前可读量、已保存量和完整性分别显示，退出码为0不等于完整输出已保存。新建与 `resume` 均可指定 `--task-max-records`（默认256）、`--task-max-running`（默认16）、`--task-output-limit`（每任务内存默认8388608字节）、`--task-total-output-limit`（客户端内存默认67108864字节）和 `--task-saved-output-limit`（每任务保存正文默认134217728字节）。产物另有集中可注入的密文上限：每Session256MiB、每profile1GiB及8192个产物文件；不占用聊天record的64MiB配额。
 
-`task search` 使用 `stream/needle/offset/limit` 做区分大小写的字面检索，needle最多512字节，limit为命中数（最多100），单次扫描最多1MiB，用 `next_offset` 继续；跨分段匹配和输出缺口都会明确处理。模型与F5检索游标彼此独立。稳定历史仍只保存任务元数据，不保存原始命令/env/stdin或输出正文；原始输出只进入认证加密的独立产物，不自动进入标题/聊天压缩。重启读取已保存范围，不恢复进程控制；缺少最终结算的任务报告未知，不重跑或向旧PID发信号。Session delete/clear同时清理关联产物并遵守原密钥撤销边界；具有任务产物的零已提交轮次Session不会误当空Session自动删除。`--no-save` 不创建自动输出临时文件，Shell 自身的显式写文件仍有效。C1–C3已提供相应能力，本段不表示整个issue#1已交付。见 [实施计划](../../docs/design/client-local-tools-delivery.md)。
+`task search` 使用 `stream/needle/offset/limit` 做区分大小写的字面检索，needle最多512字节，limit为命中数（最多100），单次扫描最多1MiB，用 `next_offset` 继续；跨分段匹配和输出缺口都会明确处理。模型与F5检索游标彼此独立。稳定历史仍只保存任务元数据，不保存原始命令/env/stdin或输出正文；消费任务WAL前另外保存认证加密的调用身份摘要，即使输出保存失败、首轮未提交即中断，也不能以相同调用ID再次执行。标记失败保留WAL，合法新ID不被永久阻断；身份标记使用同一Session产物配额并随Session delete/clear清理。原始输出只进入认证加密的独立产物，不自动进入标题/聊天压缩。重启读取已保存范围，不恢复进程控制；缺少最终结算的任务报告未知，不重跑或向旧PID发信号。Session delete/clear同时清理关联产物并遵守原密钥撤销边界；具有任务产物的零已提交轮次Session不会误当空Session自动删除。`--no-save` 不创建自动输出临时文件，Shell 自身的显式写文件仍有效。C1–C3已提供相应能力，本段不表示整个issue#1已交付。见 [实施计划](../../docs/design/client-local-tools-delivery.md)。
 
 ### 本地工作区与文件工具
 

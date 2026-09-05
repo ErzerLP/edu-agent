@@ -153,3 +153,20 @@ Go1.26.6/Linux amd64；以下Go命令在clients/cli-go运行。
 - `git diff --check`通过；mode=all的本会话86个已诊断文件无error，不是项目全扫。开发时缺失定义的旧告警经重读、primary LSP和实际编译确认已解决，没有以重复定义或忽略真实错误通过门禁。
 
 上述五包Go文件及go.mod/go.sum按路径排序的sha256列表汇总：`4d60f6fa0ef56e365f68b81f905b4514e9fb990bd23081ce349d23ed4a9c17a5`。C4–C10尚未交付，最终整体恢复/隐私复核与macOS原生证据仍待完成。
+
+## C1/C2恢复边界修正：WAL-only调用身份
+
+在继续文件批次前，最小复现确认：首轮任务WAL已保存、Shell实际执行，但输出metadata写失败，随后在稳定checkpoint之前中断；恢复只保留计数notice、消费WAL，协议检查又无已提交ToolCall，原call_id可被重新执行。真实临时计数文件从`x`变为`xx`，并非测试环境失败。
+
+修正不改变“不重放”的既有用户范围，不新增进程重附着：
+
+- 消费含LocalEffects的WAL前，必须确认每个调用身份的独立加密标记。逻辑名`local_call_<sha256>`、v1固定正文只含版本及摘要，不存原调用ID、命令、env、stdin或PID；复用agentsession产物认证、配额、generation与删除边界，record/dirty schema保持不变。
+- 标记只能按确认后的相同正文幂等复用。部分或未知保存失败不消费WAL、不重跑操作；后续恢复可认证已发布前缀。损坏/未来标记失败关闭，不覆盖旧证据。
+- BeforeLocalExecution识别已记录身份；工具返回operation_outcome=unknown/replay=false，无进程记录时明确state unknown和输出不可访问，不把任务仍在running与旧输入结果未知混为一谈。合法新ID仍可运行；stop安全路径不被记录失败阻断。
+- 零已提交轮次但拥有身份标记的Session不自动当空Session删除；no-save不创建标记。人工PTY输入仍不属于模型重放队列。
+
+验证：`go test -count=1 -timeout=60s ./internal/agentcontroller ./internal/agentloop -run '^TestLocalRecovery'`相关场景通过；故障fixture先漏建active WAL而失败，补齐真实MarkDirty前置条件后定向通过，未放宽断言。覆盖二次恢复/立即关闭保留、原ID不执行、新ID可执行、失败保留WAL及已确认标记、格式/隐私与未知投影。
+
+`go test -count=1 -timeout=120s ./internal/agentcontroller ./internal/agentloop`、两包vet及`go test -race -count=1 -timeout=90s ./internal/agentcontroller ./internal/agentloop -run '^(TestLocalRecovery|TestLocalSessionLease|TestPTY)'`均通过。Linux完整CLI构建/version运行通过，产物`/tmp/edu-agent-recovery-build.etq5GY/edu-agent`不提交；无新增平台接口，C3平台机制证据复用，不宣称本次运行了macOS原生。mode=all检查本会话39个已诊断文件无error，diff检查通过。
+
+两包Go文件及go.mod/go.sum排序sha256列表汇总：`5b43fafb6879f4236f4ee814498a095b3a5b9125ef4acbfe85e6128326a66f03`。后续继续C4，不将此修正扩成独立测试基础设施项目。

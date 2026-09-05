@@ -147,6 +147,12 @@ func (result localToolResult) value(payloadLimit, itemLimit int, minimal, histor
 	if result.Code != "" {
 		value["error"] = result.Code
 	}
+	if result.Code == "local_execution_outcome_unknown" {
+		value["operation_outcome"], value["replay"] = "unknown", false
+		if result.Snapshot == nil {
+			value["state"], value["controllable"], value["availability"] = "unknown", false, "unavailable"
+		}
+	}
 	if result.NotSaved {
 		value["saved"] = false
 	}

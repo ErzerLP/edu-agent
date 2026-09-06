@@ -59,15 +59,29 @@ pipe输出 stdout/stderr 各自有序，PTY为单一合并流；内存预算保�
 
 ### 本地工作区与文件工具
 
-Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`mkdir` 目录创建、`copy` 普通文件流式复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供结构化永久 delete 或 patch。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供结构化永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
 
 `stat` 默认只读元数据，入口版本不代表文件内容或整个目录快照；可选 `hash=true` 只在1MiB内计算普通文件原始SHA256，不返回正文。`find` 支持basename或工作区相对路径glob，独立`**`跨零或多层；默认保留隐藏文件、跳过归档树、不读正文，并明确标记扫描/结果截断。详见 [stat](../../docs/design/client-file-stat.md) 和 [find](../../docs/design/client-file-find.md)。
 
 `search` 现在支持 `output=content|files|count`：文件列表/统计模式不返回正文，不完整时以 `counts_partial` 标记局部结果；`context=1..3` 可为content附加去重、有界邻近行。新 `glob` 支持组件 `**`，不改变旧include/exclude语义。`find/search` 可显式设置 `respect_gitignore=true` 读取工作区内有界分层规则；默认仍不启用，错误规则不会被当作空规则扩大范围，ignore也不是权限保护。详见 [检索增强设计](../../docs/design/client-file-search-enhancement.md)。
 
-`write`/`edit`/`shell`/`task` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。`write` 仍限制为1MiB，预览/结果另有预算；不提供通用分块上传协议。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
+`write`/`edit`/`apply_patch`/`shell`/`task` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。`write` 仍限制为1MiB，预览/结果另有预算；不提供通用分块上传协议。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
 
-局部 `edit` 已支持独立预算内的大文本，默认原文件和完整候选各64MiB，可用 `--file-edit-limit BYTES` 配置，新建/resume/F2切换使用当前客户端设置。模型只提交最多32处精确唯一且不重叠的old_text/new_text及完整expected_hash；保留BOM、未修改原字节、替换换行、权限、授权、版本复核、WAL及原子发布。候选顺序构造，预算包含BOM和归一后的真实字节；仍全文读取/候选/发布，不承诺固定内存GB级编辑。超限可调预算或改用Shell脚本，write/stat.hash/search不随之扩大。预览仍有界且明确截断，不新增逐页审批；完整diff留C6。详见 [C5合同](../../docs/comet/specs/client-large-file-edit/spec.md)。
+局部 `edit` 已支持独立预算内的大文本，默认原文件和完整候选各64MiB，可用 `--file-edit-limit BYTES` 配置，新建/resume/F2切换使用当前客户端设置。模型只提交最多32处精确唯一且不重叠的old_text/new_text及完整expected_hash；保留BOM、未修改原字节、替换换行、权限、授权、版本复核、WAL及原子发布。候选顺序构造，预算包含BOM和归一后的真实字节；仍全文读取/候选/发布，不承诺固定内存GB级编辑。超限可调预算或改用Shell脚本，write/stat.hash/search不随之扩大。短预览有界且明确截断，不新增逐页审批；完整diff由下述独立产物保留。详见 [C5合同](../../docs/comet/specs/client-large-file-edit/spec.md)。
+
+#### 多文件补丁与完整差异
+
+`write/edit/apply_patch` 在授权前冻结并保留完整diff；无法完整生成或保留时不发布目标。远隔edit/patch修改生成多hunk，保留BOM、原换行及末尾无换行标记，不追求最小diff或固定内存流式算法。
+
+`apply_patch` 接受严格JSON的 `patch` 与 `expected_hashes`。补丁使用 `*** Begin Patch`/`*** End Patch`，支持 `*** Add File: PATH`（`+`正文）、`*** Update File: PATH`（裸`@@`及空格/`-`/`+`行）、`*** Delete File: PATH`（文本归档）；可用`*** End of File`约束EOF。`expected_hashes`必须且仅覆盖所有更新/删除文件，使用read获得的完整`sha256:`版本。拒绝Move、附加定位语法、输入no-newline标记、二进制、fuzzy以及歧义/重叠/路径冲突。
+
+最多16个文件，全部预检后一次授权；依次写每文件WAL、复核和发布，再保存真实结算。失败、冲突、取消或未知立即停止余项；已完成项不回滚，删除仍使用实际归档位置。完整逐项receipt保留原版本、执行器确认的结果版本、路径、归档位置、完成/未变更/未知/未尝试及独立保存错误。不存在可恢复批准或自动重放。
+
+**F6** 打开完整diff/receipt浏览器，待授权时优先选当前diff；`↑/↓`选产物，`PgUp/PgDn`按4096原始字节翻页，`Home`回首部，`/`检索、`n`续扫、`r`刷新，`Esc/F6`返回原对话/授权状态。人工查看不调用模型，不新增末页审批；原mkdir/copy/move门槛保持。模型用`artifact list/read/search`独立访问，读取/检索游标对应实际返回的原始字节；差异数据本身不证明已执行。
+
+持久Session使用与任务输出相同的Session-owned认证加密blob，diff/receipt有独立版本化目录；raw diff/patch参数不进入稳定聊天或自动标题。重启只读恢复、provider发送门禁及delete/clear密钥撤销不变。仅有孤儿片段不能冒认为完整结果，也不会作为空Session自动删除。`--no-save`只保留有界内存，退出不可恢复，不创建临时历史文件。任务与文件产物共享底层Session/profile密文配额，满额不自动淘汰。
+
+新建/resume/F2使用当前客户端资源设置：`--file-diff-limit`默认128MiB（同时为单产物上限）、`--file-patch-limit`默认64MiB（原文总量与候选总量分别约束）、`--artifact-memory-limit`默认256MiB、`--artifact-max-records`默认256条/Session。diff与内存预算最高1GiB、记录最高8192；单项新增仍受write预算，更新仍受edit预算。保存失败明确可见，不能用退出码、文件修改成功或短预览代表完整产物已保存。详见 [C6合同](../../docs/comet/specs/client-file-patch/spec.md)。
 
 `read` 已采用独立的完整读取预算，默认64MiB，可在新建或 `resume` 时传 `--file-read-limit BYTES`，F2切换/新建沿用当前客户端预算。例如 `edu-agent agent --workspace PATH --file-read-limit 134217728`。仍是安全全文读取、完整原始SHA256与有界行窗口，不是GB级固定内存/低IO实现；超过预算明确失败，可调预算或使用Shell。`offset/limit` 定位行，`byte_offset` 续读长行；恰在线尾的输入可规范化为下一行实际起点。必须按实际返回的 `next_offset/next_byte_offset` 并携带 `expected_hash` 连续读取；模型投影进一步缩短时也重算游标，不跳过未返回字节。`content_hash` 包含原始BOM/换行，`hash_scope=whole_file` 明确不是片段hash。读取预算不改变stat.hash/search/write的1MiB上限或edit的独立预算，也不扩大模型参数/结果预算；新旧版本不能静默混读。详见 [C4合同](../../docs/comet/specs/client-large-file-read/spec.md)。
 
@@ -77,11 +91,11 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 `move` 使用同样的三个字段，支持普通文件和整个目录（包括非空目录）；不读取正文、不限制为32MiB，内部链接随目录保留但不遍历。仅同文件系统、不覆盖、父目录必须存在；拒绝归档、自身后代和不安全大小写/身份别名，不以复制后删除兜底。入口版本不是子树快照，也不是跨进程CAS。详见 [move设计](../../docs/design/client-file-move.md)。
 
-`write`/`edit`/`mkdir`/`copy`/`move`/`archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
+`write`/`edit`/`apply_patch`/`mkdir`/`copy`/`move`/`archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
 
 `mkdir`、`copy`、`move` 的冻结预览用PgUp/PgDn完整分页，末页显示后才能批准。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。未进入稳定快照的文件日志受既有16KiB与32项回执容量约束，容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。record payload 保持v6，dirty payload升级为v7以记录不含可执行正文的本地任务操作意图；旧v6严格迁移并继续拒绝新字段，恢复从不重放文件或本地任务操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md)。
 
-删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；用户自行手动恢复或删除归档，磁盘占用不会自动释放。归档树禁止 `write/edit/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
+删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；用户自行手动恢复或删除归档，磁盘占用不会自动释放。归档树禁止 `write/edit/apply_patch/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
 
 归档底层实现支持 Linux/macOS/Windows 的不覆盖移动；当前变更的 macOS/Windows 证据为交叉编译，原生归档运行未验证，这不扩大整客户端既有平台支持范围。
 

@@ -254,6 +254,12 @@ func (s *Session) appendLocalToolResult(callID string, result localToolResult) e
 	allowed := min(max(32, s.currentToolResultBudget/max(1, s.currentToolResultShares)-30), max(32, s.currentToolResultBudget-s.currentToolResultTokens-6))
 	live := result.project(maxToolOutputBytes, func(text string) bool { return s.estimator.EstimateText(text) <= allowed }, false)
 	history := result.project(maxHistoryToolOutputBytes, nil, true)
+	return s.appendLocalDataProjectionLocked(callID, live, history)
+}
+
+// Caller holds appendMu; only live contains bounded body data. The stable
+// ledger and recall are always metadata, independent of the local data owner.
+func (s *Session) appendLocalDataProjectionLocked(callID, live, history string) error {
 	// The ledger (including its ModelMessage and recall) gets metadata only,
 	// not even the bounded live body. Raw output remains owned by localexec.
 	sourceMessage := modelclient.Message{Role: "tool", ToolCallID: callID, Content: history}
@@ -288,7 +294,7 @@ func (s *Session) normalizeLocalHistoryLocked(turnID string) {
 		}
 		for callIndex := range message.ToolCalls {
 			call := &message.ToolCalls[callIndex]
-			if isLocalExecutionTool(call.Function.Name) {
+			if isLocalPrivateTool(call.Function.Name) {
 				call.Function.Arguments = `{}`
 				localCalls[call.ID] = struct{}{}
 			}

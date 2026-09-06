@@ -112,8 +112,13 @@ func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorMo
 	if pending.Truncated {
 		body += "\n预览已按安全上限截断。"
 	}
+	title := "文件修改授权"
+	if pending.DiffID != "" {
+		title += " · F6完整差异"
+		body += "\n" + fileMutationArtifactSummary(pending.DiffID, pending.DiffBytes, pending.DiffSaved)
+	}
 	return &selectorModel{
-		kind: selectorFileMutation, title: "文件修改授权", body: body, copyReview: pending.Operation == "copy" || pending.Operation == "move" || pending.Operation == "mkdir",
+		kind: selectorFileMutation, title: title, body: body, copyReview: pending.Operation == "copy" || pending.Operation == "move" || pending.Operation == "mkdir",
 		options: []selectorOption{
 			{ID: string(agentloop.FileMutationApprove), Label: "允许此次修改", Description: "重新校验版本后只发布上方已冻结候选"},
 			{ID: string(agentloop.FileMutationDecline), Label: "拒绝此次修改", Description: "文件保持不变，并把 authorization_denied 返回模型"},

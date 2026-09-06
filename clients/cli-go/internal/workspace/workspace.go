@@ -27,6 +27,12 @@ func OpenWithLimits(path string, limits Limits) (*Workspace, error) {
 	if limits.EditFileBytes == 0 {
 		limits.EditFileBytes = limits.FileBytes
 	}
+	if limits.DiffBytes == 0 {
+		limits.DiffBytes = DefaultDiffBytes
+	}
+	if limits.PatchBytes == 0 {
+		limits.PatchBytes = DefaultPatchBytes
+	}
 	if err := validateLimits(limits); err != nil {
 		return nil, err
 	}
@@ -53,6 +59,8 @@ func validateLimits(limits Limits) error {
 	maxFileBytes := int64(^uint(0)>>1) - 1
 	if limits.ReadFileBytes < 1 || limits.ReadFileBytes > maxFileBytes ||
 		limits.EditFileBytes < 1 || limits.EditFileBytes > maxFileBytes ||
+		limits.DiffBytes < 1 || limits.DiffBytes > maxFileBytes ||
+		limits.PatchBytes < 1 || limits.PatchBytes > maxFileBytes ||
 		limits.ListEntries < 1 || limits.DirectoryScanEntries < limits.ListEntries || limits.ResultBytes < 1024 ||
 		limits.ReadLines < 1 || limits.FileBytes < 1 || limits.SearchMatches < 1 || limits.SearchFiles < 1 ||
 		limits.SearchBytes < limits.FileBytes || limits.SearchDepth < 1 || limits.SearchPreviewBytes < 32 || limits.SearchEntries < limits.SearchFiles ||

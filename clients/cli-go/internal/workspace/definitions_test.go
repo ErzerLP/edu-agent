@@ -9,6 +9,7 @@ import (
 
 func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 	expectedSchemas := map[string]string{
+		ToolPatch:   `{"type":"object","properties":{"patch":{"type":"string","minLength":1,"maxLength":65536},"expected_hashes":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}}},"required":["patch","expected_hashes"],"additionalProperties":false}`,
 		ToolMove:    `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`,
 		ToolCopy:    `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`,
 		ToolMkdir:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"parents":{"type":"boolean","default":false}},"required":["path"],"additionalProperties":false}`,
@@ -22,6 +23,7 @@ func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 		ToolEdit:    `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":65536},"new_text":{"type":"string","maxLength":65536}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`,
 	}
 	expectedDescriptions := map[string]string{
+		ToolPatch:   "Strict Begin/End Patch: Add File (+lines), Update File (bare @@, exact context/-/+), Delete File (archive); optional End of File; no move/no-newline markers. Hashes cover every update/delete only. Max 16 files, original/candidate totals 67108864 bytes each; preflight all, authorize once, publish sequentially without rollback.",
 		ToolMove:    "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.",
 		ToolCopy:    "Stream-copy a stat-versioned regular file up to 32MiB, including binary; keep source; absent destination, existing parent; no archive or links.",
 		ToolMkdir:   "Create a workspace directory; parents requires explicit true; no archive or links.",
@@ -76,6 +78,7 @@ func TestWorkspaceAllToolParsersRejectUnknownTrailingAndNonObjectJSON(t *testing
 	defer workspace.Close()
 
 	valid := map[string]string{
+		ToolPatch:   `{"patch":"*** Begin Patch\n*** Add File: new.txt\n+new\n*** End Patch","expected_hashes":{}}`,
 		ToolMove:    `{"source":"missing","destination":"moved","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 		ToolCopy:    `{"source":"missing","destination":"copy","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 		ToolMkdir:   `{"path":"new-dir"}`,
@@ -89,6 +92,7 @@ func TestWorkspaceAllToolParsersRejectUnknownTrailingAndNonObjectJSON(t *testing
 		ToolEdit:    `{"path":"missing.txt","expected_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","edits":[{"old_text":"old","new_text":"new"}]}`,
 	}
 	withUnknown := map[string]string{
+		ToolPatch:   `{"patch":"*** Begin Patch\n*** Add File: new.txt\n+new\n*** End Patch","expected_hashes":{},"force":true}`,
 		ToolMove:    `{"source":"missing","destination":"moved","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","force":true}`,
 		ToolCopy:    `{"source":"missing","destination":"copy","expected_version":"entry-v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","force":true}`,
 		ToolMkdir:   `{"path":"new-dir","unknown":true}`,

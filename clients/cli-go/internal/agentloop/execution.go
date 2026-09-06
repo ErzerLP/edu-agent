@@ -141,6 +141,17 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 		}
 		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: runningSummary, Status: EventRunning}, Phase: ActivityExecutingTool, File: initialFile})
 		switch call.Function.Name {
+		case "artifact":
+			output := s.executeArtifactTool(ctx, call)
+			if err := s.appendArtifactToolResult(call.ID, output); err != nil {
+				return Result{}, err
+			}
+			event := Event{ID: call.ID, Tool: call.Function.Name, Summary: "已读取独立长结果；不代表文件修改已执行", Status: EventSucceeded}
+			if output.Code != "" {
+				event.Status, event.Detail = EventFailed, output.Code
+			}
+			s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail})
+			events = append(events, event)
 		case "shell", "task":
 			output := s.executeLocalTool(ctx, call)
 			if err := s.appendLocalToolResult(call.ID, output); err != nil {
@@ -224,6 +235,15 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 					s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityStopped, StableCode: event.Detail, File: mergePreparedFileActivity(initialFile, prepared)})
 					return Result{}, preferContextError(ctx, toolErr)
 				}
+				diff, retentionErr := s.retainMutationArtifact(ctx, call.ID, prepared)
+				if retentionErr != nil {
+					prepared = nil
+					preparationResult = workspace.Result{
+						Publication: workspace.PublicationUnchanged,
+						Summary:     "完整差异未能保留；没有发布文件修改",
+						Value:       map[string]any{"error": artifactErrorCode(retentionErr), "publication": "unchanged"},
+					}
+				}
 				if prepared == nil {
 					if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, preparationResult); err != nil {
 						return Result{}, err
@@ -237,6 +257,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				}
 				if s.FileAuthorizationMode() == FileAuthorizationConfirm {
 					pending := pendingFileMutationFrom(call.ID, prepared)
+					pending.DiffID, pending.DiffBytes, pending.DiffSaved = diff.ID, diff.Bytes, diff.Saved
 					s.appendMu.Lock()
 					s.pendingKind = pendingFileMutation
 					s.pendingCalls = append([]modelclient.ToolCall(nil), calls...)

@@ -1681,8 +1681,9 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 	if len(model.requests) != 2 {
 		t.Fatalf("requests=%d", len(model.requests))
 	}
-	if model.requests[1].MaxTokens != 512 {
-		t.Fatalf("minimum-context workspace output reserve=%d", model.requests[1].MaxTokens)
+	request := model.requests[1]
+	if request.MaxTokens < 512 || session.estimator.EstimateRequest(request)+request.MaxTokens+divideRoundUp(4096*5, 100) > 4096 {
+		t.Fatalf("minimum-context workspace output reserve/budget invalid: %d", request.MaxTokens)
 	}
 	contents := map[string]string{}
 	for _, message := range model.requests[1].Messages {

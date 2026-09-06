@@ -16,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
@@ -52,6 +53,7 @@ type Session struct {
 	toolHistory                  map[string]string
 	toolReferences               map[string]*ServerReference
 	workspaceReferences          map[string]*WorkspaceReference
+	mutationArtifacts            map[string]localartifact.Info
 	currentToolResultTokens      int
 	currentToolResultBudget      int
 	currentToolResultShares      int
@@ -134,6 +136,7 @@ func New(model Model, server Server, options Options) (*Session, error) {
 	if options.LocalExec != nil && strings.TrimSpace(options.LocalExecOwner) == "" {
 		return nil, errors.New("local execution owner is required")
 	}
+	options = withArtifactDefaults(options)
 	status := options.WorkspaceStatus
 	if options.Workspace != nil {
 		status = options.Workspace.Status()
@@ -141,15 +144,18 @@ func New(model Model, server Server, options Options) (*Session, error) {
 	if !status.Available && status.Code == "" {
 		status.Code = workspace.CodeWorkspaceUnavailable
 	}
-	compactLocal := options.LocalExec != nil && options.ContextWindow <= 8192
+	compactWindow := options.ContextWindow <= 8192
+	compactLocal := options.LocalExec != nil && compactWindow
 	messages := []modelclient.Message{{Role: "system", Content: systemPrompt}}
 	if compactLocal {
 		messages[0].Content = compactLocalExecutionSystemPrompt
+	} else if compactWindow && status.Available && options.Workspace != nil {
+		messages[0].Content = compactCoreSystemPrompt
 	}
 	messageTurnIDs := []string{""}
 	if status.Available && options.Workspace != nil {
 		prompt := workspaceSystemPrompt
-		if compactLocal {
+		if compactWindow {
 			prompt = compactLocalWorkspaceSystemPrompt
 		}
 		messages = append(messages, modelclient.Message{Role: "system", Content: prompt})
@@ -174,6 +180,7 @@ func New(model Model, server Server, options Options) (*Session, error) {
 		toolHistory:             make(map[string]string),
 		toolReferences:          make(map[string]*ServerReference),
 		workspaceReferences:     make(map[string]*WorkspaceReference),
+		mutationArtifacts:       make(map[string]localartifact.Info),
 		currentToolResultBudget: clampInt(divideRoundUp(options.ContextWindow*8, 100), 512, 2048),
 	}
 	session.contextRuntime = newContextRuntime(model, options, estimator)
@@ -307,12 +314,12 @@ func (s *Session) appendTurnMessage(turnID string, message modelclient.Message) 
 		call := &message.ToolCalls[index]
 		for _, previous := range s.messages {
 			for _, old := range previous.ToolCalls {
-				if call.ID == old.ID && (isLocalExecutionTool(call.Function.Name) || isLocalExecutionTool(old.Function.Name)) {
+				if call.ID == old.ID && (isLocalPrivateTool(call.Function.Name) || isLocalPrivateTool(old.Function.Name)) {
 					return errors.New("duplicate_local_tool_call")
 				}
 			}
 		}
-		if isLocalExecutionTool(call.Function.Name) {
+		if isLocalPrivateTool(call.Function.Name) {
 			call.Function.Arguments = `{}`
 		}
 	}

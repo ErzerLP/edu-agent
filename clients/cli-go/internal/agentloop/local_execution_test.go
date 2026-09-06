@@ -100,7 +100,7 @@ func TestLocalExecutionSmallContextKeepsCompleteToolSet(t *testing.T) {
 		for _, definition := range request.Tools {
 			names[definition.Function.Name] = true
 		}
-		for _, name := range []string{"shell", "task", "write", "edit", "archive", "ask_user_question", "remember_preference"} {
+		for _, name := range []string{"shell", "task", "write", "edit", "archive", "apply_patch", "artifact", "ask_user_question", "remember_preference"} {
 			if !names[name] {
 				t.Fatalf("small context hid %s", name)
 			}

@@ -46,6 +46,10 @@ func (w *Workspace) prepareArchive(ctx context.Context, raw string) (*PreparedMu
 	if err != nil {
 		return nil, mutationFailureForError(err, "归档源路径无效；不能归档工作区根")
 	}
+	return w.prepareArchivePath(ctx, source)
+}
+
+func (w *Workspace) prepareArchivePath(ctx context.Context, source string) (*PreparedMutation, Result) {
 	entry, err := w.root.InspectArchiveSource(ctx, source)
 	if err != nil {
 		return nil, archiveFailure(ctx, nil, err)
@@ -93,6 +97,17 @@ func (w *Workspace) commitArchive(ctx context.Context, prepared *PreparedMutatio
 		return mutationContextFailure(err)
 	}
 	defer release()
+	// Patch deletes freeze both text and metadata. This read is inside the
+	// ordinary per-file queue, not a cross-process CAS with the later rename.
+	if prepared.archiveContentHash != "" {
+		snapshot, readErr := w.root.ReadSnapshot(prepared.path, prepared.fileBytes, false)
+		if readErr != nil {
+			return archiveFailure(ctx, prepared, readErr)
+		}
+		if contentHash(snapshot.Data) != prepared.archiveContentHash {
+			return mutationContentChanged(prepared.path, prepared.archiveContentHash, "补丁删除源内容版本已变化")
+		}
+	}
 	result, err := w.root.Archive(ctx, prepared.path, prepared.archivePath, *prepared.archiveEntry)
 	if result.Outcome == securefile.PublishUnknown || errors.Is(err, securefile.ErrOutcomeUnknown) {
 		return archiveResult(prepared, PublicationUnknown, result.DirectoriesCreated)

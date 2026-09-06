@@ -30,7 +30,7 @@ Shell 使用启动客户端的 OS 用户权限，不增设命令白名单、工�
 | C3 | PTY 输入、中断、EOF、resize | Windows、跨进程重附着 | 真实终端程序持续交互和结束，终端流与管道区别正确 |
 | C4 | >1 MiB 范围读与长行续读 | GB 级低 I/O 承诺 | 后半文件可读，版本变化可见，完整 hash 不冒充局部 hash |
 | C5 | 大文本局部 edit | 通用流式替换引擎 | 多处精确替换、失败不发布、版本复核和 BOM/换行/权限兼容 |
-| C6 | 多文件 patch 与全部修改工具完整 diff | 二进制 patch、Git index、跨文件事务 | 多 hunk 可续览；逐文件结果完整；无新增逐页审批 |
+| C6 | 多文件patch及write/edit完整diff | 二进制 patch、Git index、跨文件事务 | 多 hunk 可续览；逐文件结果完整；无新增逐页审批 |
 | C7 | list/find/search 续扫续页 | 持久查询数据库、全局快照 | >2000 项可继续；扫描/结果/遗漏/失效准确 |
 | C8 | 递归和较大二进制 copy | 跟随源链接、完整 ACL/xattr | >32 MiB 文件可复制；冲突/源变化/部分完成可核对 |
 | C9 | 定位并恢复已有归档 | 自动推断不可信原路径 | 默认不覆盖，可信回执或显式目标，实际位置清楚 |
@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1–C4 已实现并通过各自 Linux 批次门禁；C5–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C6 已实现并通过各自 Linux 批次门禁；C7–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -206,4 +206,33 @@ Linux验证（Go1.26.6，命令目录clients/cli-go）：
 - `go test -race -count=1 -timeout=90s ./internal/workspace ./internal/agentloop ./internal/agentcontroller -run '^(TestLargeFileEdit|TestLargeFileRead)'`三包通过。
 - Linux完整CLI构建/version运行和Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c5-build.CBxxzC`不提交；仍无macOS原生运行证据。diff检查通过，mode=all对本会话已诊断81文件无error，不是全项目扫描。
 
-四包Go文件及go.mod/go.sum排序sha256列表汇总：`57c091477ba78cdfb220cbf3b381dc1a9763f5330d8e2d4e8a312a9482d38fdd`。C6–C10和整体恢复/隐私独立复核仍待完成，未扩大测试为数据库、Compose或全平台矩阵。
+四包Go文件及go.mod/go.sum排序sha256列表汇总：`57c091477ba78cdfb220cbf3b381dc1a9763f5330d8e2d4e8a312a9482d38fdd`。C5当时的后续为C6–C10，未扩大测试为数据库、Compose或全平台矩阵。
+
+## C6：补丁与完整差异
+
+已贯通真实workspace准备、完整diff保留、一次授权、逐项WAL/发布/结算、模型artifact与F6浏览、加密恢复。未建立新Comet workflow；本节是Linux实现证据，不是Runtime、macOS原生或整个Issue最终验收。
+
+### 实现与边界
+
+- `workspace`在write/edit准备时冻结FullDiff；edit复用已知raw replacementRange，扩展3行context并合并邻接窗口，远端修改保留多hunk。write按共同前后行收敛单变化区；生成保留BOM/CRLF/无末LF，预算检查包含header/marker，不输出假完整的截断diff。仍有全文候选、行索引和IO，不是流式或最小diff承诺。
+- `apply_patch`严格支持Begin/End Patch、Add/Update/Delete，Update只接受裸@@、精确唯一上下文及可选End of File；拒绝Move、输入no-newline标记、二进制、fuzzy、重叠/乱序以及规范化路径、大小写/祖先冲突。每个更新/删除必须携带完整hash。最多16文件，原文总和与候选总和分别默认64MiB；单项新增仍FileBytes，更新仍EditFileBytes。删除另外冻结内容hash并在原归档队列锁内复核，不把内容hash冒充entry-v1，不承诺跨进程CAS。
+- 外层prepared只能一次ClaimPatchItems，直接Commit拒绝。Agent Loop生成域分离的逐项调用身份，按输入顺序BeforeFilePublication→CommitMutation→独立取消域的AfterFilePublication；没有跨文件事务或回滚。完成/未知先保护本轮副作用并逐项失效旧workspace证据，模型或保存失败不能抹去真实修改。
+- 完整receipt分别保留每项路径、操作、归档位置、冻结版本、执行器确认的结果版本、publication outcome和独立保存错误；余项标not_started。Inline投影只能删整项，完整receipt可独立读取。准备的diff不代表实际执行，历史receipt不恢复批准或候选。
+- `localartifact`仅保存不可变diff/receipt，不伪装为task，不建设上传或事务平台。默认128MiB/结果、256MiB仅内存累计、256记录/manager；生产每Session一实例。256KiB分段，严格v1 metadata绑定owner摘要/完整hash/段hash，全部段成功后才发布目录；未知写不重试、不删除证据。持久模式不缓存正文，Read/Search重新认证；Bind完整验证目录，失败不覆盖原绑定。孤儿片段不提升为完整结果；零对话且有片段或目录错误不误作空Session自动删除。
+- controller在目标预检完成/切换提交后绑定当前Session handle，复用C2密钥、配额、delete/clear与privacy-generation fence；record v6/dirty v7未改变。`--no-save`只用内存，原始patch/检索参数、完整diff与artifact读出的正文不进入稳定checkpoint/ledger/标题。普通write/edit的既有有界预览仍按原投影合同处理。
+- 模型`artifact list/read/search`与F6使用独立原始字节位置；进一步裁剪时重算next_offset，压缩metadata后仍尝试返回可容纳正文。F6优先选择pending diff，分页/检索/刷新不调用模型、批准或取消原pending；generation/epoch/request拒绝迟到回复。原mkdir/copy/move末页门槛不变，没有新的末页批准条件。
+- CLI增加file-diff-limit（128MiB，兼作单产物上限）、file-patch-limit（64MiB）、artifact-memory-limit（256MiB）、artifact-max-records（256）。diff/内存最高1GiB、记录最高8192；当前客户端配置贯穿新建、resume、picker新建与F2，不保存为历史权限。write/edit/apply_patch/shell/task共享整JSON64KiB政策，批参数仍128KiB。
+
+### C6验证记录
+
+Go1.26.6/Linux amd64；Go命令目录为clients/cli-go。
+
+- 内核`TestArtifact`、`TestCompleteDiff`、`TestPatchPlan`通过。完整diff使用独立hunk应用器重建候选；严格拒绝、预算、BOM/混合换行/EOF、Claim防篡改和一次性、授权后源变化均有具名测试。
+- `TestFileArtifact`/`TestFilePatch`验证模型真实多文件→授权前完整diff→逐项WAL/结算→search/read→checkpoint、部分冲突/取消/WAL失败/结算失败/模型失败、YOLO、同调用身份不绑定另一份diff、真实Session加密三文件发布及删除归档、重启只读/provider门禁/clear、孤儿证据保留、no-save零历史文件、CLI预算和resume/F2当前预算；F6具名UI测试通过。
+- 首次七包全量：`go test -count=1 -timeout=180s ./internal/localartifact ./internal/workspace ./internal/agentlimits ./internal/agentloop ./internal/agentcontroller ./internal/agentui ./internal/command`。五包通过；workspace旧测试仍期待11工具/禁patch，agentloop无Shell的4096四调用场景被新增schema挤满。更新严格预期为12工具（未放宽约束），小窗口仅收敛说明，保留问询显示列限制；不隐藏工具、不改输入/输出/执行预算。四调用断言保留至少512输出及完整总预算，而非固定必须恰好512。
+- 受影响workspace/agentloop/agentcontroller全量重验通过；其余包复用未失效证据。七包go vet通过。最后receipt版本/保存错误字段补齐后，两相关包具名race测试及vet再次通过。
+- `go test -race -count=1 -timeout=180s ./internal/localartifact ./internal/workspace ./internal/agentloop ./internal/agentcontroller ./internal/agentui -run '^Test(Artifact|CompleteDiff|PatchPlan|FileArtifact|FilePatch)'`全部通过；最后两包`^Test(FilePatch|FileArtifact)`定向race再次通过。
+- Linux完整CLI构建/version实际运行及Darwin/arm64完整CLI交叉构建通过；产物`/tmp/edu-agent-c6-build.tf00an`不提交。仍无macOS原生运行证据，不扩大Windows。未运行服务端/数据库/Compose/付费模型或最终独立Verifier。
+- `git diff --check`通过。七个相关包全部Go文件和go.mod/go.sum路径排序sha256列表汇总为`9dc912b1a3f58e959159b8e2426fef5a411dc73b544a63473e0157c9613dd982`。
+
+C6提交只作checkpoint。下一主线为C7目录检索续页，随后C8递归复制、C9归档恢复、C10归档清理及最终独立恢复/隐私复核。

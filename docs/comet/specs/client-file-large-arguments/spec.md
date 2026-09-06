@@ -4,7 +4,7 @@
 
 ## 合同与验收
 
-1. write/edit 单次 arguments JSON 最大 65536 bytes，其他工具保持 8192 bytes；字节数包含 JSON 元数据与转义，不是净正文。
+1. write/edit 单次 arguments JSON 最大 65536 bytes；后续Shell/task/apply_patch按下方独立规格采用同一预算，其余工具保持 8192 bytes；字节数包含 JSON 元数据与转义，不是净正文。
 2. 一次模型响应的工具参数累计最大 131072 bytes；上限允许恰好相等，超过拒绝，不依赖工具调用数量限制。
 3. schema 描述、实际 Agent 校验、checkpoint 保存/恢复使用同一预算策略；未知工具按小预算处理。
 4. 普通和流式请求行为一致；不为本能力进一步扩大 transport 已有累计参数硬上限。
@@ -15,6 +15,6 @@
 9. 旧会话可恢复，执行过的新长度调用也能恢复，恢复不重放修改。
 10. 1 MiB文本文件、32处edit、约6KiB结果/预览的原限制不被本能力放宽；实际内容容量受所有独立预算约束。后续read和edit的独立文件处理预算分别由[大文件范围读取合同](../client-large-file-read/spec.md)与[大文本局部编辑合同](../client-large-file-edit/spec.md)维护，不扩大write、stat.hash或search；这些扩展不放宽本参数合同。
 
-后续Shell/task的参数预算由[本地执行合同](../client-local-execution/spec.md)维护，不改变read等其余工具的8KiB参数预算。
+后续Shell/task的参数预算由[本地执行合同](../client-local-execution/spec.md)维护；apply_patch整JSON参数的同等64KiB预算由[补丁与完整差异合同](../client-file-patch/spec.md)维护，不改变read等其余工具的8KiB参数预算。
 
-延期：分块写入、append、patch、超大文件、其他新工具。实施区域：agentlimits、workspace definitions、agentloop实时与checkpoint校验及直接测试。
+本单元不提供分块写入、append或其他新工具；patch及大文件已由上述独立能力扩展。实施区域：agentlimits、workspace definitions、agentloop实时与checkpoint校验及直接测试。

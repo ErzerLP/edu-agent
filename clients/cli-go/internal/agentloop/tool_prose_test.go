@@ -24,8 +24,14 @@ func TestCompactToolProsePreservesConstraintsAndQuestion(t *testing.T) {
 	if !reflect.DeepEqual(actual, want) || projected[0].Function.Name != "example" || projected[0].Type != "function" {
 		t.Fatalf("constraints changed: %+v", projected)
 	}
-	if !reflect.DeepEqual(projected[1], original[1]) || string(original[0].Function.Parameters) != schema || original[0].Function.Description != "prose" {
-		t.Fatal("question/source modified")
+	if err := json.Unmarshal(projected[1].Function.Parameters, &actual); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual, want) || projected[1].Function.Description != compactQuestionProse {
+		t.Fatal("question constraints or terminal-width guidance changed")
+	}
+	if string(original[0].Function.Parameters) != schema || original[0].Function.Description != "prose" || original[1].Function.Description != "question safety" {
+		t.Fatal("source modified")
 	}
 	definitions := append(Tools(), workspace.Definitions()...)
 	compact := compactToolProse(definitions)

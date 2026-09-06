@@ -469,7 +469,7 @@ func compactProjectionValue(value any, depth, maxDepth, maxString int) any {
 
 func preserveOutcomeFields(tool string, object map[string]any, truncated bool, reason string) map[string]any {
 	result := map[string]any{"tool": tool}
-	for _, key := range []string{"error", "code", "status", "submitted", "saved", "reason", "candidate_id", "replayed", "active", "degraded", "truncated"} {
+	for _, key := range []string{"error", "code", "status", "submitted", "saved", "reason", "candidate_id", "replayed", "active", "degraded", "truncated", "diff_id", "diff_bytes", "diff_saved", "diff_hash", "receipt_id"} {
 		if value, ok := object[key]; ok {
 			result[key] = value
 		}
@@ -550,6 +550,7 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 		"content_hash", "expected_hash", "complete", "truncated", "truncation_reason", "returned",
 		"returned_lines", "next_offset", "next_byte_offset", "first_changed_line", "preview_kind",
 		"preview_truncated", "scanned_files", "scanned_bytes", "visited_entries", "scanned_directories", "skipped", "pattern", "type",
+		"diff_id", "diff_bytes", "diff_saved", "diff_hash", "receipt_id",
 		"respect_gitignore", "ignore_files", "ignore_bytes", "ignored_entries", "source_truncation_reason",
 	} {
 		if current, ok := object[key]; ok {

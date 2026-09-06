@@ -192,6 +192,8 @@ type model struct {
 	sessionPicker          *sessionPickerModel
 	taskPanel              *localTaskPanel
 	taskEpoch              uint64
+	artifactPanel          *localArtifactPanel
+	artifactEpoch          uint64
 	workspaceStatus        agentloop.WorkspaceStatus
 	learningStatus         agentloop.LearningStatus
 	learningLoaded         bool
@@ -305,8 +307,15 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.taskPanel != nil {
 			m.taskPanel.setPage(m.taskPanel.page, m.width, m.height)
 		}
+		if m.artifactPanel != nil {
+			m.artifactPanel.resize(m.width, m.height)
+		}
 		m.refreshTranscript(false)
 		return m, m.resizeLocalTerminal()
+	case localArtifactMsg:
+		return m.handleLocalArtifactMessage(msg)
+	case localArtifactSearchMsg:
+		return m.handleLocalArtifactSearchMessage(msg)
 	case localTerminalMsg:
 		return m.handleLocalTerminalMessage(msg)
 	case localTaskSearchMsg:
@@ -394,6 +403,12 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript(true)
 		return m, nil
 	case tea.MouseMsg:
+		if m.artifactPanel != nil {
+			if !m.terminalTooSmall() {
+				m.artifactPanel.output, _ = m.artifactPanel.output.Update(msg)
+			}
+			return m, nil
+		}
 		if m.taskPanel != nil {
 			var cmd tea.Cmd
 			m.taskPanel.output, cmd = m.taskPanel.output.Update(msg)
@@ -459,6 +474,11 @@ func (m *model) resetAfterSessionSwap(generation uint64) {
 	m.pending, m.pendingQuestion, m.pendingFileMutation, m.selector, m.sessionPicker = nil, nil, nil, nil, nil
 	m.taskPanel = nil
 	m.taskEpoch++
+	if m.artifactPanel != nil {
+		m.artifactPanel.invalidate(true)
+	}
+	m.artifactPanel = nil
+	m.artifactEpoch++
 	m.busy, m.stopping = false, false
 	m.turnSeq, m.activeTurnID, m.pendingFileTurnID = 0, 0, 0
 	m.clearActiveTurn()
@@ -488,8 +508,14 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		intent := m.sessionPicker.handleKey(msg, m.manager)
 		return m.handleSessionPickerIntent(intent)
 	}
+	if m.artifactPanel != nil {
+		return m.handleLocalArtifactKey(msg)
+	}
 	if m.taskPanel != nil {
 		return m.handleLocalTaskKey(msg)
+	}
+	if key == "f6" {
+		return m.openLocalArtifacts()
 	}
 	if key == "f5" {
 		if source, ok := m.session.(localTaskSource); ok && source.LocalExecutionAvailable() {
@@ -1061,7 +1087,7 @@ func (m *model) markAssistantDraft(turnID uint64, state string) {
 }
 
 func (m *model) restoreInputFocus() {
-	if m.selector == nil && !m.busy {
+	if m.selector == nil && !m.busy && m.artifactPanel == nil {
 		m.input.Focus()
 	} else {
 		m.input.Blur()
@@ -1290,6 +1316,9 @@ func (m model) View() string {
 		body := m.sessionPicker.render(contentWidth, m.height)
 		return lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(body)
 	}
+	if m.artifactPanel != nil {
+		return m.artifactPanel.render(m.width)
+	}
 	if m.taskPanel != nil {
 		return m.taskPanel.render(m.width, m.height)
 	}
@@ -1517,6 +1546,9 @@ func fileMutationConfirmationText(pending *agentloop.PendingFileMutation) string
 	text := fmt.Sprintf("操作：%s\n路径：%s\n预览类型：%s\n%s", pending.Operation, pending.Path, pending.PreviewKind, pending.Preview)
 	if pending.Truncated {
 		text += "\n预览已按安全上限截断。"
+	}
+	if pending.DiffID != "" {
+		text += "\n" + fileMutationArtifactSummary(pending.DiffID, pending.DiffBytes, pending.DiffSaved)
 	}
 	text += "\nEsc 将停止当前轮次，不等价于拒绝。"
 	return text

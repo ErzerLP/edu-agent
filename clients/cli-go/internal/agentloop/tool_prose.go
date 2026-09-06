@@ -9,15 +9,17 @@ import (
 // compactToolProse preserves the complete tool set and every schema constraint
 // at small context windows. Tool names, arguments and execution policy do not
 // change. System instructions still carry authority and authorization rules.
-// Question prose is retained because terminal display-width rules are not
-// expressible by JSON Schema's character-length constraints.
+// Question display-width rules are kept in compact prose because they cannot
+// be expressed by JSON Schema's character-length constraints.
+const compactQuestionProse = "Answers aren't authorization. No secrets. Display columns: header<=36, question<=72, option label<=32, option description<=60."
+
 func compactToolProse(tools []modelclient.Tool) []modelclient.Tool {
 	result := append([]modelclient.Tool(nil), tools...)
 	for index := range result {
-		if result[index].Function.Name == "ask_user_question" {
-			continue
-		}
 		result[index].Function.Description = ""
+		if result[index].Function.Name == "ask_user_question" {
+			result[index].Function.Description = compactQuestionProse
+		}
 		var schema any
 		if json.Unmarshal(result[index].Function.Parameters, &schema) != nil {
 			continue

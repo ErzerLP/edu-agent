@@ -21,11 +21,15 @@ const (
 	ToolCopy    = "copy"
 	ToolMkdir   = "mkdir"
 	ToolArchive = "archive"
+	ToolPatch   = "apply_patch"
 )
 
 const (
 	DefaultReadFileBytes int64 = 64 << 20
 	DefaultEditFileBytes int64 = 64 << 20
+	DefaultDiffBytes     int64 = 128 << 20
+	DefaultPatchBytes    int64 = 64 << 20
+	MaxPatchFiles              = 16
 )
 
 type Limits struct {
@@ -36,6 +40,8 @@ type Limits struct {
 	FileBytes            int64
 	ReadFileBytes        int64
 	EditFileBytes        int64
+	DiffBytes            int64
+	PatchBytes           int64
 	SearchMatches        int
 	SearchFiles          int
 	SearchBytes          int64
@@ -52,7 +58,7 @@ func DefaultLimits() Limits {
 		ReadLines: 200, FileBytes: 1 << 20, ReadFileBytes: DefaultReadFileBytes, EditFileBytes: DefaultEditFileBytes,
 		SearchMatches: 100, SearchFiles: 2000, SearchBytes: 16 << 20,
 		SearchDepth: 64, SearchPreviewBytes: 512, SearchEntries: 10000,
-		MutationPreviewBytes: 6 << 10, EditReplacements: 32,
+		MutationPreviewBytes: 6 << 10, DiffBytes: DefaultDiffBytes, PatchBytes: DefaultPatchBytes, EditReplacements: 32,
 	}
 }
 
@@ -119,23 +125,36 @@ type MutationPresentation struct {
 type PreparedMutation struct {
 	Presentation MutationPresentation
 
-	path            string
-	candidate       []byte
-	candidateHash   string
-	baseVersion     string
-	basePermission  uint32
-	fileBytes       int64 // processing budget frozen when write/edit is prepared
-	create          bool
-	previewHash     string
-	firstChangeLine int
-	replacements    int
-	archivePath     string
-	movePlan        *securefile.MovePlan
-	copyPlan        *securefile.CopyPlan
-	mkdirPlan       *securefile.MkdirPlan
-	archiveEntry    *securefile.ArchiveEntry
-	commitMu        sync.Mutex
-	committed       bool
+	path               string
+	candidate          []byte
+	candidateHash      string
+	baseVersion        string
+	basePermission     uint32
+	fileBytes          int64 // processing budget frozen when write/edit is prepared
+	create             bool
+	previewHash        string
+	fullDiff           string // immutable complete raw-byte diff, never a result projection
+	firstChangeLine    int
+	replacements       int
+	archivePath        string
+	movePlan           *securefile.MovePlan
+	copyPlan           *securefile.CopyPlan
+	mkdirPlan          *securefile.MkdirPlan
+	archiveEntry       *securefile.ArchiveEntry
+	archiveContentHash string // patch-only raw content check; baseVersion remains entry-v1
+	patchItems         []*PreparedMutation
+	patchPresentation  MutationPresentation
+	commitMu           sync.Mutex
+	committed          bool
+}
+
+// FullDiff returns the complete diff frozen at prepare time without copying it.
+// Non-text operations have no diff. The text is data, not a replayable candidate.
+func (p *PreparedMutation) FullDiff() string {
+	if p == nil {
+		return ""
+	}
+	return p.fullDiff
 }
 
 type Result struct {

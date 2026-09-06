@@ -40,6 +40,9 @@ type replacementRange struct {
 	text  string
 }
 
+// PrepareMutation freezes candidates without publishing them. An apply_patch
+// candidate is an outer plan: authorize it once, then ClaimPatchItems and
+// journal/commit/settle each child separately; it is not a file transaction.
 func (w *Workspace) PrepareMutation(ctx context.Context, toolName, rawArguments string) (*PreparedMutation, Result) {
 	if w == nil || w.root == nil {
 		return nil, mutationFailure(CodeWorkspaceUnavailable, "工作区不可用")
@@ -48,6 +51,8 @@ func (w *Workspace) PrepareMutation(ctx context.Context, toolName, rawArguments 
 		return nil, mutationContextFailure(err)
 	}
 	switch toolName {
+	case ToolPatch:
+		return w.preparePatch(ctx, rawArguments)
 	case ToolMove:
 		return w.prepareMove(ctx, rawArguments)
 	case ToolCopy:
@@ -70,6 +75,11 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 	if err := decodeArguments(raw, &args); err != nil {
 		return nil, mutationFailureForError(err, "文件写入参数无效")
 	}
+	return w.prepareWriteArguments(ctx, args, w.limits.DiffBytes)
+}
+
+// Internal patch callers supply a candidate, not synthetic model JSON.
+func (w *Workspace) prepareWriteArguments(ctx context.Context, args writeArguments, diffLimit int64) (*PreparedMutation, Result) {
 	path, err := normalizeModelPath(args.Path, false)
 	if err != nil {
 		return nil, mutationFailureForError(err, "文件写入路径无效")
@@ -93,6 +103,7 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 	operation := "write_create"
 	previewKind := "content"
 	baseText := ""
+	var baseRaw []byte
 	candidate := []byte(args.Content)
 	permission := os.FileMode(0o644)
 	baseVersion := ""
@@ -125,6 +136,7 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 			return nil, mutationContentChanged(path, args.ExpectedHash, "文件内容版本已变化")
 		}
 		baseText = decoded.Text
+		baseRaw = snapshot.Data
 		baseVersion = decoded.Hash
 		permission = snapshot.Mode.Perm()
 		candidate = encodeForExistingFile(args.Content, snapshot.Data)
@@ -135,8 +147,15 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 	if int64(len(candidate)) > w.limits.FileBytes {
 		return nil, mutationFailure(CodeFileTooLarge, "文件候选内容超过安全上限")
 	}
+	fullDiff, err := buildCompleteDiff(ctx, path, baseRaw, candidate, create, nil, diffLimit)
+	if err != nil {
+		return nil, completeDiffFailure(err, w.limits.DiffBytes)
+	}
 	candidateText := textWithoutBOM(candidate)
 	preview, truncated, firstLine := buildMutationPreview(path, baseText, candidateText, previewKind, w.limits.MutationPreviewBytes)
+	if err := ctx.Err(); err != nil {
+		return nil, mutationContextFailure(err)
+	}
 	prepared := &PreparedMutation{
 		Presentation: MutationPresentation{
 			Tool: ToolWrite, Operation: operation, Path: path, PreviewKind: previewKind,
@@ -144,7 +163,10 @@ func (w *Workspace) prepareWrite(ctx context.Context, raw string) (*PreparedMuta
 		},
 		path: path, candidate: append([]byte(nil), candidate...), candidateHash: contentHash(candidate),
 		baseVersion: baseVersion, basePermission: uint32(permission.Perm()), fileBytes: w.limits.FileBytes, create: create,
-		previewHash: hashProjection(preview), firstChangeLine: firstLine,
+		previewHash: hashProjection(preview), fullDiff: fullDiff, firstChangeLine: firstLine,
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, mutationContextFailure(err)
 	}
 	return prepared, Result{}
 }
@@ -231,7 +253,20 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 	if bytes.Equal(candidate, snapshot.Data) {
 		return nil, mutationFailure(CodeNoChanges, "文件编辑不包含实际变化")
 	}
+	// Matching used BOM-free text; the full diff instead reflects raw bytes.
+	bomBytes := len(snapshot.Data) - len(decoded.Text)
+	rawRanges := make([]replacementRange, len(ranges))
+	for i, current := range ranges {
+		rawRanges[i] = replacementRange{start: current.start + bomBytes, end: current.end + bomBytes, text: current.text}
+	}
+	fullDiff, err := buildCompleteDiff(ctx, path, snapshot.Data, candidate, false, rawRanges, w.limits.DiffBytes)
+	if err != nil {
+		return nil, completeDiffFailure(err, w.limits.DiffBytes)
+	}
 	preview, truncated, firstLine := buildMutationPreview(path, decoded.Text, candidateText, "diff", w.limits.MutationPreviewBytes)
+	if err := ctx.Err(); err != nil {
+		return nil, mutationContextFailure(err)
+	}
 	prepared := &PreparedMutation{
 		Presentation: MutationPresentation{
 			Tool: ToolEdit, Operation: "edit", Path: path, PreviewKind: "diff",
@@ -239,7 +274,10 @@ func (w *Workspace) prepareEdit(ctx context.Context, raw string) (*PreparedMutat
 		},
 		path: path, candidate: candidate, candidateHash: contentHash(candidate),
 		baseVersion: decoded.Hash, basePermission: uint32(snapshot.Mode.Perm()), fileBytes: w.limits.EditFileBytes,
-		previewHash: hashProjection(preview), firstChangeLine: firstLine, replacements: len(args.Edits),
+		previewHash: hashProjection(preview), fullDiff: fullDiff, firstChangeLine: firstLine, replacements: len(args.Edits),
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, mutationContextFailure(err)
 	}
 	return prepared, Result{}
 }
@@ -259,6 +297,9 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	}()
 	if w == nil || w.root == nil {
 		return mutationFailure(CodeWorkspaceUnavailable, "工作区不可用")
+	}
+	if prepared != nil && (prepared.IsPatch() || prepared.Presentation.Tool == ToolPatch) {
+		return mutationFailure(CodeInvalidArguments, "补丁计划必须先领取，再逐文件记录 WAL 并发布")
 	}
 	if prepared == nil || prepared.path == "" || !IsMutationTool(prepared.Presentation.Tool) {
 		return mutationFailure(CodeInvalidArguments, "文件修改候选无效")

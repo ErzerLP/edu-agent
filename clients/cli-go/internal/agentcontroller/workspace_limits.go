@@ -1,14 +1,23 @@
 package agentcontroller
 
-import "github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
+import (
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
+)
 
-func openWorkspaceForClient(path string, readBytes, editBytes int64) (*workspace.Workspace, error) {
+func openWorkspaceForClient(path string, options agentloop.Options) (*workspace.Workspace, error) {
 	limits := workspace.DefaultLimits()
-	if readBytes != 0 {
-		limits.ReadFileBytes = readBytes
+	if options.WorkspaceReadFileBytes != 0 {
+		limits.ReadFileBytes = options.WorkspaceReadFileBytes
 	}
-	if editBytes != 0 {
-		limits.EditFileBytes = editBytes
+	if options.WorkspaceEditFileBytes != 0 {
+		limits.EditFileBytes = options.WorkspaceEditFileBytes
+	}
+	if options.WorkspaceDiffBytes != 0 {
+		limits.DiffBytes = options.WorkspaceDiffBytes
+	}
+	if options.WorkspacePatchBytes != 0 {
+		limits.PatchBytes = options.WorkspacePatchBytes
 	}
 	return workspace.OpenWithLimits(path, limits)
 }

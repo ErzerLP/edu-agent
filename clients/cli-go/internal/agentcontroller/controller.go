@@ -22,6 +22,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
@@ -102,6 +103,9 @@ type Controller struct {
 	localExec      *localexec.Manager
 	localOwner     string
 	localOutputErr string
+	artifacts      *localartifact.Manager
+	artifactOwner  string
+	artifactErr    string
 	ownsLocalExec  bool
 
 	localSessionLease      *localSessionLease
@@ -228,6 +232,11 @@ func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Contro
 	controller.handle = handle
 	controller.localSessionLease = newLocalSessionLease(handle, dependencies.Store, record.StorageID)
 	controller.record = record
+	controller.artifactOwner = record.SessionID
+	if err := controller.loop.SetArtifactIdentity(record.SessionID); err != nil {
+		controller.abort()
+		return nil, err
+	}
 	if controller.localExec != nil {
 		controller.localOwner = record.SessionID
 		if err := controller.loop.SetLocalExecutionIdentity(record.SessionID, binding.Root); err != nil {
@@ -238,6 +247,7 @@ func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Contro
 	controller.persistent = true
 	if !dependencies.LocalExecShared {
 		controller.bindLocalOutputLocked()
+		controller.bindArtifactsLocked()
 	}
 	controller.startContextWorker()
 	return controller, nil
@@ -290,7 +300,7 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 		}
 		actual, bindErr := BindWorkspace(storedWorkspace.Root)
 		if bindErr == nil && (storedWorkspace.RootIdentityHash == "" || actual.RootIdentityHash == storedWorkspace.RootIdentityHash) {
-			opened, openErr := openWorkspaceForClient(storedWorkspace.Root, loopOptions.WorkspaceReadFileBytes, loopOptions.WorkspaceEditFileBytes)
+			opened, openErr := openWorkspaceForClient(storedWorkspace.Root, loopOptions)
 			if openErr == nil {
 				loopOptions.Workspace = opened
 				loopOptions.WorkspaceStatus = opened.Status()
@@ -299,6 +309,7 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 		}
 	}
 	loopOptions.LocalExecOwner = loaded.Record.SessionID
+	loopOptions.ArtifactOwner = loaded.Record.SessionID
 	loopOptions.LocalExecCWD = loaded.Record.WorkspaceRoot
 	dependencies.WorkspaceRoot = loaded.Record.WorkspaceRoot
 	dependencies.LoopOptions = loopOptions
@@ -433,6 +444,7 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 	closeOnError = false
 	if !options.PrepareOnly {
 		controller.bindLocalOutputLocked()
+		controller.bindArtifactsLocked()
 		controller.startContextWorker()
 	}
 	return controller, nil
@@ -441,6 +453,8 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 func baseLoopOptions(options agentloop.Options) agentloop.Options {
 	options.Workspace = nil
 	options.Durability = nil
+	options.Artifacts = nil
+	options.ArtifactOwner = ""
 	options.LocalExecOwner = ""
 	options.LocalExecCWD = ""
 	return options
@@ -524,7 +538,14 @@ func newController(dependencies Dependencies) (*Controller, error) {
 			dependencies.LoopOptions.LocalExecCWD = dependencies.WorkspaceRoot
 		}
 	}
+	if dependencies.LoopOptions.Artifacts == nil {
+		dependencies.LoopOptions.Artifacts = localartifact.New(dependencies.LoopOptions.ArtifactOptions)
+	}
+	if dependencies.LoopOptions.ArtifactOwner == "" {
+		dependencies.LoopOptions.ArtifactOwner = "unsaved-" + rand.Text()
+	}
 	controller := &Controller{
+		artifacts: dependencies.LoopOptions.Artifacts, artifactOwner: dependencies.LoopOptions.ArtifactOwner,
 		localExec: dependencies.LoopOptions.LocalExec, localOwner: dependencies.LoopOptions.LocalExecOwner,
 		ownsLocalExec: dependencies.LoopOptions.LocalExec != nil && !dependencies.LocalExecShared,
 		store:         dependencies.Store, model: dependencies.Model, server: dependencies.Server, provider: dependencies.Provider, limits: limits, now: now, generation: 1,
@@ -934,6 +955,9 @@ func (c *Controller) degradeNewSessionAfterSaveFailureLocked(cause error) error 
 	}
 	lease := c.localSessionLease
 	c.localSessionLease = nil
+	if c.artifacts != nil {
+		_ = c.artifacts.Bind(c.artifactOwner, nil)
+	}
 	if c.localExec != nil {
 		_ = c.localExec.BindArchive(c.localOwner, nil)
 	}
@@ -1788,10 +1812,17 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 		c.contextCancel = nil
 	}
 	hasLocalTaskEvidence := c.localExec != nil && len(c.localExec.List(c.localOwner)) != 0 || c.localOutputErr != ""
+	hasLocalTaskEvidence = hasLocalTaskEvidence || c.artifactErr != "" || c.artifacts != nil && len(c.artifacts.List(c.artifactOwner)) != 0
 	empty := c.persistent && !hasLocalTaskEvidence && c.dirty == nil && c.record.CommittedUserTurns == 0 && len(c.record.PreferenceReceipts) == 0 && len(c.record.FileReceipts) == 0 && c.record.TitleSource != "manual"
 	if empty {
 		identities, err := c.handle.ListArtifacts(ctx, localCallPrefix)
 		empty = err == nil && len(identities) == 0
+	}
+	if empty {
+		// A failed/uncertain diff publication may leave authenticated segments
+		// without committed metadata. An empty catalog is not no evidence.
+		artifacts, err := c.handle.ListArtifacts(ctx, "result_")
+		empty = err == nil && len(artifacts) == 0
 	}
 	var shutdownErr error
 	if c.ownsLocalExec && c.localExec != nil {

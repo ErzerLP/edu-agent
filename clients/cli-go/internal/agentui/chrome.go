@@ -415,6 +415,19 @@ func (m model) contextPercentSummary() string {
 
 func (m model) renderFooterHints(width int) string {
 	variants := m.footerHintVariants()
+	if _, ok := m.session.(localArtifactSource); ok {
+		panels := []footerHint{{key: "F6", action: "差异/回执"}}
+		if source, ok := m.session.(localTaskSource); ok && source.LocalExecutionAvailable() {
+			panels = append(panels, footerHint{key: "F5", action: "任务"})
+		}
+		for _, hints := range variants {
+			combined := append(append([]footerHint(nil), panels...), hints...)
+			if line := renderHints(combined); lipgloss.Width(line) <= width {
+				return line
+			}
+		}
+		return renderHints(panels)
+	}
 	if source, ok := m.session.(localTaskSource); ok && source.LocalExecutionAvailable() {
 		for _, hints := range variants {
 			withTasks := append([]footerHint{{key: "F5", action: "任务"}}, hints...)

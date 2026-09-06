@@ -55,7 +55,7 @@ func (s *Session) ResolveFileMutation(ctx context.Context, callID string, resolu
 	call := calls[index]
 
 	if resolution == FileMutationDecline {
-		result := workspace.MutationDenied(prepared)
+		result := s.attachMutationArtifact(call.ID, workspace.MutationDenied(prepared))
 		if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, result); err != nil {
 			return s.finishAfterTurnFailure(turnID, events, err)
 		}
@@ -126,27 +126,40 @@ func (s *Session) CancelPendingFileMutation(callID string) (Result, error) {
 	return Result{}, nil
 }
 
-func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclient.ToolCall, prepared *workspace.PreparedMutation) (workspace.Result, Event, bool, error) {
-	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: "正在安全发布文件修改", Status: EventRunning}, Phase: ActivityExecutingTool, File: fileActivityDetailFromPrepared(prepared)})
+func (s *Session) publishPreparedFileItem(ctx context.Context, callID string, prepared *workspace.PreparedMutation) (workspace.Result, error, error, error) {
 	if s.options.Durability != nil {
 		if err := s.options.Durability.BeforeFilePublication(ctx, FileWriteAhead{
-			ToolCallID: call.ID, Effect: prepared.FileEffect(),
+			ToolCallID: callID, Effect: prepared.FileEffect(),
 		}); err != nil {
-			return workspace.Result{Publication: workspace.PublicationUnchanged}, Event{}, false, errors.New("无法在文件发布前持久化恢复凭据")
+			return workspace.Result{Publication: workspace.PublicationUnchanged}, nil, nil, errors.New("无法在文件发布前持久化恢复凭据")
 		}
 	}
 	toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
 	result := s.workspace.CommitMutation(toolCtx, prepared)
 	toolErr := toolCtx.Err()
 	cancel()
-	// Disk publication can outlive foreground cancellation. Persist its actual
-	// result with a bounded independent context before any continuation.
 	var settlementErr error
 	if s.options.Durability != nil {
 		settleCtx, settleCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		settlementErr = s.options.Durability.AfterFilePublication(settleCtx, call.ID, result)
+		settlementErr = s.options.Durability.AfterFilePublication(settleCtx, callID, result)
 		settleCancel()
 	}
+	return result, toolErr, settlementErr, nil
+}
+
+func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclient.ToolCall, prepared *workspace.PreparedMutation) (workspace.Result, Event, bool, error) {
+	if prepared.IsPatch() {
+		return s.commitPatchMutation(ctx, call, prepared)
+	}
+	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: "正在安全发布文件修改", Status: EventRunning}, Phase: ActivityExecutingTool, File: fileActivityDetailFromPrepared(prepared)})
+	result, toolErr, settlementErr, err := s.publishPreparedFileItem(ctx, call.ID, prepared)
+	if err != nil {
+		return result, Event{}, false, err
+	}
+	if result.Publication == workspace.PublicationCompleted || result.Publication == workspace.PublicationUnknown {
+		s.markFileEffect(call.ID, result.Publication == workspace.PublicationUnknown)
+	}
+	result = s.attachMutationArtifact(call.ID, result)
 	if result.Publication == workspace.PublicationUnchanged && toolErr != nil {
 		event := workspaceToolContextFailureEvent(call.ID, call.Function.Name, toolErr)
 		s.publishActivity(ctx, Activity{
@@ -157,9 +170,6 @@ func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclie
 	}
 	if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, result); err != nil {
 		return result, Event{}, false, err
-	}
-	if result.Publication == workspace.PublicationCompleted || result.Publication == workspace.PublicationUnknown {
-		s.markFileEffect(call.ID, result.Publication == workspace.PublicationUnknown)
 	}
 	event := eventFromToolOutput(call.Function.Name, result.Summary, result.Value)
 	event.ID = call.ID
@@ -234,10 +244,15 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 			continue
 		}
 		var effect struct {
-			FileEffect  fileeffects.Effect `json:"file_effect"`
-			Operation   string             `json:"operation"`
-			ArchivePath string             `json:"archive_path"`
-			Path        string             `json:"path"`
+			FileEffect   fileeffects.Effect `json:"file_effect"`
+			Operation    string             `json:"operation"`
+			ArchivePath  string             `json:"archive_path"`
+			Path         string             `json:"path"`
+			Completed    int                `json:"completed"`
+			Total        int                `json:"total"`
+			Unknown      int                `json:"unknown"`
+			ReceiptID    string             `json:"receipt_id"`
+			ReceiptError string             `json:"receipt_error"`
 		}
 		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolMove && effect.FileEffect.Validate() == nil {
 			text = "已移动：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；未永久删除；后续处理已停止。"
@@ -266,6 +281,15 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 				text = "归档结果无法确认；后续处理已停止。请检查源 " + effect.Path + " 和归档目标 " + effect.ArchivePath + "；不会自动重试或清理。"
 			} else {
 				text = "已归档到 " + effect.ArchivePath + "；后续处理已停止。归档由用户手动恢复或清理。"
+			}
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolPatch {
+			text = fmt.Sprintf("补丁已完成 %d/%d 个文件，未知 %d；后续已停止，其余未执行，不会自动回滚或重放。", effect.Completed, effect.Total, effect.Unknown)
+			if effect.ReceiptID != "" {
+				text += " 完整逐项结果：" + effect.ReceiptID + "。"
+			}
+			if effect.ReceiptError != "" {
+				text += " 完整结果产物保存失败；已保留的逐文件恢复凭据仍有效。"
 			}
 		}
 		break

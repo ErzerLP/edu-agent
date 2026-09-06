@@ -67,6 +67,10 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if fileEditErr != nil {
 		return commandError("usage", "文件编辑预算无效", "运行 edu-agent agent --help 查看 --file-edit-limit", ExitInput)
 	}
+	args, fileResults, resultErr := parseFileResultOptions(args)
+	if resultErr != nil {
+		return commandError("usage", "差异/补丁/结果保留预算无效", "运行 edu-agent agent --help 查看文件结果资源参数", ExitInput)
+	}
 	set := newFlagSet("agent")
 	var workspacePath string
 	var noSave bool
@@ -102,6 +106,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if workspacePathErr == nil {
 		limits := workspace.DefaultLimits()
 		limits.ReadFileBytes, limits.EditFileBytes = fileReadBytes, fileEditBytes
+		limits.DiffBytes, limits.PatchBytes = fileResults.DiffBytes, fileResults.PatchBytes
 		workspaceExecutor, err = workspace.OpenWithLimits(workspacePath, limits)
 		if err == nil {
 			workspaceStatus = workspaceExecutor.Status()
@@ -128,6 +133,9 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 			Workspace: workspaceExecutor, WorkspaceStatus: workspaceStatus,
 			WorkspaceReadFileBytes: fileReadBytes,
 			WorkspaceEditFileBytes: fileEditBytes,
+			WorkspaceDiffBytes:     fileResults.DiffBytes,
+			WorkspacePatchBytes:    fileResults.PatchBytes,
+			ArtifactOptions:        fileResults.Artifacts,
 			LocalExec:              localexec.New(localOptions),
 		},
 	}, effectiveNoSave)
@@ -166,6 +174,10 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	args, fileEditBytes, fileEditErr := parseFileEditOptions(args)
 	if fileEditErr != nil {
 		return commandError("usage", "文件编辑预算无效", "运行 edu-agent agent resume --help 查看 --file-edit-limit", ExitInput)
+	}
+	args, fileResults, resultErr := parseFileResultOptions(args)
+	if resultErr != nil {
+		return commandError("usage", "差异/补丁/结果保留预算无效", "运行 edu-agent agent resume --help 查看文件结果资源参数", ExitInput)
 	}
 	target, last, all, workspacePath, err := parseAgentResumeArgs(args)
 	if err != nil {
@@ -216,7 +228,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			}
 			if pickerChoice.New {
 				_ = store.Close()
-				return a.runNewAgent(ctx, []string{"--file-read-limit", strconv.FormatInt(fileReadBytes, 10), "--file-edit-limit", strconv.FormatInt(fileEditBytes, 10)})
+				return a.runNewAgent(ctx, append([]string{"--file-read-limit", strconv.FormatInt(fileReadBytes, 10), "--file-edit-limit", strconv.FormatInt(fileEditBytes, 10)}, fileResults.arguments()...))
 			}
 			summaries, err = store.List(ctx)
 			if err == nil {
@@ -243,6 +255,9 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
 			WorkspaceReadFileBytes: fileReadBytes,
 			WorkspaceEditFileBytes: fileEditBytes,
+			WorkspaceDiffBytes:     fileResults.DiffBytes,
+			WorkspacePatchBytes:    fileResults.PatchBytes,
+			ArtifactOptions:        fileResults.Artifacts,
 			LocalExec:              localexec.New(localOptions),
 		},
 	}, agentcontroller.ResumeOptions{
@@ -673,6 +688,10 @@ const agentHelpText = `用法：
   --all             关闭当前工作区过滤；仅用于打开 picker 或配合显式 SESSION
   --file-read-limit BYTES      完整读取预算，默认67108864；适用于新建/resume/F2切换
   --file-edit-limit BYTES      局部edit原文/候选预算，默认67108864；独立于read/write
+  --file-diff-limit BYTES      完整差异/单产物上限，默认134217728，最高1073741824
+  --file-patch-limit BYTES     patch原文总量/候选总量各自上限，默认67108864
+  --artifact-memory-limit B   仅内存长结果累计上限，默认268435456，最高1073741824
+  --artifact-max-records N    每Session长结果记录数，默认256，最高8192；不自动淘汰
   --task-max-records N         当前客户端保留的任务记录数，默认256
   --task-max-running N         同时运行的任务数，默认16
   --task-output-limit BYTES    每任务 stdout+stderr 保留上限，默认8388608
@@ -682,9 +701,11 @@ const agentHelpText = `用法：
 
 Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
 
-文件工具：stat、find、list、read、search、write、edit、mkdir、copy、move、archive。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
+文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。
-局部edit在独立预算内支持大于1MiB文本，保留精确唯一匹配、完整expected_hash、授权、WAL和原子发布；原文/候选仍全文处理，参数仍64KiB。预览可以截断且明确标记，完整diff留C6，不新增逐页审批。编辑预算随当前客户端的新建/resume/F2切换生效，不扩大write/stat.hash/search的1MiB预算。
+局部edit在独立预算内支持大于1MiB文本，保留精确唯一匹配、完整expected_hash、授权、WAL和原子发布；原文/候选仍全文处理，参数仍64KiB。短预览可截断且明确标记；write/edit/apply_patch授权前保留完整diff，无法完整保留就不发布。F6独立分页和检索diff/receipt，不调用模型，也不新增逐页审批；原copy/move/mkdir末页门槛不变。
+apply_patch接受严格Add/Update/Delete文本及expected_hashes，最多16文件；更新/删除须携带完整hash。全部预检，一次授权，逐项WAL/复核/原子发布并结算；冲突、失败或取消停止余项，已完成项不回滚，删除仍归档。拒绝Move、模糊匹配和二进制patch。artifact list/read/search使用独立原始字节游标；diff不证明已执行，逐项结果与文件状态分开判断。
+差异/结果在持久Session中独立加密，--no-save只在有界内存；恢复不自动应用历史修改，clear/delete遵守Session密钥撤销，保存失败如实报告。文件与结果资源预算随当前客户端的新建/resume/F2切换生效，不扩大write/stat.hash/search的1MiB预算。
 本地 Shell：正常 OS 用户权限，可访问工作区外路径和网络，不受文件确认模式限制。shell/task 支持长任务、stdin 和停止；默认不设置执行总超时。F5 查看内存输出、切换 stdout/stderr、翻页和停止，退出客户端会收尾受管任务。
 持久Session的输出独立加密保存，可用task search或F5的/检索、n继续，并在重启后读取已保存范围；恢复不重跑旧命令、不恢复进程控制。--no-save输出仅内存保留，退出不可恢复；配额/保存失败和缺口明确显示。PTY交互：shell指定pty=true（默认24行80列，可用rows/cols设置1..4096）；合并流为stdout。task interrupt/eof发送终端控制字节，resize调整尺寸，close_input仍仅用于pipe。F5按i进入不回显草稿的行式输入，Enter送行，Ctrl+C中断，Ctrl+D终端EOF，Ctrl+Q退出；程序回显可能作为输出保存，不是全屏终端模拟器。上述任务资源参数同时适用于新建和 resume，不改变命令权限。`
 

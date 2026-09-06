@@ -7,6 +7,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
@@ -145,6 +146,11 @@ type Options struct {
 	// workspace identity or permissions. Zero selects the current defaults.
 	WorkspaceReadFileBytes int64
 	WorkspaceEditFileBytes int64
+	WorkspaceDiffBytes     int64
+	WorkspacePatchBytes    int64
+	Artifacts              *localartifact.Manager
+	ArtifactOptions        localartifact.Options
+	ArtifactOwner          string
 	Durability             DurabilitySink
 	LocalExec              *localexec.Manager
 	LocalExecOwner         string
@@ -290,6 +296,9 @@ const (
 )
 
 type PendingFileMutation struct {
+	DiffID          string
+	DiffBytes       int64
+	DiffSaved       bool
 	DestinationPath string
 	ArchivePath     string
 	EntryKind       string

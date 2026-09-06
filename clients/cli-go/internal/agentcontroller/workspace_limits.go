@@ -19,5 +19,14 @@ func openWorkspaceForClient(path string, options agentloop.Options) (*workspace.
 	if options.WorkspacePatchBytes != 0 {
 		limits.PatchBytes = options.WorkspacePatchBytes
 	}
+	if options.WorkspaceQueryMemoryBytes != 0 {
+		limits.QueryMemoryBytes = options.WorkspaceQueryMemoryBytes
+	}
+	if options.WorkspaceQueryEntries != 0 {
+		limits.QueryEntries = options.WorkspaceQueryEntries
+	}
+	if options.WorkspaceQueryRecords != 0 {
+		limits.QueryRecords = options.WorkspaceQueryRecords
+	}
 	return workspace.OpenWithLimits(path, limits)
 }

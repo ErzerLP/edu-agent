@@ -40,7 +40,10 @@ func TestSearchOutputDefaultCompatibilityAndModes(t *testing.T) {
 	}, DefaultLimits())
 	legacy := w.Execute(t.Context(), ToolSearch, `{"query":"needle"}`)
 	explicit := w.Execute(t.Context(), ToolSearch, `{"query":"needle","output":"content","context":0}`)
-	if !reflect.DeepEqual(legacy, explicit) {
+	legacyContent, explicitContent := copyQueryObject(resultObject(t, legacy)), copyQueryObject(resultObject(t, explicit))
+	delete(legacyContent, "cursor")
+	delete(explicitContent, "cursor")
+	if !reflect.DeepEqual(legacyContent, explicitContent) || legacy.Summary != explicit.Summary || legacy.Reference.Path != explicit.Reference.Path || legacy.Reference.Kind != explicit.Reference.Kind {
 		t.Fatalf("default changed: %+v explicit=%+v", legacy, explicit)
 	}
 	value := resultObject(t, legacy)
@@ -225,9 +228,9 @@ func TestSearchFilesPartialResultBytesAndFileLimit(t *testing.T) {
 func TestSearchCountUnreadableEntriesRemainPartial(t *testing.T) {
 	for _, directory := range []bool{false, true} {
 		t.Run(fmt.Sprint(directory), func(t *testing.T) {
-			missing, reason := "b", "file_unavailable"
+			missing := "b"
 			if directory {
-				missing, reason = "b/file", "directory_unavailable"
+				missing = "b/file"
 			}
 			w, root := openSearchOutputFixture(t, map[string]string{"a": "needle\n", missing: "needle\n", "c": "needle\n"}, DefaultLimits())
 			removed := false
@@ -240,8 +243,8 @@ func TestSearchCountUnreadableEntriesRemainPartial(t *testing.T) {
 				}
 			})
 			value := resultObject(t, w.Execute(ctx, ToolSearch, `{"query":"needle","output":"count"}`))
-			if value["complete"] != false || value["counts_partial"] != true || value["truncation_reason"] != reason || value["matched_lines"] != 2 {
-				t.Fatalf("missing entry counted as complete: %+v", value)
+			if value["complete"] != false || value["error"] != CodeCursorStale {
+				t.Fatalf("changed traversal was not invalidated: %+v", value)
 			}
 		})
 	}

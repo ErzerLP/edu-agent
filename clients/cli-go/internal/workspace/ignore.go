@@ -29,6 +29,7 @@ type gitignoreState struct {
 	usedFiles             int
 	usedBytes             int64
 	incomplete            func(string, bool)
+	captureSnapshot       func(string, securefile.Snapshot) error
 }
 
 type ignoreLayer struct {
@@ -169,6 +170,9 @@ func (s *gitignoreState) readSnapshot(relative string, limit int64) (securefile.
 		s.usedBytes += limit + 1
 	} else {
 		s.usedBytes += snapshot.Size
+		if s.captureSnapshot != nil {
+			err = s.captureSnapshot(relative, snapshot)
+		}
 	}
 	return snapshot, err
 }

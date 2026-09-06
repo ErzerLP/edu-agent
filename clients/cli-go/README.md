@@ -65,6 +65,14 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 `search` 现在支持 `output=content|files|count`：文件列表/统计模式不返回正文，不完整时以 `counts_partial` 标记局部结果；`context=1..3` 可为content附加去重、有界邻近行。新 `glob` 支持组件 `**`，不改变旧include/exclude语义。`find/search` 可显式设置 `respect_gitignore=true` 读取工作区内有界分层规则；默认仍不启用，错误规则不会被当作空规则扩大范围，ignore也不是权限保护。详见 [检索增强设计](../../docs/design/client-file-search-enhancement.md)。
 
+#### 可续扫的目录与检索
+
+`list/find/search` 可通过完整原参数与 `next_cursor` 继续同一查询，覆盖超过单目录2000项及单次扫描/结果窗口；扫描过程中可能先返回无正文进度页，不能据此判断无匹配。`scan_finished` 表示扫描结束，`scan_complete` 表示范围完整，`more` 表示还有扫描或未返回结果；永久缺口在 `scan_error` 中披露。content可继续同文件的后续匹配，files每文件一次，count按匹配行计数。缩短模型/历史投影时只保留完整定位并重算游标，不会跳过未返回项。
+
+游标仅当前workspace实例有效，不是跨进程快照：参数不一致明确拒绝；目录、实际读取正文或采用的忽略规则变化（含原先缺失的规则）会使 `cursor_stale`。Linux/macOS使用原生目录变化观察并复核正文hash，观察不可用不静默降级。关闭、恢复/F2、空闲10分钟或回收后为 `cursor_expired`，须明确新建查询而非冒充续页。查询状态只在内存，不自动落盘；历史结果不代表磁盘现在的状态。
+
+查询保留预算为当前客户端设置，新建/resume/F2均生效：`--file-query-memory-limit`默认64MiB、最高1GiB；`--file-query-entry-limit`默认100000计费单位、最高1000000；`--file-query-max-records`默认16、最高64。计费是逻辑保留预算而非精确Go峰值堆。记录满只回收最旧已结束查询，所有查询活跃时拒绝新增；到终止性容量/深度限制明确不完整，不以空结果掩盖。search单文件正文仍为1MiB。详见 [C7合同](../../docs/comet/specs/client-file-query-pagination/spec.md)。
+
 `write`/`edit`/`apply_patch`/`shell`/`task` 的单次完整 arguments JSON 上限为 64 KiB，其他工具为 8 KiB，一次模型响应的参数总量为 128 KiB；包含路径与 JSON 转义，不能理解为 64 KiB 净正文。`write` 仍限制为1MiB，预览/结果另有预算；不提供通用分块上传协议。详细说明见 [文件大参数设计](../../docs/design/client-file-large-arguments.md)。
 
 局部 `edit` 已支持独立预算内的大文本，默认原文件和完整候选各64MiB，可用 `--file-edit-limit BYTES` 配置，新建/resume/F2切换使用当前客户端设置。模型只提交最多32处精确唯一且不重叠的old_text/new_text及完整expected_hash；保留BOM、未修改原字节、替换换行、权限、授权、版本复核、WAL及原子发布。候选顺序构造，预算包含BOM和归一后的真实字节；仍全文读取/候选/发布，不承诺固定内存GB级编辑。超限可调预算或改用Shell脚本，write/stat.hash/search不随之扩大。短预览有界且明确截断，不新增逐页审批；完整diff由下述独立产物保留。详见 [C5合同](../../docs/comet/specs/client-large-file-edit/spec.md)。

@@ -320,6 +320,9 @@ func historyValue(tool string, value any) any {
 	if !ok {
 		return compactProjectionValue(value, 0, 6, 256)
 	}
+	if hasQueryProjection(tool, object) {
+		return compactQueryProjection(normalizedProjectionObject(object), 8, 256, "history_projection_limit", false)
+	}
 	if tool == workspace.ToolRead {
 		return compactReadProjection(object, 256, "history_projection_limit")
 	}
@@ -358,6 +361,9 @@ func historyValue(tool string, value any) any {
 }
 
 func boundedProjectionJSON(tool string, value any, limit int, reason string) string {
+	if object := normalizedProjectionObject(value); hasQueryProjection(tool, object) {
+		return boundedQueryProjectionJSON(object, limit, reason)
+	}
 	if tool == workspace.ToolRead {
 		return boundedReadProjectionJSON(value, limit, reason)
 	}
@@ -493,6 +499,9 @@ func preserveFields(object map[string]any, keys ...string) map[string]any {
 }
 
 func currentTurnBudgetProjection(tool string, value any) string {
+	if object := normalizedProjectionObject(value); hasQueryProjection(tool, object) {
+		return boundedQueryProjectionJSON(object, 256, "current_turn_budget")
+	}
 	object, _ := value.(map[string]any)
 	result := preserveOutcomeFields(tool, object, true, "current_turn_tool_result_budget")
 	if _, ok := result["error"]; !ok && len(result) <= 4 {
@@ -509,6 +518,13 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 	object := normalizedProjectionObject(value)
 	if object == nil {
 		return []string{currentTurnBudgetProjection(tool, value)}
+	}
+	if hasQueryProjection(tool, object) {
+		candidates := make([]string, 0, 4)
+		for _, limit := range []int{768, 384, 256, 192} {
+			candidates = append(candidates, boundedQueryProjectionJSON(object, limit, "current_turn_budget"))
+		}
+		return candidates
 	}
 	payloadLimits := []int{384, 192, 96, 48, 16, 4}
 	candidates := make([]string, 0, len(payloadLimits))
@@ -536,6 +552,9 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 }
 
 func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit int) map[string]any {
+	if hasQueryProjection(tool, object) {
+		return compactQueryProjection(object, 1, payloadLimit, "current_turn_budget", payloadLimit < 48)
+	}
 	if tool == workspace.ToolRead {
 		return compactReadProjection(object, payloadLimit, "current_turn_budget")
 	}

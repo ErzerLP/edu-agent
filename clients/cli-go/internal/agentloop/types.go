@@ -144,17 +144,20 @@ type Options struct {
 	WorkspaceStatus   WorkspaceStatus
 	// File processing budgets are client-process resource settings, not saved
 	// workspace identity or permissions. Zero selects the current defaults.
-	WorkspaceReadFileBytes int64
-	WorkspaceEditFileBytes int64
-	WorkspaceDiffBytes     int64
-	WorkspacePatchBytes    int64
-	Artifacts              *localartifact.Manager
-	ArtifactOptions        localartifact.Options
-	ArtifactOwner          string
-	Durability             DurabilitySink
-	LocalExec              *localexec.Manager
-	LocalExecOwner         string
-	LocalExecCWD           string
+	WorkspaceReadFileBytes    int64
+	WorkspaceEditFileBytes    int64
+	WorkspaceDiffBytes        int64
+	WorkspacePatchBytes       int64
+	WorkspaceQueryMemoryBytes int64
+	WorkspaceQueryEntries     int
+	WorkspaceQueryRecords     int
+	Artifacts                 *localartifact.Manager
+	ArtifactOptions           localartifact.Options
+	ArtifactOwner             string
+	Durability                DurabilitySink
+	LocalExec                 *localexec.Manager
+	LocalExecOwner            string
+	LocalExecCWD              string
 }
 
 type EventStatus string

@@ -42,6 +42,9 @@ type Limits struct {
 	EditFileBytes        int64
 	DiffBytes            int64
 	PatchBytes           int64
+	QueryMemoryBytes     int64
+	QueryEntries         int
+	QueryRecords         int
 	SearchMatches        int
 	SearchFiles          int
 	SearchBytes          int64
@@ -56,6 +59,7 @@ func DefaultLimits() Limits {
 	return Limits{
 		ListEntries: 200, DirectoryScanEntries: 2000, ResultBytes: 6 << 10,
 		ReadLines: 200, FileBytes: 1 << 20, ReadFileBytes: DefaultReadFileBytes, EditFileBytes: DefaultEditFileBytes,
+		QueryMemoryBytes: DefaultQueryMemoryBytes, QueryEntries: DefaultQueryEntries, QueryRecords: DefaultQueryRecords,
 		SearchMatches: 100, SearchFiles: 2000, SearchBytes: 16 << 20,
 		SearchDepth: 64, SearchPreviewBytes: 512, SearchEntries: 10000,
 		MutationPreviewBytes: 6 << 10, DiffBytes: DefaultDiffBytes, PatchBytes: DefaultPatchBytes, EditReplacements: 32,
@@ -175,8 +179,11 @@ type Executor interface {
 }
 
 type Workspace struct {
-	root   *securefile.Root
-	limits Limits
-	status Status
-	queues mutationQueues // serializes commits per normalized target path
+	root       *securefile.Root
+	limits     Limits
+	status     Status
+	queues     mutationQueues // serializes commits per normalized target path
+	queriesMu  sync.Mutex
+	queries    map[string]*workspaceQuery
+	queryBytes int64
 }

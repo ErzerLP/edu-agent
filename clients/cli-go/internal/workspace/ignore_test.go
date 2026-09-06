@@ -60,7 +60,10 @@ func TestGitignoreDiscoveryLayersNegationAndExplicitScopes(t *testing.T) {
 		t.Run(tool, func(t *testing.T) {
 			legacy, legacyValue := ignorePaths(t, w, tool, ".", nil)
 			explicit, explicitValue := ignorePaths(t, w, tool, ".", &off)
-			if !reflect.DeepEqual(legacyValue, explicitValue) || !reflect.DeepEqual(legacy, explicit) || len(legacy) != 11 {
+			legacyContent, explicitContent := copyQueryObject(legacyValue), copyQueryObject(explicitValue)
+			delete(legacyContent, "cursor")
+			delete(explicitContent, "cursor")
+			if !reflect.DeepEqual(legacyContent, explicitContent) || !reflect.DeepEqual(legacy, explicit) || len(legacy) != 11 {
 				t.Fatalf("default changed %v %v", legacy, explicit)
 			}
 			paths, value := ignorePaths(t, w, tool, ".", &on)

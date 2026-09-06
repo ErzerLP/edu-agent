@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1–C6 已实现并通过各自 Linux 批次门禁；C7–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C7 已实现并通过各自 Linux 批次门禁；C8–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -236,3 +236,27 @@ Go1.26.6/Linux amd64；Go命令目录为clients/cli-go。
 - `git diff --check`通过。七个相关包全部Go文件和go.mod/go.sum路径排序sha256列表汇总为`9dc912b1a3f58e959159b8e2426fef5a411dc73b544a63473e0157c9613dd982`。
 
 C6提交只作checkpoint。下一主线为C7目录检索续页，随后C8递归复制、C9归档恢复、C10归档清理及最终独立恢复/隐私复核。
+
+## C7：目录与检索续页
+
+已贯通既有list/find/search的真实连续扫描、单文件匹配续读、模型投影、可见活动与当前客户端预算；不使用持久查询产物，不改变search的1MiB单文件正文预算。
+
+- `securefile.DirectoryScan`保留原生目录读取位置；每页检查固定入口、no-follow及root身份，不丢lookahead。达到EOF后可转交变更guard。快速增删可能不改变可见元数据，故不能只靠mtime/ctime：Linux采用惰性共享inotify观察池，Darwin采用kqueue vnode通知；变化、通知溢出/丢失或资源不可用失败关闭。没有后台读goroutine，guard独立持有资源，Close并发安全、幂等。
+- workspace保存完整查询指纹、已观察元数据、采用的.gitignore（含缺失状态）、正文hash、目录guard、排序frontier、文件内行/匹配索引及不可变结果前缀。先完成当前目录枚举再输出排序节点；祖先忽略规则逐页加载。已读正文重新HashEntry复核，不把Darwin目录通知当子文件内容版本，也不声称跨进程快照。显式文件沿用绕过发现型ignore的既有规则。
+- 游标只绑定当前workspace实例和规范化参数；缓存结果位置与原生扫描位置分离，复用同一游标可读保留页，不重扫前缀。`scan_finished/scan_complete/more/scan_error`分别报告扫描结束、范围完整、未返回结果和不可扫描原因；零正文可为真实进度页。count按匹配行累计，files每文件一次，content逐出现位置并保留可用邻近行。
+- 默认保留预算：工作区64MiB逻辑内存、每查询100000计费单位、16个查询；不是Go峰值堆保证。CLI为`--file-query-memory-limit`（最高1GiB）、`--file-query-entry-limit`（最高1000000）、`--file-query-max-records`（最高64）。单调用扫描预算保持有界，终止性容量/深度限制明确返回不完整；空闲10分钟过期，记录满仅淘汰最旧已结束查询，活动查询满则拒绝。关闭workspace释放扫描和guard资源；resume/F2创建新实例，旧游标过期而不复活。
+- live/history/recall及当前轮预算只保留整条定位，裁剪后按实际返回条目重算next_cursor；不缩造路径。正文/邻近行省略与扫描完整分开标记；最小投影可省略可由数组恢复的重复returned字段，files列表被裁剪时counts_partial仍为true。只读查询不增加授权或进入副作用WAL。
+
+### C7验证记录
+
+Go1.26.6/Linux amd64；Go命令目录clients/cli-go。
+
+- `TestDirectoryScan`首次发现快速增删导致元数据不变；没有削弱变化失效合同，补充原生guard后`TestDirectory(Scan|Guard)`通过，覆盖2501项、无缺失/重复、转交、共享观察者、并发关闭、通知溢出/丢失和有界轮询。
+- `TestQuerySearch`验证content/files/count、正则空匹配/anchors、UTF-8列及有界分配；正文hash留存新增后修正测试的内存计费预期，没有将hash计费冒充临时内存泄漏。
+- `TestQueryPagination`覆盖2501文件三种工具全量分页、全路径排序、单文件30处多页匹配/匹配行计数、原生变化及正文/忽略变化失效、跨实例/TTL/关闭、缩短投影无丢项、fake模型→真实文件→客户端活动、CLI预算，以及真实加密Session的resume/F2当前预算与旧游标过期。
+- 六包全量`go test -count=1 -timeout=180s ./internal/securefile ./internal/workspace ./internal/agentloop ./internal/agentcontroller ./internal/agentui ./internal/command`：四包首次通过。workspace旧无游标/随机身份相等/schema字符串顺序断言更新；修正旧offset-only list的跳过计费、实际变更映射cursor_stale和模式进度计数。agentloop保留可容纳的邻近行并修正files裁剪的counts_partial。相关workspace/agentloop全包重验通过，其余证据复用。
+- 4096窗口工具集仍完整。新增游标schema后第二次请求估算3457而可用3379；据此进一步缩短小窗口冗余指导，不改变工具/schema/授权/输出预算。真实Shell两轮与4096文件结果投影回归通过。
+- 六包`go vet`通过；`go test -race -count=1 -timeout=120s ./internal/securefile ./internal/workspace ./internal/agentloop ./internal/agentcontroller -run '^Test(Directory(Scan|Guard)|Query)'`通过。最后新增实际恢复游标测试后controller具名race和vet通过；静态复核将query的root读取完整放入生命周期锁，`TestQueryPaginationConcurrentClose`定向race及workspace vet通过，避免入口与Close竞争。
+- Linux完整CLI构建/version运行与Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c7-build.jXvoG4`不提交。Darwin目录测试二进制交叉编译通过但没有原生运行证据；没有扩大Windows、数据库、Compose或付费模型测试范围。
+
+C7仍不是Runtime或整个Issue最终验收。下一批继续C8递归复制，不将checkpoint当作开发停止点。

@@ -54,7 +54,7 @@ func TestGitignoreProductionBothToolsRegistrationProjectionAndCheckpoint(t *test
 			registered := map[string]bool{}
 			for _, tool := range model.requests[0].Tools {
 				if tool.Function.Name == workspace.ToolFind || tool.Function.Name == workspace.ToolSearch {
-					registered[tool.Function.Name] = strings.Contains(string(tool.Function.Parameters), `"respect_gitignore":{"type":"boolean","default":false}`)
+					registered[tool.Function.Name] = strings.Contains(string(tool.Function.Parameters), `"respect_gitignore":{"default":false,"type":"boolean"}`)
 				}
 			}
 			if !registered[workspace.ToolFind] || !registered[workspace.ToolSearch] {

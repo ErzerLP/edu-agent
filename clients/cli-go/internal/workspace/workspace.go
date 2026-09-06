@@ -33,6 +33,15 @@ func OpenWithLimits(path string, limits Limits) (*Workspace, error) {
 	if limits.PatchBytes == 0 {
 		limits.PatchBytes = DefaultPatchBytes
 	}
+	if limits.QueryMemoryBytes == 0 {
+		limits.QueryMemoryBytes = DefaultQueryMemoryBytes
+	}
+	if limits.QueryEntries == 0 {
+		limits.QueryEntries = DefaultQueryEntries
+	}
+	if limits.QueryRecords == 0 {
+		limits.QueryRecords = DefaultQueryRecords
+	}
 	if err := validateLimits(limits); err != nil {
 		return nil, err
 	}
@@ -61,6 +70,8 @@ func validateLimits(limits Limits) error {
 		limits.EditFileBytes < 1 || limits.EditFileBytes > maxFileBytes ||
 		limits.DiffBytes < 1 || limits.DiffBytes > maxFileBytes ||
 		limits.PatchBytes < 1 || limits.PatchBytes > maxFileBytes ||
+		limits.QueryMemoryBytes < 1 || limits.QueryMemoryBytes > 1<<30 ||
+		limits.QueryEntries < 1 || limits.QueryEntries > maxQueryEntries || limits.QueryRecords < 1 || limits.QueryRecords > 64 ||
 		limits.ListEntries < 1 || limits.DirectoryScanEntries < limits.ListEntries || limits.ResultBytes < 1024 ||
 		limits.ReadLines < 1 || limits.FileBytes < 1 || limits.SearchMatches < 1 || limits.SearchFiles < 1 ||
 		limits.SearchBytes < limits.FileBytes || limits.SearchDepth < 1 || limits.SearchPreviewBytes < 32 || limits.SearchEntries < limits.SearchFiles ||
@@ -78,7 +89,15 @@ func (w *Workspace) Status() Status {
 }
 
 func (w *Workspace) Close() error {
-	if w == nil || w.root == nil {
+	if w == nil {
+		return nil
+	}
+	w.queriesMu.Lock()
+	defer w.queriesMu.Unlock()
+	for _, query := range w.queries {
+		w.discardQueryLocked(query)
+	}
+	if w.root == nil {
 		return nil
 	}
 	err := w.root.Close()
@@ -87,23 +106,25 @@ func (w *Workspace) Close() error {
 }
 
 func (w *Workspace) Execute(ctx context.Context, toolName, rawArguments string) Result {
-	if w == nil || w.root == nil {
+	if w == nil {
+		return failureResult(CodeWorkspaceUnavailable, "工作区不可用")
+	}
+	// Queries and Close share their lifetime lock; do not read root before
+	// acquiring it in executeQuery. Other executors retain their prior contract.
+	if isQueryTool(toolName) {
+		return w.executeQuery(ctx, toolName, rawArguments)
+	}
+	if w.root == nil {
 		return failureResult(CodeWorkspaceUnavailable, "工作区不可用")
 	}
 	if err := ctx.Err(); err != nil {
 		return contextFailure(err)
 	}
 	switch toolName {
-	case ToolFind:
-		return w.executeFind(ctx, rawArguments)
 	case ToolStat:
 		return w.executeStat(ctx, rawArguments)
-	case ToolList:
-		return w.executeList(ctx, rawArguments)
 	case ToolRead:
 		return w.executeRead(ctx, rawArguments)
-	case ToolSearch:
-		return w.executeSearch(ctx, rawArguments)
 	default:
 		return failureResult(CodeInvalidArguments, "未知工作区工具")
 	}

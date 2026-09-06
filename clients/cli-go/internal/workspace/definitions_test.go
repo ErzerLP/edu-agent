@@ -27,12 +27,12 @@ func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 		ToolMove:    "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.",
 		ToolCopy:    "Stream-copy a stat-versioned regular file up to 32MiB, including binary; keep source; absent destination, existing parent; no archive or links.",
 		ToolMkdir:   "Create a workspace directory; parents requires explicit true; no archive or links.",
-		ToolFind:    "Find workspace paths (*, ?, **); no content or links.",
+		ToolFind:    "Find workspace paths (*, ?, **), no body/links; repeat original parameters with next_cursor. Query retention: 67108864 bytes/100000 units; cursors expire on change, restart or cache reclamation.",
 		ToolStat:    "Inspect metadata; hash=true reads at most 1MiB, no links.",
 		ToolArchive: "Archive a file or directory; never permanently delete.",
-		ToolList:    "List one workspace directory; no links.",
+		ToolList:    "List one safe directory; repeat original parameters with next_cursor for further scan/results. Query retention: 67108864 bytes/100000 units; cursors expire on change, restart or cache reclamation.",
 		ToolRead:    "Read UTF-8 up to 67108864 bytes; whole-file hash; line/byte continuation; no links.",
-		ToolSearch:  "Search bounded workspace UTF-8 text; no links.",
+		ToolSearch:  "Search bounded UTF-8 text; repeat original parameters with next_cursor, including in-file matches. Query retention: 67108864 bytes/100000 units; cursors expire on change, restart or cache reclamation.",
 		ToolWrite:   "Create absent or hash-replace workspace UTF-8 text.",
 		ToolEdit:    "Exact unique non-overlapping edits to one hash; original/candidate up to 67108864 bytes.",
 	}
@@ -58,6 +58,13 @@ func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 		}
 		if err := json.Unmarshal([]byte(expected), &expectedSchema); err != nil {
 			t.Fatalf("%s expected schema: %v", name, err)
+		}
+		if isQueryTool(name) {
+			properties := expectedSchema.(map[string]any)["properties"].(map[string]any)
+			properties["cursor"] = map[string]any{"type": "string", "minLength": float64(1), "maxLength": float64(96)}
+			if name == ToolList {
+				properties["offset"].(map[string]any)["maximum"] = float64(100000)
+			}
 		}
 		if !reflect.DeepEqual(actualSchema, expectedSchema) {
 			t.Fatalf("%s schema mismatch\nactual:   %s\nexpected: %s", name, definition.Function.Parameters, expected)
@@ -132,12 +139,12 @@ func TestWorkspaceToolSchemaBoundaryContracts(t *testing.T) {
 		ToolMove:    {`"required":["source","destination","expected_version"]`, `"pattern":"^entry-v1:[0-9a-f]{64}$"`, `"additionalProperties":false`},
 		ToolCopy:    {`"required":["source","destination","expected_version"]`, `"pattern":"^entry-v1:[0-9a-f]{64}$"`, `"additionalProperties":false`},
 		ToolMkdir:   {`"parents":{"type":"boolean","default":false}`, `"required":["path"]`, `"additionalProperties":false`},
-		ToolFind:    {`"respect_gitignore":{"type":"boolean","default":false}`, `"required":["pattern"]`, `"maximum":200`, `"additionalProperties":false`},
+		ToolFind:    {`"respect_gitignore":{"default":false,"type":"boolean"}`, `"required":["pattern"]`, `"maximum":200`, `"additionalProperties":false`},
 		ToolStat:    {`"hash":{"type":"boolean"}`, `"required":["path"]`, `"additionalProperties":false`},
 		ToolArchive: {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"required":["path"]`, `"additionalProperties":false`},
-		ToolList:    {`"offset":{"type":"integer","minimum":0,"maximum":2000}`},
+		ToolList:    {`"offset":{"maximum":100000,"minimum":0,"type":"integer"}`, `"cursor":{"maxLength":96,"minLength":1,"type":"string"}`},
 		ToolRead:    {`"path":{"type":"string","minLength":1,"maxLength":4096}`, `"offset":{"type":"integer","minimum":1,"maximum":67108865}`, `"limit":{"type":"integer","minimum":1,"maximum":200}`, `"byte_offset":{"type":"integer","minimum":0,"maximum":67108864}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
-		ToolSearch:  {`"respect_gitignore":{"type":"boolean","default":false}`, `"output":{"type":"string","enum":["content","files","count"],"default":"content"}`, `"context":{"type":"integer","minimum":0,"maximum":3,"default":0}`, `"anyOf":[{"properties":{"output":{"const":"content"}}},{"properties":{"context":{"const":0}}}]`, `"query":{"type":"string","minLength":1,"maxLength":1000}`, `"mode":{"type":"string","enum":["literal","regex"]}`, `"case":{"type":"string","enum":["smart","sensitive","insensitive"]}`, `"include":{"type":"array","maxItems":16`, `"exclude":{"type":"array","maxItems":16`, `"maxLength":256`},
+		ToolSearch:  {`"respect_gitignore":{"default":false,"type":"boolean"}`, `"output":{"default":"content","enum":["content","files","count"],"type":"string"}`, `"context":{"default":0,"maximum":3,"minimum":0,"type":"integer"}`, `"anyOf":[{"properties":{"output":{"const":"content"}}},{"properties":{"context":{"const":0}}}]`, `"query":{"maxLength":1000,"minLength":1,"type":"string"}`, `"mode":{"enum":["literal","regex"],"type":"string"}`, `"case":{"enum":["smart","sensitive","insensitive"],"type":"string"}`, `"include":{"items":`, `"exclude":{"items":`, `"maxItems":16`, `"maxLength":256`},
 		ToolWrite:   {`"mode":{"type":"string","enum":["create","replace"]}`, `"content":{"type":"string","maxLength":65536}`, `"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}`},
 		ToolEdit:    {`"edits":{"type":"array","minItems":1,"maxItems":32`, `"old_text":{"type":"string","minLength":1,"maxLength":65536}`, `"new_text":{"type":"string","maxLength":65536}`, `"additionalProperties":false`},
 	}

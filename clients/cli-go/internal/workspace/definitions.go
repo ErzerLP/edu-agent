@@ -9,7 +9,7 @@ import (
 )
 
 func Definitions() []modelclient.Tool {
-	return []modelclient.Tool{
+	definitions := []modelclient.Tool{
 		workspaceTool(ToolFind, "Find workspace paths (*, ?, **); no content or links.", `{"type":"object","properties":{"path":{"type":"string"},"pattern":{"type":"string","minLength":1,"maxLength":256},"type":{"type":"string","enum":["file","directory","any"]},"limit":{"type":"integer","minimum":1,"maximum":200},"respect_gitignore":{"type":"boolean","default":false}},"required":["pattern"],"additionalProperties":false}`),
 		workspaceTool(ToolStat, "Inspect metadata; hash=true reads at most 1MiB, no links.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"hash":{"type":"boolean"}},"required":["path"],"additionalProperties":false}`),
 		workspaceTool(ToolList, "List one workspace directory; no links.", `{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer","minimum":0,"maximum":2000}},"additionalProperties":false}`),
@@ -23,6 +23,12 @@ func Definitions() []modelclient.Tool {
 		workspaceTool(ToolMove, "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.", `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
 		workspaceTool(ToolArchive, "Archive a file or directory; never permanently delete.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096}},"required":["path"],"additionalProperties":false}`),
 	}
+	for i := range definitions {
+		if isQueryTool(definitions[i].Function.Name) {
+			definitions[i] = queryDefinition(definitions[i], DefaultLimits())
+		}
+	}
+	return definitions
 }
 
 func (w *Workspace) Definitions() []modelclient.Tool {
@@ -30,6 +36,8 @@ func (w *Workspace) Definitions() []modelclient.Tool {
 	if w != nil {
 		for index := range definitions {
 			switch definitions[index].Function.Name {
+			case ToolFind, ToolList, ToolSearch:
+				definitions[index] = queryDefinition(definitions[index], w.limits)
 			case ToolRead:
 				definitions[index] = readDefinition(w.limits)
 			case ToolEdit:

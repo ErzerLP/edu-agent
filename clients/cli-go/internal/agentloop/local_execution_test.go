@@ -122,7 +122,12 @@ func TestLocalExecutionSmallContextKeepsCompleteToolSet(t *testing.T) {
 	system, _ := splitSystemMessages(s.messages)
 	fixed := s.estimator.EstimateRequest(modelclient.Request{Messages: system, Tools: s.tools()})
 	if result, err := s.Send(t.Context(), "hello"); err != nil || calls != 2 || result.Text != "done" {
-		t.Fatalf("fixed tokens=%d, model calls=%d, result=%+v, send error=%v", fixed, calls, result, err)
+		systemAfter, conversation := splitSystemMessages(s.messages)
+		if len(conversation) > 0 {
+			conversation = conversation[:len(conversation)-1]
+		}
+		required := s.estimator.EstimateRequest(modelclient.Request{Messages: append(systemAfter, conversation...), Tools: s.tools()})
+		t.Fatalf("fixed tokens=%d, second request=%d (max 3379), model calls=%d, result=%+v, send error=%v", fixed, required, calls, result, err)
 	}
 }
 

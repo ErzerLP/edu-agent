@@ -144,8 +144,11 @@ func TestFindBoundsCancellationAndInvalidArguments(t *testing.T) {
 			if value["complete"] != false || value["truncation_reason"] == "" || safeResultJSONSize(value) > limits.ResultBytes {
 				t.Fatalf("unbounded/incomplete result: %+v", value)
 			}
-			if _, ok := value["next_offset"]; ok {
-				t.Fatal("invented continuation")
+			if value["more"] == true {
+				cursor, _ := value["next_cursor"].(string)
+				if _, _, valid := parseQueryCursor(cursor); !valid {
+					t.Fatal("lost real continuation")
+				}
 			}
 			if value["visited_entries"].(int) > limits.SearchEntries {
 				t.Fatal("entry budget exceeded")

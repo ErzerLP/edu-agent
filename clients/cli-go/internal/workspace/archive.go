@@ -160,7 +160,7 @@ func archiveFailure(ctx context.Context, prepared *PreparedMutation, err error) 
 }
 
 func (r *Reference) IsOperation() bool {
-	return r != nil && (r.IsArchive() || r.Kind == "mkdir" || r.Kind == "copy" || r.Kind == "move_file" || r.Kind == "move_directory" || r.Kind == "file_effect")
+	return r != nil && (r.IsArchive() || r.Kind == "mkdir" || r.Kind == "copy" || r.Kind == "move_file" || r.Kind == "move_directory" || r.Kind == "restore_file" || r.Kind == "restore_directory" || r.Kind == "file_effect")
 }
 
 func (r *Reference) IsArchive() bool {

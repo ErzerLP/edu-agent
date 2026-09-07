@@ -235,7 +235,7 @@ func TestJournalAuthenticatedFutureCannotBeSavedOrConsumed(t *testing.T) {
 	if !bytes.Equal(before, readSessionArtifactForTest(t, s, dirtyName(record.StorageID))) {
 		t.Fatal("future dirty evidence changed")
 	}
-	if DefaultLimits().DirtyMarkerBytes != 16<<10 || DefaultLimits().ReceiptCount != 32 || recordPayloadSchemaVersion != 7 || recordContainerSchemaVersion != 1 || strings.Contains(string(plain), "authorization") {
+	if DefaultLimits().DirtyMarkerBytes != 16<<10 || DefaultLimits().ReceiptCount != 32 || recordPayloadSchemaVersion != 8 || recordContainerSchemaVersion != 1 || strings.Contains(string(plain), "authorization") {
 		t.Fatal("unrelated contract changed")
 	}
 }

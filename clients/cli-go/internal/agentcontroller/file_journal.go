@@ -110,7 +110,7 @@ func fileReceiptFromExecution(wal agentsession.FileWriteAhead, result workspace.
 			return agentsession.FileReceipt{}, errors.New("文件结算结果与预写计划不一致")
 		}
 		effect = *result.Effect
-	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove {
+	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() {
 		return agentsession.FileReceipt{}, errors.New("文件结算缺少完整执行器副作用事实")
 	}
 	if effect.IsDirectoryCopy() && (effect.Target.Version != "" || ref.ContentHash != "" || !ref.InvalidateObserved) {
@@ -119,10 +119,10 @@ func fileReceiptFromExecution(wal agentsession.FileWriteAhead, result workspace.
 	if effect.Operation == workspace.ToolCopy && !effect.IsDirectoryCopy() && !unknown && (effect.Target.Version == "" || effect.Target.Version != ref.ContentHash) {
 		return agentsession.FileReceipt{}, errors.New("复制结算缺少匹配的实际目标哈希")
 	}
-	if effect.Operation == workspace.ToolMove && (ref.ContentHash != "" || !ref.InvalidateObserved) {
+	if (effect.Operation == workspace.ToolMove || effect.IsArchiveRestore()) && (ref.ContentHash != "" || !ref.InvalidateObserved) {
 		return agentsession.FileReceipt{}, errors.New("移动结算不能伪造目标版本或省略双端失效")
 	}
-	if !unknown && !effect.IsDirectoryCopy() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
+	if !unknown && !effect.IsArchiveRestore() && !effect.IsDirectoryCopy() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
 		effect.Target.Version = ref.ContentHash
 	}
 	r := agentsession.FileReceipt{ToolCallID: wal.ToolCallID, Effect: effect, InvalidateObserved: ref.InvalidateObserved,

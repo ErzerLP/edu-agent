@@ -56,7 +56,7 @@ func (m model) renderSelector(width int) string {
 	}
 	lines := []string{selectorTitleStyle.Render(truncateDisplayWidth(selector.title, innerWidth))}
 	bodyLines := wrapDisplayLines(selector.body, innerWidth, bodyRows)
-	if selector.copyReview {
+	if selector.copyReview || selector.optionalReview {
 		bodyLines = selector.copyPreviewPage(innerWidth, bodyRows)
 	}
 	for _, line := range bodyLines {
@@ -64,6 +64,8 @@ func (m model) renderSelector(width int) string {
 	}
 	if selector.copyReview {
 		lines = append(lines, mutedStyle.Render(fmt.Sprintf("完整预览 %d/%d · 必须查看末页后授权", selector.copyPage+1, selector.copyPages)))
+	} else if selector.optionalReview {
+		lines = append(lines, mutedStyle.Render(fmt.Sprintf("完整预览 %d/%d · 可直接授权，无需末页", selector.copyPage+1, selector.copyPages)))
 	}
 
 	maxVisibleOptions, optionLabelRows := 5, 1

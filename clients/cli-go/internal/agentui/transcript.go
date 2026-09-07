@@ -216,9 +216,19 @@ func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) 
 		lines = appendWrappedToolDetail(lines, "    "+value, width, 4)
 	}
 	if detail.Path != "" {
-		appendLine("路径：" + safeSingleLineTerminalText(detail.Path))
+		label := "路径："
+		if detail.Operation == "restore_archive" {
+			label = "归档恢复源："
+		}
+		appendLine(label + safeSingleLineTerminalText(detail.Path))
 	}
-	if detail.DestinationPath != "" && detail.Operation == "move" {
+	if detail.DestinationPath != "" && detail.Operation == "restore_archive" {
+		appendLine("恢复目标：" + safeSingleLineTerminalText(detail.DestinationPath))
+		appendLine("从归档整体移动；不覆盖，不清理空容器。")
+		if detail.PublicationOutcome == "unknown" {
+			appendLine("核查归档源与恢复目标；不会自动重试、恢复重放或清理。")
+		}
+	} else if detail.DestinationPath != "" && detail.Operation == "move" {
 		appendLine("移动目标：" + safeSingleLineTerminalText(detail.DestinationPath))
 		appendLine("整体移动；不覆盖、不永久删除。")
 		if detail.PublicationOutcome == "unknown" {

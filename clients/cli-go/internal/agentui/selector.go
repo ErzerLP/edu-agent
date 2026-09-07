@@ -41,6 +41,7 @@ type selectorModel struct {
 	submitted                                bool
 	width                                    int
 	copyReview                               bool
+	optionalReview                           bool // pageable preview without a last-page approval gate
 	copyPage, copyPages, copyWidth, copyRows int
 	copyPageRendered                         bool
 }
@@ -101,7 +102,9 @@ func newPreferenceRetrySelector() *selectorModel {
 
 func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorModel {
 	body := fmt.Sprintf("操作：%s\n路径：%s\n%s：\n%s", pending.Operation, pending.Path, pending.PreviewKind, pending.Preview)
-	if pending.DestinationPath != "" && pending.Operation == "move" {
+	if pending.DestinationPath != "" && pending.Operation == "restore_archive" {
+		body = fmt.Sprintf("归档恢复源：%s\n恢复目标：%s\n%s", pending.Path, pending.DestinationPath, pending.Preview)
+	} else if pending.DestinationPath != "" && pending.Operation == "move" {
 		body = fmt.Sprintf("移动源：%s\n移动目标：%s\n%s", pending.Path, pending.DestinationPath, pending.Preview)
 	} else if pending.DestinationPath != "" {
 		body = fmt.Sprintf("复制源：%s\n复制目标：%s\n%s\n源未修改；不覆盖目标，不创建父目录。", pending.Path, pending.DestinationPath, pending.Preview)
@@ -123,6 +126,7 @@ func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorMo
 	}
 	return &selectorModel{
 		kind: selectorFileMutation, title: title, body: body, copyReview: pending.Operation == "copy" || pending.Operation == "move" || pending.Operation == "mkdir",
+		optionalReview: pending.Operation == "restore_archive",
 		options: []selectorOption{
 			{ID: string(agentloop.FileMutationApprove), Label: "允许此次修改", Description: "重新校验版本后只发布上方已冻结候选"},
 			{ID: string(agentloop.FileMutationDecline), Label: "拒绝此次修改", Description: "文件保持不变，并把 authorization_denied 返回模型"},
@@ -135,8 +139,8 @@ func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel
 		current = agentloop.FileAuthorizationConfirm
 	}
 	options := []selectorOption{
-		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit/archive/mkdir/copy/move 都显示冻结预览并等待明确授权"},
-		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit/archive/mkdir/copy/move 不再确认，但所有安全校验保持不变"},
+		{ID: string(agentloop.FileAuthorizationConfirm), Label: "逐次确认", Description: "每个 write/edit/archive/restore_archive/mkdir/copy/move/apply_patch 都显示冻结预览并等待明确授权"},
+		{ID: string(agentloop.FileAuthorizationYOLO), Label: "YOLO", Description: "当前 Session 后续 write/edit/archive/restore_archive/mkdir/copy/move/apply_patch 不再确认，但所有安全校验保持不变"},
 	}
 	focus := 0
 	for index := range options {
@@ -206,7 +210,7 @@ func (s *selectorModel) handleKey(msg tea.KeyMsg) (selectorAction, tea.Cmd) {
 		return selectorAction{}, nil
 	}
 	key := msg.String()
-	if s.copyReview {
+	if s.copyReview || s.optionalReview {
 		if key == "pgdown" || key == "pgup" {
 			if s.copyPageRendered {
 				if key == "pgdown" {
@@ -218,7 +222,7 @@ func (s *selectorModel) handleKey(msg tea.KeyMsg) (selectorAction, tea.Cmd) {
 			}
 			return selectorAction{}, nil
 		}
-		if key == "enter" && s.focus == 0 && (!s.copyPageRendered || s.copyPage != s.copyPages-1) {
+		if s.copyReview && key == "enter" && s.focus == 0 && (!s.copyPageRendered || s.copyPage != s.copyPages-1) {
 			return selectorAction{}, nil
 		}
 	}
@@ -375,6 +379,9 @@ func (s *selectorModel) helpText() string {
 	case selectorFileMutation:
 		if s.copyReview {
 			return "PgUp/PgDn 完整预览 · 末页 Enter 授权 · ↓ 拒绝 · Esc 取消"
+		}
+		if s.optionalReview {
+			return "PgUp/PgDn 完整预览 · Enter 授权（无需末页）· ↓ 拒绝 · Esc 取消"
 		}
 		return "↑/↓/Tab 或 1-2 · Enter 确认 · Esc 停止当前轮次"
 	case selectorFileMode:

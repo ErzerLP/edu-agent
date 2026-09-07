@@ -131,6 +131,9 @@ func (s *Session) publishPreparedFileItem(ctx context.Context, callID string, pr
 		if err := s.options.Durability.BeforeFilePublication(ctx, FileWriteAhead{
 			ToolCallID: callID, Effect: prepared.FileEffect(),
 		}); err != nil {
+			if errors.Is(err, ErrLocalCallRecorded) {
+				return workspace.Result{Publication: workspace.PublicationUnchanged}, nil, nil, ErrLocalCallRecorded
+			}
 			return workspace.Result{Publication: workspace.PublicationUnchanged}, nil, nil, errors.New("无法在文件发布前持久化恢复凭据")
 		}
 	}
@@ -156,6 +159,10 @@ func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclie
 	}
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: "正在安全发布文件修改", Status: EventRunning}, Phase: ActivityExecutingTool, File: fileActivityDetailFromPrepared(prepared)})
 	result, toolErr, settlementErr, err := s.publishPreparedFileItem(ctx, call.ID, prepared)
+	if errors.Is(err, ErrLocalCallRecorded) && prepared.Presentation.Tool == workspace.ToolRestoreArchive {
+		result = workspace.Result{Publication: workspace.PublicationUnchanged, Summary: "恢复调用已记录，原结果须核查；本次没有重放恢复", Value: map[string]any{"operation": workspace.ToolRestoreArchive, "path": prepared.Presentation.Path, "source": prepared.Presentation.Path, "destination": prepared.Presentation.DestinationPath, "publication_outcome": "unchanged", "operation_outcome": "unknown", "error": "file_call_recorded", "code": "file_call_recorded", "replay": false}}
+		err = nil
+	}
 	if err != nil {
 		return result, Event{}, false, err
 	}
@@ -256,6 +263,12 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 			Unknown      int                `json:"unknown"`
 			ReceiptID    string             `json:"receipt_id"`
 			ReceiptError string             `json:"receipt_error"`
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.FileEffect.IsArchiveRestore() && effect.FileEffect.Validate() == nil {
+			text = "已从归档恢复：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；后续处理已停止，空归档容器未清理。"
+			if unknown {
+				text = "归档恢复结果未知：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；请检查两端，不会自动重试、恢复重放、回滚或清理。"
+			}
 		}
 		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.Operation == workspace.ToolMove && effect.FileEffect.Validate() == nil {
 			text = "已移动：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；未永久删除；后续处理已停止。"

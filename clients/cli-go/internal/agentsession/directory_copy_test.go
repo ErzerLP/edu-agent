@@ -48,7 +48,7 @@ func TestDirectoryCopyCurrentPayloadRoundTrip(t *testing.T) {
 			}
 			plain, header := dirtyPayloadOnDiskForTest(t, s, h.dataKey, record)
 			version, err := probeRecordPayloadSchema(plain, s.limits.DirtyMarkerBytes)
-			if err != nil || version != 8 || header.SchemaVersion != 1 || bytes.Contains(plain, []byte("sha256:")) {
+			if err != nil || version != dirtySchemaVersion || header.SchemaVersion != 1 || bytes.Contains(plain, []byte("sha256:")) {
 				t.Fatalf("dirty version=%d header=%+v err=%v payload=%s", version, header, err, plain)
 			}
 			loaded, err := h.Load()
@@ -72,7 +72,7 @@ func TestDirectoryCopyCurrentPayloadRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if version, header := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, saved); version != 7 || header.SchemaVersion != 1 {
+			if version, header := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, saved); version != recordPayloadSchemaVersion || header.SchemaVersion != 1 {
 				t.Fatalf("record version=%d header=%+v", version, header)
 			}
 			loaded, err = h.Load()
@@ -159,7 +159,7 @@ func TestDirectoryCopyLegacyMigrationPreservesV1Fields(t *testing.T) {
 	writeDirtyPayloadForTest(t, s, h.dataKey, record, plain)
 	before := readSessionArtifactForTest(t, s, dirtyName(record.StorageID))
 	got, err := decodeDirtyPayload(plain, s.limits.DirtyMarkerBytes)
-	marker.SchemaVersion = 8
+	marker.SchemaVersion = dirtySchemaVersion
 	if err != nil || !reflect.DeepEqual(got, marker) {
 		t.Fatalf("v7 migration lost facts: got=%+v want=%+v err=%v", got, marker, err)
 	}
@@ -168,7 +168,7 @@ func TestDirectoryCopyLegacyMigrationPreservesV1Fields(t *testing.T) {
 	localOnly.SchemaVersion, localOnly.File, localOnly.FileJournal = 7, nil, nil
 	localPlain, _ := encodeStrict(localOnly)
 	localGot, err := decodeDirtyPayload(localPlain, s.limits.DirtyMarkerBytes)
-	localOnly.SchemaVersion = 8
+	localOnly.SchemaVersion = dirtySchemaVersion
 	if err != nil || !reflect.DeepEqual(localGot, localOnly) {
 		t.Fatalf("local-only migration: got=%+v want=%+v err=%v", localGot, localOnly, err)
 	}
@@ -189,7 +189,7 @@ func TestDirectoryCopyLegacyMigrationPreservesV1Fields(t *testing.T) {
 	record.FileReceipts = []FileReceipt{*marker.FileJournal[0].Result, completedCopy}
 	writeRecordPayloadForTest(t, s, h.dataKey, record, 6, nil)
 	loaded, err := h.Load()
-	if err != nil || !recordsEqual(loaded.Record, record) || loaded.Record.SchemaVersion != 7 || loaded.Interrupted == nil || !reflect.DeepEqual(*loaded.Interrupted, marker) {
+	if err != nil || !recordsEqual(loaded.Record, record) || loaded.Record.SchemaVersion != recordPayloadSchemaVersion || loaded.Interrupted == nil || !reflect.DeepEqual(*loaded.Interrupted, marker) {
 		t.Fatalf("legacy migration lost data: %+v err=%v", loaded, err)
 	}
 	if !bytes.Equal(before, readSessionArtifactForTest(t, s, dirtyName(record.StorageID))) {
@@ -315,11 +315,11 @@ func TestDirectoryCopyAuthenticatedFutureVersionsPreserveEvidence(t *testing.T) 
 			s, h, record, marker := journalStore(t)
 			name := recordName(record.StorageID)
 			if kind == "record" {
-				writeRecordPayloadForTest(t, s, h.dataKey, record, 8, func(b []byte) []byte {
+				writeRecordPayloadForTest(t, s, h.dataKey, record, recordPayloadSchemaVersion+1, func(b []byte) []byte {
 					return append(b[:len(b)-1], []byte(`,"future":null}`)...)
 				})
 			} else {
-				marker.SchemaVersion = 9
+				marker.SchemaVersion = dirtySchemaVersion + 1
 				plain, _ := encodeStrict(marker)
 				plain = append(plain[:len(plain)-1], []byte(`,"future":null}`)...)
 				writeDirtyPayloadForTest(t, s, h.dataKey, record, plain)
@@ -330,7 +330,7 @@ func TestDirectoryCopyAuthenticatedFutureVersionsPreserveEvidence(t *testing.T) 
 				t.Fatalf("authenticated future %s was not unsupported: %v", kind, err)
 			}
 			if kind == "dirty" {
-				marker.SchemaVersion = 8
+				marker.SchemaVersion = dirtySchemaVersion
 				if _, err := h.UpdateDirty(t.Context(), marker); !errors.Is(err, ErrVersionUnsupported) {
 					t.Fatalf("future dirty update: %v", err)
 				}
@@ -344,17 +344,17 @@ func TestDirectoryCopyAuthenticatedFutureVersionsPreserveEvidence(t *testing.T) 
 			}
 		})
 	}
-	if recordPayloadSchemaVersion != 7 || dirtySchemaVersion != 8 || recordMigrationMaxSteps != 6 || recordPayloadSchemaVersion-recordMigrationMaxSteps != 1 || recordContainerSchemaVersion != 1 || dirtyContainerSchemaVersion != 1 {
-		t.Fatal("directory-copy version/container contract changed")
+	if recordPayloadSchemaVersion-recordMigrationMaxSteps != 1 || recordContainerSchemaVersion != 1 || dirtyContainerSchemaVersion != 1 {
+		t.Fatal("bounded migration/container contract changed")
 	}
 	// Every older record version still has a complete bounded migration path.
 	_, _, record, _ := journalStore(t)
-	for version := 1; version <= 7; version++ {
+	for version := 1; version <= recordPayloadSchemaVersion; version++ {
 		t.Run(fmt.Sprintf("record-chain-v%d", version), func(t *testing.T) {
 			record.SchemaVersion = version
 			plain, _ := encodeStrict(record)
 			got, source, err := decodeRecordPayload(plain, 1<<20)
-			if err != nil || source != version || got.SchemaVersion != 7 {
+			if err != nil || source != version || got.SchemaVersion != recordPayloadSchemaVersion {
 				t.Fatalf("migration source=%d schema=%d err=%v", source, got.SchemaVersion, err)
 			}
 		})

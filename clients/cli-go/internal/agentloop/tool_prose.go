@@ -32,10 +32,27 @@ func compactToolProse(tools []modelclient.Tool) []modelclient.Tool {
 	return result
 }
 
+func onlyStringEnum(values []any) bool {
+	for _, value := range values {
+		if _, ok := value.(string); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func stripSchemaProse(value any) {
 	switch current := value.(type) {
 	case map[string]any:
 		delete(current, "description")
+		delete(current, "default") // annotation only; runtime defaults do not change
+		if current["type"] == "string" {
+			if values, ok := current["enum"].([]any); ok && len(values) > 0 && onlyStringEnum(values) {
+				// The enum already excludes every non-string value. Removing
+				// this redundant type does not widen the accepted input set.
+				delete(current, "type")
+			}
+		}
 		for key, child := range current {
 			switch key {
 			case "properties", "patternProperties", "$defs", "definitions", "dependentSchemas":
@@ -47,8 +64,8 @@ func stripSchemaProse(value any) {
 			case "items", "prefixItems", "additionalItems", "additionalProperties", "unevaluatedProperties", "unevaluatedItems", "contains", "propertyNames", "not", "if", "then", "else", "allOf", "anyOf", "oneOf", "contentSchema":
 				stripSchemaProse(child)
 			}
-			// Never recurse into const/enum/default/examples or unknown data:
-			// their object keys, including "description", may be constraints.
+			// Never recurse into const/enum/examples or unknown data: their
+			// keys, including "description" and "default", may be literal data.
 		}
 	case []any:
 		for _, child := range current {

@@ -90,7 +90,7 @@ func InitialProgress(toolName, rawArguments string) (Progress, bool) {
 		}
 		path, err = normalizeModelPath(args.Path, false)
 		progress.Operation = "write_" + args.Mode
-	case ToolCopy, ToolMove:
+	case ToolCopy, ToolMove, ToolRestoreArchive:
 		args, decodeErr := decodeCopyArguments(rawArguments)
 		if decodeErr != nil {
 			return Progress{}, false
@@ -162,7 +162,7 @@ func safeProgress(progress Progress) bool {
 	if !IsReadTool(progress.Tool) && !IsMutationTool(progress.Tool) {
 		return false
 	}
-	if progress.Tool == ToolCopy || progress.Tool == ToolMove {
+	if progress.Tool == ToolCopy || progress.Tool == ToolMove || progress.Tool == ToolRestoreArchive {
 		destination, err := normalizeModelPath(progress.DestinationPath, false)
 		if err != nil || destination != progress.DestinationPath {
 			return false
@@ -174,7 +174,7 @@ func safeProgress(progress Progress) bool {
 		}
 	}
 	allowRoot := progress.Tool == ToolFind || progress.Tool == ToolStat || progress.Tool == ToolList || progress.Tool == ToolSearch
-	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" && progress.Operation != ToolArchive && progress.Operation != ToolMkdir && progress.Operation != ToolCopy && progress.Operation != ToolMove {
+	if progress.Operation != "" && progress.Operation != "write_create" && progress.Operation != "write_replace" && progress.Operation != "edit" && progress.Operation != ToolArchive && progress.Operation != ToolMkdir && progress.Operation != ToolCopy && progress.Operation != ToolMove && progress.Operation != ToolRestoreArchive {
 		return false
 	}
 	normalized, err := normalizeModelPath(progress.Path, allowRoot)

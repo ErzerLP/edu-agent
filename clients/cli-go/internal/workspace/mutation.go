@@ -53,6 +53,8 @@ func (w *Workspace) PrepareMutation(ctx context.Context, toolName, rawArguments 
 	switch toolName {
 	case ToolPatch:
 		return w.preparePatch(ctx, rawArguments)
+	case ToolRestoreArchive:
+		return w.prepareRestore(ctx, rawArguments)
 	case ToolMove:
 		return w.prepareMove(ctx, rawArguments)
 	case ToolCopy:
@@ -317,6 +319,9 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	if err := ctx.Err(); err != nil {
 		return mutationContextFailure(err)
 	}
+	if prepared.Presentation.Tool == ToolRestoreArchive {
+		return w.commitRestore(ctx, prepared)
+	}
 	if prepared.Presentation.Tool == ToolMove {
 		return w.commitMove(ctx, prepared)
 	}
@@ -424,6 +429,9 @@ func MutationDenied(prepared *PreparedMutation) Result {
 	result.Publication = PublicationUnchanged
 	if value, ok := result.Value.(map[string]any); ok {
 		value["path"] = path
+		if prepared != nil && prepared.restorePlan != nil {
+			value["source"], value["destination"], value["entry_type"] = path, prepared.restorePlan.Destination(), string(prepared.restorePlan.Kind())
+		}
 		if prepared != nil && prepared.movePlan != nil {
 			value["source"], value["destination"], value["entry_type"] = path, prepared.movePlan.Destination(), string(prepared.movePlan.Kind())
 		}

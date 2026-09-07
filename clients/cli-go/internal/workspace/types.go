@@ -10,18 +10,19 @@ import (
 )
 
 const (
-	ToolStat    = "stat"
-	ToolFind    = "find"
-	ToolList    = "list"
-	ToolRead    = "read"
-	ToolSearch  = "search"
-	ToolWrite   = "write"
-	ToolEdit    = "edit"
-	ToolMove    = "move"
-	ToolCopy    = "copy"
-	ToolMkdir   = "mkdir"
-	ToolArchive = "archive"
-	ToolPatch   = "apply_patch"
+	ToolStat           = "stat"
+	ToolFind           = "find"
+	ToolList           = "list"
+	ToolRead           = "read"
+	ToolSearch         = "search"
+	ToolWrite          = "write"
+	ToolEdit           = "edit"
+	ToolMove           = "move"
+	ToolCopy           = "copy"
+	ToolMkdir          = "mkdir"
+	ToolArchive        = "archive"
+	ToolPatch          = "apply_patch"
+	ToolRestoreArchive = "restore_archive"
 )
 
 const (
@@ -149,6 +150,7 @@ type PreparedMutation struct {
 	replacements         int
 	archivePath          string
 	movePlan             *securefile.MovePlan
+	restorePlan          *securefile.RestorePlan
 	copyPlan             *securefile.CopyPlan
 	copyTreePlan         *securefile.CopyTreePlan
 	copyTreePresentation MutationPresentation

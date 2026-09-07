@@ -332,6 +332,9 @@ func historyValue(tool string, value any) any {
 	if tool == workspace.ToolRead {
 		return compactReadProjection(object, 256, "history_projection_limit")
 	}
+	if tool == workspace.ToolRestoreArchive {
+		return restoreReceiptProjection(object)
+	}
 	if tool == workspace.ToolCopy && (object["plan_id"] != nil || object["batch_id"] != nil) {
 		return copyReceiptProjection(object)
 	}
@@ -376,13 +379,16 @@ func boundedProjectionJSON(tool string, value any, limit int, reason string) str
 	if tool == workspace.ToolRead {
 		return boundedReadProjectionJSON(value, limit, reason)
 	}
-	// Copy/move endpoints and metadata versions are never recursively shortened.
-	if tool == workspace.ToolCopy || tool == workspace.ToolMove {
+	// Relocation endpoints and metadata versions are never recursively shortened.
+	if tool == workspace.ToolCopy || tool == workspace.ToolMove || tool == workspace.ToolRestoreArchive {
 		if data, err := json.Marshal(value); err == nil && len(data) <= limit {
 			return string(data)
 		}
 		if object := normalizedProjectionObject(value); object != nil {
 			fact := preserveFields(object, "file_effect", "operation", "path", "publication_outcome", "error", "code")
+			if tool == workspace.ToolRestoreArchive {
+				fact = restoreReceiptProjection(object)
+			}
 			if tool == workspace.ToolCopy && (object["plan_id"] != nil || object["batch_id"] != nil) {
 				fact = copyReceiptProjection(object)
 			}
@@ -610,7 +616,7 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 			result["content"] = truncateUTF8(content, payloadLimit)
 			payloadKept = true
 		}
-	case workspace.ToolWrite, workspace.ToolEdit, workspace.ToolArchive, workspace.ToolMkdir, workspace.ToolCopy, workspace.ToolMove:
+	case workspace.ToolWrite, workspace.ToolEdit, workspace.ToolArchive, workspace.ToolMkdir, workspace.ToolCopy, workspace.ToolMove, workspace.ToolRestoreArchive:
 		for _, key := range []string{"preview", "diff"} {
 			if preview, ok := object[key].(string); ok && preview != "" {
 				result[key] = truncateUTF8(preview, payloadLimit)

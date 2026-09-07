@@ -1051,7 +1051,7 @@ func (c *Controller) saveRecordLocked(ctx context.Context, consumeDirty bool) er
 		}
 		identities := append([]agentsession.LocalEffectIntent(nil), c.dirty.LocalEffects...)
 		for _, entry := range dirtyFileEntries(*c.dirty) {
-			if entry.WriteAhead.Effect.IsDirectoryCopy() {
+			if entry.WriteAhead.Effect.IsDirectoryCopy() || entry.WriteAhead.Effect.IsArchiveRestore() {
 				// Reuse the immutable local-call fence, independent of batch
 				// history loading or its current in-memory resource budget.
 				identities = append(identities, agentsession.LocalEffectIntent{ToolCallID: entry.WriteAhead.ToolCallID})
@@ -1304,16 +1304,16 @@ func fileReceiptFromCheckpoint(writeAhead agentsession.FileWriteAhead, checkpoin
 			return agentsession.FileReceipt{}, false, errors.New("文件副作用结果与预写计划不一致")
 		}
 		effect = observed
-	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove {
+	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() {
 		return agentsession.FileReceipt{}, false, errors.New("文件回执缺少完整副作用事实")
 	}
 	if effect.Operation == workspace.ToolCopy && !unknown && (effect.Target.Version == "" || effect.Target.Version != reference.ContentHash) {
 		return agentsession.FileReceipt{}, false, errors.New("复制回执缺少匹配的实际目标哈希")
 	}
-	if effect.Operation == workspace.ToolMove && (reference.ContentHash != "" || !reference.InvalidateObserved) {
+	if (effect.Operation == workspace.ToolMove || effect.IsArchiveRestore()) && (reference.ContentHash != "" || !reference.InvalidateObserved) {
 		return agentsession.FileReceipt{}, false, errors.New("移动回执不能伪造目标版本或省略双端失效")
 	}
-	if !unknown && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
+	if !unknown && !effect.IsArchiveRestore() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
 		effect.Target.Version = reference.ContentHash
 	}
 	receipt := agentsession.FileReceipt{

@@ -13,12 +13,12 @@ const (
 	profileSecretService         = "edu-agent-agent-sessions-v1"
 	profileSecretVersion         = 1
 	recordContainerSchemaVersion = 1
-	recordPayloadSchemaVersion   = 7
-	recordMigrationMaxSteps      = 6
+	recordPayloadSchemaVersion   = 8
+	recordMigrationMaxSteps      = 7
 	indexSchemaVersion           = 1
 	projectionSchemaVersion      = 1
 	dirtyContainerSchemaVersion  = 1
-	dirtySchemaVersion           = 8
+	dirtySchemaVersion           = 9
 	transcriptSchemaVersion      = 1
 	envelopeSchemaVersion        = 1
 )

@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1–C8 已实现并通过各自 Linux 批次门禁；C9–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C9 已实现并通过各自 Linux 批次门禁；C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -289,3 +289,24 @@ Go1.26.6/Linux amd64，Go命令目录clients/cli-go；本节仅为批次证据�
 - Linux完整CLI构建及version实际运行、Darwin/arm64完整CLI与securefile测试二进制交叉构建通过，产物`/tmp/edu-agent-c8-build.M0N0zz`不提交。没有macOS原生运行证据，不扩大Windows产品支持，不运行服务端/数据库/Compose/付费模型。
 
 C8 checkpoint不是开发停止点。下一主线为C9归档定位与恢复、C10主动清理，之后统一独立恢复/隐私复核和最终验收；整个Issue尚未完成。
+
+## C9：归档定位与恢复
+
+正式用户合同见[归档恢复规格](../comet/specs/client-archive-restore/spec.md)。以下生产路径已实现并通过Linux批次门禁，不代表macOS原生、Runtime或整个Issue验收：
+
+- 定位复用C7的list/find/read/stat，显式指定归档树，保留真实游标和完整性语义；不建立第二份归档目录数据库。restore_archive严格要求source/destination/expected_version；源至少为`.edu-agent-archive/<container>/<entry>`，目标显式给出，不能从旧布局推断原位置，也不恢复归档根或容器本身。
+- securefile提供独立`PrepareRestore/Restore`及root-bound、single-use的RestorePlan，不给普通Move打开归档权限开关。复用现有no-follow目录打开、入口版本、身份祖先检查和不覆盖rename原语；Linux/macOS实现，其它平台明确unsupported。
+- 准备只保存源、两端父及归档根身份，不跨授权持FD。执行重开并核对所有固定身份；源父必须实际归属当前原归档根，目标父必须在工作区且不在归档树，拒绝替换/移出与别名。目录原样移动、不遍历内部链接，不复制正文、创建父目录或清理空容器。
+- 结果复核不复用源版本为目标版本，不合成hash。完成rename后取消不回滚；同步、关闭或结果核验不能确认时报告unknown，并保留两端定位。普通move/归档写保护保持原语义。
+- 新恢复事实使用Effect v3，仅允许restore_archive从归档入口到非归档目标、同一file/directory类型、entry/subtree、冻结entry-v1源版本、空目标版本/DirectoryChain。ReferenceKind独立区分恢复操作，源/目标及相关子树观察同时失效，历史操作事实保留。
+- record payload为v8、dirty v9、容器仍v1；冻结C8的record v7/dirty v8及Effect v2语义，旧数据不能因新增restore被宽松接受。恢复沿用根WAL/执行器结算与local-call身份fence，不恢复批准或自动执行；已记录调用作为正常拒绝重放的工具结果，不误当保存失败。
+- 模型注册、预算投影、确认/活动/晚失败回退和TUI使用“恢复源→目标”，不得沿用copy的“源未修改”。沿用一次授权，不新增页末批准；完整双端定位超过可保存安全预算时在发布前拒绝。
+- 紧凑工具schema只去掉default注解及非空全字符串enum的冗余string类型，不变更运行默认、验证接受集、const/enum字面数据或工具集合；4096窗口保留完整18工具并完成真实Shell两次模型请求。
+
+### C9验证记录
+
+- securefile/fileeffects/agentsession/workspace/agentloop/agentcontroller/agentui/command八包全量`go test`与`go vet`通过；旧版本常量/迁移步数和工具集合断言已随明确的新合同更新，旧嵌套DTO的严格拒绝仍独立验证。
+- 七包`go test -race -count=1 -timeout=180s ... -run 'Test(ArchiveRestore|CompactToolProse)'`通过。具名测试覆盖超过32MiB二进制、目录内部链接、2501项旧归档分页定位、冻结展示/版本/父身份冲突、取消/unknown、完整双端投影、WAL/结算/模型失败及无末页门槛的TUI预览。
+- 真实加密Store验证完成及rename前后WAL恢复、跨两次恢复不可重放、合法新ID、provider预检、Clear撤销身份但不撤销恢复文件、no-save无自动历史；CLI真实App.Run验证注册、确认、成功恢复与目标冲突不覆盖。
+- Linux完整CLI构建及version实际运行通过；Darwin/arm64完整CLI及securefile测试二进制交叉编译通过，CLI产物`/tmp/edu-agent-c9-build.2EyWBu`。没有macOS原生证据，未扩大Windows支持。
+- 本批未运行PostgreSQL/Compose或付费模型，也未执行Runtime验收。C10主动清理及最终独立恢复/隐私复核仍待完成；checkpoint不终止主线。

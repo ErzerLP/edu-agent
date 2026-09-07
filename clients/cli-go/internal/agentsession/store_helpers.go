@@ -250,7 +250,7 @@ func validateFileReceipt(value FileReceipt) error {
 	if value.Effect.Operation == "copy" && !value.Effect.IsDirectoryCopy() && value.Outcome == NoticeOutcomeCompleted && !validSHA256Tag(value.Effect.Target.Version) {
 		return ErrInvalid
 	}
-	if value.Effect.Operation == "mkdir" || value.Effect.IsDirectoryCopy() {
+	if value.Effect.Operation == "mkdir" || value.Effect.IsDirectoryCopy() || value.Effect.IsArchiveRestore() {
 		if !value.InvalidateObserved || value.Outcome == NoticeOutcomeCompleted && value.Effect.Directories.Created != value.Effect.Directories.Count {
 			return ErrInvalid
 		}
@@ -742,6 +742,19 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			}
 			record.FileReceipts = append(record.FileReceipts, converted)
 		}
+	case 7:
+		var payload recordPayloadV7
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
+		}
+		record = recordFromPayloadV2(recordPayloadV2(payload.recordPayloadV1))
+		for _, receipt := range payload.FileReceipts {
+			converted, err := upcastReceiptV7(receipt)
+			if err != nil {
+				return record, version, err
+			}
+			record.FileReceipts = append(record.FileReceipts, converted)
+		}
 	case recordPayloadSchemaVersion:
 		if err := decodeStrict(data, &record, limit); err != nil {
 			return record, version, err
@@ -771,6 +784,8 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			record.SchemaVersion = 6
 		case 6:
 			record.SchemaVersion = 7
+		case 7:
+			record.SchemaVersion = 8
 		default:
 			return SessionRecord{}, version, ErrVersionUnsupported
 		}
@@ -928,6 +943,15 @@ func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
 			return marker, err
 		}
 		marker, err = upcastDirtyV7(payload)
+		if err != nil {
+			return DirtyMarker{}, err
+		}
+	case 8:
+		var payload dirtyPayloadV8
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		marker, err = upcastDirtyV8(payload)
 		if err != nil {
 			return DirtyMarker{}, err
 		}

@@ -45,26 +45,8 @@ func upcastDirtyV7(v dirtyPayloadV7) (DirtyMarker, error) {
 	if err != nil {
 		return DirtyMarker{}, err
 	}
-	if v.LocalEffects != nil {
-		m.LocalEffects = make([]LocalEffectIntent, len(v.LocalEffects))
-	}
-	for i, old := range v.LocalEffects {
-		// Freeze the original operation/TaskID contract before live validation.
-		switch old.Operation {
-		case "shell":
-			if old.TaskID != "" {
-				return DirtyMarker{}, ErrCorrupt
-			}
-		case "task_input", "task_close_input", "task_stop":
-			if !validLocalTaskID(old.TaskID) {
-				return DirtyMarker{}, ErrCorrupt
-			}
-		default:
-			return DirtyMarker{}, ErrCorrupt
-		}
-		m.LocalEffects[i] = LocalEffectIntent{ToolCallID: old.ToolCallID, Operation: old.Operation, TaskID: old.TaskID}
-	}
-	if validateDirtyMarker(m) != nil {
+	m.LocalEffects, err = upcastLocalEffectsV7(v.LocalEffects)
+	if err != nil || validateDirtyMarker(m) != nil {
 		return DirtyMarker{}, ErrCorrupt
 	}
 	return m, nil

@@ -49,6 +49,9 @@ func New(operation, source, target, kind string) Effect {
 			e.SchemaVersion = 2
 		}
 	}
+	if operation == "restore_archive" {
+		e.SchemaVersion = 3
+	}
 	return e
 }
 
@@ -65,6 +68,9 @@ func (e Effect) ReferencePath() string {
 	return e.Target.Path
 }
 func (e Effect) ReferenceKind() string {
+	if e.IsArchiveRestore() {
+		return "restore_" + e.Source.Kind
+	}
 	if e.Operation == "move" {
 		return "move_" + e.Source.Kind
 	}
@@ -152,6 +158,12 @@ func ValidVersion(s string) bool {
 }
 func (e Effect) Validate() error {
 	invalid := errors.New("invalid file effect")
+	if e.SchemaVersion == 3 {
+		if !validArchiveRestore(e) {
+			return invalid
+		}
+		return nil
+	}
 	if e.SchemaVersion == 2 {
 		if !e.IsDirectoryCopy() || !ValidPath(e.Source.Path, false) || !ValidPath(e.Target.Path, false) || Protected(e.Source.Path) || Protected(e.Target.Path) || e.Scope != "subtree" || !strings.HasPrefix(e.Source.Version, "entry-v1:") || !ValidVersion(e.Source.Version) || e.Target.Version != "" || e.Directories != (DirectoryChain{}) {
 			return invalid

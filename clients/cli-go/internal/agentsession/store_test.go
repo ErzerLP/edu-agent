@@ -1561,7 +1561,7 @@ func TestRecordPayloadMigrationRejectsMalformedAndBoundsVersions(t *testing.T) {
 		t.Fatalf("missing required v1 field error=%v", err)
 	}
 
-	if recordMigrationMaxSteps != 6 {
+	if recordMigrationMaxSteps != 7 {
 		t.Fatalf("migration bound=%d", recordMigrationMaxSteps)
 	}
 	if recordPayloadSchemaVersion-recordMigrationMaxSteps != 1 {

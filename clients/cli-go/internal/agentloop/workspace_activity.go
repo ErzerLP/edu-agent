@@ -228,6 +228,8 @@ func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 		return "正在检查 " + detail.Path
 	case workspace.ToolSearch:
 		return "正在搜索 " + detail.Path + "：已扫描 " + intText(detail.ScannedFiles) + " 个文件"
+	case workspace.ToolRestoreArchive:
+		return "正在准备从归档恢复 " + detail.Path + " → " + detail.DestinationPath
 	case workspace.ToolMove:
 		return "正在准备移动 " + detail.Path + " → " + detail.DestinationPath
 	case workspace.ToolCopy:
@@ -244,7 +246,7 @@ func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 }
 
 func activityPathForTool(tool, value string) string {
-	if tool == workspace.ToolCopy || tool == workspace.ToolMove {
+	if tool == workspace.ToolCopy || tool == workspace.ToolMove || tool == workspace.ToolRestoreArchive {
 		if fileeffects.ValidPath(value, false) {
 			return value
 		}

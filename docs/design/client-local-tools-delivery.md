@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1–C9 已实现并通过各自 Linux 批次门禁；C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C10 已实现并通过各自 Linux 批次门禁；最终独立复核与macOS原生证据仍待。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未获最终验收。
 
 ### C1：已实现的垂直路径
 
@@ -310,3 +310,31 @@ C8 checkpoint不是开发停止点。下一主线为C9归档定位与恢复、C1
 - 真实加密Store验证完成及rename前后WAL恢复、跨两次恢复不可重放、合法新ID、provider预检、Clear撤销身份但不撤销恢复文件、no-save无自动历史；CLI真实App.Run验证注册、确认、成功恢复与目标冲突不覆盖。
 - Linux完整CLI构建及version实际运行通过；Darwin/arm64完整CLI及securefile测试二进制交叉编译通过，CLI产物`/tmp/edu-agent-c9-build.2EyWBu`。没有macOS原生证据，未扩大Windows支持。
 - 本批未运行PostgreSQL/Compose或付费模型，也未执行Runtime验收。C10主动清理及最终独立恢复/隐私复核仍待完成；checkpoint不终止主线。
+
+## C10：用户主动归档清理
+
+正式合同见[归档清理规格](../comet/specs/client-archive-purge/spec.md)。生产闭环和Linux批次门禁已完成；不代替独立复核、macOS原生证据或Runtime验收：
+
+- `purge_archive(path, expected_version)`选择归档根以下的确切入口，允许一个完整容器，不允许归档根、通配或自动选全部。沿用stat/list/find定位，始终要求一次显式确认（YOLO不能代替永久清理确认），完整计划可F6查看而不新增末页门槛。
+- securefile提供独立`PreparePurge/Purge`和单次消费、绑定Root的PurgePlan；完整冻结入口信息及父身份，准备结束关闭FD。执行前完整重检，再按确定的后序逐项删除。普通文件只unlink、目录只rmdir、链接只unlink自身；不使用RemoveAll、Shell、隔离移动或回滚。新增入口不加入计划，非空目录报冲突停止。
+- 只在规范归档下、同挂载边界操作，Linux使用原生mount identity、Darwin使用原生文件系统标识，不能取得证明则fail closed。逐项重开父目录、核对名字和真实归属、源身份/版本；目录被自身删除后代修改的时间不当作新内容授权，仍核对身份并要求为空。保持非协作跨进程最终核查窗口的既有边界，不承诺CAS。
+- 每项非nil Before确认成功才尝试，After在独立有界取消域保存真实结果；第一项失败/未知/取消/保存失败停止余项。同步/后验/关闭不确认则unknown，已完成项不回滚。记录逻辑文件字节，不输出虚构物理释放量。
+- 复用C8 BatchManager及artifact/F6，不另建删除数据库。新增批量日志v2仅承载purge计划及结算；旧v1严格保持目录copy语义，身份marker保持v1。v2计划后序、每个source精确在根范围，target为同路径absent；completed无需内容hash，目录/链接字节为零。元数据和每行版本一致，恢复仍认证已确认前缀，EOF也经过隐私fence。
+- 根Effect v4仅为purge_archive，source为归档内file/directory/link与完整entry-v1，target为同路径absent/空版本，scope按根类型，DirectoryChain为零。计划不证明目标已经不存在，结果outcome独立。record payload v9/dirty v10/容器v1，冻结旧record v8/dirty v9及Effect v1–v3，批量v1不能夹带purge。
+- 清单/入口/日志沿用当前`file-copy-plan-limit`、`file-copy-entry-limit`、`file-copy-journal-limit`、`file-copy-max-records`的共享批量预算，CLI明确这些历史名称亦适用于purge；`file-copy-limit`只约束复制文件字节、不阻止释放大归档。新建/resume/F2使用当前设置。
+- 根WAL、独立加密调用身份、逐项日志、实际回执及观察失效闭环，始终保留不重放和保存失败门禁。完整清单、日志、原始参数不进入稳定正文；仅内存及加密历史遵守现有Session隐私合同。
+- Linux按STATX_MNT_ID区分同设备bind mount，Darwin使用Fstatfs标识；平台证明不可用即拒绝。原生目录guard覆盖准备/完整复核；不会把同tick增删当作未变化。PurgePlan值复制共享消费令牌，准备后不保留FD/guard。冻结范围中多个硬链接共享inode时，首个unlink改变后续入口版本会停止，不采纳新版本绕过冻结合同。
+- 小窗口保留完整19工具及原schema约束；紧凑提示合并同级system消息，明确purge始终确认。Shell结果按实际当前轮/工具定义剩余预算投影，必要时仅返回真实任务、状态与projection_omitted定位；初始页省略不推进字节游标，不影响task read从0读到保留输出。普通软结果预算不触发此特殊定位降级，显式read仍保留页游标。
+
+### C10验证记录
+
+- `TestArchivePurge`覆盖真实2501项、大二进制、空/嵌套目录、链接与硬链接、后序删除、身份/归属/变更/取消、unknown/同步/清理故障和资源释放；无真实跨挂载攻击运行证据，挂载标识拒绝路径有定向测试。未运行macOS原生。
+- `TestFileBatchPurge`及既有`TestFileBatch`验证旧copy-v1/new-purge-v2隔离、完整跨段计划/日志、严格版本/父范围/顺序、未知写不重试、实际后缀与SavedBytes分离、只读恢复和EOF隐私撤销。Effect v4与record v9/dirty v10的冻结迁移拒绝旧payload夹带新事实。
+- 模型验证YOLO仍生成pending、授权前完整清单、拒绝/取消/变化不删除、WAL失败停止、首项后取消、模型与结算失败保留真实事实。F6独立读4096字节页、未到末页亦可明确批准，关闭浏览器不改原确认。
+- 真实Controller从archive产生旧归档再清理42项，仅一个根receipt；模型日志read/search、加密保存/恢复、provider预检、Clear含EOF撤销与no-save无历史落盘通过。identity写失败、pending-only崩溃及actual段已存但metadata失败后，确认不提升孤儿、不重放旧ID，跨两次恢复仍允许明确新ID执行。已确认unchanged的身份失败不伪造unknown删除事实。
+- CLI真实App.Run在`--file-copy-limit=1`下清理33MiB+17字节文件，物理释放量为unknown；低入口/计划/日志预算不部分缩小范围。当前入口/计划设置在resume/new/F2生效。
+- 九包完整测试（securefile、fileeffects、agentsession、workspace、localartifact、agentloop、agentcontroller、agentui、command）及vet通过。agentloop最初的软预算页游标回归已通过限制特殊定位降级仅用于实际请求空间不足解除，之后该包全量通过；其它八包未失效证据复用。
+- 七包定向race通过：`go test -race -count=1 -timeout=180s ./internal/securefile ./internal/fileeffects ./internal/agentsession ./internal/workspace ./internal/agentloop ./internal/agentcontroller ./internal/agentui -run 'Test(ArchivePurge|FileBatchPurge|LocalExecutionSmallContext)'`。
+- Linux完整CLI构建及version运行、Darwin/arm64完整CLI及securefile测试二进制交叉编译通过，产物`/tmp/edu-agent-c10-build.hzvtwM`不提交；不将交叉编译称为原生验证，未运行服务端、PostgreSQL、Compose、付费模型或Runtime验收。
+
+C10 checkpoint后继续最终恢复/隐私复核和候选检查，不以提交作为开发停止点。

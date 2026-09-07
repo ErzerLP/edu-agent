@@ -52,6 +52,10 @@ func New(operation, source, target, kind string) Effect {
 	if operation == "restore_archive" {
 		e.SchemaVersion = 3
 	}
+	if operation == "purge_archive" {
+		e.SchemaVersion = 4
+		e.Target.Kind = "absent"
+	}
 	return e
 }
 
@@ -68,6 +72,9 @@ func (e Effect) ReferencePath() string {
 	return e.Target.Path
 }
 func (e Effect) ReferenceKind() string {
+	if e.IsArchivePurge() {
+		return "purge_" + e.Source.Kind
+	}
 	if e.IsArchiveRestore() {
 		return "restore_" + e.Source.Kind
 	}
@@ -158,6 +165,12 @@ func ValidVersion(s string) bool {
 }
 func (e Effect) Validate() error {
 	invalid := errors.New("invalid file effect")
+	if e.SchemaVersion == 4 {
+		if !validArchivePurge(e) {
+			return invalid
+		}
+		return nil
+	}
 	if e.SchemaVersion == 3 {
 		if !validArchiveRestore(e) {
 			return invalid

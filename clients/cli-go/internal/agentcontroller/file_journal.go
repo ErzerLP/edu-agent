@@ -110,7 +110,7 @@ func fileReceiptFromExecution(wal agentsession.FileWriteAhead, result workspace.
 			return agentsession.FileReceipt{}, errors.New("文件结算结果与预写计划不一致")
 		}
 		effect = *result.Effect
-	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() {
+	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() || effect.IsArchivePurge() {
 		return agentsession.FileReceipt{}, errors.New("文件结算缺少完整执行器副作用事实")
 	}
 	if effect.IsDirectoryCopy() && (effect.Target.Version != "" || ref.ContentHash != "" || !ref.InvalidateObserved) {
@@ -119,10 +119,10 @@ func fileReceiptFromExecution(wal agentsession.FileWriteAhead, result workspace.
 	if effect.Operation == workspace.ToolCopy && !effect.IsDirectoryCopy() && !unknown && (effect.Target.Version == "" || effect.Target.Version != ref.ContentHash) {
 		return agentsession.FileReceipt{}, errors.New("复制结算缺少匹配的实际目标哈希")
 	}
-	if (effect.Operation == workspace.ToolMove || effect.IsArchiveRestore()) && (ref.ContentHash != "" || !ref.InvalidateObserved) {
+	if (effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() || effect.IsArchivePurge()) && (ref.ContentHash != "" || !ref.InvalidateObserved) {
 		return agentsession.FileReceipt{}, errors.New("移动结算不能伪造目标版本或省略双端失效")
 	}
-	if !unknown && !effect.IsArchiveRestore() && !effect.IsDirectoryCopy() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
+	if !unknown && !effect.IsArchivePurge() && !effect.IsArchiveRestore() && !effect.IsDirectoryCopy() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
 		effect.Target.Version = ref.ContentHash
 	}
 	r := agentsession.FileReceipt{ToolCallID: wal.ToolCallID, Effect: effect, InvalidateObserved: ref.InvalidateObserved,
@@ -154,6 +154,9 @@ func (c *Controller) mergeFileJournalLocked(marker agentsession.DirtyMarker) err
 func fileJournalRecoveryLabel(receipt agentsession.FileReceipt) string {
 	if receipt.Outcome == agentsession.NoticeOutcomeUnknown {
 		return fileEffectRecoveryLabel(receipt.Effect)
+	}
+	if receipt.Effect.IsArchivePurge() {
+		return "永久归档清理已完成：" + receipt.Effect.Source.Path + "；不可撤销，不会恢复重放；逻辑字节不等于物理释放空间"
 	}
 	return fmt.Sprintf("文件操作已完成：%s %s → %s；已保留实际结果，不会恢复重放", receipt.Effect.Operation, receipt.Effect.Source.Path, receipt.Effect.Target.Path)
 }

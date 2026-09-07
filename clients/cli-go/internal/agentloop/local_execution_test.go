@@ -100,13 +100,20 @@ func TestLocalExecutionSmallContextKeepsCompleteToolSet(t *testing.T) {
 		for _, definition := range request.Tools {
 			names[definition.Function.Name] = true
 		}
-		for _, name := range []string{"shell", "task", "stat", "find", "list", "read", "search", "write", "edit", "copy", "move", "mkdir", "archive", "restore_archive", "apply_patch", "artifact", "ask_user_question", "remember_preference"} {
+		for _, name := range []string{"shell", "task", "stat", "find", "list", "read", "search", "write", "edit", "copy", "move", "mkdir", "archive", "restore_archive", "purge_archive", "apply_patch", "artifact", "ask_user_question", "remember_preference"} {
 			if !names[name] {
 				t.Fatalf("small context hid %s", name)
 			}
 		}
 		if calls == 1 {
 			return localResponse(localCall("small-shell", "shell", map[string]any{"command": "printf small", "wait_ms": 1000})), nil
+		}
+		value := localLastResult(t, request)
+		if value["state"] != "exited" || value["exit_code"] != float64(0) || value["output_state"] != "complete" || value["projection_omitted"] != true || value["task_id"] == "" || value["stdout"] != nil || value["stderr"] != nil {
+			t.Fatalf("small-window locator lost truthful state: %v", value)
+		}
+		if request.MaxTokens < 512 || NewTokenEstimator().EstimateRequest(request)+request.MaxTokens+divideRoundUp(4096*5, 100) > 4096 {
+			t.Fatal("small-window response reserve was weakened")
 		}
 		return localFinal(), nil
 	}), func(options *Options) {

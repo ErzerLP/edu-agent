@@ -151,6 +151,9 @@ func (s *Session) publishPreparedFileItem(ctx context.Context, callID string, pr
 }
 
 func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclient.ToolCall, prepared *workspace.PreparedMutation) (workspace.Result, Event, bool, error) {
+	if prepared.IsPurgeArchive() {
+		return s.commitPurgeMutation(ctx, call, prepared)
+	}
 	if prepared.IsCopyTree() {
 		return s.commitCopyTreeMutation(ctx, call, prepared)
 	}
@@ -263,6 +266,15 @@ func (s *Session) fileMutationCompletionFallback(turnID string, events []Event) 
 			Unknown      int                `json:"unknown"`
 			ReceiptID    string             `json:"receipt_id"`
 			ReceiptError string             `json:"receipt_error"`
+		}
+		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.FileEffect.IsArchivePurge() && effect.FileEffect.Validate() == nil {
+			text = "永久归档清理已完成：" + effect.FileEffect.Source.Path + "；不可撤销，物理释放空间未知；后续处理已停止。"
+			if unknown {
+				text = "永久归档清理结果未知，可能已部分删除：" + effect.FileEffect.Source.Path + "；请核对逐项日志，不会自动重放或回滚。"
+			}
+			if effect.ReceiptID != "" {
+				text += " 完整逐项日志：" + effect.ReceiptID + "。"
+			}
 		}
 		if json.Unmarshal([]byte(message.Content), &effect) == nil && effect.FileEffect.IsArchiveRestore() && effect.FileEffect.Validate() == nil {
 			text = "已从归档恢复：" + effect.FileEffect.Source.Path + " → " + effect.FileEffect.Target.Path + "；后续处理已停止，空归档容器未清理。"

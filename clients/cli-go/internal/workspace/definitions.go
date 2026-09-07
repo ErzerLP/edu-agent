@@ -22,6 +22,7 @@ func Definitions() []modelclient.Tool {
 		workspaceTool(ToolCopy, copyDescription(DefaultLimits()), `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
 		workspaceTool(ToolMove, "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.", `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
 		workspaceTool(ToolRestoreArchive, "Restore an exact archive entry using current stat version and explicit absent destination; existing parent, same-filesystem no-replace. Locate with list/find/read/stat. Never infer original path, copy-delete, clean containers or replay.", `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
+		workspaceTool(ToolPurgeArchive, "Permanently purge an exact stat-versioned archive entry, never the archive root. Frozen plan requires explicit approval even in YOLO; artifact reads plan/log. No link following, mount crossing, replay or rollback; physical space freed unknown.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["path","expected_version"],"additionalProperties":false}`),
 		workspaceTool(ToolArchive, "Archive a file or directory; never permanently delete.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096}},"required":["path"],"additionalProperties":false}`),
 	}
 	for i := range definitions {
@@ -84,5 +85,5 @@ func IsReadTool(name string) bool {
 }
 
 func IsMutationTool(name string) bool {
-	return name == ToolWrite || name == ToolEdit || name == ToolArchive || name == ToolMkdir || name == ToolCopy || name == ToolMove || name == ToolPatch || name == ToolRestoreArchive
+	return name == ToolWrite || name == ToolEdit || name == ToolArchive || name == ToolMkdir || name == ToolCopy || name == ToolMove || name == ToolPatch || name == ToolRestoreArchive || name == ToolPurgeArchive
 }

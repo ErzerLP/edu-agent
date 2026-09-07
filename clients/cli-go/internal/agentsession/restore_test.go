@@ -44,7 +44,7 @@ func TestArchiveRestorePayloadRoundTrip(t *testing.T) {
 				}
 				plain, header := dirtyPayloadOnDiskForTest(t, s, h.dataKey, record)
 				version, err := probeRecordPayloadSchema(plain, s.limits.DirtyMarkerBytes)
-				if err != nil || version != 9 || header.SchemaVersion != 1 {
+				if err != nil || version != dirtySchemaVersion || header.SchemaVersion != 1 {
 					t.Fatal(version, header, err)
 				}
 				loaded, err := h.Load()
@@ -61,7 +61,7 @@ func TestArchiveRestorePayloadRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if version, header := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, saved); version != 8 || header.SchemaVersion != 1 {
+				if version, header := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, saved); version != recordPayloadSchemaVersion || header.SchemaVersion != 1 {
 					t.Fatal(version, header)
 				}
 				loaded, err = h.Load()
@@ -104,12 +104,12 @@ func TestArchiveRestoreFrozenC8Migration(t *testing.T) {
 	oldDirty := readSessionArtifactForTest(t, s, dirtyName(record.StorageID))
 	marker.SchemaVersion = dirtySchemaVersion
 	loaded, err := h.Load()
-	if err != nil || loaded.Record.SchemaVersion != 8 || !recordsEqual(loaded.Record, record) || loaded.Interrupted == nil || !reflect.DeepEqual(*loaded.Interrupted, marker) {
+	if err != nil || loaded.Record.SchemaVersion != recordPayloadSchemaVersion || !recordsEqual(loaded.Record, record) || loaded.Interrupted == nil || !reflect.DeepEqual(*loaded.Interrupted, marker) {
 		t.Fatalf("lost C8 facts: %+v %v", loaded, err)
 	}
 	// Compatible records use the existing atomic migration publication; the
 	// interrupted WAL stays untouched until explicit checkpoint consumption.
-	if version, _ := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, loaded.Record); version != 8 {
+	if version, _ := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, loaded.Record); version != recordPayloadSchemaVersion {
 		t.Fatal("compatible record was not migrated", version)
 	}
 	if !bytes.Equal(oldDirty, readSessionArtifactForTest(t, s, dirtyName(record.StorageID))) {

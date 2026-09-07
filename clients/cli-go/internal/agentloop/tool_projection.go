@@ -332,6 +332,9 @@ func historyValue(tool string, value any) any {
 	if tool == workspace.ToolRead {
 		return compactReadProjection(object, 256, "history_projection_limit")
 	}
+	if tool == workspace.ToolPurgeArchive {
+		return purgeReceiptProjection(object)
+	}
 	if tool == workspace.ToolRestoreArchive {
 		return restoreReceiptProjection(object)
 	}
@@ -380,12 +383,15 @@ func boundedProjectionJSON(tool string, value any, limit int, reason string) str
 		return boundedReadProjectionJSON(value, limit, reason)
 	}
 	// Relocation endpoints and metadata versions are never recursively shortened.
-	if tool == workspace.ToolCopy || tool == workspace.ToolMove || tool == workspace.ToolRestoreArchive {
+	if tool == workspace.ToolCopy || tool == workspace.ToolMove || tool == workspace.ToolRestoreArchive || tool == workspace.ToolPurgeArchive {
 		if data, err := json.Marshal(value); err == nil && len(data) <= limit {
 			return string(data)
 		}
 		if object := normalizedProjectionObject(value); object != nil {
 			fact := preserveFields(object, "file_effect", "operation", "path", "publication_outcome", "error", "code")
+			if tool == workspace.ToolPurgeArchive {
+				fact = purgeReceiptProjection(object)
+			}
 			if tool == workspace.ToolRestoreArchive {
 				fact = restoreReceiptProjection(object)
 			}
@@ -570,6 +576,9 @@ func workspaceBudgetProjectionCandidates(tool string, value any) []string {
 }
 
 func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit int) map[string]any {
+	if tool == workspace.ToolPurgeArchive {
+		return purgeReceiptProjection(object)
+	}
 	if hasQueryProjection(tool, object) {
 		return compactQueryProjection(object, 1, payloadLimit, "current_turn_budget", payloadLimit < 48)
 	}

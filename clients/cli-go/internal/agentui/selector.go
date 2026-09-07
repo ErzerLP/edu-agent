@@ -116,6 +116,10 @@ func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorMo
 		body += "\n预览已按安全上限截断。"
 	}
 	title := "文件修改授权"
+	if pending.Operation == "purge_archive" {
+		title = "永久归档清理确认 · 不可撤销"
+		body = "即使YOLO也需要此次明确批准；只永久删除上方冻结范围，不可撤销。\n" + body
+	}
 	if pending.DiffID != "" {
 		title += " · F6完整差异"
 		body += "\n" + fileMutationArtifactSummary(pending.DiffID, pending.DiffBytes, pending.DiffSaved)
@@ -124,13 +128,18 @@ func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorMo
 		title += " · F6完整清单"
 		body += "\n" + fileMutationPlanSummary(pending.PlanID, pending.PlanBytes, pending.PlanSaved)
 	}
+	options := []selectorOption{
+		{ID: string(agentloop.FileMutationApprove), Label: "允许此次修改", Description: "重新校验版本后只发布上方已冻结候选"},
+		{ID: string(agentloop.FileMutationDecline), Label: "拒绝此次修改", Description: "文件保持不变，并把 authorization_denied 返回模型"},
+	}
+	if pending.Operation == "purge_archive" {
+		options[0].Label, options[0].Description = "永久删除选定范围", "按冻结清单永久清理，不可撤销；失败停止剩余项"
+		options[1].Label, options[1].Description = "不清理", "保留全部归档，不开始永久删除"
+	}
 	return &selectorModel{
 		kind: selectorFileMutation, title: title, body: body, copyReview: pending.Operation == "copy" || pending.Operation == "move" || pending.Operation == "mkdir",
-		optionalReview: pending.Operation == "restore_archive",
-		options: []selectorOption{
-			{ID: string(agentloop.FileMutationApprove), Label: "允许此次修改", Description: "重新校验版本后只发布上方已冻结候选"},
-			{ID: string(agentloop.FileMutationDecline), Label: "拒绝此次修改", Description: "文件保持不变，并把 authorization_denied 返回模型"},
-		},
+		optionalReview: pending.Operation == "restore_archive" || pending.Operation == "purge_archive",
+		options:        options,
 	}
 }
 
@@ -151,7 +160,7 @@ func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel
 	}
 	return &selectorModel{
 		kind: selectorFileMode, title: "文件授权模式",
-		body:    "YOLO 仅当前 Session 有效。归档目录禁止普通写入或清理；其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。",
+		body:    "YOLO 仅当前 Session 有效，永久归档清理始终另需一次明确确认。归档目录禁止普通写入；其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。",
 		options: options, focus: focus,
 	}
 }

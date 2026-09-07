@@ -29,6 +29,9 @@ func (s *Session) retainMutationArtifact(ctx context.Context, callID string, pre
 	if prepared.CopyManifest() != "" {
 		content, kind = prepared.CopyManifest(), "receipt"
 	}
+	if prepared.PurgeManifest() != "" {
+		content, kind = prepared.PurgeManifest(), "receipt"
+	}
 	if content == "" {
 		return localartifact.Info{}, nil
 	}

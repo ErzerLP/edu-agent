@@ -54,7 +54,7 @@ func TestCopyStrictArgumentsAndFrozenPreview(t *testing.T) {
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatal("not actual bytes", err)
 	}
-	if len(Definitions()) != 13 {
+	if len(Definitions()) != 14 {
 		t.Fatal("tool count", len(Definitions()))
 	}
 }

@@ -726,10 +726,10 @@ const agentHelpText = `用法：
   --file-query-entry-limit N  每查询保留条目预算，默认100000，最高1000000
   --file-query-max-records N  工作区查询数，默认16，最高64
   --file-copy-limit BYTES    复制文件总字节预算，默认1073741824；上限为平台maxInt-1
-  --file-copy-plan-limit BYTES  完整复制计划/清单预算，默认67108864，最高1073741824
-  --file-copy-entry-limit N  复制计划入口数，默认100000，最高1000000
-  --file-copy-journal-limit BYTES  复制追加日志内存预算，默认268435456，最高1073741824
-  --file-copy-max-records N  复制追加日志记录数，默认256，最高8192；不自动淘汰
+  --file-copy-plan-limit BYTES  复制/归档清理完整清单预算，默认67108864，最高1073741824
+  --file-copy-entry-limit N  复制/归档清理计划入口数，默认100000，最高1000000
+  --file-copy-journal-limit BYTES  复制/归档清理追加日志内存预算，默认268435456，最高1073741824
+  --file-copy-max-records N  复制/归档清理追加日志记录数，默认256，最高8192；不自动淘汰
   --task-max-records N         当前客户端保留的任务记录数，默认256
   --task-max-running N         同时运行的任务数，默认16
   --task-output-limit BYTES    每任务 stdout+stderr 保留上限，默认8388608
@@ -739,13 +739,14 @@ const agentHelpText = `用法：
 
 Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
 
-文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive、restore_archive。copy支持普通文件（含二进制）和完整递归目录；复制按总文件字节、完整计划入口和追加日志预算限制。目标根须不存在，不覆盖或合并；一次授权完整计划，失败/取消停止余项，已完成项保留。--no-save只在有界内存保留复制追加日志。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
+文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive、restore_archive、purge_archive。copy支持普通文件（含二进制）和完整递归目录；复制按总文件字节、完整计划入口和追加日志预算限制。目标根须不存在，不覆盖或合并；一次授权完整计划，失败/取消停止余项，已完成项保留。--no-save只在有界内存保留复制追加日志。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。
 局部edit在独立预算内支持大于1MiB文本，保留精确唯一匹配、完整expected_hash、授权、WAL和原子发布；原文/候选仍全文处理，参数仍64KiB。短预览可截断且明确标记；write/edit/apply_patch授权前保留完整diff，无法完整保留就不发布。F6独立分页和检索diff/receipt，不调用模型，也不新增逐页审批；原copy/move/mkdir末页门槛不变。
 apply_patch接受严格Add/Update/Delete文本及expected_hashes，最多16文件；更新/删除须携带完整hash。全部预检，一次授权，逐项WAL/复核/原子发布并结算；冲突、失败或取消停止余项，已完成项不回滚，删除仍归档。拒绝Move、模糊匹配和二进制patch。artifact list/read/search使用独立原始字节游标；diff不证明已执行，逐项结果与文件状态分开判断。
 差异/结果在持久Session中独立加密，--no-save只在有界内存；恢复不自动应用历史修改，clear/delete遵守Session密钥撤销，保存失败如实报告。文件与结果资源预算随当前客户端的新建/resume/F2切换生效，不扩大write/stat.hash/search的1MiB预算。
 list/find/search可复用完整原参数及next_cursor续页；可完整覆盖超过单目录2000项，不会从头重扫冒充续页。无正文进度页仍须继续；scan_finished/scan_complete与more分别报告扫描结束、完整性及未返回结果。查询仅进程内保留，空闲10分钟过期、容量紧张时回收最旧已结束查询，恢复/F2切换后旧游标过期；目录、已读正文或采用的忽略规则变化使cursor_stale，原生变更观察不可用则明确失败。查询预算适用于当前客户端新建/resume/F2，不扩大search单文件1MiB预算。
-restore_archive要求确切归档source、显式destination和当前stat的expected_version；用list/find/read/stat分页定位归档，不从旧布局猜测原位置。只在同文件系统不覆盖移动，目标父须已存在，不合并、不创建父目录、不复制后删除或清理空容器。恢复确认可PgUp/PgDn查看完整预览，无需末页即可授权；重启仅恢复加密事实和不可重放身份，未知须核查两端。永久归档清理尚未提供。
+restore_archive要求确切归档source、显式destination和当前stat的expected_version；用list/find/read/stat分页定位归档，不从旧布局猜测原位置。只在同文件系统不覆盖移动，目标父须已存在，不合并、不创建父目录、不复制后删除或清理空容器。恢复确认可PgUp/PgDn查看完整预览，无需末页即可授权；重启仅恢复加密事实和不可重放身份，未知须核查两端。
+purge_archive要求确切归档path及当前stat的expected_version，容器/文件/子目录均可，但不能选归档根、工作区根、归档外或通配全部。每次永久清理不可撤销，YOLO仍须明确批准；授权前完整冻结并保留清单，可F6/artifact独立续览而无需末页。按同挂载边界后序逐项意图/删除/结算，链接仅删入口不跟随，遇变化/失败/取消/保存失败即停余项；已删除项不回滚，不顺带清理父容器。logical_bytes_removed仅为普通文件逻辑字节，物理释放量未知；硬链接、稀疏、打开文件和快照影响实际释放。历史名称file-copy的计划/入口/日志/记录预算同时适用于purge，--file-copy-limit不限制清理大文件；--no-save清理历史仅内存，重启只读恢复日志与防重放身份，不恢复批准或自动续执行。
 本地 Shell：正常 OS 用户权限，可访问工作区外路径和网络，不受文件确认模式限制。shell/task 支持长任务、stdin 和停止；默认不设置执行总超时。F5 查看内存输出、切换 stdout/stderr、翻页和停止，退出客户端会收尾受管任务。
 持久Session的输出独立加密保存，可用task search或F5的/检索、n继续，并在重启后读取已保存范围；恢复不重跑旧命令、不恢复进程控制。--no-save输出仅内存保留，退出不可恢复；配额/保存失败和缺口明确显示。PTY交互：shell指定pty=true（默认24行80列，可用rows/cols设置1..4096）；合并流为stdout。task interrupt/eof发送终端控制字节，resize调整尺寸，close_input仍仅用于pipe。F5按i进入不回显草稿的行式输入，Enter送行，Ctrl+C中断，Ctrl+D终端EOF，Ctrl+Q退出；程序回显可能作为输出保存，不是全屏终端模拟器。上述任务资源参数同时适用于新建和 resume，不改变命令权限。`
 

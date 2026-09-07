@@ -60,6 +60,7 @@ const (
 
 type batchEntry struct {
 	File  bool
+	Purge bool
 	Bytes int64
 }
 type batchCall struct {

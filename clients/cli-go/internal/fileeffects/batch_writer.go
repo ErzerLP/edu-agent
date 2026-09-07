@@ -50,7 +50,8 @@ func (m *BatchManager) Begin(ctx context.Context, owner, callID string, plan Bat
 		used += len(line)
 		return nil
 	}
-	if err = measure(batchLine(batchRootLine{Version: 1, Type: "root", Root: plan.Root})); err != nil {
+	version := validator.version
+	if err = measure(batchLine(batchRootLine{Version: version, Type: "root", Root: plan.Root})); err != nil {
 		return "", err
 	}
 	for i, item := range plan.Items {
@@ -61,7 +62,7 @@ func (m *BatchManager) Begin(ctx context.Context, owner, callID string, plan Bat
 		if len(item.Source.Path) > 4096 || len(item.Target.Path) > 4096 || len(item.Source.Version) > 73 || len(item.Source.Kind) > 9 || len(item.Target.Kind) > 9 || item.Target.Version != "" {
 			return "", batchError("invalid_plan")
 		}
-		if err = measure(batchLine(batchPlanLine{Version: 1, Type: "plan", Index: i, Item: item})); err != nil {
+		if err = measure(batchLine(batchPlanLine{Version: version, Type: "plan", Index: i, Item: item})); err != nil {
 			return "", err
 		}
 	}
@@ -86,7 +87,10 @@ func (m *BatchManager) Begin(ctx context.Context, owner, callID string, plan Bat
 		if err = validator.add(i, item); err != nil {
 			return "", err
 		}
-		entries[i] = batchEntry{File: item.Source.Kind == "file", Bytes: item.Bytes}
+		entries[i] = batchEntry{File: item.Source.Kind == "file", Purge: version == 2, Bytes: item.Bytes}
+	}
+	if err = validator.finalize(); err != nil {
+		return "", err
 	}
 	known, err := m.confirmCall(ctx, owner, callID, s)
 	if err != nil {
@@ -96,7 +100,7 @@ func (m *BatchManager) Begin(ctx context.Context, owner, callID string, plan Bat
 		return marker.ID, batchError("duplicate_call")
 	}
 	r := &batchRecord{entries: entries, hasher: sha256.New(), charge: charge, persistent: s.backend != nil}
-	r.meta = batchMetadata{Version: 1, ID: marker.ID, OwnerHash: marker.OwnerHash, CallHash: marker.CallHash, Items: len(entries), Plan: make([]batchSegment, 0, segments), Events: make([]batchSegment, 0)}
+	r.meta = batchMetadata{Version: version, ID: marker.ID, OwnerHash: marker.OwnerHash, CallHash: marker.CallHash, Items: len(entries), Plan: make([]batchSegment, 0, segments), Events: make([]batchSegment, 0)}
 	s.records[marker.ID] = r
 	s.charge += charge
 	retained = true
@@ -133,9 +137,9 @@ func (m *BatchManager) Begin(ctx context.Context, owner, callID string, plan Bat
 		buffer = append(buffer, line...)
 		return nil
 	}
-	if err = appendPlan(batchLine(batchRootLine{Version: 1, Type: "root", Root: plan.Root})); err == nil {
+	if err = appendPlan(batchLine(batchRootLine{Version: version, Type: "root", Root: plan.Root})); err == nil {
 		for i, item := range plan.Items {
-			if err = appendPlan(batchLine(batchPlanLine{Version: 1, Type: "plan", Index: i, Item: item})); err != nil {
+			if err = appendPlan(batchLine(batchPlanLine{Version: version, Type: "plan", Index: i, Item: item})); err != nil {
 				break
 			}
 		}
@@ -220,7 +224,7 @@ func (m *BatchManager) Pending(ctx context.Context, owner, id string, index int)
 	r.meta.Unknown++
 	r.pending = true
 	r.settled = false
-	return batchAppendEvent(ctx, s, r, batchLine(batchPendingLine{Version: 1, Type: "pending", Sequence: r.meta.Sequence, Index: index}))
+	return batchAppendEvent(ctx, s, r, batchLine(batchPendingLine{Version: r.meta.Version, Type: "pending", Sequence: r.meta.Sequence, Index: index}))
 }
 func (m *BatchManager) Settle(ctx context.Context, owner, id string, index int, actual BatchActual) error {
 	if err := m.validate(owner); err != nil {
@@ -257,7 +261,7 @@ func (m *BatchManager) Settle(ctx context.Context, owner, id string, index int, 
 		r.meta.Unchanged++
 		r.meta.Unknown--
 	}
-	return batchAppendEvent(ctx, s, r, batchLine(batchActualLine{Version: 1, Type: "actual", Sequence: r.meta.Sequence, Index: index, Actual: actual}))
+	return batchAppendEvent(ctx, s, r, batchLine(batchActualLine{Version: r.meta.Version, Type: "actual", Sequence: r.meta.Sequence, Index: index, Actual: actual}))
 }
 func (m *BatchManager) Finish(ctx context.Context, owner, id string, complete bool, code string) error {
 	if err := m.validate(owner); err != nil {
@@ -286,5 +290,5 @@ func (m *BatchManager) Finish(ctx context.Context, owner, id string, complete bo
 	r.meta.Finished = true
 	r.meta.Complete = complete
 	r.meta.Code = code
-	return batchAppendEvent(ctx, s, r, batchLine(batchEndLine{Version: 1, Type: "end", Sequence: r.meta.Sequence, Complete: complete, Code: code}))
+	return batchAppendEvent(ctx, s, r, batchLine(batchEndLine{Version: r.meta.Version, Type: "end", Sequence: r.meta.Sequence, Complete: complete, Code: code}))
 }

@@ -31,7 +31,7 @@ func TestRecursiveCopyBrowser(t *testing.T) {
 			m.busy, m.activeCancelable = busy, busy
 			m.input.SetValue("original draft")
 
-			if !strings.Contains(selector.body, "F6 完整复制清单：receipt_b") || strings.Contains(selector.body, "F6 完整差异") {
+			if !strings.Contains(selector.body, "F6 完整操作清单：receipt_b") || strings.Contains(selector.body, "F6 完整差异") {
 				t.Fatalf("copy plan summary was missing or mislabeled: %s", selector.body)
 			}
 			initialSends, initialResolutions := c.sends, c.resolutions

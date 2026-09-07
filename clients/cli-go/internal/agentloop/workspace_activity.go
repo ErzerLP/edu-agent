@@ -228,6 +228,8 @@ func workspaceProgressSummary(tool string, detail *FileActivityDetail) string {
 		return "正在检查 " + detail.Path
 	case workspace.ToolSearch:
 		return "正在搜索 " + detail.Path + "：已扫描 " + intText(detail.ScannedFiles) + " 个文件"
+	case workspace.ToolPurgeArchive:
+		return "正在准备永久归档清理 " + detail.Path
 	case workspace.ToolRestoreArchive:
 		return "正在准备从归档恢复 " + detail.Path + " → " + detail.DestinationPath
 	case workspace.ToolMove:

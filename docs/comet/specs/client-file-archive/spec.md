@@ -4,7 +4,7 @@
 
 用户可让交互式 CLI Agent 将不再需要的普通文件（包括二进制）或整个目录移入固定工作区的隐藏归档目录，而不能让 Agent 永久删除它们。本次仅交付安全归档，不新增通用 find/stat/mkdir/copy/move/delete、长文本写入、回收站清理或自动恢复。
 
-本规格扩展 `client-file-operations`；归档的专用规则优先于该规格中首版五工具集合、无移动工具及无 protected-path denylist 的描述，其余既有行为不变。后续`client-archive-restore/spec.md`增加专用显式恢复入口，替代本规格原先“无恢复工具”的限制；它不放宽普通工具的归档写保护，也不提供自动恢复或永久清理。
+本规格扩展 `client-file-operations`；归档的专用规则优先于该规格中首版五工具集合、无移动工具及无 protected-path denylist 的描述，其余既有行为不变。后续`client-archive-restore/spec.md`增加专用显式恢复入口，替代本规格原先“无恢复工具”的限制；它不放宽普通工具的归档写保护，也不提供自动恢复或永久清理。后续`client-archive-purge/spec.md`另增加只针对归档内确切范围、每次明确确认的永久清理入口，替代本规格原先“无永久清理工具/只能在客户端外清理”的限制；不增加归档外delete、archive永久删除模式或自动清理。
 
 ## 工具与保存位置
 

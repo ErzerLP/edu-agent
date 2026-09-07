@@ -115,7 +115,7 @@ func fileMutationPlanSummary(id string, bytes int64, saved bool) string {
 	if saved {
 		state = "saved · 已加密保存"
 	}
-	return fmt.Sprintf("F6 完整复制清单：%s · %d字节 · %s\n清单不代表已经执行；浏览不批准、不取消，也不增加末页审批门槛。", safeSingleLineTerminalText(id), bytes, state)
+	return fmt.Sprintf("F6 完整操作清单：%s · %d字节 · %s\n清单不代表已经执行；浏览不批准、不取消，也不增加末页审批门槛。", safeSingleLineTerminalText(id), bytes, state)
 }
 
 func fileMutationArtifactSummary(pendingID string, bytes int64, saved bool) string {

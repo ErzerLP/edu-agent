@@ -219,8 +219,17 @@ func renderFileActivityDetails(detail *agentloop.FileActivityDetail, width int) 
 		label := "路径："
 		if detail.Operation == "restore_archive" {
 			label = "归档恢复源："
+		} else if detail.Operation == "purge_archive" {
+			label = "永久归档清理范围："
 		}
 		appendLine(label + safeSingleLineTerminalText(detail.Path))
+	}
+	if detail.Operation == "purge_archive" {
+		appendLine("永久删除，不可撤销；链接只移除自身，未选范围不变。")
+		appendLine("逻辑文件字节不代表实际释放空间；物理释放量未知。")
+		if detail.PublicationOutcome == "unknown" {
+			appendLine("可能已部分删除；核查逐项日志，不会自动重试、重放或回滚。")
+		}
 	}
 	if detail.DestinationPath != "" && detail.Operation == "restore_archive" {
 		appendLine("恢复目标：" + safeSingleLineTerminalText(detail.DestinationPath))

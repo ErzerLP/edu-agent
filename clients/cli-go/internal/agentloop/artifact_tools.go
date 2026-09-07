@@ -12,7 +12,7 @@ import (
 )
 
 func isLocalPrivateTool(name string) bool {
-	return isLocalExecutionTool(name) || name == "artifact" || name == "apply_patch"
+	return isLocalExecutionTool(name) || name == "artifact" || name == "apply_patch" || name == "purge_archive"
 }
 
 func artifactTool() modelclient.Tool {

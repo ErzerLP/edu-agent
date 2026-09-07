@@ -23,6 +23,7 @@ const (
 	ToolArchive        = "archive"
 	ToolPatch          = "apply_patch"
 	ToolRestoreArchive = "restore_archive"
+	ToolPurgeArchive   = "purge_archive"
 )
 
 const (
@@ -151,6 +152,9 @@ type PreparedMutation struct {
 	archivePath          string
 	movePlan             *securefile.MovePlan
 	restorePlan          *securefile.RestorePlan
+	purgePlan            *securefile.PurgePlan
+	purgePresentation    MutationPresentation
+	purgeManifest        string
 	copyPlan             *securefile.CopyPlan
 	copyTreePlan         *securefile.CopyTreePlan
 	copyTreePresentation MutationPresentation

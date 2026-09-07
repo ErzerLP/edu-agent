@@ -59,7 +59,7 @@ pipe输出 stdout/stderr 各自有序，PTY为单一合并流；内存预算保�
 
 ### 本地工作区与文件工具
 
-Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制及目录递归复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供结构化永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制及目录递归复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档、`restore_archive` 显式恢复和 `purge_archive` 永久归档清理工具；不提供归档外通用永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
 
 `stat` 默认只读元数据，入口版本不代表文件内容或整个目录快照；可选 `hash=true` 只在1MiB内计算普通文件原始SHA256，不返回正文。`find` 支持basename或工作区相对路径glob，独立`**`跨零或多层；默认保留隐藏文件、跳过归档树、不读正文，并明确标记扫描/结果截断。详见 [stat](../../docs/design/client-file-stat.md) 和 [find](../../docs/design/client-file-find.md)。
 
@@ -109,9 +109,9 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 `write`/`edit`/`apply_patch`/`mkdir`/`copy`/`move`/`archive`/`restore_archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
 
-`mkdir`、`copy`、`move` 的冻结短预览用PgUp/PgDn完整分页，末页显示后才能批准；独立F6清单/回执不增加末页门槛。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。普通文件日志仍受16KiB与32项回执容量约束；递归copy只用一个根事实，逐项计划/结算进入独立分段日志。容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。record payload现为v8、dirty为v9，容器仍v1；恢复使用严格Effect v3、目录copy为v2，其余操作仍v1。冻结旧record v7/dirty v8及更早DTO，旧版本不因新验证器而接受恢复或过去非法的目录copy事实，不放宽未来版本边界。恢复不重放文件或本地任务操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md) 及 [实施设计](../../docs/design/client-local-tools-delivery.md)。
+`mkdir`、`copy`、`move` 的冻结短预览用PgUp/PgDn完整分页，末页显示后才能批准；独立F6清单/回执不增加末页门槛。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。普通文件日志仍受16KiB与32项回执容量约束；递归copy只用一个根事实，逐项计划/结算进入独立分段日志。容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。record payload现为v9、dirty为v10，容器仍v1；清理使用严格Effect v4、恢复为v3、目录copy为v2，其余操作仍v1。冻结旧record v8/dirty v9及更早DTO，旧版本不因新验证器而接受清理、恢复或过去非法的目录copy事实，不放宽未来版本边界。恢复不重放文件或本地任务操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md) 及 [实施设计](../../docs/design/client-local-tools-delivery.md)。
 
-删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；可通过下述专用工具显式恢复，永久清理仍由用户在客户端外操作，磁盘占用不会自动释放。归档树禁止 `write/edit/apply_patch/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
+普通工作区删除请求通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；可通过下述专用工具显式恢复或明确确认永久清理，磁盘占用不会自动释放。归档树禁止 `write/edit/apply_patch/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
 
 #### 归档定位与恢复
 
@@ -120,6 +120,16 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 恢复只做同工作区、同文件系统的不覆盖移动，目标父目录须已存在；不合并、覆盖、创建父目录、复制后删除或清理空容器。普通文件/二进制没有32MiB限制，目录内部链接整体保留但不解引用。归档根与两端父身份在授权前冻结、执行重开复核；普通move及写工具的归档保护不放宽。入口版本不是正文hash、子树快照或跨进程CAS，新目标版本需重新stat。
 
 确认面板用PgUp/PgDn查看完整恢复预览，任意页均可批准，不新增末页门槛；拒绝/取消不移动入口。结果区分完成、未变化和未知，晚取消不掩盖已发生的移动；未知核查归档源和目标，不自动重试/回滚。持久Session先WAL、后真实结算；消费WAL前保存加密不可重放身份，重启只恢复历史事实，不恢复批准或执行器。--no-save不落自动历史；restore的实际文件移动不因退出撤销。Linux/macOS为支持范围，其它平台明确不支持；本批仅有Linux运行与Darwin交叉编译证据。详见 [C9合同](../../docs/comet/specs/client-archive-restore/spec.md)。
+
+#### 用户主动永久归档清理
+
+`purge_archive`严格要求归档内确切`path`及当前stat的`expected_version`，可选一个容器、文件或子目录，但拒绝归档根、工作区根、归档外及通配全部。**每次必须明确批准，YOLO不能跳过**；授权前完整冻结有界后序清单，F6/artifact可独立分页检索，不新增末页或逐项审批。
+
+只在可证明的规范归档、同挂载边界内删除入口，不读取普通文件正文，内部链接仅删除链接自身。执行前重检完整计划，逐项先保存意图、再删除与结算；变化、取消、失败、未知或保存失败即停止余项，不纳入新增文件，不回滚已删除项，也不顺带清理未选父容器。冻结的多个硬链接共享inode时，删除首项引起后续版本变化会停止，需核对后显式新操作。
+
+结果区分计划、尝试、完成、未变化、未知与not_started，并保存完整清单/追加日志。`logical_bytes_removed`只是已确认删除普通文件的逻辑字节；物理释放量unknown，硬链接、稀疏、打开文件和快照可能影响它。重启仅恢复认证事实，pending无actual仍未知，不恢复批准或自动续执行；消费WAL及再次恢复后旧调用ID仍不可重放，新ID可明确执行。`--no-save`自动清理历史只在内存，不妨碍用户批准的真实删除。
+
+历史名称`--file-copy-plan-limit`、`--file-copy-entry-limit`、`--file-copy-journal-limit`、`--file-copy-max-records`同时用于复制与清理，新建/resume/F2使用当前设置；`--file-copy-limit`仅限制复制字节，不限制清理大文件。无自动过期、后台清理、归档外delete或安全擦除承诺。详见 [C10合同](../../docs/comet/specs/client-archive-purge/spec.md)。C1–C10已完成Linux批次检查；最终独立复核及macOS原生证据仍待，不等于Runtime接受整个issue。
 
 归档底层实现支持 Linux/macOS/Windows 的不覆盖移动；当前变更的 macOS/Windows 证据为交叉编译，原生归档运行未验证，这不扩大整客户端既有平台支持范围。
 

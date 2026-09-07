@@ -245,6 +245,23 @@ func (result localToolResult) project(maxBytes int, fits func(string) bool, hist
 	return localResultJSON(result.value(0, 0, true, history))
 }
 
+// A shell start may return only its locator when the actual request cannot
+// accommodate even empty initial pages. Explicit read pages never use this;
+// no byte cursor is returned or advanced, and task read can start at zero.
+func (result localToolResult) initialShellLocator() string {
+	if result.Action != "shell" || result.Snapshot == nil || result.Snapshot.TaskID == "" || len(result.Pages) == 0 {
+		return ""
+	}
+	minimal := result.value(0, 0, true, false)
+	delete(minimal, "stdout")
+	delete(minimal, "stderr")
+	minimal["projection_omitted"] = true
+	if minimal["state"] == "exited" && minimal["reason"] == "completed" {
+		delete(minimal, "reason") // already stated by state and exit_code
+	}
+	return localResultJSON(minimal)
+}
+
 func (s *Session) appendLocalToolResult(callID string, result localToolResult) error {
 	s.appendMu.Lock()
 	defer s.appendMu.Unlock()
@@ -252,9 +269,38 @@ func (s *Session) appendLocalToolResult(callID string, result localToolResult) e
 		return ErrSessionClosed
 	}
 	allowed := min(max(32, s.currentToolResultBudget/max(1, s.currentToolResultShares)-30), max(32, s.currentToolResultBudget-s.currentToolResultTokens-6))
+	room := s.localProjectionRoomLocked(callID)
+	allowed = min(allowed, room)
 	live := result.project(maxToolOutputBytes, func(text string) bool { return s.estimator.EstimateText(text) <= allowed }, false)
+	if s.estimator.EstimateText(live) > room {
+		if locator := result.initialShellLocator(); locator != "" && len(locator) <= maxToolOutputBytes && s.estimator.EstimateText(locator) <= room {
+			live = locator
+		}
+	}
 	history := result.project(maxHistoryToolOutputBytes, nil, true)
 	return s.appendLocalDataProjectionLocked(callID, live, history)
+}
+
+// localProjectionRoomLocked accounts for the full tool schema set and the
+// irreducible current turn, not just the independent per-result allowance.
+// Older turns may be compacted later; this calculation does not discard them.
+func (s *Session) localProjectionRoomLocked(callID string) int {
+	messages := make([]modelclient.Message, 0, len(s.messages)+1)
+	for i, message := range s.messages {
+		if message.Role != "system" && s.messageTurnIDs[i] != s.currentTurnID {
+			continue
+		}
+		message.ToolCalls = append([]modelclient.ToolCall(nil), message.ToolCalls...)
+		for j := range message.ToolCalls {
+			if isLocalPrivateTool(message.ToolCalls[j].Function.Name) {
+				message.ToolCalls[j].Function.Arguments = `{}`
+			}
+		}
+		messages = append(messages, message)
+	}
+	messages = append(messages, modelclient.Message{Role: "tool", ToolCallID: callID})
+	fixed := s.estimator.EstimateRequest(modelclient.Request{Messages: messages, Tools: s.tools()})
+	return max(0, s.options.ContextWindow-512-divideRoundUp(s.options.ContextWindow*5, 100)-fixed)
 }
 
 // Caller holds appendMu; only live contains bounded body data. The stable

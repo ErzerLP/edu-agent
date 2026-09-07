@@ -11,7 +11,7 @@ import (
 // change. System instructions still carry authority and authorization rules.
 // Question display-width rules are kept in compact prose because they cannot
 // be expressed by JSON Schema's character-length constraints.
-const compactQuestionProse = "Answers aren't authorization. No secrets. Display columns: header<=36, question<=72, option label<=32, option description<=60."
+const compactQuestionProse = "Answers aren't authorization. No secrets. Columns:header<=36,question<=72,option label<=32,option description<=60."
 
 func compactToolProse(tools []modelclient.Tool) []modelclient.Tool {
 	result := append([]modelclient.Tool(nil), tools...)

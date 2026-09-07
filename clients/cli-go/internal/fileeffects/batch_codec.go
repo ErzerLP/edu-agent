@@ -246,10 +246,17 @@ func batchDecode(data []byte, out any) error {
 	if json.Unmarshal(envelope["version"], &version) != nil {
 		return batchError("corrupt")
 	}
-	if version > 1 {
+	// Identity markers retain their v1 contract. Only the existing data DTOs
+	// have v2 semantics; admitting v2 here never upgrades marker identities.
+	maxVersion := 1
+	switch out.(type) {
+	case *batchMetadata, *batchRootLine, *batchPlanLine, *batchPendingLine, *batchActualLine, *batchEndLine:
+		maxVersion = 2
+	}
+	if version > maxVersion {
 		return batchError("version_unsupported")
 	}
-	if version != 1 {
+	if version < 1 {
 		return batchError("corrupt")
 	}
 	if err := batchShape(data, reflect.TypeOf(out).Elem()); err != nil {
@@ -324,17 +331,28 @@ func batchFold(s string) string {
 
 type batchPlanValidator struct {
 	root    Effect
+	version int
+	last    string
 	paths   map[string]BatchItem
 	targets map[string]bool
 }
 
 func newBatchPlanValidator(root Effect) (*batchPlanValidator, error) {
-	if root.Validate() != nil || !root.IsDirectoryCopy() {
+	if root.Validate() != nil {
 		return nil, batchError("invalid_plan")
 	}
-	return &batchPlanValidator{root: root, paths: make(map[string]BatchItem), targets: make(map[string]bool)}, nil
+	version := 1
+	if root.IsArchivePurge() {
+		version = 2
+	} else if !root.IsDirectoryCopy() {
+		return nil, batchError("invalid_plan")
+	}
+	return &batchPlanValidator{root: root, version: version, paths: make(map[string]BatchItem), targets: make(map[string]bool)}, nil
 }
 func (v *batchPlanValidator) add(index int, item BatchItem) error {
+	if v.version == 2 {
+		return v.addPurge(index, item)
+	}
 	bad := func() error { return batchError("invalid_plan") }
 	s, t := item.Source, item.Target
 	if !ValidPath(s.Path, false) || !ValidPath(t.Path, false) || Protected(s.Path) || Protected(t.Path) || s.Kind != t.Kind || (s.Kind != "file" && s.Kind != "directory") || !strings.HasPrefix(s.Version, "entry-v1:") || !ValidVersion(s.Version) || t.Version != "" || item.Bytes < 0 || (s.Kind == "directory" && item.Bytes != 0) {
@@ -367,13 +385,13 @@ func (v *batchPlanValidator) add(index int, item BatchItem) error {
 	return nil
 }
 func batchValidActual(entry batchEntry, a BatchActual) bool {
-	if !batchCode(a.Code) || a.Bytes < 0 {
+	if !batchCode(a.Code) || a.Bytes < 0 || entry.Purge && a.ContentHash != "" {
 		return false
 	}
 	switch a.Outcome {
 	case "completed":
 		if entry.File {
-			return batchValidDigest(a.ContentHash) && a.Bytes == entry.Bytes
+			return (entry.Purge || batchValidDigest(a.ContentHash)) && a.Bytes == entry.Bytes
 		}
 		return a.ContentHash == "" && a.Bytes == 0
 	case "unchanged", "unknown":

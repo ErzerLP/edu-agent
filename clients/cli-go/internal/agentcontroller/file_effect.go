@@ -45,6 +45,8 @@ func fileEffectRecoveryLabel(e fileeffects.Effect) string {
 	switch e.Operation {
 	case "archive":
 		return "归档结果未知：检查源 " + e.Source.Path + " 与归档目标 " + e.Target.Path + "；不会自动重试或清理"
+	case "purge_archive":
+		return "永久归档清理结果未知：" + e.Source.Path + "；可能已部分删除，请核对完整逐项日志；不会自动重放或回滚，物理释放空间未知"
 	case "restore_archive":
 		return "归档恢复结果未知：归档源 " + e.Source.Path + " → 目标 " + e.Target.Path + "；请检查两端，不会自动重试、恢复重放、回滚或清理"
 	case "move":

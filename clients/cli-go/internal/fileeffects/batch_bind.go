@@ -39,11 +39,11 @@ func (m *BatchManager) verifyRecord(ctx context.Context, backend localartifact.S
 				if err = batchDecode(line, &v); err != nil {
 					return nil, err
 				}
-				if v.Type != "root" {
+				if v.Version != meta.Version || v.Type != "root" {
 					return nil, batchError("corrupt")
 				}
 				validator, err = newBatchPlanValidator(v.Root)
-				if err != nil {
+				if err != nil || validator.version != meta.Version {
 					return nil, batchError("corrupt")
 				}
 				rootSeen = true
@@ -53,13 +53,13 @@ func (m *BatchManager) verifyRecord(ctx context.Context, backend localartifact.S
 			if err = batchDecode(line, &v); err != nil {
 				return nil, err
 			}
-			if v.Type != "plan" || v.Index != len(r.entries) || v.Index >= meta.Items || validator.add(v.Index, v.Item) != nil {
+			if v.Version != meta.Version || v.Type != "plan" || v.Index != len(r.entries) || v.Index >= meta.Items || validator.add(v.Index, v.Item) != nil {
 				return nil, batchError("corrupt")
 			}
-			r.entries = append(r.entries, batchEntry{File: v.Item.Source.Kind == "file", Bytes: v.Item.Bytes})
+			r.entries = append(r.entries, batchEntry{File: v.Item.Source.Kind == "file", Purge: meta.Version == 2, Bytes: v.Item.Bytes})
 		}
 	}
-	if !rootSeen || len(r.entries) != meta.Items || batchHashState(whole) != meta.PlanHash {
+	if !rootSeen || len(r.entries) != meta.Items || validator.finalize() != nil || batchHashState(whole) != meta.PlanHash {
 		return nil, batchError("corrupt")
 	}
 	sequence, started, completed, unchanged, unknown := 0, 0, 0, 0, 0
@@ -94,7 +94,7 @@ func (m *BatchManager) verifyRecord(ctx context.Context, backend localartifact.S
 				if err = batchDecode(line, &v); err != nil {
 					return nil, err
 				}
-				if v.Sequence != sequence || v.Index != started || started >= meta.Items || pending || completed != started {
+				if v.Version != meta.Version || v.Sequence != sequence || v.Index != started || started >= meta.Items || pending || completed != started {
 					return nil, batchError("corrupt")
 				}
 				started++
@@ -105,7 +105,7 @@ func (m *BatchManager) verifyRecord(ctx context.Context, backend localartifact.S
 				if err = batchDecode(line, &v); err != nil {
 					return nil, err
 				}
-				if v.Sequence != sequence || !pending || v.Index != started-1 || !batchValidActual(r.entries[v.Index], v.Actual) {
+				if v.Version != meta.Version || v.Sequence != sequence || !pending || v.Index != started-1 || !batchValidActual(r.entries[v.Index], v.Actual) {
 					return nil, batchError("corrupt")
 				}
 				pending = false
@@ -122,7 +122,7 @@ func (m *BatchManager) verifyRecord(ctx context.Context, backend localartifact.S
 				if err = batchDecode(line, &v); err != nil {
 					return nil, err
 				}
-				if v.Sequence != sequence || !batchCode(v.Code) || v.Complete && completed != meta.Items {
+				if v.Version != meta.Version || v.Sequence != sequence || !batchCode(v.Code) || v.Complete && completed != meta.Items {
 					return nil, batchError("corrupt")
 				}
 				finished = true

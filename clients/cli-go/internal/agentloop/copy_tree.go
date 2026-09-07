@@ -181,7 +181,11 @@ func (s *Session) finishCopyTreeResult(ctx context.Context, call modelclient.Too
 	}
 	s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: event, Phase: ActivityExecutingTool, StableCode: event.Detail, File: mergePreparedFileActivity(fileActivityDetailFromResult(call.Function.Name, result), prepared)})
 	if settlementErr != nil {
-		return result, event, true, fmt.Errorf("复制结算保存失败；已停止后续操作: %w", settlementErr)
+		operation := "复制"
+		if prepared.IsPurgeArchive() {
+			operation = "永久清理"
+		}
+		return result, event, true, fmt.Errorf("%s结算保存失败；已停止后续操作: %w", operation, settlementErr)
 	}
 	if result.Publication == workspace.PublicationUnchanged && toolErr != nil {
 		return result, event, false, preferContextError(ctx, toolErr)

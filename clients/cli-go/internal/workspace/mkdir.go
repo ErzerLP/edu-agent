@@ -86,6 +86,10 @@ func (p *PreparedMutation) FileEffect() fileeffects.Effect {
 		}
 	}
 	e := fileeffects.New(operation, source, target, kind)
+	if p.purgePlan != nil {
+		e = fileeffects.New(ToolPurgeArchive, p.purgePlan.Path(), p.purgePlan.Path(), string(p.purgePlan.Kind()))
+		e.Source.Version = p.purgePlan.Version()
+	}
 	if p.restorePlan != nil {
 		e = fileeffects.New(ToolRestoreArchive, p.restorePlan.Source(), p.restorePlan.Destination(), string(p.restorePlan.Kind()))
 		e.Source.Version = p.restorePlan.Version()

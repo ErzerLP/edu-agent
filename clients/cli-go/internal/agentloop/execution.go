@@ -240,7 +240,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 					prepared = nil
 					preparationResult = workspace.Result{
 						Publication: workspace.PublicationUnchanged,
-						Summary:     "完整差异未能保留；没有发布文件修改",
+						Summary:     "完整差异或计划未能保留；没有发布文件修改或清理",
 						Value:       map[string]any{"error": artifactErrorCode(retentionErr), "publication": "unchanged"},
 					}
 				}
@@ -255,9 +255,9 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 					events = append(events, event)
 					continue
 				}
-				if s.FileAuthorizationMode() == FileAuthorizationConfirm {
+				if s.FileAuthorizationMode() == FileAuthorizationConfirm || prepared.IsPurgeArchive() {
 					pending := pendingFileMutationFrom(call.ID, prepared)
-					if prepared.IsCopyTree() {
+					if prepared.IsCopyTree() || prepared.IsPurgeArchive() {
 						pending.PlanID, pending.PlanBytes, pending.PlanSaved = diff.ID, diff.Bytes, diff.Saved
 					} else {
 						pending.DiffID, pending.DiffBytes, pending.DiffSaved = diff.ID, diff.Bytes, diff.Saved

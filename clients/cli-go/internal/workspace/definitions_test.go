@@ -9,6 +9,7 @@ import (
 
 func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 	expectedSchemas := map[string]string{
+		ToolPurgeArchive:   `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["path","expected_version"],"additionalProperties":false}`,
 		ToolRestoreArchive: `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`,
 		ToolPatch:          `{"type":"object","properties":{"patch":{"type":"string","minLength":1,"maxLength":65536},"expected_hashes":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}}},"required":["patch","expected_hashes"],"additionalProperties":false}`,
 		ToolMove:           `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`,
@@ -24,6 +25,7 @@ func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 		ToolEdit:           `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":65536},"new_text":{"type":"string","maxLength":65536}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`,
 	}
 	expectedDescriptions := map[string]string{
+		ToolPurgeArchive:   "Permanently purge an exact stat-versioned archive entry, never the archive root. Frozen plan requires explicit approval even in YOLO; artifact reads plan/log. No link following, mount crossing, replay or rollback; physical space freed unknown.",
 		ToolRestoreArchive: "Restore an exact archive entry using current stat version and explicit absent destination; existing parent, same-filesystem no-replace. Locate with list/find/read/stat. Never infer original path, copy-delete, clean containers or replay.",
 		ToolPatch:          "Strict Begin/End Patch: Add File (+lines), Update File (bare @@, exact context/-/+), Delete File (archive); optional End of File; no move/no-newline markers. Hashes cover every update/delete only. Max 16 files, original/candidate totals 67108864 bytes each; preflight all, authorize once, publish sequentially without rollback.",
 		ToolMove:           "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.",

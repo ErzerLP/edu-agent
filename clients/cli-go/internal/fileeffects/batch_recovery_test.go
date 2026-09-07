@@ -186,7 +186,7 @@ func TestFileBatchBindRejectsBadEvidenceTransactionally(t *testing.T) {
 		{"future-metadata", "version_unsupported", func(t *testing.T, s *fileBatchTestStore) {
 			var meta batchMetadata
 			fileBatchTestOK(t, json.Unmarshal(s.blobs[batchMetaName(id)], &meta))
-			meta.Version = 2
+			meta.Version = 3 // Data v2 is reserved for purge; v3 remains unsupported.
 			s.blobs[batchMetaName(id)] = fileBatchTestJSON(t, meta)
 		}},
 		{"authenticated-illegal-actual-order", "corrupt", func(t *testing.T, s *fileBatchTestStore) {

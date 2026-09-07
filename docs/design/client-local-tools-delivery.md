@@ -1,6 +1,6 @@
 # Issue #1：本地工具能力交付计划（v2）
 
-状态：用户已确认方案并授权实施；本文件是实施设计，不表示各批次已经完成或通过验收。本次 ambient resume probe 返回 `none`，不自行启动或切换 Comet workflow；后续若进入 Runtime，以其正式 continuation 为准。
+状态：C1–C10实施、Linux候选检查及限定范围的独立源码审查已完成，未留确认的生产阻断问题；macOS原生、真实跨挂载场景和Runtime仍未验收。本文件记录实施设计和Builder证据，不替代Runtime的正式验收。本次 ambient resume probe 返回 `none`，未自行启动或切换 Comet workflow；最终状态与证据见[候选交接](client-local-tools-handoff.md)。
 
 ## 用户结果与不变量
 
@@ -346,4 +346,16 @@ C10 checkpoint后继续最终恢复/隐私复核和候选检查，不以提交�
 - 新增`TestOperationErrorTranscriptPersistsWithoutBlockingContinuation`先复现三种保存失败，再验证稳定错误/failed或stopped稿保存、隐私、下一正常对话及重启后的继续可用。
 - 静态完整引用核查确认`fileReceiptFromCheckpoint`当前只有测试调用，不是生产恢复或结算入口；此前目录hash疑点不应被描述为已发生的生产复制失败。将兼容检查与正确的`fileReceiptFromExecution`对齐：目录无虚构hash且必须子树失效，不给目录回执填文件hash。
 - `TestDirectoryCopyCheckpointReceiptMatchesExecutorContract`使用真实42项复制产生的checkpoint，先复现合法completed被拒绝、unknown的伪造hash/缺失失效被接受，再验证修正后的正反边界。
-- 两项定向回归、agentcontroller全包及vet、两项定向race均通过；其它未变化包证据继续有效。下一步为稳定候选独立审查及一次CLI模块完整门禁，仍无macOS原生或Runtime验收证据。
+- 两项定向回归、agentcontroller全包及vet、两项定向race均通过；其它未变化包证据继续有效。后续`c1eb418`候选的CLI模块25包完整测试及vet、Linux完整构建运行、Darwin/arm64交叉构建通过，仍无macOS原生或Runtime验收证据。
+
+## 候选隐私撤销修正
+
+- 独立只读审查发现P1：持久Session输出的内存前缀、EOF和空检索未经过generation检查，外部Clear成功后仍可访问；读磁盘区的旧测试不能覆盖这些快捷返回。`TestLocalOutputClearRevokesPersistedBytes`扩展后先复现缓存/EOF/检索与detach后的越过撤销，再在修复后通过。
+- `agentsession.Handle.CheckArtifactAccess`复用已有handle生命期、私有根和profile generation边界，不扫描目录、不要求曾成功保存blob。localexec的持久后端新增必需同名端口；不更改容器、record/dirty或产物格式。
+- 每次受持久authority保护的Read（含内存与EOF）及Search先通过此检查；认证不可用时不返回缓存fallback。首次metadata保存失败也保留authority，有效authority下的真实内存仍可读取。
+- binding保留最后非nil的只读authority，detach不能把旧缓存降为无保护内存；该引用不持有额外lease，已关闭handle会拒绝访问。detach后真正新建的memory-only任务不受旧authority限制。执行状态和安全Stop不依赖输出读取检查，不因撤销而暗杀任务。
+- 新增`TestArtifactAccessFenceWithoutSavedBlob`、`TestPersistentOutputAccessFenceIncludesUnsavedCacheAndEOF`及`TestPersistentOutputRevocationDoesNotBlockSafeStop`，确认首次保存失败、撤销、旧缓存detach、新no-save任务、无目录扫描和安全停止边界。live/cache读取只检查访问authority，不把缓存当作新认证过的磁盘blob；并发Clear按正常读取线性化解释，不要求追回之前已返回的明文。
+- localexec、agentsession、agentcontroller、agentloop、agentui和command六个受影响包全量测试及vet通过；前三包`Test(PersistentOutput|ArtifactAccess|LocalOutput|LocalSessionLease)`定向race通过。其余候选检查未失效，不重复全模块或全平台矩阵。
+- 修复后的Linux完整CLI构建/version实际运行及Darwin/arm64完整CLI交叉构建通过，阶段产物`/tmp/edu-agent-output-access.ritH4Y`；该阶段Go输入清单摘要`7576d3ae3b6ebd461e2164a4f2421fb078540ae27d67b63e3ec83918820fec88`。最终候选的提交与构建定位见[候选交接](client-local-tools-handoff.md)。
+- 独立复核支持原P1的内存/EOF/Search/detach修复有效。复核提出的任意内部API跨authority重绑依赖错误的owner/backend组合，不是已确认的CLI漏洞：BindArchive明确同owner只允许原Session/代际；生产Start/Resume/F2由认证record派生并成组安装owner/handle。`TestLocalOutputNewGenerationNeverReusesOwner`以真实Clear和共享manager、新建时主动传旧owner选项，验证新Session覆盖该选项且旧输出仍不可读；定向race与controller vet通过。未引入面向恶意内部依赖注入的通用identity框架。
+- 清理安全、不重放、稳定投影/transcript/title、不可变与批量产物读回、new/resume/F2/no-save绑定、generation刷新及AEAD关键链路的独立只读审查已收齐，限定范围内未留确认的生产阻断；不是全仓逐行审计或Runtime接受，不把已披露的原生环境缺口写为通过。

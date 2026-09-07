@@ -129,11 +129,11 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 结果区分计划、尝试、完成、未变化、未知与not_started，并保存完整清单/追加日志。`logical_bytes_removed`只是已确认删除普通文件的逻辑字节；物理释放量unknown，硬链接、稀疏、打开文件和快照可能影响它。重启仅恢复认证事实，pending无actual仍未知，不恢复批准或自动续执行；消费WAL及再次恢复后旧调用ID仍不可重放，新ID可明确执行。`--no-save`自动清理历史只在内存，不妨碍用户批准的真实删除。
 
-历史名称`--file-copy-plan-limit`、`--file-copy-entry-limit`、`--file-copy-journal-limit`、`--file-copy-max-records`同时用于复制与清理，新建/resume/F2使用当前设置；`--file-copy-limit`仅限制复制字节，不限制清理大文件。无自动过期、后台清理、归档外delete或安全擦除承诺。详见 [C10合同](../../docs/comet/specs/client-archive-purge/spec.md)。C1–C10已完成Linux批次检查；最终独立复核及macOS原生证据仍待，不等于Runtime接受整个issue。
+历史名称`--file-copy-plan-limit`、`--file-copy-entry-limit`、`--file-copy-journal-limit`、`--file-copy-max-records`同时用于复制与清理，新建/resume/F2使用当前设置；`--file-copy-limit`仅限制复制字节，不限制清理大文件。无自动过期、后台清理、归档外delete或安全擦除承诺。详见 [C10合同](../../docs/comet/specs/client-archive-purge/spec.md)。C1–C10已完成Linux批次及候选检查，限定范围独立源码审查未留确认的生产阻断；macOS原生和Runtime仍未验收。最终证据与限制见[候选交接](../../docs/design/client-local-tools-handoff.md)。
 
 归档底层实现支持 Linux/macOS/Windows 的不覆盖移动；当前变更的 macOS/Windows 证据为交叉编译，原生归档运行未验证，这不扩大整客户端既有平台支持范围。
 
-对服务端数据，Agent 的唯一写工具仍是提出长期偏好候选。执行前，TUI会把候选内容、理由、类别、敏感性和稳定性完整放入可滚动区域，并固定显示确认控件；拒绝不会产生服务端写入。确认后也只会创建Memory候选，后续准入和隐私处理继续由服务端合同控制。响应丢失时会保留原 `operation_id` 并只允许幂等重试核对，不允许把未知结果改称“取消保存”；写入成功后的模型续答失败则会明确报告候选已提交并退出确认状态。退出Agent会话会取消在途模型和工具请求，也不会把对话或模型响应写入工作区或其他本地文件。
+对服务端数据，Agent 的唯一写工具仍是提出长期偏好候选。执行前，TUI会把候选内容、理由、类别、敏感性和稳定性完整放入可滚动区域，并固定显示确认控件；拒绝不会产生服务端写入。确认后也只会创建Memory候选，后续准入和隐私处理继续由服务端合同控制。响应丢失时会保留原 `operation_id` 并只允许幂等重试核对，不允许把未知结果改称“取消保存”；写入成功后的模型续答失败则会明确报告候选已提交并退出确认状态。退出Agent会话会取消在途模型请求并收尾受管本地任务，按保存模式处理加密Session历史；不会自动把对话或模型响应另写为工作区业务文件，`--no-save`不落自动历史。
 
 ## Commands
 

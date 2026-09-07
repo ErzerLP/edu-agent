@@ -24,6 +24,19 @@ func upcastDirtyV6(v dirtyPayloadV6) (DirtyMarker, error) {
 	if v.SchemaVersion != 6 {
 		return DirtyMarker{}, ErrCorrupt
 	}
+	m, err := upcastDirtyFileFactsV6(v)
+	if err != nil {
+		return DirtyMarker{}, err
+	}
+	if validateDirtyMarker(m) != nil {
+		return DirtyMarker{}, ErrCorrupt
+	}
+	return m, nil
+}
+
+// Shared conversion of the frozen file fields; callers validate only after
+// restoring all fields of their version (v7 may contain local intents alone).
+func upcastDirtyFileFactsV6(v dirtyPayloadV6) (DirtyMarker, error) {
 	m := DirtyMarker{
 		SchemaVersion: dirtySchemaVersion, DirtyID: v.DirtyID, SessionID: v.SessionID,
 		StorageID: v.StorageID, BaseRevision: v.BaseRevision, TurnSequence: v.TurnSequence,
@@ -57,9 +70,6 @@ func upcastDirtyV6(v dirtyPayloadV6) (DirtyMarker, error) {
 		}
 		m.FileJournal = append(m.FileJournal, next)
 	}
-	if validateDirtyMarker(m) != nil {
-		return DirtyMarker{}, ErrCorrupt
-	}
 	return m, nil
 }
 
@@ -69,12 +79,12 @@ func upcastEffectV6(v fileEffectV4) (fileeffects.Effect, error) {
 	default:
 		return fileeffects.Effect{}, ErrCorrupt
 	}
+	if validateFileEffectV1(v) != nil {
+		return fileeffects.Effect{}, ErrCorrupt
+	}
 	e := fileeffects.Effect{SchemaVersion: v.SchemaVersion, Operation: v.Operation,
 		Source: fileeffects.Endpoint(v.Source), Target: fileeffects.Endpoint(v.Target),
 		Scope: v.Scope, Directories: fileeffects.DirectoryChain(v.Directories)}
-	if e.Validate() != nil {
-		return fileeffects.Effect{}, ErrCorrupt
-	}
 	return e, nil
 }
 

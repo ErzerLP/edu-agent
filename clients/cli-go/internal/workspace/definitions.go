@@ -19,7 +19,7 @@ func Definitions() []modelclient.Tool {
 		workspaceTool(ToolEdit, editDescription(DefaultLimits()), fmt.Sprintf(`{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"expected_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"},"edits":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"old_text":{"type":"string","minLength":1,"maxLength":%d},"new_text":{"type":"string","maxLength":%d}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["path","expected_hash","edits"],"additionalProperties":false}`, agentlimits.MaxFileMutationArgumentsBytes, agentlimits.MaxFileMutationArgumentsBytes)),
 		patchDefinition(DefaultLimits()),
 		workspaceTool(ToolMkdir, "Create a workspace directory; parents requires explicit true; no archive or links.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"parents":{"type":"boolean","default":false}},"required":["path"],"additionalProperties":false}`),
-		workspaceTool(ToolCopy, "Stream-copy a stat-versioned regular file up to 32MiB, including binary; keep source; absent destination, existing parent; no archive or links.", `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
+		workspaceTool(ToolCopy, copyDescription(DefaultLimits()), `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
 		workspaceTool(ToolMove, "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.", `{"type":"object","properties":{"source":{"type":"string","minLength":1,"maxLength":4096},"destination":{"type":"string","minLength":1,"maxLength":4096},"expected_version":{"type":"string","pattern":"^entry-v1:[0-9a-f]{64}$"}},"required":["source","destination","expected_version"],"additionalProperties":false}`),
 		workspaceTool(ToolArchive, "Archive a file or directory; never permanently delete.", `{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096}},"required":["path"],"additionalProperties":false}`),
 	}
@@ -42,6 +42,8 @@ func (w *Workspace) Definitions() []modelclient.Tool {
 				definitions[index] = readDefinition(w.limits)
 			case ToolEdit:
 				definitions[index].Function.Description = editDescription(w.limits)
+			case ToolCopy:
+				definitions[index].Function.Description = copyDescription(w.limits)
 			case ToolPatch:
 				definitions[index] = patchDefinition(w.limits)
 			}
@@ -54,6 +56,10 @@ func patchDefinition(limits Limits) modelclient.Tool {
 	return workspaceTool(ToolPatch,
 		fmt.Sprintf("Strict Begin/End Patch: Add File (+lines), Update File (bare @@, exact context/-/+), Delete File (archive); optional End of File; no move/no-newline markers. Hashes cover every update/delete only. Max 16 files, original/candidate totals %d bytes each; preflight all, authorize once, publish sequentially without rollback.", limits.PatchBytes),
 		fmt.Sprintf(`{"type":"object","properties":{"patch":{"type":"string","minLength":1,"maxLength":%d},"expected_hashes":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}}},"required":["patch","expected_hashes"],"additionalProperties":false}`, agentlimits.MaxFileMutationArgumentsBytes))
+}
+
+func copyDescription(limits Limits) string {
+	return fmt.Sprintf("Copy a stat-versioned file (including binary) or recursive directory, up to %d total file bytes/%d entries. Keep source; absent destination, existing parent; no overwrite/merge/archive/links. Authorize frozen plan once; journal each item, stop on failure, retain completed prefix; artifact reads full plan/append-only receipt, never replay.", limits.CopyBytes, limits.CopyEntries)
 }
 
 func editDescription(limits Limits) string {

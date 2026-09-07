@@ -315,6 +315,12 @@ func projectionDecimalString(value string) int64 {
 	return result
 }
 
+func copyReceiptProjection(object map[string]any) map[string]any {
+	return preserveFields(object, "file_effect", "operation", "path", "destination", "publication_outcome", "error", "code", "replay",
+		"plan_id", "plan_bytes", "plan_saved", "plan_hash", "batch_id", "receipt_id", "receipt_bytes", "receipt_saved_bytes", "receipt_saved", "receipt_error",
+		"source_unchanged", "item_count", "attempted", "completed", "unchanged", "unknown", "not_started", "bytes_copied", "copy_state", "cleanup_incomplete", "complete")
+}
+
 func historyValue(tool string, value any) any {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -325,6 +331,9 @@ func historyValue(tool string, value any) any {
 	}
 	if tool == workspace.ToolRead {
 		return compactReadProjection(object, 256, "history_projection_limit")
+	}
+	if tool == workspace.ToolCopy && (object["plan_id"] != nil || object["batch_id"] != nil) {
+		return copyReceiptProjection(object)
 	}
 	if workspace.IsMutationTool(tool) {
 		if effect, ok := object["file_effect"]; ok {
@@ -374,6 +383,9 @@ func boundedProjectionJSON(tool string, value any, limit int, reason string) str
 		}
 		if object := normalizedProjectionObject(value); object != nil {
 			fact := preserveFields(object, "file_effect", "operation", "path", "publication_outcome", "error", "code")
+			if tool == workspace.ToolCopy && (object["plan_id"] != nil || object["batch_id"] != nil) {
+				fact = copyReceiptProjection(object)
+			}
 			if data, err := json.Marshal(fact); err == nil && len(data) <= limit {
 				return string(data)
 			}
@@ -570,6 +582,8 @@ func workspaceBudgetProjection(tool string, object map[string]any, payloadLimit 
 		"returned_lines", "next_offset", "next_byte_offset", "first_changed_line", "preview_kind",
 		"preview_truncated", "scanned_files", "scanned_bytes", "visited_entries", "scanned_directories", "skipped", "pattern", "type",
 		"diff_id", "diff_bytes", "diff_saved", "diff_hash", "receipt_id",
+		"plan_id", "plan_bytes", "plan_saved", "plan_hash", "batch_id", "receipt_bytes", "receipt_saved_bytes", "receipt_saved", "receipt_error", "replay",
+		"item_count", "attempted", "completed", "unchanged", "unknown", "not_started", "bytes_copied", "copy_state", "cleanup_incomplete",
 		"respect_gitignore", "ignore_files", "ignore_bytes", "ignored_entries", "source_truncation_reason",
 	} {
 		if current, ok := object[key]; ok {

@@ -52,10 +52,10 @@ func upcastEffectV4(v fileEffectV4) (fileeffects.Effect, error) {
 	default:
 		return fileeffects.Effect{}, ErrCorrupt
 	}
-	e := fileeffects.Effect{SchemaVersion: v.SchemaVersion, Operation: v.Operation, Source: fileeffects.Endpoint(v.Source), Target: fileeffects.Endpoint(v.Target), Scope: v.Scope, Directories: fileeffects.DirectoryChain(v.Directories)}
-	if e.Validate() != nil {
+	if validateFileEffectV1(v) != nil {
 		return fileeffects.Effect{}, ErrCorrupt
 	}
+	e := fileeffects.Effect{SchemaVersion: v.SchemaVersion, Operation: v.Operation, Source: fileeffects.Endpoint(v.Source), Target: fileeffects.Endpoint(v.Target), Scope: v.Scope, Directories: fileeffects.DirectoryChain(v.Directories)}
 	return e, nil
 }
 func upcastReceiptV4(v fileReceiptV4) (FileReceipt, error) {

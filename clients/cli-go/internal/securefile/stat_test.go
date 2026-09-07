@@ -101,7 +101,9 @@ func TestStatHashRawBoundedAndChanged(t *testing.T) {
 	if _, err := root.HashEntry(t.Context(), "large", large, 1<<20); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("large hash: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "data"), []byte("changed"), 0600); err != nil {
+	// An entry version is metadata, not a content hash. Change size as well
+	// so this stale-metadata test does not depend on filesystem clock ticks.
+	if err := os.WriteFile(filepath.Join(dir, "data"), []byte("changed-size"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := root.HashEntry(t.Context(), "data", entry, 1<<20); !errors.Is(err, ErrChanged) {

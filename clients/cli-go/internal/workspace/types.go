@@ -29,6 +29,9 @@ const (
 	DefaultEditFileBytes int64 = 64 << 20
 	DefaultDiffBytes     int64 = 128 << 20
 	DefaultPatchBytes    int64 = 64 << 20
+	DefaultCopyBytes     int64 = 1 << 30
+	DefaultCopyPlanBytes int64 = 64 << 20
+	DefaultCopyEntries         = 100000
 	MaxPatchFiles              = 16
 )
 
@@ -42,6 +45,9 @@ type Limits struct {
 	EditFileBytes        int64
 	DiffBytes            int64
 	PatchBytes           int64
+	CopyBytes            int64
+	CopyPlanBytes        int64
+	CopyEntries          int
 	QueryMemoryBytes     int64
 	QueryEntries         int
 	QueryRecords         int
@@ -60,6 +66,7 @@ func DefaultLimits() Limits {
 		ListEntries: 200, DirectoryScanEntries: 2000, ResultBytes: 6 << 10,
 		ReadLines: 200, FileBytes: 1 << 20, ReadFileBytes: DefaultReadFileBytes, EditFileBytes: DefaultEditFileBytes,
 		QueryMemoryBytes: DefaultQueryMemoryBytes, QueryEntries: DefaultQueryEntries, QueryRecords: DefaultQueryRecords,
+		CopyBytes: DefaultCopyBytes, CopyPlanBytes: DefaultCopyPlanBytes, CopyEntries: DefaultCopyEntries,
 		SearchMatches: 100, SearchFiles: 2000, SearchBytes: 16 << 20,
 		SearchDepth: 64, SearchPreviewBytes: 512, SearchEntries: 10000,
 		MutationPreviewBytes: 6 << 10, DiffBytes: DefaultDiffBytes, PatchBytes: DefaultPatchBytes, EditReplacements: 32,
@@ -129,27 +136,30 @@ type MutationPresentation struct {
 type PreparedMutation struct {
 	Presentation MutationPresentation
 
-	path               string
-	candidate          []byte
-	candidateHash      string
-	baseVersion        string
-	basePermission     uint32
-	fileBytes          int64 // processing budget frozen when write/edit is prepared
-	create             bool
-	previewHash        string
-	fullDiff           string // immutable complete raw-byte diff, never a result projection
-	firstChangeLine    int
-	replacements       int
-	archivePath        string
-	movePlan           *securefile.MovePlan
-	copyPlan           *securefile.CopyPlan
-	mkdirPlan          *securefile.MkdirPlan
-	archiveEntry       *securefile.ArchiveEntry
-	archiveContentHash string // patch-only raw content check; baseVersion remains entry-v1
-	patchItems         []*PreparedMutation
-	patchPresentation  MutationPresentation
-	commitMu           sync.Mutex
-	committed          bool
+	path                 string
+	candidate            []byte
+	candidateHash        string
+	baseVersion          string
+	basePermission       uint32
+	fileBytes            int64 // processing budget frozen when write/edit is prepared
+	create               bool
+	previewHash          string
+	fullDiff             string // immutable complete raw-byte diff, never a result projection
+	firstChangeLine      int
+	replacements         int
+	archivePath          string
+	movePlan             *securefile.MovePlan
+	copyPlan             *securefile.CopyPlan
+	copyTreePlan         *securefile.CopyTreePlan
+	copyTreePresentation MutationPresentation
+	copyManifest         string
+	mkdirPlan            *securefile.MkdirPlan
+	archiveEntry         *securefile.ArchiveEntry
+	archiveContentHash   string // patch-only raw content check; baseVersion remains entry-v1
+	patchItems           []*PreparedMutation
+	patchPresentation    MutationPresentation
+	commitMu             sync.Mutex
+	committed            bool
 }
 
 // FullDiff returns the complete diff frozen at prepare time without copying it.

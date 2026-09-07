@@ -301,6 +301,9 @@ func (w *Workspace) CommitMutation(ctx context.Context, prepared *PreparedMutati
 	if prepared != nil && (prepared.IsPatch() || prepared.Presentation.Tool == ToolPatch) {
 		return mutationFailure(CodeInvalidArguments, "补丁计划必须先领取，再逐文件记录 WAL 并发布")
 	}
+	if prepared.IsCopyTree() {
+		return mutationFailure(CodeInvalidArguments, "目录复制必须通过逐项日志观察的发布路径")
+	}
 	if prepared == nil || prepared.path == "" || !IsMutationTool(prepared.Presentation.Tool) {
 		return mutationFailure(CodeInvalidArguments, "文件修改候选无效")
 	}

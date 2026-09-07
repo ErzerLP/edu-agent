@@ -45,8 +45,17 @@ func New(operation, source, target, kind string) Effect {
 	}
 	if kind == "directory" {
 		e.Scope = "subtree"
+		if operation == "copy" {
+			e.SchemaVersion = 2
+		}
 	}
 	return e
+}
+
+// IsDirectoryCopy identifies the v2 root fact, not a v1 file copy or mkdir.
+// Call Validate before accepting an effect from an untrusted boundary.
+func (e Effect) IsDirectoryCopy() bool {
+	return e.SchemaVersion == 2 && e.Operation == "copy" && e.Source.Kind == "directory" && e.Target.Kind == "directory"
 }
 
 func (e Effect) ReferencePath() string {
@@ -143,6 +152,24 @@ func ValidVersion(s string) bool {
 }
 func (e Effect) Validate() error {
 	invalid := errors.New("invalid file effect")
+	if e.SchemaVersion == 2 {
+		if !e.IsDirectoryCopy() || !ValidPath(e.Source.Path, false) || !ValidPath(e.Target.Path, false) || Protected(e.Source.Path) || Protected(e.Target.Path) || e.Scope != "subtree" || !strings.HasPrefix(e.Source.Version, "entry-v1:") || !ValidVersion(e.Source.Version) || e.Target.Version != "" || e.Directories != (DirectoryChain{}) {
+			return invalid
+		}
+		// Compare components with Unicode case folding as well as the ordinary
+		// spelling: the root cannot be an alias of, or descend from, the source.
+		source, target := strings.Split(e.Source.Path, "/"), strings.Split(e.Target.Path, "/")
+		if len(target) >= len(source) {
+			prefix := true
+			for i := range source {
+				prefix = prefix && strings.EqualFold(source[i], target[i])
+			}
+			if prefix {
+				return invalid
+			}
+		}
+		return nil
+	}
 	if e.SchemaVersion != 1 || !ValidPath(e.Target.Path, false) || !ValidVersion(e.Target.Version) || (e.Target.Kind != "file" && e.Target.Kind != "directory") {
 		return invalid
 	}

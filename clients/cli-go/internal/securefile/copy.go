@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -13,12 +14,13 @@ import (
 
 const CopyMaxBytes int64 = 32 << 20
 
-// CopyPlan freezes metadata and both parent identities, never file contents.
+// CopyPlan freezes metadata, the processing limit and both parent identities, never file contents.
 // It is root-bound and single-use. It creates no temporary file or directory.
 type CopyPlan struct {
 	root                                *Root
 	source, destination                 []string
 	entry                               ArchiveEntry
+	limit                               int64
 	permission                          os.FileMode
 	sourceParentID, destinationParentID string
 	mu                                  sync.Mutex
@@ -29,6 +31,7 @@ func (p *CopyPlan) Source() string          { return strings.Join(p.source, "/")
 func (p *CopyPlan) Destination() string     { return strings.Join(p.destination, "/") }
 func (p *CopyPlan) Version() string         { return p.entry.Version }
 func (p *CopyPlan) Size() int64             { return p.entry.Size }
+func (p *CopyPlan) Limit() int64            { return p.limit }
 func (p *CopyPlan) Permission() os.FileMode { return p.permission }
 
 type CopyResult struct {
@@ -49,7 +52,16 @@ var copyWrite = func(f *os.File, b []byte) (int, error) { return f.Write(b) }
 var copySync = func(f *os.File) error { return f.Sync() }
 var copyClose = func(f *os.File) error { return f.Close() }
 
-func (r *Root) PrepareCopy(ctx context.Context, source, destination, expectedVersion string) (plan *CopyPlan, err error) {
+func (r *Root) PrepareCopy(ctx context.Context, source, destination, expectedVersion string) (*CopyPlan, error) {
+	return r.PrepareCopyWithLimit(ctx, source, destination, expectedVersion, CopyMaxBytes)
+}
+
+// PrepareCopyWithLimit freezes an explicit byte budget without reading file contents.
+// The limit must be positive and below math.MaxInt64 to allow a one-byte growth probe.
+func (r *Root) PrepareCopyWithLimit(ctx context.Context, source, destination, expectedVersion string, limit int64) (plan *CopyPlan, err error) {
+	if limit <= 0 || limit == math.MaxInt64 {
+		return nil, ErrTooLarge
+	}
 	if !validArchiveVersion(expectedVersion) || strings.ToLower(expectedVersion) != expectedVersion {
 		return nil, ErrChanged
 	}
@@ -69,7 +81,7 @@ func (r *Root) PrepareCopy(ctx context.Context, source, destination, expectedVer
 			return nil, err
 		}
 	}
-	p := &CopyPlan{root: r, source: src, destination: dst}
+	p := &CopyPlan{root: r, source: src, destination: dst, limit: limit}
 	state, err := openCopyState(ctx, r, p)
 	if err != nil {
 		return nil, err
@@ -86,7 +98,7 @@ func (r *Root) PrepareCopy(ctx context.Context, source, destination, expectedVer
 	if state.entry.Kind != EntryFile {
 		return nil, ErrNotRegular
 	}
-	if state.entry.Size < 0 || state.entry.Size > CopyMaxBytes {
+	if state.entry.Size < 0 || state.entry.Size > p.limit {
 		return nil, ErrTooLarge
 	}
 	p.entry, p.permission = state.entry, state.permission.Perm()
@@ -121,6 +133,9 @@ func (r *Root) Copy(ctx context.Context, p *CopyPlan) (result CopyResult, err er
 	p.mu.Unlock()
 	if used {
 		return result, ErrChanged
+	}
+	if p.limit <= 0 || p.limit == math.MaxInt64 || p.entry.Size < 0 || p.entry.Size > p.limit {
+		return result, ErrTooLarge
 	}
 	if err = ctx.Err(); err != nil {
 		return result, err
@@ -214,7 +229,7 @@ func (r *Root) Copy(ctx context.Context, p *CopyPlan) (result CopyResult, err er
 	return result, nil
 }
 func streamCopy(ctx context.Context, source, target *os.File, size int64) (string, error) {
-	if size < 0 || size > CopyMaxBytes {
+	if size < 0 || size == math.MaxInt64 {
 		return "", ErrTooLarge
 	}
 	buffer := make([]byte, 32<<10)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
@@ -15,7 +16,7 @@ func isLocalPrivateTool(name string) bool {
 }
 
 func artifactTool() modelclient.Tool {
-	return tool("artifact", "只读本Session的完整diff/逐项结果；list列举，read按原始字节offset/limit续读，search用needle字面检索。数据不代表修改已执行。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","read","search"]},"id":{"type":"string","minLength":1,"maxLength":128},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":65536},"needle":{"type":"string","minLength":1,"maxLength":512}},"required":["action"],"additionalProperties":false}`)
+	return tool("artifact", "本Session只读diff/清单/回执：list，read按原始字节offset/limit，search字面needle。b_追加日志：plan非执行，pending无actual=unknown，未开始=not_started；不重放。", `{"type":"object","properties":{"action":{"type":"string","enum":["list","read","search"]},"id":{"type":"string","minLength":1,"maxLength":128},"offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":65536},"needle":{"type":"string","minLength":1,"maxLength":512}},"required":["action"],"additionalProperties":false}`)
 }
 
 type artifactToolArgs struct {
@@ -74,6 +75,10 @@ func artifactErrorCode(err error) string {
 	if errors.As(err, &failure) {
 		return failure.Code
 	}
+	var batch *fileeffects.BatchError
+	if errors.As(err, &batch) {
+		return batch.Code
+	}
 	return "artifact_unavailable"
 }
 
@@ -82,13 +87,8 @@ func (s *Session) executeArtifactTool(ctx context.Context, call modelclient.Tool
 	if err != nil {
 		return artifactToolResult{Code: "invalid_arguments"}
 	}
-	manager, owner := s.options.Artifacts, s.options.ArtifactOwner
-	if status, ok := s.options.Durability.(interface{ ArtifactHistoryStatus() string }); ok {
-		if code := status.ArtifactHistoryStatus(); code != "" {
-			return artifactToolResult{Code: code}
-		}
-	}
-	if manager == nil || owner == "" {
+	catalog := s.artifactCatalog()
+	if catalog.Artifacts == nil || catalog.Owner == "" {
 		return artifactToolResult{Code: "artifact_unavailable"}
 	}
 	if err := ctx.Err(); err != nil {
@@ -96,20 +96,23 @@ func (s *Session) executeArtifactTool(ctx context.Context, call modelclient.Tool
 	}
 	switch args.Action {
 	case "list":
-		items := manager.List(owner)
+		items, err := catalog.List(ctx)
+		if err != nil {
+			return artifactToolResult{Code: artifactErrorCode(err)}
+		}
 		if args.Offset > int64(len(items)) {
 			return artifactToolResult{Code: "invalid_arguments"}
 		}
 		end := min(int64(len(items)), args.Offset+int64(args.Limit))
 		return artifactToolResult{Items: items[args.Offset:end], Offset: args.Offset, NextOffset: end, More: end < int64(len(items))}
 	case "read":
-		page, err := manager.Read(ctx, owner, args.ID, args.Offset, args.Limit)
+		page, err := catalog.Read(ctx, args.ID, args.Offset, args.Limit)
 		if err != nil {
 			return artifactToolResult{Code: artifactErrorCode(err)}
 		}
 		return artifactToolResult{Page: &page}
 	default:
-		page, err := manager.Search(ctx, owner, args.ID, args.Needle, args.Offset, args.Limit)
+		page, err := catalog.Search(ctx, args.ID, args.Needle, args.Offset, args.Limit)
 		if err != nil {
 			return artifactToolResult{Code: artifactErrorCode(err)}
 		}

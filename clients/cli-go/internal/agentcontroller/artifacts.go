@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 )
@@ -42,6 +43,7 @@ func (s fileArtifactStore) ListArtifacts(ctx context.Context, prefix string) ([]
 // Bind only after target preflight/commit. No Store operation calls Controller
 // back, and immutable artifacts have no background writers or process lease.
 func (c *Controller) bindArtifactsLocked() {
+	defer c.bindFileBatchesLocked()
 	if c.artifacts == nil || !c.persistent || c.handle == nil {
 		return
 	}
@@ -60,35 +62,32 @@ func (c *Controller) ArtifactHistoryStatus() string {
 	defer c.mu.Unlock()
 	return c.artifactErr
 }
-func (c *Controller) artifactBinding() (*localartifact.Manager, string, error) {
+func (c *Controller) artifactBinding() (agentloop.ArtifactCatalog, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || c.switching || c.artifacts == nil {
-		return nil, "", &localartifact.Error{Code: "artifact_unavailable"}
+		return agentloop.ArtifactCatalog{}, &localartifact.Error{Code: "artifact_unavailable"}
 	}
-	if c.artifactErr != "" {
-		return nil, "", &localartifact.Error{Code: c.artifactErr}
-	}
-	return c.artifacts, c.artifactOwner, nil
+	return agentloop.ArtifactCatalog{Artifacts: c.artifacts, Batches: c.fileBatches, Owner: c.artifactOwner, ArtifactError: c.artifactErr, BatchError: c.fileBatchErr}, nil
 }
 func (c *Controller) LocalArtifacts() ([]localartifact.Info, error) {
-	m, owner, err := c.artifactBinding()
+	catalog, err := c.artifactBinding()
 	if err != nil {
 		return nil, err
 	}
-	return m.List(owner), nil
+	return catalog.List(context.Background())
 }
 func (c *Controller) ReadLocalArtifact(ctx context.Context, id string, offset int64, limit int) (localartifact.Page, error) {
-	m, owner, err := c.artifactBinding()
+	catalog, err := c.artifactBinding()
 	if err != nil {
 		return localartifact.Page{}, err
 	}
-	return m.Read(ctx, owner, id, offset, limit)
+	return catalog.Read(ctx, id, offset, limit)
 }
 func (c *Controller) SearchLocalArtifact(ctx context.Context, id, needle string, offset int64, limit int) (localartifact.SearchPage, error) {
-	m, owner, err := c.artifactBinding()
+	catalog, err := c.artifactBinding()
 	if err != nil {
 		return localartifact.SearchPage{}, err
 	}
-	return m.Search(ctx, owner, id, needle, offset, limit)
+	return catalog.Search(ctx, id, needle, offset, limit)
 }

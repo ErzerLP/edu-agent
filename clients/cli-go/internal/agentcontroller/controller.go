@@ -22,6 +22,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
@@ -106,6 +107,8 @@ type Controller struct {
 	artifacts      *localartifact.Manager
 	artifactOwner  string
 	artifactErr    string
+	fileBatches    *fileeffects.BatchManager
+	fileBatchErr   string
 	ownsLocalExec  bool
 
 	localSessionLease      *localSessionLease
@@ -454,6 +457,7 @@ func baseLoopOptions(options agentloop.Options) agentloop.Options {
 	options.Workspace = nil
 	options.Durability = nil
 	options.Artifacts = nil
+	options.FileBatches = nil
 	options.ArtifactOwner = ""
 	options.LocalExecOwner = ""
 	options.LocalExecCWD = ""
@@ -541,12 +545,17 @@ func newController(dependencies Dependencies) (*Controller, error) {
 	if dependencies.LoopOptions.Artifacts == nil {
 		dependencies.LoopOptions.Artifacts = localartifact.New(dependencies.LoopOptions.ArtifactOptions)
 	}
+	if dependencies.LoopOptions.FileBatches == nil {
+		o := dependencies.LoopOptions
+		dependencies.LoopOptions.FileBatches = fileeffects.NewBatchManager(fileeffects.BatchOptions{PlanBytes: o.WorkspaceCopyPlanBytes, Entries: o.WorkspaceCopyEntries, MemoryBytes: o.FileBatchMemoryBytes, MaxRecords: o.FileBatchMaxRecords})
+	}
 	if dependencies.LoopOptions.ArtifactOwner == "" {
 		dependencies.LoopOptions.ArtifactOwner = "unsaved-" + rand.Text()
 	}
 	controller := &Controller{
 		artifacts: dependencies.LoopOptions.Artifacts, artifactOwner: dependencies.LoopOptions.ArtifactOwner,
-		localExec: dependencies.LoopOptions.LocalExec, localOwner: dependencies.LoopOptions.LocalExecOwner,
+		fileBatches: dependencies.LoopOptions.FileBatches,
+		localExec:   dependencies.LoopOptions.LocalExec, localOwner: dependencies.LoopOptions.LocalExecOwner,
 		ownsLocalExec: dependencies.LoopOptions.LocalExec != nil && !dependencies.LocalExecShared,
 		store:         dependencies.Store, model: dependencies.Model, server: dependencies.Server, provider: dependencies.Provider, limits: limits, now: now, generation: 1,
 		loopOptions: baseLoopOptions(dependencies.LoopOptions), workspaceRoot: dependencies.WorkspaceRoot,
@@ -749,6 +758,12 @@ func (c *Controller) BeforeFilePublication(ctx context.Context, receipt agentloo
 	}
 	if err := c.ensureDirtyLocked(); err != nil {
 		return err
+	}
+	if err := c.checkLocalCallIdentityLocked(ctx, receipt.ToolCallID); err != nil {
+		if errors.Is(err, agentloop.ErrLocalCallRecorded) {
+			return err
+		}
+		return c.failFileJournalLocked(err)
 	}
 	if c.fileCallExistsLocked(receipt.ToolCallID) || c.dirty.Preference != nil && c.dirty.Preference.ToolCallID == receipt.ToolCallID {
 		return c.failFileJournalLocked(agentsession.ErrCheckpointConflict)
@@ -958,6 +973,9 @@ func (c *Controller) degradeNewSessionAfterSaveFailureLocked(cause error) error 
 	if c.artifacts != nil {
 		_ = c.artifacts.Bind(c.artifactOwner, nil)
 	}
+	if c.fileBatches != nil {
+		_ = c.fileBatches.Bind(context.Background(), c.artifactOwner, nil)
+	}
 	if c.localExec != nil {
 		_ = c.localExec.BindArchive(c.localOwner, nil)
 	}
@@ -1031,7 +1049,15 @@ func (c *Controller) saveRecordLocked(ctx context.Context, consumeDirty bool) er
 		if err := c.mergeFileJournalLocked(*c.dirty); err != nil {
 			return err
 		}
-		if err := c.preserveLocalCallIdentitiesLocked(ctx, c.dirty.LocalEffects); err != nil {
+		identities := append([]agentsession.LocalEffectIntent(nil), c.dirty.LocalEffects...)
+		for _, entry := range dirtyFileEntries(*c.dirty) {
+			if entry.WriteAhead.Effect.IsDirectoryCopy() {
+				// Reuse the immutable local-call fence, independent of batch
+				// history loading or its current in-memory resource budget.
+				identities = append(identities, agentsession.LocalEffectIntent{ToolCallID: entry.WriteAhead.ToolCallID})
+			}
+		}
+		if err := c.preserveLocalCallIdentitiesLocked(ctx, identities); err != nil {
 			return err
 		}
 	}
@@ -1812,7 +1838,7 @@ func (c *Controller) Shutdown(ctx context.Context) error {
 		c.contextCancel = nil
 	}
 	hasLocalTaskEvidence := c.localExec != nil && len(c.localExec.List(c.localOwner)) != 0 || c.localOutputErr != ""
-	hasLocalTaskEvidence = hasLocalTaskEvidence || c.artifactErr != "" || c.artifacts != nil && len(c.artifacts.List(c.artifactOwner)) != 0
+	hasLocalTaskEvidence = hasLocalTaskEvidence || c.artifactErr != "" || c.fileBatchErr != "" || c.artifacts != nil && len(c.artifacts.List(c.artifactOwner)) != 0
 	empty := c.persistent && !hasLocalTaskEvidence && c.dirty == nil && c.record.CommittedUserTurns == 0 && len(c.record.PreferenceReceipts) == 0 && len(c.record.FileReceipts) == 0 && c.record.TitleSource != "manual"
 	if empty {
 		identities, err := c.handle.ListArtifacts(ctx, localCallPrefix)

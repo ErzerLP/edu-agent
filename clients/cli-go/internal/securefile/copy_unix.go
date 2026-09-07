@@ -46,7 +46,7 @@ func openCopyState(ctx context.Context, r *Root, p *CopyPlan) (state *copyState,
 	if s.entry.Kind != EntryFile {
 		return nil, ErrNotRegular
 	}
-	if s.entry.Size < 0 || s.entry.Size > CopyMaxBytes {
+	if s.entry.Size < 0 || s.entry.Size > p.limit {
 		return nil, ErrTooLarge
 	}
 	fd, err := unix.Openat(int(s.sourceParent.Fd()), p.source[len(p.source)-1], unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)

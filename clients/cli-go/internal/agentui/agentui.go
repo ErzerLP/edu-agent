@@ -1550,6 +1550,9 @@ func fileMutationConfirmationText(pending *agentloop.PendingFileMutation) string
 	if pending.DiffID != "" {
 		text += "\n" + fileMutationArtifactSummary(pending.DiffID, pending.DiffBytes, pending.DiffSaved)
 	}
+	if pending.PlanID != "" {
+		text += "\n" + fileMutationPlanSummary(pending.PlanID, pending.PlanBytes, pending.PlanSaved)
+	}
 	text += "\nEsc 将停止当前轮次，不等价于拒绝。"
 	return text
 }

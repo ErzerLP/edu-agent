@@ -6,7 +6,7 @@
 
 本规格是后续 capability，明确取代 `learning-agent` 与 `go-cli-m1` 中“交互式 Agent 普通对话只在当前进程有效、退出不创建聊天历史文件”的旧限制，但不放宽它们对学习业务正文、离线业务队列、服务端权威状态和长期偏好准入的其他限制。只有本规格列出的 Agent Session DTO 可以落盘；Goal、Route、Activity、Attempt、Assessment、Evidence、Review 和 Memory 的权威状态仍只能通过既有公开服务边界读取或写入。
 
-以下后续规格提供明确的本地能力扩展：`client-local-execution/spec.md` 允许 dirty marker 中的非执行任务意图；`client-local-output/spec.md` 允许由原 Session 密钥边界保护的独立加密输出产物；`client-file-patch/spec.md` 允许同一密钥与配额边界下的完整diff及逐文件结果产物。它们不允许原始命令/补丁参数、env、stdin、输出或完整差异正文进入稳定 checkpoint、transcript 与自动标题；这些产物只读恢复，不恢复候选或批准，原有业务 authority 和其他持久化禁令不变。
+以下后续规格提供明确的本地能力扩展：`client-local-execution/spec.md` 允许 dirty marker 中的非执行任务意图；`client-local-output/spec.md` 允许由原 Session 密钥边界保护的独立加密输出产物；`client-file-patch/spec.md` 允许同一密钥与配额边界下的完整diff及逐文件结果产物；`client-recursive-copy/spec.md` 允许独立认证加密的复制清单、追加式分段结算及不可重放调用身份。它们不允许原始命令/补丁参数、env、stdin、输出、完整差异或完整复制清单/日志正文进入稳定 checkpoint、transcript 与自动标题；这些产物只读恢复，不恢复候选、批准或执行器，原有业务 authority 和其他持久化禁令不变。
 
 历史 Session 默认自动保存。用户可以用 `edu-agent agent --no-save` 让当前新 Session 保持进程内有效，也可以在设置页关闭后续新 Session 的自动保存；被恢复的 Session 始终是已存在的持久 Session。UI 必须持续区分“已加密保存”“正在保存”“未保存降级”和“保存失败”，不能把无持久化会话显示成已可恢复。
 

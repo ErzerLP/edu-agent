@@ -72,11 +72,18 @@ func (w *Workspace) prepareCopy(ctx context.Context, raw string) (*PreparedMutat
 	if !fileeffects.ValidPath(source, false) || !fileeffects.ValidPath(destination, false) {
 		return nil, mutationFailure(CodeInvalidPath, "复制路径无法安全完整显示")
 	}
-	plan, err := w.root.PrepareCopy(ctx, source, destination, args.ExpectedVersion)
+	entry, err := w.root.Stat(ctx, source)
 	if err != nil {
 		return nil, copyFailure(ctx, source, destination, err)
 	}
-	preview := fmt.Sprintf("复制源：%s\n复制目标：%s\n源入口版本：%s\n字节数：%d（上限 32MiB）；普通权限：%04o\n流式复制普通文件（含二进制），源保持不变；目标必须不存在，父目录必须已存在。仅保留普通 rwx 权限，不复制特殊权限、ACL 或扩展属性。", source, destination, plan.Version(), plan.Size(), plan.Permission())
+	if entry.Kind == securefile.EntryDirectory {
+		return w.prepareCopyTree(ctx, source, destination, args.ExpectedVersion)
+	}
+	plan, err := w.root.PrepareCopyWithLimit(ctx, source, destination, args.ExpectedVersion, w.limits.CopyBytes)
+	if err != nil {
+		return nil, copyFailure(ctx, source, destination, err)
+	}
+	preview := fmt.Sprintf("复制源：%s\n复制目标：%s\n源入口版本：%s\n字节数：%d（本次预算 %d 字节）；普通权限：%04o\n流式复制普通文件（含二进制），源保持不变；目标必须不存在，父目录必须已存在。仅保留普通 rwx 权限，不复制特殊权限、ACL 或扩展属性。", source, destination, plan.Version(), plan.Size(), plan.Limit(), plan.Permission())
 	p := &PreparedMutation{path: source, copyPlan: plan, baseVersion: plan.Version(), previewHash: hashProjection(preview), Presentation: MutationPresentation{Tool: ToolCopy, Operation: ToolCopy, Path: source, DestinationPath: destination, EntryKind: "file", BaseVersion: plan.Version(), PreviewKind: ToolCopy, Preview: preview}}
 	// Both paths and metadata version must fit full history and confirmation.
 	if len(preview) > w.limits.MutationPreviewBytes || safeResultJSONSize(copyResult(p, PublicationUnknown, "").Value) > w.limits.ResultBytes || safeResultJSONSize(map[string]any{"file_effect": p.FileEffect(), "operation": ToolCopy, "path": source, "destination": destination, "publication_outcome": "unknown", "error": CodeOutcomeUnknown, "code": CodeOutcomeUnknown}) > 2<<10 {

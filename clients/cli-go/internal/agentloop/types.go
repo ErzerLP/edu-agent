@@ -148,12 +148,18 @@ type Options struct {
 	WorkspaceEditFileBytes    int64
 	WorkspaceDiffBytes        int64
 	WorkspacePatchBytes       int64
+	WorkspaceCopyBytes        int64
+	WorkspaceCopyPlanBytes    int64
+	WorkspaceCopyEntries      int
+	FileBatchMemoryBytes      int64
+	FileBatchMaxRecords       int
 	WorkspaceQueryMemoryBytes int64
 	WorkspaceQueryEntries     int
 	WorkspaceQueryRecords     int
 	Artifacts                 *localartifact.Manager
 	ArtifactOptions           localartifact.Options
 	ArtifactOwner             string
+	FileBatches               *fileeffects.BatchManager
 	Durability                DurabilitySink
 	LocalExec                 *localexec.Manager
 	LocalExecOwner            string
@@ -299,6 +305,9 @@ const (
 )
 
 type PendingFileMutation struct {
+	PlanID          string
+	PlanBytes       int64
+	PlanSaved       bool
 	DiffID          string
 	DiffBytes       int64
 	DiffSaved       bool

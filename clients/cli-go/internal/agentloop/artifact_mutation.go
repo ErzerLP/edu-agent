@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 )
@@ -12,16 +13,23 @@ func withArtifactDefaults(options Options) Options {
 	if options.Artifacts == nil && options.Workspace != nil {
 		options.Artifacts = localartifact.New(options.ArtifactOptions)
 	}
-	if options.Artifacts != nil && options.ArtifactOwner == "" {
+	if options.FileBatches == nil && options.Workspace != nil {
+		options.FileBatches = fileeffects.NewBatchManager(fileeffects.BatchOptions{PlanBytes: options.WorkspaceCopyPlanBytes, Entries: options.WorkspaceCopyEntries, MemoryBytes: options.FileBatchMemoryBytes, MaxRecords: options.FileBatchMaxRecords})
+	}
+	if (options.Artifacts != nil || options.FileBatches != nil) && options.ArtifactOwner == "" {
 		options.ArtifactOwner = "unsaved-" + rand.Text()
 	}
 	return options
 }
 
-// Retain the exact frozen diff before asking for authorization. Retention
-// failure is a preparation failure, never permission to publish without it.
+// Retain the exact frozen diff or copy manifest before authorization. Failure
+// is a preparation failure, never permission to publish without the full plan.
 func (s *Session) retainMutationArtifact(ctx context.Context, callID string, prepared *workspace.PreparedMutation) (localartifact.Info, error) {
-	if prepared.FullDiff() == "" {
+	content, kind := prepared.FullDiff(), "diff"
+	if prepared.CopyManifest() != "" {
+		content, kind = prepared.CopyManifest(), "receipt"
+	}
+	if content == "" {
 		return localartifact.Info{}, nil
 	}
 	if status, ok := s.options.Durability.(interface{ ArtifactHistoryStatus() string }); ok {
@@ -39,7 +47,7 @@ func (s *Session) retainMutationArtifact(ctx context.Context, callID string, pre
 		// A call ID cannot bind a newly prepared candidate to an older diff.
 		return localartifact.Info{}, &localartifact.Error{Code: "artifact_invalid_arguments"}
 	}
-	info, err := s.options.Artifacts.Put(ctx, s.options.ArtifactOwner, "diff", []byte(prepared.FullDiff()))
+	info, err := s.options.Artifacts.Put(ctx, s.options.ArtifactOwner, kind, []byte(content))
 	if err != nil {
 		return localartifact.Info{}, err
 	}
@@ -65,7 +73,11 @@ func (s *Session) attachMutationArtifact(callID string, result workspace.Result)
 			value[key] = item
 		}
 	}
-	value["diff_id"], value["diff_bytes"], value["diff_saved"], value["diff_hash"] = info.ID, info.Bytes, info.Saved, info.Hash
+	prefix := "diff"
+	if info.Kind == "receipt" {
+		prefix = "plan"
+	}
+	value[prefix+"_id"], value[prefix+"_bytes"], value[prefix+"_saved"], value[prefix+"_hash"] = info.ID, info.Bytes, info.Saved, info.Hash
 	result.Value = value
 	return result
 }

@@ -94,6 +94,10 @@ func (p *PreparedMutation) FileEffect() fileeffects.Effect {
 		e = fileeffects.New(ToolCopy, p.copyPlan.Source(), p.copyPlan.Destination(), "file")
 		e.Source.Version = p.copyPlan.Version()
 	}
+	if p.copyTreePlan != nil {
+		e = fileeffects.New(ToolCopy, p.copyTreePlan.Source(), p.copyTreePlan.Destination(), "directory")
+		e.Source.Version = p.copyTreePlan.Version()
+	}
 	if p.archiveEntry != nil {
 		e.Source.Version = p.archiveEntry.Version
 	}

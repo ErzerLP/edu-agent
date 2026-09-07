@@ -33,6 +33,15 @@ func OpenWithLimits(path string, limits Limits) (*Workspace, error) {
 	if limits.PatchBytes == 0 {
 		limits.PatchBytes = DefaultPatchBytes
 	}
+	if limits.CopyBytes == 0 {
+		limits.CopyBytes = DefaultCopyBytes
+	}
+	if limits.CopyPlanBytes == 0 {
+		limits.CopyPlanBytes = DefaultCopyPlanBytes
+	}
+	if limits.CopyEntries == 0 {
+		limits.CopyEntries = DefaultCopyEntries
+	}
 	if limits.QueryMemoryBytes == 0 {
 		limits.QueryMemoryBytes = DefaultQueryMemoryBytes
 	}
@@ -70,6 +79,8 @@ func validateLimits(limits Limits) error {
 		limits.EditFileBytes < 1 || limits.EditFileBytes > maxFileBytes ||
 		limits.DiffBytes < 1 || limits.DiffBytes > maxFileBytes ||
 		limits.PatchBytes < 1 || limits.PatchBytes > maxFileBytes ||
+		limits.CopyBytes < 1 || limits.CopyBytes >= int64(^uint64(0)>>1) ||
+		limits.CopyPlanBytes < 1 || limits.CopyPlanBytes > 1<<30 || limits.CopyEntries < 1 || limits.CopyEntries > 1000000 ||
 		limits.QueryMemoryBytes < 1 || limits.QueryMemoryBytes > 1<<30 ||
 		limits.QueryEntries < 1 || limits.QueryEntries > maxQueryEntries || limits.QueryRecords < 1 || limits.QueryRecords > 64 ||
 		limits.ListEntries < 1 || limits.DirectoryScanEntries < limits.ListEntries || limits.ResultBytes < 1024 ||

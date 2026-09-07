@@ -65,7 +65,7 @@ Snapshot 包含 task_id/state/reason/exit_code（仅已知时）/实际 Shell/�
 ## 实施记录
 
 - 初始工作区：main@b65ad72，干净。
-- C1–C7 已实现并通过各自 Linux 批次门禁；C8–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
+- C1–C8 已实现并通过各自 Linux 批次门禁；C9–C10 尚未实施。没有创建、归档或代替 Runtime 验收工作流，整个 issue 未完成。
 
 ### C1：已实现的垂直路径
 
@@ -260,3 +260,32 @@ Go1.26.6/Linux amd64；Go命令目录clients/cli-go。
 - Linux完整CLI构建/version运行与Darwin/arm64完整CLI交叉构建通过，产物`/tmp/edu-agent-c7-build.jXvoG4`不提交。Darwin目录测试二进制交叉编译通过但没有原生运行证据；没有扩大Windows、数据库、Compose或付费模型测试范围。
 
 C7仍不是Runtime或整个Issue最终验收。下一批继续C8递归复制，不将checkpoint当作开发停止点。
+
+## C8：递归目录与大文件复制
+
+既有copy入口已贯通安全复制、冻结清单/一次授权、逐项分段日志、模型投影、F6只读浏览、当前客户端预算与加密恢复；不借Shell搬运正文，也不创建通用事务/上传框架。
+
+- `PrepareCopyWithLimit`冻结独立字节预算，流式读取/校验/hash/私有暂存/不覆盖发布均使用该预算。旧低层`PrepareCopy`的32MiB兼容默认保持；生产copy默认总文件字节1GiB，文本read/edit/write预算不参与复制。
+- `PrepareCopyTree`完整枚举含根目录的有界清单，不跨授权持FD/guard。执行前完整重检，再固定每个已创建目录身份；新目录先私有暂存、不覆盖发布并持FD至本批结束，文件绑定固定目标父目录。拒绝链接、特殊入口、归档树、目标已存在、源后代与不安全别名。文件保留rwx，新目录0700；不承诺完整目录元数据或跨进程快照。
+- workspace冻结完整JSON清单为独立receipt产物，`plan_id/plan_bytes/plan_hash/plan_saved`只表示计划已保留，不表示执行。普通Commit不能绕过观察者发布目录；prepared呈现被篡改即拒绝。保留完整根事实和回执定位所需预算，无法安全展示的长根路径在发布前拒绝。
+- `fileeffects.BatchManager`只提供追加日志，不折叠成可变表。独立`result_bi_`身份、`result_bp_`计划段、`result_be_`事件段、`result_bm_`metadata均由同Session认证加密存储；`b_`ID为owner/call域分离摘要，不在日志保存原callID。metadata认证已确认的前缀长度/hash，尾段扩充不破坏旧前缀；不重试未知写，也不提升孤儿内容。
+- 根WAL确认后才Begin，完整计划及身份确认后才获得writer；每项Pending确认后执行，独立5秒收尾域保存真实Actual。任何冲突、取消、未知或日志失败立即停止余项，已完成目录/文件保留。收尾不把文件系统执行与结算保存混为一谈，活态真实actual后缀与SavedBytes分开；日志失败锁存controller保存门禁，不能消费dirty或继续副作用。
+- 恢复只加载认证前缀并禁止写入旧journal；pending没有actual为unknown，余项not_started。消费目录根WAL前另确认已有local-call加密身份fence，覆盖根WAL存在而batch身份/metadata均未保存的情况。已记录身份是“不再执行”的正常工具结果，不是假保存失败；同ID不能通过更换目标重跑，合法新ID仍可执行。
+- Effect v2仅增加directory→directory、subtree的copy根事实，源仍为entry-v1，目标无虚构hash；其它操作保持v1。record payload升级v7、dirty v8、容器保持v1，冻结record v6/dirty v7及更早嵌套DTO；旧版本不能因新Validate而接受过去非法的目录copy。旧32项dirty上限不变，目录批次只占一个根事实，详细结果在独立分段日志。
+- 当前配置贯通new/resume/F2：总复制字节1GiB、计划64MiB/最高1GiB、项100000/最高1000000、日志逻辑内存256MiB/最高1GiB、记录256/最高8192。不自动淘汰，完整清单还服从C6单产物与C2底层加密配额。持久journal不缓存全文，Read（含EOF）/Search/List重新认证；clear撤销后失败。no-save自动清单/日志仅内存，不创建历史侧车。
+- 模型`artifact`与F6通过捕获的同owner catalog合并不可变产物和b_日志，但不混淆各自后端/错误状态。F6在pending优先PlanID，不调用模型、不改变YOLO/selector/批准；保留原copy短摘要末页规则，不增加F6末页门槛。历史及预算投影保留完整根事实、plan/batch/receipt定位、计数及保存水位；完整清单、原始日志与显式artifact读取正文不进入checkpoint/transcript/自动标题。
+
+### C8验证记录
+
+Go1.26.6/Linux amd64，Go命令目录clients/cli-go；本节仅为批次证据，不替代Runtime或macOS原生验收。
+
+- `Test(LargeCopy|Copy)`核对实际32MiB+64KiB+17字节二进制、完整SHA256和旧API上限；workspace的`TestRecursiveCopyProductionFileExceedsLegacyLimit`经生产默认入口完成33MiB二进制复制并核对全部字节/hash。
+- `TestCopyTree`覆盖2501文件、空/嵌套目录、预算、权限、链接/别名/范围、授权后变化、回调取消、固定目录被替换/移出、未知发布和清理故障。`TestFileBatch`覆盖2501文件加根的跨段计划/事件、分页/hash/检索边界、未知metadata发布及事件保存失败、不重试/不提升孤儿、严格恢复/撤销/预算和身份隔离。
+- `TestRecursiveCopy`覆盖模型授权/拒绝/YOLO、完整计划授权前分页、来源变化、根WAL失败、逐项取消、模型失败后的真实结果、模型日志read/search、F6 busy/pending和独立浏览门禁、CLI配置及低预算无目标。真实Controller复制42项只保存一个根回执，完整日志加密恢复、provider预检、EOF/目录读取撤销、no-save不落盘及new/resume/F2当前字节/日志预算均通过。
+- 保存故障测试确认：根实际已完成但actual metadata未发布时，活态仍报告completed=1且SavedBytes不足；恢复仅保留pending、unknown=1，不提升已写入尾段。另验证仅根WAL而无batch身份时，消费后及再次重启仍拒绝旧ID、新ID可执行。首次测试发现已记录身份被误当持久化错误；改为正常拒绝重放的工具结果，未改通用Session错误处理。
+- 首轮九包全量测试中六包通过；workspace仍期待旧copy说明，agentsession仍期待record v6，已更新为当前合同。securefile旧stat hash测试用等长7字节改写，依赖文件系统时钟更新；入口版本并非内容hash，夹具改为同时改变长度，不加睡眠/重试或弱化产品校验。`securefile/agentsession/workspace`全包重验通过，其余未变更证据复用。
+- 九包`go vet`通过。`go test -race -count=1 -timeout=180s ./internal/securefile ./internal/fileeffects ./internal/agentsession ./internal/workspace ./internal/agentloop ./internal/agentcontroller ./internal/agentui -run '^Test(CopyTree|LargeCopy|FileBatch|DirectoryCopy|RecursiveCopy)'`全部通过。
+- 最终artifact工具说明改变后，`TestLocalExecutionSmallContextKeepsCompleteToolSet`、`TestAgentLaunchPassesContextCompactionMode`与agentloop/command的`TestRecursiveCopy`通过；不隐藏工具或扩大4096上下文预算。
+- Linux完整CLI构建及version实际运行、Darwin/arm64完整CLI与securefile测试二进制交叉构建通过，产物`/tmp/edu-agent-c8-build.M0N0zz`不提交。没有macOS原生运行证据，不扩大Windows产品支持，不运行服务端/数据库/Compose/付费模型。
+
+C8 checkpoint不是开发停止点。下一主线为C9归档定位与恢复、C10主动清理，之后统一独立恢复/隐私复核和最终验收；整个Issue尚未完成。

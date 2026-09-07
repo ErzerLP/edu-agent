@@ -54,7 +54,7 @@ func openCopyState(ctx context.Context, r *Root, p *CopyPlan) (state *copyState,
 	if s.entry.Kind != EntryFile {
 		return nil, ErrNotRegular
 	}
-	if s.entry.Size < 0 || s.entry.Size > CopyMaxBytes {
+	if s.entry.Size < 0 || s.entry.Size > p.limit {
 		return nil, ErrTooLarge
 	}
 	if err = s.targetAbsent(p); err != nil {

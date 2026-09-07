@@ -247,10 +247,10 @@ func validateFileReceipt(value FileReceipt) error {
 	if value.Effect.Validate() != nil || strings.TrimSpace(value.ToolCallID) == "" || !safeText(value.ToolCallID, 256) {
 		return ErrInvalid
 	}
-	if value.Effect.Operation == "copy" && value.Outcome == NoticeOutcomeCompleted && !validSHA256Tag(value.Effect.Target.Version) {
+	if value.Effect.Operation == "copy" && !value.Effect.IsDirectoryCopy() && value.Outcome == NoticeOutcomeCompleted && !validSHA256Tag(value.Effect.Target.Version) {
 		return ErrInvalid
 	}
-	if value.Effect.Operation == "mkdir" {
+	if value.Effect.Operation == "mkdir" || value.Effect.IsDirectoryCopy() {
 		if !value.InvalidateObserved || value.Outcome == NoticeOutcomeCompleted && value.Effect.Directories.Created != value.Effect.Directories.Count {
 			return ErrInvalid
 		}
@@ -729,6 +729,19 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			}
 			record.FileReceipts = append(record.FileReceipts, converted)
 		}
+	case 6:
+		var payload recordPayloadV6
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
+		}
+		record = recordFromPayloadV2(recordPayloadV2(payload.recordPayloadV1))
+		for _, receipt := range payload.FileReceipts {
+			converted, err := upcastReceiptV6(receipt)
+			if err != nil {
+				return record, version, err
+			}
+			record.FileReceipts = append(record.FileReceipts, converted)
+		}
 	case recordPayloadSchemaVersion:
 		if err := decodeStrict(data, &record, limit); err != nil {
 			return record, version, err
@@ -756,6 +769,8 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			record.SchemaVersion = 5
 		case 5:
 			record.SchemaVersion = 6
+		case 6:
+			record.SchemaVersion = 7
 		default:
 			return SessionRecord{}, version, ErrVersionUnsupported
 		}
@@ -904,6 +919,15 @@ func decodeDirtyPayload(data []byte, limit int64) (DirtyMarker, error) {
 			return marker, err
 		}
 		marker, err = upcastDirtyV6(payload)
+		if err != nil {
+			return DirtyMarker{}, err
+		}
+	case 7:
+		var payload dirtyPayloadV7
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return marker, err
+		}
+		marker, err = upcastDirtyV7(payload)
 		if err != nil {
 			return DirtyMarker{}, err
 		}

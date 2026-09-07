@@ -9,6 +9,9 @@ import (
 
 func (p *localArtifactPanel) header(width int) []string {
 	lines := []string{"完整差异 / 逐项回执 · 当前 Session", "diff不代表修改已执行", "receipt：逐项事实，不承诺全部成功"}
+	if strings.HasPrefix(p.id, "b_") {
+		lines[2] = "追加日志：plan非执行；pending无actual为未知"
+	}
 	if p.catalogError != "" {
 		lines = append(lines, wrapDisplayLines("目录读取失败："+p.catalogError, width, 2)...)
 	} else if !p.catalogReady {
@@ -38,6 +41,9 @@ func (p *localArtifactPanel) header(width int) []string {
 		info := p.items[selected]
 		lines = append(lines, wrapDisplayLines("kind="+safeSingleLineTerminalText(info.Kind)+" id="+safeSingleLineTerminalText(info.ID), width, 3)...)
 		saved := "仅内存；退出不可恢复"
+		if strings.HasPrefix(info.ID, "b_") {
+			saved = "未完整保存（内存或部分保存）；恢复仅限认证范围"
+		}
 		if info.Saved {
 			saved = "saved · 已加密保存"
 		}
@@ -100,6 +106,16 @@ func (p *localArtifactPanel) render(width int) string {
 	lines = append(lines, p.output.View())
 	lines = append(lines, localArtifactFooter(width)...)
 	return lipgloss.NewStyle().Width(width).Render(strings.Join(lines, "\n"))
+}
+
+// fileMutationPlanSummary is shared by the selector and transcript confirmation;
+// neither representation makes reading the complete plan an approval gate.
+func fileMutationPlanSummary(id string, bytes int64, saved bool) string {
+	state := "仅内存；退出不可恢复"
+	if saved {
+		state = "saved · 已加密保存"
+	}
+	return fmt.Sprintf("F6 完整复制清单：%s · %d字节 · %s\n清单不代表已经执行；浏览不批准、不取消，也不增加末页审批门槛。", safeSingleLineTerminalText(id), bytes, state)
 }
 
 func fileMutationArtifactSummary(pendingID string, bytes int64, saved bool) string {

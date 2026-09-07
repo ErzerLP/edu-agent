@@ -148,6 +148,9 @@ func (s *Session) publishPreparedFileItem(ctx context.Context, callID string, pr
 }
 
 func (s *Session) commitPreparedFileMutation(ctx context.Context, call modelclient.ToolCall, prepared *workspace.PreparedMutation) (workspace.Result, Event, bool, error) {
+	if prepared.IsCopyTree() {
+		return s.commitCopyTreeMutation(ctx, call, prepared)
+	}
 	if prepared.IsPatch() {
 		return s.commitPatchMutation(ctx, call, prepared)
 	}

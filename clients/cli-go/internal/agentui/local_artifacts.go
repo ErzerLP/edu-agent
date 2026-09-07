@@ -95,6 +95,9 @@ func (m model) openLocalArtifacts() (tea.Model, tea.Cmd) {
 	m.artifactPanel = newLocalArtifactPanel(m.artifactEpoch)
 	if m.pendingFileMutation != nil {
 		m.artifactPanel.id = m.pendingFileMutation.DiffID
+		if m.pendingFileMutation.PlanID != "" {
+			m.artifactPanel.id = m.pendingFileMutation.PlanID
+		}
 	}
 	m.input.Blur()
 	return m, m.loadLocalArtifacts(true)

@@ -257,7 +257,11 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				}
 				if s.FileAuthorizationMode() == FileAuthorizationConfirm {
 					pending := pendingFileMutationFrom(call.ID, prepared)
-					pending.DiffID, pending.DiffBytes, pending.DiffSaved = diff.ID, diff.Bytes, diff.Saved
+					if prepared.IsCopyTree() {
+						pending.PlanID, pending.PlanBytes, pending.PlanSaved = diff.ID, diff.Bytes, diff.Saved
+					} else {
+						pending.DiffID, pending.DiffBytes, pending.DiffSaved = diff.ID, diff.Bytes, diff.Saved
+					}
 					s.appendMu.Lock()
 					s.pendingKind = pendingFileMutation
 					s.pendingCalls = append([]modelclient.ToolCall(nil), calls...)

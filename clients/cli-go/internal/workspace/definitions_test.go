@@ -25,7 +25,7 @@ func TestWorkspaceDefinitionsExposeStrictSchemas(t *testing.T) {
 	expectedDescriptions := map[string]string{
 		ToolPatch:   "Strict Begin/End Patch: Add File (+lines), Update File (bare @@, exact context/-/+), Delete File (archive); optional End of File; no move/no-newline markers. Hashes cover every update/delete only. Max 16 files, original/candidate totals 67108864 bytes each; preflight all, authorize once, publish sequentially without rollback.",
 		ToolMove:    "Move a stat-versioned file or directory; same-filesystem no-replace, existing parent; no root/archive/links/self-descendants or copy-delete fallback.",
-		ToolCopy:    "Stream-copy a stat-versioned regular file up to 32MiB, including binary; keep source; absent destination, existing parent; no archive or links.",
+		ToolCopy:    "Copy a stat-versioned file (including binary) or recursive directory, up to 1073741824 total file bytes/100000 entries. Keep source; absent destination, existing parent; no overwrite/merge/archive/links. Authorize frozen plan once; journal each item, stop on failure, retain completed prefix; artifact reads full plan/append-only receipt, never replay.",
 		ToolMkdir:   "Create a workspace directory; parents requires explicit true; no archive or links.",
 		ToolFind:    "Find workspace paths (*, ?, **), no body/links; repeat original parameters with next_cursor. Query retention: 67108864 bytes/100000 units; cursors expire on change, restart or cache reclamation.",
 		ToolStat:    "Inspect metadata; hash=true reads at most 1MiB, no links.",

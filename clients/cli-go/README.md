@@ -59,7 +59,7 @@ pipe输出 stdout/stderr 各自有序，PTY为单一合并流；内存预算保�
 
 ### 本地工作区与文件工具
 
-Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供结构化永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制及目录递归复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档工具；暂不提供结构化永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
 
 `stat` 默认只读元数据，入口版本不代表文件内容或整个目录快照；可选 `hash=true` 只在1MiB内计算普通文件原始SHA256，不返回正文。`find` 支持basename或工作区相对路径glob，独立`**`跨零或多层；默认保留隐藏文件、跳过归档树、不读正文，并明确标记扫描/结果截断。详见 [stat](../../docs/design/client-file-stat.md) 和 [find](../../docs/design/client-file-find.md)。
 
@@ -95,13 +95,21 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 `mkdir` 可创建空目录，或显式使用 `parents=true` 创建冻结的缺失目录链；已有普通目录返回未变更，不覆盖其他入口。中途失败不删除回滚，已知创建前缀随统一回执保存；只有WAL的崩溃会明确说明计划路径可能已创建，恢复不重放。详见 [mkdir设计](../../docs/design/client-file-mkdir.md)。
 
-`copy` 使用 `source/destination/expected_version`，支持最多32MiB的普通文件（含二进制），版本来自stat；固定缓冲复制，不经模型传输正文。目标必须不存在、父目录已存在，源目标均不能在归档树。普通权限保留但不传播特殊权限，不承诺ACL等完整复制。确认预览可用PgUp/PgDn分页，完整末页显示后才可批准；结果未知不自动重试，恢复不重放。详见 [copy设计](../../docs/design/client-file-copy.md)。
+#### 递归目录与大文件复制
+
+`copy` 继续使用 `source/destination/expected_version`，版本来自stat；可复制普通文件（含超过32MiB的二进制）或完整目录树，不经模型传输文件正文。目标根必须不存在且父目录已经存在；不覆盖、不合并、不跟随源链接，也不复制特殊入口或归档树。文件固定缓冲复制并计算实际hash，保留普通rwx但不传播特殊权限；新目录0700，不承诺目录元数据、ACL/xattr或硬链接镜像。
+
+授权前完整枚举并冻结清单，F6优先显示本次 `plan_id`；仍按既有短确认摘要规则批准整个计划，不新增逐文件或F6末页审批。执行前复核全计划，再逐项确认意图、发布、结算。冲突、源变化、取消、保存失败或未知立即停止余项，已完成目标保留，不自动回滚或重放。
+
+目录复制用独立分段日志绕开而非扩大旧32项dirty上限。`batch_id`（亦为`receipt_id`）指向`b_`追加JSONL，模型`artifact read/search`和F6均可独立分页检索：plan不证明执行，pending没有actual为unknown，未开始项为not_started。`receipt_bytes/receipt_saved_bytes/receipt_error`将实际可读量与已确认保存分开；日志保存失败不抹去本进程已知结果。重启仅恢复认证前缀，不能提升孤儿尾部或恢复批准；WAL消费前另确认持久调用身份，同ID不能重跑，合法新ID仍可执行。`--no-save`仅保留有界内存日志；目标文件属于用户要求的副作用，不因退出回滚。
+
+新建/resume/F2均采用当前复制预算：`--file-copy-limit`默认1GiB总文件字节；`--file-copy-plan-limit`默认64MiB、最高1GiB；`--file-copy-entry-limit`默认100000项、最高1000000；`--file-copy-journal-limit`默认256MiB日志保留内存、最高1GiB；`--file-copy-max-records`默认256记录、最高8192，不自动淘汰。完整清单同时受现有单产物和Session/profile加密配额限制；逻辑内存预算不等同于精确Go峰值堆。详见 [C8合同](../../docs/comet/specs/client-recursive-copy/spec.md) 与 [实施设计](../../docs/design/client-local-tools-delivery.md)。
 
 `move` 使用同样的三个字段，支持普通文件和整个目录（包括非空目录）；不读取正文、不限制为32MiB，内部链接随目录保留但不遍历。仅同文件系统、不覆盖、父目录必须存在；拒绝归档、自身后代和不安全大小写/身份别名，不以复制后删除兜底。入口版本不是子树快照，也不是跨进程CAS。详见 [move设计](../../docs/design/client-file-move.md)。
 
 `write`/`edit`/`apply_patch`/`mkdir`/`copy`/`move`/`archive` 默认逐操作显示冻结预览并等待用户授权。按 `F4` 可在 TUI 内切换“逐次确认”和仅当前 Session 生效的 `YOLO`；`YOLO` 只跳过确认，不放宽固定工作区、链接、版本检查、原子发布、归档保护和取消校验，切换模式也不会自动批准已经等待确认的修改。
 
-`mkdir`、`copy`、`move` 的冻结预览用PgUp/PgDn完整分页，末页显示后才能批准。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。未进入稳定快照的文件日志受既有16KiB与32项回执容量约束，容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。record payload 保持v6，dirty payload升级为v7以记录不含可执行正文的本地任务操作意图；旧v6严格迁移并继续拒绝新字段，恢复从不重放文件或本地任务操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md)。
+`mkdir`、`copy`、`move` 的冻结短预览用PgUp/PgDn完整分页，末页显示后才能批准；独立F6清单/回执不增加末页门槛。持久Session在每次文件副作用前保存计划、执行后保存真实结算；连续变更不会覆盖此前记录。普通文件日志仍受16KiB与32项回执容量约束；递归copy只用一个根事实，逐项计划/结算进入独立分段日志。容量或持久化失败会阻止后续变更，不静默裁剪或降级继续写入；仅有WAL的崩溃仍诚实报告unknown。record payload现为v7、dirty为v8，容器仍v1；目录copy使用严格Effect v2，其他操作仍v1。冻结的旧record v6/dirty v7 DTO及更早迁移继续拒绝当时非法的目录copy事实，不放宽未来版本边界。恢复不重放文件或本地任务操作。详见 [文件效果日志](../../docs/design/client-file-effect-journal.md) 及 [C8设计](../../docs/design/client-local-tools-delivery.md)。
 
 删除请求只通过 `archive` 实现：首次提交时创建工作区内 `.edu-agent-archive/`，将普通文件（包括二进制）或整个非空目录移动到 `<UTC时间>-<随机ID>/<原相对路径>`。不覆盖旧归档，不复制后删除，不自动清理、过期或恢复；用户自行手动恢复或删除归档，磁盘占用不会自动释放。归档树禁止 `write/edit/apply_patch/mkdir/copy/move/archive` 修改；`list/read/stat/find` 可查看，普通 `search/find` 默认跳过，显式指定归档路径时可搜索文本。目录内部链接原样保留但不跟随；入口元数据校验不是整个子树快照或跨进程强锁。跨文件系统或安全移动不受支持时报错，失败可能留下空归档容器；结果未知时提示核查源和目标，不自动重试。Session 恢复保留归档回执且不重放操作。正常文本编辑和客户端内部临时文件/会话存储清理不属于这项“禁止永久删除用户文件”的约束。
 

@@ -75,6 +75,10 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if queryErr != nil {
 		return commandError("usage", "查询保留预算无效", "运行 edu-agent agent --help 查看查询资源参数", ExitInput)
 	}
+	args, fileCopies, copyErr := parseFileCopyOptions(args)
+	if copyErr != nil {
+		return commandError("usage", "复制资源预算无效", "运行 edu-agent agent --help 查看复制资源参数", ExitInput)
+	}
 	set := newFlagSet("agent")
 	var workspacePath string
 	var noSave bool
@@ -112,6 +116,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 		limits.ReadFileBytes, limits.EditFileBytes = fileReadBytes, fileEditBytes
 		limits.DiffBytes, limits.PatchBytes = fileResults.DiffBytes, fileResults.PatchBytes
 		limits.QueryMemoryBytes, limits.QueryEntries, limits.QueryRecords = fileQueries.MemoryBytes, fileQueries.Entries, fileQueries.Records
+		limits.CopyBytes, limits.CopyPlanBytes, limits.CopyEntries = fileCopies.Bytes, fileCopies.PlanBytes, fileCopies.Entries
 		workspaceExecutor, err = workspace.OpenWithLimits(workspacePath, limits)
 		if err == nil {
 			workspaceStatus = workspaceExecutor.Status()
@@ -136,6 +141,8 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
 			Workspace: workspaceExecutor, WorkspaceStatus: workspaceStatus,
+			WorkspaceCopyBytes: fileCopies.Bytes, WorkspaceCopyPlanBytes: fileCopies.PlanBytes, WorkspaceCopyEntries: fileCopies.Entries,
+			FileBatchMemoryBytes: fileCopies.JournalMemoryBytes, FileBatchMaxRecords: fileCopies.JournalRecords,
 			WorkspaceQueryMemoryBytes: fileQueries.MemoryBytes,
 			WorkspaceQueryEntries:     fileQueries.Entries,
 			WorkspaceQueryRecords:     fileQueries.Records,
@@ -191,6 +198,10 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	if queryErr != nil {
 		return commandError("usage", "查询保留预算无效", "运行 edu-agent agent resume --help 查看查询资源参数", ExitInput)
 	}
+	args, fileCopies, copyErr := parseFileCopyOptions(args)
+	if copyErr != nil {
+		return commandError("usage", "复制资源预算无效", "运行 edu-agent agent resume --help 查看复制资源参数", ExitInput)
+	}
 	target, last, all, workspacePath, err := parseAgentResumeArgs(args)
 	if err != nil {
 		return commandError("usage", "Agent Session恢复参数格式无效", "运行 edu-agent agent resume [SESSION] [--all]，或 edu-agent agent resume --last", ExitInput)
@@ -241,6 +252,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			if pickerChoice.New {
 				_ = store.Close()
 				launchArgs := append([]string{"--file-read-limit", strconv.FormatInt(fileReadBytes, 10), "--file-edit-limit", strconv.FormatInt(fileEditBytes, 10)}, fileResults.arguments()...)
+				launchArgs = append(launchArgs, fileCopies.arguments()...)
 				return a.runNewAgent(ctx, append(launchArgs, fileQueries.arguments()...))
 			}
 			summaries, err = store.List(ctx)
@@ -266,6 +278,8 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
+			WorkspaceCopyBytes: fileCopies.Bytes, WorkspaceCopyPlanBytes: fileCopies.PlanBytes, WorkspaceCopyEntries: fileCopies.Entries,
+			FileBatchMemoryBytes: fileCopies.JournalMemoryBytes, FileBatchMaxRecords: fileCopies.JournalRecords,
 			WorkspaceQueryMemoryBytes: fileQueries.MemoryBytes,
 			WorkspaceQueryEntries:     fileQueries.Entries,
 			WorkspaceQueryRecords:     fileQueries.Records,
@@ -711,6 +725,11 @@ const agentHelpText = `用法：
   --file-query-memory-limit B 查询保留总预算，默认67108864，最高1073741824
   --file-query-entry-limit N  每查询保留条目预算，默认100000，最高1000000
   --file-query-max-records N  工作区查询数，默认16，最高64
+  --file-copy-limit BYTES    复制文件总字节预算，默认1073741824；上限为平台maxInt-1
+  --file-copy-plan-limit BYTES  完整复制计划/清单预算，默认67108864，最高1073741824
+  --file-copy-entry-limit N  复制计划入口数，默认100000，最高1000000
+  --file-copy-journal-limit BYTES  复制追加日志内存预算，默认268435456，最高1073741824
+  --file-copy-max-records N  复制追加日志记录数，默认256，最高8192；不自动淘汰
   --task-max-records N         当前客户端保留的任务记录数，默认256
   --task-max-running N         同时运行的任务数，默认16
   --task-output-limit BYTES    每任务 stdout+stderr 保留上限，默认8388608
@@ -720,7 +739,7 @@ const agentHelpText = `用法：
 
 Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
 
-文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
+文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive。copy支持普通文件（含二进制）和完整递归目录；复制按总文件字节、完整计划入口和追加日志预算限制。目标根须不存在，不覆盖或合并；一次授权完整计划，失败/取消停止余项，已完成项保留。--no-save只在有界内存保留复制追加日志。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。
 局部edit在独立预算内支持大于1MiB文本，保留精确唯一匹配、完整expected_hash、授权、WAL和原子发布；原文/候选仍全文处理，参数仍64KiB。短预览可截断且明确标记；write/edit/apply_patch授权前保留完整diff，无法完整保留就不发布。F6独立分页和检索diff/receipt，不调用模型，也不新增逐页审批；原copy/move/mkdir末页门槛不变。
 apply_patch接受严格Add/Update/Delete文本及expected_hashes，最多16文件；更新/删除须携带完整hash。全部预检，一次授权，逐项WAL/复核/原子发布并结算；冲突、失败或取消停止余项，已完成项不回滚，删除仍归档。拒绝Move、模糊匹配和二进制patch。artifact list/read/search使用独立原始字节游标；diff不证明已执行，逐项结果与文件状态分开判断。

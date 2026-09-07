@@ -117,6 +117,10 @@ func newFileMutationSelector(pending *agentloop.PendingFileMutation) *selectorMo
 		title += " · F6完整差异"
 		body += "\n" + fileMutationArtifactSummary(pending.DiffID, pending.DiffBytes, pending.DiffSaved)
 	}
+	if pending.PlanID != "" {
+		title += " · F6完整清单"
+		body += "\n" + fileMutationPlanSummary(pending.PlanID, pending.PlanBytes, pending.PlanSaved)
+	}
 	return &selectorModel{
 		kind: selectorFileMutation, title: title, body: body, copyReview: pending.Operation == "copy" || pending.Operation == "move" || pending.Operation == "mkdir",
 		options: []selectorOption{

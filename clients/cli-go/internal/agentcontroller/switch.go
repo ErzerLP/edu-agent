@@ -229,6 +229,7 @@ func (c *Controller) installPreparedTarget(target *Controller, baseGeneration ui
 	c.loopOptions, c.workspaceRoot = target.loopOptions, target.record.WorkspaceRoot
 	c.localExec, c.localOwner = target.localExec, target.localOwner
 	c.artifacts, c.artifactOwner, c.artifactErr = target.artifacts, target.artifactOwner, target.artifactErr
+	c.fileBatches, c.fileBatchErr = target.fileBatches, target.fileBatchErr
 	c.persistent, c.degradedReason, c.providerBlocked, c.resumed, c.prepared = target.persistent, target.degradedReason, target.providerBlocked, true, false
 	c.notices, c.pendingUser, c.saveFailed = append([]string(nil), target.notices...), "", target.saveFailed
 	c.generation++

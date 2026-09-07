@@ -15,7 +15,7 @@ func moveEffectForTest(kind string) fileeffects.Effect {
 	e.Source.Version = "entry-v1:" + strings.Repeat("a", 64)
 	return e
 }
-func TestMovePayloadV6DirtyCurrentRoundTrip(t *testing.T) {
+func TestMovePayloadCurrentDirtyCurrentRoundTrip(t *testing.T) {
 	for _, kind := range []string{"file", "directory"} {
 		for _, outcome := range []string{NoticeOutcomeCompleted, NoticeOutcomeUnknown} {
 			t.Run(kind+"/"+outcome, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestMovePayloadV6DirtyCurrentRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if v, h := recordPayloadVersionOnDiskForTest(t, store, handle.dataKey, saved); v != 6 || h.SchemaVersion != 1 {
+				if v, h := recordPayloadVersionOnDiskForTest(t, store, handle.dataKey, saved); v != recordPayloadSchemaVersion || h.SchemaVersion != 1 {
 					t.Fatal(v, h)
 				}
 				loaded, err := handle.Load()
@@ -152,7 +152,7 @@ func TestMoveFrozenRecordV5DirtyV4MigrationAndStrictOldVersions(t *testing.T) {
 	if !bytes.Equal(futureBefore, readSessionArtifactForTest(t, store, dirtyName(record.StorageID))) {
 		t.Fatal("future dirty cleaned")
 	}
-	writeRecordPayloadForTest(t, store, handle.dataKey, record, 7, func(b []byte) []byte {
+	writeRecordPayloadForTest(t, store, handle.dataKey, record, recordPayloadSchemaVersion+1, func(b []byte) []byte {
 		return bytes.Replace(b, []byte(`"effect":{`), []byte(`"effect":{"future":null,`), 1)
 	})
 	if _, _, _, _, err = store.readRecord(record.StorageID, record.SessionID, handle.dataKey, record.PrivacyGeneration); !errors.Is(err, ErrVersionUnsupported) {

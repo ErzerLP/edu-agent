@@ -90,11 +90,12 @@ const (
 )
 
 type turnStream struct {
-	activities chan agentloop.Activity
-	completion chan turnMsg
-	wake       chan struct{}
-	deltaMu    sync.Mutex
-	pending    string
+	activities      chan agentloop.Activity
+	completion      chan turnMsg
+	wake            chan struct{}
+	deltaMu         sync.Mutex
+	pending         string
+	activityPending *agentloop.Activity // Protected by deltaMu; UI-reader lookahead.
 }
 
 func (s *turnStream) publish(turnCtx, deliveryCtx context.Context, activity agentloop.Activity) {
@@ -462,6 +463,7 @@ func (m *model) resetAfterSessionSwap(generation uint64) {
 	m.contextUpdates, m.contextCancel = subscribeSessionContext(m.session)
 	m.workspaceStatus = m.session.WorkspaceStatus()
 	m.contextStatus = m.session.ContextStatus()
+	m.toolsExpanded = false
 	m.entries = []transcriptEntry{{kind: entryNotice, text: "已安全切换 Session；文件授权模式已重置为逐次确认，旧 YOLO、草稿和 pending 交互未恢复。"}}
 	if provider, ok := m.session.(sessionStartupNoticeProvider); ok {
 		for _, notice := range provider.SessionStartupNotices() {
@@ -1009,6 +1011,9 @@ func terminalActivityWhileStopping(activity agentloop.Activity) bool {
 }
 
 func (m *model) handleActivity(turnID uint64, activity agentloop.Activity) {
+	if m.handleLiveReasoning(turnID, activity) {
+		return
+	}
 	if !activity.StartedAt.IsZero() {
 		m.activeActivityStarted = activity.StartedAt
 	}
@@ -1214,23 +1219,17 @@ func waitTurnCmdForGeneration(ctx context.Context, generation, turnID uint64, ki
 		timer := time.NewTimer(time.Second)
 		defer timer.Stop()
 		for {
-			select {
-			case activity := <-stream.activities:
-				value := activity
-				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &value, stream: stream}
-			default:
+			if activity, ok := stream.popActivity(); ok {
+				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &activity, stream: stream}
 			}
 			if activity, ok := stream.popDelta(); ok {
 				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &activity, stream: stream}
 			}
 			select {
 			case message := <-stream.completion:
-				select {
-				case activity := <-stream.activities:
+				if activity, ok := stream.popActivity(); ok {
 					stream.completion <- message
-					value := activity
-					return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &value, stream: stream}
-				default:
+					return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &activity, stream: stream}
 				}
 				if activity, ok := stream.popDelta(); ok {
 					stream.completion <- message
@@ -1238,7 +1237,7 @@ func waitTurnCmdForGeneration(ctx context.Context, generation, turnID uint64, ki
 				}
 				return message
 			case activity := <-stream.activities:
-				value := activity
+				value := stream.coalesceActivity(activity)
 				return turnMsg{generation: generation, turnID: turnID, kind: kind, activity: &value, stream: stream}
 			case <-stream.wake:
 				continue

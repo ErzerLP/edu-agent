@@ -451,7 +451,7 @@ func (m model) footerHintVariants() [][]footerHint {
 	switch {
 	case m.selector != nil:
 		return [][]footerHint{
-			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "滚轮/PgUp/PgDn", action: "历史"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "滚轮/PgUp/PgDn", action: "历史"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "详情/推理"}},
 			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}, {key: "滚轮/PgUp/PgDn", action: "历史"}},
 			{{key: "↑/↓", action: "选择"}, {key: "Enter", action: "确认"}},
 		}
@@ -461,7 +461,7 @@ func (m model) footerHintVariants() [][]footerHint {
 			{{key: "Esc", action: "正在停止"}, {key: "Ctrl+C", action: "退出"}},
 		}
 	case m.busy && m.activeCancelable:
-		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}}
+		hints := []footerHint{{key: "Esc", action: "停止当前轮次"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "F3", action: "推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "详情/推理"}}
 		if m.isSlowTurn() {
 			hints = append(hints, footerHint{key: "提示", action: m.slowTurnDetail()})
 		}
@@ -472,7 +472,7 @@ func (m model) footerHintVariants() [][]footerHint {
 		}
 	case m.busy:
 		return [][]footerHint{
-			{{key: "长期偏好写入", action: "不可中断"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "F3", action: "下一请求推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "活动详情"}},
+			{{key: "长期偏好写入", action: "不可中断"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "F3", action: "下一请求推理强度"}, {key: "F4", action: "文件模式"}, {key: "Ctrl+O", action: "详情/推理"}},
 			{{key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "Ctrl+C", action: "退出整个 Agent"}},
 			{{key: "↑/↓", action: "历史"}, {key: "Ctrl+C", action: "退出整个 Agent"}},
 		}
@@ -484,7 +484,7 @@ func (m model) footerHintVariants() [][]footerHint {
 				hints = append(hints, footerHint{key: "Ctrl+P", action: "核对未知结果"})
 			}
 		}
-		hints = append(hints, footerHint{key: "F3", action: "推理强度"}, footerHint{key: "F4", action: "文件模式"}, footerHint{key: "Ctrl+O", action: "活动详情"}, footerHint{key: "Esc", action: "退出"})
+		hints = append(hints, footerHint{key: "F3", action: "推理强度"}, footerHint{key: "F4", action: "文件模式"}, footerHint{key: "Ctrl+O", action: "详情/推理"}, footerHint{key: "Esc", action: "退出"})
 		return [][]footerHint{
 			hints,
 			{{key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}, {key: "Enter", action: "发送"}, {key: "Esc", action: "退出"}},

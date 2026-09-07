@@ -65,11 +65,12 @@ func TestStreamSendsCompatibleRequestAndAssemblesTextUsage(t *testing.T) {
 	if response.Message.Role != "assistant" || response.Message.Content != "你好" || response.FinishReason != "stop" || response.Usage.TotalTokens != 14 || !cacheReported || cacheRead != 7 || response.CompatibilityFallback {
 		t.Fatalf("response=%+v cache-read=%d reported=%t", response, cacheRead, cacheReported)
 	}
-	if len(events) != 2 || events[0].Kind != StreamEventResponseStarted || events[1] != (StreamEvent{Kind: StreamEventTextDelta, Text: "你好"}) {
+	events = withoutTransportActivity(events)
+	if len(events) != 3 || events[0].Kind != StreamEventResponseStarted || events[1] != (StreamEvent{Kind: StreamEventReasoningDelta, Text: "hidden-secret"}) || events[2] != (StreamEvent{Kind: StreamEventTextDelta, Text: "你好"}) {
 		t.Fatalf("events=%+v", events)
 	}
 	for _, event := range events {
-		if strings.Contains(event.Text, "hidden-secret") {
+		if event.Kind != StreamEventReasoningDelta && strings.Contains(event.Text, "hidden-secret") {
 			t.Fatalf("hidden reasoning leaked: %+v", events)
 		}
 	}
@@ -530,7 +531,8 @@ func TestStreamInactivityTimeoutResetsOnAnyResponseBytes(t *testing.T) {
 	if time.Since(started) <= timeout {
 		t.Fatalf("stream completed before proving timeout renewal: elapsed=%s timeout=%s", time.Since(started), timeout)
 	}
-	if response.Message.Content != "完成" || len(events) != 2 || events[0].Kind != StreamEventResponseStarted || events[1] != (StreamEvent{Kind: StreamEventTextDelta, Text: "完成"}) {
+	events = withoutTransportActivity(events)
+	if response.Message.Content != "完成" || len(events) != 3 || events[0].Kind != StreamEventResponseStarted || events[1] != (StreamEvent{Kind: StreamEventReasoningDelta, Text: "hidden"}) || events[2] != (StreamEvent{Kind: StreamEventTextDelta, Text: "完成"}) {
 		t.Fatalf("response=%+v events=%+v", response, events)
 	}
 }

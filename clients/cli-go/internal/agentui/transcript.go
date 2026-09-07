@@ -26,18 +26,20 @@ const (
 )
 
 type transcriptEntry struct {
-	kind         entryKind
-	text         string
-	activity     agentloop.Activity
-	activities   []agentloop.Activity
-	contextEvent agentloop.ContextEvent
-	turnID       uint64
-	streaming    bool
-	stopped      bool
-	failed       bool
-	pending      *agentloop.PreferenceConfirmation
-	fileMutation *agentloop.PendingFileMutation
-	question     *agentloop.PendingQuestion
+	kind           entryKind
+	text           string
+	activity       agentloop.Activity
+	activities     []agentloop.Activity
+	contextEvent   agentloop.ContextEvent
+	turnID         uint64
+	streaming      bool
+	stopped        bool
+	failed         bool
+	pending        *agentloop.PreferenceConfirmation
+	fileMutation   *agentloop.PendingFileMutation
+	question       *agentloop.PendingQuestion
+	reasoning      *liveReasoning
+	lastResponseAt time.Time
 }
 
 func renderTranscriptEntry(entry transcriptEntry, width int, toolsExpanded bool) string {
@@ -59,7 +61,7 @@ func renderTranscriptEntry(entry transcriptEntry, width int, toolsExpanded bool)
 		}
 		return assistantStyle.Width(width).Render(assistantLabelStyle.Render(label) + "\n" + renderMarkdown(entry.text, width-3))
 	case entryThinking:
-		return renderThinkingActivity(entry.activity, width, toolsExpanded)
+		return renderThinkingEntry(entry, width, toolsExpanded)
 	case entryTools:
 		return renderToolGroup(entry.activities, width, toolsExpanded)
 	case entryConfirm:

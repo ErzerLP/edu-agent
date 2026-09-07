@@ -115,6 +115,12 @@ func (s *Session) foregroundResponse(ctx context.Context, request modelclient.Re
 			if delta != "" {
 				s.publishActivity(ctx, Activity{Kind: ActivityTextDelta, Event: Event{ID: activityID, Summary: "正在生成回答", Status: EventRunning}, Phase: ActivityReceivingStream, ReasoningEffort: request.ReasoningEffort, Delta: delta})
 			}
+		case modelclient.StreamEventReasoningDelta:
+			if delta := safeActivityDelta(event.Text); delta != "" {
+				s.publishActivity(ctx, Activity{Kind: ActivityReasoningDelta, Event: Event{ID: activityID}, Delta: delta})
+			}
+		case modelclient.StreamEventResponseActivity:
+			s.publishActivity(ctx, Activity{Kind: ActivityResponseProgress, Event: Event{ID: activityID}, ReceivedAt: event.ReceivedAt})
 		case modelclient.StreamEventCompatibilityFallback:
 			s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: activityID, Summary: "模型已切换到兼容响应模式", Status: EventRunning, Detail: "stream_compatibility_fallback"}, Phase: ActivityWaitingModel, ReasoningEffort: request.ReasoningEffort, StableCode: "stream_compatibility_fallback"})
 		default:

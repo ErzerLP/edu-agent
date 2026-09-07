@@ -188,9 +188,11 @@ type Event struct {
 type ActivityKind string
 
 const (
-	ActivityThinking  ActivityKind = "thinking"
-	ActivityTool      ActivityKind = "tool"
-	ActivityTextDelta ActivityKind = "text_delta"
+	ActivityThinking         ActivityKind = "thinking"
+	ActivityTool             ActivityKind = "tool"
+	ActivityTextDelta        ActivityKind = "text_delta"
+	ActivityReasoningDelta   ActivityKind = "reasoning_delta"
+	ActivityResponseProgress ActivityKind = "response_progress"
 )
 
 type ActivityPhase string
@@ -249,8 +251,9 @@ type FileActivityDetail struct {
 	PublicationOutcome string
 }
 
-// Activity contains presentation-safe lifecycle data only. Delta never contains
-// provider reasoning, tool arguments, credentials, or raw provider errors.
+// Activity is an ephemeral UI event, not a persistence DTO. ReasoningDelta
+// carries only provider-supplied readable reasoning in Delta; sinks must not
+// log, persist or feed it into model context. Other fields remain metadata.
 type Activity struct {
 	Kind            ActivityKind
 	Event           Event
@@ -262,14 +265,15 @@ type Activity struct {
 	Progress        *ActivityProgress
 	File            *FileActivityDetail
 	StableCode      string
-	Delta           string
+	Delta           string `json:"-"`
+	ReceivedAt      time.Time
 }
 
 type activityReporter func(Activity)
 type activityReporterContextKey struct{}
 
-// WithActivityReporter attaches a safe, presentation-level activity sink to one Agent operation.
-// Activities contain lifecycle summaries only; they never contain model reasoning or tool arguments.
+// WithActivityReporter attaches an ephemeral presentation sink to one operation.
+// Reasoning deltas may contain sensitive provider text; never persist this sink.
 func WithActivityReporter(ctx context.Context, reporter func(Activity)) context.Context {
 	if reporter == nil {
 		return ctx

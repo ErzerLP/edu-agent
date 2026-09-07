@@ -74,14 +74,15 @@ type assembledToolCall struct {
 }
 
 type streamAssembler struct {
-	roleSeen     bool
-	text         strings.Builder
-	tools        map[int]*assembledToolCall
-	finishReason string
-	finishSeen   bool
-	usage        *Usage
-	sawIncrement bool
-	emptyDeltas  int
+	roleSeen       bool
+	text           strings.Builder
+	tools          map[int]*assembledToolCall
+	finishReason   string
+	finishSeen     bool
+	usage          *Usage
+	sawIncrement   bool
+	emptyDeltas    int
+	reasoningDelta string // Only the current validated frame, never part of Message.
 }
 
 type sseEvent struct {
@@ -211,7 +212,7 @@ func (c *Client) streamAttempt(
 		return Response{}, streamCompatibilityNone, contextErr
 	}
 
-	reader := &sseReader{reader: bufio.NewReaderSize(io.LimitReader(responseBody, maxStreamResponseBytes+1), 32<<10)}
+	reader := &sseReader{reader: bufio.NewReaderSize(io.LimitReader(&streamProgressReader{reader: responseBody, observe: observe}, maxStreamResponseBytes+1), 32<<10)}
 	assembler := streamAssembler{tools: make(map[int]*assembledToolCall)}
 	for {
 		if contextErr := requestContextError(ctx, requestCtx); contextErr != nil {
@@ -258,6 +259,12 @@ func (c *Client) streamAttempt(
 				return Response{}, streamCompatibilityNone, err
 			}
 			*responseStarted = true
+		}
+		if assembler.reasoningDelta != "" {
+			if err := observe(StreamEvent{Kind: StreamEventReasoningDelta, Text: assembler.reasoningDelta}); err != nil {
+				return Response{}, streamCompatibilityNone, err
+			}
+			assembler.reasoningDelta = ""
 		}
 		if text != "" {
 			if err := observe(StreamEvent{Kind: StreamEventTextDelta, Text: text}); err != nil {
@@ -395,6 +402,7 @@ func (r *sseReader) readLine() ([]byte, error) {
 }
 
 func (a *streamAssembler) apply(data []byte) (string, error) {
+	a.reasoningDelta = ""
 	if len(data) == 0 || len(data) > maxSSEEventBytes || !utf8.Valid(data) {
 		return "", clientError(ErrorCodeStreamProtocol, "模型 SSE 数据无效")
 	}
@@ -442,6 +450,7 @@ func (a *streamAssembler) apply(data []byte) (string, error) {
 		return "", hiddenErr
 	} else if hidden {
 		a.sawIncrement = true
+		a.reasoningDelta = readableReasoning(choice.Delta)
 	}
 	var text string
 	if choice.Delta.Content != nil {

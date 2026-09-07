@@ -1,6 +1,9 @@
 package modelclient
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ReasoningEffort string
 
@@ -127,10 +130,13 @@ type StreamEventKind string
 const (
 	StreamEventResponseStarted       StreamEventKind = "response_started"
 	StreamEventTextDelta             StreamEventKind = "text_delta"
+	StreamEventReasoningDelta        StreamEventKind = "reasoning_delta"
+	StreamEventResponseActivity      StreamEventKind = "response_activity"
 	StreamEventCompatibilityFallback StreamEventKind = "compatibility_fallback"
 )
 
 type StreamEvent struct {
-	Kind StreamEventKind
-	Text string
+	Kind       StreamEventKind
+	Text       string `json:"-"` // Ephemeral display data; never serialize reasoning events.
+	ReceivedAt time.Time
 }

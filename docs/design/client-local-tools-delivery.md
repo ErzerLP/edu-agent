@@ -338,3 +338,12 @@ C8 checkpoint不是开发停止点。下一主线为C9归档定位与恢复、C1
 - Linux完整CLI构建及version运行、Darwin/arm64完整CLI及securefile测试二进制交叉编译通过，产物`/tmp/edu-agent-c10-build.hzvtwM`不提交；不将交叉编译称为原生验证，未运行服务端、PostgreSQL、Compose、付费模型或Runtime验收。
 
 C10 checkpoint后继续最终恢复/隐私复核和候选检查，不以提交作为开发停止点。
+
+## 候选前恢复一致性修正
+
+- C10本地checkpoint：`561a090`，未推送。
+- `appendOperationTranscriptLocked`曾把稳定error card标为PresentationOnly，但Transcript合同明确保护error不被展示压缩。这使普通provider失败、模型取消/超时错误变为ErrInvalid保存失败。保留ModelCommitted=false，仅移除错误的可丢弃标记；不放宽Transcript校验、不保存原始错误、不更改schema。
+- 新增`TestOperationErrorTranscriptPersistsWithoutBlockingContinuation`先复现三种保存失败，再验证稳定错误/failed或stopped稿保存、隐私、下一正常对话及重启后的继续可用。
+- 静态完整引用核查确认`fileReceiptFromCheckpoint`当前只有测试调用，不是生产恢复或结算入口；此前目录hash疑点不应被描述为已发生的生产复制失败。将兼容检查与正确的`fileReceiptFromExecution`对齐：目录无虚构hash且必须子树失效，不给目录回执填文件hash。
+- `TestDirectoryCopyCheckpointReceiptMatchesExecutorContract`使用真实42项复制产生的checkpoint，先复现合法completed被拒绝、unknown的伪造hash/缺失失效被接受，再验证修正后的正反边界。
+- 两项定向回归、agentcontroller全包及vet、两项定向race均通过；其它未变化包证据继续有效。下一步为稳定候选独立审查及一次CLI模块完整门禁，仍无macOS原生或Runtime验收证据。

@@ -1121,9 +1121,11 @@ func (c *Controller) appendOperationTranscriptLocked(result agentloop.Result, op
 	}
 	if operationErr != nil {
 		code, retryable := durableOperationError(operationErr)
+		// Stable errors are protected from presentation compaction. Keeping
+		// ModelCommitted false already excludes this card from model history.
 		c.transcript.Entries = append(c.transcript.Entries, agentsession.TranscriptEntryV1{
 			Sequence: c.nextSequenceLocked(), PresentationTurn: turn, Kind: agentsession.TranscriptKindError, CreatedAt: c.now().UTC(),
-			Error: &agentsession.StableErrorV1{Code: code, Retryable: retryable}, PresentationOnly: true,
+			Error: &agentsession.StableErrorV1{Code: code, Retryable: retryable},
 		})
 	}
 	if c.dirty != nil && c.dirty.Preference != nil && operationErr == nil {
@@ -1307,13 +1309,16 @@ func fileReceiptFromCheckpoint(writeAhead agentsession.FileWriteAhead, checkpoin
 	} else if effect.Operation == workspace.ToolMkdir || effect.Operation == workspace.ToolCopy || effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() || effect.IsArchivePurge() {
 		return agentsession.FileReceipt{}, false, errors.New("文件回执缺少完整副作用事实")
 	}
-	if effect.Operation == workspace.ToolCopy && !unknown && (effect.Target.Version == "" || effect.Target.Version != reference.ContentHash) {
+	if effect.IsDirectoryCopy() && (effect.Target.Version != "" || reference.ContentHash != "" || !reference.InvalidateObserved) {
+		return agentsession.FileReceipt{}, false, errors.New("目录复制回执不能伪造目标哈希或省略子树失效")
+	}
+	if effect.Operation == workspace.ToolCopy && !effect.IsDirectoryCopy() && !unknown && (effect.Target.Version == "" || effect.Target.Version != reference.ContentHash) {
 		return agentsession.FileReceipt{}, false, errors.New("复制回执缺少匹配的实际目标哈希")
 	}
 	if (effect.Operation == workspace.ToolMove || effect.IsArchiveRestore() || effect.IsArchivePurge()) && (reference.ContentHash != "" || !reference.InvalidateObserved) {
 		return agentsession.FileReceipt{}, false, errors.New("移动回执不能伪造目标版本或省略双端失效")
 	}
-	if !unknown && !effect.IsArchivePurge() && !effect.IsArchiveRestore() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
+	if !unknown && !effect.IsArchivePurge() && !effect.IsArchiveRestore() && !effect.IsDirectoryCopy() && effect.Operation != workspace.ToolArchive && effect.Operation != workspace.ToolMkdir && effect.Operation != workspace.ToolMove {
 		effect.Target.Version = reference.ContentHash
 	}
 	receipt := agentsession.FileReceipt{

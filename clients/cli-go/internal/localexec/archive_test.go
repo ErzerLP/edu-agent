@@ -23,10 +23,19 @@ type byteArtifactStore struct {
 	reads, writes, lists int
 	beforeWrite          func(context.Context, string, []byte) error
 	readError            error
+	accessError          error
 }
 
 func newByteArtifactStore() *byteArtifactStore {
 	return &byteArtifactStore{blobs: make(map[string][]byte)}
+}
+func (s *byteArtifactStore) CheckArtifactAccess(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.accessError
 }
 func (s *byteArtifactStore) ReadArtifact(ctx context.Context, name string) ([]byte, error) {
 	if ctx.Err() != nil {

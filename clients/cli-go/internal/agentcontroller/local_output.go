@@ -30,6 +30,9 @@ func localOutputError(err error) error {
 	return &localexec.Error{Code: code}
 }
 
+func (s localOutputStore) CheckArtifactAccess(ctx context.Context) error {
+	return localOutputError(s.handle.CheckArtifactAccess(ctx))
+}
 func (s localOutputStore) ReadArtifact(ctx context.Context, name string) ([]byte, error) {
 	data, err := s.handle.ReadArtifact(ctx, name)
 	return data, localOutputError(err)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -237,7 +238,29 @@ func TestLocalOutputClearRevokesPersistedBytes(t *testing.T) {
 	if err := external.Clear(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if page, err := f.controller.ReadLocalTask(task.TaskID, "stdout", 1024, 128); err == nil {
-		t.Fatalf("old generation remained readable: %+v", page)
+	for _, check := range []struct {
+		name   string
+		offset int64
+	}{
+		{"memory_prefix", 0}, {"eof", task.StdoutBytes},
+		{"saved_segment", 1024}, {"memory_after_saved_failure", 0},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			page, err := f.controller.ReadLocalTask(task.TaskID, "stdout", check.offset, 32)
+			var unavailable *localexec.Error
+			if !errors.As(err, &unavailable) || unavailable.Code != "output_unavailable" || len(page.Data) != 0 {
+				t.Fatalf("old generation remained readable: page=%+v err=%v", page, err)
+			}
+			found, err := f.controller.SearchLocalTask(t.Context(), task.TaskID, "stdout", "prefix", check.offset, 1)
+			if !errors.As(err, &unavailable) || unavailable.Code != "output_unavailable" || len(found.Offsets) != 0 {
+				t.Fatalf("old generation remained searchable: page=%+v err=%v", found, err)
+			}
+		})
+	}
+	if err := f.manager.BindArchive(f.controller.localOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if page, err := f.controller.ReadLocalTask(task.TaskID, "stdout", 0, 32); err == nil || len(page.Data) != 0 {
+		t.Fatalf("storage detach revived revoked output: page=%+v err=%v", page, err)
 	}
 }

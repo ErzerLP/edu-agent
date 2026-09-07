@@ -30,15 +30,19 @@ const (
 // WriteArtifact errors may have an unknown publication outcome. The journal
 // never advances its confirmed prefix on error or retries an uncertain write.
 type ArtifactStore interface {
+	// CheckArtifactAccess validates lifetime/privacy authority even when no
+	// blob has been saved. It must not enumerate the artifact directory.
+	CheckArtifactAccess(context.Context) error
 	ReadArtifact(context.Context, string) ([]byte, error)
 	WriteArtifact(context.Context, string, []byte) error
 	ListArtifacts(context.Context, string) ([]string, error)
 }
 
 type archiveBinding struct {
-	mu        sync.RWMutex
-	backend   ArtifactStore // binding.mu
-	available bool          // Manager.mu; false on explicit detach
+	mu            sync.RWMutex
+	backend       ArtifactStore // binding.mu
+	accessBackend ArtifactStore // last non-nil authority; detach cannot revoke its fence
+	available     bool          // Manager.mu; false on explicit detach
 }
 
 // Metadata is deliberately separate from execution inputs and Snapshot. No
@@ -116,7 +120,11 @@ func validArtifactID(id string) bool {
 }
 
 // BindArchive atomically validates and loads an owner's journal before swapping
-// its handle. A failed bind leaves the old binding and task collection intact.
+// its handle. The caller must bind an owner only to the same Session and privacy
+// generation throughout its lifetime; this is not an archive import API. A new
+// Session/generation requires a new owner (Controller derives it from the record
+// authenticated by Create/OpenSession). Backends cannot be injected by a tool.
+// A failed bind leaves the old binding and task collection intact.
 // Existing in-process tasks are never replaced by historical records. Passing
 // nil detaches storage and permanently stops current journals (no later islands);
 // a subsequent bind can make their committed prefixes readable again.
@@ -200,6 +208,9 @@ func (m *Manager) BindArchive(owner string, backend ArtifactStore) error {
 		}
 	}
 	binding.backend, binding.available = backend, backend != nil
+	if backend != nil {
+		binding.accessBackend = backend
+	}
 	for _, t := range m.tasks {
 		if t.owner != owner {
 			continue
@@ -345,7 +356,7 @@ func validReason(code string) bool {
 
 func restoredTask(owner string, binding *archiveBinding, meta archiveMetadata) *task {
 	t := &task{
-		owner: owner, binding: binding, callDigest: meta.CallDigest, journal: true,
+		owner: owner, binding: binding, callDigest: meta.CallDigest, journal: true, outputGuarded: true,
 		archiveStopped: true, persistenceError: meta.PersistenceError, startError: meta.StartError,
 		terminal: true, stop: make(chan struct{}), done: make(chan struct{}),
 		inputClosed: true, inputGate: make(chan struct{}, 1),
@@ -438,6 +449,7 @@ func (m *Manager) initializeArchive(t *task) {
 		return
 	}
 	m.mu.Lock()
+	t.outputGuarded = true
 	meta := m.metadataLocked(t, false)
 	m.mu.Unlock()
 	err := writeMetadata(t.binding.backend, meta)

@@ -119,6 +119,7 @@ type task struct {
 	outputIncomplete  bool
 	callDigest        string
 	binding           *archiveBinding
+	outputGuarded     bool // output collected under a persistent privacy authority
 	journal           bool
 	archiveStopped    bool
 	archiveUnreadable bool
@@ -205,6 +206,7 @@ func (m *Manager) Start(ctx context.Context, owner, callID string, args StartArg
 	}
 	m.sequence++
 	t := &task{owner: owner, callDigest: key.id, binding: m.bindingLocked(owner), snapshot: Snapshot{TaskID: m.prefix + "-" + strconv.FormatUint(m.sequence, 10), State: StateStarting}, stop: make(chan struct{}), done: make(chan struct{}), inputGate: make(chan struct{}, 1)}
+	t.outputGuarded = t.binding.available
 	// Always publish valid mode metadata, even for rejected dimensions. Invalid
 	// requested sizes are not execution inputs retained in the journal.
 	rows, cols, sizeCode := terminalSize(args)

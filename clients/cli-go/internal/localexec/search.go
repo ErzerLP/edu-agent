@@ -59,15 +59,16 @@ func (m *Manager) Search(ctx context.Context, owner, taskID, stream, needle stri
 	count := min(int64(maxSearchBytes), max(int64(0), retained-offset))
 	page := SearchPage{Offsets: make([]int64, 0), Offset: offset, NextOffset: offset,
 		Received: received, Retained: retained, Truncated: retained < received, Incomplete: incomplete}
+	// Even an empty scan/EOF must pass the same privacy fence as a byte read.
+	raw, err := m.readOutput(ctx, owner, taskID, stream, offset, int(max(int64(1), count)))
+	if err != nil {
+		return SearchPage{}, err
+	}
 	if count == 0 {
 		if offset >= retained {
 			page.NextOffset = received
 		}
 		return page, nil
-	}
-	raw, err := m.readOutput(ctx, owner, taskID, stream, offset, int(count))
-	if err != nil {
-		return page, err
 	}
 	// A concurrent detach can reduce the readable range, but cannot invent a
 	// prefix. Preserve the original observed waterline and report that gap.

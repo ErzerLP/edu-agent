@@ -48,6 +48,26 @@ func (h *Handle) ReadArtifact(ctx context.Context, name string) ([]byte, error) 
 	return plain, artifactError(err)
 }
 
+// CheckArtifactAccess checks the handle lifetime, private root and profile
+// generation fence without requiring a saved blob or scanning the directory.
+// Consumers retaining plaintext must perform this check before returning it,
+// including empty/EOF results. It does not authenticate any cached blob body.
+func (h *Handle) CheckArtifactAccess(ctx context.Context) error {
+	if h == nil {
+		return ErrInvalid
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return ErrNotFound
+	}
+	lock, err := h.lockArtifacts(artifactContext(ctx))
+	if err != nil {
+		return err
+	}
+	return artifactError(lock.Close())
+}
+
 // WriteArtifact atomically creates or replaces a blob without evicting any
 // existing artifact. Unknown publication is resolved only by authenticating the
 // exact attempted ciphertext/revision and comparing its plaintext; no retries.

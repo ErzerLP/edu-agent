@@ -176,13 +176,13 @@ func New(model Model, server Server, options Options) (*Session, error) {
 		reasoningEffort:         options.ReasoningEffort,
 		fileAuthorizationMode:   FileAuthorizationConfirm,
 		activityStarts:          make(map[string]time.Time),
-		hotRawTokenLimit:        clampInt(divideRoundUp(options.ContextWindow*55, 100), 1024, options.ContextWindow),
+		hotRawTokenLimit:        clampInt(percentRoundUp(options.ContextWindow, 55), 1024, options.ContextWindow),
 		estimator:               estimator,
 		toolHistory:             make(map[string]string),
 		toolReferences:          make(map[string]*ServerReference),
 		workspaceReferences:     make(map[string]*WorkspaceReference),
 		mutationArtifacts:       make(map[string]localartifact.Info),
-		currentToolResultBudget: clampInt(divideRoundUp(options.ContextWindow*8, 100), 512, 2048),
+		currentToolResultBudget: clampInt(percentRoundUp(options.ContextWindow, 8), 512, 2048),
 	}
 	session.contextRuntime = newContextRuntime(model, options, estimator)
 	return session, nil

@@ -22,7 +22,7 @@ func TestLargeContextCLIConfigurationAndLaunch(t *testing.T) {
 	if exit := app.Run(t.Context(), []string{"model", "show"}); exit != ExitOK || !strings.Contains(out.String(), "272000") || !strings.Contains(out.String(), "128000") {
 		t.Fatalf("show: %s %s", out.String(), errOut.String())
 	}
-	for _, arg := range []string{"0", "-1", "128001"} {
+	for _, arg := range []string{"0", "-1", "9223372036854775808"} {
 		before := *store.value.Agent
 		if exit := app.Run(t.Context(), []string{"model", "set", "--max-tokens", arg}); exit != ExitInput {
 			t.Fatalf("accepted %s", arg)

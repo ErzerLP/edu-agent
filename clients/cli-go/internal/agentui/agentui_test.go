@@ -1553,6 +1553,7 @@ func TestAgentUIEscapeStopsTurnPreservesVisibleWorkAndRejectsLateEvents(t *testi
 		started: make(chan struct{}), canceled: make(chan struct{}),
 		activities: []agentloop.Activity{
 			{Kind: agentloop.ActivityTool, Phase: agentloop.ActivityExecutingTool, Event: agentloop.Event{ID: "tool-1", Tool: "search_knowledge", Summary: "检索完成", Status: agentloop.EventSucceeded}},
+			{Kind: agentloop.ActivityThinking, Phase: agentloop.ActivityReceivingStream, Event: agentloop.Event{ID: "thinking-2", Summary: "正在接收模型响应", Status: agentloop.EventRunning}},
 			{Kind: agentloop.ActivityTextDelta, Delta: "部分答案"},
 		},
 	}
@@ -1592,6 +1593,11 @@ func TestAgentUIEscapeStopsTurnPreservesVisibleWorkAndRejectsLateEvents(t *testi
 	view := value.View()
 	if value.busy || !strings.Contains(view, "需要取消") || !strings.Contains(view, "检索完成") || !strings.Contains(view, "部分答案") || !strings.Contains(view, "已停止") || strings.Contains(view, "请求失败") {
 		t.Fatalf("cancelled state=%s", view)
+	}
+	for _, entry := range value.entries {
+		if entry.kind == entryThinking && normalizedEventStatus(entry.activity.Event.Status) == agentloop.EventRunning {
+			t.Fatalf("thinking survived the real Esc/worker completion path: %+v", entry.activity)
+		}
 	}
 	before := len(value.entries)
 	late := agentloop.Activity{Kind: agentloop.ActivityTextDelta, Delta: "不应出现"}

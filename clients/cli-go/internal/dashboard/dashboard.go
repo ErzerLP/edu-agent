@@ -321,7 +321,7 @@ func (m *model) open(next screen) {
 			newInput("0", toolRounds),
 			newInput(strconv.Itoa(config.DefaultAgentMaxTokens), strconv.Itoa(maxTokens)),
 		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", "最大工具轮数（0=不限制，无固定上界）", "最大输出 tokens（1-128000）"}
+		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", "最大工具轮数（0=不限制，无固定上界）", "最大输出 tokens（正整数，无固定上界）"}
 	case screenAgentKey:
 		input := newInput("输入不会显示", "")
 		input.EchoMode = textinput.EchoPassword

@@ -859,7 +859,7 @@ func (a *App) runModelSet(args []string) error {
 	set.StringVar(&baseURL, "base-url", "", "OpenAI-compatible base URL")
 	set.StringVar(&modelName, "model", "", "model name")
 	set.IntVar(&contextWindow, "context-window", 0, "total context window (default 272000)")
-	set.IntVar(&maxTokens, "max-tokens", 0, "maximum output tokens (1-128000; default 128000)")
+	set.IntVar(&maxTokens, "max-tokens", 0, "maximum output tokens (positive integer; default 128000)")
 	set.StringVar(&contextCompaction, "context-compaction", "", "auto, recent-only, or off")
 	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
 	set.StringVar(&sessionHistory, "session-history", "", "auto or off")
@@ -868,8 +868,11 @@ func (a *App) runModelSet(args []string) error {
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return modelUsage("模型参数格式无效")
 	}
-	maxToolRoundsSet, maxTokensSet := false, false
+	maxToolRoundsSet, maxTokensSet, contextWindowSet := false, false, false
 	set.Visit(func(current *flag.Flag) {
+		if current.Name == "context-window" {
+			contextWindowSet = true
+		}
 		if current.Name == "max-tokens" {
 			maxTokensSet = true
 		}
@@ -877,8 +880,11 @@ func (a *App) runModelSet(args []string) error {
 			maxToolRoundsSet = true
 		}
 	})
-	if maxTokensSet && (maxTokens <= 0 || maxTokens > config.DefaultAgentMaxTokens) {
-		return commandError("invalid_configuration", "最大输出 tokens 无效", "请输入1到128000的整数", ExitInput)
+	if contextWindowSet && contextWindow < 4096 {
+		return commandError("invalid_configuration", "上下文窗口无效", "请输入至少4096的整数", ExitInput)
+	}
+	if maxTokensSet && maxTokens <= 0 {
+		return commandError("invalid_configuration", "最大输出 tokens 无效", "请输入正整数", ExitInput)
 	}
 	if maxToolRoundsSet && maxToolRounds < config.MinAgentMaxToolRounds {
 		return commandError("invalid_configuration", "最大工具轮数无效", "请输入0或正整数；0表示不限制", ExitInput)
@@ -911,7 +917,7 @@ func (a *App) runModelSet(args []string) error {
 	if maxTokensSet {
 		candidate.MaxTokens = maxTokens
 	}
-	if contextWindow != 0 {
+	if contextWindowSet {
 		candidate.ContextWindow = contextWindow
 	}
 	if strings.TrimSpace(contextCompaction) != "" {

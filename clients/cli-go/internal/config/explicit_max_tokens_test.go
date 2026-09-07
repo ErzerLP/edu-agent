@@ -14,7 +14,7 @@ func TestLargeContextExplicitJSONMaxTokens(t *testing.T) {
 			value string
 			valid bool
 		}{
-			{"0", false}, {"null", false}, {"-1", false}, {"128001", false}, {`"128000"`, false},
+			{"0", false}, {"null", false}, {"-1", false}, {"128001", true}, {"9223372036854775808", false}, {`"128000"`, false},
 			{"1", true}, {"512", true}, {"128000", true},
 		} {
 			t.Run(field+"="+test.value, func(t *testing.T) {

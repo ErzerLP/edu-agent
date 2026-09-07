@@ -60,7 +60,7 @@ func runObserver(ctx context.Context, model Model, estimator TokenEstimator, con
 	request := modelclient.Request{
 		Messages: []modelclient.Message{
 			{Role: "system", Content: observerSystemPrompt},
-			{Role: "user", Content: renderObserverInput(snapshot, estimator, clampInt(divideRoundUp(contextWindow*20, 100), 512, 8192))},
+			{Role: "user", Content: renderObserverInput(snapshot, estimator, clampInt(percentRoundUp(contextWindow, 20), 512, 8192))},
 		},
 		Tools:     []modelclient.Tool{observerRecordTool()},
 		MaxTokens: min(2048, max(1, contextWindow/4)),

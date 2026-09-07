@@ -53,7 +53,7 @@ func runReflector(ctx context.Context, model Model, estimator TokenEstimator, co
 	request := modelclient.Request{
 		Messages: []modelclient.Message{
 			{Role: "system", Content: reflectorSystemPrompt},
-			{Role: "user", Content: renderReflectorInput(snapshot, estimator, clampInt(divideRoundUp(contextWindow*20, 100), 512, 8192))},
+			{Role: "user", Content: renderReflectorInput(snapshot, estimator, clampInt(percentRoundUp(contextWindow, 20), 512, 8192))},
 		},
 		Tools:     []modelclient.Tool{reflectorRecordTool()},
 		MaxTokens: min(2048, max(1, contextWindow/4)),

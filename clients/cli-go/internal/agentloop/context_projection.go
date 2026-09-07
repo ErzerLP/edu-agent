@@ -44,12 +44,12 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	if p.ReservedOutputOverride > 0 {
 		outputCeiling = min(outputCeiling, p.ReservedOutputOverride)
 	}
-	safetyMargin := divideRoundUp(p.ContextWindow*5, 100)
+	safetyMargin := percentRoundUp(p.ContextWindow, 5)
 	// Legacy/small windows cannot reserve the configured large ceiling. Keep
 	// useful input capacity (including committed memory) instead of spending
 	// every spare token on output. There is no old 8192-token output cap.
-	if outputCeiling+safetyMargin >= p.ContextWindow {
-		outputCeiling = min(outputCeiling, max(1024, divideRoundUp(p.ContextWindow*15, 100)))
+	if outputCeiling >= p.ContextWindow-safetyMargin {
+		outputCeiling = min(outputCeiling, max(1024, percentRoundUp(p.ContextWindow, 15)))
 	}
 	minimumOutput := min(512, outputCeiling)
 	maximumInput := p.ContextWindow - safetyMargin - minimumOutput
@@ -124,7 +124,7 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	var memoryMessage *modelclient.Message
 	memoryItemCount := 0
 	if mode == ContextCompactionAuto && len(p.Memory.Items) > 0 {
-		memoryCap := min(divideRoundUp(p.ContextWindow*20, 100), inputLimit-total)
+		memoryCap := min(percentRoundUp(p.ContextWindow, 20), inputLimit-total)
 		if memoryCap > 0 {
 			memoryMessage, memoryItemCount = p.selectMemoryMessage(memoryCap)
 			if memoryMessage != nil {
@@ -166,7 +166,7 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	}
 	return ContextPlan{
 		Request: request, EstimatedInput: estimated, ReservedOutput: request.MaxTokens, SafetyMargin: safetyMargin,
-		SoftPressure: fullEstimate >= divideRoundUp(inputLimit*72, 100), TotalTurns: len(groups), SelectedTurns: selectedCount,
+		SoftPressure: fullEstimate >= percentRoundUp(inputLimit, 72), TotalTurns: len(groups), SelectedTurns: selectedCount,
 		DroppedTurns: len(groups) - selectedCount, ProjectedTurns: projectedCount, MemoryItemCount: memoryItemCount, UsedMemory: memoryMessage != nil,
 	}, nil
 }

@@ -4,9 +4,10 @@
 
 ## 配置和请求预算
 
-- `agentlimits` 是 272000 总窗口、128000 最大输出、1 MiB 助手正文的常量来源。
-- `AgentConfig.max_tokens` 默认 128000，合法显式值为 1..128000。旧 JSON 只有缺少该字段时在加载结果中补默认，不写回文件；显式0、null、负数和超过上限均拒绝，已有 `context_window`、模型和其他设置保留。内部Go零值构造仍允许缺省归一化，不把它当作配置文件显式0的授权。
-- `edu-agent model set --max-tokens 64000` 可调低输出；显式 CLI 0、负数和大于 128000 拒绝。`model show` 与 Dashboard 参数表单显示该字段；新建和恢复都把当前配置传入 Loop。
+- `agentlimits` 是 272000 默认总窗口、128000 默认输出、1 MiB 助手正文防护的常量来源。窗口和输出默认值不是配置上限。
+- `AgentConfig.max_tokens` 默认 128000，合法显式值为可表示的正整数；`context_window` 最小 4096，不再固定上限 1000000。旧 JSON 只有缺少 max_tokens 字段时在加载结果中补默认，不写回文件；显式0、null、负数、类型错误和溢出拒绝，已有模型和其他设置保留。内部Go零值构造仍允许缺省归一化，不把它当作配置文件显式0的授权。
+- `edu-agent model set --max-tokens 256000 --context-window 2000000 --timeout 30m` 可由用户选择更大配置；CLI、配置加载、Dashboard、新建和恢复一致，不静默夹紧到旧上限。模型 timeout 仅要求可表示的正时长，不再限制 10 分钟；不自动更改本机已有时长。
+- 百分比预算先分解商和余数再计算，向上取整不使用可能溢出的 `value + divisor - 1`，输出与安全余量比较使用减法；即使窗口或输出取平台最大 int 也不得绕过预算。协议正文和存储配额仍独立于 token 设置。
 - 请求不是能力协商：provider/model 名称不改，不测试真实 provider 是否支持容量；provider 的不支持/长度错误仍明确返回。
 
 每次主请求满足：
@@ -76,3 +77,13 @@ estimated_input + effective_max_tokens + ceil(context_window * 5%) <= context_wi
 | 10 原子工具与内部小请求 | tool call/result、用户授权事实、protected/off、标题96、Observer/Reflector最多2048 |
 
 仅 fake provider、临时工作区和现有依赖。未运行真实 provider、数据库、Compose、全平台、race 或性能压力矩阵；父代理负责最终集成复核/vet。已知 AIX `unix.Linkat` 诊断来自基线，不在 C1 改动范围。
+
+## 后续模型设置上限修正验证
+
+上述 C1 记录为历史批次证据；本轮按用户要求取消模型设置的人为上界，新增验证如下：
+
+- 配置真实保存/加载不改写，CLI 设置/显示/启动与 Dashboard 保持 200 万窗口、256000 输出和 30 分钟超时；负值、显式零输出/不足最小窗口、类型错误和整数/时长溢出仍拒绝。
+- 平台最大 int 下的百分比取整对照大整数计算，三种压缩模式的请求均保留完整窗口预算与 5% 余量，默认行为和内部小请求预算不变。
+- 使用 Go 虚拟时间和假 HTTP transport 验证普通/SSE 请求静默等待 11 分钟后，在 30 分钟配置下仍完成；外部传入 http.Client 的短 timeout 不覆盖模型设置，输出 256000 原样发出。没有真实等待 11 分钟或调用付费模型。
+- agentlimits、config、command、dashboard、agentloop、agentui、modelclient、agentcontroller 八包全量测试及 vet 通过；agentloop、agentui、modelclient 的活动生命周期、模型设置和无响应超时定向 race 通过。原有小窗口及 SSE 连续响应续期回归仍通过。
+- Linux 完整 CLI 构建及 version 运行、Darwin/arm64 交叉构建通过，产物 `/tmp/edu-agent-thinking-settings.Msosid`；没有新增 macOS 原生运行证据。本机配置未修改，用户报告的那一次超时尚无具体错误码/耗时证据，不能据此断言其唯一来源。

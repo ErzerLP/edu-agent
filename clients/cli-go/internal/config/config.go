@@ -121,7 +121,7 @@ func (s Store) Load() (Config, error) {
 		return Config{}, fmt.Errorf("decode configuration presence: %w", err)
 	}
 	if explicit.Agent != nil && len(explicit.Agent.MaxTokens) != 0 && (value.Agent == nil || !agentlimits.ValidMaxTokens(value.Agent.MaxTokens)) {
-		return Config{}, errors.New("agent configuration: explicit max tokens must be between 1 and 128000")
+		return Config{}, errors.New("agent configuration: explicit max tokens must be a positive integer")
 	}
 	if err := value.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate configuration: %w", err)
@@ -294,17 +294,16 @@ func (c *AgentConfig) Validate() error {
 		c.MaxTokens = DefaultAgentMaxTokens
 	}
 	if !agentlimits.ValidMaxTokens(c.MaxTokens) {
-		return errors.New("max tokens must be between 1 and 128000")
+		return errors.New("max tokens must be a positive integer")
 	}
-	if c.ContextWindow < 4096 || c.ContextWindow > 1_000_000 {
-		return errors.New("context window must be between 4096 and 1000000")
+	if c.ContextWindow < 4096 {
+		return errors.New("context window must be at least 4096")
 	}
 	if c.Timeout == "" {
 		c.Timeout = DefaultAgentTimeout.String()
 	}
-	timeout, err := ParseTimeout(c.Timeout)
-	if err != nil || timeout > 10*time.Minute {
-		return errors.New("agent inactivity timeout must be a positive duration no greater than 10m")
+	if _, err := ParseTimeout(c.Timeout); err != nil {
+		return errors.New("agent inactivity timeout must be a positive duration")
 	}
 	if !agentlimits.ValidToolRounds(c.MaxToolRounds) {
 		return errors.New("max tool rounds must be non-negative; 0 means unlimited")

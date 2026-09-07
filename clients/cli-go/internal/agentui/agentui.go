@@ -890,6 +890,7 @@ func (m *model) finishTurn(result agentloop.Result, err error) {
 	m.activeTimeoutBudget = 0
 
 	if err != nil {
+		m.finishThinkingActivities(turnID, err)
 		if errors.Is(err, context.Canceled) && wasStopping {
 			m.markAssistantDraft(turnID, "stopped")
 			m.status = "已停止当前轮次"
@@ -936,6 +937,26 @@ func (m *model) finishTurn(result agentloop.Result, err error) {
 	m.handleTurnResult(result)
 	m.clearActiveTurn()
 	m.restoreInputFocus()
+}
+
+// Only the worker's completed result settles an interrupted request. Do not
+// mark it finished merely because Esc was pressed, or alter tool outcomes.
+func (m *model) finishThinkingActivities(turnID uint64, err error) {
+	for i := range m.entries {
+		entry := &m.entries[i]
+		if entry.kind != entryThinking || entry.turnID != turnID || normalizedEventStatus(entry.activity.Event.Status) != agentloop.EventRunning {
+			continue
+		}
+		entry.activity.Event.Status = agentloop.EventFailed
+		entry.activity.Event.Summary = "当前请求未完成"
+		entry.activity.StableCode = stableErrorCode(err)
+		entry.activity.Event.Detail = entry.activity.StableCode
+		entry.activity.UpdatedAt = time.Now()
+		if errors.Is(err, context.Canceled) {
+			entry.activity.Phase = agentloop.ActivityStopped
+			entry.activity.Event.Summary = "当前请求已停止"
+		}
+	}
 }
 
 func (m *model) restorePending(kind turnKind, question *agentloop.PendingQuestion, preference *agentloop.PreferenceConfirmation) {

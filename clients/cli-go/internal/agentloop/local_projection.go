@@ -300,7 +300,7 @@ func (s *Session) localProjectionRoomLocked(callID string) int {
 	}
 	messages = append(messages, modelclient.Message{Role: "tool", ToolCallID: callID})
 	fixed := s.estimator.EstimateRequest(modelclient.Request{Messages: messages, Tools: s.tools()})
-	return max(0, s.options.ContextWindow-512-divideRoundUp(s.options.ContextWindow*5, 100)-fixed)
+	return max(0, s.options.ContextWindow-512-percentRoundUp(s.options.ContextWindow, 5)-fixed)
 }
 
 // Caller holds appendMu; only live contains bounded body data. The stable

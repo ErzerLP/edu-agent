@@ -108,5 +108,14 @@ func divideRoundUp(value, divisor int) int {
 	if value <= 0 {
 		return 0
 	}
-	return (value + divisor - 1) / divisor
+	return 1 + (value-1)/divisor
+}
+
+// percentRoundUp avoids overflowing the intermediate product for a configured
+// window near MaxInt. Callers supply a percentage in the fixed range 0..100.
+func percentRoundUp(value, percent int) int {
+	if value <= 0 {
+		return 0
+	}
+	return value/100*percent + divideRoundUp(value%100*percent, 100)
 }

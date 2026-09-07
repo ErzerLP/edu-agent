@@ -133,8 +133,8 @@ func newContextRuntime(model Model, options Options, estimator TokenEstimator) *
 		now:                 options.Now,
 		mode:                options.ContextCompaction,
 		contextWindow:       options.ContextWindow,
-		observeAfterTokens:  clampInt(divideRoundUp(options.ContextWindow*12, 100), 2000, 8000),
-		observerChunkTokens: clampInt(divideRoundUp(options.ContextWindow*20, 100), 512, 8192),
+		observeAfterTokens:  clampInt(percentRoundUp(options.ContextWindow, 12), 2000, 8000),
+		observerChunkTokens: clampInt(percentRoundUp(options.ContextWindow, 20), 512, 8192),
 		warmEvidenceLimit:   maxContextWarmEvidenceBytes,
 		hotTurns:            make(map[string]struct{}),
 		closeWait:           defaultContextCloseWait,
@@ -732,7 +732,7 @@ func (r *ContextRuntime) reflectorSnapshotLocked() (reflectorSnapshot, bool) {
 		activeTokens += observation.TokenEstimate
 	}
 	due := r.ledger.SuccessfulObserverRuns-r.lastReflectedRun >= 2 ||
-		activeTokens >= divideRoundUp(r.contextWindow*10, 100) || r.softPressure
+		activeTokens >= percentRoundUp(r.contextWindow, 10) || r.softPressure
 	if !due {
 		return reflectorSnapshot{}, false
 	}

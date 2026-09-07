@@ -3,7 +3,6 @@ package agentloop
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
@@ -44,6 +43,7 @@ func (s *Session) runOnce(ctx context.Context, events []Event) (Result, error) {
 	summary := "正在分析问题"
 	if len(events) > 0 {
 		summary = "正在结合工具结果继续分析"
+		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: summary, Status: EventRunning}, Phase: ActivityContinuingAfterTool})
 	}
 	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: summary, Status: EventRunning}, Phase: ActivityPreparingContext})
 	plan, err := s.contextPlan()
@@ -331,7 +331,6 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: fmt.Sprintf("continue-%d", s.activitySequence), Summary: "正在结合工具结果继续分析", Status: EventRunning}, Phase: ActivityContinuingAfterTool})
 	return Result{}, &continueAgentLoopError{events: events}
 }
 

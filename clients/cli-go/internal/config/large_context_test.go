@@ -17,7 +17,7 @@ func TestLargeContextDefaultsAndValidation(t *testing.T) {
 			candidate := value
 			candidate.MaxTokens = limit
 			err := candidate.Validate()
-			if (err != nil) != (limit < 0 || limit > 128000) {
+			if (err != nil) != (limit < 0) {
 				t.Fatalf("limit=%d err=%v", limit, err)
 			}
 			if limit == 0 && candidate.MaxTokens != 128000 {

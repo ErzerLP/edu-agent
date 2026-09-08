@@ -1663,8 +1663,16 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 		{Message: modelclient.Message{Role: "assistant", ToolCalls: calls}},
 		{Message: modelclient.Message{Role: "assistant", Content: "已结合四个结果。"}},
 	}}
+	// Automatic consolidation may run after Send returns. Record only foreground
+	// requests so the observer cannot mutate the fixture during assertions.
+	foregroundModel := localExecutionModel(func(ctx context.Context, request modelclient.Request) (modelclient.Response, error) {
+		if len(request.Tools) == 1 && request.Tools[0].Function.Name == observerToolName {
+			return modelclient.Response{}, errors.New("observer is outside this projection fixture")
+		}
+		return model.Complete(ctx, request)
+	})
 	uuidCalls := 0
-	session, err := New(model, &fakeServer{}, Options{
+	session, err := New(foregroundModel, &fakeServer{}, Options{
 		ContextWindow: 4096, MaxToolRounds: 8, Workspace: executor,
 		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
@@ -1675,6 +1683,7 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(session.Close)
 	if _, err := session.Send(t.Context(), "读取并搜索工作区"); err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/google/uuid"
 	internaldiff "github.com/rogpeppe/go-internal/diff"
 )
@@ -182,6 +183,8 @@ type ReviewSummary struct {
 }
 
 type ReviewStatus struct {
+	LearningSpaceID         string `json:"learning_space_id,omitempty"`
+	CollectionID            string `json:"collection_id,omitempty"`
 	Configured              bool   `json:"configured"`
 	Compatible              bool   `json:"compatible"`
 	Reason                  string `json:"reason"`
@@ -353,8 +356,12 @@ type previewRemoteNote struct {
 }
 
 func (s *ReviewService) Status(ctx context.Context) ReviewStatus {
+	if err := requireDefaultMapping(ctx); err != nil {
+		return ReviewStatus{Reason: "source_mapping_unavailable"}
+	}
 	capability := s.remote.Probe(ctx, s.vault)
 	return ReviewStatus{
+		LearningSpaceID: learningspace.DefaultID, CollectionID: knowledge.DefaultCollectionID,
 		Configured: true, Compatible: capability.Compatible, Reason: capability.Reason,
 		Version: capability.Version, Vault: s.vault, PathPrefix: s.pathPrefix,
 		ExternalCleanupRequired: true,
@@ -362,6 +369,9 @@ func (s *ReviewService) Status(ctx context.Context) ReviewStatus {
 }
 
 func (s *ReviewService) Preview(ctx context.Context, command PreviewCommand) (PreviewResult, error) {
+	if err := requireDefaultMapping(ctx); err != nil {
+		return PreviewResult{}, err
+	}
 	page, pageSize := command.Page, command.PageSize
 	if page == 0 {
 		page = 1
@@ -513,6 +523,9 @@ func (s *ReviewService) previewNote(ctx context.Context, note Note, missing bool
 }
 
 func (s *ReviewService) ListReviews(ctx context.Context, command ReviewListCommand) (ReviewPage, error) {
+	if err := requireDefaultMapping(ctx); err != nil {
+		return ReviewPage{}, err
+	}
 	if command.Limit == 0 {
 		command.Limit = DefaultReviewPageSize
 	}
@@ -530,6 +543,9 @@ func (s *ReviewService) ListReviews(ctx context.Context, command ReviewListComma
 }
 
 func (s *ReviewService) Review(ctx context.Context, reviewID string) (Review, error) {
+	if err := requireDefaultMapping(ctx); err != nil {
+		return Review{}, err
+	}
 	reviewID = strings.ToLower(strings.TrimSpace(reviewID))
 	if uuid.Validate(reviewID) != nil {
 		return Review{}, &ReviewError{Code: CodeReviewInvalidRequest}
@@ -538,6 +554,9 @@ func (s *ReviewService) Review(ctx context.Context, reviewID string) (Review, er
 }
 
 func (s *ReviewService) Resolve(ctx context.Context, command ResolutionCommand) (ResolutionResult, error) {
+	if err := requireDefaultMapping(ctx); err != nil {
+		return ResolutionResult{}, err
+	}
 	command.ReviewID = strings.ToLower(strings.TrimSpace(command.ReviewID))
 	command.OperationID = strings.ToLower(strings.TrimSpace(command.OperationID))
 	command.DeviceID = strings.ToLower(strings.TrimSpace(command.DeviceID))
@@ -677,6 +696,14 @@ func (s *ReviewService) recheckRemote(ctx context.Context, review Review) (Revie
 
 func (s *ReviewService) managesPath(value string) bool {
 	return validManagedPath(value) && strings.HasPrefix(value, s.pathPrefix+"/") && value != s.pathPrefix
+}
+
+// 旧同步配置只对应默认区与默认集合，不能根据客户端活动区猜测远端来源。
+func requireDefaultMapping(ctx context.Context) error {
+	if learningspace.Scope(ctx) != learningspace.DefaultID || knowledge.CollectionID(ctx) != knowledge.DefaultCollectionID {
+		return &ReviewError{Code: CodeReviewInvalidRequest}
+	}
+	return nil
 }
 
 func (s *ReviewService) canonicalPath(remotePath string) (string, error) {

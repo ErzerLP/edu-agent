@@ -23,7 +23,7 @@ make cli-build
 
 “AI学习助手”是客户端Agent Loop，不会切换或重启服务端教学模型。它使用受限工具读取服务端知识、学习进度、路线、复习和已接纳偏好，不再对单次用户 turn 的模型工具轮数、单响应工具调用数量或总工具调用数设置固定上限；循环由模型最终回答、用户交互、取消、超时或上下文管理结束。输入、单个协议载荷、工具结果投影和上下文仍保留独立安全边界。模型文本在渲染前会移除终端控制字符；保存长期偏好前，TUI会在可滚动区域展示内容、理由、类别、敏感性和稳定性并获得明确确认。新 Agent Session 默认使用系统钥匙串保护的密钥自动加密保存；可在工作台“AI助手与模型”设置中切换，或用 `edu-agent model set --session-history auto|off` 控制后续新会话，`off` 不影响恢复和删除已有历史。TUI 空闲时按 `F2` 可在共享 Session picker 中搜索、恢复、重命名、二次确认删除或新建会话；切换后 YOLO、旧文件授权和未完成交互一律重置。Session 不按时间自动删除，达到硬上限也不自动淘汰，需用 `agent sessions delete/clear` 手动清理。`edu-agent agent --no-save` 仅关闭当前新会话的持久化且不改配置；自动标题会向当前模型端点发送有界、清理后的已提交用户文本和安全最终回答，恢复后的下一模型请求会向当前 provider 发送历史上下文，端点身份变化时必须先确认。恢复绑定旧工作区；旧 root 不可用时只恢复本地对话并禁用文件工具，绝不回退到当前目录，且历史文件正文不代表磁盘当前内容。平台密钥服务不可用时只降级为明确的未保存状态，不写明文。`clear` 只清除本地 Agent Session store，不清除服务端事件、Nocturne、终端 scrollback、Shell history、provider retention 或 OS backup。`TERM=dumb`、stdin/stdout非TTY或传入显式子命令时不会启动全屏界面。
 
-学习区由服务端持久化。TUI 主菜单按 `z`，或运行 `edu-agent space browse`；脚本可使用 `space list/create/show/edit/archive/restore`，完整参数见 `space help`。当前选择仅属于本客户端进程，脚本用 `--space UUID` 显式指定；无参数旧入口固定绑定默认区。资料、目标、教学和记忆目前只支持默认区，非默认区会明确显示不可用，不会冒充数据隔离。详见[学习区范围与兼容契约](docs/design/learning-spaces.md)。
+学习区由服务端持久化。TUI 主菜单按 `z`，或运行 `edu-agent space browse`；脚本可使用 `space list/create/show/edit/archive/restore`，完整参数见 `space help`。当前选择仅属于本客户端进程，脚本用 `--space UUID` 显式指定；无参数旧入口固定绑定默认区。资料支持按区引用集合，用 `knowledge library help` 查看创建、共享、关联、预览和冻结范围命令；交互入口为 `knowledge library browse`。导入时使用 `knowledge import --collection UUID 路径` 明确来源集合。目标、教学和记忆仍只支持默认区。详见[资料范围与使用说明](docs/design/knowledge-spaces.md)和[学习区基础契约](docs/design/learning-spaces.md)。
 
 ## 开发入口
 

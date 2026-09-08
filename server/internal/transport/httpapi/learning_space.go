@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"io"
 	"net/http"
 	"strconv"
@@ -27,7 +28,11 @@ func (a *API) mountLearningSpaces(r chi.Router) {
 			spaceFailure(w, r, &space.Error{Code: "learning_spaces_unsupported"})
 			return
 		}
-		writeJSON(w, 200, map[string]any{"version": 1, "default_space_id": space.DefaultID, "legacy_scope": "fixed_default", "modules": map[string]string{"knowledge": "default_only", "learning": "default_only", "tutoring": "default_only", "memory": "default_only"}})
+		knowledgeMode := "default_only"
+		if service, ok := a.knowledge.(knowledgeSpaces); ok && service.SupportsKnowledgeScopes() {
+			knowledgeMode = "collections_v1"
+		}
+		writeJSON(w, 200, map[string]any{"version": 1, "default_space_id": space.DefaultID, "legacy_scope": "fixed_default", "modules": map[string]string{"knowledge": knowledgeMode, "learning": "default_only", "tutoring": "default_only", "memory": "default_only"}})
 	})
 	if a.learningSpaces == nil {
 		return
@@ -134,7 +139,7 @@ func legacyBusinessPath(path string) bool {
 }
 func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Has("learning_space_id") || r.URL.Query().Has("space_id") {
+		if r.URL.Query().Has("learning_space_id") || r.URL.Query().Has("space_id") || r.URL.Query().Has("collection_id") || r.URL.Query().Has("scope_snapshot_id") {
 			spaceFailure(w, r, space.Invalid())
 			return
 		}
@@ -165,7 +170,9 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_archived"})
 						return
 					}
-					if id != space.DefaultID {
+					scopedKnowledge, implementsKnowledge := a.knowledge.(knowledgeSpaces)
+					supportsKnowledge := implementsKnowledge && scopedKnowledge.SupportsKnowledgeScopes()
+					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_module_unavailable"})
 						return
 					}
@@ -173,11 +180,22 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 			}
 		}
 		ctx, _ := space.WithScope(r.Context(), id)
+		if values, present := r.Header[http.CanonicalHeaderKey(knowledge.CollectionHeader)]; present {
+			if len(values) != 1 || !space.ValidID(values[0]) || !collectionSelectionPath(r.URL.Path) {
+				spaceFailure(w, r, space.Invalid())
+				return
+			}
+			ctx, _ = knowledge.WithCollection(ctx, values[0])
+		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 func (a *API) rejectMCPSpace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := r.Header[http.CanonicalHeaderKey(knowledge.CollectionHeader)]; ok {
+			spaceFailure(w, r, &space.Error{Code: "learning_spaces_unsupported"})
+			return
+		}
 		if _, ok := r.Header[http.CanonicalHeaderKey(space.Header)]; ok || r.URL.Query().Has("learning_space_id") || r.URL.Query().Has("space_id") {
 			spaceFailure(w, r, &space.Error{Code: "learning_spaces_unsupported"})
 			return

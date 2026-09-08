@@ -1,5 +1,13 @@
 # Knowledge Core 完整规格
 
+## 学习区资料范围（Issue #3）
+
+知识资料按有稳定 ID 的来源集合组织；学习区显式引用集合，正文和稳定文档/节点身份不因共享复制。每个集合维护独立版本和相对路径命名空间，旧全局 catalog 迁入固定默认集合，保留原 ID、正文版本、哈希和历史引用。下文的单 catalog 语义继续描述一个集合内部的版本、导入和身份规则。
+
+浏览按明确集合读取最新内容。正式资料范围使用独立快照，固定多个集合版本及可选文档/章节子树。快照属于创建区；解除当前引用不销毁历史范围。新版本只能提示可更新内容，不能自动替换已冻结依据。候选生成、排序、模型输入、树与导出在服务端应用同一范围；跨区 ID、混用范围参数、无效范围和清除后的范围失败，不回退全库。
+
+用户可通过 HTTP、CLI 及交互式资料入口管理集合/引用、查看正文和选择冻结范围。MCP 检索使用相同校验，保持无高权限写入口。管理页显式选择范围。旧 NoteSync 单 vault 仅映射固定默认区/集合，其他未映射来源明确不可用。隐私清除覆盖集合元数据、引用、冻结条目与原正文。具体公共字段、使用链路与验证见 [资料范围设计](../../../design/knowledge-spaces.md)。
+
 ## 模块边界
 
 `server/internal/knowledge` 拥有 canonical Markdown、catalog snapshot、document identity、node identity、node lineage、派生 knowledge artifact 和检索 trace 的业务语义。端口由 knowledge 应用层定义，PostgreSQL adapter、LLM selector adapter 和 HTTP transport 只实现这些端口；其他模块不得直接读取 knowledge 表。

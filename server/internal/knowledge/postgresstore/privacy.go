@@ -70,6 +70,9 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 
 	switch request.Store {
 	case privacy.StoreKnowledgeContent:
+		if _, err := tx.Exec(ctx, `UPDATE knowledge_collections SET name='[redacted]',source='privacy_erasure',shared=false; DELETE FROM knowledge_collection_links WHERE NOT(space_id='00000000-0000-4000-8000-000000000001' AND collection_id='00000000-0000-4000-8000-000000000002'); INSERT INTO knowledge_collection_links VALUES('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002') ON CONFLICT DO NOTHING; UPDATE knowledge_scope_snapshots SET entries='[]',redacted=true`); err != nil {
+			return fmt.Errorf("清除资料集合与冻结范围: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_revisions
 			SET source='privacy_erasure',redacted_at=clock_timestamp(),redacted_by_erasure_id=$1
@@ -207,6 +210,9 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 	case privacy.StoreKnowledgeContent:
 		query = `
 			SELECT
+				(SELECT count(*) FROM knowledge_collections WHERE name<>'[redacted]' OR source<>'privacy_erasure' OR shared)+
+				(SELECT count(*) FROM knowledge_collection_links WHERE NOT(space_id='00000000-0000-4000-8000-000000000001' AND collection_id='00000000-0000-4000-8000-000000000002'))+
+				(SELECT count(*) FROM knowledge_scope_snapshots WHERE entries<>'[]'::jsonb OR NOT redacted)+
 				(SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown <> '')+
 				(SELECT count(*) FROM knowledge_snapshot_documents WHERE canonical_path NOT LIKE 'erased/%')+
 				(SELECT count(*) FROM knowledge_snapshot_documents WHERE folded_path NOT LIKE 'erased/%')+

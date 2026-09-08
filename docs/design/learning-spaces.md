@@ -1,5 +1,7 @@
 # 学习区基础契约（Issue #2）
 
+本文记录 Issue #2 的基础交付。后续 Issue #3 已将资料模块接入集合与冻结范围，当前知识能力为 `collections_v1`；其他模块仍保持下述默认区兼容行为。最新资料入口见[资料范围设计](knowledge-spaces.md)。
+
 ## 确认与交付范围
 
 基线 `c5eb38d` 没有学习区实体、迁移、HTTP 生命周期或客户端选择入口。`server/internal/learning/domain.go:110` 的 `GoalRevision` 没有空间归属；`server/internal/learning/postgresstore/projection.go:560` 的 `CurrentSession` 直接读取全局当前会话。已有“学习区”文字仅指侧栏。

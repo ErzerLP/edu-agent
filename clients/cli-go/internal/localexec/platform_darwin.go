@@ -37,7 +37,8 @@ func terminalEOF(error) bool { return false }
 
 // Modern Darwin does not export e_sess kernel pointers through sysctl. Use
 // numeric session IDs instead, while the unreaped leader still pins the SID.
-// A failed lookup is only harmless if the process really disappeared.
+// Failed lookups remain uncertain unless disappearance or a non-running zombie
+// outside the anchored root group is confirmed below.
 func sessionHasMembers(sid int, liveOnly bool) (bool, error) {
 	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {

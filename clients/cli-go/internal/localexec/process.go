@@ -1,7 +1,6 @@
 package localexec
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"time"
@@ -11,6 +10,8 @@ type exitResult struct {
 	state *os.ProcessState
 	err   error
 }
+
+var signalTaskGroup = signalProcessGroup
 
 // The leader is observed WITHOUT reaping (WNOWAIT). Until all group signals are
 // finished its PID therefore remains reserved, even if the shell has exited.
@@ -89,7 +90,6 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 
 	// An anchored, exited leader plus no LIVE group members needs no signal.
 	// Zombies are checked separately after reap, and are never called clean.
-	var settlementError error
 	groupSettled := func() bool {
 		checkObserved()
 		if !observed || observationError != nil {
@@ -97,11 +97,9 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		}
 		if t.snapshot.PTY {
 			live, err := sessionHasMembers(pid, true)
-			settlementError = err
 			return err == nil && !live
 		}
 		live, err := groupHasLiveMembers(pid)
-		settlementError = err
 		return err == nil && !live
 	}
 	awaitSettlement := func(budget time.Duration) bool {
@@ -125,11 +123,10 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	}
 
 	settled := groupSettled()
-	signalFailed := false
 	if !settled && observationError == nil {
-		if err := signalProcessGroup(pid, false); err != nil {
-			signalFailed = true
-		}
+		// Signal errors do not prove residual processes. Always verify the
+		// actual group/session state, including after a failed attempt.
+		_ = signalTaskGroup(pid, false)
 		settled = awaitSettlement(m.options.StopGrace)
 		if !settled && observationError == nil {
 			if t.snapshot.PTY {
@@ -139,9 +136,7 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 				// cannot establish EOF and capture reports incomplete honestly.
 				closeFile(pipes.stdoutReader)
 			}
-			if err := signalProcessGroup(pid, true); err != nil {
-				signalFailed = true
-			}
+			_ = signalTaskGroup(pid, true)
 			settled = awaitSettlement(killSettleLimit)
 		}
 	}
@@ -149,10 +144,8 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	// the leader. Do not chase old numeric identities after reap. A detached
 	// session is outside this contract; a remaining job-control pgrp is not.
 	sessionIncomplete := false
-	var sessionError error
 	if t.snapshot.PTY {
 		exists, err := sessionHasMembers(pid, false)
-		sessionError = err
 		sessionIncomplete = exists || err != nil
 	}
 	// Ownership of the leader ends here. Even if it is stuck in kernel I/O,
@@ -175,16 +168,10 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		default:
 		}
 	}
-	cleanupIncomplete := !settled || signalFailed || !haveResult || observationError != nil || sessionIncomplete
-	groupExists := false
-	var groupError error
+	cleanupIncomplete := !settled || !haveResult || observationError != nil || sessionIncomplete
 	if haveResult && !t.snapshot.PTY {
 		exists, err := processGroupExists(pid)
-		groupExists, groupError = exists, err
 		cleanupIncomplete = cleanupIncomplete || err != nil || exists
-	}
-	if cleanupIncomplete && os.Getenv("EDU_AGENT_CLEANUP_DIAGNOSTICS") == "1" {
-		fmt.Fprintf(os.Stderr, "CLEANUP_DIAGNOSTICS pty=%v settled=%v settlement_error=%v signal_failed=%v reaped=%v observe_error=%v session_incomplete=%v session_error=%v group_exists=%v group_error=%v\n", t.snapshot.PTY, settled, settlementError, signalFailed, haveResult, observationError, sessionIncomplete, sessionError, groupExists, groupError)
 	}
 
 	// Bound pipe waiting independently from journal I/O. Each capture spends

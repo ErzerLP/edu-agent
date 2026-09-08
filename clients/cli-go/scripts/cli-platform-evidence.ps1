@@ -324,6 +324,7 @@ if ($env:RUNNER_OS_NAME -eq "macOS") {
 }
 if ($env:RUNNER_OS_NAME -in @("Linux", "macOS")) {
     $checks += @(
+        @{ Name = "local-tools-signal-settlement"; Package = "./internal/localexec"; Expected = @("TestStopSettlementOverridesSignalAttemptError"); Method = "signal-error+independent-exit-and-group-proof" },
         @{ Name = "local-tools-purge-links"; Package = "./internal/securefile"; Expected = @("TestArchivePurgeCompleteFrozenPostorder2501", "TestArchivePurgeLeavesContainersAndLargeBinary"); Method = "real-archive+symlink-itself+external-target-preserved" },
         @{ Name = "local-tools-large-edit"; Package = "./internal/agentloop"; Expected = @("TestLargeFileReadModelPaginationAndVisibleActivity", "TestLargeFileEditModelAuthorizationAndSettlement"); Method = "scripted-model+large-file+authorization+visible-activity" },
         @{ Name = "local-tools-pty-recovery"; Package = "./internal/agentcontroller"; Expected = @("TestPTYLocalTerminalPortsAndEncryptedRecovery"); Method = "real-pty+direct-client-input+resize+encrypted-recovery" },

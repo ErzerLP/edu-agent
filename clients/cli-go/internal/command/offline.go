@@ -128,7 +128,7 @@ func (a *App) runOfflinePrepare(ctx context.Context, args []string) error {
 		return err
 	}
 	defer store.Close()
-	client := a.NewClient(bound.Config.ServerURL, bound.Token, timeout)
+	client := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout)
 
 	currentTrustState := store.TrustState()
 	verificationTrust := trust
@@ -421,7 +421,7 @@ func (a *App) runOfflineSync(ctx context.Context, args []string) error {
 		_ = store.Recover(ctx)
 		return offlineStoreError(err)
 	}
-	response, err := a.NewClient(bound.Config.ServerURL, bound.Token, timeout).SyncOfflineCanonical(ctx, canonicalRequest)
+	response, err := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout).SyncOfflineCanonical(ctx, canonicalRequest)
 	if err != nil {
 		_ = store.Recover(ctx)
 		return mapAPIError(err)
@@ -528,7 +528,7 @@ func (a *App) runOfflinePurge(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	client := a.NewClient(bound.Config.ServerURL, bound.Token, timeout)
+	client := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout)
 	purger, ok := client.(offlinePurgeAPI)
 	if !ok {
 		return commandError("client_unsupported", "this client cannot process offline privacy purge tasks", "upgrade the CLI", ExitInternal)

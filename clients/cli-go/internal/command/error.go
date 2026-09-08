@@ -48,6 +48,17 @@ func mapAPIError(err error) *Error {
 	if errors.As(err, &apiErr) {
 		mapped := &Error{Code: apiErr.Code, RequestID: apiErr.RequestID, ExitCode: ExitConflict}
 		switch apiErr.Code {
+		case "learning_spaces_unsupported", "learning_space_module_unavailable":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "learning spaces are unsupported by this server or the selected business module"
+			mapped.Next = "upgrade the server or explicitly select the default learning space"
+		case "invalid_learning_space":
+			mapped.ExitCode = ExitInput
+			mapped.Detail = "learning space scope or metadata is invalid"
+			mapped.Next = "use space help"
+		case "learning_space_not_found", "learning_space_archived":
+			mapped.Detail = "the learning space does not exist or is archived"
+			mapped.Next = "use space list or space restore"
 		case "authentication_failed":
 			mapped.ExitCode = ExitAuth
 			mapped.Detail = "authentication failed or the credential may have been revoked"

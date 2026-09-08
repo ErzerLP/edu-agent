@@ -179,6 +179,8 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		name string
 		sql  string
 	}{
+		{"learning space operations", `UPDATE learning_space_operations SET request_hash=decode(repeat('00',32),'hex'),result='{"redacted":true}'::jsonb`},
+		{"learning spaces", `UPDATE learning_spaces SET name='[redacted]',description='',status=CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END,version=version+1,updated_at=clock_timestamp() WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END`},
 		{"learning inbox", `UPDATE learning_inbox SET result='{"redacted":true}'::jsonb`},
 		{"learning goals", `UPDATE learning_goal_revisions SET goal_text='[redacted]',source='privacy_erasure'`},
 		{"learning route steps", `UPDATE learning_route_steps SET teaching_intent='[redacted]',completion_condition='[redacted]'`},
@@ -372,6 +374,8 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 	err := db.QueryRow(ctx, `
 		SELECT COALESCE(sum(remaining),0)::bigint FROM (
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
+			UNION ALL SELECT count(*) FROM learning_space_operations WHERE request_hash<>decode(repeat('00',32),'hex') OR result<>'{"redacted":true}'::jsonb
+			UNION ALL SELECT count(*) FROM learning_spaces WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END
 			UNION ALL SELECT count(*) FROM learning_goal_revisions WHERE goal_text<>'[redacted]' OR source<>'privacy_erasure'
 			UNION ALL SELECT count(*) FROM learning_route_steps WHERE teaching_intent<>'[redacted]' OR completion_condition<>'[redacted]'
 			UNION ALL SELECT count(*) FROM learning_activities WHERE prompt<>'[redacted]' OR rubric_revision<>'[redacted]' OR rubric<>'{"redacted":true}'::jsonb

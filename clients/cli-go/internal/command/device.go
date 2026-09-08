@@ -56,7 +56,7 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 		_, _ = fmt.Fprintln(a.Err, warning)
 	}
 	timeout, _ := config.ParseTimeout(resolved.Timeout)
-	issued, pairErr := a.NewClient(resolved.ServerURL, "", timeout).Pair(ctx, code, name)
+	issued, pairErr := a.scopedClient(resolved.ServerURL, "", timeout).Pair(ctx, code, name)
 	code = ""
 	if pairErr != nil {
 		var apiErr *api.APIError
@@ -193,7 +193,7 @@ func (a *App) runDeviceStatus(ctx context.Context, args []string) error {
 		return err
 	}
 	a.printInsecureWarning(bound.Config)
-	client := a.NewClient(bound.Config.ServerURL, bound.Token, timeout)
+	client := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout)
 	devices, err := client.Devices(ctx)
 	if err != nil {
 		return mapAPIError(err)
@@ -274,7 +274,7 @@ func (a *App) runLogout(ctx context.Context, args []string) error {
 		}
 	}
 	a.printInsecureWarning(bound.Config)
-	err = a.NewClient(bound.Config.ServerURL, bound.Token, timeout).RevokeDevice(ctx, bound.Config.DeviceID)
+	err = a.scopedClient(bound.Config.ServerURL, bound.Token, timeout).RevokeDevice(ctx, bound.Config.DeviceID)
 	if err != nil {
 		var apiErr *api.APIError
 		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {

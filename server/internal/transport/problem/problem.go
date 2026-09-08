@@ -8,6 +8,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type Problem struct {
@@ -59,7 +60,18 @@ func ContentRedacted() Problem {
 	return Problem{Status: http.StatusServiceUnavailable, Code: memory.CodeContentRedacted, Message: "Content was redacted before the response completed"}
 }
 
+func learningSpaceArchive(err error) (Problem, bool) {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Message == "learning_space_archived" {
+		return Problem{Status: 409, Code: "learning_space_archived", Message: "Restore the learning space before writing new business data"}, true
+	}
+	return Problem{}, false
+}
+
 func Knowledge(err error) Problem {
+	if p, ok := learningSpaceArchive(err); ok {
+		return p
+	}
 	code := knowledge.ErrorCode(err)
 	result := Internal()
 	result.Code = code
@@ -99,6 +111,9 @@ func Knowledge(err error) Problem {
 }
 
 func Learning(err error) Problem {
+	if p, ok := learningSpaceArchive(err); ok {
+		return p
+	}
 	code := learning.ErrorCode(err)
 	result := Internal()
 	result.Code = code
@@ -140,6 +155,9 @@ func Learning(err error) Problem {
 }
 
 func Memory(err error) Problem {
+	if p, ok := learningSpaceArchive(err); ok {
+		return p
+	}
 	code := memory.ErrorCode(err)
 	result := Internal()
 	result.Code = code

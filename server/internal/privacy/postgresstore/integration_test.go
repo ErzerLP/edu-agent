@@ -13,6 +13,8 @@ import (
 	knowledgedb "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningdb "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
+	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	memorydb "github.com/edu-agent/edu-agent/server/internal/memory/postgresstore"
 	outboxdb "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
@@ -91,6 +93,15 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	}
 	cancelDrain()
 	blockingPermit.Release()
+	spaces := spacedb.New(pool)
+	spaceCommand := space.Command{OperationID: uuid.NewString(), Name: "private learning direction", Description: "private description", Status: "active"}
+	privateSpace, err := spaces.Mutate(ctx, deviceID, "", spaceCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = spaces.Mutate(ctx, deviceID, space.DefaultID, space.Command{OperationID: uuid.NewString(), ExpectedVersion: 1, Name: "private default", Status: "archived"}); err != nil {
+		t.Fatal(err)
+	}
 	reopenedPermit, err := manager.Acquire(ctx, privacy.OwnerIdentity)
 	if err != nil {
 		t.Fatalf("failed barrier drain left manager closed: %v", err)
@@ -162,6 +173,17 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	}
 	if complete.Status != privacy.StatusLocalScrubbed {
 		t.Fatalf("local receipt=%+v", complete)
+	}
+	redactedSpace, err := spaces.Get(ctx, privateSpace.ID)
+	if err != nil || redactedSpace.Name != "[redacted]" || redactedSpace.Description != "" || redactedSpace.Status != "archived" {
+		t.Fatalf("space metadata survived scrub: %+v err=%v", redactedSpace, err)
+	}
+	if _, err = spaces.Mutate(ctx, deviceID, "", spaceCommand); privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+		t.Fatalf("old retry resurrected metadata: %v", err)
+	}
+	defaultSpace, err := spaces.Get(ctx, space.DefaultID)
+	if err != nil || defaultSpace.Status != "active" || defaultSpace.Name != "[redacted]" {
+		t.Fatalf("default after privacy=%+v err=%v", defaultSpace, err)
 	}
 	resumed, err := store.RunLocalScrub(ctx, barrier.ErasureID)
 	if err != nil || resumed.Status != privacy.StatusLocalScrubbed || resumed.ErasureID != complete.ErasureID {

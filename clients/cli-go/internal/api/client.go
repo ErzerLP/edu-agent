@@ -44,13 +44,14 @@ type TransportError struct{ Category string }
 func (e *TransportError) Error() string { return "api transport error: " + e.Category }
 
 type Client struct {
-	baseURL string
-	token   string
-	timeout time.Duration
-	http    *http.Client
-	maxBody int64
-	now     func() time.Time
-	sleep   func(context.Context, time.Duration) error
+	learningSpace string
+	baseURL       string
+	token         string
+	timeout       time.Duration
+	http          *http.Client
+	maxBody       int64
+	now           func() time.Time
+	sleep         func(context.Context, time.Duration) error
 }
 
 func NewClient(baseURL, token string, timeout time.Duration, source *http.Client) *Client {
@@ -328,6 +329,14 @@ func (c *Client) doCanonicalJSON(ctx context.Context, method, path string, authe
 func (c *Client) doJSONBody(ctx context.Context, method, path string, authenticated bool, body []byte, hasBody bool, success map[int]bool, retry bool, target any) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
+	if c.learningSpace != "" && spaceBusinessPath(path) {
+		if !validLearningUUID(c.learningSpace) {
+			return 0, &ProtocolError{Category: "invalid_learning_space"}
+		}
+		if _, err := c.LearningSpacesCapabilities(ctx); err != nil {
+			return 0, err
+		}
+	}
 	attempts := 1
 	if retry {
 		attempts = 2
@@ -364,6 +373,9 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", userAgent)
+	if c.learningSpace != "" && spaceBusinessPath(path) {
+		request.Header.Set("X-Learning-Space-ID", c.learningSpace)
+	}
 	if hasBody {
 		request.Header.Set("Content-Type", "application/json")
 	}
@@ -708,7 +720,7 @@ func validateErrorResponse(method, path string, status int, value ErrorResponse)
 			return errors.New("unexpected learning conflict details")
 		}
 	}
-	if value.Error.Code == "version_conflict" && value.Conflict == nil {
+	if value.Error.Code == "version_conflict" && value.Conflict == nil && !strings.HasPrefix(path, "/v1/learning-spaces/") {
 		return errors.New("version conflict details are missing")
 	}
 	if value.Error.Code == "assessment_disposition_conflict" {

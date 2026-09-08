@@ -47,7 +47,7 @@ func (a *App) runKnowledge(ctx context.Context, args []string) error {
 		return err
 	}
 	a.printInsecureWarning(bound.Config)
-	client := a.NewClient(bound.Config.ServerURL, bound.Token, timeout)
+	client := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout)
 	var expectedParent *string
 	head, err := client.KnowledgeHead(ctx)
 	if err != nil {

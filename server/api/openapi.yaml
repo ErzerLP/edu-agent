@@ -6,6 +6,124 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning-spaces/capabilities:
+    get:
+      operationId: getLearningSpaceCapabilities
+      security: [{ deviceBearer: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: Authoritative learning space result. Empty items is success, never a loading failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningSpaceCapabilities" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: learning_space_not_found }
+        "409": { description: version_conflict or idempotency_conflict; refetch metadata or retry the unchanged request. }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: learning_spaces_unsupported; do not create client-only partitions. }
+        "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
+  /v1/learning-spaces:
+    get:
+      operationId: listLearningSpaces
+      security: [{ deviceBearer: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 120 }, description: Literal case-insensitive substring of name or description. }
+        - { name: status, in: query, schema: { type: string, enum: [active, archived] }, description: Omit to include both active and archived. }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 }, description: Opaque keyset cursor bound to search and status. }
+      responses:
+        "200":
+          description: Authoritative learning space result. Empty items is success, never a loading failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningSpacePage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: learning_space_not_found }
+        "409": { description: version_conflict or idempotency_conflict; refetch metadata or retry the unchanged request. }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: learning_spaces_unsupported; do not create client-only partitions. }
+        "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
+    post:
+      operationId: createLearningSpace
+      security: [{ deviceBearer: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LearningSpaceCommand" }
+      responses:
+        "200":
+          description: Committed metadata, or the exact stored response for a retry with the same device, operation ID and payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningSpace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: learning_space_not_found }
+        "409": { description: version_conflict or idempotency_conflict; refetch metadata or retry the unchanged request. }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: learning_spaces_unsupported; do not create client-only partitions. }
+        "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
+  /v1/learning-spaces/{spaceID}:
+    parameters:
+      - name: spaceID
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/LearningUUID" }
+    get:
+      operationId: getLearningSpace
+      security: [{ deviceBearer: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: Authoritative learning space result. Empty items is success, never a loading failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningSpace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: learning_space_not_found }
+        "409": { description: version_conflict or idempotency_conflict; refetch metadata or retry the unchanged request. }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: learning_spaces_unsupported; do not create client-only partitions. }
+        "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
+    put:
+      operationId: updateLearningSpace
+      security: [{ deviceBearer: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LearningSpaceCommand" }
+      responses:
+        "200":
+          description: Committed metadata, or the exact stored response for a retry with the same device, operation ID and payload.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningSpace" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: learning_space_not_found }
+        "409": { description: version_conflict or idempotency_conflict; refetch metadata or retry the unchanged request. }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: learning_spaces_unsupported; do not create client-only partitions. }
+        "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
   /livez:
     get:
       operationId: getLiveness
@@ -141,6 +259,8 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
   /v1/knowledge/revisions/head:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeHead
       summary: Read the current frozen knowledge revision
@@ -148,6 +268,9 @@ paths:
       security:
         - deviceBearer: []
       responses:
+        "400": { description: invalid_learning_space }
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Current immutable knowledge revision.
           content:
@@ -172,6 +295,8 @@ paths:
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/imports:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: importKnowledgeDocuments
       summary: Atomically upsert Markdown documents into a new complete snapshot
@@ -186,6 +311,8 @@ paths:
             schema:
               $ref: "#/components/schemas/KnowledgeImportRequest"
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Idempotent replay or unchanged manifest.
           content:
@@ -221,6 +348,8 @@ paths:
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/maintenance/proposals:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: createKnowledgeMaintenanceProposal
       summary: Submit a sourced proposal against the current canonical knowledge revision
@@ -233,6 +362,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposalRequest" }
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Exact idempotent replay of an existing proposal.
           content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
@@ -264,6 +395,8 @@ paths:
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Deterministically ordered proposal page.
           content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposalPage" } } }
@@ -275,6 +408,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/maintenance/rollbacks:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: createKnowledgeMaintenanceRollback
       summary: Submit a destructive proposal restoring an unredacted ancestor snapshot
@@ -287,6 +422,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/KnowledgeMaintenanceRollbackRequest" }
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Exact idempotent replay of an existing rollback proposal.
           content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
@@ -302,6 +439,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/maintenance/proposals/{proposalID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeMaintenanceProposal
       summary: Read one frozen knowledge maintenance proposal
@@ -309,6 +448,8 @@ paths:
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Frozen proposal, computed impacts, policy versions, decision, and origin.
           content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
@@ -320,6 +461,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/maintenance/proposals/{proposalID}/approve:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: approveKnowledgeMaintenanceProposal
       summary: Approve and atomically apply the exact frozen proposal when it is still current
@@ -331,6 +474,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceDecisionRequest" } } }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Applied or deterministically stale terminal proposal.
           content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
@@ -344,6 +488,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/maintenance/proposals/{proposalID}/reject:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: rejectKnowledgeMaintenanceProposal
       summary: Reject one open knowledge maintenance proposal atomically
@@ -355,6 +501,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceDecisionRequest" } } }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Rejected or deterministically stale terminal proposal.
           content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeMaintenanceProposal" } } }
@@ -368,6 +515,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/revisions/{revisionID}/tree:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeRevisionTree
       summary: Read the deterministic document and node tree for a revision
@@ -377,6 +526,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/KnowledgeRevisionID"
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Complete revision tree.
           content:
@@ -403,6 +554,8 @@ paths:
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/revisions/{revisionID}/export:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: exportKnowledgeRevision
       summary: Export an immutable revision as sorted Obsidian-readable Markdown documents
@@ -412,6 +565,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/KnowledgeRevisionID"
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Sorted Markdown export with source revision metadata.
           content:
@@ -433,6 +588,8 @@ paths:
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/retrievals:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: retrieveKnowledge
       summary: Run deterministic hierarchical retrieval against one frozen revision
@@ -446,6 +603,8 @@ paths:
             schema:
               $ref: "#/components/schemas/KnowledgeRetrievalRequest"
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Candidate trace and canonical hits.
           content:
@@ -469,6 +628,8 @@ paths:
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/notesync/status:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeNotesyncStatus
       summary: Read the Fast Note Sync bridge capability status
@@ -477,6 +638,9 @@ paths:
       security:
         - deviceBearer: []
       responses:
+        "404": { description: learning_space_not_found }
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Current bridge configuration and compatibility status, including an explicit not-configured state.
           content:
@@ -489,6 +653,8 @@ paths:
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/knowledge/notesync/previews:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: previewKnowledgeNotesync
       summary: Preview managed Fast Note Sync notes without importing them
@@ -503,6 +669,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/NotesyncPreviewRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Bounded preview results. An empty result is encoded as an empty items array.
           content:
@@ -518,6 +685,8 @@ paths:
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/knowledge/notesync/reviews:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listKnowledgeNotesyncReviews
       summary: List explicit Fast Note Sync reviews
@@ -546,6 +715,8 @@ paths:
             maximum: 25
             default: 25
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Review summaries with an optional generation-bound cursor.
           content:
@@ -559,6 +730,8 @@ paths:
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/knowledge/notesync/reviews/{reviewID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeNotesyncReview
       summary: Read one complete Fast Note Sync review
@@ -569,6 +742,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/NotesyncReviewID"
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Complete review detail with base, local, remote and diff data.
           content:
@@ -583,6 +757,8 @@ paths:
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/knowledge/notesync/reviews/{reviewID}/resolutions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: resolveKnowledgeNotesyncReview
       summary: Resolve one Fast Note Sync review through the canonical knowledge importer
@@ -599,6 +775,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/NotesyncResolutionRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Idempotent replay, unchanged keep-canonical resolution, or an already committed result.
           content:
@@ -619,6 +796,8 @@ paths:
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/learning/evidence-carryovers:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listEvidenceCarryovers
       summary: List evidence carryover proposals with a generation-bound cursor
@@ -636,6 +815,8 @@ paths:
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Deterministically ordered evidence carryover page.
           content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverPage" } } }
@@ -647,6 +828,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/evidence-carryovers/{proposalID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getEvidenceCarryover
       summary: Read one frozen evidence carryover proposal
@@ -654,6 +837,8 @@ paths:
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Current status, frozen candidates, decision, provisional links, redaction state, and replay state.
           content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
@@ -665,6 +850,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/evidence-carryovers/{proposalID}/approve:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: approveEvidenceCarryover
       summary: Approve one open carryover as replayable provisional learning state
@@ -676,6 +863,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverDecisionRequest" } } }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Approved, stale, or exactly replayed terminal carryover proposal.
           content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
@@ -690,6 +878,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/evidence-carryovers/{proposalID}/reject:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: rejectEvidenceCarryover
       summary: Reject one open carryover without creating projection effects
@@ -701,6 +891,7 @@ paths:
         required: true
         content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverDecisionRequest" } } }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Rejected, stale, or exactly replayed terminal carryover proposal.
           content: { application/json: { schema: { $ref: "#/components/schemas/EvidenceCarryoverProposal" } } }
@@ -715,6 +906,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/goals:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: createLearningGoal
       summary: Create an immutable learning goal revision
@@ -733,6 +926,7 @@ paths:
             },
         }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Idempotent replay.,
@@ -768,6 +962,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/tutoring/sessions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: createTutoringSession
       summary: Create a tutoring session
@@ -787,6 +983,7 @@ paths:
             },
         }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Idempotent replay.,
@@ -822,6 +1019,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/tutoring/proposals:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: proposeTutoringArtifact
       summary: Generate and durably freeze a model proposal without mutating an aggregate
@@ -841,6 +1040,7 @@ paths:
             },
         }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "201":
           {
             description: Durable frozen proposal.,
@@ -861,6 +1061,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/tutoring/sessions/{sessionID}/actions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: applyTutoringAction
       summary: Apply one state-machine action to a tutoring session
@@ -881,6 +1083,7 @@ paths:
             },
         }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Idempotent replay.,
@@ -916,6 +1119,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/assessments/{assessmentID}/decisions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: decideLearningAssessment
       summary: Compensate an assessment disposition and its evidence
@@ -937,6 +1142,7 @@ paths:
             },
         }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Idempotent replay.,
@@ -976,12 +1182,16 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/tutoring/sessions/current:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getCurrentTutoringSession
       summary: Read the current active tutoring session
       x-required-scope: learning:read
       security: [{ deviceBearer: [] }]
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Current session.,
@@ -999,6 +1209,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/tutoring/sessions/{sessionID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getTutoringSession
       summary: Read one tutoring session
@@ -1006,6 +1218,8 @@ paths:
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/SessionID" }]
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Session read model.,
@@ -1023,6 +1237,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/timeline:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listLearningTimeline
       summary: Read event-ordered learning timeline items
@@ -1039,6 +1255,8 @@ paths:
           },
         ]
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Event-ordered timeline page.
           content:
@@ -1052,6 +1270,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/routes:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listLearningRoutes
       summary: Read immutable route revisions
@@ -1068,6 +1288,8 @@ paths:
           },
         ]
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Immutable route revision page.
           content:
@@ -1081,6 +1303,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/nodes/{nodeRevisionID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getLearningNode
       summary: Read mastery and misconception reduction for a node revision
@@ -1088,6 +1312,8 @@ paths:
       security: [{ deviceBearer: [] }]
       parameters: [{ $ref: "#/components/parameters/NodeRevisionID" }]
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Node read model.,
@@ -1105,6 +1331,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/evidence:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listLearningEvidence
       summary: Read accepted immutable evidence
@@ -1121,6 +1349,8 @@ paths:
           },
         ]
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Accepted evidence page.
           content:
@@ -1134,6 +1364,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/reviews:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listLearningReviews
       summary: Read deterministic review schedule
@@ -1146,6 +1378,8 @@ paths:
           { $ref: "#/components/parameters/DueBefore" },
         ]
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Deterministic review schedule page.
           content:
@@ -1159,12 +1393,17 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/projections/status:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getLearningProjectionStatus
       summary: Read projection generation and checkpoint status
       x-required-scope: learning:read
       security: [{ deviceBearer: [] }]
       responses:
+        "404": { description: learning_space_not_found }
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           {
             description: Projection status.,
@@ -1181,6 +1420,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/offline/packs:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: prepareOfflineLearningPack
       summary: Sign and reserve the current Objective activity for offline use
@@ -1193,6 +1434,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/OfflinePrepareRequest" }
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Idempotent replay of a previously published pack.
           content:
@@ -1212,6 +1455,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/offline/sync:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: syncOfflineLearningOperations
       summary: Archive independently committed offline learning operations
@@ -1224,6 +1469,9 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/OfflineSyncRequest" }
       responses:
+        "404": { description: learning_space_not_found }
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Request-level validation succeeded; inspect each item result.
           content:
@@ -1237,6 +1485,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/offline/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getOfflineLearningOperationStatus
       summary: Read one device-owned immutable ingest receipt and current status
@@ -1248,6 +1498,8 @@ paths:
           required: true
           schema: { $ref: "#/components/schemas/LearningUUID" }
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Current operation status.
           content:
@@ -1261,6 +1513,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/offline/assessments:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listOfflineLearningAssessments
       summary: List device-owned provisional Open assessments
@@ -1274,6 +1528,8 @@ paths:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Closed projection-bound page without prompt, answer, quote, or signature fields.
           content:
@@ -1287,6 +1543,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/offline/assessments/{assessmentID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getOfflineLearningAssessment
       summary: Read one device-owned frozen offline assessment chain
@@ -1295,6 +1553,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/AssessmentID"
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Frozen Activity, Attempt, Assessment, current Decision, and projection metadata.
           content:
@@ -1308,6 +1568,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/offline/assessments/{assessmentID}/decisions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: decideOfflineLearningAssessment
       summary: Append an independent confirm, override, or void decision
@@ -1325,6 +1587,7 @@ paths:
             schema:
               { $ref: "#/components/schemas/OfflineAssessmentDecisionRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Stable replay of the original decision receipt.
           content:
@@ -1352,6 +1615,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/candidates:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: createMemoryCandidate
       summary: Propose an explicit user-stated memory candidate
@@ -1364,6 +1629,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/MemoryCandidateRequest" }
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Idempotent replay.
           content:
@@ -1402,6 +1669,8 @@ paths:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Candidate page. Pending candidates may include reviewable proposed content.
           content:
@@ -1419,6 +1688,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/candidates/{candidateID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getMemoryCandidate
       summary: Read one memory candidate
@@ -1427,6 +1698,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/MemoryCandidateID"
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Candidate detail. Only a pending, available payload includes proposed_content.
           content:
@@ -1444,6 +1717,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/candidates/{candidateID}/decisions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: decideMemoryCandidate
       summary: Admit or reject a pending memory candidate using expected revision
@@ -1459,6 +1734,7 @@ paths:
             schema:
               { $ref: "#/components/schemas/MemoryCandidateDecisionRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Decision committed or idempotently replayed.
           content:
@@ -1480,6 +1756,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/records:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listMemoryRecords
       summary: List current memory record metadata
@@ -1489,6 +1767,8 @@ paths:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Current record metadata page without cached remote content.
           content:
@@ -1504,6 +1784,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/records/{memoryID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getMemoryRecord
       summary: Read current record metadata with live remote content availability
@@ -1512,6 +1794,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/LogicalMemoryID"
       responses:
+        "409": { description: learning_space_archived }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Current metadata plus live content status; content is present only after a current Nocturne hash match.
           content:
@@ -1540,6 +1824,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/MemoryDeleteRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Delete already reached a public terminal state or was replayed.
           content:
@@ -1571,6 +1856,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/records/{memoryID}/candidates:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: createMemoryCorrectionCandidate
       summary: Propose a correction candidate for the current record revision
@@ -1586,6 +1873,7 @@ paths:
             schema:
               { $ref: "#/components/schemas/MemoryCorrectionCandidateRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Idempotent replay.
           content:
@@ -1617,6 +1905,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/export:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: exportMemoryRecords
       summary: Export record metadata with live remote content availability
@@ -1626,6 +1916,8 @@ paths:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
       responses:
+        "404": { description: learning_space_not_found }
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Typed export without credentials, raw upstream responses, attempt tokens, or leases.
           content:
@@ -1641,6 +1933,8 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/memory/deliveries/{deliveryID}/replays:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: replayMemoryDelivery
       summary: Requeue one eligible dead-letter memory delivery
@@ -1655,6 +1949,7 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/MemoryReplayRequest" }
       responses:
+        "501": { description: learning_space_module_unavailable }
         "200":
           description: Replay is terminal or idempotently returned.
           content:
@@ -1806,6 +2101,12 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    LearningSpaceID:
+      name: X-Learning-Space-ID
+      in: header
+      required: false
+      description: Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity.
+      schema: { $ref: "#/components/schemas/LearningUUID" }
     KnowledgeRevisionID:
       name: revisionID
       in: path
@@ -2069,6 +2370,52 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    LearningSpace:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, status, version, created_at, updated_at]
+      properties:
+        id: { $ref: "#/components/schemas/LearningUUID" }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        status: { type: string, enum: [active, archived] }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LearningSpaceCommand:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, name, description, status]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0, description: Zero for create; exact current version for edit/archive/restore. }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        status: { type: string, enum: [active, archived], description: Create requires active. PUT replaces editable metadata; archived is reversible. }
+    LearningSpacePage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/LearningSpace" } }
+        next_cursor: { type: string }
+    LearningSpaceCapabilities:
+      type: object
+      additionalProperties: false
+      required: [version, default_space_id, legacy_scope, modules]
+      properties:
+        version: { type: integer, enum: [1] }
+        default_space_id: { type: string, enum: ["00000000-0000-4000-8000-000000000001"] }
+        legacy_scope: { type: string, enum: [fixed_default] }
+        modules:
+          type: object
+          additionalProperties: false
+          required: [knowledge, learning, tutoring, memory]
+          properties:
+            knowledge: { type: string, enum: [default_only] }
+            learning: { type: string, enum: [default_only] }
+            tutoring: { type: string, enum: [default_only] }
+            memory: { type: string, enum: [default_only] }
     LearningUUID:
       type: string
       format: uuid

@@ -11,6 +11,16 @@ import (
 )
 
 func TestDarwinSessionMembershipUnreapedLeader(t *testing.T) {
+	// A different unreaped session must not taint this session's cleanup.
+	unrelated := exec.Command("/bin/sh", "-c", "exit 0")
+	unrelated.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := unrelated.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer unrelated.Wait()
+	if err := observeExit(unrelated.Process.Pid); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("/bin/sh", "-c", "exit 0")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {

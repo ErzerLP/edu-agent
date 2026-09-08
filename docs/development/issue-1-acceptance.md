@@ -26,6 +26,16 @@ go test -race ./internal/agentloop -run '^TestWorkspaceProjectionSharesMinimumCo
 依据：[Apple XNU fill_user64_eproc](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sysctl.c)
 与 [getsid](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_prot.c)。
 
+全量原生检查另复现归档中符号链接清理失败：Darwin 的 `O_NOFOLLOW` 会拒绝链接，
+即便同时设置 `O_SYMLINK`。修复对已确认的链接入口仅用 `O_SYMLINK` 打开链接本身，
+父路径仍逐级拒绝链接，发布前仍校验身份。外部目标、相对及悬空链接由现有真实清理测试覆盖，
+并新增为严格原生验收项。依据：[Apple open(2)](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/open.2.html)。
+
+Darwin 对僵尸进程的 getsid 查询可能返回 ESRCH；根进程组内僵尸仍计入残留，
+其它组里已确认死亡的入口不再使所有无关 PTY 会话误报清理失败。无法确认的活进程仍保守报告。
+此处不宣称能归属 Darwin 已丢失会话身份的其它组僵尸。单进程模型等待/取消测试显式使用
+`exec sleep` / `exec cat`，不再依赖 Linux Shell 的末命令替换优化；真实子进程收尾测试保留。
+
 ## 双平台自动验收
 
 `.github/workflows/cli-platform.yml` 在 Linux 和 macOS 原生 runner 上运行：

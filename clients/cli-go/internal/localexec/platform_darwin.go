@@ -69,6 +69,12 @@ func sessionHasMembers(sid int, liveOnly bool) (bool, error) {
 			if checkErr == nil && len(remaining) == 0 {
 				continue
 			}
+			// Darwin getsid cannot reference a zombie. Root-group zombies
+			// were counted above; a zombie elsewhere cannot be a live escaped
+			// job and must not make every unrelated PTY session unclean.
+			if checkErr == nil && len(remaining) == 1 && remaining[0].Proc.P_stat == 5 && int(remaining[0].Eproc.Pgid) != sid {
+				continue
+			}
 		}
 		if err != nil {
 			uncertain = err

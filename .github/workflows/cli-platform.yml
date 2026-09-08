@@ -13,6 +13,8 @@ jobs:
     name: full CLI ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      EDU_AGENT_CLEANUP_DIAGNOSTICS: "1"
     strategy:
       fail-fast: false
       matrix:

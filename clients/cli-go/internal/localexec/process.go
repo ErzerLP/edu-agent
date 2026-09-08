@@ -1,6 +1,7 @@
 package localexec
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"time"
@@ -88,6 +89,7 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 
 	// An anchored, exited leader plus no LIVE group members needs no signal.
 	// Zombies are checked separately after reap, and are never called clean.
+	var settlementError error
 	groupSettled := func() bool {
 		checkObserved()
 		if !observed || observationError != nil {
@@ -95,9 +97,11 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		}
 		if t.snapshot.PTY {
 			live, err := sessionHasMembers(pid, true)
+			settlementError = err
 			return err == nil && !live
 		}
 		live, err := groupHasLiveMembers(pid)
+		settlementError = err
 		return err == nil && !live
 	}
 	awaitSettlement := func(budget time.Duration) bool {
@@ -145,8 +149,10 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	// the leader. Do not chase old numeric identities after reap. A detached
 	// session is outside this contract; a remaining job-control pgrp is not.
 	sessionIncomplete := false
+	var sessionError error
 	if t.snapshot.PTY {
 		exists, err := sessionHasMembers(pid, false)
+		sessionError = err
 		sessionIncomplete = exists || err != nil
 	}
 	// Ownership of the leader ends here. Even if it is stuck in kernel I/O,
@@ -170,9 +176,15 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		}
 	}
 	cleanupIncomplete := !settled || signalFailed || !haveResult || observationError != nil || sessionIncomplete
+	groupExists := false
+	var groupError error
 	if haveResult && !t.snapshot.PTY {
 		exists, err := processGroupExists(pid)
+		groupExists, groupError = exists, err
 		cleanupIncomplete = cleanupIncomplete || err != nil || exists
+	}
+	if cleanupIncomplete && os.Getenv("EDU_AGENT_CLEANUP_DIAGNOSTICS") == "1" {
+		fmt.Fprintf(os.Stderr, "CLEANUP_DIAGNOSTICS pty=%v settled=%v settlement_error=%v signal_failed=%v reaped=%v observe_error=%v session_incomplete=%v session_error=%v group_exists=%v group_error=%v\n", t.snapshot.PTY, settled, settlementError, signalFailed, haveResult, observationError, sessionIncomplete, sessionError, groupExists, groupError)
 	}
 
 	// Bound pipe waiting independently from journal I/O. Each capture spends

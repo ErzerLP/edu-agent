@@ -47,7 +47,16 @@ func newLocalExecutionSession(t *testing.T, model Model, configure func(*Options
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if err := manager.Close(ctx); err != nil {
-			t.Errorf("manager cleanup: %v", err)
+			// As in localexec.testManager, kernel cleanup uncertainty is a
+			// supported terminal result (e.g. unreaped children on macOS).
+			// These model-contract tests assert the execution states themselves;
+			// strict child-reaping assertions live in localexec's process tests.
+			var stable *localexec.Error
+			if !errors.As(err, &stable) || stable.Code != "cleanup_incomplete" {
+				t.Errorf("manager cleanup: %v", err)
+			} else {
+				t.Logf("manager reported cleanup uncertainty: %v", err)
+			}
 		}
 	})
 	options := Options{ContextWindow: 32768, MaxToolRounds: 0, LocalExec: manager, LocalExecOwner: "test-owner", LocalExecCWD: t.TempDir(), ToolTimeout: time.Second, ModelTimeout: time.Second, NewUUID: func() (string, error) { return "70000000-0000-4000-8000-000000000001", nil }}

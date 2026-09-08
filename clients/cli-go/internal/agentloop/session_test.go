@@ -22,6 +22,12 @@ type fakeModel struct {
 }
 
 func (m *fakeModel) Complete(_ context.Context, request modelclient.Request) (modelclient.Response, error) {
+	// This fixture records foreground requests. Background consolidation has
+	// dedicated synchronized models in context_compaction_test.go; it must not
+	// consume this queue or race with foreground request assertions.
+	if len(request.Tools) == 1 && (request.Tools[0].Function.Name == observerToolName || request.Tools[0].Function.Name == reflectorToolName) {
+		return modelclient.Response{}, errors.New("background consolidation is outside this fixture")
+	}
 	m.requests = append(m.requests, request)
 	if len(m.responses) == 0 {
 		if m.err != nil {
@@ -281,6 +287,7 @@ func TestSessionSupportsUnlimitedToolLoopAndOptionalUserLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unlimited tool loop rejected: %v", err)
 	}
+	t.Cleanup(session.Close)
 	result, err := session.Send(t.Context(), "完成超过旧上限的工具循环")
 	if err != nil {
 		t.Fatalf("unlimited tool loop failed: %v", err)
@@ -1663,16 +1670,8 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 		{Message: modelclient.Message{Role: "assistant", ToolCalls: calls}},
 		{Message: modelclient.Message{Role: "assistant", Content: "已结合四个结果。"}},
 	}}
-	// Automatic consolidation may run after Send returns. Record only foreground
-	// requests so the observer cannot mutate the fixture during assertions.
-	foregroundModel := localExecutionModel(func(ctx context.Context, request modelclient.Request) (modelclient.Response, error) {
-		if len(request.Tools) == 1 && request.Tools[0].Function.Name == observerToolName {
-			return modelclient.Response{}, errors.New("observer is outside this projection fixture")
-		}
-		return model.Complete(ctx, request)
-	})
 	uuidCalls := 0
-	session, err := New(foregroundModel, &fakeServer{}, Options{
+	session, err := New(model, &fakeServer{}, Options{
 		ContextWindow: 4096, MaxToolRounds: 8, Workspace: executor,
 		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {

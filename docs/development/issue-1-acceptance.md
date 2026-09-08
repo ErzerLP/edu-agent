@@ -15,7 +15,9 @@ cd clients/cli-go
 go test -race ./internal/agentloop -run '^TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls$' -count=30 -timeout=90s
 ```
 
-修复只隔离此测试的后台 observer 请求，并注册 Session 清理；保留自动上下文模式和原预算断言。
+修复在前台假模型中隔离后台 observer/reflector 请求，并注册 Session 清理；
+保留自动上下文模式和原预算断言。完整 macOS race 也在不限工具轮数测试中复现同一夹具问题，
+因此隔离放在共用前台夹具中；后台整理由独立同步模型测试覆盖。
 同一测试修复后 `-count=100` 通过。
 
 首次新增 macOS 原生验收在提交 `4b38151` 复现：正常 PTY 退出仍返回
@@ -35,6 +37,14 @@ Darwin 对僵尸进程的 getsid 查询可能返回 ESRCH；根进程组内僵�
 其它组里已确认死亡的入口不再使所有无关 PTY 会话误报清理失败。无法确认的活进程仍保守报告。
 此处不宣称能归属 Darwin 已丢失会话身份的其它组僵尸。单进程模型等待/取消测试显式使用
 `exec sleep` / `exec cat`，不再依赖 Linux Shell 的末命令替换优化；真实子进程收尾测试保留。
+模型合同测试的最终清理与既有 `localexec.testManager` 一致：记录允许的
+`cleanup_incomplete` 终态，不把内核收尾不确定性当作模型调用失败；其它清理错误仍失败。
+这不改变工具返回值或任务状态断言，也不放宽底层严格子进程回收测试。
+
+完整模块检查还修正两项测试假设：恢复后的复制测试沿用原夹具 30 秒工具预算，
+避免 42 项持久结算被默认一秒截断；导入器大小写冲突测试在不能创建两个不同大小写文件的
+文件系统上明确跳过（Linux 继续验证），不把 APFS 已合并为同一文件误称为接受了重复路径。
+该平台条件测试不属于要求零跳过的本地工具指定验收组。
 
 ## 双平台自动验收
 

@@ -69,6 +69,13 @@ func TestLoadRejectsInvalidUTF8SymlinkAndUnicodePathConflict(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 2 {
+			t.Skip("case-insensitive filesystem cannot construct two case-fold conflicting files")
+		}
 		if _, err := Load(dir); err == nil {
 			t.Fatal("Load accepted case-fold conflicting paths")
 		}

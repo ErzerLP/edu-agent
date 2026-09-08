@@ -1,6 +1,6 @@
 # Issue #1：最终验收入口
 
-当前实现已覆盖 C1–C10；本次核查未确认新的产品功能缺口。此前交接见
+当前实现已覆盖 C1–C10；新增原生验收确认了 macOS PTY 收尾问题并修复。此前交接见
 [候选交接](../design/client-local-tools-handoff.md)。本文补充可重复执行的验收入口，不替代对应提交的运行结果。
 
 ## 确认并修复的失败
@@ -16,17 +16,29 @@ go test -race ./internal/agentloop -run '^TestWorkspaceProjectionSharesMinimumCo
 ```
 
 修复只隔离此测试的后台 observer 请求，并注册 Session 清理；保留自动上下文模式和原预算断言。
-同一测试修复后 `-count=100` 通过。生产工具行为没有变化。
+同一测试修复后 `-count=100` 通过。
+
+首次新增 macOS 原生验收在提交 `4b38151` 复现：正常 PTY 退出仍返回
+`cleanup_incomplete`，影响任务等待和 Session 关闭。`sessionHasMembers` 原先依赖
+`kinfo_proc.e_sess`，但现代 Darwin 不再导出该内核指针；零值被误当作无法定位会话。
+修复改用 `getsid` 的数值会话 ID，并继续要求未回收 leader 固定身份；查询失败或
+残留成员仍保守报告，不在 leader 回收后追发信号。新增原生测试覆盖已退出但未回收的空会话。
+依据：[Apple XNU fill_user64_eproc](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sysctl.c)
+与 [getsid](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_prot.c)。
 
 ## 双平台自动验收
 
 `.github/workflows/cli-platform.yml` 在 Linux 和 macOS 原生 runner 上运行：
 
-- 全量 `go test -count=1 -timeout=180s -json ./...`。
-- 全量 `go test -race -count=1 -timeout=180s -json ./...`。
+- 全量 `go test -count=1 -timeout=10m -json ./...`。
+- 全量 `go test -race -count=1 -timeout=10m -json ./...`。
 - `go vet ./...`、CLI 构建和实际执行 `version`。
 - 现有真实系统凭据、Session、终端与文件安全证据检查。
 - 以下本地工具命名测试；必须实际执行并通过，缺失或跳过均判失败。
+
+测试使用私有、规范化的 TMPDIR，避免 macOS 默认 `/var` 链接触发加密存储的路径保护。
+CI 单包预算为 10 分钟：首次 Linux race 在 3 分钟上限时仍处理大输出加密/JSON，
+并非数据竞争报告；本地该包约 99 秒。该预算只影响测试，不限制用户 Shell 执行。
 
 | 验收范围 | 原生证据组 | 可观察结果 |
 | --- | --- | --- |

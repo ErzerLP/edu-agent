@@ -29,13 +29,15 @@ jobs:
           cache-dependency-path: clients/cli-go/go.sum
       - name: Record native identity
         run: |
-          mkdir -p "$RUNNER_TEMP/cli-check"
+          mkdir -p "$RUNNER_TEMP/cli-check/test-tmp"
+          chmod 700 "$RUNNER_TEMP/cli-check/test-tmp"
+          echo "TMPDIR=$(cd "$RUNNER_TEMP/cli-check/test-tmp" && pwd -P)" >> "$GITHUB_ENV"
           { git rev-parse HEAD; go version; go env GOOS GOARCH; } | tee "$RUNNER_TEMP/cli-check/identity.log"
       - name: Full tests
-        run: go test -count=1 -timeout=180s -json ./... | tee "$RUNNER_TEMP/cli-check/test.jsonl"
+        run: go test -count=1 -timeout=10m -json ./... | tee "$RUNNER_TEMP/cli-check/test.jsonl"
       - name: Full race tests
         if: success() || failure()
-        run: go test -race -count=1 -timeout=180s -json ./... | tee "$RUNNER_TEMP/cli-check/race.jsonl"
+        run: go test -race -count=1 -timeout=10m -json ./... | tee "$RUNNER_TEMP/cli-check/race.jsonl"
       - name: Vet
         if: success() || failure()
         run: go vet ./... 2>&1 | tee "$RUNNER_TEMP/cli-check/vet.log"

@@ -317,6 +317,11 @@ if ($env:RUNNER_OS_NAME -eq "Windows") {
 
 # Issue #1 acceptance uses real local processes/files, scripted model calls and
 # client state/view assertions. Missing or skipped named tests fail evidence.
+if ($env:RUNNER_OS_NAME -eq "macOS") {
+    $checks += @(
+        @{ Name = "local-tools-darwin-session"; Package = "./internal/localexec"; Expected = @("TestDarwinSessionMembershipUnreapedLeader"); Method = "native-getsid+unreaped-session-leader" }
+    )
+}
 if ($env:RUNNER_OS_NAME -in @("Linux", "macOS")) {
     $checks += @(
         @{ Name = "local-tools-large-edit"; Package = "./internal/agentloop"; Expected = @("TestLargeFileReadModelPaginationAndVisibleActivity", "TestLargeFileEditModelAuthorizationAndSettlement"); Method = "scripted-model+large-file+authorization+visible-activity" },

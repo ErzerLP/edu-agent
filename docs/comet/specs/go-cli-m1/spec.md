@@ -115,9 +115,9 @@ Work item 只用于当前受认证设备恢复，不进入 timeline、日志、�
 
 ## Goal 与 Session
 
-`goal set` 创建新的 GoalRevision，source 固定为 `go-cli-m1`。CLI 先读取 current session。没有 active session时使用新 GoalRevision创建 Session；存在 active session 时显示 current state 和 focus invalidation 影响，得到确认后以 current aggregate version执行 switch-goal。CLI 不创建未提示的第二个 active session，也不在本地保存 pending goal。
+`goal set` 创建新的 GoalRevision，source 固定为 `go-cli-m1`，只保存目标并返回目标版本。该命令不读取、创建或切换教学 Session；已有会话的状态、焦点和历史保持不变。保存目标不要求资料或模型可用，也不在本地保存 pending goal。
 
-`learn` 首先读取 current SessionView/work item。没有 session 时提示 Goal 文本并执行 goal set。`GoalReady` 自动执行 `start_diagnostic`；`Diagnostic` 进入 route proposal；`Completed` 显示紧凑结果并要求显式 goal set 才开始新 Session。
+`learn` 首先读取 current SessionView/work item。没有 session 时提示 Goal 文本，通过交互教学入口创建目标及 Session。`GoalReady` 自动执行 `start_diagnostic`；`Diagnostic` 进入 route proposal；`Completed` 显示紧凑结果。`goal set` 不再承担开始新 Session 的职责。
 
 每次自动 action 使用新 canonical lowercase UUID。一次 HTTP uncertainty 的重试保持同一 UUID 和 payload。每次成功响应后立即重新读取 work item，不以本地预计状态代替服务端状态。
 

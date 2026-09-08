@@ -577,8 +577,20 @@ func (h *harness) setGoal(home, text string) string {
 	h.t.Helper()
 	result := h.runCLI(home, "", "goal", "set", text)
 	requireExit(h.t, result, 0, "goal set")
-	requireContains(h.t, result.stdout, "State: GoalReady", "goal state")
-	return h.scalarString("current session metadata", `SELECT id FROM tutoring_sessions WHERE state<>'Completed' ORDER BY started_at DESC,id DESC LIMIT 1`)
+	fields := strings.Fields(string(result.stdout))
+	if len(fields) < 2 || fields[0] != "Goal:" {
+		h.t.Fatal("目标保存未返回目标版本")
+	}
+	// 教学场景显式创建会话，避免依赖目标保存的旧副作用。
+	credential := h.pairCredential("", "blackbox-session-setup")
+	sessionID := randomUUID(h.t)
+	var response json.RawMessage
+	h.authenticatedJSON(http.MethodPost, h.serverURL+"/v1/tutoring/sessions", credential.Token, map[string]any{
+		"operation_id": randomUUID(h.t), "payload_schema_version": 1,
+		"aggregate_type": "session", "aggregate_id": sessionID, "expected_version": 0,
+		"goal_revision_id": fields[1],
+	}, http.StatusCreated, &response)
+	return sessionID
 }
 
 func (h *harness) latestSession() (id, state string) {

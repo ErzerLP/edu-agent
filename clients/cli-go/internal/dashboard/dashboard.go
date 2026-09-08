@@ -555,7 +555,7 @@ func (m model) items() []menuItem {
 		menuItem{key: "z", title: "学习区", description: "列表、搜索、详情与当前客户端选择", command: []string{"space", "browse"}},
 		menuItem{key: "l", title: "继续结构化学习", description: "恢复服务端教学状态机中的当前会话", command: []string{"learn"}},
 		menuItem{key: "i", title: "导入知识", description: "导入Markdown文件或目录", next: screenImport},
-		menuItem{key: "g", title: "设置学习目标", description: "创建或切换当前学习目标", next: screenGoal},
+		menuItem{key: "g", title: "保存学习目标", description: "保存一句话目标，独立于当前教学会话", next: screenGoal},
 		menuItem{key: "v", title: "查看学习进度", description: "读取当前学习快照", command: []string{"progress"}},
 		menuItem{key: "r", title: "查看学习路线", description: "显示当前路线", command: []string{"route"}},
 		menuItem{key: "e", title: "查看学习证据", description: "检查已接受的学习证据", command: []string{"evidence"}},
@@ -593,7 +593,7 @@ func (m model) View() string {
 
 	switch m.screen {
 	case screenGoal:
-		body.WriteString(labelStyle.Render("设置学习目标"))
+		body.WriteString(labelStyle.Render("保存学习目标"))
 		m.renderInputs(&body)
 		body.WriteString("\n" + mutedStyle.Render("Enter提交  Esc取消"))
 	case screenImport:

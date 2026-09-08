@@ -14,12 +14,11 @@ func purgeEntryOpenFlags(kind EntryType) int {
 	if kind == EntryDirectory {
 		return unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	}
+	flags := unix.O_EVTONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC
 	if kind == EntryLink {
-		// O_SYMLINK opens the link itself. Combining O_NOFOLLOW with it
-		// rejects the link with ELOOP on Darwin. Ancestors remain no-follow.
-		return unix.O_EVTONLY | unix.O_SYMLINK | unix.O_CLOEXEC
+		flags |= unix.O_SYMLINK
 	}
-	return unix.O_EVTONLY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	return flags
 }
 
 func purgeNativeMount(file *os.File) (string, error) {

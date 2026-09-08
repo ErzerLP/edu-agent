@@ -11,8 +11,6 @@ type exitResult struct {
 	err   error
 }
 
-var signalTaskGroup = signalProcessGroup
-
 // The leader is observed WITHOUT reaping (WNOWAIT). Until all group signals are
 // finished its PID therefore remains reserved, even if the shell has exited.
 // This avoids the killpg-after-Wait PID-reuse race. No signal is sent after reap.
@@ -123,10 +121,11 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	}
 
 	settled := groupSettled()
+	signalFailed := false
 	if !settled && observationError == nil {
-		// Signal errors do not prove residual processes. Always verify the
-		// actual group/session state, including after a failed attempt.
-		_ = signalTaskGroup(pid, false)
+		if err := signalProcessGroup(pid, false); err != nil {
+			signalFailed = true
+		}
 		settled = awaitSettlement(m.options.StopGrace)
 		if !settled && observationError == nil {
 			if t.snapshot.PTY {
@@ -136,7 +135,9 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 				// cannot establish EOF and capture reports incomplete honestly.
 				closeFile(pipes.stdoutReader)
 			}
-			_ = signalTaskGroup(pid, true)
+			if err := signalProcessGroup(pid, true); err != nil {
+				signalFailed = true
+			}
 			settled = awaitSettlement(killSettleLimit)
 		}
 	}
@@ -168,7 +169,7 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		default:
 		}
 	}
-	cleanupIncomplete := !settled || !haveResult || observationError != nil || sessionIncomplete
+	cleanupIncomplete := !settled || signalFailed || !haveResult || observationError != nil || sessionIncomplete
 	if haveResult && !t.snapshot.PTY {
 		exists, err := processGroupExists(pid)
 		cleanupIncomplete = cleanupIncomplete || err != nil || exists

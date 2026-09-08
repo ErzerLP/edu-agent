@@ -236,9 +236,7 @@ func TestLocalExecutionWaitCancellationAndExecutionTimeout(t *testing.T) {
 	if _, err := s.startTurn(); err != nil {
 		t.Fatal(err)
 	}
-	// These cases test wait/cancel semantics for a single process. Explicit exec
-	// avoids depending on the host shell's last-command fork optimization.
-	background := s.executeLocalTool(t.Context(), localCall("background", "shell", map[string]any{"command": "exec sleep 10", "wait_ms": 5}))
+	background := s.executeLocalTool(t.Context(), localCall("background", "shell", map[string]any{"command": "sleep 10", "wait_ms": 5}))
 	if background.Snapshot == nil || background.Snapshot.State != "running" {
 		t.Fatalf("short wait killed task: %+v", background)
 	}
@@ -248,12 +246,12 @@ func TestLocalExecutionWaitCancellationAndExecutionTimeout(t *testing.T) {
 	if waited.Code != "wait_canceled" || waited.Snapshot.State != "running" {
 		t.Fatalf("existing wait: %+v", waited)
 	}
-	timed := s.executeLocalTool(t.Context(), localCall("timeout", "shell", map[string]any{"command": "exec sleep 10", "timeout_ms": 20, "wait_ms": 1000}))
+	timed := s.executeLocalTool(t.Context(), localCall("timeout", "shell", map[string]any{"command": "sleep 10", "timeout_ms": 20, "wait_ms": 1000}))
 	if timed.Snapshot == nil || timed.Snapshot.State != "timed_out" {
 		t.Fatalf("timeout: %+v", timed)
 	}
 	foregroundCtx, stop := context.WithTimeout(t.Context(), 30*time.Millisecond)
-	foreground := s.executeLocalTool(foregroundCtx, localCall("foreground", "shell", map[string]any{"command": "exec sleep 10", "wait_ms": 30000}))
+	foreground := s.executeLocalTool(foregroundCtx, localCall("foreground", "shell", map[string]any{"command": "sleep 10", "wait_ms": 30000}))
 	stop()
 	if foreground.Snapshot == nil || foreground.Snapshot.State != "canceled" {
 		t.Fatalf("foreground: %+v", foreground)
@@ -279,7 +277,7 @@ func TestLocalExecutionFailureAndCancellationKeepFacts(t *testing.T) {
 			model := localExecutionModel(func(_ context.Context, _ modelclient.Request) (modelclient.Response, error) {
 				step++
 				if step == 1 {
-					return localResponse(localCall("start", "shell", map[string]any{"command": "exec sleep 10 # private-command", "env": map[string]string{"PRIVATE_ENV": "secret-environment"}, "wait_ms": 0})), nil
+					return localResponse(localCall("start", "shell", map[string]any{"command": "sleep 10 # private-command", "env": map[string]string{"PRIVATE_ENV": "secret-environment"}, "wait_ms": 0})), nil
 				}
 				if mode == "cancel_followup" {
 					cancel()
@@ -449,7 +447,7 @@ func TestLocalExecutionDurabilityAndUnavailableTask(t *testing.T) {
 	}
 	sink.fail = false
 	s.options.Durability = sink
-	started := s.executeLocalTool(t.Context(), localCall("started", "shell", map[string]any{"command": "exec cat", "stdin": true, "wait_ms": 0}))
+	started := s.executeLocalTool(t.Context(), localCall("started", "shell", map[string]any{"command": "cat", "stdin": true, "wait_ms": 0}))
 	id := started.Snapshot.TaskID
 	sink.fail = true
 	input := s.executeLocalTool(t.Context(), localCall("denied-input", "task", map[string]any{"action": "input", "task_id": id, "content": "secret"}))
@@ -480,7 +478,7 @@ func TestLocalExecutionDurabilityAndUnavailableTask(t *testing.T) {
 }
 
 func TestLocalExecutionPendingFileCancellationKeepsTask(t *testing.T) {
-	shell := localCall("before-pending", "shell", map[string]any{"command": "exec sleep 10", "wait_ms": 0})
+	shell := localCall("before-pending", "shell", map[string]any{"command": "sleep 10", "wait_ms": 0})
 	mutation := localCall("pending-write", "write", map[string]any{"path": "note.txt", "mode": "create", "content": "pending"})
 	model := &fakeModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{shell, mutation}}}}}
 	s := newLocalExecutionSession(t, model, func(o *Options) {

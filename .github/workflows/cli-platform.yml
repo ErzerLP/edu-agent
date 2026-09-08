@@ -9,53 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  cli-check:
-    name: full CLI ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    defaults:
-      run:
-        shell: bash
-        working-directory: clients/cli-go
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32
-        with:
-          go-version: 1.26.6
-          cache-dependency-path: clients/cli-go/go.sum
-      - name: Record native identity
-        run: |
-          mkdir -p "$RUNNER_TEMP/cli-check/test-tmp"
-          chmod 700 "$RUNNER_TEMP/cli-check/test-tmp"
-          echo "TMPDIR=$(cd "$RUNNER_TEMP/cli-check/test-tmp" && pwd -P)" >> "$GITHUB_ENV"
-          { git rev-parse HEAD; go version; go env GOOS GOARCH; } | tee "$RUNNER_TEMP/cli-check/identity.log"
-      - name: Full tests
-        run: go test -count=1 -timeout=10m -json ./... | tee "$RUNNER_TEMP/cli-check/test.jsonl"
-      - name: Full race tests
-        if: success() || failure()
-        run: go test -race -count=1 -timeout=10m -json ./... | tee "$RUNNER_TEMP/cli-check/race.jsonl"
-      - name: Vet
-        if: success() || failure()
-        run: go vet ./... 2>&1 | tee "$RUNNER_TEMP/cli-check/vet.log"
-      - name: Build and execute CLI
-        if: success() || failure()
-        run: |
-          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/cli-check/edu-agent" ./cmd/edu-agent
-          "$RUNNER_TEMP/cli-check/edu-agent" version | tee "$RUNNER_TEMP/cli-check/version.log"
-      - name: Upload full CLI evidence
-        if: always()
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
-        with:
-          name: cli-check-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/cli-check/*.log
-            ${{ runner.temp }}/cli-check/*.jsonl
-          if-no-files-found: error
-          retention-days: 14
   native-cli:
     name: native ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

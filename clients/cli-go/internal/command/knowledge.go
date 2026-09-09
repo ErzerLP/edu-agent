@@ -14,6 +14,9 @@ import (
 
 func (a *App) runKnowledge(ctx context.Context, args []string) error {
 	if len(args) > 1 && args[0] == "import" {
+		if args[1] == "jobs" {
+			return a.runImportJobs(ctx, args[2:])
+		}
 		switch args[1] {
 		case "wizard", "scan", "preview", "confirm", "operation", "help":
 			return a.runImportWorkflow(ctx, args[1:])

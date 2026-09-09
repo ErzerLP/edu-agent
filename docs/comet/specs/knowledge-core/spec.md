@@ -106,6 +106,8 @@ JSON 继续拒绝未知字段。解析与 marker 问题返回 `400` 或 `422` �
 
 ## 装配与兼容
 
+可恢复导入使用固定设备、学习区和集合的持久任务。完整来源清单和摘要先冻结，客户端自动分段上传；确认绑定完整批次计划和预览版本，每批沿用原子提交及父版本校验。部分成功独立呈现，未知结果按原操作和请求摘要对账，取消不回滚已入库资料。客户端或服务重启后可以查询并继续，来源变化需重新预览，外部基线变化撤销剩余授权。任务有独立配额、有效期与加密暂存清理；隐私清除删除元数据和密钥，旧任务不得复活正文。CLI/TUI共用任务查询、恢复与身份审阅契约，详见[导入任务设计](../../../design/import-jobs.md)。
+
 `app.Run` 在 migration 后组合 knowledge PostgreSQL store、canonicalizer/indexer、可选 LLM selector 和 service，再通过 HTTP `Options` 注入。模型未配置或不可用不会让知识导入、导出、tree 或 lexical retrieval 不可用，也不会改变服务 readiness 的既有 required/optional 语义。
 
 OpenAPI 版本随 knowledge endpoints 更新，保留既有 health、pairing、device 和 model 契约。现有 token、rate limiter、request ID、recoverer 和 error envelope 语义不得回归。

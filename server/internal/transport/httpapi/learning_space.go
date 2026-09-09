@@ -174,7 +174,8 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					return
 				}
 				if business {
-					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" && !scopedTutoringPath(r.URL.Path) {
+					jobCleanup := r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/knowledge/import-jobs/")
+					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" && !scopedTutoringPath(r.URL.Path) && !jobCleanup {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_archived"})
 						return
 					}

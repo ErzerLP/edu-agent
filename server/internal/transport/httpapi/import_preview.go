@@ -17,6 +17,7 @@ type importPreviewService interface {
 }
 
 func (a *API) mountImportPreview(r chi.Router) {
+	a.mountImportJobs(r)
 	s, ok := a.knowledge.(importPreviewService)
 	if !ok {
 		return

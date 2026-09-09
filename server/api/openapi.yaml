@@ -6,6 +6,109 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/knowledge/import-jobs:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+    get:
+      operationId: listImportJobs
+      summary: 分页查询当前设备在固定学习区及集合的持久导入任务
+      x-required-scope: knowledge:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 最多100个任务摘要；next_cursor为空表示结束，批次详情单独查询。
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ImportJob" } }
+                  next_cursor: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    post:
+      operationId: mutateImportJob
+      summary: 创建、分段上传、预览、身份决定、确认完整计划或继续一个原子批次
+      description: 任务最多1000文件及128 MiB原文。单文件4 MiB、单请求16 MiB；上传可用base64避免JSON转义膨胀。confirm和continue额外要求knowledge:approve。确认不立即发布，continue先对账原操作且最多启动一批；未知结果不能换任务或操作ID重传。
+      x-required-scope: knowledge:write
+      x-required-scopes: [knowledge:read, knowledge:write]
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportJobCommand" }
+      responses:
+        "200":
+          description: 当前持久状态，unknown不是成功或失败。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportJob" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: 任务忙、来源变化、确认过期、任务未就绪或已关闭；原任务仍可查询。 }
+        "413": { description: 单请求或任务配额超限。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/knowledge/import-jobs/{jobID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+      - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getImportJob
+      summary: 查询原任务、核对结果未知的操作，或读取单批差异和身份候选
+      x-required-scope: knowledge:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { name: batch, in: query, schema: { type: integer, minimum: 0, maximum: 999 } }
+      responses:
+        "200":
+          description: 未传batch返回任务，传batch返回该批详细预览；归档后仍可查询。
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/ImportJob" }
+                  - { $ref: "#/components/schemas/ImportJobBatch" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: 任务正在处理，稍后查询原ID。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
+    delete:
+      operationId: cancelImportJob
+      summary: 取消后续批次并清理暂存，保留已入库版本及任务结果
+      x-required-scope: knowledge:write
+      security: [{ deviceBearer: [] }]
+      responses:
+        "200":
+          description: 密钥已清除；cleanup_pending为true时文件删除未完成，可再次清理。归档仍允许取消。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportJob" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: 任务正在执行一个批次，稍后重试取消；已提交事务不回滚。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/collections:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
@@ -2686,6 +2789,67 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    ImportJobItem:
+      type: object
+      additionalProperties: false
+      required: [path, sha256, bytes]
+      properties:
+        path: { type: string, minLength: 1, maxLength: 512 }
+        sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        bytes: { type: integer, minimum: 0, maximum: 4194304 }
+    ImportJobCommand:
+      type: object
+      additionalProperties: false
+      required: [id, action]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string, enum: [create, upload, preview, resolve, confirm, continue, get, cancel, clean] }
+        items: { type: array, maxItems: 1000, items: { $ref: "#/components/schemas/ImportJobItem" } }
+        batch: { type: integer, minimum: 0, maximum: 999 }
+        plan_version: { type: integer, minimum: 0 }
+        content_base64: { type: string, maxLength: 5592408, description: 原始Markdown的标准base64，与document互斥；路径来自冻结清单。 }
+        document:
+          type: object
+          additionalProperties: false
+          required: [path, markdown]
+          properties:
+            path: { type: string }
+            markdown: { type: string }
+        document_resolutions: { type: array, items: { $ref: "#/components/schemas/DocumentIdentityResolution" } }
+        node_resolutions: { type: array, items: { $ref: "#/components/schemas/NodeIdentityResolution" } }
+    ImportJobBatch:
+      type: object
+      additionalProperties: false
+      required: [item, operation_id, status]
+      properties:
+        request_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        item: { $ref: "#/components/schemas/ImportJobItem" }
+        operation_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, uploaded, ready, review, unknown, completed, failed, missing, stale] }
+        error: { type: string }
+        preview: { $ref: "#/components/schemas/ImportPreview" }
+        result: { $ref: "#/components/schemas/KnowledgeImportResult" }
+        planned_revision: { type: string, format: uuid }
+        planned_manifest: { type: string }
+    ImportJob:
+      type: object
+      additionalProperties: false
+      required: [id, actor_device_id, space_id, collection_id, generation, version, plan_version, approved, status, created_at, expires_at, batch_count, batches, cleanup_pending]
+      properties:
+        id: { type: string, format: uuid }
+        actor_device_id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        collection_id: { type: string, format: uuid }
+        generation: { type: integer }
+        version: { type: integer, minimum: 1 }
+        plan_version: { type: integer, minimum: 0 }
+        approved: { type: boolean }
+        status: { type: string, enum: [uploading, ready, review, committing, partial, completed, failed, cancelled, expired] }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        batch_count: { type: integer, minimum: 1, maximum: 1000 }
+        batches: { type: [array, "null"], items: { $ref: "#/components/schemas/ImportJobBatch" } }
+        cleanup_pending: { type: boolean }
     KnowledgeCollection:
       type: object
       required: [id, name, source, shared, head_revision_id, version]

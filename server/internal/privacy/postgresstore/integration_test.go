@@ -2,6 +2,8 @@ package postgresstore_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"os"
 	"strings"
@@ -84,6 +86,23 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 		}),
 	)
 	now := time.Now().UTC()
+	jobDirectory := t.TempDir()
+	if err := os.Chmod(jobDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	knowledgedb.WithImportJobDirectory(jobDirectory)(knowledgeStore)
+	jobService, _ := knowledge.NewService(knowledgeStore, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{})
+	jobDocument := knowledge.ImportDocument{Path: "private-job.md", Markdown: "# 未提交的私密资料"}
+	jobHash := sha256.Sum256([]byte(jobDocument.Markdown))
+	jobCommand := knowledge.ImportJobCommand{ID: uuid.NewString(), Action: "create", Items: []knowledge.ImportJobItem{{Path: jobDocument.Path, Bytes: len(jobDocument.Markdown), Digest: hex.EncodeToString(jobHash[:])}}}
+	job, jobErr := jobService.RunImportJob(ctx, deviceID, jobCommand)
+	if jobErr != nil {
+		t.Fatal(jobErr)
+	}
+	job, jobErr = jobService.RunImportJob(ctx, deviceID, knowledge.ImportJobCommand{ID: job.ID, Action: "upload", Document: &jobDocument})
+	if jobErr != nil {
+		t.Fatal(jobErr)
+	}
 	request := privacy.ErasureRequest{DeviceID: deviceID, OperationID: uuid.NewString(), ActorDeviceID: deviceID, ReasonCode: "learner_request", RequestedAt: now, ManagedBackupUnrecoverableAfter: now.Add(24 * time.Hour), ExpectedCurrentLearnerGeneration: 1}
 	blockingPermit, err := manager.Acquire(ctx, privacy.OwnerIdentity)
 	if err != nil {
@@ -188,6 +207,22 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	defaultSpace, err := spaces.Get(ctx, space.DefaultID)
 	if err != nil || defaultSpace.Status != "active" || defaultSpace.Name != "[redacted]" {
 		t.Fatalf("default after privacy=%+v err=%v", defaultSpace, err)
+	}
+	var jobResidue bool
+	if err := pool.QueryRow(ctx, `SELECT state<>'{}'::jsonb OR staging_key IS NOT NULL FROM knowledge_import_jobs WHERE id=$1`, job.ID).Scan(&jobResidue); err != nil || jobResidue {
+		t.Fatalf("导入暂存密钥或元数据残留: %v %v", jobResidue, err)
+	}
+	if _, err := knowledgeStore.ImportJobPayload(ctx, job, 0); err == nil {
+		t.Fatal("旧任务复活已清除正文")
+	}
+	if err := knowledgeStore.SaveImportJob(ctx, &job); err == nil {
+		t.Fatal("旧generation重新写入任务")
+	}
+	if _, err := knowledgeStore.SweepImportJobs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(jobDirectory); err != nil || len(entries) != 0 {
+		t.Fatalf("密文清理: %d %v", len(entries), err)
 	}
 	resumed, err := store.RunLocalScrub(ctx, barrier.ErasureID)
 	if err != nil || resumed.Status != privacy.StatusLocalScrubbed || resumed.ErasureID != complete.ErasureID {

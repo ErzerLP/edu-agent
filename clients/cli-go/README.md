@@ -2,6 +2,8 @@
 
 `clients/cli-go` is an independent Go module for the online `edu-agent` client. It uses only the public HTTP/OpenAPI boundary and does not import server internals.
 
+可恢复大批导入使用 `knowledge import jobs`：`new` 自动扫描并分段上传，`list/show` 找回原任务，`resume` 校验原来源后续传，`preview/confirm/continue --all` 按完整计划逐批发布，`cancel` 保留已入库结果并清理暂存。所有入口明确指定 `--space` 和 `--collection`；`new` 可用 `--id` 保留创建身份，列表可用 `--cursor` 翻页。TUI使用 `jobs browse --collection UUID`，也可从原导入向导来源页按F7进入本集合任务页，复用来源扫描和身份审阅组件。任务最多128 MiB/1000篇，有效24小时，单文件和请求上限不变；详情见[任务恢复与留存契约](../../docs/design/import-jobs.md)。
+
 ## 资料导入向导
 
 主菜单 `i` 或 `knowledge import wizard` 打开独立全屏导入页面。学习区入口预选当前区，全局入口先选择区与已关联集合。来源页支持路径输入、Tab 补全、F2 浏览目录、F4 粘贴 UTF-8 原文；F3/F5 修改集合/学习区，F6 返回已有清单。扫描后空格多选，Ctrl+D 选择/排除同目录及子目录，`/` 搜索，`v` 查看正文，`e` 修改远端相对路径，Enter 请求服务端预览。包含/排除规则为逗号分隔的相对路径 glob；`private/**` 排除子树。

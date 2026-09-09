@@ -23,6 +23,7 @@ import (
 const MaxScanEntries = 5000
 
 type ScanOptions struct {
+	Job     bool     `json:"job,omitempty"`
 	Path    string   `json:"path"`
 	Include []string `json:"include,omitempty"`
 	Exclude []string `json:"exclude,omitempty"`
@@ -81,6 +82,10 @@ func Scan(ctx context.Context, options ScanOptions) ScanReport {
 	defer root.Close()
 	seen := map[string]int{}
 	used, count, entries := 0, 0, 0
+	budget := 12 << 20
+	if options.Job {
+		budget = 128 << 20
+	}
 	visit := func(current string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -153,8 +158,8 @@ func Scan(ctx context.Context, options ScanOptions) ScanReport {
 				if previous, duplicate := seen[key]; duplicate {
 					item.Reason = "规范路径与另一文件冲突"
 					report.Items[previous].Status, report.Items[previous].Reason, report.Items[previous].Selected = "error", item.Reason, false
-				} else if count >= MaxDocuments || used+len(document.Markdown) > 12<<20 {
-					item.Reason = "超出单批 1000 篇或 12 MiB 内容预算，请缩小选择"
+				} else if count >= MaxDocuments || used+len(document.Markdown) > budget {
+					item.Reason = fmt.Sprintf("超出1000篇或%d MiB内容预算，请缩小选择", budget>>20)
 				} else {
 					seen[key] = len(report.Items)
 					used += len(document.Markdown)

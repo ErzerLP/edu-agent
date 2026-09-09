@@ -52,6 +52,25 @@ func mapAPIError(err error) *Error {
 	if errors.As(err, &apiErr) {
 		mapped := &Error{Code: apiErr.Code, RequestID: apiErr.RequestID, ExitCode: ExitConflict}
 		switch apiErr.Code {
+		case "import_job_busy":
+			mapped.Detail = "任务正在处理一个批次"
+			mapped.Next = "稍后用 jobs show 查询原任务，再继续或取消"
+		case "import_job_source_changed":
+			mapped.Detail = "本地来源与任务清单不一致"
+			mapped.Next = "恢复原文件，或为变化内容创建新任务并重新预览"
+		case "import_job_confirmation_required", "import_job_not_ready":
+			mapped.Detail = "任务尚未具备已确认的完整提交计划"
+			mapped.Next = "先续传缺失文件，再 preview/resolve 并 confirm 当前预览版本"
+		case "import_job_closed":
+			mapped.Detail = "任务已完成、取消或过期，不能启动新的批次"
+			mapped.Next = "使用 jobs show 查看实际结果；未提交内容需要新任务"
+		case "import_job_quota":
+			mapped.Detail = "导入任务配额已耗尽"
+			mapped.Next = "单任务最多1000文件/128 MiB，最多32个有暂存密钥的任务；清理不再使用的任务"
+		case "import_job_staging_missing", "import_job_storage_unavailable", "import_jobs_unavailable":
+			mapped.Detail = "导入暂存不可用或缺失"
+			mapped.Next = "检查服务端暂存目录与剩余磁盘，用原任务查询结果后从未变化的来源续传"
+			mapped.ExitCode = ExitUnavailable
 		case "import_preview_stale":
 			mapped.Detail = "导入预览已失效，未复用旧确认"
 			mapped.Next = "保留当前选择，重新预览后确认；已提交操作可继续核对"

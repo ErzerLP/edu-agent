@@ -28,6 +28,7 @@ type importMessage struct {
 	err        error
 }
 type importDraft struct {
+	jobID                         string
 	space, spaceName              string
 	collection                    api.KnowledgeCollection
 	path, include, exclude, paste string
@@ -39,6 +40,9 @@ type importDraft struct {
 	unknown                       bool
 }
 type importModel struct {
+	jobMode                                               bool
+	jobResume                                             *api.ImportJob
+	jobResolve                                            func(api.ImportRequest) tea.Cmd
 	draft                                                 *importDraft
 	client                                                *api.Client
 	ctx                                                   context.Context
@@ -87,6 +91,7 @@ func (m *importModel) loadTargets() tea.Cmd {
 }
 func (m *importModel) Init() tea.Cmd { return m.loadTargets() }
 func (m *importModel) invalidate() {
+	m.draft.jobID = ""
 	m.draft.preview = api.ImportPreview{}
 	m.draft.request = api.ImportRequest{}
 	m.reviewIndex = 0
@@ -97,10 +102,41 @@ func (m *importModel) saveInputs() {
 func (m *importModel) scan() tea.Cmd {
 	m.saveInputs()
 	m.invalidate()
-	options := importer.ScanOptions{Path: m.draft.path, Include: importPatterns(m.draft.include), Exclude: importPatterns(m.draft.exclude)}
+	options := importer.ScanOptions{Path: m.draft.path, Include: importPatterns(m.draft.include), Exclude: importPatterns(m.draft.exclude), Job: m.jobMode}
 	return m.task("本地扫描", func(ctx context.Context) (any, error) { return importer.Scan(ctx, options), nil })
 }
 func (m *importModel) previewRequest(fresh bool) tea.Cmd {
+	if m.jobResolve != nil {
+		return m.jobResolve(m.draft.request)
+	}
+	if m.jobMode {
+		if m.jobResume != nil {
+			j, docs := *m.jobResume, m.draft.report.Documents()
+			client := m.client.WithLearningSpace(j.Space).WithCollection(j.Collection)
+			return m.task("创建持久任务", func(ctx context.Context) (any, error) { return uploadImportJob(ctx, client, j, docs) })
+		}
+		if m.draft.jobID == "" {
+			id, err := m.newID()
+			if err != nil {
+				m.note = err.Error()
+				return nil
+			}
+			m.draft.jobID = id
+		}
+		id, docs, client := m.draft.jobID, m.draft.report.Documents(), m.scoped()
+		if len(docs) == 0 {
+			m.note = "请至少选择一篇资料"
+			return nil
+		}
+		m.note = "原任务ID：" + id
+		return m.task("创建持久任务", func(ctx context.Context) (any, error) {
+			j, err := client.RunImportJob(ctx, api.ImportJobCommand{ID: id, Action: "create", Items: jobManifest(docs)})
+			if err != nil {
+				return j, err
+			}
+			return uploadImportJob(ctx, client, j, docs)
+		})
+	}
 	if fresh {
 		id, err := m.newID()
 		if err != nil {
@@ -291,6 +327,9 @@ func (m *importModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.refreshPreview()
 			}
+		case "创建持久任务":
+			m.navigate = "jobs"
+			return m, tea.Quit
 		case "正式提交", "核对原操作":
 			result := msg.value.(api.ImportResult)
 			m.draft.result, m.draft.unknown, m.stage, m.note = &result, false, "result", ""
@@ -314,12 +353,19 @@ func (m *importModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		key := msg.String()
+		if key == "f7" && m.stage == "source" && m.draft.collection.ID != "" && !m.jobMode {
+			m.navigate = "jobs"
+			return m, tea.Quit
+		}
 		if key == "ctrl+c" {
 			m.saveInputs()
 			m.cancel()
 			return m, tea.Quit
 		}
 		if key == "esc" {
+			if m.jobResume != nil && m.stage == "source" && m.busy == "" {
+				return m, tea.Quit
+			}
 			if m.busy != "" {
 				kind := m.busy
 				m.requestCancel()
@@ -717,6 +763,10 @@ func (m *importModel) decide(value string) tea.Cmd {
 		path, locator, candidates = v.Path, v.Locator, v.Candidates
 	}
 	if value == "跳过" {
+		if m.jobResolve != nil {
+			m.note = "持久任务清单已经冻结；如需排除，请取消后以新清单创建任务"
+			return nil
+		}
 		for i := range m.draft.report.Items {
 			v := &m.draft.report.Items[i]
 			if v.Document != nil && v.Document.Path == path {
@@ -905,18 +955,32 @@ func (m *importModel) View() string {
 		m.view.SetContent(ansi.Wrap(body, max(10, m.view.Width), ""))
 		body = m.view.View()
 	}
+	if m.stage == "source" && !m.jobMode {
+		help += " · F7 本集合导入任务"
+	}
 	return header + "\n" + body + "\n" + safeText(m.note) + "\n" + help + "\n"
 }
 
 func (a *App) runImportWizard(ctx context.Context, client *api.Client, collection, initial string) error {
+	return a.runImportWizardMode(ctx, client, collection, initial, false)
+}
+func (a *App) runImportWizardMode(ctx context.Context, client *api.Client, collection, initial string, jobMode bool, resumes ...api.ImportJob) error {
 	if a.teachingInput == nil || a.teachingOutput == nil {
 		return commandError("not_a_terminal", "全屏输入输出不可用", "使用 import preview/confirm", ExitInput)
 	}
 	key := a.learningSpace
+	if jobMode {
+		key += "/import-job/" + collection
+	}
 	if a.importDrafts == nil {
 		a.importDrafts = map[string]*importDraft{}
 	}
 	draft := a.importDrafts[key]
+	if len(resumes) > 0 {
+		j := resumes[0]
+		draft = &importDraft{space: j.Space, path: initial, jobID: j.ID}
+		draft.collection.ID = j.Collection
+	}
 	if draft == nil {
 		draft = &importDraft{space: a.learningSpace, spaceName: a.learningSpaceName, path: initial}
 		draft.collection.ID = collection
@@ -925,6 +989,10 @@ func (a *App) runImportWizard(ctx context.Context, client *api.Client, collectio
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := &importModel{draft: draft, client: client, ctx: child, cancel: cancel, newID: a.NewUUID, stage: "target", width: 80, height: 24, view: viewport.New(76, 15), query: textinput.New(), paste: textarea.New()}
+	m.jobMode = jobMode
+	if len(resumes) > 0 {
+		m.jobResume = &resumes[0]
+	}
 	m.paste.CharLimit = importer.MaxDocumentSize
 	m.paste.SetValue(draft.paste)
 	for _, v := range []string{draft.path, draft.include, draft.exclude} {
@@ -937,6 +1005,15 @@ func (a *App) runImportWizard(ctx context.Context, client *api.Client, collectio
 	_, err := tea.NewProgram(m, tea.WithContext(child), tea.WithInput(a.teachingInput), tea.WithOutput(a.teachingOutput), tea.WithAltScreen()).Run()
 	if err != nil && !errors.Is(err, tea.ErrProgramKilled) {
 		return err
+	}
+	if jobMode && m.navigate == "jobs" {
+		delete(a.importDrafts, key)
+	}
+	if !jobMode && m.navigate == "jobs" {
+		local := *a
+		local.learningSpace = draft.space
+		local.learningSpaceName = draft.spaceName
+		return local.runImportJobsUI(ctx, client.WithLearningSpace(draft.space).WithCollection(draft.collection.ID), draft.collection.ID)
 	}
 	if m.navigate == "goal" && draft.result != nil {
 		// 只冻结资料上下文；目标由既有目标管理入口显式创建或编辑。

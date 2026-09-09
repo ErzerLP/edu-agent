@@ -95,6 +95,8 @@ services:
       ADMIN_UI_ENABLED: ${ADMIN_UI_ENABLED:-false}
       ADMIN_UI_TOKEN: ${ADMIN_UI_TOKEN:-}
       ADMIN_UI_SETTINGS_FILE: /var/lib/edu-agent/private/admin-settings.json
+      # 复用服务器持久卷；正文加密暂存，任务密钥由数据库隐私流程管理。
+      IMPORT_JOB_STAGING_DIR: /var/lib/edu-agent/import-jobs
       NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK: ${NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK:-false}
       # The published host port above is loopback-only; the container listener itself is not.
       ADMIN_UI_TRUSTED_LOOPBACK_PROXY: "true"

@@ -15,6 +15,7 @@ RUN apk add --no-cache postgresql15-client \
     && install -d -o eduagent -g eduagent -m 0700 /var/lib/edu-agent/nocturne-backups
 COPY --from=build /out/edu-agentd /usr/local/bin/edu-agentd
 USER 10001:10001
+ENV IMPORT_JOB_STAGING_DIR=/var/lib/edu-agent/import-jobs
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD wget -q -O /dev/null http://127.0.0.1:8080/livez || exit 1

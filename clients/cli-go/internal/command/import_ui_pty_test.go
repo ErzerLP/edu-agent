@@ -11,17 +11,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workbench"
 )
 
 func TestImportWizardPTYScanPreviewConfirm(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
-	for _, paste := range []bool{false, true} {
-		t.Run(map[bool]string{false: "Markdown", true: "粘贴原文"}[paste], func(t *testing.T) {
+	for _, mode := range []string{"Markdown", "粘贴原文", "工作台嵌入"} {
+		t.Run(mode, func(t *testing.T) {
+			paste, embedded := mode != "Markdown", mode == "工作台嵌入"
+			var confirmed atomic.Bool
 			name := "go.md"
 			if paste {
 				name = "粘贴文本.md"
@@ -54,8 +59,12 @@ func TestImportWizardPTYScanPreviewConfirm(t *testing.T) {
 						w.WriteHeader(400)
 						return
 					}
+					confirmed.Store(true)
 					json.NewEncoder(w).Encode(api.ImportResult{Revision: testRevision(), Summary: &api.ImportSummary{OperationID: request.Request.OperationID, SpaceID: api.DefaultLearningSpaceID, CollectionID: collection, ActorDeviceID: testDeviceID, Added: 1, DocumentIDs: []string{testDocID}}})
 				default:
+					if workbenchSpaceHTTP(w, r) {
+						return
+					}
 					w.WriteHeader(404)
 				}
 			}))
@@ -73,7 +82,8 @@ func TestImportWizardPTYScanPreviewConfirm(t *testing.T) {
 			if err = os.WriteFile(file, []byte("# Go\nchannel\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			app, _, _ := newTestApp(nil, nil, nil)
+			cfg, creds := pairedStores(server.URL, "test")
+			app, _, _ := newTestApp(cfg, creds, nil)
 			app.teachingInput, app.teachingOutput = terminal, terminal
 			app.learningSpace = api.DefaultLearningSpaceID
 			app.learningSpaceName = "Go 后端"
@@ -81,6 +91,13 @@ func TestImportWizardPTYScanPreviewConfirm(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
+				if embedded {
+					model := workbench.New(ctx, workbenchService{app: *app}, api.DefaultLearningSpaceID)
+					model.Open(ctx, "import/"+collection)
+					_, err := tea.NewProgram(model, tea.WithContext(ctx), tea.WithInput(terminal), tea.WithOutput(terminal), tea.WithAltScreen()).Run()
+					done <- err
+					return
+				}
 				done <- app.runImportWizard(ctx, api.NewClient(server.URL, "test", time.Second, nil), collection, file)
 			}()
 			chunks := make(chan string, 64)
@@ -128,6 +145,13 @@ func TestImportWizardPTYScanPreviewConfirm(t *testing.T) {
 			io.WriteString(primary, "\x13")
 			wait("已提交版本")
 			io.WriteString(primary, "\x1b")
+			if embedded {
+				wait("区内 · 资料集合")
+				if strings.Contains(output, "\x1b[?1049l") {
+					t.Fatal("提交后离开了全屏")
+				}
+				io.WriteString(primary, "\x03")
+			}
 			select {
 			case err := <-done:
 				if err != nil {
@@ -136,7 +160,7 @@ func TestImportWizardPTYScanPreviewConfirm(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal("Esc 未退出向导")
 			}
-			if !strings.Contains(output, "\x1b[?1049h") || app.importDrafts[api.DefaultLearningSpaceID].result == nil {
+			if !strings.Contains(output, "\x1b[?1049h") || !confirmed.Load() || (!embedded && app.importDrafts[api.DefaultLearningSpaceID].result == nil) {
 				t.Fatal("全屏或结果未保留")
 			}
 		})

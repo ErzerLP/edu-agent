@@ -302,45 +302,14 @@ func (a *App) learnRouteActive(ctx context.Context, client APIClient, view api.S
 		}
 	}
 	if allowed(view.WorkItem.AllowedActions, "record_exposure") {
-		step, err := currentRouteStep(view)
+		fresh, explanation, err := a.recordExplanation(ctx, client, view)
 		if err != nil {
 			return view, false, err
 		}
-		query := step.TeachingIntent
-		if strings.TrimSpace(query) == "" {
-			query = view.WorkItem.GoalRevision.Text
+		if explanation != "" {
+			_, _ = fmt.Fprintf(a.Out, "Current: explanation (not scored)\n%s\n", safeText(explanation))
 		}
-		retrieval, err := a.retrieveForWorkItem(ctx, client, view, query, view.WorkItem.RouteRevision.KnowledgeRevisionID)
-		if err != nil {
-			return view, false, err
-		}
-		requestID, err := a.operationID()
-		if err != nil {
-			return view, false, err
-		}
-		request, err := proposalRequest(view, "explanation", retrieval, requestID)
-		if err != nil {
-			return view, false, err
-		}
-		proposal, fresh, stale, err := a.createProposalAndRefetch(ctx, client, view, request)
-		if err != nil {
-			return view, false, err
-		}
-		if stale {
-			return fresh, false, nil
-		}
-		_, _ = fmt.Fprintf(a.Out, "Current: explanation (not scored)\n%s\n", safeText(proposal.Text.Text))
-		operationID, err := a.operationID()
-		if err != nil {
-			return view, false, err
-		}
-		fresh, conflict, err := a.applyAndRefetch(ctx, client, fresh, api.ActionProposalExposureRequest{
-			SessionOperation: sessionOperation(fresh, operationID), Action: "record_exposure", ProposalID: proposal.ProposalID, ExposureKind: "explanation",
-		})
-		if err != nil {
-			return view, false, err
-		}
-		if conflict || fresh.Session.State != "RouteActive" {
+		if explanation == "" || fresh.Session.State != "RouteActive" {
 			return fresh, false, nil
 		}
 		view = fresh
@@ -552,6 +521,17 @@ func (a *App) submitAttempt(ctx context.Context, client APIClient, view api.Sess
 	help, err := a.chooseHelp(view.WorkItem.Activity.AllowedHelp)
 	if err != nil {
 		return view, err
+	}
+	return a.submitAttemptWithHelp(ctx, client, view, answer, help)
+}
+
+// submitAttemptWithHelp 复用作答请求构造，界面只负责输入与帮助等级选择。
+func (a *App) submitAttemptWithHelp(ctx context.Context, client APIClient, view api.SessionView, answer, help string) (api.SessionView, error) {
+	if view.WorkItem == nil || view.WorkItem.Activity == nil || !allowed(view.WorkItem.AllowedActions, "submit_attempt") || !allowed(view.WorkItem.Activity.AllowedHelp, help) {
+		return view, commandError("invalid_state", "answer or help is not allowed", "refresh the session", ExitConflict)
+	}
+	if strings.TrimSpace(answer) == "" || !utf8.ValidString(answer) || len(answer) > 262144 {
+		return view, commandError("invalid_answer", "answer must contain non-empty UTF-8 text up to 262144 bytes", "edit the answer", ExitInput)
 	}
 	operationID, err := a.operationID()
 	if err != nil {

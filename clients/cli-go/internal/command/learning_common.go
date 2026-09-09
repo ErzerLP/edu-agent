@@ -107,6 +107,9 @@ func (a *App) applyAndRefetch(ctx context.Context, client APIClient, view api.Se
 				return api.SessionView{}, true, mapAPIError(fetchErr)
 			}
 			_, _ = fmt.Fprintln(a.Err, "warning[version_conflict]: authoritative session refreshed; the previous input was not replayed")
+			if a.strictLearningConflicts {
+				return fresh, true, commandError("version_conflict", "服务端教学状态已改变，输入未重放", "刷新后重新确认", ExitConflict)
+			}
 			return fresh, true, nil
 		}
 		var transportErr *api.TransportError
@@ -163,6 +166,9 @@ func (a *App) createProposalAndRefetch(ctx context.Context, client APIClient, vi
 				return api.TutoringProposal{}, api.SessionView{}, false, mapAPIError(fetchErr)
 			}
 			_, _ = fmt.Fprintln(a.Err, "warning[stale_proposal]: authoritative session refreshed; request a new proposal from the new work item")
+			if a.strictLearningConflicts {
+				return api.TutoringProposal{}, fresh, true, commandError("stale_proposal", "教学提案已过期，未应用", "刷新后重试", ExitConflict)
+			}
 			return api.TutoringProposal{}, fresh, true, nil
 		}
 		return api.TutoringProposal{}, view, false, mapAPIError(err)
@@ -173,6 +179,9 @@ func (a *App) createProposalAndRefetch(ctx context.Context, client APIClient, vi
 	}
 	if fresh.Session.SessionID != view.Session.SessionID || fresh.Session.AggregateVersion != view.Session.AggregateVersion || fresh.Session.State != view.Session.State {
 		_, _ = fmt.Fprintln(a.Err, "warning[stale_proposal]: session changed while the proposal was frozen; the proposal was discarded")
+		if a.strictLearningConflicts {
+			return api.TutoringProposal{}, fresh, true, commandError("stale_proposal", "生成期间教学上下文已改变，提案已丢弃", "刷新后重试", ExitConflict)
+		}
 		return api.TutoringProposal{}, fresh, true, nil
 	}
 	return proposal, fresh, false, nil

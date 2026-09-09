@@ -988,20 +988,12 @@ func (a *App) runImportWizardMode(ctx context.Context, client *api.Client, colle
 	}
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
-	m := &importModel{draft: draft, client: client, ctx: child, cancel: cancel, newID: a.NewUUID, stage: "target", width: 80, height: 24, view: viewport.New(76, 15), query: textinput.New(), paste: textarea.New()}
+	m := newImportModel(child, client, draft, a.NewUUID)
+	m.cancel = cancel
 	m.jobMode = jobMode
 	if len(resumes) > 0 {
 		m.jobResume = &resumes[0]
 	}
-	m.paste.CharLimit = importer.MaxDocumentSize
-	m.paste.SetValue(draft.paste)
-	for _, v := range []string{draft.path, draft.include, draft.exclude} {
-		input := textinput.New()
-		input.CharLimit = 4096
-		input.SetValue(v)
-		m.inputs = append(m.inputs, input)
-	}
-	m.inputs[0].Focus()
 	_, err := tea.NewProgram(m, tea.WithContext(child), tea.WithInput(a.teachingInput), tea.WithOutput(a.teachingOutput), tea.WithAltScreen()).Run()
 	if err != nil && !errors.Is(err, tea.ErrProgramKilled) {
 		return err

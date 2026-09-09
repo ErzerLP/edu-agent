@@ -98,51 +98,70 @@ func (a *App) runAssessment(ctx context.Context, args []string) error {
 }
 
 func (a *App) collectAssessmentOverride(artifact api.AssessmentArtifact, decision api.AssessmentDecision) ([]api.AssessmentItem, error) {
-	currentByRubric := make(map[string]api.AssessmentItem, len(decision.Items))
-	for _, current := range decision.Items {
-		if _, exists := currentByRubric[current.RubricItemID]; exists {
-			return nil, commandError("protocol_error", "the current assessment decision has duplicate rubric items", "refresh the assessment", ExitInternal)
-		}
-		currentByRubric[current.RubricItemID] = current
-	}
-	if len(currentByRubric) != len(artifact.Items) {
-		return nil, commandError("protocol_error", "the current assessment decision does not match the immutable artifact", "refresh the assessment", ExitInternal)
-	}
-	items := make([]api.AssessmentItem, len(artifact.Items))
-	for index, source := range artifact.Items {
-		current, ok := currentByRubric[source.RubricItemID]
-		if !ok || !sameAssessmentSource(source, current) {
-			return nil, commandError("protocol_error", "the current assessment decision changed immutable assessment source fields", "refresh the assessment", ExitInternal)
-		}
+	return assessmentOverrideItems(artifact, decision, func(source, current api.AssessmentItem) (string, string, error) {
 		_, _ = fmt.Fprintf(a.Out, "Rubric: %s current=%s\n", safeText(source.RubricItemID), safeText(current.Conclusion))
-		prompt := a.dashboardText(
-			fmt.Sprintf("Conclusion (pass/partial/fail) [%s]: ", safeText(current.Conclusion)),
-			fmt.Sprintf("结论（pass/partial/fail）[%s]：", safeText(current.Conclusion)),
-		)
-		conclusion, err := a.Terminal.ReadLine(prompt)
+		conclusion, err := a.Terminal.ReadLine(a.dashboardText(fmt.Sprintf("Conclusion (pass/partial/fail) [%s]: ", safeText(current.Conclusion)), fmt.Sprintf("结论（pass/partial/fail）[%s]：", safeText(current.Conclusion))))
 		if err != nil {
-			return nil, commandError("assessment_input_failed", "override conclusion could not be read", "run assessment override again", ExitInput)
+			return "", "", commandError("assessment_input_failed", "override conclusion could not be read", "run assessment override again", ExitInput)
 		}
-		conclusion = strings.TrimSpace(strings.ToLower(conclusion))
-		if conclusion == "" && current.Conclusion != "unassessed" {
-			conclusion = current.Conclusion
-		}
-		if conclusion != "pass" && conclusion != "partial" && conclusion != "fail" {
-			return nil, commandError("invalid_assessment_conclusion", "override conclusion must be pass, partial, or fail", "run assessment override again", ExitInput)
+		conclusion, err = normalizeOverrideConclusion(conclusion, current.Conclusion)
+		if err != nil {
+			return "", "", err
 		}
 		candidate, err := a.Terminal.ReadLine(a.dashboardText("Misconception candidate (blank preserves current): ", "误区候选（留空保留当前值）："))
 		if err != nil {
-			return nil, commandError("assessment_input_failed", "misconception candidate could not be read", "run assessment override again", ExitInput)
+			return "", "", commandError("assessment_input_failed", "misconception candidate could not be read", "run assessment override again", ExitInput)
 		}
-		copyItem := source
-		copyItem.Conclusion = conclusion
-		copyItem.MisconceptionCandidate = current.MisconceptionCandidate
+		return conclusion, candidate, nil
+	})
+}
+
+// assessmentOverrideItems 为脚本输入与工作台表单复用不可变证据校验及结论选择。
+func assessmentOverrideItems(artifact api.AssessmentArtifact, decision api.AssessmentDecision, choose func(api.AssessmentItem, api.AssessmentItem) (string, string, error)) ([]api.AssessmentItem, error) {
+	currentByRubric := map[string]api.AssessmentItem{}
+	for _, item := range decision.Items {
+		if _, ok := currentByRubric[item.RubricItemID]; ok {
+			return nil, commandError("protocol_error", "评估包含重复评分项", "刷新评估", ExitInternal)
+		}
+		currentByRubric[item.RubricItemID] = item
+	}
+	if len(currentByRubric) != len(artifact.Items) {
+		return nil, commandError("protocol_error", "评估处置与不可变证据不一致", "刷新评估", ExitInternal)
+	}
+	items := make([]api.AssessmentItem, len(artifact.Items))
+	for i, source := range artifact.Items {
+		current, ok := currentByRubric[source.RubricItemID]
+		if !ok || !sameAssessmentSource(source, current) {
+			return nil, commandError("protocol_error", "评估不可变证据不一致", "刷新评估", ExitInternal)
+		}
+		conclusion, candidate, err := choose(source, current)
+		if err != nil {
+			return nil, err
+		}
+		conclusion, err = normalizeOverrideConclusion(conclusion, current.Conclusion)
+		if err != nil {
+			return nil, err
+		}
+		item := source
+		item.Conclusion = conclusion
+		item.MisconceptionCandidate = current.MisconceptionCandidate
 		if strings.TrimSpace(candidate) != "" {
-			copyItem.MisconceptionCandidate = strings.TrimSpace(candidate)
+			item.MisconceptionCandidate = strings.TrimSpace(candidate)
 		}
-		items[index] = copyItem
+		items[i] = item
 	}
 	return items, nil
+}
+
+func normalizeOverrideConclusion(value, current string) (string, error) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if value == "" && current != "unassessed" {
+		value = current
+	}
+	if value != "pass" && value != "partial" && value != "fail" {
+		return "", commandError("invalid_assessment_conclusion", "override conclusion must be pass, partial, or fail", "run assessment override again", ExitInput)
+	}
+	return value, nil
 }
 
 func sameAssessmentSource(artifact, decision api.AssessmentItem) bool {

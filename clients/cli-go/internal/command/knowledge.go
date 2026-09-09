@@ -44,31 +44,40 @@ func (a *App) runKnowledge(ctx context.Context, args []string) error {
 	if err := set.Parse(args[1:]); err != nil || len(set.Args()) != 1 {
 		return commandError("usage", "knowledge import requires one Markdown file or directory", "run edu-agent knowledge import <file-or-directory>", ExitInput)
 	}
-	batch, err := importer.Load(set.Args()[0])
+	result, err := a.importKnowledge(ctx, flags, set.Args()[0], *collection)
 	if err != nil {
-		return commandError("invalid_markdown_input", "the Markdown file set is invalid", "remove symlinks, invalid paths, oversized files, or non-UTF-8 content", ExitInput)
+		return err
+	}
+	return printImportResult(a.Out, result)
+}
+
+// importKnowledge 返回结构化回执；只有原命令入口进入终端身份审批流程。
+func (a *App) importKnowledge(ctx context.Context, flags onlineFlags, path, collection string) (api.ImportResult, error) {
+	batch, err := importer.Load(path)
+	if err != nil {
+		return api.ImportResult{}, commandError("invalid_markdown_input", "the Markdown file set is invalid", "remove symlinks, invalid paths, oversized files, or non-UTF-8 content", ExitInput)
 	}
 	operationID, err := a.NewUUID()
 	if err != nil {
-		return commandError("uuid_generation_failed", "a secure operation ID could not be generated", "inspect the operating system random source", ExitInternal)
+		return api.ImportResult{}, commandError("uuid_generation_failed", "a secure operation ID could not be generated", "inspect the operating system random source", ExitInternal)
 	}
 	if err := validateInitialImportRequestSize(operationID, batch.Documents); err != nil {
-		return err
+		return api.ImportResult{}, err
 	}
 	bound, timeout, err := a.loadBinding(flags.overrides())
 	if err != nil {
-		return err
+		return api.ImportResult{}, err
 	}
 	a.printInsecureWarning(bound.Config)
 	client := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout)
-	if *collection != "" {
-		if !spaceIDPattern.MatchString(*collection) {
-			return commandError("usage", "资料集合 ID 无效", "使用 knowledge library list", ExitInput)
+	if collection != "" {
+		if !spaceIDPattern.MatchString(collection) {
+			return api.ImportResult{}, commandError("usage", "资料集合 ID 无效", "使用 knowledge library list", ExitInput)
 		}
 		if real, ok := client.(*api.Client); ok {
-			client = real.WithCollection(*collection)
+			client = real.WithCollection(collection)
 		} else {
-			return commandError("unsupported", "客户端不支持资料集合", "更新客户端", ExitUnavailable)
+			return api.ImportResult{}, commandError("unsupported", "客户端不支持资料集合", "更新客户端", ExitUnavailable)
 		}
 	}
 	var expectedParent *string
@@ -76,7 +85,7 @@ func (a *App) runKnowledge(ctx context.Context, args []string) error {
 	if err != nil {
 		var apiErr *api.APIError
 		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
-			return mapAPIError(err)
+			return api.ImportResult{}, mapAPIError(err)
 		}
 	} else {
 		expectedParent = &head.RevisionID
@@ -85,21 +94,21 @@ func (a *App) runKnowledge(ctx context.Context, args []string) error {
 		OperationID: operationID, ExpectedParentRevisionID: expectedParent, Source: "go-cli-m1", Documents: batch.Documents,
 	}
 	if err := validateImportRequestSize(request); err != nil {
-		return err
+		return api.ImportResult{}, err
 	}
 	result, err := client.ImportKnowledge(ctx, request)
 	if err == nil {
-		return printImportResult(a.Out, result)
+		return result, nil
 	}
 	var apiErr *api.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "identity_review_required" || apiErr.IdentityReview == nil {
-		return mapAPIError(err)
+		return api.ImportResult{}, mapAPIError(err)
 	}
 	result, err = a.resolveIdentityReview(ctx, client, request, *apiErr.IdentityReview)
 	if err != nil {
-		return err
+		return api.ImportResult{}, err
 	}
-	return printImportResult(a.Out, result)
+	return result, nil
 }
 
 func validateInitialImportRequestSize(operationID string, documents []api.ImportDocument) error {

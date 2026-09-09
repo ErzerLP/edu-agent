@@ -144,16 +144,17 @@ type App struct {
 	AgentSessionSecrets agentsession.SecretBackend
 	Build               BuildInfo
 
-	dashboardMode       bool
-	learningSpace       string
-	learningSpaceName   string
-	learningSessions    map[string]string
-	learningDrafts      map[string][]string
-	learningInputDrafts map[string]string
-	importDrafts        map[string]*importDraft
-	importedScope       string
-	teachingInput       io.Reader
-	teachingOutput      io.Writer
+	strictLearningConflicts bool
+	dashboardMode           bool
+	learningSpace           string
+	learningSpaceName       string
+	learningSessions        map[string]string
+	learningDrafts          map[string][]string
+	learningInputDrafts     map[string]string
+	importDrafts            map[string]*importDraft
+	importedScope           string
+	teachingInput           io.Reader
+	teachingOutput          io.Writer
 }
 
 func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, error) {
@@ -213,9 +214,18 @@ func (a *App) interactiveDashboardAvailable() bool {
 }
 
 func (a *App) runDashboard(ctx context.Context) int {
+	if runner, ok := a.Dashboard.(*dashboard.Runner); ok {
+		runner.Workbench = workbenchService{app: *a}
+		runner.LearningSpaceID = a.learningSpace
+	}
 	lastExit := ExitOK
 	for {
 		args, quit, err := a.Dashboard.Run(ctx, a.dashboardSnapshot())
+		if runner, ok := a.Dashboard.(*dashboard.Runner); ok {
+			if selected, name := runner.SelectedLearningSpace(); selected != "" {
+				a.learningSpace, a.learningSpaceName = selected, name
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return lastExit

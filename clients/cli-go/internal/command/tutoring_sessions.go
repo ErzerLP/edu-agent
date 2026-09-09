@@ -56,7 +56,12 @@ func (a *App) startGoalSession(ctx context.Context, client APIClient, goalID str
 	if err != nil {
 		return api.SessionView{}, err
 	}
-	_, err = client.CreateSession(ctx, api.TutoringSessionRequest{OperationID: operationID, PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: 0, GoalRevisionID: goal.GoalRevisionID})
+	return a.startGoalSessionWithIDs(ctx, client, goal, sessionID, operationID)
+}
+
+// startGoalSessionWithIDs 保留显式新建的操作身份，工作台未知结果重试不另建会话。
+func (a *App) startGoalSessionWithIDs(ctx context.Context, client APIClient, goal api.GoalRevision, sessionID, operationID string) (api.SessionView, error) {
+	_, err := client.CreateSession(ctx, api.TutoringSessionRequest{OperationID: operationID, PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: 0, GoalRevisionID: goal.GoalRevisionID})
 	if err != nil {
 		return api.SessionView{}, mapAPIError(err)
 	}

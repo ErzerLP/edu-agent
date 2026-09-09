@@ -11,6 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workbench"
 )
 
 type LocalState string
@@ -45,14 +47,36 @@ type Snapshot struct {
 }
 
 type Runner struct {
-	In       io.Reader
-	Out      io.Writer
-	modelKey string
+	In              io.Reader
+	Out             io.Writer
+	modelKey        string
+	Workbench       workbench.Service
+	LearningSpaceID string
+	workspace       *workbench.Model
+	workspaceServer string
 }
 
 func (r *Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, error) {
 	r.modelKey = ""
 	initial := newModel(snapshot)
+	if r.Workbench != nil {
+		if r.workspaceServer != snapshot.ServerURL {
+			if r.workspace != nil {
+				r.workspace.Suspend()
+			}
+			r.workspace = nil
+			r.workspaceServer = snapshot.ServerURL
+		}
+		if r.workspace == nil {
+			space := r.LearningSpaceID
+			if space == "" {
+				space = "00000000-0000-4000-8000-000000000001"
+			}
+			r.workspace = workbench.New(ctx, r.Workbench, space)
+		}
+		initial.workspace, initial.ctx = r.workspace, ctx
+		defer r.workspace.Suspend()
+	}
 	program := tea.NewProgram(initial, tea.WithAltScreen(), tea.WithInput(r.In), tea.WithOutput(r.Out), tea.WithContext(ctx))
 	result, err := program.Run()
 	if err != nil {
@@ -78,6 +102,13 @@ func (r *Runner) TakeModelKey() (string, bool) {
 	value := r.modelKey
 	r.modelKey = ""
 	return value, true
+}
+
+func (r *Runner) SelectedLearningSpace() (string, string) {
+	if r.workspace == nil {
+		return "", ""
+	}
+	return r.workspace.Selection()
 }
 
 type screen int
@@ -113,6 +144,9 @@ type menuItem struct {
 }
 
 type model struct {
+	ctx                context.Context
+	workspace          *workbench.Model
+	workspaceActive    bool
 	snapshot           Snapshot
 	agentProviderDraft string
 	screen             screen
@@ -137,6 +171,22 @@ func newModel(snapshot Snapshot) model {
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := message.(workbench.ExitMsg); ok {
+		m.workspaceActive = false
+		_, m.snapshot.LearningSpaceName = m.workspace.Selection()
+		m.snapshot.LearningSpaceName = terminal.EscapeText(m.snapshot.LearningSpaceName)
+		return m, nil
+	}
+	if m.workspaceActive {
+		if size, ok := message.(tea.WindowSizeMsg); ok {
+			m.width, m.height = size.Width, size.Height
+		}
+		if key, ok := message.(tea.KeyMsg); ok && key.String() == "ctrl+c" {
+			m.quit = true
+		}
+		_, cmd := m.workspace.Update(message)
+		return m, cmd
+	}
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -247,6 +297,14 @@ func (m *model) goBack() {
 }
 
 func (m model) activate(item menuItem) (tea.Model, tea.Cmd) {
+	if m.workspace != nil && m.screen == screenMain {
+		page := map[string]string{"z": "spaces", "l": "learn", "g": "new-goal", "o": "goals", "i": "import", "t": "import", "v": "overview", "r": "learn", "w": "reviews", "b": "overview"}[item.key]
+		if page != "" {
+			m.workspaceActive = true
+			_, _ = m.workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			return m, m.workspace.Open(m.ctx, page)
+		}
+	}
 	if item.key == "b" {
 		m.goBack()
 		return m, nil
@@ -548,6 +606,10 @@ func (m model) items() []menuItem {
 		}
 	}
 	items := []menuItem{agentItem}
+	if m.workspace != nil {
+		items = append([]menuItem{{key: "b", title: "学习工作台", description: "持续页面、学习区切换、目标、教学和复习"}}, items...)
+		items = append(items, menuItem{key: "t", title: "资料导入与身份审批", description: "在持续工作台中完成预览、审批与确认", next: screenImport})
+	}
 	if len(agentItem.command) > 0 {
 		items = append(items, menuItem{key: "y", title: "恢复AI历史会话", description: "打开当前工作区已加密保存的Agent Session选择器", command: []string{"agent", "resume"}})
 	}
@@ -576,6 +638,9 @@ var (
 )
 
 func (m model) View() string {
+	if m.workspaceActive {
+		return m.workspace.View()
+	}
 	if m.terminalTooSmall() {
 		return smallTerminalView(m.width, m.height)
 	}
@@ -630,16 +695,28 @@ func (m model) View() string {
 		body.WriteString("   " + mutedStyle.Render("N 取消"))
 	default:
 		m.renderMenuHeader(&body)
-		for index, item := range m.items() {
+		items := m.items()
+		start, end := 0, len(items)
+		descriptions := m.width >= 52 && m.height >= 30
+		if m.workspace != nil && m.screen == screenMain {
+			available := max(1, m.height-lipgloss.Height(body.String())-5)
+			descriptions = descriptions && len(items)*2 <= available
+			if len(items) > available {
+				start = max(0, m.cursor-available+1)
+				end = min(len(items), start+available)
+			}
+		}
+		for index := start; index < end; index++ {
+			item := items[index]
 			marker := "  "
 			style := lipgloss.NewStyle()
 			if index == m.cursor {
 				marker = "> "
 				style = selectedStyle
 			}
-			body.WriteString(style.Render(fmt.Sprintf("%s[%s] %s", marker, item.key, item.title)))
+			body.WriteString(style.MaxWidth(width - 4).MaxHeight(1).Render(fmt.Sprintf("%s[%s] %s", marker, item.key, item.title)))
 			body.WriteString("\n")
-			if m.width >= 52 && m.height >= 30 {
+			if descriptions {
 				body.WriteString("    " + mutedStyle.Render(item.description) + "\n")
 			}
 		}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -69,6 +70,19 @@ func learningSpaceArchive(err error) (Problem, bool) {
 }
 
 func Knowledge(err error) Problem {
+	var scoped *learningspace.Error
+	if errors.As(err, &scoped) {
+		status := 400
+		switch scoped.Code {
+		case "learning_space_not_found":
+			status = 404
+		case "learning_space_archived":
+			status = 409
+		case "learning_space_module_unavailable":
+			status = 501
+		}
+		return Problem{Status: status, Code: scoped.Code, Message: "资料学习区请求无法完成"}
+	}
 	if p, ok := learningSpaceArchive(err); ok {
 		return p
 	}

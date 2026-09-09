@@ -279,6 +279,12 @@
           hidden
         >
           <div id="knowledgeStats" class="metric-row"></div>
+		  <div class="section-block">
+		    <label>学习区 ID（留空为默认区）<input id="knowledgeSpace" type="text" /></label>
+		    <label>资料集合 ID（留空为默认资料库）<input id="knowledgeCollection" type="text" /></label>
+		    <button id="knowledgeScopeLoad" type="button">加载本区资料</button>
+		    <p>仅显示本区已关联的集合。关联和范围选择使用 knowledge library；浏览为最新版本，正式学习使用冻结范围。</p>
+		  </div>
           <div class="explorer-layout">
             <section class="section-block explorer-list-block">
               <div class="section-heading responsive-heading">

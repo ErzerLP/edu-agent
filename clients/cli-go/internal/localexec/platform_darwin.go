@@ -35,29 +35,57 @@ const disabledTerminalByte = 0xff // Darwin _POSIX_VDISABLE.
 // Darwin returns ordinary EOF on terminal hangup; other errors stay incomplete.
 func terminalEOF(error) bool { return false }
 
-// All entries from one sysctl snapshot share the same session-pointer identity.
-// The unreaped leader must still be present; otherwise cleanup is unprovable.
+// Modern Darwin does not export e_sess kernel pointers through sysctl. Use
+// numeric session IDs instead, while the unreaped leader still pins the SID.
+// Failed lookups remain uncertain unless disappearance or a non-running zombie
+// outside the anchored root group is confirmed below.
 func sessionHasMembers(sid int, liveOnly bool) (bool, error) {
 	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return false, err
 	}
-	var session uintptr
+	anchored := false
 	for _, process := range processes {
 		if int(process.Proc.P_pid) == sid {
-			session = process.Eproc.Sess
+			anchored = true
 			break
 		}
 	}
-	if session == 0 {
+	if !anchored {
 		return false, unix.ESRCH
 	}
+	var uncertain error
 	for _, process := range processes {
-		if int(process.Proc.P_pid) != sid && process.Eproc.Sess == session && (!liveOnly || process.Proc.P_stat != 5) {
+		pid := int(process.Proc.P_pid)
+		if pid <= 0 || pid == sid || liveOnly && process.Proc.P_stat == 5 {
+			continue
+		}
+		// The anchored root group belongs to this session, including zombies.
+		if int(process.Eproc.Pgid) == sid {
+			return true, nil
+		}
+		session, err := unix.Getsid(pid)
+		if errors.Is(err, unix.ESRCH) {
+			remaining, checkErr := unix.SysctlKinfoProcSlice("kern.proc.pid", pid)
+			if checkErr == nil && len(remaining) == 0 {
+				continue
+			}
+			// Darwin getsid cannot reference a zombie. Root-group zombies
+			// were counted above; a zombie elsewhere cannot be a live escaped
+			// job and must not make every unrelated PTY session unclean.
+			if checkErr == nil && len(remaining) == 1 && remaining[0].Proc.P_stat == 5 && int(remaining[0].Eproc.Pgid) != sid {
+				continue
+			}
+		}
+		if err != nil {
+			uncertain = err
+			continue
+		}
+		if session == sid {
 			return true, nil
 		}
 	}
-	return false, nil
+	return false, uncertain
 }
 
 func groupHasLiveMembers(pgid int) (bool, error) {

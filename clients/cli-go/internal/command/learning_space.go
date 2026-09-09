@@ -71,7 +71,7 @@ func (a *App) parseSpaceFlag(args []string) ([]string, func(), error) {
 }
 func (a *App) runSpace(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(a.Out, "space list [--search TEXT] [--status active|archived] [--limit 1..100] [--cursor TOKEN]\nspace show|select --id UUID\nspace create --name NAME [--description TEXT] [--operation-id UUID]\nspace edit|archive|restore --id UUID [--name NAME] [--description TEXT] [--expected-version N] [--operation-id UUID]\nspace browse (interactive list, details, selection and management)\nAll commands accept --space UUID for this invocation. Selection is process-local; shell scripts must pass --space on each invocation.\nKnowledge, learning, tutoring and memory are available only in the default space; Agent/offline require the default space. Names never determine ownership.")
+		_, err := fmt.Fprintln(a.Out, "space list [--search TEXT] [--status active|archived] [--limit 1..100] [--cursor TOKEN]\nspace show|select --id UUID\nspace create --name NAME [--description TEXT] [--operation-id UUID]\nspace edit|archive|restore --id UUID [--name NAME] [--description TEXT] [--expected-version N] [--operation-id UUID]\nspace browse (interactive list, details, selection and management)\nAll commands accept --space UUID for this invocation. Selection is process-local; shell scripts must pass --space on each invocation.\n资料使用 knowledge library 管理区内集合与冻结范围。目标、教学、记忆和 Agent/offline 仍要求默认区；名称不决定归属。")
 		return err
 	}
 	action := args[0]
@@ -237,7 +237,7 @@ func (a *App) browseSpaces(ctx context.Context, client spaceClient) error {
 			return err
 		}
 		_, _ = fmt.Fprintf(a.Out, "%s\n%s\nID: %s  status: %s  version: %d\n", safeText(item.Name), safeText(item.Description), item.ID, item.Status, item.Version)
-		_, _ = fmt.Fprintln(a.Out, "Business modules currently support only the default space.")
+		_, _ = fmt.Fprintln(a.Out, "资料使用 knowledge library 管理集合；目标、教学和记忆仍仅支持默认区。")
 		action, err := a.Terminal.ReadLine("s: select; r: rename; a: archive; u: restore; Enter: back > ")
 		if err != nil {
 			return err

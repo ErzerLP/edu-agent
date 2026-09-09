@@ -76,6 +76,9 @@ type evidenceCarryoverGetInput struct {
 }
 
 type knowledgeRetrieveInput struct {
+	LearningSpaceID           *string                   `json:"learning_space_id,omitempty"`
+	CollectionID              *string                   `json:"collection_id,omitempty"`
+	ScopeSnapshotID           *string                   `json:"scope_snapshot_id,omitempty"`
 	Query                     string                    `json:"query"`
 	KnowledgeRevisionID       *string                   `json:"knowledge_revision_id,omitempty"`
 	QueryContextSchemaVersion string                    `json:"query_context_schema_version,omitempty"`

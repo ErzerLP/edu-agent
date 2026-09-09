@@ -1,5 +1,7 @@
 # MCP surface technical reference
 
+Issue #3 为 `knowledge.retrieve` 增加 `learning_space_id`、`collection_id` 和 `scope_snapshot_id` 参数。冻结范围不与集合选择或单一 revision 混用；所有 ID 交由同一个知识服务验证。旧资源 URI 固定默认范围，MCP HTTP 空间/集合 header 明确拒绝，不能隐式改变学习和记忆工具。未增加集合共享、关联或导入等高权限写工具。详见[资料范围契约](knowledge-spaces.md)。
+
 ## Runtime shape
 
 The server exposes one MCP endpoint at `POST /mcp` on the existing `edu-agentd` listener. It does not create another process, port, database, namespace, PostgreSQL pool, or Nocturne client. The app composition constructs HTTP and MCP from the same `httpapi.Options` service instances, rate limiters, logger, and `privacy.ReadPermitManager`.

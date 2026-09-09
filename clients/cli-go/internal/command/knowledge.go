@@ -13,6 +13,12 @@ import (
 )
 
 func (a *App) runKnowledge(ctx context.Context, args []string) error {
+	if len(args) > 1 && args[0] == "import" {
+		switch args[1] {
+		case "wizard", "scan", "preview", "confirm", "operation", "help":
+			return a.runImportWorkflow(ctx, args[1:])
+		}
+	}
 	if len(args) > 0 && args[0] == "library" {
 		return a.runKnowledgeLibrary(ctx, args[1:])
 	}
@@ -228,6 +234,10 @@ func sortedNodeResolutions(values map[string]api.NodeResolution) []api.NodeResol
 }
 
 func (a *App) collectIdentityResolutions(review api.IdentityReview) ([]api.DocumentResolution, []api.NodeResolution, error) {
+	if !a.interactiveTerminalAvailable() {
+		_ = json.NewEncoder(a.Out).Encode(review)
+		return nil, nil, commandError("identity_review_required", "导入需要身份决定", "使用 knowledge import preview/confirm 的 JSON 请求提交明确决定", ExitConflict)
+	}
 	_, _ = fmt.Fprintln(a.Out, "Identity review required.")
 	documents := make([]api.DocumentResolution, 0, len(review.Documents))
 	for _, item := range review.Documents {

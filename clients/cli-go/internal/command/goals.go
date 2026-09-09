@@ -477,12 +477,20 @@ func (a *App) editGoal(ctx context.Context, client goalClient, g api.GoalRevisio
 		management.Details = d
 		preview.Management = &management
 		a.goalDetail(preview)
+		if a.importedScope != "" {
+			_, _ = fmt.Fprintln(a.Out, "i 加入本次导入资料（保存前可检查或取消）")
+		}
 		_, _ = fmt.Fprintln(a.Out, "字段：text/name/outcome/scope/exclusions/self-assessment/purpose/criteria/priority/timezone/deadline/weekly-minutes；m 选择资料；x 清除资料；s 保存；r 读取远端版本；q 取消")
 		key, err := a.Terminal.ReadLine("编辑 > ")
 		if err != nil {
 			return err
 		}
 		switch key {
+		case "i":
+			if a.importedScope != "" {
+				d.ScopeSnapshotID = a.importedScope
+				r.OperationID = ""
+			}
 		case "q":
 			return nil
 		case "s":

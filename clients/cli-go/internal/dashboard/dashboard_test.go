@@ -188,9 +188,7 @@ func TestMenuNavigationAndFormsReturnExistingArgv(t *testing.T) {
 
 	updated, _ = newModel(Snapshot{LocalState: LocalStatePaired}).Update(key("i"))
 	importModel := updated.(model)
-	importModel.inputs[0].SetValue("notes/course")
-	updated, _ = importModel.Update(key("enter"))
-	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"knowledge", "import", "--", "notes/course"}) {
+	if got := importModel.command; !reflect.DeepEqual(got, []string{"knowledge", "import", "wizard"}) {
 		t.Fatalf("import command = %#v", got)
 	}
 }
@@ -364,9 +362,7 @@ func TestFormsProtectLeadingDashValuesFromFlagParsing(t *testing.T) {
 
 	updated, _ = newModel(Snapshot{LocalState: LocalStatePaired}).Update(key("i"))
 	knowledge := updated.(model)
-	knowledge.inputs[0].SetValue("-notes.md")
-	updated, _ = knowledge.Update(key("enter"))
-	if got, want := updated.(model).command, []string{"knowledge", "import", "--", "-notes.md"}; !reflect.DeepEqual(got, want) {
+	if got, want := knowledge.command, []string{"knowledge", "import", "wizard"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("import command = %#v, want %#v", got, want)
 	}
 }

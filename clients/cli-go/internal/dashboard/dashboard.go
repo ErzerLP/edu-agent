@@ -554,7 +554,7 @@ func (m model) items() []menuItem {
 	items = append(items,
 		menuItem{key: "z", title: "学习区", description: "列表、搜索、详情与当前客户端选择", command: []string{"space", "browse"}},
 		menuItem{key: "l", title: "继续结构化学习", description: "恢复服务端教学状态机中的当前会话", command: []string{"learn"}},
-		menuItem{key: "i", title: "导入知识", description: "导入Markdown文件或目录", next: screenImport},
+		menuItem{key: "i", title: "导入知识", description: "选择资料、预览变更并确认导入", command: []string{"knowledge", "import", "wizard"}},
 		menuItem{key: "g", title: "保存学习目标", description: "保存一句话目标，独立于当前教学会话", next: screenGoal},
 		menuItem{key: "o", title: "目标管理", description: "列表、草稿、资料选择与独立生命周期", command: []string{"goal", "browse"}},
 		menuItem{key: "v", title: "查看学习进度", description: "读取当前学习快照", command: []string{"progress"}},

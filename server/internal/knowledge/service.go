@@ -23,6 +23,8 @@ type ImportOperationRecord struct {
 }
 
 type PreparedCommit struct {
+	ExpectedGeneration       *int64
+	Summary                  *ImportSummary
 	OperationID              string
 	RequestHash              string
 	ExpectedParentRevisionID *string

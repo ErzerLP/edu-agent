@@ -18,6 +18,9 @@ type knowledgeSpaces interface {
 }
 
 func collectionSelectionPath(path string) bool {
+	if strings.HasPrefix(path, "/v1/knowledge/imports/") {
+		return true
+	}
 	return path == "/admin/api/knowledge" || path == "/v1/knowledge/imports" || path == "/v1/knowledge/retrievals" || strings.HasPrefix(path, "/v1/knowledge/revisions/")
 }
 
@@ -97,6 +100,9 @@ func (a *API) mountKnowledgeSpaces(r chi.Router) {
 }
 
 func scopedKnowledgePath(path string) bool {
+	if strings.HasPrefix(path, "/v1/knowledge/imports/") {
+		return true
+	}
 	switch path {
 	case "/admin/api/knowledge":
 		return true

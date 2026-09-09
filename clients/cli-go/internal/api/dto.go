@@ -100,6 +100,7 @@ type ImportRequest struct {
 }
 
 type ImportResult struct {
+	Summary   *ImportSummary    `json:"summary,omitempty"`
 	Revision  KnowledgeRevision `json:"revision"`
 	Unchanged bool              `json:"unchanged"`
 	Replayed  bool              `json:"replayed,omitempty"`

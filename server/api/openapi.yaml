@@ -399,6 +399,95 @@ paths:
           $ref: "#/components/responses/InternalError"
         "503":
           $ref: "#/components/responses/DependencyUnavailable"
+  /v1/knowledge/imports/previews:
+    parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    post:
+      operationId: previewKnowledgeImport
+      summary: 检查明确提交的内容与身份决定，不发布版本
+      x-required-scopes: [knowledge:write, knowledge:read]
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeImportRequest" }
+      responses:
+        "200":
+          description: ready 返回15分钟确认回执；review 返回待决定身份和原文
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 学习区或集合不可访问 }
+        "409": { description: 父版本、路径或身份决定冲突 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { description: 正文或路径无效 }
+        "429": { description: 请求过于频繁 }
+        "500": { description: 服务端错误 }
+        "503": { description: 隐私边界不可用 }
+  /v1/knowledge/imports/confirm:
+    parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    post:
+      operationId: confirmKnowledgeImport
+      summary: 原子提交与回执绑定的原始预览请求
+      x-required-scopes: [knowledge:write, knowledge:approve]
+      security: [{ deviceBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [request, receipt]
+              properties:
+                request: { $ref: "#/components/schemas/KnowledgeImportRequest" }
+                receipt: { type: string }
+      responses:
+        "200":
+          description: 成功、未变化或原操作重放，summary 计数持久一致
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeImportResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 学习区或集合不可访问 }
+        "409": { description: import_preview_stale、revision_conflict 或 idempotency_conflict；重新检查 }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "422": { description: 内容或身份决定无效 }
+        "429": { description: 请求过于频繁 }
+        "500": { description: 提交未能确认，应核对原操作 }
+        "503": { description: 隐私边界不可用 }
+  /v1/knowledge/imports/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getKnowledgeImportOperation
+      summary: 核对当前设备在指定区和集合提交的原操作
+      x-required-scope: knowledge:read
+      security: [{ deviceBearer: [] }]
+      responses:
+        "200":
+          description: 持久提交回执
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeImportResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 未查到或无权访问；不证明在途提交失败 }
+        "429": { description: 请求过于频繁 }
+        "500": { description: 服务端错误 }
+        "503": { description: 隐私边界不可用 }
   /v1/knowledge/imports:
     parameters:
       - { $ref: "#/components/parameters/KnowledgeCollectionID" }
@@ -5906,11 +5995,49 @@ components:
         reason:
           type: string
           minLength: 1
+    ImportSummary:
+      type: object
+      additionalProperties: false
+      required: [operation_id, space_id, collection_id, actor_device_id, document_ids, added, updated, unchanged]
+      properties:
+        document_ids:
+          type: [array, "null"]
+          items: { type: string, format: uuid }
+        operation_id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        collection_id: { type: string, format: uuid }
+        actor_device_id: { type: string, format: uuid }
+        added: { type: integer, minimum: 0 }
+        updated: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+    ImportPreview:
+      type: object
+      additionalProperties: false
+      required: [status, summary, diff, affected_evidence, impact_known]
+      properties:
+        status: { type: string, enum: [ready, review] }
+        receipt: { type: string }
+        summary: { $ref: "#/components/schemas/ImportSummary" }
+        diff:
+          type: array
+          items: { $ref: "#/components/schemas/KnowledgeMaintenanceDocumentDiff" }
+        identity_review: { $ref: "#/components/schemas/IdentityReview" }
+        before:
+          type: array
+          items:
+            type: object
+            required: [path, markdown]
+            properties:
+              path: { type: string }
+              markdown: { type: string }
+        affected_evidence: { type: integer, minimum: 0 }
+        impact_known: { type: boolean }
     KnowledgeImportResult:
       type: object
       additionalProperties: false
       required: [revision, unchanged]
       properties:
+        summary: { $ref: "#/components/schemas/ImportSummary" }
         revision:
           $ref: "#/components/schemas/KnowledgeRevision"
         unchanged:

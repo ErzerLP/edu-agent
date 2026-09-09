@@ -197,10 +197,11 @@ func (s *Store) LookupImportOperation(ctx context.Context, operationID string) (
 	var requestHash []byte
 	var revisionID string
 	var unchanged bool
+	var summary *knowledge.ImportSummary
 	err = tx.QueryRow(ctx, `
-		SELECT request_hash,result_revision_id,unchanged
+		SELECT request_hash,result_revision_id,unchanged,summary
 		FROM knowledge_import_operations WHERE operation_id=$1`, operationID).
-		Scan(&requestHash, &revisionID, &unchanged)
+		Scan(&requestHash, &revisionID, &unchanged, &summary)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
 			return knowledge.ImportOperationRecord{}, false, fmt.Errorf("commit missing import operation read: %w", err)
@@ -221,7 +222,7 @@ func (s *Store) LookupImportOperation(ctx context.Context, operationID string) (
 		return knowledge.ImportOperationRecord{}, false, fmt.Errorf("commit import operation read: %w", err)
 	}
 	return knowledge.ImportOperationRecord{
-		RequestHash: hex.EncodeToString(requestHash), Result: knowledge.ImportResult{Revision: revision, Unchanged: unchanged},
+		RequestHash: hex.EncodeToString(requestHash), Result: knowledge.ImportResult{Revision: revision, Unchanged: unchanged, Summary: summary},
 	}, true, nil
 }
 
@@ -246,10 +247,11 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 	var storedHash []byte
 	var storedRevisionID string
 	var storedUnchanged bool
+	var storedSummary *knowledge.ImportSummary
 	err = tx.QueryRow(ctx, `
-		SELECT request_hash,result_revision_id,unchanged
+		SELECT request_hash,result_revision_id,unchanged,summary
 		FROM knowledge_import_operations WHERE operation_id=$1 FOR UPDATE`, prepared.OperationID).
-		Scan(&storedHash, &storedRevisionID, &storedUnchanged)
+		Scan(&storedHash, &storedRevisionID, &storedUnchanged, &storedSummary)
 	if err == nil {
 		if hex.EncodeToString(storedHash) != prepared.RequestHash {
 			return knowledge.ImportResult{}, &knowledge.Error{Code: knowledge.CodeIdempotencyConflict}
@@ -264,10 +266,13 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		if err != nil {
 			return knowledge.ImportResult{}, err
 		}
-		return knowledge.ImportResult{Revision: revision, Unchanged: storedUnchanged, Replayed: true}, nil
+		return knowledge.ImportResult{Revision: revision, Unchanged: storedUnchanged, Replayed: true, Summary: storedSummary}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return knowledge.ImportResult{}, fmt.Errorf("lock import operation: %w", err)
+	}
+	if prepared.ExpectedGeneration != nil && *prepared.ExpectedGeneration != knowledgeGeneration {
+		return knowledge.ImportResult{}, &knowledge.Error{Code: knowledge.CodeImportPreviewStale}
 	}
 
 	var currentHead *string
@@ -339,14 +344,30 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		return knowledge.ImportResult{}, fmt.Errorf("invalid prepared request hash")
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO knowledge_import_operations(operation_id,request_hash,result_revision_id,unchanged,completed_at)
-		VALUES($1,$2,$3,$4,$5)`, prepared.OperationID, requestHash, prepared.Revision.ID, prepared.Unchanged, prepared.Revision.CreatedAt); err != nil {
+		INSERT INTO knowledge_import_operations(operation_id,request_hash,result_revision_id,unchanged,completed_at,summary)
+		VALUES($1,$2,$3,$4,$5,$6)`, prepared.OperationID, requestHash, prepared.Revision.ID, prepared.Unchanged, prepared.Revision.CreatedAt, prepared.Summary); err != nil {
 		return knowledge.ImportResult{}, fmt.Errorf("record knowledge import operation: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return knowledge.ImportResult{}, fmt.Errorf("commit knowledge import: %w", err)
 	}
-	return knowledge.ImportResult{Revision: prepared.Revision, Unchanged: prepared.Unchanged}, nil
+	return knowledge.ImportResult{Revision: prepared.Revision, Unchanged: prepared.Unchanged, Summary: prepared.Summary}, nil
+}
+
+func (s *Store) ImportGeneration(ctx context.Context) (int64, error) {
+	tx, err := s.beginPrivacyRead(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(context.Background())
+	if err := checkCollection(ctx, tx, knowledge.CollectionID(ctx)); err != nil {
+		return 0, err
+	}
+	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
+	if err != nil {
+		return 0, err
+	}
+	return generation, tx.Commit(ctx)
 }
 
 func insertRevision(ctx context.Context, tx pgx.Tx, revision knowledge.KnowledgeRevision, lineages []knowledge.Lineage) error {

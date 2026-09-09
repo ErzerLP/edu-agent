@@ -2,6 +2,26 @@
 
 `clients/cli-go` is an independent Go module for the online `edu-agent` client. It uses only the public HTTP/OpenAPI boundary and does not import server internals.
 
+## 资料导入向导
+
+主菜单 `i` 或 `knowledge import wizard` 打开独立全屏导入页面。学习区入口预选当前区，全局入口先选择区与已关联集合。来源页支持路径输入、Tab 补全、F2 浏览目录、F4 粘贴 UTF-8 原文；F3/F5 修改集合/学习区，F6 返回已有清单。扫描后空格多选，Ctrl+D 选择/排除同目录及子目录，`/` 搜索，`v` 查看正文，`e` 修改远端相对路径，Enter 请求服务端预览。包含/排除规则为逗号分隔的相对路径 glob；`private/**` 排除子树。
+
+预览不发布版本。身份冲突按候选序号选择“更新原资料并保留历史”，或输入“新资料”“跳过”；章节改写、拆分和合并有明确选项，身份不会按同名文件自动继承。长候选、正文、差异可滚动和搜索；`v` 读取完整原资料。确认页 Ctrl+S 原子提交，Esc 返回修改；网络等待可取消，草稿与结果只保留在当前进程。结果未知时 `c` 核对原操作，`r` 仅重试同一确认；未查到不等于提交失败。结果页 `v` 进入资料详情，`g` 带本次资料进入目标管理，再由用户选择新建/编辑及是否加入资料，不自动建立目标、路线或证据。
+
+脚本入口不进入全屏或等待交互：
+
+```sh
+edu-agent knowledge import scan --include '*.md,*.txt' --exclude 'private/**' ./notes
+edu-agent --space 区ID knowledge import preview --collection 集合ID --request preview.json
+edu-agent --space 区ID knowledge import confirm --collection 集合ID --request confirm.json
+edu-agent --space 区ID knowledge import operation --collection 集合ID --id 原操作ID
+edu-agent knowledge import help
+```
+
+扫描返回逐项 `status/reason/selected/document`；取明确选择的 `ready` 文档组成预览请求。`preview.json` 使用 `operation_id`、`expected_parent_revision_id`（空集合显式 `null`）、`source` 和 `documents`。`ready` 返回回执，`review` 返回身份候选；填写既有 document/node resolutions 和 review receipt，以新 operation 重新预览。`confirm.json` 为 `{"request": 原预览请求, "receipt": 预览回执}`。确认与核对返回相同的持久 summary，包含实际目标、文档 ID 和新增/更新/未变化计数；本地排除、错误和不支持项不计入成功。
+
+只支持 Markdown、UTF-8 纯文本和粘贴；纯文本转换保留原始内容、相对来源名、类型及 SHA-256，不公开绝对路径。单文件含转换后内容至多4 MiB，扫描至多5000项/64层，批次至多1000篇/12 MiB内容，最终 HTTP JSON 仍受16 MiB限制。回执15分钟内有效，服务重启或输入/目标/父版本/隐私 generation 改变需重新预览；已经提交的原操作可跨重启核对。旧 `knowledge import 路径` 仍保留，非 TTY 遇身份审阅输出结构化审阅并退出；需要可靠人工确认与原操作核对时使用新入口。完整契约见 [导入向导设计](../../docs/design/import-wizard.md)。
+
 ## Build
 
 Go 1.26.6 is required.

@@ -823,6 +823,7 @@ func TestKnowledgeImportRefreshesStaleIdentityReviewWithoutReusingDecision(t *te
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	terminal := &fakeTerminal{lines: []string{"preserve", testDocID, "same document", "new", "new identity after restart"}}
 	app, out, errOut := newTestApp(configStore, credentialStore, terminal)
+	app.InputIsTTY, app.OutputIsTTY = func() bool { return true }, func() bool { return true }
 	app.NewUUID = uuidSequence(t, operationIDs...)
 	if exit := app.Run(t.Context(), []string{"knowledge", "import", markdownPath}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
@@ -895,6 +896,7 @@ func TestKnowledgeImportCompletesDocumentThenNodeReview(t *testing.T) {
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	terminal := &fakeTerminal{lines: []string{"preserve", testDocID, "same document", "rewrite", nodeRevisionID, "same node"}}
 	app, out, errOut := newTestApp(configStore, credentialStore, terminal)
+	app.InputIsTTY, app.OutputIsTTY = func() bool { return true }, func() bool { return true }
 	app.NewUUID = uuidSequence(t,
 		"91000000-0000-4000-8000-000000000001",
 		"91000000-0000-4000-8000-000000000002",

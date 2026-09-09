@@ -97,7 +97,7 @@ func Knowledge(err error) Problem {
 	case knowledge.CodeInvalidMarkdown, knowledge.CodeInvalidIdentityMarker:
 		result.Status, result.Message = http.StatusUnprocessableEntity, "Markdown identity or syntax is invalid"
 	case knowledge.CodeDuplicateDocumentIdentity, knowledge.CodePathOccupied,
-		knowledge.CodeIdentityReviewRequired, knowledge.CodeStaleIdentityReview,
+		knowledge.CodeIdentityReviewRequired, knowledge.CodeStaleIdentityReview, knowledge.CodeImportPreviewStale,
 		knowledge.CodeRevisionConflict, knowledge.CodeIdempotencyConflict:
 		result.Status, result.Message = http.StatusConflict, "Knowledge import could not be committed"
 	case knowledge.CodeNotFound:

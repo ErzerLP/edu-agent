@@ -52,6 +52,9 @@ func mapAPIError(err error) *Error {
 	if errors.As(err, &apiErr) {
 		mapped := &Error{Code: apiErr.Code, RequestID: apiErr.RequestID, ExitCode: ExitConflict}
 		switch apiErr.Code {
+		case "import_preview_stale":
+			mapped.Detail = "导入预览已失效，未复用旧确认"
+			mapped.Next = "保留当前选择，重新预览后确认；已提交操作可继续核对"
 		case "goal_management_unsupported":
 			mapped.ExitCode = ExitUnavailable
 			mapped.Detail = "服务端尚不支持独立目标管理"

@@ -29,7 +29,7 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 15 || latest.name != "000015_tutoring_selection.sql" || len(latest.checksum) != 64 {
+	if latest.version != 16 || latest.name != "000016_import_preview.sql" || len(latest.checksum) != 64 {
 		t.Fatalf("教学会话迁移未正确嵌入: %s", latest.name)
 	}
 }

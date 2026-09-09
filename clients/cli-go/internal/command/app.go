@@ -150,6 +150,8 @@ type App struct {
 	learningSessions    map[string]string
 	learningDrafts      map[string][]string
 	learningInputDrafts map[string]string
+	importDrafts        map[string]*importDraft
+	importedScope       string
 	teachingInput       io.Reader
 	teachingOutput      io.Writer
 }
@@ -244,6 +246,9 @@ func (a *App) runDashboard(ctx context.Context) int {
 		}
 		lastExit = a.runDashboardCommand(ctx, args)
 		if len(args) > 0 && args[0] == "agent" && lastExit == ExitOK {
+			continue
+		}
+		if len(args) > 2 && args[0] == "knowledge" && args[1] == "import" && args[2] == "wizard" && lastExit == ExitOK {
 			continue
 		}
 		if ctx.Err() != nil {

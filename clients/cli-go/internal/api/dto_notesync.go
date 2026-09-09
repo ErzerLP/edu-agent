@@ -11,6 +11,8 @@ const (
 )
 
 type NotesyncStatus struct {
+	LearningSpaceID         string `json:"learning_space_id,omitempty"`
+	CollectionID            string `json:"collection_id,omitempty"`
 	Configured              bool   `json:"configured"`
 	Compatible              bool   `json:"compatible"`
 	Reason                  string `json:"reason"`

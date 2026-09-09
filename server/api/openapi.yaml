@@ -6,6 +6,110 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/knowledge/collections:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: listKnowledgeCollections
+      summary: 列出本区引用的资料集合；可显式发现已共享的集合
+      security: [{ deviceBearer: [] }]
+      x-required-scope: knowledge:read
+      parameters:
+        - { name: shared, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200":
+          description: 集合列表；空列表是成功结果
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/KnowledgeCollection" } }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+    post:
+      operationId: changeKnowledgeCollection
+      summary: 创建资料集合、开启共享、关联或解除本区引用
+      security: [{ deviceBearer: [] }]
+      x-required-scope: knowledge:write
+      x-required-scopes: [knowledge:write, knowledge:approve]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeCollectionCommand" }
+      responses:
+        "200":
+          description: 操作后的集合；解除引用不删除正文或历史范围
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeCollection" }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+  /v1/knowledge/scopes:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    post:
+      operationId: freezeKnowledgeScope
+      summary: 冻结多个集合版本及文档或章节选择
+      security: [{ deviceBearer: [] }]
+      x-required-scope: knowledge:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeScopeSnapshot" }
+      responses:
+        "200":
+          description: 归属当前区的不可变范围；版本更新不会替换条目
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeScopeSnapshot" }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+  /v1/knowledge/scopes/{scopeID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeScopeID" }
+    get:
+      operationId: getKnowledgeScope
+      security: [{ deviceBearer: [] }]
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: 冻结范围，不含正文；跨区 ID 不可读取
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeScopeSnapshot" }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+  /v1/knowledge/scopes/{scopeID}/tree:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeScopeID" }
+    get:
+      operationId: getKnowledgeScopeTree
+      security: [{ deviceBearer: [] }]
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: 仅包含冻结范围的节点；revision_id 为范围遍历标识
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeScopeTree" }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+  /v1/knowledge/scopes/{scopeID}/export:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeScopeID" }
+    get:
+      operationId: exportKnowledgeScope
+      security: [{ deviceBearer: [] }]
+      x-required-scope: knowledge:read
+      responses:
+        "200":
+          description: 冻结正文或章节原文；各条目通过集合和版本身份区分
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeScopeExport" }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
   /v1/learning-spaces/capabilities:
     get:
       operationId: getLearningSpaceCapabilities
@@ -260,6 +364,7 @@ paths:
           $ref: "#/components/responses/InternalError"
   /v1/knowledge/revisions/head:
     parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
       - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeHead
@@ -296,6 +401,7 @@ paths:
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/imports:
     parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
       - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: importKnowledgeDocuments
@@ -516,6 +622,7 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/knowledge/revisions/{revisionID}/tree:
     parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
       - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: getKnowledgeRevisionTree
@@ -555,6 +662,7 @@ paths:
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/revisions/{revisionID}/export:
     parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
       - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: exportKnowledgeRevision
@@ -589,6 +697,7 @@ paths:
           $ref: "#/components/responses/DependencyUnavailable"
   /v1/knowledge/retrievals:
     parameters:
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
       - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: retrieveKnowledge
@@ -2101,6 +2210,16 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    KnowledgeCollectionID:
+      name: X-Knowledge-Collection-ID
+      in: header
+      description: 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。
+      schema: { type: string, format: uuid }
+    KnowledgeScopeID:
+      name: scopeID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     LearningSpaceID:
       name: X-Learning-Space-ID
       in: header
@@ -2191,6 +2310,11 @@ components:
       name: X-Privacy-Erasure-Grant
       description: One-time, device-bound, locally issued privacy erasure grant. For a new operation it is validated and consumed in the same serializable transaction as the barrier; a failed or conflicting barrier does not consume it. An exact committed-operation replay may omit it. The value is never returned or logged.
   responses:
+    KnowledgeScopeFailure:
+      description: 400 无效请求；401 未认证；403 缺少权限；404 集合、版本或范围不属于本区；409 版本/幂等冲突或归档区；429 限流；500 内部错误；503 隐私清除。失败不回退全库。
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     BadRequest:
       description: Request validation failed.
       content:
@@ -2370,6 +2494,83 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    KnowledgeCollection:
+      type: object
+      required: [id, name, source, shared, head_revision_id, version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source: { type: string }
+        shared: { type: boolean }
+        head_revision_id: { type: [string, "null"], format: uuid }
+        version: { type: integer, minimum: 1 }
+    KnowledgeCollectionCommand:
+      type: object
+      additionalProperties: false
+      required: [id, action]
+      properties:
+        id: { type: string, format: uuid }
+        action: { type: string, enum: [create, share, link, unlink] }
+        name: { type: string, maxLength: 120 }
+        source: { type: string, maxLength: 500 }
+        shared: { type: boolean }
+        expected_version: { type: integer, minimum: 0 }
+    KnowledgeScopeEntry:
+      type: object
+      additionalProperties: false
+      required: [collection_id, revision_id]
+      properties:
+        collection_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid, description: 必须同时指定 document_id，包含该章节及其子树 }
+    KnowledgeScopeTree:
+      type: object
+      required: [revision]
+      properties:
+        revision:
+          type: object
+          description: 范围投影包装，非独立 canonical catalog revision；文档哈希与身份仍指向原版本
+          required: [revision_id, documents]
+          properties:
+            revision_id: { type: string, format: uuid }
+            documents:
+              type: array
+              items: { $ref: "#/components/schemas/SnapshotDocument" }
+    KnowledgeScopeExport:
+      type: object
+      additionalProperties: false
+      required: [revision_id, documents]
+      properties:
+        revision_id: { type: string, format: uuid, description: 冻结范围 ID }
+        documents:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [collection_id, knowledge_revision_id, path, markdown]
+            properties:
+              collection_id: { type: string, format: uuid }
+              knowledge_revision_id: { type: string, format: uuid }
+              path: { type: string }
+              markdown: { type: string }
+    KnowledgeScopeSnapshot:
+      type: object
+      additionalProperties: false
+      required: [id, entries]
+      properties:
+        updates:
+          type: array
+          readOnly: true
+          description: 有更新的集合及其最新版本；entries 始终保持冻结值
+          items: { $ref: "#/components/schemas/KnowledgeScopeEntry" }
+        id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { $ref: "#/components/schemas/KnowledgeScopeEntry" }
     LearningSpace:
       type: object
       additionalProperties: false
@@ -2412,7 +2613,7 @@ components:
           additionalProperties: false
           required: [knowledge, learning, tutoring, memory]
           properties:
-            knowledge: { type: string, enum: [default_only] }
+            knowledge: { type: string, enum: [default_only, collections_v1] }
             learning: { type: string, enum: [default_only] }
             tutoring: { type: string, enum: [default_only] }
             memory: { type: string, enum: [default_only] }
@@ -5594,6 +5795,9 @@ components:
       additionalProperties: false
       required: [path, document]
       properties:
+        collection_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+        selected_range: { $ref: "#/components/schemas/SourceRange" }
         path:
           type: string
         document:
@@ -5879,6 +6083,7 @@ components:
       additionalProperties: false
       required: [query]
       properties:
+        scope_snapshot_id: { type: string, format: uuid, description: 与 knowledge_revision_id 互斥，严格使用冻结范围 }
         query:
           type: string
           minLength: 1
@@ -5925,6 +6130,7 @@ components:
         - degraded
         - truncated
       properties:
+        scope_snapshot_id: { type: string, format: uuid }
         knowledge_revision_id:
           type: string
           format: uuid
@@ -6120,6 +6326,8 @@ components:
         vault: { type: string, minLength: 1 }
         path_prefix: { type: string, minLength: 1 }
         external_cleanup_required: { type: boolean }
+        learning_space_id: { type: string, format: uuid }
+        collection_id: { type: string, format: uuid }
     NotesyncPreviewRequest:
       type: object
       additionalProperties: false

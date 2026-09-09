@@ -293,6 +293,10 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodeRevisionID := first.Revision.Documents[0].Revision.Nodes[1].ID
+	snapshot, err := knowledgeService.FreezeScope(ctx, knowledge.ScopeSnapshot{ID: uuid.NewString(), Entries: []knowledge.ScopeEntry{{CollectionID: knowledge.DefaultCollectionID, RevisionID: first.Revision.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO knowledge_node_artifacts(
 			id,node_revision_id,kind,producer_version,prompt_version,model_version,
@@ -337,6 +341,12 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 	}
 	if _, err := knowledgeService.Export(ctx, first.Revision.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
 		t.Fatalf("old revision export error=%v", err)
+	}
+	if _, err := knowledgeService.Export(ctx, snapshot.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("清除后冻结范围仍可导出: %v", err)
+	}
+	if _, err := knowledgeService.ReadScope(ctx, snapshot.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("清除后冻结范围仍可读取: %v", err)
 	}
 	oldRevisionID := first.Revision.ID
 	if _, err := knowledgeService.Retrieve(ctx, knowledge.RetrievalCommand{Query: "private", KnowledgeRevisionID: &oldRevisionID}); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {

@@ -9,6 +9,9 @@ import (
 )
 
 func validateKnowledgeRetrievalRequest(value KnowledgeRetrievalRequest) error {
+	if value.ScopeSnapshotID != "" && (!validLearningUUID(value.ScopeSnapshotID) || value.KnowledgeRevisionID != "") {
+		return errors.New("冻结范围无效或与版本参数冲突")
+	}
 	if strings.TrimSpace(value.Query) == "" || !utf8.ValidString(value.Query) {
 		return errors.New("retrieval query is invalid")
 	}

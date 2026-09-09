@@ -122,6 +122,9 @@ type pendingLineage struct {
 }
 
 func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResult, error) {
+	if err := s.checkScopeAdapter(ctx); err != nil {
+		return ImportResult{}, err
+	}
 	source := strings.TrimSpace(command.Source)
 	if !command.ExpectedParentProvided || !validUUID(strings.ToLower(command.OperationID)) || len(command.Documents) == 0 || len(command.Documents) > MaxImportDocuments || !utf8.ValidString(source) || utf8.RuneCountInString(source) < 1 || utf8.RuneCountInString(source) > MaxSourceRunes {
 		return ImportResult{}, &Error{Code: CodeInvalidRequest}
@@ -794,10 +797,16 @@ func nodeTokens(document DocumentRevision, node NodeRevision, canonicalizer *Can
 }
 
 func (s *Service) Head(ctx context.Context) (*KnowledgeRevision, error) {
+	if err := s.checkScopeAdapter(ctx); err != nil {
+		return nil, err
+	}
 	return s.store.Head(ctx)
 }
 
 func (s *Service) Tree(ctx context.Context, revisionID string) (TreeResult, error) {
+	if err := s.checkScopeAdapter(ctx); err != nil {
+		return TreeResult{}, err
+	}
 	if !validUUID(strings.ToLower(revisionID)) {
 		return TreeResult{}, &Error{Code: CodeInvalidRequest}
 	}
@@ -818,11 +827,19 @@ func (s *Service) Export(ctx context.Context, revisionID string) (ExportResult, 
 	}
 	result := ExportResult{RevisionID: tree.Revision.ID, Documents: make([]ExportDocument, 0, len(tree.Revision.Documents))}
 	for _, document := range tree.Revision.Documents {
-		markdown, err := ExportMarkdown(document.Revision.CanonicalMarkdown, tree.Revision.ID)
+		if selected := document.SelectedRange; selected != nil {
+			result.Documents = append(result.Documents, ExportDocument{CollectionID: document.CollectionID, KnowledgeRevisionID: document.KnowledgeRevisionID, Path: document.Path, Markdown: document.Revision.CanonicalMarkdown[selected.Start:selected.End]})
+			continue
+		}
+		sourceRevision := tree.Revision.ID
+		if document.KnowledgeRevisionID != "" {
+			sourceRevision = document.KnowledgeRevisionID
+		}
+		markdown, err := ExportMarkdown(document.Revision.CanonicalMarkdown, sourceRevision)
 		if err != nil {
 			return ExportResult{}, err
 		}
-		result.Documents = append(result.Documents, ExportDocument{Path: document.Path, Markdown: markdown})
+		result.Documents = append(result.Documents, ExportDocument{CollectionID: document.CollectionID, KnowledgeRevisionID: document.KnowledgeRevisionID, Path: document.Path, Markdown: markdown})
 	}
 	return result, nil
 }

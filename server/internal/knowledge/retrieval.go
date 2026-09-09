@@ -33,6 +33,18 @@ type queueItem struct {
 }
 
 func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (RetrievalResult, error) {
+	if err := s.checkScopeAdapter(ctx); err != nil {
+		return RetrievalResult{}, err
+	}
+	if command.ScopeSnapshotID != nil {
+		if command.KnowledgeRevisionID != nil {
+			return RetrievalResult{}, &Error{Code: CodeInvalidRequest}
+		}
+		if _, err := s.ReadScope(ctx, *command.ScopeSnapshotID); err != nil {
+			return RetrievalResult{}, err
+		}
+		command.KnowledgeRevisionID = command.ScopeSnapshotID
+	}
 	queryTokens := retrievalTokens(command.Query)
 	if len(queryTokens) == 0 {
 		return RetrievalResult{}, &Error{Code: CodeInvalidRequest}
@@ -70,6 +82,7 @@ func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (Retri
 		return RetrievalResult{}, &Error{Code: CodeContentRedacted}
 	}
 	result := RetrievalResult{
+		ScopeSnapshotID:     command.ScopeSnapshotID,
 		KnowledgeRevisionID: revision.ID, RetrieverVersion: RetrieverVersion, SelectorVersion: SelectorVersion,
 		QueryContextVersion: contextVersion, SummarySnapshot: []string{}, Trace: []RetrievalTrace{}, Hits: []RetrievalHit{},
 		Truncated: initiallyTruncated,
@@ -386,6 +399,9 @@ func scoreDocuments(input []SnapshotDocument, queryTokens []string, canonicalize
 			}
 		}
 		excerpt := canonicalUserBody(document.Revision.CanonicalMarkdown, canonicalizer)
+		if r := document.SelectedRange; r != nil {
+			excerpt = document.Revision.CanonicalMarkdown[r.Start:r.End]
+		}
 		score := 4*scoreField(queryTokens, document.Path) + 3*scoreField(queryTokens, titles.String()) + scoreField(queryTokens, excerpt)
 		result = append(result, retrievalDocument{path: document.Path, revision: document.Revision, score: score})
 	}

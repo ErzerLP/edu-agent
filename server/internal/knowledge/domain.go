@@ -107,8 +107,11 @@ type DocumentRevision struct {
 }
 
 type SnapshotDocument struct {
-	Path     string           `json:"path"`
-	Revision DocumentRevision `json:"document"`
+	CollectionID        string           `json:"collection_id,omitempty"`
+	KnowledgeRevisionID string           `json:"knowledge_revision_id,omitempty"`
+	SelectedRange       *SourceRange     `json:"selected_range,omitempty"`
+	Path                string           `json:"path"`
+	Revision            DocumentRevision `json:"document"`
 }
 
 type KnowledgeRevision struct {
@@ -264,8 +267,10 @@ type NodeArtifact struct {
 }
 
 type ExportDocument struct {
-	Path     string `json:"path"`
-	Markdown string `json:"markdown"`
+	CollectionID        string `json:"collection_id,omitempty"`
+	KnowledgeRevisionID string `json:"knowledge_revision_id,omitempty"`
+	Path                string `json:"path"`
+	Markdown            string `json:"markdown"`
 }
 
 type ExportResult struct {
@@ -285,6 +290,7 @@ type RetrievalLimits struct {
 }
 
 type RetrievalCommand struct {
+	ScopeSnapshotID           *string         `json:"scope_snapshot_id,omitempty"`
 	Query                     string          `json:"query"`
 	KnowledgeRevisionID       *string         `json:"knowledge_revision_id,omitempty"`
 	QueryContextSchemaVersion string          `json:"query_context_schema_version,omitempty"`
@@ -369,6 +375,7 @@ type RetrievalHit struct {
 }
 
 type RetrievalResult struct {
+	ScopeSnapshotID     *string          `json:"scope_snapshot_id,omitempty"`
 	KnowledgeRevisionID string           `json:"knowledge_revision_id"`
 	RetrieverVersion    string           `json:"retriever_version"`
 	SelectorVersion     string           `json:"selector_version"`

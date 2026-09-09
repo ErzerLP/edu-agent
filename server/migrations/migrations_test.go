@@ -29,8 +29,8 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 12 || latest.name != "000012_learning_spaces.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("knowledge maintenance migration was not embedded with checksum: %+v", latest)
+	if latest.version != 13 || latest.name != "000013_knowledge_spaces.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("资料范围迁移未正确嵌入: %s", latest.name)
 	}
 }
 

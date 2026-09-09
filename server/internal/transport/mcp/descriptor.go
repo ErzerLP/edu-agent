@@ -275,6 +275,7 @@ func evidenceCarryoverPageOutputSchema() any {
 
 func knowledgeRetrieveSchema() any {
 	return objectSchema(map[string]any{
+		"learning_space_id": uuidProperty(), "collection_id": uuidProperty(), "scope_snapshot_id": uuidProperty(),
 		"query": stringProperty(), "knowledge_revision_id": uuidProperty(),
 		"query_context_schema_version": stringProperty(), "context": map[string]any{"type": "object"},
 		"limits": objectSchema(map[string]any{

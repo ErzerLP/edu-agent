@@ -44,14 +44,15 @@ type TransportError struct{ Category string }
 func (e *TransportError) Error() string { return "api transport error: " + e.Category }
 
 type Client struct {
-	learningSpace string
-	baseURL       string
-	token         string
-	timeout       time.Duration
-	http          *http.Client
-	maxBody       int64
-	now           func() time.Time
-	sleep         func(context.Context, time.Duration) error
+	knowledgeCollection string
+	learningSpace       string
+	baseURL             string
+	token               string
+	timeout             time.Duration
+	http                *http.Client
+	maxBody             int64
+	now                 func() time.Time
+	sleep               func(context.Context, time.Duration) error
 }
 
 func NewClient(baseURL, token string, timeout time.Duration, source *http.Client) *Client {
@@ -372,6 +373,9 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 		return false, 0, 0, &ProtocolError{Category: "request_creation_failed"}
 	}
 	request.Header.Set("Accept", "application/json")
+	if c.knowledgeCollection != "" && strings.HasPrefix(path, "/v1/knowledge/") {
+		request.Header.Set("X-Knowledge-Collection-ID", c.knowledgeCollection)
+	}
 	request.Header.Set("User-Agent", userAgent)
 	if c.learningSpace != "" && spaceBusinessPath(path) {
 		request.Header.Set("X-Learning-Space-ID", c.learningSpace)

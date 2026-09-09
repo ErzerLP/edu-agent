@@ -101,7 +101,7 @@ func TestOpenAPIContainsFoundationClientContract(t *testing.T) {
 	assertParameterList(t, paths, "/v1/learning/routes", "get", "#/components/parameters/Cursor", "#/components/parameters/PageLimit", "current_only")
 	assertParameterList(t, paths, "/v1/learning/nodes/{nodeRevisionID}", "get", "#/components/parameters/NodeRevisionID")
 	assertParameterList(t, paths, "/v1/learning/evidence", "get", "#/components/parameters/Cursor", "#/components/parameters/PageLimit", "node_revision_id")
-	assertParameterList(t, paths, "/v1/learning/reviews", "get", "#/components/parameters/Cursor", "#/components/parameters/PageLimit", "#/components/parameters/DueBefore")
+	assertParameterList(t, paths, "/v1/learning/reviews", "get", "#/components/parameters/Cursor", "#/components/parameters/PageLimit", "#/components/parameters/DueBefore", "global", "goal_id", "status")
 	assertInlineResponseRequired(t, paths, "/v1/devices", "get", "200", "devices")
 	assertInlineResponseRequired(t, paths, "/v1/knowledge/revisions/head", "get", "200", "revision")
 

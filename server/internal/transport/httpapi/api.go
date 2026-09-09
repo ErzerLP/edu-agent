@@ -328,6 +328,7 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/nodes/{nodeRevisionID}", api.learningNode)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/evidence", api.learningEvidence)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/reviews", api.learningReviews)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/progress", api.handleProgress)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge, privacy.OwnerLearning)).Get("/v1/learning/evidence-carryovers", api.learningEvidenceCarryoverList)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge, privacy.OwnerLearning)).Get("/v1/learning/evidence-carryovers/{proposalID}", api.learningEvidenceCarryoverGet)
 			protected.With(api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge, privacy.OwnerLearning)).Post("/v1/learning/evidence-carryovers/{proposalID}/approve", api.learningEvidenceCarryoverApprove)

@@ -167,6 +167,9 @@ func replaceProjection(ctx context.Context, tx pgx.Tx, generationID string, proj
 			return fmt.Errorf("project evidence carryover: %w", err)
 		}
 	}
+	if err := replaceProgress(ctx, tx, generationID, projection, highWater); err != nil {
+		return fmt.Errorf("生成目标进度：%w", err)
+	}
 	fingerprint, err := learning.ProjectionFingerprint(projection)
 	if err != nil {
 		return fmt.Errorf("fingerprint learning projection: %w", err)
@@ -776,60 +779,8 @@ func (s *Store) EvidenceList(ctx context.Context, query learning.EvidenceQuery) 
 	})
 }
 func (s *Store) Reviews(ctx context.Context, query learning.ReviewQuery) (learning.ReviewsPage, error) {
-	return withProjectionRead(ctx, s, func(tx pgx.Tx, metadata learning.ProjectionMetadata) (learning.ReviewsPage, error) {
-		keys, err := decodeCursor(query.Page.Cursor, "reviews", metadata.GenerationID, metadata.AsOfEventSequence, 3)
-		if err != nil {
-			return learning.ReviewsPage{}, err
-		}
-		afterDue := time.Time{}
-		afterNode := uuid.Nil.String()
-		afterStable := uuid.Nil.String()
-		if len(keys) > 0 {
-			afterDue, err = time.Parse(time.RFC3339Nano, keys[0])
-			if err != nil || uuid.Validate(keys[1]) != nil || uuid.Validate(keys[2]) != nil {
-				return learning.ReviewsPage{}, &learning.Error{Code: learning.CodeStaleCursor}
-			}
-			afterNode, afterStable = keys[1], keys[2]
-		}
-		limit := normalizeLimit(query.Page.Limit)
-		due := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)
-		if query.DueBefore != nil {
-			due = query.DueBefore.UTC()
-		}
-		rows, err := tx.Query(ctx, `SELECT due_at,node_revision_id,stable_id,item FROM learning_projection_reviews WHERE generation_id=$1 AND due_at<=$2 AND (due_at,node_revision_id,stable_id)>($3,$4,$5) ORDER BY due_at,node_revision_id,stable_id LIMIT $6`, metadata.GenerationID, due, afterDue, afterNode, afterStable, limit+1)
-		if err != nil {
-			return learning.ReviewsPage{}, err
-		}
-		defer rows.Close()
-		result := learning.ReviewsPage{Metadata: metadata}
-		type key struct {
-			due          time.Time
-			node, stable string
-		}
-		var positions []key
-		for rows.Next() {
-			var position key
-			var raw []byte
-			if err := rows.Scan(&position.due, &position.node, &position.stable, &raw); err != nil {
-				return result, err
-			}
-			var item learning.ReviewSchedule
-			if err := json.Unmarshal(raw, &item); err != nil {
-				return result, err
-			}
-			result.Items = append(result.Items, item)
-			positions = append(positions, position)
-		}
-		if err := rows.Err(); err != nil {
-			return result, err
-		}
-		if len(result.Items) > limit {
-			result.Items = result.Items[:limit]
-			last := positions[limit-1]
-			result.NextCursor = encodeCursor("reviews", metadata.GenerationID, metadata.AsOfEventSequence, last.due.UTC().Format(time.RFC3339Nano), last.node, last.stable)
-		}
-		return result, nil
-	})
+	query.Page.Limit = normalizeLimit(query.Page.Limit)
+	return s.scopedReviews(ctx, query)
 }
 
 func optionalUUIDFilter(value string) any {

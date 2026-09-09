@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workbench"
@@ -31,7 +30,7 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 	a.Out, a.Err = io.Discard, io.Discard
 	p := workbench.Page{Title: "学习工作台"}
 	if req.Page == "help" {
-		p.Content = "1–7 切页；方向键/Tab 选择可见操作，Enter 执行；PgUp/PgDn 滚动正文。\n输入中 Enter 换行、Tab 切字段、Ctrl+S 提交、Esc 保留草稿返回。\n导入页 F10 返回工作台，保留草稿；预览和确认仍按导入页提示操作。\n取消仅停止等待，远端可能已提交；刷新原对象核对。\n保存目标不会启动或切换教学；目标页可明确新建教学会话，学习页可选择已有会话。\nAI 聊天历史和本地任务使用主菜单 Agent/F2 原入口。\n规划、跨目标统计和 Agent 区域绑定尚未接入。"
+		p.Content = "1–7 切页；方向键/Tab 选择可见操作，Enter 执行；PgUp/PgDn 滚动正文。\n输入中 Enter 换行、Tab 切字段、Ctrl+S 提交、Esc 保留草稿返回。\n导入页 F10 返回工作台，保留草稿；预览和确认仍按导入页提示操作。\n取消仅停止等待，远端可能已提交；刷新原对象核对。\n保存目标不会启动或切换教学；目标页可明确新建教学会话，学习页可选择已有会话。\nAI 聊天历史和本地任务使用主菜单 Agent/F2 原入口。\n总览与复习页可切换到全局范围，点击续学保留真实目标和会话。Agent 区域绑定尚未接入。"
 		return p, nil
 	}
 	online, err := a.openOnline(onlineFlags{})
@@ -80,6 +79,8 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 		return p, nil
 	}
 	switch req.Page {
+	case "overview", "global-overview", "goal-progress", "global-reviews":
+		return a.workbenchProgress(ctx, client, req, p)
 	case "materials", "collection", "shared":
 		return a.workbenchMaterials(ctx, client, req, p)
 	case "import":
@@ -94,19 +95,7 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 	case "goals", "goal", "new-goal", "history":
 		return a.workbenchGoals(ctx, client, req, p)
 	case "reviews":
-		now := time.Now().UTC()
-		page, err := a.reviewsPage(ctx, client, req.Cursor, 50, &now)
-		if err != nil {
-			return p, err
-		}
-		p.Title, p.NextCursor = "区内 · 到期复习", page.NextCursor
-		for _, review := range page.Items {
-			p.Content += fmt.Sprintf("知识节点 %s\n到期 %s · 第 %d 步\n\n", review.NodeRevisionID, review.DueAt.Format(time.RFC3339), review.Step)
-		}
-		if len(page.Items) == 0 {
-			p.Content = "没有到期复习。"
-		}
-		return p, nil
+		return a.workbenchProgress(ctx, client, req, p)
 	case "sessions":
 		return a.workbenchSessions(ctx, client, req, p)
 	}

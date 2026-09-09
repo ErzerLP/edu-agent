@@ -167,6 +167,9 @@ type EvidenceQuery struct {
 }
 
 type ReviewQuery struct {
+	Global    bool
+	GoalID    string
+	Status    string
 	Page      CursorPageRequest
 	DueBefore *time.Time
 }
@@ -198,6 +201,9 @@ type EvidencePage struct {
 }
 
 type ReviewsPage struct {
+	DueBefore  time.Time          `json:"due_before"`
+	Total      int                `json:"total"`
+	UpdatedAt  time.Time          `json:"updated_at"`
 	Metadata   ProjectionMetadata `json:"metadata"`
 	Items      []ReviewSchedule   `json:"items"`
 	NextCursor string             `json:"next_cursor,omitempty"`

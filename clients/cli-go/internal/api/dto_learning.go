@@ -590,14 +590,29 @@ type EvidencePage struct {
 }
 
 type ReviewSchedule struct {
-	NodeRevisionID string    `json:"node_revision_id"`
-	Step           int       `json:"step"`
-	DueAt          time.Time `json:"due_at"`
-	Intervals      []int64   `json:"intervals"`
-	PolicyVersion  string    `json:"policy_version"`
+	GoalName            string    `json:"goal_name,omitempty"`
+	SpaceName           string    `json:"space_name,omitempty"`
+	TaskID              string    `json:"task_id,omitempty"`
+	GoalID              string    `json:"goal_id,omitempty"`
+	LearningSpaceID     string    `json:"learning_space_id,omitempty"`
+	GoalRevisionID      string    `json:"goal_revision_id,omitempty"`
+	KnowledgeRevisionID string    `json:"knowledge_revision_id,omitempty"`
+	RouteRevisionID     string    `json:"route_revision_id,omitempty"`
+	SessionID           string    `json:"session_id,omitempty"`
+	EvidenceID          string    `json:"evidence_id,omitempty"`
+	Startable           bool      `json:"startable,omitempty"`
+	UnavailableReason   string    `json:"unavailable_reason,omitempty"`
+	NodeRevisionID      string    `json:"node_revision_id"`
+	Step                int       `json:"step"`
+	DueAt               time.Time `json:"due_at"`
+	Intervals           []int64   `json:"intervals"`
+	PolicyVersion       string    `json:"policy_version"`
 }
 
 type ReviewsPage struct {
+	DueBefore  time.Time          `json:"due_before"`
+	Total      int                `json:"total"`
+	UpdatedAt  time.Time          `json:"updated_at"`
 	Metadata   ProjectionMetadata `json:"metadata"`
 	Items      []ReviewSchedule   `json:"items"`
 	NextCursor string             `json:"next_cursor,omitempty"`

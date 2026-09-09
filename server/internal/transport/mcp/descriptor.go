@@ -58,7 +58,8 @@ var descriptorCatalog = []Descriptor{
 	toolDescriptor("learning.list_timeline", "List learning timeline projection entries", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_timeline", "listLearningTimeline", timelineSchema(), nil),
 	toolDescriptor("learning.list_routes", "List current or historical learning routes", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_routes", "listLearningRoutes", routesSchema(), nil),
 	toolDescriptor("learning.list_evidence", "List accepted learning evidence", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_evidence", "listLearningEvidence", evidenceSchema(), nil),
-	toolDescriptor("learning.list_reviews", "List scheduled learning reviews", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_reviews", "listLearningReviews", reviewsSchema(), nil),
+	toolDescriptor("learning.list_reviews", "按目标、学习区或全局读取复习任务", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_list_reviews", "listLearningReviews", reviewsSchema(), nil),
+	toolDescriptor("learning.progress", "读取目标进度、近期活动及明确续学位置", "learning:read", learningOwners(), true, defaultToolInputLimit, defaultOutputLimit, "learning_progress", "getLearningProgress", progressSchema(), nil),
 	toolDescriptor("memory.list_records", "List admitted memory record metadata", "memory:read", []privacy.OwnerKind{privacy.OwnerMemory}, true, defaultToolInputLimit, defaultOutputLimit, "memory_list_records", "listMemoryRecords", pageSchema(), nil),
 	toolDescriptor("learning.create_goal", "Create a goal revision through the learning application service", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "learning_create_goal", "createLearningGoal", createGoalSchema(), nil),
 	toolDescriptor("tutoring.create_session", "Create a tutoring session through the learning application service", "learning:write", learningOwners(), false, learningToolInputLimit, defaultOutputLimit, "tutoring_create_session", "createTutoringSession", createSessionSchema(), nil),
@@ -297,7 +298,14 @@ func evidenceSchema() any {
 	return objectSchema(mergeProperties(pageProperties(), map[string]any{"node_revision_id": uuidProperty()}))
 }
 func reviewsSchema() any {
-	return objectSchema(mergeProperties(pageProperties(), map[string]any{"due_before": map[string]any{"type": "string", "format": "date-time"}}))
+	return objectSchema(mergeProperties(pageProperties(), mergeProperties(progressScopeProperties(), map[string]any{"due_before": map[string]any{"type": "string", "format": "date-time"}})))
+}
+
+func progressScopeProperties() map[string]any {
+	return map[string]any{"global": map[string]any{"type": "boolean"}, "learning_space_id": uuidProperty(), "goal_id": uuidProperty(), "status": stringProperty()}
+}
+func progressSchema() any {
+	return objectSchema(mergeProperties(pageProperties(), mergeProperties(progressScopeProperties(), map[string]any{"order": stringProperty()})))
 }
 
 func createGoalSchema() any {

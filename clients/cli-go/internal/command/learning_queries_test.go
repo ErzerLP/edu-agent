@@ -129,7 +129,7 @@ func TestStableLearningQueriesAndStaleCursorRestart(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	for _, args := range [][]string{{"route", "--cursor", "stale"}, {"progress"}, {"evidence"}, {"reviews"}} {
+	for _, args := range [][]string{{"route", "--cursor", "stale"}, {"evidence"}} {
 		configStore, credentialStore := pairedStores(server.URL, "token")
 		app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
 		if exit := app.Run(t.Context(), args); exit != ExitOK {
@@ -139,7 +139,7 @@ func TestStableLearningQueriesAndStaleCursorRestart(t *testing.T) {
 			t.Fatalf("stale warning missing: %q", errOut.String())
 		}
 	}
-	if currentOnlyCalls.Load() < 3 {
+	if currentOnlyCalls.Load() != 2 {
 		t.Fatalf("current_only calls=%d", currentOnlyCalls.Load())
 	}
 }

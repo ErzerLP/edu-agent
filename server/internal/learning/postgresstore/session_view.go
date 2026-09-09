@@ -206,7 +206,7 @@ func (s *Store) assembleSessionWorkItem(ctx context.Context, tx pgx.Tx, generati
 	}
 
 	if session.State == tutoring.StateRouteActive {
-		due, err := dueReviewForFocus(ctx, tx, generationID, session.Context.FocusNodeRevisionID)
+		due, err := dueReviewForFocus(ctx, tx, generationID, session.Context.GoalRevisionID, session.Context.FocusNodeRevisionID)
 		if err != nil {
 			return nil, sessionTypedReadError(ctx, "review_projection", err)
 		}
@@ -394,9 +394,9 @@ func loadAttemptForView(ctx context.Context, db learningLoaderDB, id string) (le
 	return value, err
 }
 
-func dueReviewForFocus(ctx context.Context, db learningLoaderDB, generationID, nodeRevisionID string) (bool, error) {
+func dueReviewForFocus(ctx context.Context, db learningLoaderDB, generationID, goalRevisionID, nodeRevisionID string) (bool, error) {
 	var raw []byte
-	err := db.QueryRow(ctx, `SELECT item FROM learning_projection_reviews WHERE generation_id=$1 AND node_revision_id=$2 AND due_at<=transaction_timestamp()`, generationID, nodeRevisionID).Scan(&raw)
+	err := db.QueryRow(ctx, `SELECT r.value FROM learning_projection_progress p JOIN learning_goal_revisions g ON g.goal_id=p.goal_id CROSS JOIN LATERAL jsonb_array_elements(p.item->'reviews') r WHERE p.generation_id=$1 AND g.id=$2 AND r.value->>'node_revision_id'=$3 AND (r.value->>'due_at')::timestamptz<=transaction_timestamp()`, generationID, goalRevisionID, nodeRevisionID).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

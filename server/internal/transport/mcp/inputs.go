@@ -130,7 +130,11 @@ type evidenceInput struct {
 
 type reviewsInput struct {
 	pageInput
-	DueBefore *time.Time `json:"due_before,omitempty"`
+	Global          bool       `json:"global,omitempty"`
+	LearningSpaceID string     `json:"learning_space_id,omitempty"`
+	GoalID          string     `json:"goal_id,omitempty"`
+	Status          string     `json:"status,omitempty"`
+	DueBefore       *time.Time `json:"due_before,omitempty"`
 }
 
 type createGoalInput struct {

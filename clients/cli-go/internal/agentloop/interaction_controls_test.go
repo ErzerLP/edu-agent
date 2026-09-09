@@ -216,7 +216,7 @@ func TestQuestionSinglePausesSiblingsPreservesCallIDAndClonesResult(t *testing.T
 	if len(ids) != 1 || ids[0] != "first" {
 		t.Fatalf("option_ids=%+v", ids)
 	}
-	if _, present := decodedToolResult(t, model.requests[1].Messages, "progress-call")["active"]; !present {
+	if _, present := decodedToolResult(t, model.requests[1].Messages, "progress-call")["items"]; !present {
 		t.Fatalf("sibling tool result missing: %+v", model.requests[1].Messages)
 	}
 }

@@ -185,7 +185,9 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					supportsGoals := hasGoals && goals.SupportsGoalManagement() && goalManagementPath(r.URL.Path)
 					sessions, hasSessions := a.learning.(sessionSelectionService)
 					supportsSessions := hasSessions && sessions.SupportsSessionSelection() && scopedTutoringPath(r.URL.Path)
-					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions {
+					progress, hasProgress := a.learning.(progressService)
+					supportsProgress := hasProgress && progress.SupportsProgress() && (r.URL.Path == "/v1/learning/progress" || r.URL.Path == "/v1/learning/reviews")
+					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions && !supportsProgress {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_module_unavailable"})
 						return
 					}

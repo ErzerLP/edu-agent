@@ -419,11 +419,11 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 	case "route":
 		return a.runRoute(ctx, args[1:])
 	case "progress":
-		return a.runProgress(ctx, args[1:])
+		return a.runScopedProgress(ctx, args[1:], false)
 	case "evidence":
 		return a.runEvidence(ctx, args[1:])
 	case "reviews":
-		return a.runReviews(ctx, args[1:])
+		return a.runScopedProgress(ctx, args[1:], true)
 	case "offline":
 		return a.runOffline(ctx, args[1:])
 	case "clear":

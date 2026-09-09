@@ -330,6 +330,19 @@ func (m *Model) choose(id string) tea.Cmd {
 		return nil
 	}
 	if strings.HasPrefix(id, "select:") {
+		if target, ok := strings.CutPrefix(id, "select:resume:"); ok {
+			space, session, valid := strings.Cut(target, "/")
+			if !valid || space == "" || session == "" {
+				m.status = "续学目标无效"
+				return nil
+			}
+			m.space = space
+			m.sessions[space] = session
+			m.data = Page{}
+			m.goal, m.stage, m.spaceName = "", "", ""
+			m.history = nil
+			return m.Open(m.ctx, "session/"+session)
+		}
 		if target, ok := strings.CutPrefix(id, "select:page:"); ok {
 			return m.Open(m.ctx, target)
 		}

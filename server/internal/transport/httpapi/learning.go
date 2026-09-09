@@ -694,7 +694,7 @@ func (a *API) handleLearningEvidence(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 func (a *API) handleLearningReviews(w http.ResponseWriter, r *http.Request) {
-	query, ok := strictLearningQuery(w, r, "cursor", "limit", "due_before")
+	query, ok := strictLearningQuery(w, r, "cursor", "limit", "due_before", "global", "goal_id", "status")
 	if !ok {
 		return
 	}
@@ -711,7 +711,16 @@ func (a *API) handleLearningReviews(w http.ResponseWriter, r *http.Request) {
 		}
 		due = &parsed
 	}
-	result, err := a.learning.Reviews(r.Context(), learning.ReviewQuery{Page: page, DueBefore: due})
+	global := false
+	if query.Has("global") {
+		var err error
+		global, err = strconv.ParseBool(query.Get("global"))
+		if err != nil {
+			writeLearningInvalid(w, r)
+			return
+		}
+	}
+	result, err := a.learning.Reviews(r.Context(), learning.ReviewQuery{Page: page, DueBefore: due, Global: global, GoalID: query.Get("goal_id"), Status: query.Get("status")})
 	if err != nil {
 		a.writeLearningFailure(w, r, "reviews", err)
 		return

@@ -21,7 +21,7 @@ func TestManagementSnapshotAndProbeUseLiveCatalogWithoutCredentials(t *testing.T
 	if snapshot.Transport != "streamable_http" || !snapshot.Stateless || !snapshot.JSONResponse || snapshot.MaxRequestBodyBytes != DefaultMaxRequestBodyBytes {
 		t.Fatalf("runtime snapshot = %+v", snapshot)
 	}
-	if snapshot.StaticResourceCount != 4 || snapshot.ResourceTemplateCount != 6 || snapshot.ResourceCount != 10 || snapshot.ToolCount != 15 || len(snapshot.Descriptors) != 25 {
+	if snapshot.StaticResourceCount != 4 || snapshot.ResourceTemplateCount != 6 || snapshot.ResourceCount != 10 || snapshot.ToolCount != 16 || len(snapshot.Descriptors) != 26 {
 		t.Fatalf("catalog counts = static:%d templates:%d resources:%d tools:%d descriptors:%d", snapshot.StaticResourceCount, snapshot.ResourceTemplateCount, snapshot.ResourceCount, snapshot.ToolCount, len(snapshot.Descriptors))
 	}
 	for _, descriptor := range snapshot.Descriptors {
@@ -31,7 +31,7 @@ func TestManagementSnapshotAndProbeUseLiveCatalogWithoutCredentials(t *testing.T
 	}
 
 	probe := handler.Probe(context.Background(), testToken, "localhost")
-	if !probe.OK || probe.HTTPStatus != http.StatusOK || probe.ToolCount != 15 || probe.RequestID == "" || probe.ErrorCode != "" {
+	if !probe.OK || probe.HTTPStatus != http.StatusOK || probe.ToolCount != 16 || probe.RequestID == "" || probe.ErrorCode != "" {
 		t.Fatalf("successful probe = %+v", probe)
 	}
 	failed := handler.Probe(context.Background(), "invalid-device-token", "localhost")

@@ -195,6 +195,17 @@ func (s *fakeServer) CurrentSession(context.Context) (api.SessionView, error) {
 	s.currentCalls++
 	return s.currentResult, s.currentErr
 }
+
+func (s *fakeServer) Progress(context.Context, api.ProgressQuery) (api.ProgressPage, error) {
+	s.currentCalls++
+	if isAPINotFound(s.currentErr) {
+		return api.ProgressPage{Items: []api.GoalProgress{}}, nil
+	}
+	return api.ProgressPage{Items: []api.GoalProgress{}}, s.currentErr
+}
+func (s *fakeServer) ScopedReviews(ctx context.Context, q api.ProgressQuery, due *time.Time) (api.ReviewsPage, error) {
+	return s.Reviews(ctx, q.Cursor, q.Limit, due)
+}
 func (s *fakeServer) Routes(context.Context, string, int, bool) (api.RoutesPage, error) {
 	s.routeCalls++
 	return s.routeResult, nil
@@ -1039,7 +1050,7 @@ func TestAllReadToolsExecuteContract(t *testing.T) {
 		},
 		{
 			name: "progress", tool: "get_learning_progress", arguments: `{}`,
-			server: &fakeServer{currentResult: api.SessionView{Session: api.TutoringSession{State: "Diagnostic"}}}, wantOutput: `"active":true`,
+			server: &fakeServer{currentResult: api.SessionView{Session: api.TutoringSession{State: "Diagnostic"}}}, wantOutput: `"items":[]`,
 			verify: func(t *testing.T, server *fakeServer) {
 				if server.currentCalls != 1 {
 					t.Fatalf("current calls=%d", server.currentCalls)
@@ -1059,7 +1070,7 @@ func TestAllReadToolsExecuteContract(t *testing.T) {
 			name: "reviews", tool: "get_due_reviews", arguments: `{"cursor":"review-next"}`,
 			server: &fakeServer{reviewResult: api.ReviewsPage{Items: []api.ReviewSchedule{{NodeRevisionID: "node-1", Step: 2}}, NextCursor: "review-more"}}, wantOutput: `"next_cursor":"review-more"`,
 			verify: func(t *testing.T, server *fakeServer) {
-				if server.reviewCalls != 1 || server.reviewCursor != "review-next" || server.reviewLimit != 20 || server.reviewDue == nil {
+				if server.reviewCalls != 1 || server.reviewCursor != "review-next" || server.reviewLimit != 20 || server.reviewDue != nil {
 					t.Fatalf("review call=%d cursor=%q limit=%d due=%v", server.reviewCalls, server.reviewCursor, server.reviewLimit, server.reviewDue)
 				}
 			},
@@ -1183,7 +1194,7 @@ func TestLearningProgressTreatsMissingSessionAsEmptyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	messages := model.requests[1].Messages
-	if content := messages[len(messages)-1].Content; !strings.Contains(content, "no_current_session") || strings.Contains(content, `"error"`) {
+	if content := messages[len(messages)-1].Content; !strings.Contains(content, `"items":[]`) || strings.Contains(content, `"error"`) {
 		t.Fatalf("tool content=%s", content)
 	}
 }

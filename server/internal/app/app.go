@@ -114,6 +114,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	runtimeWorkers := append([]workerSpec(nil), bridge.workers...)
 	runtimeWorkers = append(runtimeWorkers, periodicWorker("import-job-cleanup", time.Minute, 1, stores.knowledge.SweepImportJobs))
+	runtimeWorkers = append(runtimeWorkers, periodicWorker("learning-progress-upgrade", time.Minute, 1, stores.learning.EnsureProgressProjection))
 	runtimeWorkers = append(runtimeWorkers, notesyncBridge.workers...)
 	evaluationWorkerSpec, evaluationWorkerHealth, err := newOfflineEvaluationWorkerSpec(learningService, stores.learning, stores.outbox, cfg.Model.Timeout)
 	if err != nil {

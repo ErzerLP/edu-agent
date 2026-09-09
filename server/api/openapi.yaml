@@ -1814,12 +1814,42 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/progress:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: getLearningProgress
+      summary: 读取权威目标进度、待办与明确续学位置
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/PageLimit" }
+        - { name: global, in: query, schema: { type: boolean, default: false } }
+        - { name: goal_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string, enum: [active, draft, paused, completed, archived, all], default: active } }
+        - { name: order, in: query, schema: { type: string, enum: [priority, recent], default: priority } }
+      responses:
+        "200":
+          description: 服务端完成范围过滤、排序和分页；无有效路线分母时百分比为 null。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProgressPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 目标或学习区不存在 }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: progress_unavailable }
+        "503": { $ref: "#/components/responses/DependencyUnavailable" }
   /v1/learning/reviews:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
     get:
       operationId: listLearningReviews
-      summary: Read deterministic review schedule
+      summary: 按真实目标任务身份读取到期复习，省略截止时间时由服务端冻结分页截止时间
       x-required-scope: learning:read
       security: [{ deviceBearer: [] }]
       parameters:
@@ -1827,6 +1857,9 @@ paths:
           { $ref: "#/components/parameters/Cursor" },
           { $ref: "#/components/parameters/PageLimit" },
           { $ref: "#/components/parameters/DueBefore" },
+          { name: global, in: query, schema: { type: boolean, default: false } },
+          { name: goal_id, in: query, schema: { type: string, format: uuid } },
+          { name: status, in: query, schema: { type: string, enum: [active, draft, paused, completed, archived, all], default: active } },
         ]
       responses:
         "404": { description: learning_space_not_found }
@@ -4344,6 +4377,18 @@ components:
       additionalProperties: false
       required: [node_revision_id, step, due_at, intervals, policy_version]
       properties:
+        goal_name: { type: string }
+        space_name: { type: string }
+        task_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        learning_space_id: { type: string, format: uuid }
+        goal_revision_id: { type: string, format: uuid }
+        knowledge_revision_id: { type: string, format: uuid }
+        route_revision_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        evidence_id: { type: string, format: uuid }
+        startable: { type: boolean }
+        unavailable_reason: { type: string }
         node_revision_id: { type: string, format: uuid }
         step: { type: integer, minimum: 0 }
         due_at: { type: string, format: date-time }
@@ -4356,11 +4401,84 @@ components:
       additionalProperties: false
       required: [metadata, items]
       properties:
+        total: { type: integer, minimum: 0 }
+        updated_at: { type: string, format: date-time }
+        due_before: { type: string, format: date-time }
         metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
         items:
           type: array
           items: { $ref: "#/components/schemas/ReviewSchedule" }
         next_cursor: { type: string }
+    ProgressPage:
+      type: object
+      additionalProperties: false
+      required: [metadata, updated_at, committed_event_high_water, items, total]
+      properties:
+        metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
+        updated_at: { type: string, format: date-time }
+        committed_event_high_water: { type: integer }
+        total: { type: integer, minimum: 0 }
+        next_cursor: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GoalProgress" }
+    GoalProgress:
+      type: object
+      additionalProperties: false
+      required: [goal, routes, nodes, sessions, recent_activity, recent_has_more, reviews, pending_assessments, evidence_count, estimated_active_seconds, estimated]
+      properties:
+        learning_space_id: { type: string, format: uuid }
+        space_name: { type: string }
+        evidence_basis: { type: string, enum: [same_goal_valid_history] }
+        evidence_sources:
+          type: array
+          items:
+            type: object
+            properties:
+              evidence_id: { type: string, format: uuid }
+              goal_revision_id: { type: string, format: uuid }
+              knowledge_revision_id: { type: string, format: uuid }
+              node_revision_id: { type: string, format: uuid }
+              current_goal_revision: { type: boolean }
+        goal: { $ref: "#/components/schemas/GoalRevision" }
+        routes:
+          type: array
+          items:
+            type: object
+            properties:
+              route: { $ref: "#/components/schemas/RouteRevision" }
+              numerator: { type: integer, minimum: 0 }
+              denominator: { type: integer, minimum: 0 }
+              percent: { type: number, nullable: true, minimum: 0, maximum: 100 }
+              basis: { type: string, enum: [acknowledged_route_steps] }
+              current_goal_revision: { type: boolean }
+              completed_steps: { type: array, items: { type: string, format: uuid } }
+        nodes: { type: array, items: { $ref: "#/components/schemas/NodeReduction" } }
+        sessions:
+          type: array
+          items:
+            type: object
+            description: 明确的学习区、目标与会话身份；resumable 只影响继续入口，不改变历史。
+            properties:
+              session_id: { type: string, format: uuid }
+              learning_space_id: { type: string, format: uuid }
+              goal_id: { type: string, format: uuid }
+              goal_revision_id: { type: string, format: uuid }
+              resumable: { type: boolean }
+        recent_activity: { type: array, items: { $ref: "#/components/schemas/TimelineItem" } }
+        recent_has_more: { type: boolean }
+        reviews: { type: array, items: { $ref: "#/components/schemas/ReviewSchedule" } }
+        pending_assessments:
+          type: array
+          items:
+            type: object
+            properties:
+              assessment_id: { type: string, format: uuid }
+              node_revision_id: { type: string, format: uuid }
+              reasons: { type: array, items: { type: string } }
+        evidence_count: { type: integer, minimum: 0 }
+        estimated_active_seconds: { type: integer, minimum: 0 }
+        estimated: { type: boolean, enum: [true] }
     MasteryProjection:
       type: object
       additionalProperties: false

@@ -127,6 +127,7 @@ func (f *testKnowledge) Get(_ context.Context, proposalID string) (knowledge.Pro
 }
 
 type testLearning struct {
+	progressQuery          learning.ProgressQuery
 	mu                     sync.Mutex
 	actor                  string
 	method                 string
@@ -394,7 +395,7 @@ func TestOfficialSDKDiscoversExactSurfaceAndInvokesCallbacks(t *testing.T) {
 		"knowledge.maintenance.get", "knowledge.maintenance.list", "knowledge.maintenance.propose",
 		"knowledge.retrieve", "learning.create_goal", "learning.evidence_carryover.get", "learning.evidence_carryover.list",
 		"learning.list_evidence", "learning.list_reviews", "learning.list_routes",
-		"learning.list_timeline", "memory.list_records", "tutoring.apply_action", "tutoring.create_session", "tutoring.propose",
+		"learning.list_timeline", "learning.progress", "memory.list_records", "tutoring.apply_action", "tutoring.create_session", "tutoring.propose",
 	}
 	sort.Strings(wantTools)
 	if !equalStrings(toolNames, wantTools) {

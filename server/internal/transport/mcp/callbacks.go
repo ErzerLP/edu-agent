@@ -158,6 +158,30 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 				value = pageValue
 			}
 		}
+	case "learning.progress":
+		var input struct {
+			learning.ProgressQuery
+			LearningSpaceID string `json:"learning_space_id,omitempty"`
+		}
+		if decodeArguments(request.Params.Arguments, &input) != nil {
+			err = invalidLearningInput()
+			break
+		}
+		if input.LearningSpaceID != "" {
+			ctx, err = learningspace.WithScope(ctx, input.LearningSpaceID)
+			if err != nil {
+				break
+			}
+		}
+		if input.Limit == 0 {
+			input.Limit = 50
+		}
+		service, ok := r.learning.(learning.ProgressStore)
+		if !ok {
+			err = &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "progress_unavailable"}
+			break
+		}
+		value, err = service.Progress(ctx, input.ProgressQuery)
 	case "learning.list_reviews":
 		var input reviewsInput
 		if decodeArguments(request.Params.Arguments, &input) != nil {
@@ -167,7 +191,13 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		var page learning.CursorPageRequest
 		page, err = input.learningPage()
 		if err == nil {
-			value, err = r.learning.Reviews(ctx, learning.ReviewQuery{Page: page, DueBefore: input.DueBefore})
+			if input.LearningSpaceID != "" {
+				ctx, err = learningspace.WithScope(ctx, input.LearningSpaceID)
+				if err != nil {
+					break
+				}
+			}
+			value, err = r.learning.Reviews(ctx, learning.ReviewQuery{Page: page, DueBefore: input.DueBefore, Global: input.Global, GoalID: input.GoalID, Status: input.Status})
 			if pageValue, ok := value.(learning.ReviewsPage); ok {
 				normalizeReviews(&pageValue)
 				value = pageValue

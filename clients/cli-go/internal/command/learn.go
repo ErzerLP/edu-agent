@@ -295,7 +295,7 @@ func (a *App) learnRouteActive(ctx context.Context, client APIClient, view api.S
 				printProjectionWarning(a.Err, pageMetadata)
 			}
 		}
-		// 非默认区没有全局复习面板；服务端 work_item 已核验当前焦点的复习资格。
+		// 服务端 work_item 已按真实目标核验当前焦点的复习资格。
 		confirmed, confirmErr := a.Terminal.Confirm(a.dashboardText("A review is due for the current node. Present it now?", "当前知识节点已到复习时间，是否现在开始复习？"))
 		if confirmErr != nil {
 			return view, false, commandError("confirmation_failed", "review confirmation could not be read", "retry in an interactive terminal", ExitInput)
@@ -329,7 +329,13 @@ func (a *App) currentDueReview(ctx context.Context, client APIClient, view api.S
 	current := view
 	for attempt := 0; attempt <= progressSnapshotRestartLimit; attempt++ {
 		pages, err := collectProjectionPages(current.Metadata.Generation, maxProgressPages, func(cursor string) (api.ProjectionMetadata, []api.ReviewSchedule, string, error) {
-			page, pageErr := client.Reviews(ctx, cursor, defaultPageLimit, &dueBefore)
+			var page api.ReviewsPage
+			var pageErr error
+			if reader, ok := client.(progressClient); ok && current.WorkItem != nil && current.WorkItem.GoalRevision != nil {
+				page, pageErr = reader.ScopedReviews(ctx, api.ProgressQuery{GoalID: current.WorkItem.GoalRevision.GoalID, Status: "all", Cursor: cursor, Limit: defaultPageLimit}, &dueBefore)
+			} else {
+				page, pageErr = client.Reviews(ctx, cursor, defaultPageLimit, &dueBefore)
+			}
 			return page.Metadata, page.Items, page.NextCursor, pageErr
 		})
 		if err != nil {
@@ -337,6 +343,9 @@ func (a *App) currentDueReview(ctx context.Context, client APIClient, view api.S
 		}
 		if pages.restartReason == "" {
 			for index := range pages.items {
+				if pages.items[index].GoalRevisionID != "" && pages.items[index].GoalRevisionID != current.Session.Focus.GoalRevisionID {
+					continue
+				}
 				if pages.items[index].NodeRevisionID == current.Session.Focus.FocusNodeRevisionID {
 					return current, &pages.items[index], pages.metadata, false, nil
 				}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
@@ -55,17 +56,24 @@ func (s *Session) executeBaseReadTool(ctx context.Context, call modelclient.Tool
 			"truncated":             result.Truncated,
 		}, fmt.Sprintf("检索到 %d 条知识片段", len(hits))
 	case "get_learning_progress":
-		if err := requireEmptyArguments(call.Function.Arguments); err != nil {
+		var args struct {
+			Cursor string `json:"cursor"`
+		}
+		if err := decodeArguments(call.Function.Arguments, &args); err != nil || len(args.Cursor) > 4096 {
 			return toolError("invalid_arguments"), "学习进度参数无效"
 		}
-		result, err := s.server.CurrentSession(ctx)
-		if err != nil {
-			if isAPINotFound(err) {
-				return map[string]any{"active": false, "reason": "no_current_session"}, "当前没有进行中的学习会话"
-			}
-			return toolFailure(err, "current_session_unavailable"), "当前学习进度不可用"
+		q := api.ProgressQuery{Global: true, Limit: 20, Cursor: args.Cursor}
+		reader, ok := s.server.(interface {
+			Progress(context.Context, api.ProgressQuery) (api.ProgressPage, error)
+		})
+		if !ok {
+			return toolError("progress_unavailable"), "目标进度不可用"
 		}
-		return map[string]any{"active": true, "session": result}, "已读取当前学习状态"
+		result, err := reader.Progress(ctx, q)
+		if err != nil {
+			return toolFailure(err, "progress_unavailable"), "目标进度不可用"
+		}
+		return result, fmt.Sprintf("已读取 %d/%d 个目标", len(result.Items), result.Total)
 	case "get_learning_route":
 		var args struct {
 			Offset int `json:"offset"`
@@ -118,15 +126,24 @@ func (s *Session) executeBaseReadTool(ctx context.Context, call modelclient.Tool
 		if err := decodeArguments(call.Function.Arguments, &args); err != nil || len(args.Cursor) > 4096 {
 			return toolError("invalid_arguments"), "复习任务参数无效"
 		}
-		due := s.options.Now().UTC()
-		result, err := s.server.Reviews(ctx, args.Cursor, 20, &due)
+		q := api.ProgressQuery{Global: true, Limit: 20, Cursor: args.Cursor}
+		reader, ok := s.server.(interface {
+			ScopedReviews(context.Context, api.ProgressQuery, *time.Time) (api.ReviewsPage, error)
+		})
+		if !ok {
+			return toolError("reviews_unavailable"), "复习任务不可用"
+		}
+		result, err := reader.ScopedReviews(ctx, q, nil)
 		if err != nil {
 			return toolFailure(err, "reviews_unavailable"), "复习任务不可用"
 		}
 		value := map[string]any{
 			"items":      result.Items,
 			"returned":   len(result.Items),
-			"due_before": due,
+			"due_before": result.DueBefore,
+			"total":      result.Total,
+			"metadata":   result.Metadata,
+			"updated_at": result.UpdatedAt,
 			"generation": result.Metadata.Generation,
 			"has_more":   result.NextCursor != "",
 		}

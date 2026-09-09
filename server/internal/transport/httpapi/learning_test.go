@@ -20,6 +20,7 @@ import (
 )
 
 type fakeLearning struct {
+	progressQuery     learning.ProgressQuery
 	actor             string
 	actors            []string
 	method            string

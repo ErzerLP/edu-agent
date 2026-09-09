@@ -232,7 +232,7 @@ func (s *Store) redactLearningProjections(ctx context.Context, tx pgx.Tx, reques
 	for _, table := range []string{
 		"learning_projection_timeline", "learning_projection_routes", "learning_projection_sessions",
 		"learning_projection_nodes", "learning_projection_evidence", "learning_projection_reviews",
-		"learning_projection_misconceptions", "learning_projection_stats", "learning_projection_carryovers",
+		"learning_projection_misconceptions", "learning_projection_stats", "learning_projection_carryovers", "learning_projection_progress",
 	} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table); err != nil {
 			return fmt.Errorf("clear redacted %s: %w", table, err)
@@ -461,6 +461,7 @@ func (s *Store) verifyLearningProjections(ctx context.Context, request privacy.L
 			UNION ALL SELECT count(*) FROM learning_projection_misconceptions
 			UNION ALL SELECT count(*) FROM learning_projection_stats
 			UNION ALL SELECT count(*) FROM learning_projection_carryovers
+			UNION ALL SELECT count(*) FROM learning_projection_progress
 		)
 		SELECT COALESCE(sum(remaining),0)::bigint FROM residuals`, generationID, event.EventSequence, event.ID, request.ErasureID, fingerprint).Scan(&remaining)
 	if err != nil {

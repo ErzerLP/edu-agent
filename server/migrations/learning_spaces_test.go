@@ -19,7 +19,7 @@ func TestLearningSpaceUpgradePreservesLegacyGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	var before, after string
-	if err := pool.QueryRow(ctx, `SELECT row_to_json(g)::text FROM learning_goal_revisions g WHERE id=$1`, revision).Scan(&before); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(g)-'space_id'-'management')::text FROM learning_goal_revisions g WHERE id=$1`, revision).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
 	if err := Run(ctx, pool); err != nil {
@@ -28,7 +28,7 @@ func TestLearningSpaceUpgradePreservesLegacyGoal(t *testing.T) {
 	if err := Run(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT row_to_json(g)::text FROM learning_goal_revisions g WHERE id=$1`, revision).Scan(&after); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(g)-'space_id'-'management')::text FROM learning_goal_revisions g WHERE id=$1`, revision).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if before != after {

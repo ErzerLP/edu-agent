@@ -301,7 +301,8 @@ func reviewsSchema() any {
 
 func createGoalSchema() any {
 	return objectSchema(mergeProperties(operationProperties(), map[string]any{
-		"goal_id": uuidProperty(), "text": stringProperty(), "source": stringProperty(), "previous_revision_id": uuidProperty(),
+		"learning_space_id": uuidProperty(),
+		"goal_id":           uuidProperty(), "text": stringProperty(), "source": stringProperty(), "previous_revision_id": uuidProperty(),
 	}), "operation_id", "payload_schema_version", "aggregate_type", "aggregate_id", "expected_version", "text", "source")
 }
 

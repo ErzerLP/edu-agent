@@ -193,6 +193,8 @@ The default server is `http://127.0.0.1:8080`. Plain HTTP to a non-loopback host
 
 The default color mode is `never`. `edu-agent clear`, interactive `:clear`, and Ctrl-L clear only the visible application viewport in a TTY and redraw a neutral `>` prompt. They do not clear terminal scrollback, shell history, OS audit records, remote terminal logs, server events, projections, or credentials. Non-TTY clear emits no control sequence and returns a diagnostic error. The implementation does not execute `clear`, `cls`, a shell, or another external command.
 
+`goal set` 只保存一句话目标并返回目标版本，不读取、创建或切换教学会话，不要求先导入资料或配置模型。TUI 按 `o` 或运行 `goal browse` 打开目标管理，支持列表、搜索、状态筛选、分页、详情、多行编辑、资料选择和状态操作；按 `g` 保留一句话快捷保存。`goal help` 列出脚本参数，使用 `--space UUID` 指定稳定归属。保存失败在编辑页面保留输入和重试身份；版本冲突后可读取远端内容，再明确选择下一次保存依据。资料选择可以累积多个集合、文档或章节，并冻结具体范围版本。开始或继续教学使用 `learn` 的独立交互入口；非默认区教学由后续并行学习功能负责。
+
 Text entered directly in a shell command, including `goal set` text, may be retained by shell history. Interactive `learn` keeps answers and free questions out of argv and does not create a persistent input history.
 
 This is an online client. Network failures do not create an offline business queue, and the CLI does not persist Markdown, goals, activities, attempts, answers, assessments, free questions, free answers, routes, evidence, progress, cursors, or pending operations. Proposal input is `go-cli-context-v1` and contains only authoritative work-item records plus canonical retrieval IDs, ranges, slices, and hashes returned by the server.

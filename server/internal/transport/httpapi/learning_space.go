@@ -32,7 +32,11 @@ func (a *API) mountLearningSpaces(r chi.Router) {
 		if service, ok := a.knowledge.(knowledgeSpaces); ok && service.SupportsKnowledgeScopes() {
 			knowledgeMode = "collections_v1"
 		}
-		writeJSON(w, 200, map[string]any{"version": 1, "default_space_id": space.DefaultID, "legacy_scope": "fixed_default", "modules": map[string]string{"knowledge": knowledgeMode, "learning": "default_only", "tutoring": "default_only", "memory": "default_only"}})
+		goalMode := "default_only"
+		if service, ok := a.learning.(goalManagementService); ok && service.SupportsGoalManagement() {
+			goalMode = "goals_v1"
+		}
+		writeJSON(w, 200, map[string]any{"version": 1, "default_space_id": space.DefaultID, "legacy_scope": "fixed_default", "modules": map[string]string{"knowledge": knowledgeMode, "learning": goalMode, "tutoring": "default_only", "memory": "default_only"}})
 	})
 	if a.learningSpaces == nil {
 		return
@@ -172,7 +176,9 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					}
 					scopedKnowledge, implementsKnowledge := a.knowledge.(knowledgeSpaces)
 					supportsKnowledge := implementsKnowledge && scopedKnowledge.SupportsKnowledgeScopes()
-					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) {
+					goals, hasGoals := a.learning.(goalManagementService)
+					supportsGoals := hasGoals && goals.SupportsGoalManagement() && goalManagementPath(r.URL.Path)
+					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_module_unavailable"})
 						return
 					}

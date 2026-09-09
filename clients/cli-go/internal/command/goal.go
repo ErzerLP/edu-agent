@@ -11,7 +11,7 @@ import (
 
 func (a *App) runGoal(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] != "set" {
-		return commandError("usage", "goal requires set", "run edu-agent goal set <text>", ExitInput)
+		return a.runGoalManagement(ctx, args)
 	}
 	set := newFlagSet("goal set")
 	var flags onlineFlags
@@ -27,64 +27,11 @@ func (a *App) runGoal(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	current, active, err := a.currentSession(ctx, online.client)
-	if err != nil {
-		return err
-	}
-	if active {
-		if current.WorkItem == nil || !allowed(current.WorkItem.AllowedActions, "switch_goal") {
-			return commandError("invalid_state", "the active session cannot switch goal in its current state", "resolve the current assessment or use a displayed allowed action", ExitConflict)
-		}
-		_, _ = fmt.Fprintf(a.Out, "Current: state=%s session=%s\n", safeText(current.Session.State), safeText(current.Session.SessionID))
-		confirmed, confirmErr := a.Terminal.Confirm(a.dashboardText("Switching goal may invalidate the active focus. Continue?", "切换学习目标可能使当前学习焦点失效，是否继续？"))
-		if confirmErr != nil {
-			return commandError("confirmation_failed", "goal switch confirmation could not be read", "retry in an interactive terminal", ExitInput)
-		}
-		if !confirmed {
-			return commandError("goal_switch_declined", "the active session was not changed", "continue learning or run goal set again", ExitInput)
-		}
-	}
 	goal, err := a.createGoal(ctx, online.client, text)
 	if err != nil {
 		return err
 	}
-	if !active {
-		sessionID, idErr := a.operationID()
-		if idErr != nil {
-			return idErr
-		}
-		operationID, idErr := a.operationID()
-		if idErr != nil {
-			return idErr
-		}
-		_, createErr := online.client.CreateSession(ctx, api.TutoringSessionRequest{
-			OperationID: operationID, PayloadSchemaVersion: 1, AggregateType: "session",
-			AggregateID: sessionID, ExpectedVersion: 0, GoalRevisionID: goal.GoalRevisionID,
-		})
-		if createErr != nil {
-			return mapAPIError(createErr)
-		}
-		fresh, fetchErr := online.client.CurrentSession(ctx)
-		if fetchErr != nil {
-			return mapAPIError(fetchErr)
-		}
-		_, err = fmt.Fprintf(a.Out, "Goal: %s\nSession: %s\nState: %s\n", safeText(goal.GoalRevisionID), safeText(fresh.Session.SessionID), safeText(fresh.Session.State))
-		return err
-	}
-	operationID, err := a.operationID()
-	if err != nil {
-		return err
-	}
-	fresh, conflict, err := a.applyAndRefetch(ctx, online.client, current, api.ActionSwitchGoalRequest{
-		SessionOperation: sessionOperation(current, operationID), Action: "switch_goal", GoalRevisionID: goal.GoalRevisionID,
-	})
-	if err != nil {
-		return err
-	}
-	if conflict {
-		return commandError("version_conflict", "the goal was created but the session changed before it could switch", "inspect the refreshed session before choosing whether to switch again", ExitConflict)
-	}
-	_, err = fmt.Fprintf(a.Out, "Goal: %s\nSession: %s\nState: %s\n", safeText(goal.GoalRevisionID), safeText(fresh.Session.SessionID), safeText(fresh.Session.State))
+	_, err = fmt.Fprintf(a.Out, "Goal: %s\n已保存目标：%s\n", safeText(goal.GoalRevisionID), safeText(goal.Text))
 	return err
 }
 

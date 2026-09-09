@@ -9,11 +9,16 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/google/uuid"
 )
 
 type GoalCommand struct {
+	SpaceID            string            `json:"learning_space_id,omitempty"`
+	Details            *GoalDetails      `json:"details,omitempty"`
+	Action             string            `json:"action,omitempty"`
+	CompletionReason   string            `json:"completion_reason,omitempty"`
 	Operation          OperationEnvelope `json:"operation"`
 	GoalID             string            `json:"goal_id,omitempty"`
 	Text               string            `json:"text"`
@@ -74,6 +79,16 @@ func (s *Service) RebuildProjection(ctx context.Context) (ProjectionStatus, erro
 }
 
 func (s *Service) CreateGoal(ctx context.Context, deviceID string, command GoalCommand) (OperationResult, error) {
+	// 查找回执与提交必须使用同一规范命令，兼容旧入口省略 goal_id 的请求。
+	if command.GoalID == "" {
+		command.GoalID = command.Operation.AggregateID
+	}
+	if command.SpaceID != "" && command.SpaceID != learningspace.Scope(ctx) {
+		return OperationResult{}, &Error{Code: CodeInvalidRequest}
+	}
+	if learningspace.Scope(ctx) != learningspace.DefaultID {
+		command.SpaceID = learningspace.Scope(ctx)
+	}
 	return s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
 		return s.createGoal(ctx, deviceID, command)
 	})
@@ -154,6 +169,7 @@ func (s *Service) createGoal(ctx context.Context, deviceID string, command GoalC
 	if command.GoalID != command.Operation.AggregateID {
 		return OperationResult{}, &Error{Code: CodeInvalidRequest}
 	}
+	var previousGoal *GoalRevision
 	if command.Operation.ExpectedVersion == 0 {
 		if command.PreviousRevisionID != nil {
 			return OperationResult{}, &Error{Code: CodeInvalidRequest, Reason: "first_goal_revision_has_previous"}
@@ -169,9 +185,19 @@ func (s *Service) createGoal(ctx context.Context, deviceID string, command GoalC
 		if previous.ID != *command.PreviousRevisionID || previous.GoalID != command.GoalID || previous.Revision != command.Operation.ExpectedVersion {
 			return OperationResult{}, &Error{Code: CodeInvalidRequest, Reason: "goal_revision_lineage"}
 		}
+		if previous.LearningSpaceID() != learningspace.Scope(ctx) {
+			return OperationResult{}, &Error{Code: CodeNotFound}
+		}
+		previousGoal = &previous
 	}
 	now := s.now().UTC().Truncate(time.Microsecond)
+	management, err := nextGoalManagement(previousGoal, command, deviceID, now)
+	if err != nil {
+		return OperationResult{}, err
+	}
 	value := GoalRevision{ID: s.newUUID(), GoalID: command.GoalID, Revision: command.Operation.ExpectedVersion + 1, Text: strings.TrimSpace(command.Text), Source: strings.TrimSpace(command.Source), ActorDeviceID: deviceID, CreatedAt: now, PreviousRevisionID: command.PreviousRevisionID}
+	value.SpaceID = learningspace.Scope(ctx)
+	value.Management = management
 	batch := CommandBatch{GoalRevision: &value, Events: []EventDraft{draft(EventGoalRevisionCreated, "goal", value.GoalID, value)}, TypedResult: mustJSON(value)}
 	return s.commit(ctx, deviceID, command.Operation, []AggregateExpectation{{Type: "goal", ID: value.GoalID, ExpectedVersion: command.Operation.ExpectedVersion}}, batch, command, now)
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
@@ -67,15 +68,7 @@ func (s *Store) LoadAggregateVersion(ctx context.Context, aggregateType, aggrega
 
 func (s *Store) LoadGoalRevision(ctx context.Context, id string) (learning.GoalRevision, error) {
 	return withLearningLoaderRead(ctx, s, func(db learningLoaderDB) (learning.GoalRevision, error) {
-		var value learning.GoalRevision
-		err := db.QueryRow(ctx, `SELECT id,goal_id,revision,goal_text,source,actor_device_id,created_at,previous_revision_id FROM learning_goal_revisions WHERE id=$1`, id).Scan(&value.ID, &value.GoalID, &value.Revision, &value.Text, &value.Source, &value.ActorDeviceID, &value.CreatedAt, &value.PreviousRevisionID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return value, &learning.Error{Code: learning.CodeNotFound}
-		}
-		if err != nil {
-			return value, fmt.Errorf("load goal revision: %w", err)
-		}
-		return value, nil
+		return scanGoal(db.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id=$2", id, learningspace.Scope(ctx)))
 	})
 }
 

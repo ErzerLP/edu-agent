@@ -108,14 +108,16 @@ type KnowledgeReferenceResolver interface {
 }
 
 type GoalRevision struct {
-	ID                 string    `json:"goal_revision_id"`
-	GoalID             string    `json:"goal_id"`
-	Revision           int64     `json:"revision"`
-	Text               string    `json:"text"`
-	Source             string    `json:"source"`
-	ActorDeviceID      string    `json:"actor_device_id"`
-	CreatedAt          time.Time `json:"created_at"`
-	PreviousRevisionID *string   `json:"previous_revision_id,omitempty"`
+	SpaceID            string          `json:"learning_space_id,omitempty"`
+	Management         *GoalManagement `json:"management,omitempty"`
+	ID                 string          `json:"goal_revision_id"`
+	GoalID             string          `json:"goal_id"`
+	Revision           int64           `json:"revision"`
+	Text               string          `json:"text"`
+	Source             string          `json:"source"`
+	ActorDeviceID      string          `json:"actor_device_id"`
+	CreatedAt          time.Time       `json:"created_at"`
+	PreviousRevisionID *string         `json:"previous_revision_id,omitempty"`
 }
 
 type RouteStep struct {

@@ -182,7 +182,7 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"learning space operations", `UPDATE learning_space_operations SET request_hash=decode(repeat('00',32),'hex'),result='{"redacted":true}'::jsonb`},
 		{"learning spaces", `UPDATE learning_spaces SET name='[redacted]',description='',status=CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END,version=version+1,updated_at=clock_timestamp() WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END`},
 		{"learning inbox", `UPDATE learning_inbox SET result='{"redacted":true}'::jsonb`},
-		{"learning goals", `UPDATE learning_goal_revisions SET goal_text='[redacted]',source='privacy_erasure'`},
+		{"learning goals", `UPDATE learning_goal_revisions SET goal_text='[redacted]',source='privacy_erasure',management=NULL`},
 		{"learning route steps", `UPDATE learning_route_steps SET teaching_intent='[redacted]',completion_condition='[redacted]'`},
 		{"learning activities", `UPDATE learning_activities SET prompt='[redacted]',rubric_revision='[redacted]',rubric='{"redacted":true}'::jsonb`},
 		{"learning activity references", `UPDATE learning_activity_references SET source_start=0,source_end=1,slice_text='',slice_hash=decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex')`},
@@ -376,7 +376,7 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_space_operations WHERE request_hash<>decode(repeat('00',32),'hex') OR result<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_spaces WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END
-			UNION ALL SELECT count(*) FROM learning_goal_revisions WHERE goal_text<>'[redacted]' OR source<>'privacy_erasure'
+			UNION ALL SELECT count(*) FROM learning_goal_revisions WHERE goal_text<>'[redacted]' OR source<>'privacy_erasure' OR management IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_route_steps WHERE teaching_intent<>'[redacted]' OR completion_condition<>'[redacted]'
 			UNION ALL SELECT count(*) FROM learning_activities WHERE prompt<>'[redacted]' OR rubric_revision<>'[redacted]' OR rubric<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_activity_references WHERE source_start<>0 OR source_end<>1 OR slice_text<>'' OR slice_hash<>decode('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','hex')

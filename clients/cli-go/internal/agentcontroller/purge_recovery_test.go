@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
@@ -98,6 +99,8 @@ func TestArchivePurgeCrashAndUncertainSettlementNeverReplay(t *testing.T) {
 				t.Helper()
 				deps := controllerDependencies(f.openStore(t), fresh, f.server, f.workspace, provider)
 				deps.LoopOptions.ContextWindow = 32768
+				// Preserve the original purge fixture's durable-batch budget.
+				deps.LoopOptions.ToolTimeout = 30 * time.Second
 				next, err := Resume(t.Context(), deps, ResumeOptions{SessionID: owner, CurrentWorkspace: f.workspace})
 				if err != nil {
 					t.Fatal(err)

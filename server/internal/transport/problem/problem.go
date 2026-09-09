@@ -125,6 +125,19 @@ func Knowledge(err error) Problem {
 }
 
 func Learning(err error) Problem {
+	var scoped *learningspace.Error
+	if errors.As(err, &scoped) {
+		status := 400
+		switch scoped.Code {
+		case "learning_space_not_found":
+			status = 404
+		case "learning_space_archived":
+			status = 409
+		case "learning_space_module_unavailable":
+			status = 501
+		}
+		return Problem{Status: status, Code: scoped.Code, Message: "目标学习区请求无法完成"}
+	}
 	if p, ok := learningSpaceArchive(err); ok {
 		return p
 	}

@@ -48,6 +48,10 @@ func mapAPIError(err error) *Error {
 	if errors.As(err, &apiErr) {
 		mapped := &Error{Code: apiErr.Code, RequestID: apiErr.RequestID, ExitCode: ExitConflict}
 		switch apiErr.Code {
+		case "goal_management_unsupported":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "服务端尚不支持独立目标管理"
+			mapped.Next = "更新服务端"
 		case "learning_spaces_unsupported", "learning_space_module_unavailable":
 			mapped.ExitCode = ExitUnavailable
 			mapped.Detail = "learning spaces are unsupported by this server or the selected business module"

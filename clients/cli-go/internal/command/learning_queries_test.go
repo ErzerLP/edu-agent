@@ -12,7 +12,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 )
 
-func TestGoalSetCreatesSessionOrConfirmsActiveSwitch(t *testing.T) {
+func TestGoalSetPreservesTeachingSession(t *testing.T) {
 	t.Parallel()
 	for _, active := range []bool{false, true} {
 		active := active
@@ -25,9 +25,11 @@ func TestGoalSetCreatesSessionOrConfirmsActiveSwitch(t *testing.T) {
 			hasSession := active
 			goal := api.GoalRevision{}
 			var switchCalls atomic.Int32
+			var sessionReads atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+					sessionReads.Add(1)
 					if !hasSession {
 						writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-none"}})
 						return
@@ -82,11 +84,11 @@ func TestGoalSetCreatesSessionOrConfirmsActiveSwitch(t *testing.T) {
 			if exit := app.Run(t.Context(), []string{"goal", "set", "Study", "the", "imported", "topic"}); exit != ExitOK {
 				t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 			}
-			if active && switchCalls.Load() != 1 {
-				t.Fatalf("switch calls=%d", switchCalls.Load())
+			if switchCalls.Load() != 0 || hasSession != active {
+				t.Fatalf("保存目标改变了教学会话：原有会话=%v，保存后有会话=%v，切换次数=%d", active, hasSession, switchCalls.Load())
 			}
-			if !active && switchCalls.Load() != 0 {
-				t.Fatalf("unexpected switch calls=%d", switchCalls.Load())
+			if sessionReads.Load() != 0 {
+				t.Fatalf("保存目标不应依赖教学会话查询：查询次数=%d", sessionReads.Load())
 			}
 			if configStore.saveCalls != 0 || credentialStore.saveCalls != 0 {
 				t.Fatalf("goal/session content was persisted locally")

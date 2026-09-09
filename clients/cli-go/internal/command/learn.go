@@ -31,7 +31,7 @@ func (a *App) runLearn(ctx context.Context, args []string) error {
 	if !active {
 		goalText, readErr := a.Terminal.ReadLine(a.dashboardText("Goal: ", "学习目标："))
 		if readErr != nil || strings.TrimSpace(goalText) == "" {
-			return commandError("invalid_goal", "a goal is required when no active session exists", "enter a non-empty goal or run goal set", ExitInput)
+			return commandError("invalid_goal", "a goal is required when no active session exists", "重新运行 learn 并输入非空学习目标", ExitInput)
 		}
 		view, err = a.createInteractiveSession(ctx, online.client, strings.TrimSpace(goalText))
 		if err != nil {
@@ -145,7 +145,7 @@ func (a *App) learnLoop(ctx context.Context, client APIClient, view api.SessionV
 			}
 			view = fresh
 		case "Completed":
-			_, err := fmt.Fprintf(a.Out, "Result: session=%s completed active_time=%ds estimated=%t samples=%d\nNext: run goal set to start a new session\n", safeText(view.Session.SessionID), view.EstimatedActiveTime.DurationSeconds, view.EstimatedActiveTime.Estimated, view.EstimatedActiveTime.SampleCount)
+			_, err := fmt.Fprintf(a.Out, "Result: session=%s completed active_time=%ds estimated=%t samples=%d\n本次教学已完成。goal set 可独立保存后续目标。\n", safeText(view.Session.SessionID), view.EstimatedActiveTime.DurationSeconds, view.EstimatedActiveTime.Estimated, view.EstimatedActiveTime.SampleCount)
 			return err
 		default:
 			return commandError("invalid_state", "the server returned a non-resumable tutoring state", "retry after the authoritative projection is repaired", ExitUnavailable)

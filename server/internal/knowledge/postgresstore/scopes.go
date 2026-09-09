@@ -411,3 +411,12 @@ func (s *Store) ReadScope(ctx context.Context, id string) (knowledge.ScopeSnapsh
 	}
 	return result, nil
 }
+
+// ValidateGoalScopeWith 供目标 owner 在同一事务中校验冻结范围，防止清除竞态。
+func (s *Store) ValidateGoalScopeWith(ctx context.Context, tx pgx.Tx, id string) error {
+	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
+		return err
+	}
+	_, err := readScope(ctx, tx, id)
+	return err
+}

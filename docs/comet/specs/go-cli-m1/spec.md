@@ -27,6 +27,9 @@ edu-agent device forget-local
 edu-agent logout
 edu-agent knowledge import <file-or-directory>
 edu-agent goal set <text>
+edu-agent goal create [结构化参数] <text>
+edu-agent goal list|show|history|edit|browse
+edu-agent goal start|pause|resume|complete|archive|restore --id UUID
 edu-agent learn
 edu-agent assessment show|confirm|override|void
 edu-agent route
@@ -40,6 +43,12 @@ edu-agent version
 `learn` 是交互式教学入口。内部命令使用 `:` 前缀：`:ask`、`:answer`、`:quiz`、`:resume`、`:assessment`、`:progress`、`:route`、`:reviews`、`:clear`、`:end`、`:complete`、`:quit` 和按需 `:help`。普通文本只在 `AwaitingResponse` 解释为答案；在 `FreeAnswer` 输入普通文本解释为追问并通过 `ask_free_question` 复用 active frame；其他状态不猜测意图，而是显示当前 allowed actions。
 
 `:answer` 进入多行 block，使用单独一行 `.` 结束，不创建临时文件。`:quit` 只退出进程，不结束服务端 Session。`:end` 显式结束当前 Activity，`:complete` 只在服务端允许的状态完成 Session。切换 Goal、结束 Activity 或完成 Session 可能失效 FocusFrame，CLI 必须在提交前显示紧凑确认。
+
+## 独立目标管理
+
+Issue #4 的独立目标管理通过 `goal help` 提供完整参数说明。`goal browse` 或主菜单 `o` 打开真实按区列表、分页/搜索/筛选、详情、多行编辑及集合/文档/章节选择；主菜单 `g` 仍是一句话保存。选择详情与状态操作分开，不隐式选择或替换教学会话。编辑内容仅存当前进程内存，失败保留输入及同请求操作身份；版本冲突后先展示远端内容，用户明确确认才可基于新版本再保存。列表展示名称、中文状态、时间及版本，序号可区分重名项，技术 ID 在详情中查看。旧服务器不支持 `goals_v1` 时明确报告能力缺失，旧 `goal set` 继续兼容。
+
+资料选择保存 #3 冻结范围 ID，详情 `v` 展示冻结范围、正文与更新提示，不自动采用新资料。时间预算或截止时间必须显式提供 IANA 时区，未填写即未设定。目标状态不控制客户端页面选择；并行教学与续学仍属于独立 Issue，非默认区仅开放目标与资料管理。完整规则见[目标管理设计](../../../design/goals.md)。
 
 ## 配置、凭据与连接安全
 
@@ -115,9 +124,9 @@ Work item 只用于当前受认证设备恢复，不进入 timeline、日志、�
 
 ## Goal 与 Session
 
-`goal set` 创建新的 GoalRevision，source 固定为 `go-cli-m1`。CLI 先读取 current session。没有 active session时使用新 GoalRevision创建 Session；存在 active session 时显示 current state 和 focus invalidation 影响，得到确认后以 current aggregate version执行 switch-goal。CLI 不创建未提示的第二个 active session，也不在本地保存 pending goal。
+`goal set` 创建新的 GoalRevision，source 固定为 `go-cli-m1`，只保存目标并返回目标版本。该命令不读取、创建或切换教学 Session；已有会话的状态、焦点和历史保持不变。保存目标不要求资料或模型可用，也不在本地保存 pending goal。
 
-`learn` 首先读取 current SessionView/work item。没有 session 时提示 Goal 文本并执行 goal set。`GoalReady` 自动执行 `start_diagnostic`；`Diagnostic` 进入 route proposal；`Completed` 显示紧凑结果并要求显式 goal set 才开始新 Session。
+`learn` 首先读取 current SessionView/work item。没有 session 时提示 Goal 文本，通过交互教学入口创建目标及 Session。`GoalReady` 自动执行 `start_diagnostic`；`Diagnostic` 进入 route proposal；`Completed` 显示紧凑结果。`goal set` 不再承担开始新 Session 的职责。
 
 每次自动 action 使用新 canonical lowercase UUID。一次 HTTP uncertainty 的重试保持同一 UUID 和 payload。每次成功响应后立即重新读取 work item，不以本地预计状态代替服务端状态。
 

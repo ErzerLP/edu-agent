@@ -310,6 +310,10 @@ func New(options Options) (http.Handler, error) {
 		if api.learning != nil {
 			learningOwners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/learning/goals", api.learningCreateGoal)
+			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerLearning)).Put("/v1/learning/goals/{goalID}", api.learningCreateGoal)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerLearning)).Get("/v1/learning/goals", api.handleGoals)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerLearning)).Get("/v1/learning/goals/{goalID}", api.handleGoals)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerLearning)).Get("/v1/learning/goals/{goalID}/{history:revisions}", api.handleGoals)
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/sessions", api.learningCreateSession)
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/proposals", api.learningProposal)
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/sessions/{sessionID}/actions", api.learningAction)

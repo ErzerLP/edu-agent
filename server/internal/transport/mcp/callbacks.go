@@ -196,6 +196,15 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		}
 		var command learning.GoalCommand
 		command, err = input.command()
+		if err == nil && input.LearningSpaceID != "" {
+			var scoped context.Context
+			scoped, err = learningspace.WithScope(ctx, input.LearningSpaceID)
+			if err == nil {
+				ctx = scoped
+			} else {
+				err = invalidLearningInput()
+			}
+		}
 		if err == nil {
 			value, err = r.learning.CreateGoal(ctx, invocation.Credential.Device.ID, command)
 		}

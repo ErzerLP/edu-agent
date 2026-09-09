@@ -315,6 +315,27 @@ if ($env:RUNNER_OS_NAME -eq "Windows") {
     )
 }
 
+# Issue #1 acceptance uses real local processes/files, scripted model calls and
+# client state/view assertions. Missing or skipped named tests fail evidence.
+if ($env:RUNNER_OS_NAME -eq "macOS") {
+    $checks += @(
+        @{ Name = "local-tools-darwin-session"; Package = "./internal/localexec"; Expected = @("TestDarwinSessionMembershipUnreapedLeader"); Method = "native-getsid+unreaped-session-leader" }
+    )
+}
+if ($env:RUNNER_OS_NAME -in @("Linux", "macOS")) {
+    $checks += @(
+        @{ Name = "local-tools-signal-settlement"; Package = "./internal/localexec"; Expected = @("TestStopSettlementOverridesSignalAttemptError"); Method = "signal-error+independent-exit-and-group-proof" },
+        @{ Name = "local-tools-purge-links"; Package = "./internal/securefile"; Expected = @("TestArchivePurgeCompleteFrozenPostorder2501", "TestArchivePurgeLeavesContainersAndLargeBinary"); Method = "real-archive+symlink-itself+external-target-preserved" },
+        @{ Name = "local-tools-large-edit"; Package = "./internal/agentloop"; Expected = @("TestLargeFileReadModelPaginationAndVisibleActivity", "TestLargeFileEditModelAuthorizationAndSettlement"); Method = "scripted-model+large-file+authorization+visible-activity" },
+        @{ Name = "local-tools-pty-recovery"; Package = "./internal/agentcontroller"; Expected = @("TestPTYLocalTerminalPortsAndEncryptedRecovery"); Method = "real-pty+direct-client-input+resize+encrypted-recovery" },
+        @{ Name = "local-tools-process"; Package = "./internal/localexec"; Expected = @("TestShellPipelineCWDEnvironmentAndDefaultEOF", "TestStopTimeoutAndChildCleanup", "TestPTYStdioMergedInputAndResize", "TestPTYInteractiveShellRetainsStateOnlyWithinTask", "TestPersistentOutputRoundTripBeyondMemory", "TestPersistentOutputSearchBoundariesOverlapAndWaterline"); Method = "native-process+pty+encrypted-output" },
+        @{ Name = "local-tools-files"; Package = "./internal/workspace"; Expected = @("TestLargeFileReadRangesAndWholeHash", "TestQueryPaginationLargeDirectory", "TestQueryPaginationStaleAfterEnumerationAndContentChanges", "TestRecursiveCopyProductionFileExceedsLegacyLimit", "TestCompleteDiffPrepareEditRanges"); Method = "real-files+2501-entries+33MiB-copy+complete-diff" },
+        @{ Name = "local-tools-model"; Package = "./internal/agentloop"; Expected = @("TestLocalExecutionModelLoopAndMetadataOnlyCheckpoint", "TestLocalExecutionCumulativeInputAndReadback", "TestPTYModelResizeInputAndMergedRead", "TestLocalOutputModelSearchReadKeepsRawDataOutOfHistory", "TestQueryPaginationModelAndClientActivity", "TestFilePatchModelApprovalAndPerItemSettlement", "TestRecursiveCopyProductionAuthorizationAndSettlement", "TestArchiveRestoreModelAuthorizationSettlementAndHistory", "TestArchivePurgeModelApprovalSettlementAndPrivacy"); Method = "scripted-model+production-tools+actual-effects" },
+        @{ Name = "local-tools-controller"; Package = "./internal/agentcontroller"; Expected = @("TestLocalSessionLeaseSwitchRoundTrip", "TestLocalSessionLeaseShutdownStopsAllOwnersBeforeRelease", "TestLocalRecoveryWALOnlyCallIdentityPreventsReplay", "TestFileArtifactEncryptedPatchRecovery", "TestArchivePurgeEncryptedRecoveryAndNoSave"); Method = "session-switch+shutdown+encrypted-recovery+no-replay" },
+        @{ Name = "local-tools-ui"; Package = "./internal/agentui"; Expected = @("TestPTYTaskPanelDirectInputControlsAndResize", "TestLocalExecutionTaskPanelWorksWhileModelBusy", "TestLocalExecutionTaskPanelIndependentBytePagesAndStaleReplies", "TestFileArtifactIndependentOffsetsSearchContinuationAndTrueNextOffset", "TestArchiveRestorePreviewPagingWithoutApprovalGate", "TestArchivePurgeConfirmationAndIndependentPlan"); Method = "client-update-view+input+pages+approval" }
+    )
+}
+
 $failed = $false
 $sessionFailed = $false
 $expectedLines = New-Object System.Collections.Generic.List[string]

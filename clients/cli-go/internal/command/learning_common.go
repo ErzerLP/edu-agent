@@ -30,7 +30,7 @@ func (a *App) openOnline(flags onlineFlags) (onlineSession, error) {
 		return onlineSession{}, err
 	}
 	a.printInsecureWarning(bound.Config)
-	return onlineSession{client: a.NewClient(bound.Config.ServerURL, bound.Token, timeout), config: bound.Config}, nil
+	return onlineSession{client: a.scopedClient(bound.Config.ServerURL, bound.Token, timeout), config: bound.Config}, nil
 }
 
 func (a *App) operationID() (string, error) {

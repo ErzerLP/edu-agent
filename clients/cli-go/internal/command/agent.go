@@ -108,7 +108,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	server := a.NewClient(value.ServerURL, record.Token, requestTimeout)
+	server := a.scopedClient(value.ServerURL, record.Token, requestTimeout)
 	workspaceStatus := workspace.Status{Code: workspace.CodeWorkspaceUnavailable}
 	var workspaceExecutor *workspace.Workspace
 	if workspacePathErr == nil {
@@ -269,7 +269,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 		_ = store.Close()
 		return err
 	}
-	server := a.NewClient(value.ServerURL, record.Token, requestTimeout)
+	server := a.scopedClient(value.ServerURL, record.Token, requestTimeout)
 	controller, err := agentcontroller.Resume(ctx, agentcontroller.Dependencies{
 		Store: store, Model: model, Server: server,
 		Provider: provider,

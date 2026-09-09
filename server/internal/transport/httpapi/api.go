@@ -143,6 +143,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	LearningSpaces          LearningSpaceService
 	Identity                IdentityService
 	Model                   ModelProber
 	Knowledge               KnowledgeService
@@ -173,6 +174,7 @@ type Options struct {
 }
 
 type API struct {
+	learningSpaces          LearningSpaceService
 	identity                IdentityService
 	model                   ModelProber
 	knowledge               KnowledgeService
@@ -246,7 +248,8 @@ func New(options Options) (http.Handler, error) {
 		options.MaxOfflineRequestBody = 8 << 20
 	}
 	api := &API{
-		identity: options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
+		learningSpaces: options.LearningSpaces,
+		identity:       options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
 		offline: options.Offline, memory: options.Memory, memoryExporter: options.MemoryExporter,
 		privacy: options.Privacy, migrationLeases: options.MigrationLeases,
 		maintenanceToken: options.MaintenanceToken, readPermits: options.ReadPermits,
@@ -270,7 +273,7 @@ func New(options Options) (http.Handler, error) {
 		api.mountAdminUI(router)
 	}
 	if api.mcp != nil {
-		router.Handle("/mcp", api.mcp)
+		router.Handle("/mcp", api.rejectMCPSpace(api.mcp))
 	}
 	if api.migrationLeases != nil {
 		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/acquire", api.acquirePrivacyMigrationLease)
@@ -279,6 +282,9 @@ func New(options Options) (http.Handler, error) {
 	router.Post("/v1/pairings/exchange", api.exchangePairingCode)
 	router.Group(func(protected chi.Router) {
 		protected.Use(api.authenticate)
+		protected.Use(api.resolveLearningSpace)
+		api.mountLearningSpaces(protected)
+		api.mountKnowledgeSpaces(protected)
 		protected.With(api.requireScope("devices:read")).Get("/v1/devices", api.listDevices)
 		protected.With(api.requireScope("devices:manage")).Delete("/v1/devices/{deviceID}", api.revokeDevice)
 		protected.With(api.requireScope("model:probe")).Get("/v1/model/capabilities", api.modelCapabilities)

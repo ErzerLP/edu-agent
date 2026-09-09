@@ -13,6 +13,8 @@ import (
 	knowledgedb "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningdb "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
+	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	memorydb "github.com/edu-agent/edu-agent/server/internal/memory/postgresstore"
 	outboxdb "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
@@ -91,6 +93,15 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	}
 	cancelDrain()
 	blockingPermit.Release()
+	spaces := spacedb.New(pool)
+	spaceCommand := space.Command{OperationID: uuid.NewString(), Name: "private learning direction", Description: "private description", Status: "active"}
+	privateSpace, err := spaces.Mutate(ctx, deviceID, "", spaceCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = spaces.Mutate(ctx, deviceID, space.DefaultID, space.Command{OperationID: uuid.NewString(), ExpectedVersion: 1, Name: "private default", Status: "archived"}); err != nil {
+		t.Fatal(err)
+	}
 	reopenedPermit, err := manager.Acquire(ctx, privacy.OwnerIdentity)
 	if err != nil {
 		t.Fatalf("failed barrier drain left manager closed: %v", err)
@@ -162,6 +173,17 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 	}
 	if complete.Status != privacy.StatusLocalScrubbed {
 		t.Fatalf("local receipt=%+v", complete)
+	}
+	redactedSpace, err := spaces.Get(ctx, privateSpace.ID)
+	if err != nil || redactedSpace.Name != "[redacted]" || redactedSpace.Description != "" || redactedSpace.Status != "archived" {
+		t.Fatalf("space metadata survived scrub: %+v err=%v", redactedSpace, err)
+	}
+	if _, err = spaces.Mutate(ctx, deviceID, "", spaceCommand); privacy.ErrorCode(err) != privacy.CodeContentRedacted {
+		t.Fatalf("old retry resurrected metadata: %v", err)
+	}
+	defaultSpace, err := spaces.Get(ctx, space.DefaultID)
+	if err != nil || defaultSpace.Status != "active" || defaultSpace.Name != "[redacted]" {
+		t.Fatalf("default after privacy=%+v err=%v", defaultSpace, err)
 	}
 	resumed, err := store.RunLocalScrub(ctx, barrier.ErasureID)
 	if err != nil || resumed.Status != privacy.StatusLocalScrubbed || resumed.ErasureID != complete.ErasureID {
@@ -271,6 +293,10 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodeRevisionID := first.Revision.Documents[0].Revision.Nodes[1].ID
+	snapshot, err := knowledgeService.FreezeScope(ctx, knowledge.ScopeSnapshot{ID: uuid.NewString(), Entries: []knowledge.ScopeEntry{{CollectionID: knowledge.DefaultCollectionID, RevisionID: first.Revision.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO knowledge_node_artifacts(
 			id,node_revision_id,kind,producer_version,prompt_version,model_version,
@@ -315,6 +341,12 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 	}
 	if _, err := knowledgeService.Export(ctx, first.Revision.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
 		t.Fatalf("old revision export error=%v", err)
+	}
+	if _, err := knowledgeService.Export(ctx, snapshot.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("清除后冻结范围仍可导出: %v", err)
+	}
+	if _, err := knowledgeService.ReadScope(ctx, snapshot.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
+		t.Fatalf("清除后冻结范围仍可读取: %v", err)
 	}
 	oldRevisionID := first.Revision.ID
 	if _, err := knowledgeService.Retrieve(ctx, knowledge.RetrievalCommand{Query: "private", KnowledgeRevisionID: &oldRevisionID}); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {

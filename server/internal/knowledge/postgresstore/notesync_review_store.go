@@ -56,6 +56,9 @@ func (s *Store) LoadNotesyncPreviewState(
 		return notesyncintegration.PreviewState{}, fmt.Errorf("begin notesync preview state read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := checkNotesyncReference(ctx, tx, false); err != nil {
+		return notesyncintegration.PreviewState{}, err
+	}
 	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
 	if err != nil {
 		return notesyncintegration.PreviewState{}, err
@@ -248,6 +251,9 @@ func (s *Store) SaveNotesyncReview(ctx context.Context, review notesyncintegrati
 	if err != nil {
 		return notesyncintegration.Review{}, err
 	}
+	if err := checkNotesyncReference(ctx, tx, true); err != nil {
+		return notesyncintegration.Review{}, err
+	}
 	if generation != review.Generation {
 		return notesyncintegration.Review{}, &notesyncintegration.ReviewError{Code: notesyncintegration.CodeReviewStale}
 	}
@@ -314,6 +320,9 @@ func (s *Store) ListNotesyncReviews(ctx context.Context, command notesyncintegra
 		return notesyncintegration.ReviewPage{}, fmt.Errorf("begin notesync review list: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := checkNotesyncReference(ctx, tx, false); err != nil {
+		return notesyncintegration.ReviewPage{}, err
+	}
 	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
 	if err != nil {
 		return notesyncintegration.ReviewPage{}, err
@@ -365,6 +374,9 @@ func (s *Store) NotesyncReview(ctx context.Context, reviewID string) (notesyncin
 		return notesyncintegration.Review{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := checkNotesyncReference(ctx, tx, false); err != nil {
+		return notesyncintegration.Review{}, err
+	}
 	review, err := readNotesyncReview(ctx, tx, reviewID, false)
 	if err != nil {
 		return notesyncintegration.Review{}, err
@@ -381,6 +393,9 @@ func (s *Store) LookupNotesyncResolution(ctx context.Context, deviceID, operatio
 		return notesyncintegration.ResolutionOperationRecord{}, false, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := checkNotesyncReference(ctx, tx, false); err != nil {
+		return notesyncintegration.ResolutionOperationRecord{}, false, err
+	}
 	record, exists, err := lookupNotesyncResolutionWith(ctx, tx, deviceID, operationID, false)
 	if err != nil {
 		return notesyncintegration.ResolutionOperationRecord{}, false, err
@@ -399,6 +414,9 @@ func (s *Store) ResolveNotesyncKeep(ctx context.Context, request notesyncintegra
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
 	if err != nil {
+		return notesyncintegration.ResolutionResult{}, err
+	}
+	if err := checkNotesyncReference(ctx, tx, true); err != nil {
 		return notesyncintegration.ResolutionResult{}, err
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1||':'||$2,0))`, request.DeviceID, request.OperationID); err != nil {

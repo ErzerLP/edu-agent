@@ -108,6 +108,10 @@ func (a *API) adminKnowledge(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) writeAdminKnowledgeFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
 	code := knowledge.ErrorCode(err)
+	if code == knowledge.CodeNotFound || code == knowledge.CodeInvalidRequest {
+		a.writeKnowledgeFailure(w, r, operation, err)
+		return
+	}
 	if code == knowledge.CodeContentRedacted {
 		writeError(w, r, http.StatusServiceUnavailable, code, "Knowledge content is unavailable")
 		return

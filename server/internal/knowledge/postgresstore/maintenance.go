@@ -42,6 +42,9 @@ func (s *Store) MaintenanceBase(ctx context.Context, revisionID string) (knowled
 		return knowledge.MaintenanceBaseSnapshot{}, fmt.Errorf("begin knowledge maintenance base read: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := checkRevision(ctx, tx, revisionID); err != nil {
+		return knowledge.MaintenanceBaseSnapshot{}, err
+	}
 	generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
 	if err != nil {
 		return knowledge.MaintenanceBaseSnapshot{}, err

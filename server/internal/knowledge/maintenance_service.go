@@ -44,6 +44,9 @@ type maintenanceAnalysis struct {
 }
 
 func (s *Service) Create(ctx context.Context, command CreateProposalCommand) (Proposal, error) {
+	if err := legacyKnowledgeScope(ctx); err != nil {
+		return Proposal{}, err
+	}
 	if s.maintenanceStore == nil || s.evidenceImpactReader == nil {
 		return Proposal{}, fmt.Errorf("knowledge maintenance dependencies are not configured")
 	}
@@ -123,6 +126,9 @@ func (s *Service) Create(ctx context.Context, command CreateProposalCommand) (Pr
 }
 
 func (s *Service) CreateRollback(ctx context.Context, command CreateRollbackCommand) (Proposal, error) {
+	if err := legacyKnowledgeScope(ctx); err != nil {
+		return Proposal{}, err
+	}
 	if s.maintenanceStore == nil || s.evidenceImpactReader == nil {
 		return Proposal{}, fmt.Errorf("knowledge maintenance dependencies are not configured")
 	}
@@ -209,6 +215,9 @@ func optionalRevisionPointer(value string) *string {
 }
 
 func (s *Service) List(ctx context.Context, command ProposalListCommand) (ProposalPage, error) {
+	if err := legacyKnowledgeScope(ctx); err != nil {
+		return ProposalPage{}, err
+	}
 	if s.maintenanceStore == nil {
 		return ProposalPage{}, fmt.Errorf("knowledge maintenance store is not configured")
 	}
@@ -250,6 +259,9 @@ func (s *Service) List(ctx context.Context, command ProposalListCommand) (Propos
 }
 
 func (s *Service) Get(ctx context.Context, proposalID string) (Proposal, error) {
+	if err := legacyKnowledgeScope(ctx); err != nil {
+		return Proposal{}, err
+	}
 	if s.maintenanceStore == nil || !validUUID(strings.ToLower(strings.TrimSpace(proposalID))) {
 		return Proposal{}, &Error{Code: CodeInvalidRequest}
 	}
@@ -258,6 +270,9 @@ func (s *Service) Get(ctx context.Context, proposalID string) (Proposal, error) 
 }
 
 func (s *Service) Decide(ctx context.Context, command ProposalDecisionCommand) (Proposal, error) {
+	if err := legacyKnowledgeScope(ctx); err != nil {
+		return Proposal{}, err
+	}
 	if s.maintenanceStore == nil || s.evidenceImpactReader == nil {
 		return Proposal{}, fmt.Errorf("knowledge maintenance dependencies are not configured")
 	}

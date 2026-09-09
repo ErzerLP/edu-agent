@@ -1,5 +1,7 @@
 # NoteSync bridge technical reference
 
+Issue #3 将当前单 vault 配置显式映射到固定默认学习区与默认资料集合，状态响应包含 `learning_space_id` 和 `collection_id`。非默认集合不会自动发布到该 vault；未映射来源明确不可用，不能根据客户端活动区重新归属。远端路径冲突仍使用本文件定义的审阅流程，上游并发限制不变。详见[资料范围契约](knowledge-spaces.md)。
+
 ## Verified upstream baseline
 
 The production adapter is designed against these exact source revisions:

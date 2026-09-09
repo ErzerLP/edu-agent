@@ -8,6 +8,7 @@ const (
 )
 
 type KnowledgeRetrievalRequest struct {
+	ScopeSnapshotID           string                `json:"scope_snapshot_id,omitempty"`
 	Query                     string                `json:"query"`
 	KnowledgeRevisionID       string                `json:"knowledge_revision_id,omitempty"`
 	QueryContextSchemaVersion string                `json:"query_context_schema_version,omitempty"`
@@ -23,6 +24,7 @@ type KnowledgeQueryLimits struct {
 }
 
 type KnowledgeRetrievalResult struct {
+	ScopeSnapshotID           string           `json:"scope_snapshot_id,omitempty"`
 	KnowledgeRevisionID       string           `json:"knowledge_revision_id"`
 	RetrieverVersion          string           `json:"retriever_version"`
 	SelectorVersion           string           `json:"selector_version"`

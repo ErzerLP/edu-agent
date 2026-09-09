@@ -732,7 +732,14 @@
       renderKnowledge();
       return;
     }
-    state.knowledge = await api("/admin/api/knowledge");
+    const headers = {};
+    const space = byId("knowledgeSpace").value.trim();
+    const collection = byId("knowledgeCollection").value.trim();
+    if (space) headers["X-Learning-Space-ID"] = space;
+    if (collection) headers["X-Knowledge-Collection-ID"] = collection;
+    state.knowledge = null;
+    renderKnowledge();
+    state.knowledge = await api("/admin/api/knowledge", { headers });
     renderKnowledge();
   }
 
@@ -1518,6 +1525,7 @@
     byId("memorySearch").addEventListener("input", renderMemory);
     byId("loadMoreMemory").addEventListener("click", loadMoreMemory);
     byId("knowledgeSearch").addEventListener("input", renderKnowledge);
+    byId("knowledgeScopeLoad").addEventListener("click", () => loadKnowledge(true).catch((error) => showNotice(error.message, "danger")));
     byId("pairingForm").addEventListener("submit", createPairing);
     byId("downloadKnowledge").addEventListener(
       "click",

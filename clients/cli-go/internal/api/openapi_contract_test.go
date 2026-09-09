@@ -273,6 +273,15 @@ func assertResponses(t *testing.T, paths map[string]any, path, method string, st
 	}
 	slices.Sort(actual)
 	expected := append([]string(nil), statuses...)
+	// Business routes now share explicit scope validation and archive errors.
+	// Keep the comparison exact, including the pre-existing endpoint errors.
+	if spaceBusinessPath(path) {
+		for _, status := range []string{"400", "404", "409", "501"} {
+			if !slices.Contains(expected, status) {
+				expected = append(expected, status)
+			}
+		}
+	}
 	slices.Sort(expected)
 	if !slices.Equal(actual, expected) {
 		t.Errorf("%s %s responses = %v, want %v", method, path, actual, expected)

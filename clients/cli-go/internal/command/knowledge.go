@@ -13,6 +13,9 @@ import (
 )
 
 func (a *App) runKnowledge(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "library" {
+		return a.runKnowledgeLibrary(ctx, args[1:])
+	}
 	if len(args) == 0 {
 		return commandError("usage", "knowledge requires import, maintenance, or notesync", "run edu-agent knowledge import <file-or-directory>, edu-agent knowledge maintenance proposals, or edu-agent knowledge notesync status", ExitInput)
 	}
@@ -26,6 +29,7 @@ func (a *App) runKnowledge(ctx context.Context, args []string) error {
 		return commandError("usage", "knowledge requires import, maintenance, or notesync", "run edu-agent knowledge import <file-or-directory>, edu-agent knowledge maintenance proposals, or edu-agent knowledge notesync status", ExitInput)
 	}
 	set := newFlagSet("knowledge import")
+	collection := set.String("collection", "", "资料集合 ID；省略固定使用默认资料库")
 	var flags onlineFlags
 	addOnlineFlags(set, &flags)
 	if err := set.Parse(args[1:]); err != nil || len(set.Args()) != 1 {
@@ -47,7 +51,17 @@ func (a *App) runKnowledge(ctx context.Context, args []string) error {
 		return err
 	}
 	a.printInsecureWarning(bound.Config)
-	client := a.NewClient(bound.Config.ServerURL, bound.Token, timeout)
+	client := a.scopedClient(bound.Config.ServerURL, bound.Token, timeout)
+	if *collection != "" {
+		if !spaceIDPattern.MatchString(*collection) {
+			return commandError("usage", "资料集合 ID 无效", "使用 knowledge library list", ExitInput)
+		}
+		if real, ok := client.(*api.Client); ok {
+			client = real.WithCollection(*collection)
+		} else {
+			return commandError("unsupported", "客户端不支持资料集合", "更新客户端", ExitUnavailable)
+		}
+	}
 	var expectedParent *string
 	head, err := client.KnowledgeHead(ctx)
 	if err != nil {

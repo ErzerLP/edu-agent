@@ -23,11 +23,12 @@ const (
 
 // Snapshot contains only non-secret local state that is safe to render.
 type Snapshot struct {
-	ServerURL  string
-	Timeout    string
-	Color      string
-	DeviceName string
-	LocalState LocalState
+	LearningSpaceName string
+	ServerURL         string
+	Timeout           string
+	Color             string
+	DeviceName        string
+	LocalState        LocalState
 
 	AgentProvider              string
 	AgentBaseURL               string
@@ -551,6 +552,7 @@ func (m model) items() []menuItem {
 		items = append(items, menuItem{key: "y", title: "恢复AI历史会话", description: "打开当前工作区已加密保存的Agent Session选择器", command: []string{"agent", "resume"}})
 	}
 	items = append(items,
+		menuItem{key: "z", title: "学习区", description: "列表、搜索、详情与当前客户端选择", command: []string{"space", "browse"}},
 		menuItem{key: "l", title: "继续结构化学习", description: "恢复服务端教学状态机中的当前会话", command: []string{"learn"}},
 		menuItem{key: "i", title: "导入知识", description: "导入Markdown文件或目录", next: screenImport},
 		menuItem{key: "g", title: "设置学习目标", description: "创建或切换当前学习目标", next: screenGoal},
@@ -584,6 +586,9 @@ func (m model) View() string {
 	body.WriteString(titleStyle.Render("edu-agent 学习工作台"))
 	body.WriteString("\n")
 	body.WriteString(mutedStyle.Render("中文优先 · 直接学习与AI辅助学习"))
+	if m.snapshot.LearningSpaceName != "" {
+		body.WriteString("\n" + mutedStyle.Render("当前学习区："+m.snapshot.LearningSpaceName))
+	}
 	body.WriteString("\n\n")
 
 	switch m.screen {

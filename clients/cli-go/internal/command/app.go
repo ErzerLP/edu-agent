@@ -144,7 +144,9 @@ type App struct {
 	AgentSessionSecrets agentsession.SecretBackend
 	Build               BuildInfo
 
-	dashboardMode bool
+	dashboardMode     bool
+	learningSpace     string
+	learningSpaceName string
 }
 
 func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, error) {
@@ -183,7 +185,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		if a.interactiveDashboardAvailable() {
 			return a.runDashboard(ctx)
 		}
-		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, config, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput))
+		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, config, space, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput))
 	}
 	if err := a.dispatch(ctx, args); err != nil {
 		return a.fail(err)
@@ -285,9 +287,10 @@ func (a *App) waitForDashboardReturn(ctx context.Context) error {
 
 func (a *App) dashboardSnapshot() dashboard.Snapshot {
 	snapshot := dashboard.Snapshot{
-		ServerURL:  config.DefaultServerURL,
-		Timeout:    config.DefaultTimeout.String(),
-		LocalState: dashboard.LocalStateUnpaired,
+		LearningSpaceName: safeText(a.learningSpaceName),
+		ServerURL:         config.DefaultServerURL,
+		Timeout:           config.DefaultTimeout.String(),
+		LocalState:        dashboard.LocalStateUnpaired,
 	}
 	value, configErr := a.Config.Load()
 	if configErr == nil {
@@ -347,7 +350,18 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 
 // dispatch keeps command parsing centralized while workflows remain in focused files.
 func (a *App) dispatch(ctx context.Context, args []string) error {
+	var err error
+	args, restore, err := a.parseSpaceFlag(args)
+	if err != nil {
+		return err
+	}
+	defer restore()
+	if len(args) == 0 {
+		return commandError("usage", "a command is required", "use space help", ExitInput)
+	}
 	switch args[0] {
+	case "space":
+		return a.runSpace(ctx, args[1:])
 	case "version":
 		if len(args) != 1 {
 			return commandError("usage", "version accepts no arguments", "run edu-agent version", ExitInput)
@@ -403,7 +417,7 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		}
 		return nil
 	default:
-		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, config, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput)
+		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, config, space, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
@@ -36,8 +37,26 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 			err = &knowledge.Error{Code: knowledge.CodeInvalidRequest}
 			break
 		}
+		if input.LearningSpaceID != nil {
+			var scopedContext context.Context
+			scopedContext, err = learningspace.WithScope(ctx, *input.LearningSpaceID)
+			if err != nil {
+				err = &knowledge.Error{Code: knowledge.CodeInvalidRequest}
+				break
+			}
+			ctx = scopedContext
+		}
+		if input.CollectionID != nil {
+			var scopedContext context.Context
+			scopedContext, err = knowledge.WithCollection(ctx, *input.CollectionID)
+			if err != nil {
+				break
+			}
+			ctx = scopedContext
+		}
 		value, err = r.knowledge.Retrieve(ctx, knowledge.RetrievalCommand{
-			Query: input.Query, KnowledgeRevisionID: input.KnowledgeRevisionID,
+			ScopeSnapshotID: input.ScopeSnapshotID,
+			Query:           input.Query, KnowledgeRevisionID: input.KnowledgeRevisionID,
 			QueryContextSchemaVersion: input.QueryContextSchemaVersion,
 			Context:                   input.Context, Limits: input.Limits,
 		})

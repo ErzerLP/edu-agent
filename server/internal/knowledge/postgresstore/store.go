@@ -44,7 +44,7 @@ func (s *Store) RevisionHeadLockedWith(ctx context.Context, tx pgx.Tx, revisionI
 		SELECT revision.redacted_at,catalog.head_revision_id::text
 		FROM knowledge_revisions revision
 		CROSS JOIN knowledge_catalog catalog
-		WHERE revision.id=$1 AND catalog.singleton_id=1`, revisionID).Scan(&redactedAt, &headRevisionID); err != nil {
+		WHERE revision.id=$1 AND revision.collection_id='00000000-0000-4000-8000-000000000002' AND catalog.singleton_id=1`, revisionID).Scan(&redactedAt, &headRevisionID); err != nil {
 		return false, "", fmt.Errorf("read knowledge revision status and head: %w", err)
 	}
 	if headRevisionID == nil {
@@ -71,8 +71,11 @@ func (s *Store) Head(ctx context.Context) (*knowledge.KnowledgeRevision, error) 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := checkCollection(ctx, tx, knowledge.CollectionID(ctx)); err != nil {
+		return nil, err
+	}
 	var id *string
-	if err := tx.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_catalog WHERE singleton_id=1`).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_collections WHERE id=$1`, knowledge.CollectionID(ctx)).Scan(&id); err != nil {
 		return nil, fmt.Errorf("read knowledge catalog: %w", err)
 	}
 	if id == nil {
@@ -97,7 +100,7 @@ func (s *Store) Revision(ctx context.Context, id string) (knowledge.KnowledgeRev
 		return knowledge.KnowledgeRevision{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	revision, err := loadRevision(ctx, tx, id)
+	revision, err := loadScopedRevision(ctx, tx, id)
 	if err != nil {
 		return knowledge.KnowledgeRevision{}, err
 	}
@@ -133,6 +136,19 @@ func (s *Store) ReadyNodeArtifacts(ctx context.Context, knowledgeRevisionID stri
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	revision, err := loadScopedRevision(ctx, tx, knowledgeRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	nodeIDs := []string{}
+	for _, doc := range revision.Documents {
+		for _, node := range doc.Revision.Nodes {
+			if doc.SelectedRange != nil && node.HeadingLevel == 0 {
+				continue
+			}
+			nodeIDs = append(nodeIDs, node.ID)
+		}
+	}
 	rows, err := tx.Query(ctx, `
 		SELECT DISTINCT ON (a.node_revision_id)
 		       a.id,a.node_revision_id,a.kind,a.producer_version,a.prompt_version,a.model_version,
@@ -141,8 +157,8 @@ func (s *Store) ReadyNodeArtifacts(ctx context.Context, knowledgeRevisionID stri
 		JOIN knowledge_node_revisions nr ON nr.id=a.node_revision_id
 		JOIN knowledge_snapshot_documents sd ON sd.document_revision_id=nr.document_revision_id
 		JOIN knowledge_revisions kr ON kr.id=sd.knowledge_revision_id AND kr.redacted_at IS NULL
-		WHERE sd.knowledge_revision_id=$1 AND a.kind='summary' AND a.status='ready'
-		ORDER BY a.node_revision_id,a.created_at DESC,a.id DESC`, knowledgeRevisionID)
+		WHERE a.node_revision_id=ANY($1::uuid[]) AND a.kind='summary' AND a.status='ready'
+		ORDER BY a.node_revision_id,a.created_at DESC,a.id DESC`, nodeIDs)
 	if err != nil {
 		return nil, fmt.Errorf("read ready node artifacts: %w", err)
 	}
@@ -194,6 +210,9 @@ func (s *Store) LookupImportOperation(ctx context.Context, operationID string) (
 	if err != nil {
 		return knowledge.ImportOperationRecord{}, false, fmt.Errorf("read import operation: %w", err)
 	}
+	if err := checkRevision(ctx, tx, revisionID); err != nil {
+		return knowledge.ImportOperationRecord{}, false, err
+	}
 	revision, err := loadRevision(ctx, tx, revisionID)
 	if err != nil {
 		return knowledge.ImportOperationRecord{}, false, err
@@ -216,6 +235,9 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 	if err != nil {
 		return knowledge.ImportResult{}, err
 	}
+	if err := lockCollectionWrite(ctx, tx); err != nil {
+		return knowledge.ImportResult{}, err
+	}
 
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, prepared.OperationID); err != nil {
 		return knowledge.ImportResult{}, fmt.Errorf("lock knowledge import operation key: %w", err)
@@ -235,6 +257,9 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		if err := validateCompletedNotesyncImportResolution(ctx, tx, prepared.NotesyncResolution); err != nil {
 			return knowledge.ImportResult{}, err
 		}
+		if err := checkRevision(ctx, tx, storedRevisionID); err != nil {
+			return knowledge.ImportResult{}, err
+		}
 		revision, err := loadRevision(ctx, tx, storedRevisionID)
 		if err != nil {
 			return knowledge.ImportResult{}, err
@@ -246,7 +271,13 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 	}
 
 	var currentHead *string
-	if err := tx.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_catalog WHERE singleton_id=1 FOR UPDATE`).Scan(&currentHead); err != nil {
+	headSQL := `SELECT head_revision_id FROM knowledge_collections WHERE id=$1 FOR UPDATE`
+	headArgs := []any{knowledge.CollectionID(ctx)}
+	if knowledge.CollectionID(ctx) == knowledge.DefaultCollectionID {
+		headSQL = `SELECT head_revision_id FROM knowledge_catalog WHERE singleton_id=1 FOR UPDATE`
+		headArgs = nil
+	}
+	if err := tx.QueryRow(ctx, headSQL, headArgs...).Scan(&currentHead); err != nil {
 		return knowledge.ImportResult{}, fmt.Errorf("lock knowledge catalog: %w", err)
 	}
 	if !sameOptional(currentHead, prepared.ExpectedParentRevisionID) {
@@ -263,7 +294,7 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		}
 	}
 	var parentDocumentRevisions map[string]notesyncParentDocument
-	if !prepared.Unchanged && s.notesyncPublication {
+	if !prepared.Unchanged && s.notesyncPublication && knowledge.CollectionID(ctx) == knowledge.DefaultCollectionID {
 		parentDocumentRevisions, err = loadParentDocumentRevisions(ctx, tx, prepared.Revision.ParentRevisionID)
 		if err != nil {
 			return knowledge.ImportResult{}, err
@@ -279,7 +310,7 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 		if err := insertRevision(ctx, tx, prepared.Revision, prepared.Lineages); err != nil {
 			return knowledge.ImportResult{}, err
 		}
-		if s.notesyncPublication {
+		if s.notesyncPublication && knowledge.CollectionID(ctx) == knowledge.DefaultCollectionID {
 			var resolvedReview *notesyncintegration.Review
 			if prepared.NotesyncResolution != nil {
 				resolvedReview = &lockedNotesyncReview
@@ -288,7 +319,13 @@ func (s *Store) CommitImport(ctx context.Context, prepared knowledge.PreparedCom
 				return knowledge.ImportResult{}, err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE knowledge_catalog SET head_revision_id=$1,updated_at=$2 WHERE singleton_id=1`, prepared.Revision.ID, prepared.Revision.CreatedAt); err != nil {
+		advanceSQL := `UPDATE knowledge_catalog SET head_revision_id=$1,updated_at=$2 WHERE singleton_id=1`
+		advanceArgs := []any{prepared.Revision.ID, prepared.Revision.CreatedAt}
+		if knowledge.CollectionID(ctx) != knowledge.DefaultCollectionID {
+			advanceSQL = `UPDATE knowledge_collections SET head_revision_id=$1 WHERE id=$2`
+			advanceArgs = []any{prepared.Revision.ID, knowledge.CollectionID(ctx)}
+		}
+		if _, err := tx.Exec(ctx, advanceSQL, advanceArgs...); err != nil {
 			return knowledge.ImportResult{}, fmt.Errorf("advance knowledge head: %w", err)
 		}
 	}
@@ -320,11 +357,11 @@ func insertRevision(ctx context.Context, tx pgx.Tx, revision knowledge.Knowledge
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO knowledge_revisions(
 			id,revision_no,parent_revision_id,manifest_hash,source,created_by_device_id,created_at,
-			canonicalizer_version,parser_version,indexer_version,identity_policy_version)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+			canonicalizer_version,parser_version,indexer_version,identity_policy_version,collection_id)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		revision.ID, revision.RevisionNo, revision.ParentRevisionID, manifestHash, revision.Source,
 		revision.CreatedByDeviceID, revision.CreatedAt, revision.CanonicalizerVersion, revision.ParserVersion,
-		revision.IndexerVersion, revision.IdentityPolicyVersion); err != nil {
+		revision.IndexerVersion, revision.IdentityPolicyVersion, knowledge.CollectionID(ctx)); err != nil {
 		return fmt.Errorf("insert knowledge revision: %w", err)
 	}
 	for _, snapshot := range revision.Documents {

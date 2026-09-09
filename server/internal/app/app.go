@@ -20,6 +20,7 @@ import (
 	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	spacepostgres "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
@@ -142,7 +143,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
-		Identity: identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
+		LearningSpaces: spacepostgres.New(pool),
+		Identity:       identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
 		Learning: learningService, Offline: offlineService,
 		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,
 		Privacy: bridge.privacyService, MigrationLeases: migrationLeases,

@@ -565,7 +565,7 @@ func TestPostgreSQLLearningCoreDurabilityAndRebuild(t *testing.T) {
 	}
 
 	assertExpiredProposalWorkerFenced(t, store, pool)
-	proposalRequest := learning.ProposalRequest{RequestID: "40000000-0000-4000-8000-000000000001", Type: learning.ProposalRoute, AggregateType: "goal", AggregateID: learningGoalID, AggregateVersion: 2, KnowledgeRevisionID: learningKnowledgeRevision, NodeRevisionIDs: []string{learningNodeRevisionID}, Input: json.RawMessage(`{"goal":"integration"}`)}
+	proposalRequest := learning.ProposalRequest{RequestID: "40000000-0000-4000-8000-000000000001", Type: learning.ProposalRoute, AggregateType: "goal", AggregateID: learningGoalID, AggregateVersion: 2, GoalRevisionID: currentGoalRevisionID, KnowledgeRevisionID: learningKnowledgeRevision, NodeRevisionIDs: []string{learningNodeRevisionID}, Input: json.RawMessage(`{"goal":"integration"}`)}
 	proposalHash, err := learning.HashJSON(proposalRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -884,6 +884,9 @@ func TestPostgreSQLNilProposalFailurePersistsEmptyAttempts(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO devices(id,display_name,created_at) VALUES($1,'nil-model-proposal',now())`, learningDeviceOne); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.Commit(ctx, goalCommit(t, learningDeviceOne, "20000000-0000-4000-8000-000000000001", "30000000-0000-4000-8000-000000000001", 0, 1, 1)); err != nil {
+		t.Fatal(err)
+	}
 	assertNilProposalFailurePersisted(t, store, pool)
 }
 
@@ -893,7 +896,8 @@ func assertNilProposalFailurePersisted(t *testing.T, store *postgresstore.Store,
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	request := learning.ProposalRequest{
 		RequestID: "56000000-0000-4000-8000-000000000001", Type: learning.ProposalRoute,
-		AggregateType: "goal", AggregateID: learningGoalID, AggregateVersion: 2,
+		GoalRevisionID: "30000000-0000-4000-8000-000000000001",
+		AggregateType:  "goal", AggregateID: learningGoalID, AggregateVersion: 2,
 		KnowledgeRevisionID: learningKnowledgeRevision, NodeRevisionIDs: []string{learningNodeRevisionID},
 		Input: json.RawMessage(`{"goal":"nil-model"}`),
 	}
@@ -928,7 +932,8 @@ func assertExpiredProposalWorkerFenced(t *testing.T, store *postgresstore.Store,
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	request := learning.ProposalRequest{
 		RequestID: "57000000-0000-4000-8000-000000000001", Type: learning.ProposalRoute,
-		AggregateType: "goal", AggregateID: learningGoalID, AggregateVersion: 2,
+		GoalRevisionID: "30000000-0000-4000-8000-000000000001",
+		AggregateType:  "goal", AggregateID: learningGoalID, AggregateVersion: 2,
 		KnowledgeRevisionID: learningKnowledgeRevision, NodeRevisionIDs: []string{learningNodeRevisionID},
 		Input: json.RawMessage(`{"goal":"expired-worker"}`),
 	}

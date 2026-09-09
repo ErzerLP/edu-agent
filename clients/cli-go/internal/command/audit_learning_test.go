@@ -19,7 +19,7 @@ func TestProposalMismatchProducesNoContentOrAction(t *testing.T) {
 	var actionCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			writeJSONTest(w, http.StatusOK, commandSessionView("Diagnostic", "open", "", false, false))
 		case "/v1/knowledge/revisions/head":
 			writeJSONTest(w, http.StatusOK, api.HeadResponse{Revision: testRevision()})
@@ -43,7 +43,7 @@ func TestProposalMismatchProducesNoContentOrAction(t *testing.T) {
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitInternal || out.Len() != 0 || actionCalls.Load() != 0 || !strings.Contains(errOut.String(), "protocol_error") {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitInternal || strings.Contains(out.String(), "proposed route") || actionCalls.Load() != 0 || !strings.Contains(errOut.String(), "protocol_error") {
 		t.Fatalf("exit=%d out=%q actions=%d err=%q", exit, out.String(), actionCalls.Load(), errOut.String())
 	}
 }
@@ -54,7 +54,7 @@ func TestSubmitAttemptRequiresAllowedActionBeforeInputOrHTTP(t *testing.T) {
 	view := commandSessionView("AwaitingResponse", "open", "", false, false)
 	view.WorkItem.AllowedActions = []string{"ask_free_question", "end_activity"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current" {
+		if r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID) {
 			writeJSONTest(w, http.StatusOK, view)
 			return
 		}
@@ -65,7 +65,7 @@ func TestSubmitAttemptRequiresAllowedActionBeforeInputOrHTTP(t *testing.T) {
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	term := &fakeTerminal{lines: []string{"answer", "hint"}}
 	app, _, errOut := newTestApp(configStore, credentialStore, term)
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitConflict || actionCalls.Load() != 0 || !strings.Contains(errOut.String(), "submit_attempt") {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitConflict || actionCalls.Load() != 0 || !strings.Contains(errOut.String(), "submit_attempt") {
 		t.Fatalf("exit=%d actions=%d err=%q", exit, actionCalls.Load(), errOut.String())
 	}
 	if len(term.lines) != 1 || term.lines[0] != "hint" {
@@ -197,7 +197,7 @@ func TestLearnRouteActiveRestartsDueReviewsAfterStaleCursor(t *testing.T) {
 	var reviewCalls, currentCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			currentCalls.Add(1)
 			writeJSONTest(w, http.StatusOK, freshView)
 		case "/v1/learning/reviews":
@@ -235,7 +235,7 @@ func TestProgressAllPaginatesEvidenceAndReviews(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/learning/projections/status":
 			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-no-session"}})
 		case "/v1/learning/routes":
 			writeJSONTest(w, http.StatusOK, api.RoutesPage{Metadata: metadata, Items: []api.RouteProjection{}})
@@ -283,7 +283,7 @@ func TestProgressAllEvidenceStaleCursorRestartsWholeSnapshot(t *testing.T) {
 				metadata = newMetadata
 			}
 			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-no-session"}})
 		case "/v1/learning/routes":
 			metadata := oldMetadata
@@ -348,7 +348,7 @@ func TestProgressAllMarksEvidencePageBudgetTruncated(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/learning/projections/status":
 			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "none", RequestID: "request-no-session"}})
 		case "/v1/learning/routes":
 			writeJSONTest(w, http.StatusOK, api.RoutesPage{Metadata: metadata, Items: []api.RouteProjection{}})
@@ -400,7 +400,7 @@ func TestProgressAllRestartsWithoutCombiningStaleGeneration(t *testing.T) {
 	var routeCalls, currentCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			currentCalls.Add(1)
 			writeJSONTest(w, http.StatusOK, newView)
 		case "/v1/learning/routes":
@@ -470,7 +470,7 @@ func TestProgressAllStaleCursorDiscardsDeletedGeneration(t *testing.T) {
 				metadata = newMetadata
 			}
 			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			if currentCalls.Add(1) == 1 {
 				writeJSONTest(w, http.StatusOK, oldView)
 			} else {
@@ -562,7 +562,7 @@ func TestProgressAllRetriesCompleteSnapshotOnGenerationMismatch(t *testing.T) {
 				metadata = newMetadata
 			}
 			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			if currentCalls.Add(1) == 1 {
 				writeJSONTest(w, http.StatusOK, oldView)
 			} else {
@@ -623,7 +623,7 @@ func TestProgressRejectsUnstableCompleteSnapshot(t *testing.T) {
 		case "/v1/learning/projections/status":
 			statusCalls.Add(1)
 			writeJSONTest(w, http.StatusOK, api.ProjectionStatus{Metadata: metadata, CommittedEventHighWater: metadata.AsOfEventSeq, Fingerprint: strings.Repeat("f", 64), ActiveGenerationID: metadata.Generation})
-		case "/v1/tutoring/sessions/current":
+		case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 			currentCalls.Add(1)
 			writeJSONTest(w, http.StatusOK, view)
 		case "/v1/learning/routes":

@@ -1,5 +1,9 @@
 # Go CLI M1 完整规格
 
+## Issue #5 续学增量契约
+
+`learn browse/list/show/start` 与 `--goal`、`--session` 提供显式会话选择，支持 `--space`。名称 picker 无需复制 UUID；继续只读原 session，不执行 `switch_goal`。学习循环、proposal、冲突及侧栏按来源 session 刷新。F2 在请求等待时也能切换；独立页面接收器隔离迟到成功、失败与取消。草稿仅在当前进程按 session/activity 保存，重启不保留、不写明文；取消后重进查询服务端状态，不自动再答一次。`:pause` 与 `:complete` 是独立操作。入口、兼容规则及验收见[教学续学设计](../../../design/tutoring-sessions.md)。下文 M1 中依赖全局 current 的旧流程由本段取代。
+
 ## 产品与边界
 
 Go CLI 是单用户自托管教学系统的第一个原生客户端。它提供在线、低可见度、可恢复的终端学习体验，使用用户导入的任意领域 Markdown 和服务端教学状态，不硬编码技术面试、Go 或其他课程。可执行文件名为 `edu-agent`，服务端管理进程继续使用 `edu-agentd`。

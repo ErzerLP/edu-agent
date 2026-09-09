@@ -41,10 +41,10 @@ func (s *Store) RevisionHeadLockedWith(ctx context.Context, tx pgx.Tx, revisionI
 	var redactedAt *time.Time
 	var headRevisionID *string
 	if err := tx.QueryRow(ctx, `
-		SELECT revision.redacted_at,catalog.head_revision_id::text
+		SELECT revision.redacted_at,COALESCE(revision.scope_snapshot_id,collection.head_revision_id)::text
 		FROM knowledge_revisions revision
-		CROSS JOIN knowledge_catalog catalog
-		WHERE revision.id=$1 AND revision.collection_id='00000000-0000-4000-8000-000000000002' AND catalog.singleton_id=1`, revisionID).Scan(&redactedAt, &headRevisionID); err != nil {
+		LEFT JOIN knowledge_collections collection ON collection.id=revision.collection_id
+		WHERE revision.id=$1`, revisionID).Scan(&redactedAt, &headRevisionID); err != nil {
 		return false, "", fmt.Errorf("read knowledge revision status and head: %w", err)
 	}
 	if headRevisionID == nil {

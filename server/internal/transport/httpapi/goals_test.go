@@ -147,6 +147,34 @@ func TestPostgreSQLGoalHTTPManagementContract(t *testing.T) {
 		t.Fatalf("修订：%d %s", updated.Code, updated.Body)
 	}
 	validate("GoalOperationResult", updated)
+	// 同一真实 HTTP 服务按区创建和读取独立教学会话，列表响应同时核对公开 schema。
+	sessionID := uuid.NewString()
+	sessionBody := map[string]any{"operation_id": uuid.NewString(), "payload_schema_version": 1, "aggregate_type": "session", "aggregate_id": sessionID, "expected_version": 0, "goal_revision_id": result.Result.ID}
+	sessionCreated := request("POST", "/v1/tutoring/sessions", a.ID, sessionBody)
+	if sessionCreated.Code != 201 {
+		t.Fatalf("教学创建：%d %s", sessionCreated.Code, sessionCreated.Body)
+	}
+	validate("SessionOperationResult", sessionCreated)
+	sessions := request("GET", "/v1/tutoring/sessions?goal_id="+goalID, a.ID, nil)
+	if sessions.Code != 200 {
+		t.Fatalf("教学列表：%d %s", sessions.Code, sessions.Body)
+	}
+	validate("TutoringSessionPage", sessions)
+	var sessionPage learning.SessionPage
+	if err := json.Unmarshal(sessions.Body.Bytes(), &sessionPage); err != nil || len(sessionPage.Items) != 1 || sessionPage.Items[0].SessionID != sessionID {
+		t.Fatalf("教学列表归属：%s %v", sessions.Body, err)
+	}
+	for _, scope := range []string{a.ID, space.DefaultID} {
+		detail := request("GET", "/v1/tutoring/sessions/"+sessionID, scope, nil)
+		if scope == a.ID {
+			if detail.Code != 200 {
+				t.Fatal(detail.Body)
+			}
+			validate("SessionView", detail)
+		} else if detail.Code != 404 {
+			t.Fatalf("跨区教学读取未拒绝：%d", detail.Code)
+		}
+	}
 	body["operation_id"] = uuid.NewString()
 	if rec := request("PUT", "/v1/learning/goals/"+goalID, a.ID, body); rec.Code != 409 {
 		t.Fatalf("过期修订未冲突：%d %s", rec.Code, rec.Body)

@@ -217,6 +217,14 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		var command learning.SessionCommand
 		command, err = input.command()
 		if err == nil {
+			if input.LearningSpaceID != "" {
+				scoped, scopeErr := learningspace.WithScope(ctx, input.LearningSpaceID)
+				if scopeErr != nil {
+					err = invalidLearningInput()
+					break
+				}
+				ctx = scoped
+			}
 			value, err = r.learning.CreateSession(ctx, invocation.Credential.Device.ID, command)
 		}
 	case "tutoring.propose":
@@ -228,6 +236,14 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		var proposal learning.ProposalRequest
 		proposal, err = input.request()
 		if err == nil {
+			if input.LearningSpaceID != "" {
+				scoped, scopeErr := learningspace.WithScope(ctx, input.LearningSpaceID)
+				if scopeErr != nil {
+					err = invalidLearningInput()
+					break
+				}
+				ctx = scoped
+			}
 			value, err = r.learning.Propose(ctx, invocation.Credential.Device.ID, proposal)
 		}
 	case "tutoring.apply_action":
@@ -239,6 +255,14 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 		var command learning.ActionCommand
 		command, err = input.command()
 		if err == nil {
+			if input.LearningSpaceID != "" {
+				scoped, scopeErr := learningspace.WithScope(ctx, input.LearningSpaceID)
+				if scopeErr != nil {
+					err = invalidLearningInput()
+					break
+				}
+				ctx = scoped
+			}
 			value, err = r.learning.ApplyAction(ctx, invocation.Credential.Device.ID, input.SessionID, command)
 		}
 	default:
@@ -293,11 +317,19 @@ func (r callbackRuntime) readResource(ctx context.Context, request *sdkmcp.ReadR
 			normalizeSession(&session)
 			value = session
 		}
-	case "tutoring.session":
+	case "tutoring.session", "tutoring.scoped_session":
 		values, matched := matchResourceTemplate(descriptor.URITemplate, uri)
 		if !matched {
 			err = invalidLearningInput()
 		} else {
+			if id := values["learning_space_id"]; id != "" {
+				scoped, scopeErr := learningspace.WithScope(ctx, id)
+				if scopeErr != nil {
+					err = invalidLearningInput()
+					break
+				}
+				ctx = scoped
+			}
 			value, err = r.learning.Session(ctx, values["session_id"])
 			if session, ok := value.(learning.SessionView); ok {
 				normalizeSession(&session)

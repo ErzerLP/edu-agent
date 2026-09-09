@@ -174,7 +174,13 @@ func (c *Client) ApplySessionAction(ctx context.Context, sessionID string, reque
 	}
 	var response SessionOperationResult
 	path := "/v1/tutoring/sessions/" + url.PathEscape(sessionID) + "/actions"
-	if err := c.doJSON(ctx, http.MethodPost, path, true, request, map[int]bool{http.StatusOK: true, http.StatusCreated: true}, true, &response); err != nil {
+	retry := true
+	switch request.(type) {
+	case ActionAttemptRequest, *ActionAttemptRequest:
+		// 丢失响应不代表未接收答案；由命令层查询原会话，不能自动重放提交。
+		retry = false
+	}
+	if err := c.doJSON(ctx, http.MethodPost, path, true, request, map[int]bool{http.StatusOK: true, http.StatusCreated: true}, retry, &response); err != nil {
 		return response, err
 	}
 	return response, protocolSuccessError(validateSessionOperationBinding(response, sessionID))

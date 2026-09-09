@@ -42,6 +42,13 @@ func (a *App) operationID() (string, error) {
 }
 
 func (a *App) currentSession(ctx context.Context, client APIClient) (api.SessionView, bool, error) {
+	if id := a.learningSessions[a.teachingSpace()]; id != "" {
+		view, err := refetchSession(ctx, client, id)
+		return view, err == nil, mapSessionReadError(err)
+	}
+	if a.teachingSpace() != api.DefaultLearningSpaceID {
+		return api.SessionView{}, false, commandError("session_required", "请先选择本区教学会话", "运行 learn browse", ExitInput)
+	}
 	view, err := client.CurrentSession(ctx)
 	if err == nil {
 		return view, true, nil
@@ -53,18 +60,15 @@ func (a *App) currentSession(ctx context.Context, client APIClient) (api.Session
 	return api.SessionView{}, false, mapAPIError(err)
 }
 
+func mapSessionReadError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return mapAPIError(err)
+}
+
 func refetchSession(ctx context.Context, client APIClient, sessionID string) (api.SessionView, error) {
-	view, err := client.CurrentSession(ctx)
-	if err == nil && view.Session.SessionID == sessionID {
-		return view, nil
-	}
-	if err != nil {
-		var apiErr *api.APIError
-		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
-			return api.SessionView{}, err
-		}
-	}
-	view, err = client.Session(ctx, sessionID)
+	view, err := client.Session(ctx, sessionID)
 	if err != nil {
 		return api.SessionView{}, err
 	}
@@ -92,6 +96,9 @@ func allowed(values []string, target string) bool {
 
 func (a *App) applyAndRefetch(ctx context.Context, client APIClient, view api.SessionView, request api.TutoringAction) (api.SessionView, bool, error) {
 	_, err := client.ApplySessionAction(ctx, view.Session.SessionID, request)
+	if ctx.Err() != nil {
+		return view, false, ctx.Err()
+	}
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Code == "version_conflict" {
@@ -100,6 +107,16 @@ func (a *App) applyAndRefetch(ctx context.Context, client APIClient, view api.Se
 				return api.SessionView{}, true, mapAPIError(fetchErr)
 			}
 			_, _ = fmt.Fprintln(a.Err, "warning[version_conflict]: authoritative session refreshed; the previous input was not replayed")
+			return fresh, true, nil
+		}
+		var transportErr *api.TransportError
+		var protocolErr *api.ProtocolError
+		if _, answer := request.(api.ActionAttemptRequest); answer && (errors.As(err, &transportErr) || errors.As(err, &protocolErr) || apiErr != nil && apiErr.Code == "dependency_unavailable") {
+			fresh, fetchErr := refetchSession(ctx, client, view.Session.SessionID)
+			if fetchErr != nil {
+				return view, true, mapAPIError(fetchErr)
+			}
+			_, _ = fmt.Fprintln(a.Err, "答案响应未确认，已查询原会话；未自动重放答案。若仍等待作答，请确认原请求状态后再提交。")
 			return fresh, true, nil
 		}
 		return api.SessionView{}, false, mapAPIError(err)
@@ -135,10 +152,13 @@ func (a *App) proposalAction(ctx context.Context, client APIClient, view api.Ses
 
 func (a *App) createProposalAndRefetch(ctx context.Context, client APIClient, view api.SessionView, request api.TutoringProposalRequest) (api.TutoringProposal, api.SessionView, bool, error) {
 	proposal, err := client.CreateProposal(ctx, request)
+	if ctx.Err() != nil {
+		return api.TutoringProposal{}, view, false, ctx.Err()
+	}
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && apiErr.Code == "stale_proposal" {
-			fresh, fetchErr := client.CurrentSession(ctx)
+			fresh, fetchErr := refetchSession(ctx, client, view.Session.SessionID)
 			if fetchErr != nil {
 				return api.TutoringProposal{}, api.SessionView{}, false, mapAPIError(fetchErr)
 			}
@@ -147,7 +167,7 @@ func (a *App) createProposalAndRefetch(ctx context.Context, client APIClient, vi
 		}
 		return api.TutoringProposal{}, view, false, mapAPIError(err)
 	}
-	fresh, err := client.CurrentSession(ctx)
+	fresh, err := refetchSession(ctx, client, view.Session.SessionID)
 	if err != nil {
 		return api.TutoringProposal{}, api.SessionView{}, false, mapAPIError(err)
 	}
@@ -170,11 +190,16 @@ func (a *App) retrieveForWorkItem(ctx context.Context, client APIClient, view ap
 	if view.WorkItem != nil && view.WorkItem.GoalRevision != nil {
 		contextValue["goal_revision_id"] = view.WorkItem.GoalRevision.GoalRevisionID
 	}
-	result, err := client.RetrieveKnowledge(ctx, api.KnowledgeRetrievalRequest{
+	request := api.KnowledgeRetrievalRequest{
 		Query: query, KnowledgeRevisionID: knowledgeRevisionID,
 		QueryContextSchemaVersion: "query-context-v1", Context: contextValue,
 		Limits: &api.KnowledgeQueryLimits{MaxDepth: 4, CandidatesPerLayer: 12, MaxHits: 10, TotalCandidates: 100},
-	})
+	}
+	if view.WorkItem != nil && view.WorkItem.GoalRevision != nil && view.WorkItem.GoalRevision.GoalManagement().Details.ScopeSnapshotID != "" {
+		request.ScopeSnapshotID = view.WorkItem.GoalRevision.GoalManagement().Details.ScopeSnapshotID
+		request.KnowledgeRevisionID = ""
+	}
+	result, err := client.RetrieveKnowledge(ctx, request)
 	if err != nil {
 		return api.KnowledgeRetrievalResult{}, mapAPIError(err)
 	}

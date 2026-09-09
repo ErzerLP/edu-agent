@@ -157,6 +157,7 @@ func (value createGoalInput) command() (learning.GoalCommand, error) {
 }
 
 type createSessionInput struct {
+	LearningSpaceID string `json:"learning_space_id,omitempty"`
 	operationInput
 	GoalRevisionID string `json:"goal_revision_id"`
 }
@@ -173,6 +174,7 @@ func (value createSessionInput) command() (learning.SessionCommand, error) {
 }
 
 type proposeInput struct {
+	LearningSpaceID     string                `json:"learning_space_id,omitempty"`
 	RequestID           string                `json:"request_id"`
 	Type                learning.ProposalType `json:"proposal_type"`
 	AggregateType       string                `json:"aggregate_type"`
@@ -226,6 +228,7 @@ func (value proposeInput) request() (learning.ProposalRequest, error) {
 }
 
 type applyActionInput struct {
+	LearningSpaceID string `json:"learning_space_id,omitempty"`
 	operationInput
 	SessionID           string                         `json:"session_id"`
 	Action              tutoring.Action                `json:"action"`

@@ -22,6 +22,7 @@ const (
 )
 
 type prepareDetail struct {
+	LearningSpaceID      string          `json:"learning_space_id,omitempty"`
 	Purpose              string          `json:"purpose"`
 	Request              json.RawMessage `json:"request"`
 	TrustState           json.RawMessage `json:"trust_state,omitempty"`
@@ -38,6 +39,11 @@ type prepareDetail struct {
 }
 
 func (d prepareDetail) validate(state string) error {
+	if d.LearningSpaceID != "" {
+		if _, err := parseUUID(d.LearningSpaceID); err != nil {
+			return err
+		}
+	}
 	emptyPublication := d.PublicationVersion == 0 && d.RequestDigest == "" && d.TrustStateDigest == "" && len(d.BaseTrustState) == 0 && d.BaseTrustStateDigest == "" && len(d.NextTrustState) == 0 && d.NextTrustStateDigest == "" && d.PackID == "" && d.PackRecord == nil && d.PackRecordDigest == ""
 	switch d.Purpose {
 	case "prepare_intent":

@@ -331,7 +331,7 @@ func TestLearningHTTPRouteMethodScopeAndActorMatrix(t *testing.T) {
 			service = &fakeLearning{}
 			handler = newLearningTestAPI(t, authorizedScopes, service, &logs)
 			wrongMethod := http.MethodGet
-			if contract.method == http.MethodGet || contract.path == "/v1/learning/goals" {
+			if contract.method == http.MethodGet || contract.path == "/v1/learning/goals" || contract.path == "/v1/tutoring/sessions" {
 				wrongMethod = http.MethodDelete
 			}
 			response = learningRequest(t, handler, wrongMethod, contract.path, contract.body)

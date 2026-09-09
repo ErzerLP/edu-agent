@@ -139,6 +139,7 @@ type testLearning struct {
 	proposal               learning.ProposalArtifact
 	lastGoal               learning.GoalCommand
 	lastGoalSpace          string
+	lastTeachingSpace      string
 	lastSession            learning.SessionCommand
 	lastAction             learning.ActionCommand
 	carryover              learning.EvidenceCarryoverProposal
@@ -162,21 +163,26 @@ func (f *testLearning) CreateGoal(ctx context.Context, actor string, command lea
 	f.mu.Unlock()
 	return f.operation, f.err
 }
-func (f *testLearning) CreateSession(_ context.Context, actor string, command learning.SessionCommand) (learning.OperationResult, error) {
+func (f *testLearning) CreateSession(ctx context.Context, actor string, command learning.SessionCommand) (learning.OperationResult, error) {
 	f.record("create_session", actor)
 	f.mu.Lock()
 	f.lastSession = command
+	f.lastTeachingSpace = learningspace.Scope(ctx)
 	f.mu.Unlock()
 	return f.operation, f.err
 }
-func (f *testLearning) Propose(_ context.Context, actor string, _ learning.ProposalRequest) (learning.ProposalArtifact, error) {
+func (f *testLearning) Propose(ctx context.Context, actor string, _ learning.ProposalRequest) (learning.ProposalArtifact, error) {
 	f.record("propose", actor)
+	f.mu.Lock()
+	f.lastTeachingSpace = learningspace.Scope(ctx)
+	f.mu.Unlock()
 	return f.proposal, f.err
 }
-func (f *testLearning) ApplyAction(_ context.Context, actor, _ string, command learning.ActionCommand) (learning.OperationResult, error) {
+func (f *testLearning) ApplyAction(ctx context.Context, actor, _ string, command learning.ActionCommand) (learning.OperationResult, error) {
 	f.record("apply_action", actor)
 	f.mu.Lock()
 	f.lastAction = command
+	f.lastTeachingSpace = learningspace.Scope(ctx)
 	f.mu.Unlock()
 	return f.operation, f.err
 }
@@ -186,7 +192,10 @@ func (f *testLearning) Decide(context.Context, string, string, learning.Assessme
 func (f *testLearning) CurrentSession(context.Context) (learning.SessionView, error) {
 	return f.current, f.err
 }
-func (f *testLearning) Session(context.Context, string) (learning.SessionView, error) {
+func (f *testLearning) Session(ctx context.Context, _ string) (learning.SessionView, error) {
+	f.mu.Lock()
+	f.lastTeachingSpace = learningspace.Scope(ctx)
+	f.mu.Unlock()
 	return f.current, f.err
 }
 func (f *testLearning) Timeline(context.Context, learning.TimelineQuery) (learning.TimelinePage, error) {
@@ -423,6 +432,7 @@ func TestOfficialSDKDiscoversExactSurfaceAndInvokesCallbacks(t *testing.T) {
 		"edu-agent://knowledge/revisions/{revision_id}/export", "edu-agent://knowledge/revisions/{revision_id}/tree",
 		"edu-agent://learning/nodes/{node_revision_id}", "edu-agent://memory/records/{memory_id}",
 		"edu-agent://tutoring/sessions/{session_id}",
+		"edu-agent://spaces/{learning_space_id}/tutoring/sessions/{session_id}",
 	}
 	sort.Strings(wantTemplates)
 	if !equalStrings(templateURIs, wantTemplates) {

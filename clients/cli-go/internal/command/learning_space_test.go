@@ -47,8 +47,8 @@ func TestSpaceSelectionIsPerAppAndFlagsAreTemporary(t *testing.T) {
 	if exit := one.Run(t.Context(), []string{"--space", api.DefaultLearningSpaceID, "space", "show", "--id", api.DefaultLearningSpaceID}); exit != ExitOK || one.learningSpace != other {
 		t.Fatal("temporary override changed selection")
 	}
-	if exit := one.Run(t.Context(), []string{"offline", "status"}); exit != ExitUnavailable {
-		t.Fatalf("nondefault offline exit=%d", exit)
+	if exit := one.Run(t.Context(), []string{"agent"}); exit != ExitUnavailable {
+		t.Fatalf("nondefault agent exit=%d", exit)
 	}
 	if exit := one.Run(t.Context(), []string{"--space=bad", "space", "list"}); exit != ExitInput || one.learningSpace != other {
 		t.Fatal("malformed scope changed selection")

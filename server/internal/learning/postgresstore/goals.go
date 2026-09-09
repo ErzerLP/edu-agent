@@ -143,6 +143,10 @@ type goalScopeValidator interface {
 	ValidateGoalScopeWith(context.Context, pgx.Tx, string) error
 }
 
+type teachingScopeWriter interface {
+	EnsureTeachingScopeWith(context.Context, pgx.Tx, string, string) error
+}
+
 func (s *Store) validateGoalWrite(ctx context.Context, tx pgx.Tx, g *learning.GoalRevision) error {
 	if g.LearningSpaceID() != learningspace.Scope(ctx) {
 		return &learning.Error{Code: learning.CodeNotFound}

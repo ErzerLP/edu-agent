@@ -36,7 +36,11 @@ func (a *API) mountLearningSpaces(r chi.Router) {
 		if service, ok := a.learning.(goalManagementService); ok && service.SupportsGoalManagement() {
 			goalMode = "goals_v1"
 		}
-		writeJSON(w, 200, map[string]any{"version": 1, "default_space_id": space.DefaultID, "legacy_scope": "fixed_default", "modules": map[string]string{"knowledge": knowledgeMode, "learning": goalMode, "tutoring": "default_only", "memory": "default_only"}})
+		tutoringMode := "default_only"
+		if service, ok := a.learning.(sessionSelectionService); ok && service.SupportsSessionSelection() {
+			tutoringMode = "sessions_v1"
+		}
+		writeJSON(w, 200, map[string]any{"version": 1, "default_space_id": space.DefaultID, "legacy_scope": "fixed_default", "modules": map[string]string{"knowledge": knowledgeMode, "learning": goalMode, "tutoring": tutoringMode, "memory": "default_only"}})
 	})
 	if a.learningSpaces == nil {
 		return
@@ -170,7 +174,7 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					return
 				}
 				if business {
-					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" {
+					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" && !scopedTutoringPath(r.URL.Path) {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_archived"})
 						return
 					}
@@ -178,7 +182,9 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					supportsKnowledge := implementsKnowledge && scopedKnowledge.SupportsKnowledgeScopes()
 					goals, hasGoals := a.learning.(goalManagementService)
 					supportsGoals := hasGoals && goals.SupportsGoalManagement() && goalManagementPath(r.URL.Path)
-					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals {
+					sessions, hasSessions := a.learning.(sessionSelectionService)
+					supportsSessions := hasSessions && sessions.SupportsSessionSelection() && scopedTutoringPath(r.URL.Path)
+					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_module_unavailable"})
 						return
 					}

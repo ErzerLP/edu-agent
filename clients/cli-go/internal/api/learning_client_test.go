@@ -100,6 +100,21 @@ func TestLearningMutationRetryUsesIdenticalBody(t *testing.T) {
 	}
 }
 
+func TestAnswerResponseLossDoesNotReplaySubmission(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token", time.Second, nil)
+	request := ActionAttemptRequest{SessionOperation: SessionOperation{OperationID: "e0000000-0000-4000-8000-000000000010", PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: learningSessionID, ExpectedVersion: 4}, Action: "submit_attempt", Answer: "原题答案", Help: "none"}
+	_, err := client.ApplySessionAction(t.Context(), learningSessionID, request)
+	if err == nil || calls.Load() != 1 {
+		t.Fatalf("答案响应丢失后自动重放：调用=%d 错误=%v", calls.Load(), err)
+	}
+}
+
 func TestInvalidLearningRequestDoesNotReachHTTP(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32

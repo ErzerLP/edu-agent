@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/google/uuid"
 )
@@ -88,6 +89,16 @@ func (s *OfflineService) Prepare(ctx context.Context, deviceID string, request O
 	}
 	if uuid.Validate(deviceID) != nil || request.Validate() != nil {
 		return OfflinePrepareResponse{}, &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_prepare_request"}
+	}
+	if request.SessionID == "" && learningspace.Scope(ctx) != learningspace.DefaultID {
+		return OfflinePrepareResponse{}, &Error{Code: CodeInvalidRequest, Reason: "explicit_session_required"}
+	}
+	if request.SessionID != "" {
+		if owner, ok := s.store.(SessionScopeValidator); ok {
+			if err := owner.ValidateSessionScope(ctx, request.SessionID); err != nil {
+				return OfflinePrepareResponse{}, err
+			}
+		}
 	}
 	trustedRevision, _ := ParseUint63Decimal(request.TrustedManifestRevision)
 	manifestChain, err := s.signer.ManifestChain(trustedRevision, request.TrustedManifestDigest)

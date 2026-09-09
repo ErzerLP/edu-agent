@@ -148,6 +148,7 @@ type OfflinePairingBootstrap struct {
 }
 
 type OfflinePrepareRequest struct {
+	SessionID               string        `json:"session_id,omitempty"`
 	OperationID             string        `json:"operation_id"`
 	PayloadSchemaVersion    int           `json:"payload_schema_version"`
 	ExpectedSessionVersion  Uint63Decimal `json:"expected_session_version"`

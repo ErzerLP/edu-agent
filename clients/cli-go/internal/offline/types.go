@@ -299,10 +299,11 @@ type OperationStatus struct {
 }
 
 type PrepareIntent struct {
-	RequestID  string
-	CreatedAt  time.Time
-	Canonical  json.RawMessage
-	TrustState TrustState
+	LearningSpaceID string
+	RequestID       string
+	CreatedAt       time.Time
+	Canonical       json.RawMessage
+	TrustState      TrustState
 }
 
 type SyncBatch struct {

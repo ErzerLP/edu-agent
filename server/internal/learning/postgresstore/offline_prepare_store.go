@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/google/uuid"
@@ -156,6 +157,9 @@ func (s *Store) ClaimOfflinePrepare(ctx context.Context, request learning.Offlin
 		if err != nil {
 			return learning.OfflinePrepareClaim{}, err
 		}
+		if err := setOfflinePrepareSettlementScope(ctx, tx, request.DeviceID, request.Request.OperationID); err != nil {
+			return learning.OfflinePrepareClaim{}, err
+		}
 	}
 	newLease := uuid.NewString()
 	leaseUntil := databaseNow.Add(offlinePrepareLeaseDuration)
@@ -210,7 +214,15 @@ func (s *Store) StoreOfflinePrepareArtifact(ctx context.Context, deviceID, opera
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setOfflinePrepareSettlementScope(ctx, tx, deviceID, operationID); err != nil {
+		return err
+	}
+	command, err := tx.Exec(ctx, `
 		UPDATE offline_prepare_claims
 		SET model_artifact=$4,updated_at=clock_timestamp()
 		WHERE device_id=$1 AND operation_id=$2 AND status='processing' AND lease_token=$3
@@ -223,7 +235,7 @@ func (s *Store) StoreOfflinePrepareArtifact(ctx context.Context, deviceID, opera
 	if command.RowsAffected() != 1 {
 		return &learning.Error{Code: learning.CodeStaleProposal, Reason: "offline_prepare_lease_lost"}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) RejectOfflinePrepare(ctx context.Context, deviceID, operationID, leaseToken string, cause error) error {
@@ -238,7 +250,15 @@ func (s *Store) RejectOfflinePrepare(ctx context.Context, deviceID, operationID,
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setOfflinePrepareSettlementScope(ctx, tx, deviceID, operationID); err != nil {
+		return err
+	}
+	command, err := tx.Exec(ctx, `
 		UPDATE offline_prepare_claims
 		SET status='rejected',lease_token=NULL,lease_expires_at=NULL,result_body=$4,updated_at=clock_timestamp()
 		WHERE device_id=$1 AND operation_id=$2 AND status='processing' AND lease_token=$3
@@ -249,7 +269,22 @@ func (s *Store) RejectOfflinePrepare(ctx context.Context, deviceID, operationID,
 	if command.RowsAffected() != 1 {
 		return &learning.Error{Code: learning.CodeStaleProposal, Reason: "offline_prepare_lease_lost"}
 	}
-	return nil
+	return tx.Commit(ctx)
+}
+
+// 从已冻结的签发计划恢复后台结果归属；旧计划没有范围字段时沿用默认区升级映射。
+func setOfflinePrepareSettlementScope(ctx context.Context, tx pgx.Tx, deviceID, operationID string) error {
+	var goal string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(request_body->'generation'->>'goal_revision_id',model_artifact->>'goal_revision_id','') FROM offline_prepare_claims WHERE device_id=$1 AND operation_id=$2`, deviceID, operationID).Scan(&goal); err != nil {
+		return err
+	}
+	space := learningspace.DefaultID
+	if goal != "" {
+		if err := tx.QueryRow(ctx, `SELECT space_id FROM learning_goal_revisions WHERE id=$1`, goal).Scan(&space); err != nil {
+			return err
+		}
+	}
+	return setTeachingWriteScope(ctx, tx, space, true)
 }
 
 func (s *Store) PublishOfflinePrepare(ctx context.Context, request learning.OfflinePrepareStoreRequest, leaseToken string, signer learning.OfflineSigner) (learning.OfflinePreparedPack, error) {
@@ -718,21 +753,30 @@ func (s *Store) loadOfflinePrepareAuthority(ctx context.Context, tx pgx.Tx, requ
 	if err != nil {
 		return offlinePrepareAuthority{}, err
 	}
-	var sessionID string
-	if err := tx.QueryRow(ctx, `
+	sessionID := request.Request.SessionID
+	if sessionID == "" {
+		if err := tx.QueryRow(ctx, `
 		SELECT session_id::text
 		FROM learning_projection_sessions
 		WHERE generation_id=$1 AND item->'session'->>'state'<>'Completed'
+		AND EXISTS(SELECT 1 FROM learning_goal_revisions g WHERE g.id=(item->'session'->'focus'->>'goal_revision_id')::uuid AND g.space_id=$2)
 		ORDER BY updated_event_seq DESC,session_id DESC
-		LIMIT 1`, metadata.GenerationID).Scan(&sessionID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return offlinePrepareAuthority{}, &learning.Error{Code: learning.CodeOfflinePrepareUnavailable, Reason: "active_session_missing"}
+		LIMIT 1`, metadata.GenerationID, learningspace.Scope(ctx)).Scan(&sessionID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return offlinePrepareAuthority{}, &learning.Error{Code: learning.CodeOfflinePrepareUnavailable, Reason: "active_session_missing"}
+			}
+			return offlinePrepareAuthority{}, fmt.Errorf("load offline prepare current session: %w", err)
 		}
-		return offlinePrepareAuthority{}, fmt.Errorf("load offline prepare current session: %w", err)
 	}
 	session, err := s.tutoring.LoadSessionLockedWith(ctx, tx, sessionID)
 	if err != nil {
 		return offlinePrepareAuthority{}, fmt.Errorf("load offline prepare session authority: %w", err)
+	}
+	if err := s.checkGoalStartWith(ctx, tx, session.Context.GoalRevisionID); err != nil {
+		return offlinePrepareAuthority{}, err
+	}
+	if err := setTeachingWriteScope(ctx, tx, learningspace.Scope(ctx), false); err != nil {
+		return offlinePrepareAuthority{}, err
 	}
 	expectedSessionVersion, _ := learning.ParseUint63Decimal(request.Request.ExpectedSessionVersion)
 	if uint64(session.AggregateVer) != expectedSessionVersion {

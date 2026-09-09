@@ -54,6 +54,13 @@ func (c *offlineCommandClient) CurrentSession(context.Context) (api.SessionView,
 	return api.SessionView{Session: api.TutoringSession{SessionID: offlineTestSessionID, AggregateVersion: 4}}, nil
 }
 
+func (c *offlineCommandClient) Session(_ context.Context, id string) (api.SessionView, error) {
+	if id != offlineTestSessionID {
+		return api.SessionView{}, &api.ProtocolError{Category: "wrong_session"}
+	}
+	return api.SessionView{Session: api.TutoringSession{SessionID: id, AggregateVersion: 4}}, nil
+}
+
 func (c *offlineCommandClient) PrepareOffline(_ context.Context, request api.OfflinePrepareRequest) (api.OfflinePrepareResponse, int, error) {
 	c.prepareRequests = append(c.prepareRequests, request)
 	artifactKeyID := c.artifactKeyID
@@ -192,7 +199,7 @@ func TestOfflineKeyMigrateRewrapsExistingPassphraseProfile(t *testing.T) {
 	app.OfflineRoot = func() (string, error) { return root, nil }
 	app.NewClient = func(string, string, time.Duration) APIClient { return client }
 	app.NewUUID = uuidSequence(t, "50000000-0000-4000-8000-000000000001")
-	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--count", "1"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--session", offlineTestSessionID, "--count", "1"}); exit != ExitOK {
 		t.Fatalf("prepare exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 
@@ -397,7 +404,7 @@ func TestOfflinePrepareDoesNotSilentlyDowngradeWhenSystemBackendFails(t *testing
 	app.NewClient = func(string, string, time.Duration) APIClient { return client }
 	app.NewUUID = uuidSequence(t, "50000000-0000-4000-8000-000000000001")
 
-	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--count", "1"}); exit != ExitUnavailable {
+	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--session", offlineTestSessionID, "--count", "1"}); exit != ExitUnavailable {
 		t.Fatalf("prepare exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if exists, err := offline.Exists(root); err != nil || exists {
@@ -418,7 +425,7 @@ func TestOfflinePrepareLearnSyncAndSafeLogoutLoop(t *testing.T) {
 	app.NewClient = func(string, string, time.Duration) APIClient { return client }
 	app.NewUUID = uuidSequence(t, "50000000-0000-4000-8000-000000000001", "50000000-0000-4000-8000-000000000002")
 
-	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--count", "1"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--session", offlineTestSessionID, "--count", "1"}); exit != ExitOK {
 		t.Fatalf("prepare exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	assertOfflineFilesDoNotContain(t, root, "What is two plus two?", "correct horse battery staple")
@@ -462,7 +469,7 @@ func TestOfflinePurgeDeletesManagedProfileAndAcknowledges(t *testing.T) {
 	app.NewClient = func(string, string, time.Duration) APIClient { return client }
 	app.NewUUID = uuidSequence(t, "50000000-0000-4000-8000-000000000011")
 
-	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--count", "1"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"offline", "prepare", "--session", offlineTestSessionID, "--count", "1"}); exit != ExitOK {
 		t.Fatalf("prepare exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if exists, err := offline.Exists(root); err != nil || !exists {

@@ -17,10 +17,13 @@ import (
 	knowledgedb "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
+	"github.com/google/uuid"
 )
 
 func TestPostgreSQLOfflinePairingBootstrapFromFreshSchema(t *testing.T) {
@@ -58,6 +61,15 @@ func TestPostgreSQLOfflineObjectivePrepareSyncStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	session, version := seedOfflinePrepareSession(t, store, goalRevisionID)
+	// 另一客户端随后进入 B；A 的显式签发不能重新猜测全局最近会话。
+	learnings, err := learning.NewService(store, store, integrationKnowledgeResolver{}, learning.ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bID := uuid.NewString()
+	if _, err := learnings.CreateSession(ctx, learningDeviceTwo, learning.SessionCommand{GoalRevisionID: goalRevisionID, Operation: learning.OperationEnvelope{OperationID: uuid.NewString(), PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: bID, Payload: json.RawMessage(`{}`)}}); err != nil {
+		t.Fatal(err)
+	}
 	signer := offlineIntegrationSigner(t)
 	service, err := learning.NewOfflineService(store, signer, signer.Origin(), time.Now)
 	if err != nil {
@@ -66,6 +78,7 @@ func TestPostgreSQLOfflineObjectivePrepareSyncStatus(t *testing.T) {
 	handler := offlineIntegrationHTTPHandler(t, service, learningDeviceOne)
 	prepareOperationID := "61000000-0000-4000-8000-000000000001"
 	prepareRequest := learning.OfflinePrepareRequest{
+		SessionID:               session.ID,
 		OperationID:             prepareOperationID,
 		PayloadSchemaVersion:    1,
 		ExpectedSessionVersion:  strconv.FormatInt(version, 10),
@@ -83,7 +96,7 @@ func TestPostgreSQLOfflineObjectivePrepareSyncStatus(t *testing.T) {
 	if err := json.Unmarshal(prepared.Pack.Payload, &pack); err != nil {
 		t.Fatal(err)
 	}
-	if len(pack.Items) != 1 || !pack.Truncated || pack.TruncatedReason != "model_partial" || pack.Items[0].Activity.Type != learning.ActivityObjective {
+	if pack.ParentSessionID != session.ID || len(pack.Items) != 1 || !pack.Truncated || pack.TruncatedReason != "model_partial" || pack.Items[0].Activity.Type != learning.ActivityObjective {
 		t.Fatalf("offline Objective bounded pack=%+v", pack)
 	}
 	var replayedPrepare learning.OfflinePrepareResponse
@@ -131,6 +144,20 @@ func TestPostgreSQLOfflineObjectivePrepareSyncStatus(t *testing.T) {
 		PayloadSchemaVersion: 1,
 		Operations:           []json.RawMessage{operationBody},
 	}
+	spaces := spacedb.New(pool)
+	otherSpace, err := spaces.Mutate(ctx, learningDeviceOne, "", learningspace.Command{OperationID: uuid.NewString(), Name: "同步时所选学习区", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherContext, _ := learningspace.WithScope(ctx, otherSpace.ID)
+	// 归档不删除已签发授权；收到的答案仍依原授权归档，而非同步页面的区。
+	defaultSpace, err := spaces.Get(ctx, learningspace.DefaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := spaces.Mutate(ctx, learningDeviceOne, defaultSpace.ID, learningspace.Command{OperationID: uuid.NewString(), ExpectedVersion: defaultSpace.Version, Name: defaultSpace.Name, Status: "archived"}); err != nil {
+		t.Fatal(err)
+	}
 	var synced learning.OfflineSyncResponse
 	if statusCode := offlineIntegrationRequest(t, handler, http.MethodPost, "/v1/learning/offline/sync", syncRequest, &synced); statusCode != http.StatusOK || len(synced.Results) != 1 || synced.Results[0].ArchiveStatus != learning.OfflineArchivedSucceeded || synced.Results[0].AssessmentStatus != learning.OfflineAssessmentCompleted || synced.Results[0].EvidenceStatus != learning.OfflineEvidenceAccepted || synced.Results[0].Replayed || synced.Results[0].ReasonCodes == nil {
 		t.Fatalf("offline Objective sync status=%d result=%+v", statusCode, synced)
@@ -138,6 +165,18 @@ func TestPostgreSQLOfflineObjectivePrepareSyncStatus(t *testing.T) {
 	var replayedSync learning.OfflineSyncResponse
 	if statusCode := offlineIntegrationRequest(t, handler, http.MethodPost, "/v1/learning/offline/sync", syncRequest, &replayedSync); statusCode != http.StatusOK || len(replayedSync.Results) != 1 || !replayedSync.Results[0].Replayed || replayedSync.Results[0].Receipt == nil || replayedSync.Results[0].ReasonCodes == nil {
 		t.Fatalf("offline Objective sync replay status=%d result=%+v", statusCode, replayedSync)
+	}
+	scopedReplay, err := service.Sync(otherContext, learningDeviceOne, syncRequest)
+	if err != nil || len(scopedReplay.Results) != 1 || !scopedReplay.Results[0].Replayed {
+		t.Fatalf("切区后原授权重放失败：%+v %v", scopedReplay, err)
+	}
+	var originalSession, originalGoal string
+	if err := pool.QueryRow(ctx, `SELECT parent_session_id,goal_revision_id FROM offline_activities WHERE id=$1`, authorization.OfflineActivityID).Scan(&originalSession, &originalGoal); err != nil || originalSession != session.ID || originalGoal != goalRevisionID {
+		t.Fatalf("同步结果串目标：%s %s %v", originalSession, originalGoal, err)
+	}
+	bView, err := store.Session(ctx, bID)
+	if err != nil || bView.Session.State != tutoring.StateGoalReady {
+		t.Fatalf("离线同步推进了 B：%+v %v", bView, err)
 	}
 	var status learning.OfflineOperationStatus
 	if statusCode := offlineIntegrationRequest(t, handler, http.MethodGet, "/v1/learning/offline/operations/"+authorization.OperationID, nil, &status); statusCode != http.StatusOK || status.EvidenceStatus != learning.OfflineEvidenceAccepted || status.Receipt.AggregateVersion == "" || status.StatusTicket.Revision != "1" {

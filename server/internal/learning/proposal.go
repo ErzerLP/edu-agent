@@ -97,6 +97,11 @@ func (s *Service) Propose(ctx context.Context, deviceID string, request Proposal
 	if err := validateProposalRequest(request); err != nil {
 		return ProposalArtifact{}, err
 	}
+	if request.AggregateType == "session" {
+		if err := s.validateSessionScope(ctx, request.AggregateID); err != nil {
+			return ProposalArtifact{}, err
+		}
+	}
 	requestHash, err := HashJSON(request)
 	if err != nil {
 		return ProposalArtifact{}, err
@@ -190,6 +195,13 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 		}
 		if err := freezeField(&request.GoalRevisionID, session.Context.GoalRevisionID); err != nil {
 			return request, err
+		}
+		goal, err := s.authority.LoadGoalRevision(ctx, session.Context.GoalRevisionID)
+		if err != nil {
+			return request, err
+		}
+		if scopeID := goal.GoalManagement().Details.ScopeSnapshotID; scopeID != "" && request.KnowledgeRevisionID != scopeID {
+			return request, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "goal_scope_mismatch"}
 		}
 		if err := freezeField(&request.RouteRevisionID, session.Context.RouteRevisionID); err != nil {
 			return request, err

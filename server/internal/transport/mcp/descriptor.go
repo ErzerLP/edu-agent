@@ -43,6 +43,7 @@ var descriptorCatalog = []Descriptor{
 	{Kind: DescriptorResourceTemplate, Name: "knowledge.revision_export", URITemplate: "edu-agent://knowledge/revisions/{revision_id}/export", Description: "Canonical Markdown export for one knowledge revision", RequiredScope: "knowledge:read", PrivacyOwners: []privacy.OwnerKind{privacy.OwnerKnowledge}, ReadOnly: true, OutputLimit: exportOutputLimit, AuditName: "knowledge_export", HTTPOperationID: "exportKnowledgeRevision"},
 	{Kind: DescriptorResource, Name: "tutoring.current_session", URI: "edu-agent://tutoring/sessions/current", Description: "Current tutoring session and projection", RequiredScope: "learning:read", PrivacyOwners: learningOwners(), ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "tutoring_current_session", HTTPOperationID: "getCurrentTutoringSession"},
 	{Kind: DescriptorResourceTemplate, Name: "tutoring.session", URITemplate: "edu-agent://tutoring/sessions/{session_id}", Description: "One tutoring session and projection", RequiredScope: "learning:read", PrivacyOwners: learningOwners(), ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "tutoring_session", HTTPOperationID: "getTutoringSession"},
+	{Kind: DescriptorResourceTemplate, Name: "tutoring.scoped_session", URITemplate: "edu-agent://spaces/{learning_space_id}/tutoring/sessions/{session_id}", Description: "读取指定学习区的教学会话", RequiredScope: "learning:read", PrivacyOwners: learningOwners(), ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "tutoring_scoped_session", HTTPOperationID: "getTutoringSession"},
 	{Kind: DescriptorResourceTemplate, Name: "learning.node", URITemplate: "edu-agent://learning/nodes/{node_revision_id}", Description: "Learner projection for one knowledge node revision", RequiredScope: "learning:read", PrivacyOwners: learningOwners(), ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "learning_node", HTTPOperationID: "getLearningNode"},
 	{Kind: DescriptorResource, Name: "learning.projection_status", URI: "edu-agent://learning/projections/status", Description: "Learning projection status and event high water", RequiredScope: "learning:read", PrivacyOwners: learningOwners(), ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "learning_projection_status", HTTPOperationID: "getLearningProjectionStatus"},
 	{Kind: DescriptorResourceTemplate, Name: "memory.record", URITemplate: "edu-agent://memory/records/{memory_id}", Description: "One admitted memory record loaded from the composed memory exporter", RequiredScope: "memory:read", PrivacyOwners: []privacy.OwnerKind{privacy.OwnerMemory}, ReadOnly: true, OutputLimit: defaultOutputLimit, AuditName: "memory_record", HTTPOperationID: "getMemoryRecord"},
@@ -307,13 +308,14 @@ func createGoalSchema() any {
 }
 
 func createSessionSchema() any {
-	return objectSchema(mergeProperties(operationProperties(), map[string]any{"goal_revision_id": uuidProperty()}),
+	return objectSchema(mergeProperties(operationProperties(), map[string]any{"goal_revision_id": uuidProperty(), "learning_space_id": uuidProperty()}),
 		"operation_id", "payload_schema_version", "aggregate_type", "aggregate_id", "expected_version", "goal_revision_id")
 }
 
 func proposeSchema() any {
 	return objectSchema(map[string]any{
-		"request_id": uuidProperty(), "proposal_type": stringProperty(), "aggregate_type": stringProperty(),
+		"learning_space_id": uuidProperty(),
+		"request_id":        uuidProperty(), "proposal_type": stringProperty(), "aggregate_type": stringProperty(),
 		"aggregate_id": uuidProperty(), "aggregate_version": map[string]any{"type": "integer", "minimum": 0},
 		"goal_revision_id": uuidProperty(), "route_revision_id": uuidProperty(), "route_step_id": uuidProperty(),
 		"focus_node_revision_id": uuidProperty(), "activity_id": uuidProperty(), "attempt_id": uuidProperty(),
@@ -333,7 +335,8 @@ func applyActionSchema() any {
 	}, "node_revision_id")
 	return objectSchema(mergeProperties(operationProperties(), map[string]any{
 		"session_id": uuidProperty(), "action": stringProperty(), "proposal_id": uuidProperty(),
-		"question": stringProperty(), "answer": stringProperty(), "help": stringProperty(),
+		"learning_space_id": uuidProperty(),
+		"question":          stringProperty(), "answer": stringProperty(), "help": stringProperty(),
 		"goal_revision_id": uuidProperty(), "exposure_kind": stringProperty(), "exposure_text": stringProperty(),
 		"knowledge_references": map[string]any{"type": "array", "items": knowledgeReference, "maxItems": 100},
 		"question_id":          uuidProperty(), "answer_id": uuidProperty(),

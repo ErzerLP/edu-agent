@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	outboxpostgres "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
@@ -221,7 +222,25 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 			return learning.OperationResult{}, err
 		}
 	}
-	if session := request.Batch.Session; session != nil {
+	if request.Operation.AggregateType == "offline_attempt" {
+		if err := setOfflineSettlementScope(ctx, tx, request.Operation.AggregateID); err != nil {
+			return learning.OperationResult{}, err
+		}
+	}
+	if session := request.Batch.Session; session != nil && session.Context.GoalRevisionID != "" {
+		goal, err := scanGoal(tx.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id=$2", session.Context.GoalRevisionID, learningspace.Scope(ctx)))
+		if err != nil {
+			return learning.OperationResult{}, err
+		}
+		newTask := request.Operation.ExpectedVersion == 0 || session.State == tutoring.StateDiagnostic || request.Batch.RouteRevision != nil || request.Batch.Activity != nil || request.Batch.FreeQuestion != nil
+		if err := setTeachingWriteScope(ctx, tx, goal.LearningSpaceID(), !newTask); err != nil {
+			return learning.OperationResult{}, err
+		}
+		if newTask {
+			if err := s.checkGoalStartWith(ctx, tx, session.Context.GoalRevisionID); err != nil {
+				return learning.OperationResult{}, err
+			}
+		}
 		starting := request.Operation.ExpectedVersion == 0
 		if !starting {
 			old, err := s.tutoring.LoadSessionWith(ctx, tx, session.ID)
@@ -233,6 +252,15 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		if starting && session.Context.GoalRevisionID != "" {
 			if err := s.checkGoalStartWith(ctx, tx, session.Context.GoalRevisionID); err != nil {
 				return learning.OperationResult{}, err
+			}
+			if scopeID := goal.GoalManagement().Details.ScopeSnapshotID; scopeID != "" {
+				owner, ok := s.knowledge.(teachingScopeWriter)
+				if !ok {
+					return learning.OperationResult{}, &learning.Error{Code: learning.CodeKnowledgeReferenceInvalid}
+				}
+				if err := owner.EnsureTeachingScopeWith(ctx, tx, scopeID, request.DeviceID); err != nil {
+					return learning.OperationResult{}, err
+				}
 			}
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/google/uuid"
@@ -541,6 +542,13 @@ func (s *Store) LoadSessionAuthority(ctx context.Context, id string) (learning.S
 	session, err := s.tutoring.LoadSessionWith(ctx, tx, id)
 	if err != nil {
 		return learning.SessionAuthority{}, mapTutoringLoadError(err)
+	}
+	if session.Context.GoalRevisionID != "" {
+		if _, err := scanGoal(tx.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id=$2", session.Context.GoalRevisionID, learningspace.Scope(ctx))); err != nil {
+			return learning.SessionAuthority{}, err
+		}
+	} else if learningspace.Scope(ctx) != learningspace.DefaultID {
+		return learning.SessionAuthority{}, &learning.Error{Code: learning.CodeNotFound}
 	}
 	high, err := eventHighWater(ctx, tx, false)
 	if err != nil {

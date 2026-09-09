@@ -1156,6 +1156,26 @@ paths:
   /v1/tutoring/sessions:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: listTutoringSessions
+      summary: 按学习区和目标列出教学会话及续学位置
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { name: goal_id, in: query, schema: { $ref: "#/components/schemas/LearningUUID" } }
+        - { name: status, in: query, schema: { type: string, enum: [resumable, completed] } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: 独立教学会话列表，空列表与错误分开。, content: { application/json: { schema: { $ref: "#/components/schemas/TutoringSessionPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 学习区不存在。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: session_selection_unavailable }
+        "503": { description: 隐私读门关闭。 }
     post:
       operationId: createTutoringSession
       summary: Create a tutoring session
@@ -3547,6 +3567,32 @@ components:
         sample_count: { type: integer, minimum: 0 }
         first_received_at: { type: string, format: date-time }
         last_received_at: { type: string, format: date-time }
+    TutoringSessionPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        next_cursor: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [session_id, learning_space_id, goal_id, goal_revision_id, name, goal_status, state, position, last_event_seq, resumable]
+            properties:
+              session_id: { $ref: "#/components/schemas/LearningUUID" }
+              learning_space_id: { $ref: "#/components/schemas/LearningUUID" }
+              goal_id: { $ref: "#/components/schemas/LearningUUID" }
+              goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+              scope_snapshot_id: { $ref: "#/components/schemas/LearningUUID" }
+              name: { type: string }
+              goal_status: { type: string }
+              state: { type: string }
+              position: { type: string }
+              route_step_id: { $ref: "#/components/schemas/LearningUUID" }
+              activity_id: { $ref: "#/components/schemas/LearningUUID" }
+              last_event_seq: { type: integer }
+              resumable: { type: boolean }
     SessionView:
       type: object
       additionalProperties: false
@@ -4329,6 +4375,7 @@ components:
           trusted_manifest_digest,
         ]
       properties:
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { const: 1 }
         expected_session_version: { $ref: "#/components/schemas/Uint63Decimal" }

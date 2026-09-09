@@ -63,7 +63,7 @@ func (c *Client) LearningSpacesCapabilities(ctx context.Context) (LearningSpaceC
 	}
 	if err == nil {
 		for _, module := range []string{"knowledge", "learning", "tutoring", "memory"} {
-			if result.Modules[module] != "default_only" && !(module == "knowledge" && result.Modules[module] == "collections_v1") && !(module == "learning" && result.Modules[module] == "goals_v1") {
+			if result.Modules[module] != "default_only" && !(module == "knowledge" && result.Modules[module] == "collections_v1") && !(module == "learning" && result.Modules[module] == "goals_v1") && !(module == "tutoring" && result.Modules[module] == "sessions_v1") {
 				err = &ProtocolError{Category: "invalid_learning_space_capabilities"}
 			}
 		}

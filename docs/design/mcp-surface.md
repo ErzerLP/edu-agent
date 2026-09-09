@@ -1,5 +1,7 @@
 # MCP surface technical reference
 
+Issue #5 为 `tutoring.create_session`、`tutoring.propose`、`tutoring.apply_action` 增加可选 `learning_space_id`，省略固定默认区，错误归属不回退。新增资源模板 `edu-agent://spaces/{learning_space_id}/tutoring/sessions/{session_id}`，与 HTTP 调用同一应用服务读取指定会话。会话列表和名称 picker 使用 HTTP/CLI；旧 current 资源仍限默认区，不作为新客户端续学依据。目录现在为 4 个静态资源、6 个模板及 15 个工具；未增加评分或目标生命周期工具。参见[教学续学契约](tutoring-sessions.md)。
+
 Issue #3 为 `knowledge.retrieve` 增加 `learning_space_id`、`collection_id` 和 `scope_snapshot_id` 参数。冻结范围不与集合选择或单一 revision 混用；所有 ID 交由同一个知识服务验证。旧资源 URI 固定默认范围，MCP HTTP 空间/集合 header 明确拒绝，不能隐式改变学习和记忆工具。未增加集合共享、关联或导入等高权限写工具。详见[资料范围契约](knowledge-spaces.md)。
 
 Issue #4 为既有 `learning.create_goal` 增加可选 `learning_space_id`。省略时仍使用固定默认区，显式值必须为有效 UUID；回调在认证设备身份下将范围传给与 HTTP 相同的目标应用服务，校验学习区归属、归档状态、版本和幂等。一句话创建成为空资料草稿，不调用模型或创建教学会话。原文本修订入口保持兼容；本次不向 MCP 新增结构化编辑、生命周期操作或管理权限，`action` 等额外参数仍拒绝。目标列表、详情与生命周期使用 HTTP/CLI/TUI 管理入口。参见[目标管理设计](goals.md)。
@@ -36,6 +38,7 @@ The one MiB request limit is no greater than the existing learning write limit. 
 | `edu-agent://knowledge/revisions/{revision_id}/export` | template | `exportKnowledgeRevision` | `knowledge:read` | knowledge | 16 MiB |
 | `edu-agent://tutoring/sessions/current` | static | `getCurrentTutoringSession` | `learning:read` | learning, tutoring | 4 MiB |
 | `edu-agent://tutoring/sessions/{session_id}` | template | `getTutoringSession` | `learning:read` | learning, tutoring | 4 MiB |
+| `edu-agent://spaces/{learning_space_id}/tutoring/sessions/{session_id}` | template | `getTutoringSession` | `learning:read` | learning, tutoring | 4 MiB |
 | `edu-agent://learning/nodes/{node_revision_id}` | template | `getLearningNode` | `learning:read` | learning, tutoring | 4 MiB |
 | `edu-agent://learning/projections/status` | static | `getLearningProjectionStatus` | `learning:read` | learning, tutoring | 4 MiB |
 | `edu-agent://memory/records/{memory_id}` | template | `getMemoryRecord` | `memory:read` | memory | 4 MiB |

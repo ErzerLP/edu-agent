@@ -23,9 +23,12 @@ type spaceClient interface {
 var spaceIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func (a *App) scopedClient(server, token string, timeout time.Duration) APIClient {
+	return a.clientInSpace(server, token, timeout, a.learningSpace)
+}
+func (a *App) clientInSpace(server, token string, timeout time.Duration, space string) APIClient {
 	client := a.NewClient(server, token, timeout)
-	if real, ok := client.(*api.Client); ok && a.learningSpace != "" {
-		return real.WithLearningSpace(a.learningSpace)
+	if real, ok := client.(*api.Client); ok && space != "" {
+		return real.WithLearningSpace(space)
 	}
 	return client
 }
@@ -60,18 +63,19 @@ func (a *App) parseSpaceFlag(args []string) ([]string, func(), error) {
 			filtered = append(filtered, arg)
 		}
 	}
-	if selected != "" && selected != api.DefaultLearningSpaceID && len(filtered) > 0 && (filtered[0] == "offline" || filtered[0] == "agent") {
-		return nil, func() {}, commandError("learning_space_module_unavailable", "Agent and offline workflows are available only in the default learning space", "select the default space", ExitUnavailable)
+	if selected != "" && selected != api.DefaultLearningSpaceID && len(filtered) > 0 && filtered[0] == "agent" {
+		return nil, func() {}, commandError("learning_space_module_unavailable", "Agent 仍仅支持默认学习区", "选择默认区；教学请使用 learn", ExitUnavailable)
 	}
 	if seen {
 		a.learningSpace = selected
+		a.learningSpaceName = ""
 		restore = func() { a.learningSpace = old; a.learningSpaceName = oldName }
 	}
 	return filtered, restore, nil
 }
 func (a *App) runSpace(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(a.Out, "space list [--search TEXT] [--status active|archived] [--limit 1..100] [--cursor TOKEN]\nspace show|select --id UUID\nspace create --name NAME [--description TEXT] [--operation-id UUID]\nspace edit|archive|restore --id UUID [--name NAME] [--description TEXT] [--expected-version N] [--operation-id UUID]\nspace browse (interactive list, details, selection and management)\nAll commands accept --space UUID for this invocation. Selection is process-local; shell scripts must pass --space on each invocation.\n资料使用 knowledge library 管理区内集合与冻结范围，目标使用 goal browse 管理。教学、记忆和 Agent/offline 仍要求默认区；名称不决定归属。")
+		_, err := fmt.Fprintln(a.Out, "space list [--search TEXT] [--status active|archived] [--limit 1..100] [--cursor TOKEN]\nspace show|select --id UUID\nspace create --name NAME [--description TEXT] [--operation-id UUID]\nspace edit|archive|restore --id UUID [--name NAME] [--description TEXT] [--expected-version N] [--operation-id UUID]\nspace browse（交互列表、详情、选择与管理）\n所有命令接受 --space UUID；选择仅在当前进程有效，脚本每次调用需显式传入。\n资料使用 knowledge library，目标使用 goal browse，教学使用 learn，离线签发使用 offline prepare --session UUID。记忆及 Agent 仍要求默认区；名称不决定归属。")
 		return err
 	}
 	action := args[0]
@@ -128,7 +132,7 @@ func (a *App) runSpace(ctx context.Context, args []string) error {
 		a.learningSpaceName = item.Name
 		_, err = fmt.Fprintf(a.Out, "Selected %s (%s), status=%s; selection lasts for this client process.\n", safeText(item.Name), item.ID, item.Status)
 		if item.ID != api.DefaultLearningSpaceID {
-			_, _ = fmt.Fprintln(a.Out, "资料和目标可在本区独立管理；教学、记忆及 Agent/offline 仍仅支持默认区。")
+			_, _ = fmt.Fprintln(a.Out, "资料、目标和教学可在本区独立管理；learn 选择目标续学，offline prepare 从所选会话签发。记忆及 Agent 仍仅支持默认区。")
 		}
 		return err
 	}
@@ -237,7 +241,7 @@ func (a *App) browseSpaces(ctx context.Context, client spaceClient) error {
 			return err
 		}
 		_, _ = fmt.Fprintf(a.Out, "%s\n%s\nID: %s  status: %s  version: %d\n", safeText(item.Name), safeText(item.Description), item.ID, item.Status, item.Version)
-		_, _ = fmt.Fprintln(a.Out, "资料使用 knowledge library 管理集合；目标使用 goal browse 管理；教学和记忆仍仅支持默认区。")
+		_, _ = fmt.Fprintln(a.Out, "资料使用 knowledge library 管理集合；目标使用 goal browse 管理；教学使用 learn 独立续学；记忆仍仅支持默认区。")
 		action, err := a.Terminal.ReadLine("s: select; r: rename; a: archive; u: restore; Enter: back > ")
 		if err != nil {
 			return err

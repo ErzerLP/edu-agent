@@ -27,7 +27,7 @@ func TestKnowledgeSpaceUpgradePreservesLegacyRevision(t *testing.T) {
 	if err := Run(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(r)-'collection_id')::text FROM knowledge_revisions r WHERE id=$1`, id).Scan(&after); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT (to_jsonb(r)-'collection_id'-'scope_snapshot_id')::text FROM knowledge_revisions r WHERE id=$1 AND scope_snapshot_id IS NULL`, id).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if before != after {
@@ -36,5 +36,8 @@ func TestKnowledgeSpaceUpgradePreservesLegacyRevision(t *testing.T) {
 	var head string
 	if err := pool.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_collections WHERE id=$1`, knowledge.DefaultCollectionID).Scan(&head); err != nil || head != id {
 		t.Fatalf("默认集合未保留旧 head: %s %v", head, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE knowledge_revisions SET collection_id=NULL WHERE id=$1`, id); err == nil {
+		t.Fatal("资料版本不能同时缺少集合和冻结范围归属")
 	}
 }

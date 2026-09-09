@@ -133,12 +133,12 @@ func TestPreflightTracksQueuedAndPrepareJournal(t *testing.T) {
 	if err := store.SaveImmutableOperation(ctx, testOperation(testOperationID, 1, "answer")); err != nil {
 		t.Fatal(err)
 	}
-	intent := PrepareIntent{RequestID: testJournalID, CreatedAt: time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC), Canonical: json.RawMessage(`{"operation_id":"` + testJournalID + `"}`)}
+	intent := PrepareIntent{RequestID: testJournalID, CreatedAt: time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC), Canonical: json.RawMessage(`{"operation_id":"` + testJournalID + `"}`), LearningSpaceID: "10000000-0000-4000-8000-000000000001"}
 	if err := store.SavePrepareIntent(ctx, intent); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := store.PendingPrepareIntent(ctx)
-	if err != nil || !bytes.Equal(pending.Canonical, intent.Canonical) {
+	if err != nil || !bytes.Equal(pending.Canonical, intent.Canonical) || pending.LearningSpaceID != intent.LearningSpaceID {
 		t.Fatalf("pending prepare: %#v %v", pending, err)
 	}
 	preflight, err := store.PreflightLogout(ctx)
@@ -226,10 +226,11 @@ func TestPreparePublicationRecoversEveryCrashBoundary(t *testing.T) {
 				t.Fatal(err)
 			}
 			intent := PrepareIntent{
-				RequestID:  testJournalID,
-				CreatedAt:  time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC),
-				Canonical:  json.RawMessage(`{"operation_id":"` + testJournalID + `"}`),
-				TrustState: baseTrust,
+				RequestID:       testJournalID,
+				CreatedAt:       time.Date(2029, 1, 1, 0, 0, 0, 0, time.UTC),
+				Canonical:       json.RawMessage(`{"operation_id":"` + testJournalID + `"}`),
+				TrustState:      baseTrust,
+				LearningSpaceID: "10000000-0000-4000-8000-000000000001",
 			}
 			if err := store.SavePrepareIntent(t.Context(), intent); err != nil {
 				t.Fatal(err)
@@ -268,6 +269,9 @@ func TestPreparePublicationRecoversEveryCrashBoundary(t *testing.T) {
 					var detail prepareDetail
 					if err := decodeClosed(journal.Detail, &detail); err != nil {
 						return err
+					}
+					if detail.LearningSpaceID != intent.LearningSpaceID {
+						return errors.New("签发恢复日志丢失原学习区")
 					}
 					expectedRecord, err := packToRecord(pack)
 					if err != nil {

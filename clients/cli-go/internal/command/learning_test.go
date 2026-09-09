@@ -37,11 +37,7 @@ func TestLearnMultilineHelpAndNoLocalPersistence(t *testing.T) {
 	var submitted api.ActionAttemptRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
-			if state == "Completed" {
-				writeJSONTest(w, http.StatusNotFound, api.ErrorResponse{Error: api.ErrorBody{Code: "not_found", Message: "no active session", RequestID: "request-current-completed"}})
-				return
-			}
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 			writeJSONTest(w, http.StatusOK, commandSessionView(state, "open", "", false, false))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID:
 			if state != "Completed" {
@@ -64,7 +60,7 @@ func TestLearnMultilineHelpAndNoLocalPersistence(t *testing.T) {
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{":answer", "first line", "second line", ".", "hint"}})
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if submitted.Answer != "first line\nsecond line" || submitted.Help != "hint" {
@@ -80,7 +76,7 @@ func TestLearnClearDoesNotRedrawActivity(t *testing.T) {
 	state := "AwaitingResponse"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 			writeJSONTest(w, http.StatusOK, commandSessionView(state, "open", "", false, false))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/actions"):
 			state = "Completed"
@@ -93,7 +89,7 @@ func TestLearnClearDoesNotRedrawActivity(t *testing.T) {
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	term := &fakeTerminal{lines: []string{":clear", "answer", ""}}
 	app, out, errOut := newTestApp(configStore, credentialStore, term)
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if term.clearCalls != 1 || strings.Count(out.String(), "Question:") != 1 {
@@ -111,7 +107,7 @@ func TestLearnAskBeforeAutomaticActivityProgression(t *testing.T) {
 			var asked atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+				case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 					writeJSONTest(w, http.StatusOK, commandSessionView(state, "open", "", false, false))
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/knowledge/retrievals":
 					writeJSONTest(w, http.StatusOK, commandRetrieval(false, false))
@@ -141,7 +137,7 @@ func TestLearnAskBeforeAutomaticActivityProgression(t *testing.T) {
 			defer server.Close()
 			configStore, credentialStore := pairedStores(server.URL, "token")
 			app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{":ask follow up", ":quit"}})
-			if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+			if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 				t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 			}
 			if asked.Load() != 1 {
@@ -157,14 +153,12 @@ func TestLearnVersionConflictRefreshDoesNotReplayAnswer(t *testing.T) {
 	var currentCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 			if currentCalls.Add(1) == 1 {
 				writeJSONTest(w, http.StatusOK, commandSessionView("AwaitingResponse", "open", "", false, false))
 				return
 			}
-			other := commandSessionView("Completed", "open", "", false, false)
-			other.Session.SessionID = "11000000-0000-4000-8000-000000000099"
-			writeJSONTest(w, http.StatusOK, other)
+			writeJSONTest(w, http.StatusOK, commandSessionView("Completed", "open", "", false, false))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID:
 			writeJSONTest(w, http.StatusOK, commandSessionView("Completed", "open", "", false, false))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/actions"):
@@ -180,7 +174,7 @@ func TestLearnVersionConflictRefreshDoesNotReplayAnswer(t *testing.T) {
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{"answer once", "", ":quit"}})
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if actionCalls.Load() != 1 || !strings.Contains(errOut.String(), "previous input was not replayed") {
@@ -198,7 +192,7 @@ func TestLearnObjectiveAndOpenAssessmentPaths(t *testing.T) {
 			var proposalCalls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+				case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 					writeJSONTest(w, http.StatusOK, commandSessionView(state, activityType, "accepted", false, false))
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/tutoring/proposals":
 					proposalCalls.Add(1)
@@ -228,7 +222,7 @@ func TestLearnObjectiveAndOpenAssessmentPaths(t *testing.T) {
 			defer server.Close()
 			configStore, credentialStore := pairedStores(server.URL, "token")
 			app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{":quit"}})
-			if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+			if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 				t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 			}
 			want := int32(0)
@@ -246,7 +240,7 @@ func TestLearnProvisionalQuitDoesNotSendForbiddenAction(t *testing.T) {
 	t.Parallel()
 	var mutations atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current" {
+		if r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID) {
 			writeJSONTest(w, http.StatusOK, commandSessionView("Feedback", "open", "provisional", true, false))
 			return
 		}
@@ -256,7 +250,7 @@ func TestLearnProvisionalQuitDoesNotSendForbiddenAction(t *testing.T) {
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{":quit"}})
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if mutations.Load() != 0 || !strings.Contains(out.String(), "provisional") || !strings.Contains(out.String(), "confirm") {
@@ -274,7 +268,7 @@ func TestAssessmentConfirmOverrideAndVoid(t *testing.T) {
 			var receivedKind string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+				case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 					writeJSONTest(w, http.StatusOK, commandSessionView("Feedback", "open", disposition, true, false))
 				case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/decisions"):
 					var discriminator struct {
@@ -339,7 +333,7 @@ func TestLearnFreeQuestionCreatesAnswerThenQuits(t *testing.T) {
 	var proposalType string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 			writeJSONTest(w, http.StatusOK, commandSessionView(state, "open", "", false, false))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/knowledge/retrievals":
 			writeJSONTest(w, http.StatusOK, commandRetrieval(false, false))
@@ -358,7 +352,7 @@ func TestLearnFreeQuestionCreatesAnswerThenQuits(t *testing.T) {
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{":quit"}})
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 	}
 	if proposalType != "free_answer" || !strings.Contains(out.String(), "not scored") {
@@ -372,7 +366,7 @@ func TestLearnAttachedQuizRequiresExplicitResumeAfterFeedback(t *testing.T) {
 	var actions []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/tutoring/sessions/current":
+		case r.Method == http.MethodGet && (r.URL.Path == "/v1/tutoring/sessions/current" || r.URL.Path == "/v1/tutoring/sessions/"+commandSessionID):
 			attached := state == "ActivityIssued" || state == "AwaitingResponse" || state == "Evaluating" || state == "Feedback"
 			disposition := ""
 			if state == "Feedback" {
@@ -415,7 +409,7 @@ func TestLearnAttachedQuizRequiresExplicitResumeAfterFeedback(t *testing.T) {
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, "token")
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{lines: []string{":quiz", "", "quiz answer", "", "", ""}})
-	if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK {
+	if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK {
 		t.Fatalf("exit=%d out=%q err=%q actions=%v", exit, out.String(), errOut.String(), actions)
 	}
 	want := []string{"convert_free_answer_to_quiz", "present_activity", "submit_attempt", "record_assessment", "acknowledge_feedback", "resume_focus"}
@@ -455,7 +449,7 @@ func TestLearnDegradedRedactedAndModelUnavailable(t *testing.T) {
 	t.Run("degraded retrieval declined", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/v1/tutoring/sessions/current":
+			case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 				writeJSONTest(w, http.StatusOK, commandSessionView("Diagnostic", "open", "", false, false))
 			case "/v1/knowledge/revisions/head":
 				writeJSONTest(w, http.StatusOK, api.HeadResponse{Revision: testRevision()})
@@ -468,7 +462,7 @@ func TestLearnDegradedRedactedAndModelUnavailable(t *testing.T) {
 		defer server.Close()
 		configStore, credentialStore := pairedStores(server.URL, "token")
 		app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{confirmed: false})
-		if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitInput || !strings.Contains(errOut.String(), "retrieval_degraded") {
+		if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitInput || !strings.Contains(errOut.String(), "retrieval_degraded") {
 			t.Fatalf("exit=%d err=%q", exit, errOut.String())
 		}
 	})
@@ -477,7 +471,7 @@ func TestLearnDegradedRedactedAndModelUnavailable(t *testing.T) {
 		var actions atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/v1/tutoring/sessions/current":
+			case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 				if sessionReads.Add(1) == 1 {
 					writeJSONTest(w, http.StatusOK, commandSessionView("Diagnostic", "open", "", false, false))
 				} else {
@@ -497,14 +491,14 @@ func TestLearnDegradedRedactedAndModelUnavailable(t *testing.T) {
 		defer server.Close()
 		configStore, credentialStore := pairedStores(server.URL, "token")
 		app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-		if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitOK || actions.Load() != 0 || !strings.Contains(errOut.String(), "stale_proposal") || !strings.Contains(out.String(), "completed") {
+		if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitOK || actions.Load() != 0 || !strings.Contains(errOut.String(), "stale_proposal") || !strings.Contains(out.String(), "completed") {
 			t.Fatalf("exit=%d actions=%d out=%q err=%q", exit, actions.Load(), out.String(), errOut.String())
 		}
 	})
 	t.Run("model unavailable preserves state", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
-			case "/v1/tutoring/sessions/current":
+			case "/v1/tutoring/sessions/current", "/v1/tutoring/sessions/" + commandSessionID:
 				writeJSONTest(w, http.StatusOK, commandSessionView("Diagnostic", "open", "", false, false))
 			case "/v1/knowledge/revisions/head":
 				writeJSONTest(w, http.StatusOK, api.HeadResponse{Revision: testRevision()})
@@ -519,7 +513,7 @@ func TestLearnDegradedRedactedAndModelUnavailable(t *testing.T) {
 		defer server.Close()
 		configStore, credentialStore := pairedStores(server.URL, "token")
 		app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-		if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitUnavailable || !strings.Contains(errOut.String(), "model") || strings.Contains(out.String(), "applied") {
+		if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitUnavailable || !strings.Contains(errOut.String(), "model") || strings.Contains(out.String(), "applied") {
 			t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 		}
 	})
@@ -530,7 +524,7 @@ func TestLearnDegradedRedactedAndModelUnavailable(t *testing.T) {
 		defer server.Close()
 		configStore, credentialStore := pairedStores(server.URL, "token")
 		app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-		if exit := app.Run(t.Context(), []string{"learn"}); exit != ExitUnavailable || !strings.Contains(errOut.String(), "content_redacted") || out.Len() != 0 {
+		if exit := app.Run(t.Context(), []string{"learn", "--session", commandSessionID}); exit != ExitUnavailable || !strings.Contains(errOut.String(), "content_redacted") || out.Len() != 0 {
 			t.Fatalf("exit=%d out=%q err=%q", exit, out.String(), errOut.String())
 		}
 	})

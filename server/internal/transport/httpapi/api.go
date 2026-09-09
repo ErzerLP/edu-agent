@@ -318,6 +318,7 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/proposals", api.learningProposal)
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/sessions/{sessionID}/actions", api.learningAction)
 			protected.With(api.requireScope("learning:write"), api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/learning/assessments/{assessmentID}/decisions", api.learningDecision)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions", api.handleSessions)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions/current", api.learningCurrentSession)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions/{sessionID}", api.learningSession)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/learning/timeline", api.learningTimeline)

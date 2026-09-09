@@ -9,6 +9,7 @@ import (
 	"reflect"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
@@ -40,7 +41,7 @@ func (s *Store) readSessionView(ctx context.Context, id string, current bool) (l
 	}
 	var raw, stats []byte
 	if current {
-		err = tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.item->'session'->>'state'<>'Completed' ORDER BY s.updated_event_seq DESC,s.session_id DESC LIMIT 1`, metadata.GenerationID).Scan(&raw, &stats)
+		err = tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.item->'session'->>'state'<>'Completed' AND EXISTS(SELECT 1 FROM learning_goal_revisions g WHERE g.id=(s.item->'session'->'focus'->>'goal_revision_id')::uuid AND g.space_id=$2) ORDER BY s.updated_event_seq DESC,s.session_id DESC LIMIT 1`, metadata.GenerationID, learningspace.Scope(ctx)).Scan(&raw, &stats)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.session_id=$2`, metadata.GenerationID, id).Scan(&raw, &stats)
 	}
@@ -60,6 +61,9 @@ func (s *Store) readSessionView(ctx context.Context, id string, current bool) (l
 	}
 	if !consistentSessionProjection(view.Session, authority) {
 		return learning.SessionView{}, projectionFailure("session_projection_authority_mismatch", nil)
+	}
+	if _, err := scanGoal(tx.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id=$2", authority.Context.GoalRevisionID, learningspace.Scope(ctx))); err != nil {
+		return learning.SessionView{}, err
 	}
 	view.Session.ActiveFrame = authority.ActiveFrame
 	if authority.State == tutoring.StateCompleted {
@@ -321,7 +325,7 @@ func validateFreeQuestionCommitVersion(ctx context.Context, db learningLoaderDB,
 }
 
 func loadGoalRevisionForView(ctx context.Context, db learningLoaderDB, id string) (learning.GoalRevision, error) {
-	return scanGoal(db.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id='00000000-0000-4000-8000-000000000001'", id))
+	return scanGoal(db.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id=$2", id, learningspace.Scope(ctx)))
 }
 
 func loadRouteRevisionForView(ctx context.Context, db learningLoaderDB, id string) (learning.RouteRevision, error) {

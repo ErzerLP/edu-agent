@@ -343,6 +343,11 @@ func (s *Store) GetPack(ctx context.Context, packID string) (Pack, error) {
 }
 
 func (s *Store) SavePrepareIntent(ctx context.Context, intent PrepareIntent) error {
+	if intent.LearningSpaceID != "" {
+		if _, err := parseUUID(intent.LearningSpaceID); err != nil {
+			return errors.New("签发来源学习区必须是规范 UUID")
+		}
+	}
 	if _, err := parseUUID(intent.RequestID); err != nil {
 		return errors.New("prepare request ID must be a canonical UUID")
 	}
@@ -358,7 +363,7 @@ func (s *Store) SavePrepareIntent(ctx context.Context, intent PrepareIntent) err
 	if len(trustState) != 0 && !intent.TrustState.valid() {
 		return errors.New("prepare trust checkpoint must be canonical JSON")
 	}
-	detail, _ := marshalCanonical(prepareDetail{Purpose: "prepare_intent", Request: request, TrustState: trustState})
+	detail, _ := marshalCanonical(prepareDetail{Purpose: "prepare_intent", Request: request, TrustState: trustState, LearningSpaceID: intent.LearningSpaceID})
 	journal := newJournal(intent.RequestID, JournalPreparePublish, "prepared", intent.RequestID, intent.RequestID, 1, detail)
 	journal.CreatedAt = formatRecordTime(created)
 	return s.withLease(ctx, LeaseExclusive, func() error {
@@ -402,7 +407,7 @@ func (s *Store) PendingPrepareIntent(ctx context.Context) (PrepareIntent, error)
 				}
 			}
 			created, _ := parseRecordTime(journal.CreatedAt)
-			result = PrepareIntent{RequestID: journal.SourceID, CreatedAt: created, Canonical: append(json.RawMessage(nil), request...), TrustState: trustState}
+			result = PrepareIntent{RequestID: journal.SourceID, CreatedAt: created, Canonical: append(json.RawMessage(nil), request...), TrustState: trustState, LearningSpaceID: detail.LearningSpaceID}
 			return nil
 		}
 		return ErrNotFound
@@ -456,7 +461,7 @@ func newPreparePublicationDetail(intent prepareDetail, expectedCurrent, next Tru
 	}
 	record.CanonicalBytes = append(json.RawMessage(nil), record.CanonicalBytes...)
 	return prepareDetail{
-		Purpose: "prepare_publish", Request: append(json.RawMessage(nil), intent.Request...), TrustState: append(json.RawMessage(nil), intent.TrustState...),
+		Purpose: "prepare_publish", Request: append(json.RawMessage(nil), intent.Request...), TrustState: append(json.RawMessage(nil), intent.TrustState...), LearningSpaceID: intent.LearningSpaceID,
 		PublicationVersion: preparePublicationVersion, RequestDigest: requestDigest, TrustStateDigest: trustDigest,
 		BaseTrustState: expectedCurrent.Bytes(), BaseTrustStateDigest: baseDigest,
 		NextTrustState: next.Bytes(), NextTrustStateDigest: nextDigest,

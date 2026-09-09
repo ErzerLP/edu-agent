@@ -111,6 +111,8 @@ func (a *App) runOffline(ctx context.Context, args []string) error {
 func (a *App) runOfflinePrepare(ctx context.Context, args []string) error {
 	set := newFlagSet("offline prepare")
 	var flags onlineFlags
+	var sessionID string
+	set.StringVar(&sessionID, "session", "", "从指定教学会话签发")
 	addOnlineFlags(set, &flags)
 	count := 5
 	ttl := 72 * time.Hour
@@ -137,6 +139,12 @@ func (a *App) runOfflinePrepare(ctx context.Context, args []string) error {
 	intent, intentErr := store.PendingPrepareIntent(ctx)
 	switch {
 	case intentErr == nil:
+		// 请求重试使用原加密 intent 的区；旧 intent 明确映射到默认区，不跟随当前页面。
+		originSpace := intent.LearningSpaceID
+		if originSpace == "" {
+			originSpace = api.DefaultLearningSpaceID
+		}
+		client = a.clientInSpace(bound.Config.ServerURL, bound.Token, timeout, originSpace)
 		if err := decodeClosedJSON(intent.Canonical, &request); err != nil {
 			return offlineStoreError(fmt.Errorf("decode prepare journal: %w", err))
 		}
@@ -148,9 +156,21 @@ func (a *App) runOfflinePrepare(ctx context.Context, args []string) error {
 			intentHasTrustState = true
 		}
 	case errors.Is(intentErr, offline.ErrNotFound):
-		view, currentErr := client.CurrentSession(ctx)
+		if sessionID == "" {
+			sessionID = a.learningSessions[a.teachingSpace()]
+		}
+		var view api.SessionView
+		var currentErr error
+		if sessionID != "" {
+			view, currentErr = refetchSession(ctx, client, sessionID)
+		} else {
+			view, currentErr = a.pickTeachingSession(ctx, client, "")
+		}
 		if currentErr != nil {
 			return mapAPIError(currentErr)
+		}
+		if view.Session.SessionID == "" {
+			return nil
 		}
 		if view.Session.AggregateVersion < 0 {
 			return commandError("protocol_error", "the current session version is invalid", "check the server version", ExitInternal)
@@ -160,6 +180,7 @@ func (a *App) runOfflinePrepare(ctx context.Context, args []string) error {
 			return commandError("uuid_generation_failed", "a secure prepare operation ID could not be generated", "inspect the operating system random source", ExitInternal)
 		}
 		request = api.OfflinePrepareRequest{
+			SessionID:               view.Session.SessionID,
 			OperationID:             operationID,
 			PayloadSchemaVersion:    1,
 			ExpectedSessionVersion:  api.Uint63Decimal(strconv.FormatInt(view.Session.AggregateVersion, 10)),
@@ -172,7 +193,7 @@ func (a *App) runOfflinePrepare(ctx context.Context, args []string) error {
 		if canonicalErr != nil {
 			return offlineStoreError(canonicalErr)
 		}
-		if err := store.SavePrepareIntent(ctx, offline.PrepareIntent{RequestID: operationID, CreatedAt: time.Now().UTC(), Canonical: canonical, TrustState: currentTrustState}); err != nil {
+		if err := store.SavePrepareIntent(ctx, offline.PrepareIntent{RequestID: operationID, CreatedAt: time.Now().UTC(), Canonical: canonical, TrustState: currentTrustState, LearningSpaceID: a.teachingSpace()}); err != nil {
 			return offlineStoreError(err)
 		}
 	default:

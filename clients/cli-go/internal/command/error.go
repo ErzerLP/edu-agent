@@ -44,6 +44,10 @@ func commandError(code, detail, next string, exit int) *Error {
 }
 
 func mapAPIError(err error) *Error {
+	var commandErr *Error
+	if errors.As(err, &commandErr) {
+		return commandErr
+	}
 	var apiErr *api.APIError
 	if errors.As(err, &apiErr) {
 		mapped := &Error{Code: apiErr.Code, RequestID: apiErr.RequestID, ExitCode: ExitConflict}

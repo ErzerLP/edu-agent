@@ -190,6 +190,13 @@ func (s *Store) IngestOffline(ctx context.Context, request learning.OfflineInges
 	if err != nil {
 		return learning.OfflineIngestResult{}, err
 	}
+	var sourceSpace string
+	if err := tx.QueryRow(ctx, `SELECT space_id FROM learning_goal_revisions WHERE id=$1`, activity.Activity.GoalRevisionID).Scan(&sourceSpace); err != nil {
+		return learning.OfflineIngestResult{}, err
+	}
+	if err := setTeachingWriteScope(ctx, tx, sourceSpace, true); err != nil {
+		return learning.OfflineIngestResult{}, err
+	}
 	if activity.LearnerGeneration != operation.LearnerGeneration || activity.Activity.ID != operation.OfflineActivityID || receivedAt.After(authorization.ArchiveUntil) || receivedAt.After(activity.ArchiveUntil) {
 		return s.commitOfflineRejection(ctx, tx, operation, authorization, requestHashBytes, receivedAt, learning.OfflineReasonAuthorizationExpired)
 	}

@@ -19,6 +19,8 @@ func (a *App) runAssessment(ctx context.Context, args []string) error {
 	}
 	set := newFlagSet("assessment " + kind)
 	var flags onlineFlags
+	var sessionID string
+	set.StringVar(&sessionID, "session", "", "指定教学会话")
 	addOnlineFlags(set, &flags)
 	if err := set.Parse(args[1:]); err != nil || len(set.Args()) != 0 {
 		return commandError("usage", "assessment accepts only connection flags", "run edu-agent assessment "+kind, ExitInput)
@@ -27,7 +29,14 @@ func (a *App) runAssessment(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	view, active, err := a.currentSession(ctx, online.client)
+	var view api.SessionView
+	var active bool
+	if sessionID != "" {
+		view, err = refetchSession(ctx, online.client, sessionID)
+		active = err == nil
+	} else {
+		view, active, err = a.currentSession(ctx, online.client)
+	}
 	if err != nil {
 		return err
 	}
@@ -146,10 +155,13 @@ func sameAssessmentSource(artifact, decision api.AssessmentItem) bool {
 func (a *App) decideAndRefetch(ctx context.Context, client APIClient, view api.SessionView, request api.AssessmentDecisionRequest) (api.SessionView, error) {
 	assessmentID := view.WorkItem.Assessment.AssessmentID
 	_, err := client.DecideAssessment(ctx, assessmentID, request)
+	if ctx.Err() != nil {
+		return view, ctx.Err()
+	}
 	if err != nil {
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) && (apiErr.Code == "version_conflict" || apiErr.Code == "assessment_disposition_conflict") {
-			fresh, fetchErr := client.CurrentSession(ctx)
+			fresh, fetchErr := refetchSession(ctx, client, view.Session.SessionID)
 			if fetchErr != nil {
 				return api.SessionView{}, mapAPIError(fetchErr)
 			}
@@ -160,7 +172,7 @@ func (a *App) decideAndRefetch(ctx context.Context, client APIClient, view api.S
 		}
 		return api.SessionView{}, mapAPIError(err)
 	}
-	fresh, err := client.CurrentSession(ctx)
+	fresh, err := refetchSession(ctx, client, view.Session.SessionID)
 	if err != nil {
 		return api.SessionView{}, mapAPIError(err)
 	}

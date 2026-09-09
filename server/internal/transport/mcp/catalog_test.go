@@ -88,7 +88,7 @@ func TestCatalogIsUniqueExactAndMatchesOpenAPIScopes(t *testing.T) {
 			t.Fatalf("descriptor %s scope=%q OpenAPI %s scope=%q", descriptor.Name, descriptor.RequiredScope, descriptor.HTTPOperationID, scopesByOperation[descriptor.HTTPOperationID])
 		}
 	}
-	if toolCount != 15 || resourceCount != 4 || templateCount != 5 {
+	if toolCount != 15 || resourceCount != 4 || templateCount != 6 {
 		t.Fatalf("catalog counts tools=%d resources=%d templates=%d", toolCount, resourceCount, templateCount)
 	}
 

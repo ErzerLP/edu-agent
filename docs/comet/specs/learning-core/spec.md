@@ -1,5 +1,9 @@
 # Learning Core 完整规格
 
+## Issue #5 显式会话增量契约
+
+`GET /v1/tutoring/sessions` 按学习区、目标和可继续/完成状态分页；指定会话读取既有稳定状态即续学。目标修订决定真实区与冻结资料范围，客户端不能组合其他区的 goal/session/activity/node。新建不会使其他目标失效；普通切换不发教学事件。`switch_goal` 仅保留同一目标的明确修订替换，不允许跨目标模拟页面切换。新任务在事务内检查最新目标状态和区归档门；已接收答案、评估及离线结算保留。迁移 15 只增加冻结范围的不可变外键锚点与教学事务范围门，不重写历史事件。详见[教学续学设计](../../../design/tutoring-sessions.md)。
+
 ## 模块边界与权威数据
 
 `server/internal/learning` 拥有 GoalRevision、RouteRevision、RouteStep、Activity、Attempt、AssessmentArtifact、AcceptedEvidence、MisconceptionHypothesis、LearningEvent、Inbox、MasteryProjection、ReviewSchedule、查询 projection 与 replay 语义。`server/internal/tutoring` 拥有 LearningSession、FocusFrame、教学状态和纯状态转换规则。HTTP、PostgreSQL、knowledge reader 与模型 adapter 只实现消费方定义的窄端口。

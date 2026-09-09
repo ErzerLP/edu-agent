@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -19,6 +20,27 @@ func (s *Store) ClaimProposal(ctx context.Context, deviceID string, request lear
 		return learning.ProposalClaim{}, err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	goalRevisionID := request.GoalRevisionID
+	if request.AggregateType == "session" {
+		session, err := s.tutoring.LoadSessionLockedWith(ctx, tx, request.AggregateID)
+		if err != nil {
+			return learning.ProposalClaim{}, err
+		}
+		goalRevisionID = session.Context.GoalRevisionID
+	} else {
+		if err := tx.QueryRow(ctx, `SELECT id FROM learning_goal_revisions WHERE goal_id=$1 AND space_id=$2 ORDER BY revision DESC LIMIT 1`, request.AggregateID, learningspace.Scope(ctx)).Scan(&goalRevisionID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return learning.ProposalClaim{}, &learning.Error{Code: learning.CodeNotFound}
+			}
+			return learning.ProposalClaim{}, err
+		}
+	}
+	if _, err := scanGoal(tx.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id=$2", goalRevisionID, learningspace.Scope(ctx))); err != nil {
+		return learning.ProposalClaim{}, err
+	}
+	if err := setTeachingWriteScope(ctx, tx, learningspace.Scope(ctx), true); err != nil {
+		return learning.ProposalClaim{}, err
+	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "tutoring-proposal:"+deviceID+":"+request.RequestID); err != nil {
 		return learning.ProposalClaim{}, err
 	}
@@ -61,6 +83,14 @@ func (s *Store) ClaimProposal(ctx context.Context, deviceID string, request lear
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return learning.ProposalClaim{}, fmt.Errorf("read proposal request: %w", err)
 	}
+	if request.Type != learning.ProposalAssessment && request.Type != learning.ProposalFreeAnswer {
+		if err := setTeachingWriteScope(ctx, tx, learningspace.Scope(ctx), false); err != nil {
+			return learning.ProposalClaim{}, err
+		}
+		if err := s.checkGoalStartWith(ctx, tx, goalRevisionID); err != nil {
+			return learning.ProposalClaim{}, err
+		}
+	}
 	lease := uuid.NewString()
 	expires := now.Add(2 * time.Minute)
 	input, _ := json.Marshal(request)
@@ -84,6 +114,9 @@ func (s *Store) CompleteProposal(ctx context.Context, deviceID, lease string, ar
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setTeachingWriteScope(ctx, tx, learningspace.Scope(ctx), true); err != nil {
+		return err
+	}
 	inputHash, err := decodeHash(artifact.InputHash)
 	if err != nil {
 		return err
@@ -111,15 +144,23 @@ func (s *Store) CompleteProposal(ctx context.Context, deviceID, lease string, ar
 	return tx.Commit(ctx)
 }
 func (s *Store) FailProposal(ctx context.Context, deviceID, lease string, categories []string, category string, now time.Time) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setTeachingWriteScope(ctx, tx, learningspace.Scope(ctx), true); err != nil {
+		return err
+	}
 	normalizedCategories := append([]string{}, categories...)
-	command, err := s.pool.Exec(ctx, `UPDATE tutoring_proposal_requests SET status='failed',attempt_categories=$3,error_category=$4,lease_token=NULL,lease_expires_at=NULL,updated_at=$5 WHERE device_id=$1 AND lease_token=$2 AND status='processing' AND lease_expires_at>clock_timestamp()`, deviceID, lease, normalizedCategories, category, now)
+	command, err := tx.Exec(ctx, `UPDATE tutoring_proposal_requests SET status='failed',attempt_categories=$3,error_category=$4,lease_token=NULL,lease_expires_at=NULL,updated_at=$5 WHERE device_id=$1 AND lease_token=$2 AND status='processing' AND lease_expires_at>clock_timestamp()`, deviceID, lease, normalizedCategories, category, now)
 	if err != nil {
 		return err
 	}
 	if command.RowsAffected() != 1 {
 		return &learning.Error{Code: learning.CodeStaleProposal}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 func loadProposalTx(ctx context.Context, tx pgx.Tx, id string) (learning.ProposalArtifact, error) {
 	var raw []byte

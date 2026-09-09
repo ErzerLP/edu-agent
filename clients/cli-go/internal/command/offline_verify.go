@@ -321,6 +321,9 @@ func verifyPreparedPack(response api.OfflinePrepareResponse, request api.Offline
 		return nil, offlineTrustRoot{}, err
 	}
 	pack := response.Pack.Payload
+	if request.SessionID != "" && pack.ParentSessionID != request.SessionID {
+		return nil, offlineTrustRoot{}, errors.New("离线包来源会话不匹配")
+	}
 	if pack.ProtocolVersion != 1 || pack.DeviceID != value.DeviceID || string(pack.LearnerGeneration) != value.Offline.LearnerGeneration || len(pack.Items) == 0 || len(pack.Items) > 20 {
 		return nil, offlineTrustRoot{}, errors.New("offline pack binding is invalid")
 	}

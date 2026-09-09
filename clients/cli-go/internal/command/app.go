@@ -144,9 +144,14 @@ type App struct {
 	AgentSessionSecrets agentsession.SecretBackend
 	Build               BuildInfo
 
-	dashboardMode     bool
-	learningSpace     string
-	learningSpaceName string
+	dashboardMode       bool
+	learningSpace       string
+	learningSpaceName   string
+	learningSessions    map[string]string
+	learningDrafts      map[string][]string
+	learningInputDrafts map[string]string
+	teachingInput       io.Reader
+	teachingOutput      io.Writer
 }
 
 func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, error) {
@@ -165,6 +170,7 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 		Dashboard: &dashboard.Runner{In: in, Out: out}, AgentUI: defaultAgentUIRunner{in: in, out: out},
 		InputIsTTY: terminalIO.InputIsTTY, OutputIsTTY: terminalIO.OutputIsTTY,
 		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{},
+		teachingInput: in, teachingOutput: out,
 		AgentSessionRoot: agentsession.DefaultRoot, Build: build,
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
 			client := api.NewClient(serverURL, token, timeout, http.DefaultClient)

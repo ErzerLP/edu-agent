@@ -391,6 +391,7 @@ func validOfflineDigest(value string) bool {
 }
 
 type OfflinePrepareRequest struct {
+	SessionID               string `json:"session_id,omitempty"`
 	OperationID             string `json:"operation_id"`
 	PayloadSchemaVersion    int    `json:"payload_schema_version"`
 	ExpectedSessionVersion  string `json:"expected_session_version"`
@@ -401,6 +402,9 @@ type OfflinePrepareRequest struct {
 }
 
 func (r OfflinePrepareRequest) Validate() error {
+	if r.SessionID != "" && (uuid.Validate(r.SessionID) != nil || strings.ToLower(r.SessionID) != r.SessionID) {
+		return &Error{Code: CodeInvalidRequest, Reason: "invalid_session_id"}
+	}
 	if uuid.Validate(r.OperationID) != nil || strings.ToLower(r.OperationID) != r.OperationID || r.PayloadSchemaVersion != 1 {
 		return &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_prepare_request"}
 	}

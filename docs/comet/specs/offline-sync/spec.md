@@ -1,5 +1,9 @@
 # Offline Sync Capability
 
+## Issue #5 显式签发来源
+
+prepare 请求新增可选 `session_id`；新 CLI 总是从所选会话签发，非默认区缺少该字段会拒绝。旧请求省略字段时仍固定默认区；其规范化字节不增加空字段。签名包、授权、payload 和信任链不变，旧包以原服务端签发关系与默认区升级映射解释，不重签或重写历史。后台任务与 sync 根据原授权/冻结计划确定归属，不使用同步时的 UI 选择。暂停或归档阻止新签发，但已签发授权继续按原有效期、隐私门和幂等规则接收；既有评估可落库查询，不推进在线 session，不增加本地评分。详见[教学续学设计](../../../design/tutoring-sessions.md)。
+
 ## 产品结果
 
 已经配对的 Go CLI 可以在线取得服务端签发的离线 Activity，在没有网络时安全阅读和作答，并在恢复联网后上传不可变 operation。服务端逐项存档、生成 canonical Learning Event、执行适用评估和 Evidence 接纳，并分别返回 archive 与 Evidence 状态。

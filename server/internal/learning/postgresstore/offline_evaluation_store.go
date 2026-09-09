@@ -63,6 +63,9 @@ func (s *Store) BeginOfflineEvaluation(ctx context.Context, message outbox.Messa
 		return learning.OfflineEvaluationSnapshot{}, fmt.Errorf("begin offline evaluation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setOfflineSettlementScope(ctx, tx, task.SubmissionID); err != nil {
+		return learning.OfflineEvaluationSnapshot{}, err
+	}
 
 	var status string
 	var attemptID string
@@ -173,7 +176,15 @@ func (s *Store) SaveOfflineEvaluationArtifact(ctx context.Context, snapshot lear
 		return fmt.Errorf("canonicalize offline model artifact: %w", err)
 	}
 	digest := sha256.Sum256(canonical)
-	command, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setOfflineSettlementScope(ctx, tx, snapshot.Task.SubmissionID); err != nil {
+		return err
+	}
+	command, err := tx.Exec(ctx, `
 		UPDATE offline_evaluation_jobs
 		SET model_artifact=$4,model_artifact_hash=$5,updated_at=clock_timestamp()
 		WHERE id=$1 AND submission_id=$2 AND status='processing' AND lease_token=$3
@@ -185,7 +196,7 @@ func (s *Store) SaveOfflineEvaluationArtifact(ctx context.Context, snapshot lear
 	if command.RowsAffected() != 1 {
 		return evaluationStoreError{"model_artifact_conflict", true, nil}
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) MarkOfflineEvaluationRetry(ctx context.Context, snapshot learning.OfflineEvaluationSnapshot, category string) error {
@@ -202,6 +213,9 @@ func (s *Store) markOfflineEvaluation(ctx context.Context, snapshot learning.Off
 		return fmt.Errorf("begin offline evaluation status: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setOfflineSettlementScope(ctx, tx, snapshot.Task.SubmissionID); err != nil {
+		return err
+	}
 	var now time.Time
 	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return fmt.Errorf("read offline evaluation status clock: %w", err)
@@ -224,6 +238,9 @@ func (s *Store) CompleteOfflineEvaluation(ctx context.Context, snapshot learning
 		return fmt.Errorf("begin offline evaluation completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	if err := setOfflineSettlementScope(ctx, tx, snapshot.Task.SubmissionID); err != nil {
+		return err
+	}
 	var current string
 	var assessmentID *string
 	if err := tx.QueryRow(ctx, `SELECT status,result_assessment_id::text FROM offline_evaluation_jobs WHERE id=$1 FOR UPDATE`, snapshot.Task.JobID).Scan(&current, &assessmentID); err != nil {

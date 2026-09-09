@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,31 +15,83 @@ import (
 )
 
 func (a *App) runLearn(ctx context.Context, args []string) error {
+	action := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		action = args[0]
+		args = args[1:]
+	}
+	if action == "help" {
+		_, err := fmt.Fprintln(a.Out, "learn [browse|list|show|start] [--goal UUID] [--session UUID] [--space UUID]\n默认选择目标和会话；start 开始独立新会话；show 只读历史。\n原生页面 F2 可在请求等待中切换，Esc 返回但不结束教学。\n:switch 切目标/会话，:space 切区，:pause 暂停目标，:complete 结束本次学习。\n草稿仅保留在当前进程，重启后不保留，不写明文。")
+		return err
+	}
 	set := newFlagSet("learn")
 	var flags onlineFlags
+	var sessionID, goalID string
+	set.StringVar(&sessionID, "session", "", "指定教学会话")
+	set.StringVar(&goalID, "goal", "", "指定目标")
 	addOnlineFlags(set, &flags)
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
-		return commandError("usage", "learn accepts only connection flags", "run edu-agent learn", ExitInput)
+		return commandError("usage", "学习参数无效", "使用 learn help", ExitInput)
 	}
 	online, err := a.openOnline(flags)
 	if err != nil {
 		return err
 	}
-	view, active, err := a.currentSession(ctx, online.client)
-	if err != nil {
-		return err
+	if sessionID != "" && goalID != "" {
+		return commandError("usage", "会话和目标选择不能混用", "使用 learn help", ExitInput)
 	}
-	if !active {
-		goalText, readErr := a.Terminal.ReadLine(a.dashboardText("Goal: ", "学习目标："))
-		if readErr != nil || strings.TrimSpace(goalText) == "" {
-			return commandError("invalid_goal", "a goal is required when no active session exists", "重新运行 learn 并输入非空学习目标", ExitInput)
+	if action == "list" {
+		c, ok := online.client.(teachingSessionClient)
+		if !ok {
+			return commandError("session_selection_unavailable", "会话列表不可用", "升级客户端", ExitUnavailable)
 		}
-		view, err = a.createInteractiveSession(ctx, online.client, strings.TrimSpace(goalText))
+		page, err := c.Sessions(ctx, goalID, "", "", 100)
+		if err != nil {
+			return mapAPIError(err)
+		}
+		return json.NewEncoder(a.Out).Encode(page)
+	}
+	if action != "" && action != "browse" && action != "start" && action != "show" {
+		return commandError("usage", "未知学习命令", "使用 learn help", ExitInput)
+	}
+	if action == "show" && sessionID == "" || action == "start" && goalID == "" {
+		return commandError("usage", "缺少目标或会话参数", "使用 learn help", ExitInput)
+	}
+	if action == "" && sessionID == "" && goalID == "" {
+		sessionID = a.learningSessions[a.teachingSpace()]
+	}
+	for {
+		var view api.SessionView
+		switch {
+		case action == "start":
+			view, err = a.startGoalSession(ctx, online.client, goalID)
+		case sessionID != "":
+			view, err = refetchSession(ctx, online.client, sessionID)
+		default:
+			view, err = a.pickTeachingSession(ctx, online.client, goalID)
+		}
+		if err != nil {
+			return mapAPIError(err)
+		}
+		if view.Session.SessionID == "" {
+			return nil
+		}
+		if action == "show" {
+			return json.NewEncoder(a.Out).Encode(view)
+		}
+		a.selectTeachingSession(view.Session.SessionID)
+		err = a.runTeachingLoop(ctx, online.client, view)
+		if !errors.Is(err, errSelectTeachingSession) {
+			return err
+		}
+		online, err = a.openOnline(flags)
 		if err != nil {
 			return err
 		}
+		sessionID = ""
+		goalID = ""
+		action = "browse"
 	}
-	return a.learnLoop(ctx, online.client, view)
 }
 
 func (a *App) createInteractiveSession(ctx context.Context, client APIClient, goalText string) (api.SessionView, error) {
@@ -64,7 +117,7 @@ func (a *App) createInteractiveSession(ctx context.Context, client APIClient, go
 	if err != nil {
 		return api.SessionView{}, mapAPIError(err)
 	}
-	view, err := client.CurrentSession(ctx)
+	view, err := refetchSession(ctx, client, sessionID)
 	if err != nil {
 		return api.SessionView{}, mapAPIError(err)
 	}
@@ -72,8 +125,17 @@ func (a *App) createInteractiveSession(ctx context.Context, client APIClient, go
 }
 
 func (a *App) learnLoop(ctx context.Context, client APIClient, view api.SessionView) error {
+	if view.WorkItem != nil && view.WorkItem.GoalRevision != nil {
+		_, _ = fmt.Fprintf(a.Out, "学习区：%s · 目标：%s\n", safeText(a.teachingSpaceLabel()), safeText(view.WorkItem.GoalRevision.GoalManagement().Details.Name))
+	}
 	for {
 		printProjectionWarning(a.Err, view.Metadata)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if terminal, ok := a.Terminal.(interface{ SetTeachingFocus(api.SessionView) }); ok {
+			terminal.SetTeachingFocus(view)
+		}
 		switch view.Session.State {
 		case "GoalReady":
 			fresh, _, err := a.noFieldAction(ctx, client, view, "start_diagnostic")
@@ -157,11 +219,15 @@ func (a *App) learnDiagnostic(ctx context.Context, client APIClient, view api.Se
 	if view.WorkItem == nil || view.WorkItem.GoalRevision == nil || !allowed(view.WorkItem.AllowedActions, "apply_route") {
 		return api.SessionView{}, commandError("invalid_state", "Diagnostic work item is incomplete", "refresh the session", ExitConflict)
 	}
-	head, err := client.KnowledgeHead(ctx)
-	if err != nil {
-		return api.SessionView{}, mapAPIError(err)
+	knowledgeID := view.WorkItem.GoalRevision.GoalManagement().Details.ScopeSnapshotID
+	if knowledgeID == "" {
+		head, err := client.KnowledgeHead(ctx)
+		if err != nil {
+			return api.SessionView{}, mapAPIError(err)
+		}
+		knowledgeID = head.RevisionID
 	}
-	retrieval, err := a.retrieveForWorkItem(ctx, client, view, view.WorkItem.GoalRevision.Text, head.RevisionID)
+	retrieval, err := a.retrieveForWorkItem(ctx, client, view, view.WorkItem.GoalRevision.Text, knowledgeID)
 	if err != nil {
 		return api.SessionView{}, err
 	}
@@ -212,22 +278,25 @@ func (a *App) learnRouteActive(ctx context.Context, client APIClient, view api.S
 		return a.handleLearnCommand(ctx, client, view, trimmed)
 	}
 	if allowed(view.WorkItem.AllowedActions, "present_review") {
-		resolvedView, review, metadata, refreshRequired, err := a.currentDueReview(ctx, client, view, time.Now().UTC())
-		if err != nil {
-			return view, false, err
+		if a.teachingSpace() == api.DefaultLearningSpaceID {
+			resolvedView, _, metadata, refreshRequired, err := a.currentDueReview(ctx, client, view, time.Now().UTC())
+			if err != nil {
+				return view, false, err
+			}
+			if refreshRequired {
+				return resolvedView, false, nil
+			}
+			view = resolvedView
+			for _, pageMetadata := range metadata {
+				printProjectionWarning(a.Err, pageMetadata)
+			}
 		}
-		if refreshRequired {
-			return resolvedView, false, nil
-		}
-		view = resolvedView
-		for _, pageMetadata := range metadata {
-			printProjectionWarning(a.Err, pageMetadata)
-		}
+		// 非默认区没有全局复习面板；服务端 work_item 已核验当前焦点的复习资格。
 		confirmed, confirmErr := a.Terminal.Confirm(a.dashboardText("A review is due for the current node. Present it now?", "当前知识节点已到复习时间，是否现在开始复习？"))
 		if confirmErr != nil {
 			return view, false, commandError("confirmation_failed", "review confirmation could not be read", "retry in an interactive terminal", ExitInput)
 		}
-		if confirmed && review != nil {
+		if confirmed {
 			fresh, err := a.issueRouteActivity(ctx, client, view, "present_review")
 			return fresh, false, err
 		}
@@ -412,7 +481,7 @@ func (a *App) learnAwaitingResponse(ctx context.Context, client APIClient, view 
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, ":") {
 			if trimmed == ":answer" {
-				answer, blockErr := a.readMultilineAnswer()
+				answer, blockErr := a.readMultilineAnswer(view.Session.SessionID + "/" + view.WorkItem.Activity.ActivityID)
 				if blockErr != nil {
 					return view, false, blockErr
 				}
@@ -429,14 +498,31 @@ func (a *App) learnAwaitingResponse(ctx context.Context, client APIClient, view 
 	}
 }
 
-func (a *App) readMultilineAnswer() (string, error) {
+func (a *App) readMultilineAnswer(key string) (string, error) {
 	_, _ = fmt.Fprintln(a.Err, a.dashboardText("Enter answer lines; a single . ends the block.", "请输入多行答案；单独输入一行 . 结束。"))
-	var lines []string
-	total := 0
+	if a.learningDrafts == nil {
+		a.learningDrafts = map[string][]string{}
+	}
+	lines := append([]string(nil), a.learningDrafts[key]...)
+	total := len(strings.Join(lines, "\n"))
+	if len(lines) > 0 {
+		_, _ = fmt.Fprintf(a.Err, "已恢复本题 %d 行进程内草稿，继续输入或用 . 提交。\n", len(lines))
+	}
 	for {
 		line, err := a.Terminal.ReadLine("")
 		if err != nil {
+			a.learningDrafts[key] = lines
 			return "", commandError("input_closed", "multiline answer ended before the terminator", "run learn again and end the block with a single .", ExitInput)
+		}
+		if line == ":switch" {
+			a.learningDrafts[key] = lines
+			return "", errSelectTeachingSession
+		}
+		if line == ":discard" {
+			lines = nil
+			total = 0
+			delete(a.learningDrafts, key)
+			continue
 		}
 		if line == "." {
 			break
@@ -448,6 +534,7 @@ func (a *App) readMultilineAnswer() (string, error) {
 		lines = append(lines, line)
 	}
 	answer := strings.Join(lines, "\n")
+	a.learningDrafts[key] = lines
 	if strings.TrimSpace(answer) == "" || !utf8.ValidString(answer) {
 		return "", commandError("invalid_answer", "multiline answer must be non-empty valid UTF-8", "enter the answer again", ExitInput)
 	}
@@ -458,6 +545,10 @@ func (a *App) submitAttempt(ctx context.Context, client APIClient, view api.Sess
 	if view.WorkItem == nil || view.WorkItem.Activity == nil || !allowed(view.WorkItem.AllowedActions, "submit_attempt") {
 		return view, commandError("invalid_state", "submit_attempt is not allowed by the current work item", "refresh the session and use a displayed allowed action", ExitConflict)
 	}
+	if a.learningDrafts == nil {
+		a.learningDrafts = map[string][]string{}
+	}
+	a.learningDrafts[view.Session.SessionID+"/"+view.WorkItem.Activity.ActivityID] = strings.Split(answer, "\n")
 	help, err := a.chooseHelp(view.WorkItem.Activity.AllowedHelp)
 	if err != nil {
 		return view, err
@@ -469,6 +560,9 @@ func (a *App) submitAttempt(ctx context.Context, client APIClient, view api.Sess
 	fresh, _, err := a.applyAndRefetch(ctx, client, view, api.ActionAttemptRequest{
 		SessionOperation: sessionOperation(view, operationID), Action: "submit_attempt", Answer: answer, Help: help,
 	})
+	if err == nil {
+		delete(a.learningDrafts, view.Session.SessionID+"/"+view.WorkItem.Activity.ActivityID)
+	}
 	return fresh, err
 }
 
@@ -655,6 +749,35 @@ func (a *App) handleLearnCommand(ctx context.Context, client APIClient, view api
 		argument = strings.TrimSpace(parts[1])
 	}
 	switch command {
+	case ":switch":
+		return view, false, errSelectTeachingSession
+	case ":pause":
+		c, ok := client.(goalClient)
+		if !ok || view.WorkItem == nil || view.WorkItem.GoalRevision == nil {
+			return view, false, commandError("invalid_state", "当前目标不可用", "刷新会话", ExitConflict)
+		}
+		goal, err := c.Goal(ctx, view.WorkItem.GoalRevision.GoalID)
+		if err != nil {
+			return view, false, mapAPIError(err)
+		}
+		op, err := a.operationID()
+		if err != nil {
+			return view, false, err
+		}
+		request := goalRequest(goal, op)
+		request.Action = "pause"
+		if _, err := c.ReviseGoal(ctx, request); err != nil {
+			return view, false, mapAPIError(err)
+		}
+		return view, true, nil
+	case ":space":
+		if c, ok := client.(spaceClient); ok {
+			if err := a.browseSpaces(ctx, c); err != nil {
+				return view, false, err
+			}
+			return view, false, errSelectTeachingSession
+		}
+		return view, false, commandError("learning_spaces_unsupported", "学习区入口不可用", "升级客户端", ExitUnavailable)
 	case ":quit":
 		return view, true, nil
 	case ":ask":
@@ -689,6 +812,10 @@ func (a *App) handleLearnCommand(ctx context.Context, client APIClient, view api
 		printRoute(a.Out, *view.WorkItem.RouteRevision, true, view.Session.Focus.RouteStepID)
 		return view, false, nil
 	case ":reviews":
+		if a.teachingSpace() != api.DefaultLearningSpaceID {
+			_, _ = fmt.Fprintf(a.Out, "当前会话焦点可开始复习：%t；跨目标复习总览不在本入口提供。\n", view.WorkItem != nil && allowed(view.WorkItem.AllowedActions, "present_review"))
+			return view, false, nil
+		}
 		page, err := a.reviewsPage(ctx, client, "", defaultPageLimit, nil)
 		if err != nil {
 			return view, false, err
@@ -718,7 +845,7 @@ func (a *App) handleLearnCommand(ctx context.Context, client APIClient, view api
 }
 
 func learnHelpCommands(view api.SessionView) []string {
-	commands := []string{":progress", ":route", ":reviews", ":clear", ":help", ":quit"}
+	commands := []string{":switch", ":space", ":pause", ":progress", ":route", ":reviews", ":clear", ":help", ":quit"}
 	if view.WorkItem == nil {
 		return commands
 	}
@@ -800,19 +927,15 @@ func (a *App) convertFreeAnswerToQuiz(ctx context.Context, client APIClient, vie
 }
 
 func (a *App) showLearnProgress(ctx context.Context, client APIClient, view api.SessionView) error {
-	status, err := client.ProjectionStatus(ctx)
+	fresh, err := refetchSession(ctx, client, view.Session.SessionID)
 	if err != nil {
 		return mapAPIError(err)
 	}
-	printProjectionWarning(a.Err, status.Metadata)
+	view = fresh
+	printProjectionWarning(a.Err, view.Metadata)
 	_, _ = fmt.Fprintf(a.Out, "Current: session=%s state=%s active_time=%ds estimated=%t samples=%d\n", safeText(view.Session.SessionID), safeText(view.Session.State), view.EstimatedActiveTime.DurationSeconds, view.EstimatedActiveTime.Estimated, view.EstimatedActiveTime.SampleCount)
-	if view.Session.Focus.FocusNodeRevisionID != "" {
-		node, nodeErr := client.Node(ctx, view.Session.Focus.FocusNodeRevisionID)
-		if nodeErr != nil {
-			return mapAPIError(nodeErr)
-		}
-		printProjectionWarning(a.Err, node.Metadata)
-		_, _ = fmt.Fprintf(a.Out, "Node: %s mastery=%s evidence=%d pending_assessments=%d\n", safeText(node.Node.Mastery.NodeRevisionID), safeText(node.Node.Mastery.State), node.Node.Mastery.ValidEvidenceCount, node.Node.Mastery.PendingAssessments)
+	if view.WorkItem != nil && view.WorkItem.RouteRevision != nil {
+		printRoute(a.Out, *view.WorkItem.RouteRevision, true, view.Session.Focus.RouteStepID)
 	}
 	return nil
 }

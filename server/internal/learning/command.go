@@ -95,18 +95,27 @@ func (s *Service) CreateGoal(ctx context.Context, deviceID string, command GoalC
 }
 
 func (s *Service) CreateSession(ctx context.Context, deviceID string, command SessionCommand) (OperationResult, error) {
+	if _, err := s.authority.LoadGoalRevision(ctx, command.GoalRevisionID); err != nil {
+		return OperationResult{}, err
+	}
 	return s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
 		return s.createSession(ctx, deviceID, command)
 	})
 }
 
 func (s *Service) ApplyAction(ctx context.Context, deviceID, sessionID string, command ActionCommand) (OperationResult, error) {
+	if err := s.validateSessionScope(ctx, sessionID); err != nil {
+		return OperationResult{}, err
+	}
 	return s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
 		return s.applyAction(ctx, deviceID, sessionID, command)
 	})
 }
 
 func (s *Service) Decide(ctx context.Context, deviceID, assessmentID string, command AssessmentDecisionCommand) (OperationResult, error) {
+	if err := s.validateSessionScope(ctx, command.Operation.AggregateID); err != nil {
+		return OperationResult{}, err
+	}
 	return s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
 		return s.decide(ctx, deviceID, assessmentID, command)
 	})
@@ -503,6 +512,17 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 		payloads[EventFreeAnswerRecorded] = []json.RawMessage{mustJSON(answer)}
 		payloads[EventExposureRecorded] = []json.RawMessage{mustJSON(exposure)}
 	case tutoring.ActionSwitchGoal:
+		previousGoal, err := s.authority.LoadGoalRevision(ctx, session.Context.GoalRevisionID)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		replacementGoal, err := s.authority.LoadGoalRevision(ctx, command.GoalRevisionID)
+		if err != nil {
+			return OperationResult{}, err
+		}
+		if previousGoal.GoalID != replacementGoal.GoalID {
+			return OperationResult{}, &Error{Code: CodeInvalidTransition, Reason: "different_goal_requires_new_session"}
+		}
 		if command.GoalRevisionID == "" {
 			return OperationResult{}, &Error{Code: CodeInvalidRequest}
 		}

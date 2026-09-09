@@ -193,7 +193,13 @@ The default server is `http://127.0.0.1:8080`. Plain HTTP to a non-loopback host
 
 The default color mode is `never`. `edu-agent clear`, interactive `:clear`, and Ctrl-L clear only the visible application viewport in a TTY and redraw a neutral `>` prompt. They do not clear terminal scrollback, shell history, OS audit records, remote terminal logs, server events, projections, or credentials. Non-TTY clear emits no control sequence and returns a diagnostic error. The implementation does not execute `clear`, `cls`, a shell, or another external command.
 
-`goal set` 只保存一句话目标并返回目标版本，不读取、创建或切换教学会话，不要求先导入资料或配置模型。TUI 按 `o` 或运行 `goal browse` 打开目标管理，支持列表、搜索、状态筛选、分页、详情、多行编辑、资料选择和状态操作；按 `g` 保留一句话快捷保存。`goal help` 列出脚本参数，使用 `--space UUID` 指定稳定归属。保存失败在编辑页面保留输入和重试身份；版本冲突后可读取远端内容，再明确选择下一次保存依据。资料选择可以累积多个集合、文档或章节，并冻结具体范围版本。开始或继续教学使用 `learn` 的独立交互入口；非默认区教学由后续并行学习功能负责。
+`goal set` 只保存一句话目标并返回目标版本，不读取、创建或切换教学会话，不要求先导入资料或配置模型。TUI 按 `o` 或运行 `goal browse` 打开目标管理，支持列表、搜索、状态筛选、分页、详情、多行编辑、资料选择和状态操作；按 `g` 保留一句话快捷保存。`goal help` 列出脚本参数，使用 `--space UUID` 指定稳定归属。保存失败在编辑页面保留输入和重试身份；版本冲突后可读取远端内容，再明确选择下一次保存依据。资料选择可以累积多个集合、文档或章节，并冻结具体范围版本。
+
+教学入口 `learn browse [--space UUID]` 按名称和编号选择目标、会话；列表显示阶段、路线位置和可继续状态。`learn start --goal UUID` 新建，`learn --session UUID` 继续，`learn show --session UUID` 只读历史，`learn list --goal UUID` 输出会话列表。普通 `learn` 优先使用本进程在该区明确选择的会话，否则打开 picker，不猜测全局最新会话。
+
+原生教学页 F2 可在请求等待中切换会话；`:switch`、`:space`、`:pause`、`:complete` 分别切会话、切区、暂停目标、结束本次教学，互不等价。Esc / `:quit` 返回但不结束服务端教学。`:answer` 的多行草稿及正在编辑的一行按 session/activity 隔离，回到原题可继续；`:discard` 清除多行草稿。草稿不落盘，重启不恢复。取消不保证服务器事务回滚；重新进入查询原 session，CLI 不自动重放答案。非默认区的复习资格使用本会话 work_item；跨目标复习总览不在此入口提供。
+
+`offline prepare --session UUID [--space UUID]` 从所选会话签发；未给 ID 时使用进程选择或 picker。已保存离线 intent 的重试复用原请求，sync 按原授权归属，不跟随当前页面改目标；现有加密离线存储与签名信任链不变。详见[教学续学契约](../../docs/design/tutoring-sessions.md)。
 
 Text entered directly in a shell command, including `goal set` text, may be retained by shell history. Interactive `learn` keeps answers and free questions out of argv and does not create a persistent input history.
 

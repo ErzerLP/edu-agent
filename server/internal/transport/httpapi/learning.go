@@ -48,10 +48,13 @@ func (value operationInput) operation(payload any, aggregateType, pathID string)
 
 type learningGoalInput struct {
 	operationInput
-	GoalID             *string `json:"goal_id,omitempty"`
-	Text               *string `json:"text"`
-	Source             *string `json:"source"`
-	PreviousRevisionID *string `json:"previous_revision_id,omitempty"`
+	Details            *learning.GoalDetails `json:"details,omitempty"`
+	Action             string                `json:"action,omitempty"`
+	CompletionReason   string                `json:"completion_reason,omitempty"`
+	GoalID             *string               `json:"goal_id,omitempty"`
+	Text               *string               `json:"text"`
+	Source             *string               `json:"source"`
+	PreviousRevisionID *string               `json:"previous_revision_id,omitempty"`
 }
 
 type tutoringSessionInput struct {
@@ -286,13 +289,17 @@ func (a *API) handleLearningCreateGoal(w http.ResponseWriter, r *http.Request) {
 		writeLearningInvalid(w, r)
 		return
 	}
-	operation, err := request.operation(request, "goal", "")
+	operation, err := request.operation(request, "goal", chi.URLParam(r, "goalID"))
+	if r.Method == http.MethodPut && operation.ExpectedVersion < 1 {
+		writeLearningInvalid(w, r)
+		return
+	}
 	if err != nil {
 		writeLearningInvalid(w, r)
 		return
 	}
 	credential, _ := credentialFromContext(r.Context())
-	result, err := a.learning.CreateGoal(r.Context(), credential.Device.ID, learning.GoalCommand{Operation: operation, GoalID: stringValue(request.GoalID), Text: *request.Text, Source: *request.Source, PreviousRevisionID: request.PreviousRevisionID})
+	result, err := a.learning.CreateGoal(r.Context(), credential.Device.ID, learning.GoalCommand{Operation: operation, GoalID: stringValue(request.GoalID), Text: *request.Text, Source: *request.Source, PreviousRevisionID: request.PreviousRevisionID, Details: request.Details, Action: request.Action, CompletionReason: request.CompletionReason})
 	if err != nil {
 		a.writeLearningFailure(w, r, "create_goal", err)
 		return

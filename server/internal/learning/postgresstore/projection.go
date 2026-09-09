@@ -593,7 +593,7 @@ func (s *Store) Timeline(ctx context.Context, query learning.TimelineQuery) (lea
 			}
 		}
 		limit := normalizeLimit(query.Page.Limit)
-		rows, err := tx.Query(ctx, `SELECT event_seq,item FROM learning_projection_timeline WHERE generation_id=$1 AND event_seq>$2 AND ($3='' OR item->>'aggregate_id'=$3 OR item->>'parent_session_id'=$3) ORDER BY event_seq LIMIT $4`, metadata.GenerationID, after, query.SessionID, limit+1)
+		rows, err := tx.Query(ctx, `SELECT event_seq,item FROM learning_projection_timeline WHERE generation_id=$1 AND event_seq>$2 AND ($3='' OR item->>'aggregate_id'=$3 OR item->>'parent_session_id'=$3) AND (item->>'event_type'<>'GoalRevisionCreated' OR EXISTS(SELECT 1 FROM learning_goal_revisions g WHERE g.goal_id::text=item->>'aggregate_id' AND g.space_id='00000000-0000-4000-8000-000000000001')) ORDER BY event_seq LIMIT $4`, metadata.GenerationID, after, query.SessionID, limit+1)
 		if err != nil {
 			return learning.TimelinePage{}, fmt.Errorf("query timeline: %w", err)
 		}

@@ -37,6 +37,10 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	learningOperationID := uuid.NewString()
+	goalRevisionID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO learning_goal_revisions(id,goal_id,revision,goal_text,source,actor_device_id,created_at,management) VALUES($1,$2,1,'私人学习意图','privacy-test',$3,now(),'{"details":{"name":"私人目标","self_assessment":"私人基础"},"status":"completed","completion":{"reason":"私人完成依据"}}')`, goalRevisionID, uuid.NewString(), deviceID); err != nil {
+		t.Fatal(err)
+	}
 	tutoringRequestID := uuid.NewString()
 	aggregateID := uuid.NewString()
 	candidateID, candidatePayloadID := uuid.NewString(), uuid.NewString()
@@ -246,6 +250,10 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 		t.Fatalf("owner scrub learning_hash=%q learning_result=%q tutoring_hash=%q tutoring_input=%q tutoring_status=%q candidate_status=%q candidate_revision=%d candidate_available=%v candidate_payloads=%d candidate_decisions=%d", learningHash, learningResult, tutoringHash, tutoringInput, tutoringStatus, candidateStatus, candidateRevision, candidatePayloadAvailable, candidatePayloads, candidateDecisions)
 	}
 	var activeGenerations, timelineItems, oldProjectionItems int
+	var goalRedacted bool
+	if err := pool.QueryRow(ctx, `SELECT management IS NULL AND goal_text='[redacted]' FROM learning_goal_revisions WHERE id=$1`, goalRevisionID).Scan(&goalRedacted); err != nil || !goalRedacted {
+		t.Fatalf("目标结构化个人信息未清除：%v", err)
+	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM learning_projection_generations WHERE status='active'`).Scan(&activeGenerations); err != nil {
 		t.Fatal(err)
 	}

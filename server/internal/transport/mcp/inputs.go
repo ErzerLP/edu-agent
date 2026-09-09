@@ -135,6 +135,7 @@ type reviewsInput struct {
 
 type createGoalInput struct {
 	operationInput
+	LearningSpaceID    string  `json:"learning_space_id,omitempty"`
 	GoalID             string  `json:"goal_id,omitempty"`
 	Text               string  `json:"text"`
 	Source             string  `json:"source"`
@@ -142,6 +143,9 @@ type createGoalInput struct {
 }
 
 func (value createGoalInput) command() (learning.GoalCommand, error) {
+	if value.LearningSpaceID != "" && !canonicalUUID(value.LearningSpaceID) {
+		return learning.GoalCommand{}, invalidLearningInput()
+	}
 	if value.GoalID != "" && !canonicalUUID(value.GoalID) || value.PreviousRevisionID != nil && !canonicalUUID(*value.PreviousRevisionID) || learning.ValidateGoal(value.Text) != nil || learning.ValidateGoalSource(value.Source) != nil {
 		return learning.GoalCommand{}, invalidLearningInput()
 	}

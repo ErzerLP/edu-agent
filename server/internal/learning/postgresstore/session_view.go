@@ -321,9 +321,7 @@ func validateFreeQuestionCommitVersion(ctx context.Context, db learningLoaderDB,
 }
 
 func loadGoalRevisionForView(ctx context.Context, db learningLoaderDB, id string) (learning.GoalRevision, error) {
-	var value learning.GoalRevision
-	err := db.QueryRow(ctx, `SELECT id,goal_id,revision,goal_text,source,actor_device_id,created_at,previous_revision_id FROM learning_goal_revisions WHERE id=$1`, id).Scan(&value.ID, &value.GoalID, &value.Revision, &value.Text, &value.Source, &value.ActorDeviceID, &value.CreatedAt, &value.PreviousRevisionID)
-	return value, err
+	return scanGoal(db.QueryRow(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE id=$1 AND space_id='00000000-0000-4000-8000-000000000001'", id))
 }
 
 func loadRouteRevisionForView(ctx context.Context, db learningLoaderDB, id string) (learning.RouteRevision, error) {

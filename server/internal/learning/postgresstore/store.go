@@ -96,6 +96,11 @@ func (s *Store) ArchiveRejection(ctx context.Context, rejection learning.Operati
 	if err := lockOperation(ctx, tx, rejection.Lookup); err != nil {
 		return learning.OperationResult{}, err
 	}
+	if rejection.AggregateType == "goal" {
+		if err := lockGoalSpace(ctx, tx); err != nil {
+			return learning.OperationResult{}, err
+		}
+	}
 	if result, replayErr, found := lookupArchivedOperation(ctx, tx, rejection.Lookup); found {
 		if replayErr == nil {
 			if err := tx.Commit(ctx); err != nil {
@@ -211,6 +216,26 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		return replay, replayErr
 	}
 
+	if goal := request.Batch.GoalRevision; goal != nil {
+		if err := s.validateGoalWrite(ctx, tx, goal); err != nil {
+			return learning.OperationResult{}, err
+		}
+	}
+	if session := request.Batch.Session; session != nil {
+		starting := request.Operation.ExpectedVersion == 0
+		if !starting {
+			old, err := s.tutoring.LoadSessionWith(ctx, tx, session.ID)
+			if err != nil {
+				return learning.OperationResult{}, err
+			}
+			starting = old.Context.GoalRevisionID != session.Context.GoalRevisionID
+		}
+		if starting && session.Context.GoalRevisionID != "" {
+			if err := s.checkGoalStartWith(ctx, tx, session.Context.GoalRevisionID); err != nil {
+				return learning.OperationResult{}, err
+			}
+		}
+	}
 	expectations := append([]learning.AggregateExpectation(nil), request.Expectations...)
 	sort.Slice(expectations, func(i, j int) bool {
 		if expectations[i].Type != expectations[j].Type {

@@ -1017,9 +1017,29 @@ paths:
   /v1/learning/goals:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: listLearningGoals
+      summary: 按学习区列出独立目标
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { name: search, in: query, schema: { type: string, maxLength: 120 } }
+        - { name: status, in: query, schema: { type: string, enum: ["", draft, active, paused, completed, archived] } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 }, description: 游标绑定学习区、搜索及状态；不是跨页快照。 }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: 成功列表，空结果为 items 数组。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: learning_space_not_found }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: goal_management_unsupported }
+        "503": { description: 隐私读门关闭。 }
     post:
       operationId: createLearningGoal
-      summary: Create an immutable learning goal revision
+      summary: 保存不可变目标修订，不创建或切换教学会话
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
       security: [{ deviceBearer: [] }]
@@ -1070,6 +1090,69 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/goals/{goalID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+    get:
+      operationId: getLearningGoal
+      summary: 读取目标最新版本与完成依据
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      responses:
+        "200": { description: 目标详情。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalRevision" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 目标不存在或不属于当前学习区。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: goal_management_unsupported }
+        "503": { description: 隐私读门关闭。 }
+    put:
+      operationId: reviseLearningGoal
+      summary: 追加内容修订或执行独立目标状态操作
+      description: aggregate_id 必须匹配路径，expected_version 至少为 1，并携带对应 previous_revision_id。details 完整替换结构化信息；action 与内容变更互斥。并发冲突返回 409，不覆盖他人更新。同 operation_id 同请求重试返回原结果。
+      x-required-scope: learning:write
+      x-max-body-bytes: 1048576
+      security: [{ deviceBearer: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LearningGoalRequest" } } } }
+      responses:
+        "200": { description: 幂等重放。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalOperationResult" } } } }
+        "201": { description: 新修订已提交。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalOperationResult" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 目标或学习区不存在。 }
+        "409": { description: version_conflict、idempotency_conflict、invalid_transition 或 learning_space_archived。 }
+        "413": { description: 请求过大。 }
+        "422": { description: knowledge_reference_invalid。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: learning_space_module_unavailable }
+        "503": { description: 隐私写门关闭。 }
+  /v1/learning/goals/{goalID}/revisions:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+    get:
+      operationId: listLearningGoalRevisions
+      summary: 按版本升序分页读取目标历史
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        "200": { description: 不可变修订列表。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalPage" } } } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { description: 目标或学习区不存在。 }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: goal_management_unsupported }
+        "503": { description: 隐私读门关闭。 }
   /v1/tutoring/sessions:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
@@ -2614,7 +2697,7 @@ components:
           required: [knowledge, learning, tutoring, memory]
           properties:
             knowledge: { type: string, enum: [default_only, collections_v1] }
-            learning: { type: string, enum: [default_only] }
+            learning: { type: string, enum: [default_only, goals_v1] }
             tutoring: { type: string, enum: [default_only] }
             memory: { type: string, enum: [default_only] }
     LearningUUID:
@@ -2653,6 +2736,9 @@ components:
           source,
         ]
       properties:
+        details: { $ref: "#/components/schemas/GoalDetails" }
+        action: { type: string, enum: [start, pause, resume, complete, archive, restore] }
+        completion_reason: { type: string, minLength: 1, maxLength: 4000, description: complete 操作必填，记录用户手动完成依据，不生成 Evidence。 }
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         payload_schema_version: { type: integer, const: 1 }
         aggregate_type: { const: goal }
@@ -3343,6 +3429,8 @@ components:
           created_at,
         ]
       properties:
+        learning_space_id: { $ref: "#/components/schemas/LearningUUID" }
+        management: { $ref: "#/components/schemas/GoalManagement" }
         goal_revision_id: { type: string, format: uuid }
         goal_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
@@ -3351,6 +3439,50 @@ components:
         actor_device_id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         previous_revision_id: { type: string, format: uuid }
+    GoalDetails:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        expected_outcome: { type: string, maxLength: 4000 }
+        scope: { type: string, maxLength: 4000 }
+        exclusions: { type: string, maxLength: 4000 }
+        self_assessment: { type: string, maxLength: 4000, description: 用户自述，不是模型建议或已验证学习证据。 }
+        purpose: { type: string, maxLength: 4000 }
+        completion_criteria: { type: string, maxLength: 4000 }
+        priority: { type: string, enum: ["", low, normal, high] }
+        scope_snapshot_id: { $ref: "#/components/schemas/LearningUUID" }
+        timezone: { type: string, description: 明确 IANA 时区，提供截止日期或时间预算时必填，不接受 Local。 }
+        deadline: { type: string, format: date-time, description: 带偏移的 RFC3339 时间，偏移须与 timezone 一致；省略即未设定。 }
+        weekly_minutes: { type: integer, minimum: 1, maximum: 10080, description: 每周投入预算，不自动安排学习日程。 }
+    GoalManagement:
+      type: object
+      additionalProperties: false
+      required: [details, status, criteria_verification, changed_fields, route_adjustment_needed]
+      properties:
+        details: { $ref: "#/components/schemas/GoalDetails" }
+        status: { type: string, enum: [draft, active, paused, completed, archived] }
+        archived_from: { type: string, enum: [draft, active, paused, completed] }
+        criteria_verification: { type: string, enum: [unverified], description: 手动完成和自述不会自动宣称标准已验证。 }
+        changed_fields: { type: array, items: { type: string } }
+        route_adjustment_needed: { type: boolean }
+        completion:
+          type: object
+          additionalProperties: false
+          required: [kind, reason, actor_device_id, at]
+          properties:
+            kind: { type: string, enum: [manual] }
+            reason: { type: string }
+            actor_device_id: { $ref: "#/components/schemas/LearningUUID" }
+            at: { type: string, format: date-time }
+    GoalPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/GoalRevision" } }
+        next_cursor: { type: string }
     FocusContext:
       type: object
       additionalProperties: false

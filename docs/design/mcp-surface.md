@@ -2,6 +2,8 @@
 
 Issue #3 为 `knowledge.retrieve` 增加 `learning_space_id`、`collection_id` 和 `scope_snapshot_id` 参数。冻结范围不与集合选择或单一 revision 混用；所有 ID 交由同一个知识服务验证。旧资源 URI 固定默认范围，MCP HTTP 空间/集合 header 明确拒绝，不能隐式改变学习和记忆工具。未增加集合共享、关联或导入等高权限写工具。详见[资料范围契约](knowledge-spaces.md)。
 
+Issue #4 为既有 `learning.create_goal` 增加可选 `learning_space_id`。省略时仍使用固定默认区，显式值必须为有效 UUID；回调在认证设备身份下将范围传给与 HTTP 相同的目标应用服务，校验学习区归属、归档状态、版本和幂等。一句话创建成为空资料草稿，不调用模型或创建教学会话。原文本修订入口保持兼容；本次不向 MCP 新增结构化编辑、生命周期操作或管理权限，`action` 等额外参数仍拒绝。目标列表、详情与生命周期使用 HTTP/CLI/TUI 管理入口。参见[目标管理设计](goals.md)。
+
 ## Runtime shape
 
 The server exposes one MCP endpoint at `POST /mcp` on the existing `edu-agentd` listener. It does not create another process, port, database, namespace, PostgreSQL pool, or Nocturne client. The app composition constructs HTTP and MCP from the same `httpapi.Options` service instances, rate limiters, logger, and `privacy.ReadPermitManager`.

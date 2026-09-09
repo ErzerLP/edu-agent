@@ -16,7 +16,11 @@
 6. 提供按区搜索、状态过滤和分页、详情、创建、多行编辑及状态操作；重名项显示可理解的辅助信息，技术 ID 放详情。保存失败保留输入与操作身份，版本冲突要求用户重新查看差异。
 7. 新增个人数据纳入隐私清除与残留验证，同步 OpenAPI、帮助和使用文档。
 
-资料选择依赖 #3 的冻结范围契约。当前工作树尚无该契约；本地候选 `task/13@7b5b6e8` 提供归属于学习区的 `scope_snapshot_id`，支持多个集合及确定版本。引入该候选需要明确选择依赖范围；不得把现有单个 knowledge_revision_id 冒充新范围模型，也不得提前宣称资料选择已完成。
+资料选择复用已合并的 #3 冻结范围契约：`scope_snapshot_id` 归属于学习区，支持多个集合及确定版本。2026-09-09 按用户补充要求将远端已合并的 #2/#3 接入 task/14，保留已接受的 CLI 修复。
+
+剩余批次为一个完整管理链路：复用 learning 的事务、事件、幂等回执及隐私门，追加目标结构化元数据和学习区归属；HTTP 查询及修订、CLI/TUI 编辑、资料选择与生命周期一并交付。状态变更也追加修订，不修改旧行；draft 和 active 可发起新学习，paused/completed/archived 不可发起。归档恢复回到归档前状态，暂停恢复为 active。手动完成记录依据和操作时间，学习标准验证仍标记为未验证。旧行按默认区和 active 解释以保持原教学入口兼容。只有资料范围、范围/排除项、预期结果或完成标准的变化提示路线可能需调整。
+
+详情历史按版本分页；列表用绑定区、搜索和状态的稳定游标。完整内容替换和状态动作分开，均复用原 GoalCommand 版本与 operation_id。未提供截止日期和预算即未设定；提供时区使用 IANA 名称，截止时间带明确偏移并与该时区核对。读写目标均按上下文学习区校验，非默认目标事件不能进入默认区旧时间线。
 
 ## 验收标准
 
@@ -35,6 +39,49 @@
 
 修改前 `go test ./internal/command -run '^TestGoalSetPreservesTeachingSession$' -count=1 -v` 两个子测试均失败：无会话时从 false 变为 true；已有会话时发生一次 switch。修改后两个子测试通过，并断言教学会话查询次数为零。
 
-客户端受影响的 command/dashboard 测试与 vet 通过，生产 CLI 构建通过。黑盒夹具仅做编译和 vet 检查；真实 PostgreSQL 与完整 Issue 验收尚未执行。
+上一批客户端受影响的 command/dashboard 测试与 vet 通过，生产 CLI 构建通过。当时黑盒夹具仅做编译和 vet 检查，未进行真实 PostgreSQL 与完整 Issue 验收。
 
-结构化草稿、独立生命周期、目标查询管理、隐私扩展及资料选择仍未实现。本次局部修复不代表 Issue #4 已完成。继续整体交付前，需确定是否引入尚未进入 main 的 #3 候选提交，或明确采用无资料管理的独立交付批次。
+上述记录保留为上一批局部修复的证据。2026-09-09 继续完成完整管理链路，结果如下。
+
+## 最终实现与使用
+
+- `learning/goals.go` 拥有结构化信息、状态转换和是否允许开始新学习的窄查询；原 CreateGoal 统一规范命令、版本链和幂等身份。修复旧入口省略 goal_id 时回执查找与提交哈希不一致的问题。
+- 迁移 14 为旧版本追加默认区归属及可空管理快照，不改旧 ID、事件或冻结引用。列表与详情从不可变版本读取最新状态，无额外单 active 限制；隐私清除同时清空管理快照并验证无残留。
+- 目标 store 通过 knowledge owner 的同事务窄接口验证冻结范围，不直接读取知识表。生命周期不写教学表；教学事务按目标锁检查是否允许新学习，不终止既有会话。默认区旧时间线排除其他区目标，原非目标事件不受影响。
+- HTTP 列表/详情/历史使用 learning:read，创建/修订/生命周期使用 learning:write。POST 保持旧入口，PUT 使用明确目标路径。MCP 只为既有创建入口增加显式学习区参数，不新增生命周期权限。
+- `goal browse` 和主菜单 `o` 打开列表及详情；`e` 进入多行编辑，`m` 选择资料集合/文档/章节，`v` 查看冻结资料与更新。`g` 和 `goal set` 继续一句话保存，不操作教学。
+
+最小命令示例（省略 `--space` 固定默认区；其他区每次显式传入）：
+
+```sh
+edu-agent goal create --name 并发基础 掌握并发编程
+edu-agent goal list --search 并发 --status draft --limit 20
+edu-agent goal browse
+edu-agent goal help
+```
+
+修订完整保留结构化字段；清空可选 deadline/weekly-minutes 即取消约束。手动完成必须填写依据，完成状态与标准验证分开显示。新草稿不自动进入 active，也不自动开始教学。非默认区并行教学、会话选择/续学、模型规划、自动验标和跨目标证据继承仍属于独立 Issue，不包含在本次交付。
+
+## 最终验收记录
+
+环境为 Go 1.26.6、PostgreSQL 17/pgvector；复用现有测试容器，新建专用 `edu_agent_task14` 数据库，各测试隔离 schema 并清理。未触碰生产数据库或修改部署配置。本机没有 psql，黑盒测试通过仓库外的临时包装调用同一测试容器内的 psql，没有安装工具或将密码写入文件。
+
+| 验收点 | 已通过的证据 |
+| --- | --- |
+| 同区双目标、重试、并发、分页、搜索、状态过滤、重启 | `TestPostgreSQLGoalManagementLifecycleScopeRetriesAndHistory`，生产二进制 `TestBlackBoxGoalsWithoutModelPersistenceAndIndependentLifecycle` |
+| 无模型、空资料草稿，旧 set 保留已有会话 | 黑盒服务完全移除模型配置；实际配对 CLI 创建、修订、重启及原会话行前后对比；保留上一批 set 回归 |
+| 资料冻结、无效/跨区引用、暂停禁止新学习 | `TestPostgreSQLGoalFrozenMaterialsValidation`，真实知识导入和冻结范围，CLI 黑盒关联范围 |
+| 暂停/归档/恢复/完成与修订不改历史 | `TestPostgreSQLGoalRevisionsPreserveLearningFactsAndFocus` 比较路线、题目、作答、评估、证据、会话、焦点帧完整行；掌握度不变，旧引用仍保留 |
+| 多行输入、失败后保留、确认并发冲突、章节选择重试 | command 的 GoalEditor、GoalBrowser 系列测试；失败重试复用内容与操作身份，远端版本需确认 |
+| HTTP/MCP 同一规则、权限及 OpenAPI | `TestPostgreSQLGoalHTTPManagementContract` 验证真实数据库响应符合 schema、跨区拒绝和写权限；MCP 参数归属及非法生命周期参数测试 |
+| 历史升级、隐私清除 | 真实数据库 `./migrations`、`./internal/privacy/postgresstore` 全包通过，旧字段不变及新增结构化个人数据清空断言 |
+
+执行结果：
+
+- server 和 clients/cli-go 各自 `go test ./... && go vet ./... && go build ./...` 通过。普通全仓测试中未配置数据库而跳过的场景不计为数据库证据。
+- 真实数据库串行 `go test -p=1 -count=1 ./migrations ./internal/learning/postgresstore ./internal/privacy/postgresstore` 中迁移与隐私全包通过；学习全包最初发现时间线过滤误排非目标事件，修复后精确回归和学习 store 全包重新通过。
+- 真实数据库目标测试再次以 `-race` 通过；客户端目标/学习区相关 api、command 测试以 `-race` 通过。dashboard 在该筛选下没有匹配测试，使用普通全包测试证据。
+- 真实 HTTP 目标契约、生产服务/CLI 黑盒测试通过。`contracttests/cli-m1` 的编译、普通测试和 vet 通过；其他无关黑盒场景未全跑。
+- 后补的旧长文本目标兼容测试、资料章节选择失败重试测试均通过。未进行桌面终端人工验收、跨平台原生验收或真实外部模型调用，不将这些写成已验证。
+
+开发方案和验收记录均随代码提交 task/14；不推送或合并 main，由用户审核落地。

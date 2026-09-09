@@ -12,6 +12,8 @@ PostgreSQL 是 learning 与 tutoring 数据的唯一权威存储。模型 propos
 
 GoalRevision 包含 goal ID、revision、用户目标正文、来源、actor device、创建时间和前一 revision。修改目标只创建新 revision。RouteRevision 冻结 goal revision、knowledge revision、route policy version、有序 RouteStep 和来源 proposal；每个 step 引用不可变 node revision、教学意图与完成条件。路线调整创建新 RouteRevision，旧 Activity 和 Evidence 不重新绑定。
 
+Issue #4 扩展 GoalRevision 的稳定学习区归属及结构化管理快照。新目标为草稿，旧目标保留原 ID、事件及正文并按默认区、进行中解释。内容修订和 draft/active/paused/completed/archived 状态操作均追加版本，允许多个 active；手动完成保留操作人、时间、依据，标准验证单独记录为未验证，不产生 Evidence 或 mastery。资料引用 #3 的冻结范围，由 knowledge owner 在事务内验证归属；时区与时间约束显式保存。目标变更不修改教学表，教学创建/换目标事务通过目标锁检查最新状态，只有 draft/active 可开始新学习。详见[完整目标契约](../../../design/goals.md)。
+
 Activity 在发给用户前创建并冻结 Activity ID/revision、goal revision、route revision/step、knowledge revision、一个或多个 node/node revision、题目正文、题型、rubric revision 与完整 rubric、难度、允许帮助、activity policy、assessment policy 和 review policy。创建后不能覆盖。`objective` rubric 包含确定性答案规则；`open` rubric 包含有序 item、判定标准与所需知识引用。
 
 Attempt 不可变，包含 Activity revision、答案 payload 引用、实际帮助级别、认证 device、可空不可信 `occurred_at`、可信 `received_at` 和 payload hash。帮助级别固定为 `none / hint / scaffold / answer_revealed`；`answer_revealed` 只形成 exposure，不能形成 accepted Evidence。
@@ -113,6 +115,8 @@ timeline 按 event_seq 游标稳定分页。route 历史按 revision 与 event s
 ## HTTP 与 OpenAPI
 
 写端点为 `POST /v1/learning/goals`、`POST /v1/tutoring/sessions`、`POST /v1/tutoring/proposals`、`POST /v1/tutoring/sessions/{sessionID}/actions` 和 `POST /v1/learning/assessments/{assessmentID}/decisions`。session action 使用严格 discriminator，只接受 `start_diagnostic / apply_route / issue_activity / present_activity / submit_attempt / record_assessment / acknowledge_feedback / present_review / record_exposure / ask_free_question / record_free_answer / convert_free_answer_to_quiz / resume_focus / end_activity / switch_goal / complete_session`；每种 action 的前后态和 event batch 服从状态机章节。
+
+Issue #4 增加 `GET /v1/learning/goals`（搜索、状态过滤、游标分页）、`GET/PUT /v1/learning/goals/{goalID}` 与 `GET /v1/learning/goals/{goalID}/revisions`。PUT 完整内容修订或生命周期 action 二选一，要求前一 revision 和 expected_version；旧 POST 继续复用相同应用服务和幂等回执。所有目标入口按 `X-Learning-Space-ID` 隔离，权限沿用 learning:read/write；不新增无授权管理入口。
 
 读端点为 `GET /v1/tutoring/sessions/current`、`GET /v1/tutoring/sessions/{sessionID}`、`GET /v1/learning/timeline`、`GET /v1/learning/routes`、`GET /v1/learning/nodes/{nodeRevisionID}`、`GET /v1/learning/evidence`、`GET /v1/learning/reviews` 和 `GET /v1/learning/projections/status`。列表使用有界 cursor/limit，默认 50、最大 200；cursor 绑定查询种类和 projection generation，stale cursor 返回明确 conflict。
 

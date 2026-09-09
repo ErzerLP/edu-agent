@@ -1,6 +1,6 @@
 # 学习区基础契约（Issue #2）
 
-本文记录 Issue #2 的基础交付。后续 Issue #3 已将资料模块接入集合与冻结范围，当前知识能力为 `collections_v1`；其他模块仍保持下述默认区兼容行为。最新资料入口见[资料范围设计](knowledge-spaces.md)。
+本文记录 Issue #2 的基础交付。后续 Issue #3 已将资料模块接入集合与冻结范围，当前知识能力为 `collections_v1`；Issue #4 将目标管理接入 `learning: goals_v1`，只开放按区目标入口及 MCP `learning.create_goal` 的显式归属参数，教学与记忆仍保持下述默认区兼容行为。最新入口见[资料范围设计](knowledge-spaces.md)与[目标管理设计](goals.md)。
 
 ## 确认与交付范围
 

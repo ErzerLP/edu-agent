@@ -10,12 +10,8 @@ import (
 )
 
 func (a *App) runGoal(ctx context.Context, args []string) error {
-	if len(args) == 1 && (args[0] == "help" || args[0] == "--help") {
-		_, err := fmt.Fprintln(a.Out, "goal set <text>：保存一句话目标，不创建或切换教学会话；无需资料或模型。")
-		return err
-	}
 	if len(args) == 0 || args[0] != "set" {
-		return commandError("usage", "goal requires set", "run edu-agent goal set <text>", ExitInput)
+		return a.runGoalManagement(ctx, args)
 	}
 	set := newFlagSet("goal set")
 	var flags onlineFlags

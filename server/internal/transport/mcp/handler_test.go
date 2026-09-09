@@ -19,6 +19,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
@@ -137,6 +138,7 @@ type testLearning struct {
 	operation              learning.OperationResult
 	proposal               learning.ProposalArtifact
 	lastGoal               learning.GoalCommand
+	lastGoalSpace          string
 	lastSession            learning.SessionCommand
 	lastAction             learning.ActionCommand
 	carryover              learning.EvidenceCarryoverProposal
@@ -152,10 +154,11 @@ func (f *testLearning) record(method, actor string) {
 	f.method, f.actor = method, actor
 	f.calls++
 }
-func (f *testLearning) CreateGoal(_ context.Context, actor string, command learning.GoalCommand) (learning.OperationResult, error) {
+func (f *testLearning) CreateGoal(ctx context.Context, actor string, command learning.GoalCommand) (learning.OperationResult, error) {
 	f.record("create_goal", actor)
 	f.mu.Lock()
 	f.lastGoal = command
+	f.lastGoalSpace = learningspace.Scope(ctx)
 	f.mu.Unlock()
 	return f.operation, f.err
 }

@@ -71,7 +71,7 @@ func (a *App) parseSpaceFlag(args []string) ([]string, func(), error) {
 }
 func (a *App) runSpace(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		_, err := fmt.Fprintln(a.Out, "space list [--search TEXT] [--status active|archived] [--limit 1..100] [--cursor TOKEN]\nspace show|select --id UUID\nspace create --name NAME [--description TEXT] [--operation-id UUID]\nspace edit|archive|restore --id UUID [--name NAME] [--description TEXT] [--expected-version N] [--operation-id UUID]\nspace browse (interactive list, details, selection and management)\nAll commands accept --space UUID for this invocation. Selection is process-local; shell scripts must pass --space on each invocation.\n资料使用 knowledge library 管理区内集合与冻结范围。目标、教学、记忆和 Agent/offline 仍要求默认区；名称不决定归属。")
+		_, err := fmt.Fprintln(a.Out, "space list [--search TEXT] [--status active|archived] [--limit 1..100] [--cursor TOKEN]\nspace show|select --id UUID\nspace create --name NAME [--description TEXT] [--operation-id UUID]\nspace edit|archive|restore --id UUID [--name NAME] [--description TEXT] [--expected-version N] [--operation-id UUID]\nspace browse (interactive list, details, selection and management)\nAll commands accept --space UUID for this invocation. Selection is process-local; shell scripts must pass --space on each invocation.\n资料使用 knowledge library 管理区内集合与冻结范围，目标使用 goal browse 管理。教学、记忆和 Agent/offline 仍要求默认区；名称不决定归属。")
 		return err
 	}
 	action := args[0]
@@ -128,7 +128,7 @@ func (a *App) runSpace(ctx context.Context, args []string) error {
 		a.learningSpaceName = item.Name
 		_, err = fmt.Fprintf(a.Out, "Selected %s (%s), status=%s; selection lasts for this client process.\n", safeText(item.Name), item.ID, item.Status)
 		if item.ID != api.DefaultLearningSpaceID {
-			_, _ = fmt.Fprintln(a.Out, "Knowledge, goals, tutoring, memory, Agent and offline workflows are unavailable in this space.")
+			_, _ = fmt.Fprintln(a.Out, "资料和目标可在本区独立管理；教学、记忆及 Agent/offline 仍仅支持默认区。")
 		}
 		return err
 	}
@@ -237,7 +237,7 @@ func (a *App) browseSpaces(ctx context.Context, client spaceClient) error {
 			return err
 		}
 		_, _ = fmt.Fprintf(a.Out, "%s\n%s\nID: %s  status: %s  version: %d\n", safeText(item.Name), safeText(item.Description), item.ID, item.Status, item.Version)
-		_, _ = fmt.Fprintln(a.Out, "资料使用 knowledge library 管理集合；目标、教学和记忆仍仅支持默认区。")
+		_, _ = fmt.Fprintln(a.Out, "资料使用 knowledge library 管理集合；目标使用 goal browse 管理；教学和记忆仍仅支持默认区。")
 		action, err := a.Terminal.ReadLine("s: select; r: rename; a: archive; u: restore; Enter: back > ")
 		if err != nil {
 			return err

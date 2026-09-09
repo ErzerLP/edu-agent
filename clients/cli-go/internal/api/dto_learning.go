@@ -82,15 +82,18 @@ type RetrievalHit struct {
 }
 
 type LearningGoalRequest struct {
-	OperationID          string `json:"operation_id"`
-	PayloadSchemaVersion int    `json:"payload_schema_version"`
-	AggregateType        string `json:"aggregate_type"`
-	AggregateID          string `json:"aggregate_id"`
-	ExpectedVersion      int64  `json:"expected_version"`
-	GoalID               string `json:"goal_id,omitempty"`
-	Text                 string `json:"text"`
-	Source               string `json:"source"`
-	PreviousRevisionID   string `json:"previous_revision_id,omitempty"`
+	Details              *GoalDetails `json:"details,omitempty"`
+	Action               string       `json:"action,omitempty"`
+	CompletionReason     string       `json:"completion_reason,omitempty"`
+	OperationID          string       `json:"operation_id"`
+	PayloadSchemaVersion int          `json:"payload_schema_version"`
+	AggregateType        string       `json:"aggregate_type"`
+	AggregateID          string       `json:"aggregate_id"`
+	ExpectedVersion      int64        `json:"expected_version"`
+	GoalID               string       `json:"goal_id,omitempty"`
+	Text                 string       `json:"text"`
+	Source               string       `json:"source"`
+	PreviousRevisionID   string       `json:"previous_revision_id,omitempty"`
 }
 
 type TutoringSessionRequest struct {
@@ -370,14 +373,16 @@ type KnowledgeReference struct {
 }
 
 type GoalRevision struct {
-	GoalRevisionID     string    `json:"goal_revision_id"`
-	GoalID             string    `json:"goal_id"`
-	Revision           int64     `json:"revision"`
-	Text               string    `json:"text"`
-	Source             string    `json:"source"`
-	ActorDeviceID      string    `json:"actor_device_id"`
-	CreatedAt          time.Time `json:"created_at"`
-	PreviousRevisionID string    `json:"previous_revision_id,omitempty"`
+	SpaceID            string          `json:"learning_space_id,omitempty"`
+	Management         *GoalManagement `json:"management,omitempty"`
+	GoalRevisionID     string          `json:"goal_revision_id"`
+	GoalID             string          `json:"goal_id"`
+	Revision           int64           `json:"revision"`
+	Text               string          `json:"text"`
+	Source             string          `json:"source"`
+	ActorDeviceID      string          `json:"actor_device_id"`
+	CreatedAt          time.Time       `json:"created_at"`
+	PreviousRevisionID string          `json:"previous_revision_id,omitempty"`
 }
 
 type FocusContext struct {

@@ -20,7 +20,7 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 			previousGoalID = value.GoalID
 			previousRevision = value.Revision - 1
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_goal_revisions(id,goal_id,revision,goal_text,source,actor_device_id,created_at,previous_revision_id,previous_goal_id,previous_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, value.ID, value.GoalID, value.Revision, value.Text, value.Source, value.ActorDeviceID, value.CreatedAt, value.PreviousRevisionID, previousGoalID, previousRevision); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_goal_revisions(id,goal_id,revision,goal_text,source,actor_device_id,created_at,previous_revision_id,previous_goal_id,previous_revision,space_id,management) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, value.ID, value.GoalID, value.Revision, value.Text, value.Source, value.ActorDeviceID, value.CreatedAt, value.PreviousRevisionID, previousGoalID, previousRevision, value.LearningSpaceID(), value.Management); err != nil {
 			return fmt.Errorf("insert goal revision: %w", err)
 		}
 	}

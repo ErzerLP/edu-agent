@@ -284,6 +284,7 @@ func New(options Options) (http.Handler, error) {
 		protected.Use(api.authenticate)
 		protected.Use(api.resolveLearningSpace)
 		api.mountLearningSpaces(protected)
+		api.mountPlanning(protected)
 		api.mountKnowledgeSpaces(protected)
 		protected.With(api.requireScope("devices:read")).Get("/v1/devices", api.listDevices)
 		protected.With(api.requireScope("devices:manage")).Delete("/v1/devices/{deviceID}", api.revokeDevice)

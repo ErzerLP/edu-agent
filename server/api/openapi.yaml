@@ -6,6 +6,53 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/goals/{goalID}/plans:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+    get:
+      operationId: listLearningPlans
+      summary: 列出目标的已保存规划草稿；列表不是当前可应用状态，确认前读取详情
+      security: [{ deviceBearer: [] }]
+      x-required-scopes: [learning:read, knowledge:read]
+      responses:
+        "200":
+          description: 草稿列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/PlanningDraft" } }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+  /v1/learning/goals/{goalID}/plans/{planID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+      - { name: planID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+    get:
+      operationId: getLearningPlan
+      summary: 读取草稿、用户原文、模型建议、真实出处与过期原因
+      security: [{ deviceBearer: [] }]
+      x-required-scopes: [learning:read, knowledge:read]
+      responses:
+        "200": { description: 草稿详情, content: { application/json: { schema: { $ref: "#/components/schemas/PlanningDraft" } } } }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
+    post:
+      operationId: changeLearningPlan
+      summary: 创建、编辑、可选生成或明确确认学习规划
+      description: create 的 expected_version 为 0；其他操作要求当前草稿版本。edit 完整替换 content。generate 仅产生独立 suggestion，错误保存为 last_error，原草稿不变。confirm 的 target 必须显式选择 goal、new_session 或 current_session；update_goal 决定是否同时修订正式目标。确认在单一事务中验证目标、范围、教学状态并调用正式应用服务。响应丢失可复用完全相同请求与 operation_id，返回真实回执；不同请求复用操作身份返回冲突。
+      security: [{ deviceBearer: [] }]
+      x-required-scopes: [learning:write, knowledge:read]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanningCommand" }
+      responses:
+        "200": { description: 已保存草稿或确认回执；模型失败不丢已有内容, content: { application/json: { schema: { $ref: "#/components/schemas/PlanningDraft" } } } }
+        default: { $ref: "#/components/responses/KnowledgeScopeFailure" }
   /v1/knowledge/import-jobs:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
@@ -3688,6 +3735,78 @@ components:
         range: { $ref: "#/components/schemas/LearningSourceRange" }
         slice: { type: string }
         slice_sha256: { $ref: "#/components/schemas/SHA256" }
+    PlanningCommand:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, action]
+      properties:
+        operation_id: { $ref: "#/components/schemas/LearningUUID" }
+        expected_version: { type: integer, minimum: 0 }
+        action: { type: string, enum: [create, edit, generate, confirm] }
+        content: { $ref: "#/components/schemas/PlanningContent" }
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
+        target: { type: string, enum: [goal, new_session, current_session] }
+        update_goal: { type: boolean }
+    PlanningContent:
+      type: object
+      additionalProperties: false
+      required: [details, steps, questions, gaps]
+      properties:
+        details: { $ref: "#/components/schemas/GoalDetails" }
+        steps: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PlanningStep" } }
+        gaps: { type: array, maxItems: 30, items: { type: string, maxLength: 4000 }, description: 待核实的资料缺口，不是已证明缺失或用户掌握度。 }
+        questions:
+          type: array
+          maxItems: 7
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, question, answer]
+            properties:
+              field: { type: string, enum: [expected_outcome, self_assessment, purpose, scope, exclusions, completion_criteria, time] }
+              question: { type: string, maxLength: 4000 }
+              answer: { type: string, maxLength: 4000 }
+    PlanningStep:
+      type: object
+      additionalProperties: false
+      required: [name, content, reason, exercise, completion, minutes, prerequisites, node_revision_id]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 4000 }
+        content: { type: string, minLength: 1, maxLength: 4000 }
+        reason: { type: string, maxLength: 4000 }
+        exercise: { type: string, maxLength: 4000 }
+        completion: { type: string, minLength: 1, maxLength: 4000 }
+        minutes: { type: integer, minimum: 1, maximum: 10080 }
+        prerequisites: { type: array, items: { type: integer, minimum: 0 }, description: 前置步骤的零起始序号，必须在本步骤之前且不得重复。 }
+        node_revision_id: { type: string, description: 冻结范围中的章节修订；空字符串表示不可执行大纲。 }
+    PlanningDraft:
+      type: object
+      additionalProperties: false
+      required: [id, version, goal, content, sources, state, stale_reasons, model_source]
+      properties:
+        id: { $ref: "#/components/schemas/LearningUUID" }
+        version: { type: integer, minimum: 1 }
+        goal: { $ref: "#/components/schemas/GoalRevision" }
+        content: { $ref: "#/components/schemas/PlanningContent" }
+        suggestion: { $ref: "#/components/schemas/PlanningContent" }
+        sources:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [name, reference]
+            additionalProperties: false
+            properties:
+              name: { type: string }
+              reference: { $ref: "#/components/schemas/KnowledgeReference" }
+        session_id: { $ref: "#/components/schemas/LearningUUID" }
+        session_version: { type: integer, minimum: 1 }
+        state: { type: string, enum: [draft, applied] }
+        stale_reasons: { type: array, items: { type: string } }
+        last_error: { type: string }
+        model_source: { type: string }
+        applied_session_id: { $ref: "#/components/schemas/LearningUUID" }
+        applied_goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
     GoalRevision:
       type: object
       additionalProperties: false

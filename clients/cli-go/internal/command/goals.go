@@ -83,6 +83,7 @@ func (a *App) goalList(page api.GoalPage) {
 
 func (a *App) runGoalManagement(ctx context.Context, args []string) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
+		fmt.Fprintln(a.Out,"goal plan --id 目标ID [--plan 草稿ID] [--session 原会话ID] [--json]：可选 AI 完善、出处、手动编辑与确认采用。生成不修改正式目标；模型来自服务端教学配置。")
 		_, err := fmt.Fprintln(a.Out, "goal set <text>：只保存一句话目标\ngoal create [--id UUID] [--operation-id UUID] [结构化参数] <学习意图>\ngoal list [--search 文本] [--status draft|active|paused|completed|archived] [--limit 1..100] [--cursor 游标] [--json]\ngoal show|history --id UUID [--json]\ngoal edit --id UUID [--expected-version N] [结构化参数]（无参数进入多行编辑）\ngoal start|pause|resume|complete|archive|restore --id UUID [--expected-version N] [--reason 完成依据]\ngoal browse：交互列表、详情、资料选择与状态操作\n结构化参数：--name、--text、--outcome、--scope、--exclusions、--self-assessment、--purpose、--criteria、--priority low|normal|high、--materials 冻结范围ID、--timezone IANA时区、--deadline RFC3339、--weekly-minutes 分钟。空值清除可选约束。\n所有管理写操作支持 --operation-id；跨进程重试创建须同时复用 --id 和 --operation-id。使用 --space 指定学习区；归属创建后固定。新增、编辑与状态操作均不切换教学会话。")
 		return err
 	}
@@ -380,7 +381,7 @@ func (a *App) browseGoalDetail(ctx context.Context, client goalClient, id string
 			return mapAPIError(err)
 		}
 		a.goalDetail(g)
-		input, err := a.Terminal.ReadLine("e 编辑/选择资料；v 查看冻结资料；h 版本历史；start/pause/resume/complete/archive/restore 状态操作；q 返回 > ")
+		input, err := a.Terminal.ReadLine("e 编辑/选择资料；p 帮助完善/规划；v 查看冻结资料；h 版本历史；start/pause/resume/complete/archive/restore 状态操作；q 返回 > ")
 		if err != nil {
 			return err
 		}
@@ -389,6 +390,16 @@ func (a *App) browseGoalDetail(ctx context.Context, client goalClient, id string
 		}
 		if input == "e" {
 			if err = a.editGoal(ctx, client, g); err != nil {
+				return err
+			}
+			continue
+		}
+		if input == "p" {
+			p, ok := client.(planningClient)
+			if !ok {
+				return fmt.Errorf("规划接口不可用")
+			}
+			if err = a.browsePlanning(ctx, p, id, "", ""); err != nil {
 				return err
 			}
 			continue

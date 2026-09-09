@@ -51,3 +51,21 @@ func (s *Store) EnsureTeachingScopeWith(ctx context.Context, tx pgx.Tx, id, devi
 	}
 	return nil
 }
+
+// 确认期间锁住范围所依赖的集合，避免检查后 head 变化使旧计划覆盖新事实。
+func (s *Store) LockPlanningScopeWith(ctx context.Context, tx pgx.Tx, id string) error {
+	if err := s.ValidateGoalScopeWith(ctx, tx, id); err != nil {
+		return err
+	}
+	scope, err := readScope(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	for _, entry := range scope.Entries {
+		var head *string
+		if err = tx.QueryRow(ctx, `SELECT head_revision_id FROM knowledge_collections WHERE id=$1 FOR SHARE`, entry.CollectionID).Scan(&head); err != nil {
+			return err
+		}
+	}
+	return nil
+}

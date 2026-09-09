@@ -44,6 +44,13 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	tutoringRequestID := uuid.NewString()
+	planningID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO learning_plans(id,goal_id,space_id,payload) VALUES($1,$2,'00000000-0000-4000-8000-000000000001','{"private":"草稿与临时正文"}')`, planningID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO learning_plan_operations(device_id,operation_id,request_hash,payload) VALUES($1,$2,'请求摘要','{"private":"模型建议与确认回执"}')`, deviceID, planningID); err != nil {
+		t.Fatal(err)
+	}
 	aggregateID := uuid.NewString()
 	candidateID, candidatePayloadID := uuid.NewString(), uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO learning_inbox(device_id,operation_id,request_hash,aggregate_type,aggregate_id,terminal_status,result,completed_at) VALUES($1,$2,decode(repeat('ab',32),'hex'),'session',$3,'succeeded','{"secret":"learning"}',clock_timestamp())`, deviceID, learningOperationID, aggregateID); err != nil {
@@ -285,6 +292,10 @@ func TestBarrierPersistsAcrossStepFailureAndLocalScrubResumes(t *testing.T) {
 		t.Fatalf("owner scrub learning_hash=%q learning_result=%q tutoring_hash=%q tutoring_input=%q tutoring_status=%q candidate_status=%q candidate_revision=%d candidate_available=%v candidate_payloads=%d candidate_decisions=%d", learningHash, learningResult, tutoringHash, tutoringInput, tutoringStatus, candidateStatus, candidateRevision, candidatePayloadAvailable, candidatePayloads, candidateDecisions)
 	}
 	var activeGenerations, timelineItems, oldProjectionItems int
+	var plansRedacted bool
+	if err := pool.QueryRow(ctx, `SELECT (SELECT payload IS NULL FROM learning_plans WHERE id=$1) AND (SELECT payload IS NULL FROM learning_plan_operations WHERE device_id=$2 AND operation_id=$1)`, planningID, deviceID).Scan(&plansRedacted); err != nil || !plansRedacted {
+		t.Fatalf("规划隐私残留：%v", err)
+	}
 	var goalRedacted bool
 	if err := pool.QueryRow(ctx, `SELECT management IS NULL AND goal_text='[redacted]' FROM learning_goal_revisions WHERE id=$1`, goalRevisionID).Scan(&goalRedacted); err != nil || !goalRedacted {
 		t.Fatalf("目标结构化个人信息未清除：%v", err)

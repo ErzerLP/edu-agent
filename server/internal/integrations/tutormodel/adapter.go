@@ -68,6 +68,8 @@ func schemaFor(kind learning.ProposalType) json.RawMessage {
 	const reference = `{"type":"object","properties":{"node_revision_id":{"type":"string"},"slice_sha256":{"type":"string"},"range":{"type":"object","properties":{"start":{"type":"integer"},"end":{"type":"integer"}},"required":["start","end"],"additionalProperties":false}},"required":["node_revision_id"],"additionalProperties":false}`
 	const sourceRange = `{"type":"object","properties":{"start":{"type":"integer"},"end":{"type":"integer"}},"required":["start","end"],"additionalProperties":false}`
 	switch kind {
+	case learning.ProposalType("planning"):
+		return learning.PlanningSchema()
 	case learning.ProposalRoute:
 		return json.RawMessage(`{"type":"object","properties":{"route":{"type":"array","items":{"type":"object","properties":{"node_revision_id":{"type":"string"},"teaching_intent":{"type":"string"},"completion_condition":{"type":"string"}},"required":["node_revision_id","teaching_intent","completion_condition"],"additionalProperties":false}}},"required":["route"],"additionalProperties":false}`)
 	case learning.ProposalActivity:

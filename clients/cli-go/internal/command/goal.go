@@ -10,6 +10,9 @@ import (
 )
 
 func (a *App) runGoal(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "plan" {
+		return a.runPlanning(ctx, args[1:])
+	}
 	if len(args) == 0 || args[0] != "set" {
 		return a.runGoalManagement(ctx, args)
 	}

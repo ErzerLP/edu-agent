@@ -45,7 +45,7 @@ type knowledgeOwner interface {
 
 // Store is the PostgreSQL transaction authority for learning commands and projections.
 type Store struct {
-	pool      *pgxpool.Pool
+	pool      planningDB
 	registry  *learning.EventRegistry
 	tutoring  tutoringOwner
 	knowledge knowledgeOwner

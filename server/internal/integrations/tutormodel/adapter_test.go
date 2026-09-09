@@ -16,10 +16,11 @@ import (
 
 func TestAdapterSendsStrictRecursiveSchemasAndThreeRoles(t *testing.T) {
 	outputs := map[learning.ProposalType]string{
-		learning.ProposalRoute:      `{"route":[{"node_revision_id":"node","teaching_intent":"teach","completion_condition":"pass"}]}`,
-		learning.ProposalActivity:   `{"activity":{"prompt":"Question","type":"open","rubric":{"rubric_revision":"r1","items":[{"rubric_item_id":"i1","criterion":"correct"}]},"difficulty":1,"allowed_help":["none"],"knowledge_references":[{"node_revision_id":"node"}]}}`,
-		learning.ProposalAssessment: `{"assessment":{"items":[],"rubric_complete":false,"confidence":0,"risk_flags":[]}}`,
-		learning.ProposalFreeAnswer: `{"text":{"text":"Answer","knowledge_references":[{"node_revision_id":"node"}]}}`,
+		learning.ProposalType("planning"): `{"details":{"name":"并发","priority":"normal","expected_outcome":"","scope":"","exclusions":"","self_assessment":"","purpose":"","completion_criteria":"","scope_snapshot_id":"","timezone":"","deadline":null,"weekly_minutes":null},"steps":[],"questions":[],"gaps":["资料尚待核对"]}`,
+		learning.ProposalRoute:            `{"route":[{"node_revision_id":"node","teaching_intent":"teach","completion_condition":"pass"}]}`,
+		learning.ProposalActivity:         `{"activity":{"prompt":"Question","type":"open","rubric":{"rubric_revision":"r1","items":[{"rubric_item_id":"i1","criterion":"correct"}]},"difficulty":1,"allowed_help":["none"],"knowledge_references":[{"node_revision_id":"node"}]}}`,
+		learning.ProposalAssessment:       `{"assessment":{"items":[],"rubric_complete":false,"confidence":0,"risk_flags":[]}}`,
+		learning.ProposalFreeAnswer:       `{"text":{"text":"Answer","knowledge_references":[{"node_revision_id":"node"}]}}`,
 	}
 	for kind, output := range outputs {
 		t.Run(string(kind), func(t *testing.T) {

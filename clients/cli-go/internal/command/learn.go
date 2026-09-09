@@ -250,6 +250,10 @@ func (a *App) learnDiagnostic(ctx context.Context, client APIClient, view api.Se
 	for index, step := range proposal.Route {
 		_, _ = fmt.Fprintf(a.Out, "%d node=%s intent=%s completion=%s\n", index, safeText(step.NodeRevisionID), safeText(step.TeachingIntent), safeText(step.CompletionCondition))
 	}
+	confirmed, confirmErr := a.Terminal.Confirm("确认采用以上路线？如需编辑，请先返回 goal plan；取消不会应用路线。")
+	if confirmErr != nil || !confirmed {
+		return fresh, commandError("planning_confirmation_required", "路线尚未采用", "使用 goal plan --id 目标ID 编辑规划，或重新进入学习", ExitInput)
+	}
 	fresh, _, err = a.proposalAction(ctx, client, fresh, "apply_route", proposal.ProposalID)
 	return fresh, err
 }

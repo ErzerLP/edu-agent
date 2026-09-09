@@ -15,11 +15,51 @@ type TreeReader interface {
 type Adapter struct{ reader TreeReader }
 
 func New(reader TreeReader) *Adapter { return &Adapter{reader: reader} }
+
+// 规划只枚举已冻结范围；超过输入预算时明确提示覆盖不完整。
+func (a *Adapter) PlanningSources(ctx context.Context, id string) ([]learning.PlanningSource, bool, error) {
+	scopeReader, ok := a.reader.(interface {
+		ReadScope(context.Context, string) (knowledge.ScopeSnapshot, error)
+	})
+	if !ok {
+		return nil, false, invalidReference("范围读取不可用")
+	}
+	scope, err := scopeReader.ReadScope(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	tree, err := a.reader.Tree(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	sources := []learning.PlanningSource{}
+	budget := 0
+	for _, doc := range tree.Revision.Documents {
+		for _, node := range doc.Revision.Nodes {
+			if len(sources) >= 100 {
+				break
+			}
+			ref, e := resolveTreeReference(tree, id, node.ID)
+			if e != nil {
+				return nil, false, e
+			}
+			if len(sources) >= 100 || budget+len(ref.Slice) > 48000 {
+				continue
+			}
+			budget += len(ref.Slice)
+			sources = append(sources, learning.PlanningSource{Name: doc.Path + " / " + node.Title, Reference: ref})
+		}
+	}
+	return sources, len(scope.Updates) > 0, nil
+}
 func (a *Adapter) Resolve(ctx context.Context, knowledgeRevisionID, nodeRevisionID string) (learning.KnowledgeReference, error) {
 	tree, err := a.reader.Tree(ctx, knowledgeRevisionID)
 	if err != nil {
 		return learning.KnowledgeReference{}, err
 	}
+	return resolveTreeReference(tree, knowledgeRevisionID, nodeRevisionID)
+}
+func resolveTreeReference(tree knowledge.TreeResult, knowledgeRevisionID, nodeRevisionID string) (learning.KnowledgeReference, error) {
 	if tree.Revision.ID != knowledgeRevisionID {
 		return learning.KnowledgeReference{}, invalidReference("knowledge revision mismatch")
 	}

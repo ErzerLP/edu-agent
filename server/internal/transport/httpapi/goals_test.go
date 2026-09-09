@@ -127,6 +127,50 @@ func TestPostgreSQLGoalHTTPManagementContract(t *testing.T) {
 	if result.Result.Management.Status != "draft" {
 		t.Fatal("新目标不是草稿")
 	}
+	t.Run("规划草稿权限、降级与公共契约", func(t *testing.T) {
+		planID := uuid.NewString()
+		path := "/v1/learning/goals/" + goalID + "/plans/" + planID
+		command := learning.PlanningCommand{OperationID: uuid.NewString(), Action: "create"}
+		if rec := request("POST", path, a.ID, command); rec.Code != 403 {
+			t.Fatalf("缺少资料读取权限仍创建：%d", rec.Code)
+		}
+		auth.auth.Scopes = append(auth.auth.Scopes, "knowledge:read")
+		rec := request("POST", path, a.ID, command)
+		if rec.Code != 200 {
+			t.Fatalf("创建草稿：%d %s", rec.Code, rec.Body)
+		}
+		validate("PlanningDraft", rec)
+		if other := request("GET", path, space.DefaultID, nil); other.Code != 404 {
+			t.Fatal("跨区草稿泄露")
+		}
+		command = learning.PlanningCommand{OperationID: uuid.NewString(), Action: "generate", ExpectedVersion: 1}
+		rec = request("POST", path, a.ID, command)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "未配置") {
+			t.Fatalf("无模型丢草稿：%d %s", rec.Code, rec.Body)
+		}
+		validate("PlanningDraft", rec)
+		replay := request("POST", path, a.ID, command)
+		if replay.Code != 200 || replay.Body.String() != rec.Body.String() {
+			t.Fatal("重试回执改变")
+		}
+		if invalid := request("POST", path, a.ID, map[string]any{"operation_id": uuid.NewString(), "action": "edit", "expected_version": 2, "mastery": "retained"}); invalid.Code != 400 {
+			t.Fatal("权威字段注入未拒绝")
+		}
+		var d learning.PlanningDraft
+		if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
+			t.Fatal(err)
+		}
+		d.Content.Gaps = []string{"资料范围尚未选择"}
+		rec = request("POST", path, a.ID, learning.PlanningCommand{OperationID: uuid.NewString(), Action: "edit", ExpectedVersion: 2, Content: &d.Content})
+		if rec.Code != 200 {
+			t.Fatal(rec.Body)
+		}
+		validate("PlanningDraft", rec)
+		rec = request("POST", path, a.ID, learning.PlanningCommand{OperationID: uuid.NewString(), Action: "confirm", ExpectedVersion: 3, Target: "new_session"})
+		if rec.Code != 422 && rec.Code != 409 {
+			t.Fatalf("空大纲可执行：%d %s", rec.Code, rec.Body)
+		}
+	})
 	if rec := request("POST", "/v1/learning/goals", a.ID, body); rec.Code != 200 {
 		t.Fatalf("重试：%d %s", rec.Code, rec.Body)
 	}

@@ -229,6 +229,8 @@ The default color mode is `never`. `edu-agent clear`, interactive `:clear`, and 
 
 教学入口 `learn browse [--space UUID]` 按名称和编号选择目标、会话；列表显示阶段、路线位置和可继续状态。`learn start --goal UUID` 新建，`learn --session UUID` 继续，`learn show --session UUID` 只读历史，`learn list --goal UUID` 输出会话列表。普通 `learn` 优先使用本进程在该区明确选择的会话，否则打开 picker，不猜测全局最新会话。
 
+目标详情按 `p`，或运行 `goal plan --id UUID` 打开独立学习规划。可手动创建草稿，也可选 AI 完善；模型使用页面声明的服务端教学配置，不上传客户端 Key。草稿页可编辑目标建议、步骤、顺序、负荷和资料范围，按名称查看出处。AI 建议与用户原文分开展示，`u` 复制建议到草稿，`c` 明确确认后才修订目标或采用路线。可选择原会话后续步骤或新会话，旧学习事实保留。`--plan UUID` 恢复草稿，`--session UUID` 绑定教学上下文，`--json` 只读输出。模型失败或取消保留草稿；响应丢失时使用同一操作重试或按草稿 ID 查询。旧诊断路线也需要明确确认。详见[学习规划契约](../../docs/design/learning-planning.md)。
+
 原生教学页 F2 可在请求等待中切换会话；`:switch`、`:space`、`:pause`、`:complete` 分别切会话、切区、暂停目标、结束本次教学，互不等价。Esc / `:quit` 返回但不结束服务端教学。`:answer` 的多行草稿及正在编辑的一行按 session/activity 隔离，回到原题可继续；`:discard` 清除多行草稿。草稿不落盘，重启不恢复。取消不保证服务器事务回滚；重新进入查询原 session，CLI 不自动重放答案。非默认区的复习资格使用本会话 work_item；跨目标复习总览不在此入口提供。
 
 `offline prepare --session UUID [--space UUID]` 从所选会话签发；未给 ID 时使用进程选择或 picker。已保存离线 intent 的重试复用原请求，sync 按原授权归属，不跟随当前页面改目标；现有加密离线存储与签名信任链不变。详见[教学续学契约](../../docs/design/tutoring-sessions.md)。

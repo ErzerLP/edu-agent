@@ -361,8 +361,23 @@ func validateJSONSchema(schemaBytes, valueBytes []byte) error {
 
 func validateValue(schema map[string]any, value any, path string) error {
 	if expected, exists := schema["type"]; exists {
-		typeName, ok := expected.(string)
-		if !ok || !matchesType(typeName, value) {
+		matched := false
+		switch types := expected.(type) {
+		case string:
+			matched = matchesType(types, value)
+		case []any:
+			// 严格模型 schema 的可选值用类型联合表达，例如 integer/null。
+			for _, member := range types {
+				typeName, ok := member.(string)
+				if !ok {
+					return fmt.Errorf("%s has invalid type schema", path)
+				}
+				if matchesType(typeName, value) {
+					matched = true
+				}
+			}
+		}
+		if !matched {
 			return fmt.Errorf("%s must be %v", path, expected)
 		}
 	}

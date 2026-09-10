@@ -85,6 +85,7 @@ func (a *App) workbenchGoals(ctx context.Context, client APIClient, req workbenc
 	}
 	g := api.GoalRevision{Management: &api.GoalManagement{Status: "draft", Details: api.GoalDetails{Priority: "normal"}}}
 	if req.Page == "goal" {
+		p.Entries = append(p.Entries, workbench.Entry{ID: "agent:" + g.GoalID + "/", Label: "打开此目标的 AI 聊天（与教学续学独立）"})
 		var err error
 		g, err = c.Goal(ctx, req.Resource)
 		if err != nil {

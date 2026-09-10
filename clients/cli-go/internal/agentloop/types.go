@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
@@ -130,6 +131,7 @@ type FileWriteAhead struct {
 }
 
 type Options struct {
+	LearningBinding   agentcontext.Binding
 	ContextWindow     int
 	MaxTokens         int
 	MaxToolRounds     int
@@ -389,6 +391,8 @@ var (
 )
 
 type Result struct {
+	Workflow            *LearningWorkflow
+	Navigate            *agentcontext.Binding
 	Text                string
 	Events              []Event
 	Pending             *PreferenceConfirmation

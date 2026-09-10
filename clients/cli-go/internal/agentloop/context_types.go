@@ -141,6 +141,7 @@ const (
 // ServerReference records only version/revision metadata needed to keep a
 // tool-derived source honest about being a historical server snapshot.
 type ServerReference struct {
+	LearningContext   string `json:",omitempty"`
 	Tool              string
 	Entity            string
 	EntityID          string
@@ -155,7 +156,11 @@ func (r *ServerReference) Identity() string {
 	if r == nil {
 		return ""
 	}
-	return r.Tool + "\x00" + r.Entity + "\x00" + r.EntityID
+	identity := r.Tool + "\x00" + r.Entity + "\x00" + r.EntityID
+	if r.LearningContext != "" {
+		identity = r.LearningContext + "\x00" + identity
+	}
+	return identity
 }
 
 type SourceEntry struct {

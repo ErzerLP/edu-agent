@@ -126,6 +126,7 @@ func TestArchiveRestoreFrozenC8Migration(t *testing.T) {
 	}
 	record.SchemaVersion = 7
 	recordPlain, _ := encodeStrict(record)
+	recordPlain = withoutLearningBindingForTest(t, recordPlain)
 	for _, point := range []string{`"file_receipts":[{`, `"effect":{`, `"source":{`, `"target":{`, `"directories":{`} {
 		bad := bytes.ReplaceAll(recordPlain, []byte(point), []byte(point+`"future":null,`))
 		if bytes.Equal(bad, recordPlain) {

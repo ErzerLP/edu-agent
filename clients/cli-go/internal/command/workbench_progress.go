@@ -65,6 +65,9 @@ func (a *App) workbenchProgress(ctx context.Context, client APIClient, req workb
 		p.Content += progressWarnings(page.Metadata)
 	}
 	p.Entries = append(p.Entries, workbench.Entry{ID: "page:global-overview", Label: "全局学习总览"}, workbench.Entry{ID: "page:global-reviews", Label: "全局到期复习"})
+	if !q.Global {
+		p.Entries = append(p.Entries, workbench.Entry{ID: "agent:" + req.Resource + "/", Label: "打开本区 AI 聊天（不自动选择目标）"})
+	}
 	p.Content = safeText(p.Content)
 	return p, nil
 }

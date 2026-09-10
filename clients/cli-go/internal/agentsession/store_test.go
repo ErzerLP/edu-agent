@@ -1561,7 +1561,7 @@ func TestRecordPayloadMigrationRejectsMalformedAndBoundsVersions(t *testing.T) {
 		t.Fatalf("missing required v1 field error=%v", err)
 	}
 
-	if recordMigrationMaxSteps != 8 {
+	if recordMigrationMaxSteps != 9 {
 		t.Fatalf("migration bound=%d", recordMigrationMaxSteps)
 	}
 	if recordPayloadSchemaVersion-recordMigrationMaxSteps != 1 {
@@ -1614,6 +1614,7 @@ func legacyRecordPayloadV1ForTest(t *testing.T, record SessionRecord) recordPayl
 		t.Fatal(err)
 	}
 	var payload recordPayloadV1
+	plain = withoutLearningBindingForTest(t, plain)
 	if err := decodeStrict(plain, &payload, int64(len(plain))); err != nil {
 		t.Fatal(err)
 	}
@@ -1656,6 +1657,9 @@ func writeRecordPayloadForTest(t *testing.T, store *Store, dataKey []byte, recor
 	plain, err := encodeStrict(payload)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if version < 10 {
+		plain = withoutLearningBindingForTest(t, plain)
 	}
 	if mutate != nil {
 		plain = mutate(plain)

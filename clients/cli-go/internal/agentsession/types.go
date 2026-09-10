@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/keybackend"
@@ -13,8 +14,8 @@ const (
 	profileSecretService         = "edu-agent-agent-sessions-v1"
 	profileSecretVersion         = 1
 	recordContainerSchemaVersion = 1
-	recordPayloadSchemaVersion   = 9
-	recordMigrationMaxSteps      = 8
+	recordPayloadSchemaVersion   = 10
+	recordMigrationMaxSteps      = 9
 	indexSchemaVersion           = 1
 	projectionSchemaVersion      = 1
 	dirtyContainerSchemaVersion  = 1
@@ -101,6 +102,7 @@ type Options struct {
 }
 
 type CreateInput struct {
+	LearningBinding           agentcontext.Binding
 	Title                     string
 	WorkspaceID               string
 	WorkspaceRoot             string
@@ -204,11 +206,12 @@ type fileWriteAheadV2 struct {
 }
 
 type SessionRecord struct {
-	SchemaVersion     int    `json:"schema_version"`
-	SessionID         string `json:"session_id"`
-	StorageID         string `json:"storage_id"`
-	PrivacyGeneration uint64 `json:"privacy_generation"`
-	RecordRevision    uint64 `json:"record_revision"`
+	LearningBinding   agentcontext.Binding `json:"learning_binding"`
+	SchemaVersion     int                  `json:"schema_version"`
+	SessionID         string               `json:"session_id"`
+	StorageID         string               `json:"storage_id"`
+	PrivacyGeneration uint64               `json:"privacy_generation"`
+	RecordRevision    uint64               `json:"record_revision"`
 	// CommitID distinguishes an exact publication from a stale revision.
 	CommitID                  string              `json:"commit_id"`
 	CreatedAt                 time.Time           `json:"created_at"`
@@ -388,6 +391,7 @@ type DeleteTarget struct {
 }
 
 type Summary struct {
+	LearningBinding          agentcontext.Binding
 	SessionID                string
 	StorageID                string
 	RecordRevision           uint64
@@ -429,30 +433,31 @@ type indexLocator struct {
 }
 
 type indexProjection struct {
-	SchemaVersion            int       `json:"schema_version"`
-	SessionID                string    `json:"session_id"`
-	StorageID                string    `json:"storage_id"`
-	PrivacyGeneration        uint64    `json:"privacy_generation"`
-	RecordRevision           uint64    `json:"record_revision"`
-	RecordCommitID           string    `json:"record_commit_id"`
-	CheckpointRevision       uint64    `json:"checkpoint_revision"`
-	CreatedAt                time.Time `json:"created_at"`
-	UpdatedAt                time.Time `json:"updated_at"`
-	LastOpenedAt             time.Time `json:"last_opened_at"`
-	Title                    string    `json:"title"`
-	TitleSource              string    `json:"title_source"`
-	FirstUserSummary         string    `json:"first_user_summary,omitempty"`
-	RecentUserSummary        string    `json:"recent_user_summary,omitempty"`
-	TitleRevision            uint64    `json:"title_revision"`
-	CommittedUserTurns       uint64    `json:"committed_user_turns"`
-	TranscriptCount          uint64    `json:"transcript_count"`
-	ServerProfileFingerprint string    `json:"server_profile_fingerprint"`
-	WorkspaceID              string    `json:"workspace_id"`
-	WorkspaceLabel           string    `json:"workspace_label,omitempty"`
-	ProviderName             string    `json:"provider_name,omitempty"`
-	ProviderEndpoint         string    `json:"provider_endpoint"`
-	ProviderModel            string    `json:"provider_model,omitempty"`
-	Lifecycle                string    `json:"lifecycle"`
+	LearningBinding          agentcontext.Binding `json:"learning_binding,omitempty"`
+	SchemaVersion            int                  `json:"schema_version"`
+	SessionID                string               `json:"session_id"`
+	StorageID                string               `json:"storage_id"`
+	PrivacyGeneration        uint64               `json:"privacy_generation"`
+	RecordRevision           uint64               `json:"record_revision"`
+	RecordCommitID           string               `json:"record_commit_id"`
+	CheckpointRevision       uint64               `json:"checkpoint_revision"`
+	CreatedAt                time.Time            `json:"created_at"`
+	UpdatedAt                time.Time            `json:"updated_at"`
+	LastOpenedAt             time.Time            `json:"last_opened_at"`
+	Title                    string               `json:"title"`
+	TitleSource              string               `json:"title_source"`
+	FirstUserSummary         string               `json:"first_user_summary,omitempty"`
+	RecentUserSummary        string               `json:"recent_user_summary,omitempty"`
+	TitleRevision            uint64               `json:"title_revision"`
+	CommittedUserTurns       uint64               `json:"committed_user_turns"`
+	TranscriptCount          uint64               `json:"transcript_count"`
+	ServerProfileFingerprint string               `json:"server_profile_fingerprint"`
+	WorkspaceID              string               `json:"workspace_id"`
+	WorkspaceLabel           string               `json:"workspace_label,omitempty"`
+	ProviderName             string               `json:"provider_name,omitempty"`
+	ProviderEndpoint         string               `json:"provider_endpoint"`
+	ProviderModel            string               `json:"provider_model,omitempty"`
+	Lifecycle                string               `json:"lifecycle"`
 
 	Corrupt            bool `json:"-"`
 	LocatorOnly        bool `json:"-"`

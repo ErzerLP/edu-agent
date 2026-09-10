@@ -53,6 +53,7 @@ type Conversation interface {
 }
 
 type Runner struct {
+	Workflow  WorkflowRunner
 	In        io.Reader
 	Out       io.Writer
 	Session   Conversation
@@ -64,6 +65,7 @@ func (r Runner) Run(ctx context.Context) error {
 		return fmt.Errorf("agent session is not configured")
 	}
 	initial := newModel(ctx, r.Session, r.ModelName)
+	initial.workflowRunner = r.Workflow
 	defer initial.cancel()
 	if initial.contextCancel != nil {
 		defer initial.contextCancel()
@@ -76,7 +78,10 @@ func (r Runner) Run(ctx context.Context) error {
 		tea.WithOutput(r.Out),
 		tea.WithContext(ctx),
 	)
-	_, err := program.Run()
+	final, err := program.Run()
+	if result, ok := final.(model); err == nil && ok && result.navigation != nil {
+		return result.navigation
+	}
 	return err
 }
 
@@ -156,12 +161,17 @@ type contextMsg struct {
 }
 
 type learningMsg struct {
-	generation uint64
-	status     agentloop.LearningStatus
-	err        error
+	description string
+	generation  uint64
+	status      agentloop.LearningStatus
+	err         error
 }
 
 type model struct {
+	learningLabel          string
+	workflowRunner         WorkflowRunner
+	pendingWorkflow        *agentloop.LearningWorkflow
+	navigation             *NavigateLearningContext
 	ctx                    context.Context
 	cancel                 context.CancelFunc
 	session                Conversation
@@ -302,6 +312,11 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case workflowMessage:
+		if msg.generation != m.generation || m.pendingWorkflow == nil || m.pendingWorkflow.CallID != msg.id {
+			return m, nil
+		}
+		return m.resolveLearningWorkflow(msg.id, msg.outcome)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
@@ -347,6 +362,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, waitTurnCmdForGeneration(m.ctx, m.generation, msg.turnID, msg.kind, msg.stream)
 		}
 		m.finishTurn(msg.result, msg.err)
+		if msg.err == nil && msg.result.Navigate != nil {
+			m.navigation = &NavigateLearningContext{Binding: *msg.result.Navigate}
+			return m, tea.Quit
+		}
 		m.resize()
 		m.refreshTranscript(true)
 		learningCmd := m.startLearningRefresh()
@@ -356,8 +375,10 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.learningLoading = false
+		m.learningLabel = msg.description
 		m.learningLoaded = msg.err == nil
 		m.learningFailed = msg.err != nil
+		m.resize()
 		if msg.err == nil {
 			m.learningStatus = msg.status
 		} else {
@@ -490,6 +511,8 @@ func (m *model) resetAfterSessionSwap(generation uint64) {
 	m.shownEventKeys = map[string]struct{}{}
 	m.learningLoading, m.learningLoaded, m.learningFailed, m.learningRefreshPending = true, false, false, false
 	m.status = "已切换 Session"
+	m.learningLabel = ""
+	m.pendingWorkflow = nil
 	m.resize()
 	m.refreshTranscript(true)
 }
@@ -505,6 +528,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.terminalTooSmall() {
 		return m, nil
+	}
+	if m.pendingWorkflow != nil {
+		return m.learningWorkflowKey(key)
+	}
+	if key == "f7" {
+		return m.chooseLearningContext()
 	}
 	if m.sessionPicker != nil {
 		intent := m.sessionPicker.handleKey(msg, m.manager)
@@ -1075,6 +1104,13 @@ func (m *model) handleTurnResult(result agentloop.Result) {
 	}
 	m.entries = appendToolEvents(m.entries, m.activeTurnID, newEvents)
 	m.pending, m.pendingQuestion, m.pendingFileMutation, m.selector = nil, nil, nil, nil
+	if result.Workflow != nil {
+		flow := *result.Workflow
+		m.pendingWorkflow = &flow
+		m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "正式流程：" + flow.Kind + "。Enter 打开选择/预览页面，Esc 取消。进入页面不等于确认保存或发布。"})
+		m.status = "Enter 打开正式流程 · Esc 取消"
+		return
+	}
 	if result.PendingFileMutation != nil {
 		m.pendingFileMutation = cloneFileMutation(result.PendingFileMutation)
 		m.pendingFileTurnID = m.activeTurnID
@@ -1343,6 +1379,9 @@ func (m model) View() string {
 		return m.taskPanel.render(m.width, m.height)
 	}
 	mainWidth := max(20, m.viewport.Width)
+	if m.pendingWorkflow != nil {
+		return m.viewport.View() + "\n正式流程：" + m.pendingWorkflow.Kind + "\nEnter 打开正式页面 · Esc 取消（尚未批准写入）\n"
+	}
 	main := lipgloss.JoinVertical(lipgloss.Left,
 		m.viewport.View(),
 		m.renderControl(mainWidth),

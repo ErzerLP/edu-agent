@@ -124,6 +124,7 @@ type dashboardModelKeySource interface {
 }
 
 type App struct {
+	agentWorkflow       bool
 	Config              ConfigStore
 	Credentials         CredentialStore
 	ModelSecrets        ModelSecretStore

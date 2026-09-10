@@ -68,6 +68,12 @@ func workspaceModelVisibleValue(result workspace.Result) any {
 }
 
 func serverReferenceForToolResult(tool string, value any) *ServerReference {
+	if tool == "learning_context" {
+		object := normalizedProjectionObject(value)
+		if view, ok := object["learning_view"].(string); ok && view != "learning_context" {
+			return serverReferenceForToolResult(view, value)
+		}
+	}
 	reference := &ServerReference{Tool: tool, Entity: tool}
 	object := normalizedProjectionObject(value)
 	if object == nil {
@@ -78,6 +84,9 @@ func serverReferenceForToolResult(tool string, value any) *ServerReference {
 	case "search_knowledge":
 		reference.Entity = "knowledge_revision"
 		reference.EntityID, _ = object["knowledge_revision_id"].(string)
+		if scope, ok := object["scope_snapshot_id"].(string); ok && scope != "" {
+			reference.Entity, reference.EntityID = "scope_snapshot", scope
+		}
 		reference.Revision = reference.EntityID
 	case "get_learning_progress":
 		reference.Entity = "learning_session"

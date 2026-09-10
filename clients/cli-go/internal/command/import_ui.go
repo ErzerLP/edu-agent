@@ -40,6 +40,7 @@ type importDraft struct {
 	unknown                       bool
 }
 type importModel struct {
+	fixedSpace                                            bool
 	jobMode                                               bool
 	jobResume                                             *api.ImportJob
 	jobResolve                                            func(api.ImportRequest) tea.Cmd
@@ -475,6 +476,10 @@ func (m *importModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.stage = "paste"
 				return m, m.paste.Focus()
 			case "f5":
+				if m.fixedSpace {
+					m.note = "本流程绑定原聊天学习区；请返回聊天并明确切换上下文后再导入。"
+					return m, nil
+				}
 				m.draft.space, m.draft.spaceName = "", ""
 				m.draft.collection = api.KnowledgeCollection{}
 				m.nextSpace = ""
@@ -989,6 +994,7 @@ func (a *App) runImportWizardMode(ctx context.Context, client *api.Client, colle
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 	m := newImportModel(child, client, draft, a.NewUUID)
+	m.fixedSpace = a.agentWorkflow
 	m.cancel = cancel
 	m.jobMode = jobMode
 	if len(resumes) > 0 {

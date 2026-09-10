@@ -33,6 +33,13 @@ func renderProductLabel() string {
 }
 
 func (m model) renderControl(width int) string {
+	if m.learningLabel != "" && m.sidebarWidth == 0 {
+		return truncateDisplayWidth(safeSingleLineTerminalText(m.learningLabel), width) + "\n" + m.renderLearningComposer(width)
+	}
+	return m.renderLearningComposer(width)
+}
+
+func (m model) renderLearningComposer(width int) string {
 	if m.selector != nil {
 		return m.renderSelector(width)
 	}
@@ -478,6 +485,9 @@ func (m model) footerHintVariants() [][]footerHint {
 		}
 	default:
 		hints := []footerHint{{key: "Enter", action: "发送"}, {key: "Ctrl+J", action: "换行"}, {key: "滚轮/↑/↓/PgUp/PgDn", action: "历史"}}
+		if m.workflowRunner != nil {
+			hints = append(hints, footerHint{key: "F7", action: "学习区/目标"})
+		}
 		if m.manager != nil {
 			hints = append(hints, footerHint{key: "F2", action: "Session"})
 			if len(m.manager.UnknownOutcomes()) > 0 {

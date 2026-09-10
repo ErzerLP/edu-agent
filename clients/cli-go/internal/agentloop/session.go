@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
@@ -63,6 +64,7 @@ type Session struct {
 	pendingIndex                 int
 	pendingArgs                  preferenceArgs
 	pendingQuestion              *PendingQuestion
+	pendingWorkflow              *LearningWorkflow
 	pendingFileMutation          *PendingFileMutation
 	pendingPreparedMutation      *workspace.PreparedMutation
 	pendingResolving             bool
@@ -102,6 +104,9 @@ type preferenceArgs struct {
 func New(model Model, server Server, options Options) (*Session, error) {
 	if model == nil || server == nil || options.NewUUID == nil {
 		return nil, errors.New("agent loop dependencies are incomplete")
+	}
+	if bound, ok := server.(*agentcontext.Client); ok && bound.Binding != options.LearningBinding.Normalize() {
+		return nil, errors.New("Agent 客户端与检查点绑定不一致")
 	}
 	if options.ContextWindow < 4096 || !agentlimits.ValidToolRounds(options.MaxToolRounds) {
 		return nil, errors.New("agent loop limits are invalid")
@@ -165,6 +170,9 @@ func New(model Model, server Server, options Options) (*Session, error) {
 	if options.LocalExec != nil && !compactLocal {
 		messages = append(messages, modelclient.Message{Role: "system", Content: localExecutionSystemPrompt})
 		messageTurnIDs = append(messageTurnIDs, "")
+	}
+	if bound, ok := server.(interface{ AgentBinding() string }); ok {
+		messages[0].Content += "\n绑定=" + bound.AgentBinding() + "。身份固定；learning_context读取，open_learning_workflow选择或编辑。普通聊天不批准写入；偏好保存为全局，方向约束仅留本聊天。"
 	}
 	estimator := NewTokenEstimator()
 	session := &Session{
@@ -259,6 +267,7 @@ func (s *Session) clearPendingLocked() {
 	s.pendingIndex = 0
 	s.pendingArgs = preferenceArgs{}
 	s.pendingQuestion = nil
+	s.pendingWorkflow = nil
 	s.pendingFileMutation = nil
 	s.pendingPreparedMutation = nil
 	s.pendingResolving = false
@@ -544,7 +553,7 @@ func (s *Session) SwitchState() SessionSwitchState {
 	defer s.appendMu.Unlock()
 	return SessionSwitchState{
 		ActiveTurn:          s.activeTurnID != "",
-		PendingQuestion:     s.pendingQuestion != nil,
+		PendingQuestion:     s.pendingQuestion != nil || s.pendingWorkflow != nil,
 		PendingPreference:   s.pendingKind == pendingPreference,
 		PendingFileMutation: s.pendingFileMutation != nil || s.pendingPreparedMutation != nil,
 		Resolving:           s.pendingResolving,
@@ -834,6 +843,14 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 }
 
 func cloneResult(value Result) Result {
+	if value.Workflow != nil {
+		flow := *value.Workflow
+		value.Workflow = &flow
+	}
+	if value.Navigate != nil {
+		binding := *value.Navigate
+		value.Navigate = &binding
+	}
 	value.Events = append([]Event(nil), value.Events...)
 	if value.Pending != nil {
 		pending := *value.Pending
@@ -1140,6 +1157,9 @@ func (s *Session) appendToolResult(tool, callID string, value any) error {
 		return s.appendUncapturedToolResult(tool, callID, value)
 	}
 	projection := projectToolResult(tool, value)
+	if bound, ok := s.server.(interface{ AgentBinding() string }); ok && projection.ServerReference != nil {
+		projection.ServerReference.LearningContext = bound.AgentBinding()
+	}
 	allServerEvidence := toolResultCode(value) == "content_redacted"
 	identityEvidence := toolResultInvalidatesIdentity(tool, value)
 	s.appendMu.Lock()

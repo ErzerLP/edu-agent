@@ -61,7 +61,7 @@ func TestArchivePurgePayloadRoundTrip(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if version, header := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, saved); version != 9 || header.SchemaVersion != 1 {
+				if version, header := recordPayloadVersionOnDiskForTest(t, s, h.dataKey, saved); version != 10 || header.SchemaVersion != 1 {
 					t.Fatal(version, header)
 				}
 				loaded, err = h.Load()
@@ -120,6 +120,7 @@ func TestArchivePurgeFrozenC9Migration(t *testing.T) {
 	}
 	record.SchemaVersion = 8
 	recordPlain, _ := encodeStrict(record)
+	recordPlain = withoutLearningBindingForTest(t, recordPlain)
 	for _, point := range []string{`"file_receipts":[{`, `"effect":{`, `"source":{`, `"target":{`, `"directories":{`} {
 		bad := bytes.ReplaceAll(recordPlain, []byte(point), []byte(point+`"future":null,`))
 		if bytes.Equal(bad, recordPlain) {
@@ -139,6 +140,7 @@ func TestArchivePurgeRejectedByAllOlderPayloads(t *testing.T) {
 		for version := 1; version <= 8; version++ {
 			record.SchemaVersion, record.FileReceipts = version, []FileReceipt{r}
 			raw, _ := encodeStrict(record)
+			raw = withoutLearningBindingForTest(t, raw)
 			if _, _, err := decodeRecordPayload(raw, 1<<20); !errors.Is(err, ErrCorrupt) {
 				t.Fatalf("record %d effect %d: %v", version, effectVersion, err)
 			}

@@ -20,8 +20,10 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
@@ -175,6 +177,20 @@ func ProviderEndpointIdentity(value Provider) string {
 }
 
 func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Controller, error) {
+	if err := bindLearningDependencies(ctx, &dependencies, dependencies.LoopOptions.LearningBinding); err != nil {
+		if dependencies.Store != nil {
+			_ = dependencies.Store.Close()
+		}
+		return nil, err
+	}
+	if bound, ok := dependencies.Server.(*agentcontext.Client); ok && (bound.Binding.SpaceID != api.DefaultLearningSpaceID || bound.Binding.GoalID != "") {
+		if _, _, err := bound.Validate(ctx); err != nil {
+			if dependencies.Store != nil {
+				_ = dependencies.Store.Close()
+			}
+			return nil, err
+		}
+	}
 	controller, err := newController(dependencies)
 	if err != nil {
 		if dependencies.Store != nil {
@@ -212,7 +228,8 @@ func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Contro
 	}
 	learner, memory, verified := privacyStamp(ctx, dependencies.Server)
 	handle, record, err := dependencies.Store.Create(ctx, agentsession.CreateInput{
-		Title: "新会话", WorkspaceID: WorkspaceScopeID(binding), WorkspaceRoot: binding.Root, WorkspaceLabel: binding.Label,
+		LearningBinding: dependencies.LoopOptions.LearningBinding.Normalize(),
+		Title:           "新会话", WorkspaceID: WorkspaceScopeID(binding), WorkspaceRoot: binding.Root, WorkspaceLabel: binding.Label,
 		WorkspacePathHash: binding.PathHash, WorkspaceRootIdentityHash: binding.RootIdentityHash,
 		ProviderName: dependencies.Provider.Name, ProviderEndpoint: normalizedEndpoint(dependencies.Provider.Endpoint), ProviderModel: dependencies.Provider.Model,
 		PrivacyLearnerGeneration: learner, PrivacyMemoryGeneration: memory, PrivacyVerified: verified,
@@ -277,6 +294,9 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 			_ = lease.release()
 		}
 	}()
+	if err := bindLearningDependencies(ctx, &dependencies, loaded.Record.LearningBinding); err != nil {
+		return nil, err
+	}
 
 	storedWorkspace := WorkspaceBinding{
 		Root: loaded.Record.WorkspaceRoot, Label: loaded.Record.WorkspaceLabel, PathHash: loaded.Record.WorkspacePathHash,
@@ -327,6 +347,9 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 	controller.localSessionLease = lease
 	closeOnError = false // Subsequent failures clean up through controller.abort.
 	controller.record = loaded.Record
+	if loaded.Record.LearningBinding.Normalize().SpaceID == api.DefaultLearningSpaceID && loaded.Record.LearningBinding.GoalID == "" {
+		controller.appendStatusNoticeLocked("默认区兼容：旧聊天不按标题推测归属；旧全局资料不代表已经按学习区隔离。")
+	}
 	controller.resumed = true
 	controller.prepared = options.PrepareOnly
 	controller.record.LastOpenedAt = controller.now().UTC()
@@ -553,6 +576,7 @@ func newController(dependencies Dependencies) (*Controller, error) {
 		dependencies.LoopOptions.ArtifactOwner = "unsaved-" + rand.Text()
 	}
 	controller := &Controller{
+		record:    agentsession.SessionRecord{LearningBinding: dependencies.LoopOptions.LearningBinding.Normalize()},
 		artifacts: dependencies.LoopOptions.Artifacts, artifactOwner: dependencies.LoopOptions.ArtifactOwner,
 		fileBatches: dependencies.LoopOptions.FileBatches,
 		localExec:   dependencies.LoopOptions.LocalExec, localOwner: dependencies.LoopOptions.LocalExecOwner,
@@ -577,6 +601,9 @@ func privacyStamp(ctx context.Context, server agentloop.Server) (int64, int64, b
 	page, err := server.ExportMemory(ctx, "", 1)
 	if err != nil {
 		return 0, 0, false
+	}
+	if bound, ok := server.(*agentcontext.Client); ok {
+		bound.SetPrivacyBaseline(page.ReadGeneration.LearnerGeneration, page.ReadGeneration.MemoryGeneration)
 	}
 	return page.ReadGeneration.LearnerGeneration, page.ReadGeneration.MemoryGeneration, true
 }
@@ -900,7 +927,7 @@ func (c *Controller) CancelPendingFileMutation(callID string) (agentloop.Result,
 }
 
 func (c *Controller) finishOperation(ctx context.Context, result agentloop.Result, operationErr error) (agentloop.Result, error) {
-	if result.Pending != nil || result.PendingQuestion != nil || result.PendingFileMutation != nil {
+	if result.Pending != nil || result.PendingQuestion != nil || result.PendingFileMutation != nil || result.Workflow != nil {
 		c.endRuntimeOperation()
 		return result, operationErr
 	}

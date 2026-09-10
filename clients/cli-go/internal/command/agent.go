@@ -13,10 +13,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontroller"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentui"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
@@ -45,13 +47,22 @@ func (a *App) runAgent(ctx context.Context, args []string) error {
 		_, err := io.WriteString(a.Out, agentHelpText+"\n")
 		return err
 	}
-	if len(args) > 0 && args[0] == "resume" {
-		return a.runAgentResume(ctx, args[1:])
-	}
 	if len(args) > 0 && args[0] == "sessions" {
 		return a.runAgentSessions(ctx, args[1:])
 	}
-	return a.runNewAgent(ctx, args)
+	var err error
+	if len(args) > 0 && args[0] == "resume" {
+		err = a.runAgentResume(ctx, args[1:])
+	} else {
+		err = a.runNewAgent(ctx, args)
+	}
+	for {
+		var navigation *agentui.NavigateLearningContext
+		if !errors.As(err, &navigation) {
+			return err
+		}
+		err = a.enterAgentBinding(ctx, navigation.Binding, navigation.NoSave, navigation.WorkspaceRoot)
+	}
 }
 
 func (a *App) runNewAgent(ctx context.Context, args []string) error {
@@ -82,6 +93,9 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	set := newFlagSet("agent")
 	var workspacePath string
 	var noSave bool
+	var goalID, teachingID string
+	set.StringVar(&goalID, "goal", "", "明确绑定目标 ID")
+	set.StringVar(&teachingID, "session", "", "明确绑定教学会话 ID（需同时指定 --goal）")
 	set.StringVar(&workspacePath, "workspace", "", "fixed workspace root")
 	set.BoolVar(&noSave, "no-save", false, "disable persistence for this new session")
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
@@ -109,6 +123,10 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 		return err
 	}
 	server := a.scopedClient(value.ServerURL, record.Token, requestTimeout)
+	learningBinding := agentcontext.Binding{SpaceID: a.learningSpace, GoalID: goalID, SessionID: teachingID}.Normalize()
+	if !learningBinding.Valid() {
+		return commandError("invalid_agent_binding", "学习区/目标/教学绑定无效", "--session 需配合 --goal，所有 ID 使用规范 UUID", ExitInput)
+	}
 	workspaceStatus := workspace.Status{Code: workspace.CodeWorkspaceUnavailable}
 	var workspaceExecutor *workspace.Workspace
 	if workspacePathErr == nil {
@@ -136,7 +154,8 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 		Provider:      agentcontroller.Provider{Name: value.Agent.Provider, Endpoint: value.Agent.BaseURL, Model: value.Agent.Model},
 		WorkspaceRoot: workspacePath,
 		LoopOptions: agentloop.Options{
-			ContextWindow: value.Agent.ContextWindow, MaxTokens: value.Agent.MaxTokens, MaxToolRounds: value.Agent.MaxToolRounds,
+			LearningBinding: learningBinding,
+			ContextWindow:   value.Agent.ContextWindow, MaxTokens: value.Agent.MaxTokens, MaxToolRounds: value.Agent.MaxToolRounds,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -232,6 +251,16 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 		_ = store.Close()
 		return sessionCommandError(err)
 	}
+	if target == "" && !all {
+		filtered := summaries[:0]
+		space := (agentcontext.Binding{SpaceID: a.learningSpace}).Normalize().SpaceID
+		for _, summary := range summaries {
+			if summary.LearningBinding.Normalize().SpaceID == space {
+				filtered = append(filtered, summary)
+			}
+		}
+		summaries = filtered
+	}
 	workspaceBinding, _ := agentcontroller.BindWorkspace(workspacePath)
 	workspaceID := agentcontroller.WorkspaceScopeID(workspaceBinding)
 	provider := agentcontroller.Provider{Name: value.Agent.Provider, Endpoint: value.Agent.BaseURL, Model: value.Agent.Model}
@@ -239,7 +268,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	var pickerChoice agentui.PickerChoice
 	if target == "" && !last {
 		if picker, ok := a.AgentUI.(AgentSessionPickerRunner); ok {
-			selector := agentcontroller.NewSelector(store, workspaceID, provider)
+			selector := agentcontroller.NewSelector(store, workspaceID, provider).InLearningSpace((agentcontext.Binding{SpaceID: a.learningSpace}).Normalize().SpaceID)
 			pickerChoice, err = picker.Pick(ctx, selector, all)
 			if err != nil {
 				_ = store.Close()
@@ -328,6 +357,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 }
 
 func (a *App) runAgentController(ctx context.Context, controller *agentcontroller.Controller, modelName string) error {
+	noSave := !controller.Status().Persistent
 	uiErr := a.runAgentUI(ctx, controller, modelName)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	shutdownErr := controller.Shutdown(shutdownCtx)
@@ -338,6 +368,11 @@ func (a *App) runAgentController(ctx context.Context, controller *agentcontrolle
 			return commandError(taskErr.Code, "本地任务清理未能确认完成", "检查相关进程；不要将此状态当作已全部停止，也不要自动重跑历史命令", ExitUnavailable)
 		}
 		return sessionCommandError(shutdownErr)
+	}
+	var navigation *agentui.NavigateLearningContext
+	if errors.As(uiErr, &navigation) {
+		navigation.NoSave = noSave
+		navigation.WorkspaceRoot = controller.LearningWorkspaceRoot()
 	}
 	return uiErr
 }
@@ -407,13 +442,56 @@ func (a *App) runAgentSessions(ctx context.Context, args []string) error {
 }
 
 func (a *App) runAgentUI(ctx context.Context, conversation agentui.Conversation, modelName string) error {
-	if err := a.AgentUI.Run(ctx, conversation, modelName); err != nil {
+	run := a.AgentUI.Run
+	if _, ok := a.AgentUI.(defaultAgentUIRunner); ok {
+		run = func(ctx context.Context, c agentui.Conversation, name string) error {
+			return (agentui.Runner{In: a.teachingInput, Out: a.teachingOutput, Session: c, ModelName: name, Workflow: a.runAgentWorkflow}).Run(ctx)
+		}
+	}
+	if err := run(ctx, conversation, modelName); err != nil {
+		var navigation *agentui.NavigateLearningContext
+		if errors.As(err, &navigation) {
+			return err
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return commandError("terminal_error", "AI学习助手界面无法运行", "检查终端能力后重试", ExitInternal)
 	}
 	return nil
+}
+
+func (a *App) enterAgentBinding(ctx context.Context, b agentcontext.Binding, noSave bool, workspaceRoot string) error {
+	local := *a
+	local.learningSpace = b.Normalize().SpaceID
+	if !noSave {
+		value, err := a.Config.Load()
+		if err == nil {
+			store, err := a.openAgentSessionStore(ctx, value.ServerURL)
+			if err == nil {
+				items, listErr := store.List(ctx)
+				_ = store.Close()
+				if listErr == nil {
+					for _, item := range sortAgentSessionSummaries(items) {
+						if item.LearningBinding.Normalize() == b.Normalize() && !item.Locked && !item.Corrupt && !item.Unavailable {
+							return local.runAgentResume(ctx, []string{item.SessionID, "--all"})
+						}
+					}
+				}
+			}
+		}
+	}
+	args := []string{"--workspace", workspaceRoot}
+	if b.GoalID != "" {
+		args = append(args, "--goal", b.GoalID)
+	}
+	if b.SessionID != "" {
+		args = append(args, "--session", b.SessionID)
+	}
+	if noSave {
+		args = append(args, "--no-save")
+	}
+	return local.runNewAgent(ctx, args)
 }
 
 func agentTimeouts(value config.Config) (requestTimeout, modelTimeout time.Duration, err error) {
@@ -660,6 +738,11 @@ func sessionCommandErrorForCode(code string) *Error {
 }
 
 func sessionCommandError(err error) error {
+	var remote *api.APIError
+	var protocol *api.ProtocolError
+	if errors.As(err, &remote) || errors.As(err, &protocol) {
+		return mapAPIError(err)
+	}
 	var commandErr *Error
 	if errors.As(err, &commandErr) {
 		if mapped := sessionCommandErrorForCode(commandErr.Code); mapped != nil {
@@ -703,7 +786,7 @@ func sessionCommandError(err error) error {
 }
 
 const agentHelpText = `用法：
-  edu-agent agent [--workspace PATH] [--no-save]
+  edu-agent agent [--workspace PATH] [--no-save] [--space UUID] [--goal UUID] [--session UUID]
   edu-agent agent resume [SESSION] [--all]
   edu-agent agent resume --last
   edu-agent agent sessions delete SESSION|storage:<storage-id> --confirmed
@@ -712,10 +795,13 @@ const agentHelpText = `用法：
 启动、恢复或管理自动加密保存的 AI 学习助手会话。无 SESSION 的 resume 打开与 TUI F2 相同的选择器；Session 不按时间自动删除，达到上限也不自动淘汰。
 
 选项：
+  --space UUID      绑定学习区，省略时使用当前区；F7 明确选择区/目标/教学并进入对应独立聊天
+  --goal UUID       可选目标；省略可区内交流，需要具体目标时由用户选择，不取最近目标
+  --session UUID    可选教学会话，必须同时 --goal；只读其冻结范围，不调用全局 current
   --workspace PATH  固定本 Session 的本地工作区；省略时使用 Agent 启动目录
   --no-save         仅当前新 Session 不保存；不会改变默认设置
-  --last            恢复当前工作区范围内最近更新且可恢复的 Session；不能与 SESSION 或 --all 合用
-  --all             关闭当前工作区过滤；仅用于打开 picker 或配合显式 SESSION
+  --last            恢复当前学习区及工作区内最近可恢复的聊天；不能与 SESSION 或 --all 合用
+  --all             关闭学习区及工作区过滤；跨区恢复保留原绑定，不改标签或重放教学
   --file-read-limit BYTES      完整读取预算，默认67108864；适用于新建/resume/F2切换
   --file-edit-limit BYTES      局部edit原文/候选预算，默认67108864；独立于read/write
   --file-diff-limit BYTES      完整差异/单产物上限，默认134217728，最高1073741824
@@ -737,7 +823,7 @@ const agentHelpText = `用法：
   --task-saved-output-limit B  每任务加密输出保留上限，默认134217728；仅持久Session
   -h, --help        显示此帮助
 
-Session picker：空闲时 F2 打开；Tab 切换当前/全部工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
+Session picker：空闲时 F2 打开；Tab 切换当前/全部学习区及工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
 
 文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive、restore_archive、purge_archive。copy支持普通文件（含二进制）和完整递归目录；复制按总文件字节、完整计划入口和追加日志预算限制。目标根须不存在，不覆盖或合并；一次授权完整计划，失败/取消停止余项，已完成项保留。--no-save只在有界内存保留复制追加日志。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。

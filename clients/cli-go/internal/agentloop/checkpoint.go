@@ -14,12 +14,13 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 const (
-	SessionCheckpointSchemaVersion = 1
+	SessionCheckpointSchemaVersion = 2
 	MaxSessionCheckpointBytes      = 24 << 20
 	maxCheckpointTurns             = 4096
 	maxCheckpointMessages          = 16384
@@ -35,6 +36,7 @@ var (
 )
 
 type SessionCheckpoint struct {
+	LearningBinding     agentcontext.Binding        `json:"learning_binding"`
 	SchemaVersion       int                         `json:"schema_version"`
 	ReasoningEffort     modelclient.ReasoningEffort `json:"reasoning_effort"`
 	Messages            []modelclient.Message       `json:"messages"`
@@ -141,6 +143,7 @@ func (s *Session) ExportCheckpoint() (SessionCheckpoint, error) {
 		return SessionCheckpoint{}, ErrCheckpointUnstable
 	}
 	checkpoint := SessionCheckpoint{
+		LearningBinding: s.options.LearningBinding.Normalize(),
 		SchemaVersion:   SessionCheckpointSchemaVersion,
 		ReasoningEffort: s.reasoningEffort,
 		CurrentTurnID:   s.currentTurnID,
@@ -186,6 +189,9 @@ func (s *Session) ExportCheckpoint() (SessionCheckpoint, error) {
 // Runtime-only interaction state is reset and file authorization always
 // returns to per-operation confirmation.
 func (s *Session) RestoreCheckpoint(checkpoint SessionCheckpoint) error {
+	if checkpoint.LearningBinding.Normalize() != s.options.LearningBinding.Normalize() {
+		return ErrCheckpointCorrupt
+	}
 	prepared, err := prepareSessionCheckpoint(checkpoint)
 	if err != nil {
 		return err
@@ -267,6 +273,13 @@ func DecodeSessionCheckpoint(data []byte) (SessionCheckpoint, error) {
 	if err := checkpointSchemaError(checkpoint.SchemaVersion); err != nil {
 		return SessionCheckpoint{}, err
 	}
+	if checkpoint.SchemaVersion == 1 {
+		if checkpoint.LearningBinding != (agentcontext.Binding{}) {
+			return SessionCheckpoint{}, ErrCheckpointCorrupt
+		}
+		checkpoint.LearningBinding = checkpoint.LearningBinding.Normalize()
+		checkpoint.SchemaVersion = SessionCheckpointSchemaVersion
+	}
 	if err := validateSessionCheckpoint(checkpoint); err != nil {
 		return SessionCheckpoint{}, ErrCheckpointCorrupt
 	}
@@ -275,7 +288,7 @@ func DecodeSessionCheckpoint(data []byte) (SessionCheckpoint, error) {
 
 func checkpointSchemaError(version int) error {
 	switch {
-	case version == SessionCheckpointSchemaVersion:
+	case version == 1 || version == SessionCheckpointSchemaVersion:
 		return nil
 	case version > 0:
 		return ErrCheckpointVersionUnsupported
@@ -387,6 +400,9 @@ func prepareSessionCheckpoint(checkpoint SessionCheckpoint) (preparedSessionChec
 }
 
 func validateSessionCheckpoint(checkpoint SessionCheckpoint) error {
+	if !checkpoint.LearningBinding.Valid() {
+		return ErrCheckpointCorrupt
+	}
 	if err := checkpointSchemaError(checkpoint.SchemaVersion); err != nil {
 		return err
 	}
@@ -847,7 +863,7 @@ func validCheckpointSourceMessage(source CheckpointSource) bool {
 }
 
 func validCheckpointServerReference(value ServerReference) bool {
-	return safeCheckpointString(value.Tool, 256, true) && safeCheckpointString(value.Entity, 256, true) &&
+	return safeCheckpointString(value.LearningContext, 256, false) && safeCheckpointString(value.Tool, 256, true) && safeCheckpointString(value.Entity, 256, true) &&
 		safeCheckpointString(value.EntityID, 2048, false) && safeCheckpointString(value.Revision, 2048, false) &&
 		value.Version >= 0 && value.Generation >= 0 && value.LearnerGeneration >= 0 && value.MemoryGeneration >= 0
 }

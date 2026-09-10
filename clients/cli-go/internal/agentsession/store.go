@@ -257,7 +257,8 @@ func (s *Store) Create(ctx context.Context, input CreateInput) (*Handle, Session
 	}
 	now := s.now().UTC()
 	record := SessionRecord{
-		SchemaVersion: recordPayloadSchemaVersion, SessionID: sessionID, StorageID: storageID,
+		LearningBinding: input.LearningBinding.Normalize(),
+		SchemaVersion:   recordPayloadSchemaVersion, SessionID: sessionID, StorageID: storageID,
 		PrivacyGeneration: generation, RecordRevision: 1,
 		CommitID: commitID, CreatedAt: now, UpdatedAt: now, LastOpenedAt: now,
 		CheckpointRevision: 1, ServerProfileFingerprint: hex.EncodeToString(s.profile[:]), Lifecycle: "active",
@@ -456,7 +457,8 @@ func (s *Store) List(ctx context.Context) ([]Summary, error) {
 	for _, entry := range entries {
 		locked, lockUnavailable := s.probeSessionLock(ctx, entry.StorageID)
 		result = append(result, Summary{
-			SessionID: entry.SessionID, StorageID: entry.StorageID, RecordRevision: entry.RecordRevision, CheckpointRevision: entry.CheckpointRevision,
+			LearningBinding: entry.LearningBinding.Normalize(),
+			SessionID:       entry.SessionID, StorageID: entry.StorageID, RecordRevision: entry.RecordRevision, CheckpointRevision: entry.CheckpointRevision,
 			CreatedAt: entry.CreatedAt, UpdatedAt: entry.UpdatedAt, LastOpenedAt: entry.LastOpenedAt,
 			Title: entry.Title, TitleSource: entry.TitleSource, FirstUserSummary: entry.FirstUserSummary, RecentUserSummary: entry.RecentUserSummary, TitleRevision: entry.TitleRevision,
 			CommittedUserTurns: entry.CommittedUserTurns, TranscriptCount: entry.TranscriptCount,
@@ -768,6 +770,9 @@ func (h *Handle) Save(ctx context.Context, expectedRevision uint64, candidate Se
 	}
 	if current.RecordRevision != expectedRevision {
 		return SessionRecord{}, ErrCheckpointConflict
+	}
+	if candidate.LearningBinding.Normalize() != current.LearningBinding.Normalize() {
+		return SessionRecord{}, ErrInvalid
 	}
 	commitID, _, err := randomUUID()
 	if err != nil {

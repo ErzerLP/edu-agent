@@ -170,7 +170,8 @@ func validateCreateInput(input CreateInput, limits Limits) error {
 		return err
 	}
 	record := SessionRecord{
-		SchemaVersion: recordPayloadSchemaVersion, SessionID: "00000000-0000-4000-8000-000000000000", StorageID: strings.Repeat("0", 32),
+		LearningBinding: input.LearningBinding,
+		SchemaVersion:   recordPayloadSchemaVersion, SessionID: "00000000-0000-4000-8000-000000000000", StorageID: strings.Repeat("0", 32),
 		PrivacyGeneration: 1, RecordRevision: 1, CommitID: "00000000-0000-4000-8000-000000000001",
 		CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC(), LastOpenedAt: time.Unix(1, 0).UTC(),
 		CheckpointRevision: 1, ServerProfileFingerprint: strings.Repeat("0", 64), Lifecycle: "active",
@@ -518,6 +519,9 @@ func validSearchProjectionWithin(first, recent string, limits Limits) bool {
 }
 
 func validateRecord(record SessionRecord, limits Limits) error {
+	if !record.LearningBinding.Valid() {
+		return ErrCorrupt
+	}
 	if err := persistedSchemaError(record.SchemaVersion, recordPayloadSchemaVersion); err != nil {
 		return err
 	}
@@ -768,6 +772,13 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			}
 			record.FileReceipts = append(record.FileReceipts, converted)
 		}
+	case 9:
+		var payload recordPayloadV9
+		if err := decodeStrict(data, &payload, limit); err != nil {
+			return record, version, err
+		}
+		record = recordFromPayloadV2(recordPayloadV2(payload.recordPayloadV1))
+		record.FileReceipts = payload.FileReceipts
 	case recordPayloadSchemaVersion:
 		if err := decodeStrict(data, &record, limit); err != nil {
 			return record, version, err
@@ -801,6 +812,9 @@ func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
 			record.SchemaVersion = 8
 		case 8:
 			record.SchemaVersion = 9
+		case 9:
+			record.LearningBinding = record.LearningBinding.Normalize()
+			record.SchemaVersion = 10
 		default:
 			return SessionRecord{}, version, ErrVersionUnsupported
 		}
@@ -1267,8 +1281,9 @@ func recordsEqual(left, right SessionRecord) bool {
 
 func projectionFromRecord(record SessionRecord) indexProjection {
 	return indexProjection{
-		SchemaVersion: projectionSchemaVersion,
-		SessionID:     record.SessionID, StorageID: record.StorageID, PrivacyGeneration: record.PrivacyGeneration,
+		LearningBinding: record.LearningBinding.Normalize(),
+		SchemaVersion:   projectionSchemaVersion,
+		SessionID:       record.SessionID, StorageID: record.StorageID, PrivacyGeneration: record.PrivacyGeneration,
 		RecordRevision: record.RecordRevision, RecordCommitID: record.CommitID,
 		CheckpointRevision: record.CheckpointRevision, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt, LastOpenedAt: record.LastOpenedAt,
 		Title: record.Title, TitleSource: record.TitleSource, FirstUserSummary: record.FirstUserSummary, RecentUserSummary: record.RecentUserSummary, TitleRevision: record.TitleRevision,

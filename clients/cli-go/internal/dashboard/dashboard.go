@@ -171,6 +171,16 @@ func newModel(snapshot Snapshot) model {
 func (m model) Init() tea.Cmd { return nil }
 
 func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if selection, ok := message.(workbench.AgentMsg); ok {
+		m.command = []string{"agent", "--space", selection.Space}
+		if selection.Goal != "" {
+			m.command = append(m.command, "--goal", selection.Goal)
+		}
+		if selection.Session != "" {
+			m.command = append(m.command, "--session", selection.Session)
+		}
+		return m, tea.Quit
+	}
 	if _, ok := message.(workbench.ExitMsg); ok {
 		m.workspaceActive = false
 		_, m.snapshot.LearningSpaceName = m.workspace.Selection()

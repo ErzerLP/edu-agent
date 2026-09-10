@@ -15,10 +15,11 @@ import (
 type pendingInteractionKind string
 
 const (
-	pendingNone         pendingInteractionKind = ""
-	pendingPreference   pendingInteractionKind = "preference"
-	pendingQuestion     pendingInteractionKind = "question"
-	pendingFileMutation pendingInteractionKind = "file_mutation"
+	pendingNone             pendingInteractionKind = ""
+	pendingLearningWorkflow pendingInteractionKind = "learning_workflow"
+	pendingPreference       pendingInteractionKind = "preference"
+	pendingQuestion         pendingInteractionKind = "question"
+	pendingFileMutation     pendingInteractionKind = "file_mutation"
 )
 
 type questionArgs struct {

@@ -2,15 +2,55 @@ package agentloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 func (s *Session) executeReadTool(ctx context.Context, call modelclient.ToolCall) (any, string) {
+	if c, ok := s.server.(*agentcontext.Client); ok {
+		if err := c.Check(ctx); err != nil {
+			return toolFailure(err, "learning_context_unavailable"), "上下文需要重新校验"
+		}
+	}
+	if call.Function.Name == "learning_context" {
+		var args struct {
+			View   string `json:"view"`
+			Cursor string `json:"cursor"`
+			Query  string `json:"query"`
+			Offset int    `json:"offset"`
+		}
+		if decodeArguments(call.Function.Arguments, &args) != nil || len(args.Cursor) > 4096 || len(args.Query) > 2000 || args.Offset < 0 {
+			return toolError("invalid_arguments"), "学习查询参数无效"
+		}
+		name := map[string]string{"goals": "list_learning_goals", "goal": "get_bound_goal", "plans": "get_planning_drafts", "progress": "get_learning_progress", "reviews": "get_due_reviews", "route": "get_learning_route", "search": "search_knowledge"}[args.View]
+		if name == "" {
+			return toolError("invalid_arguments"), "未知学习视图"
+		}
+		params := map[string]any{}
+		switch args.View {
+		case "goals", "progress", "reviews":
+			params["cursor"] = args.Cursor
+		case "route":
+			params["offset"] = args.Offset
+		case "search":
+			params["query"] = args.Query
+		}
+		raw, _ := json.Marshal(params)
+		call.Function.Name, call.Function.Arguments = name, string(raw)
+		value, summary := s.executeBaseReadTool(ctx, call)
+		object := normalizedProjectionObject(value)
+		if object != nil {
+			object["learning_view"] = name
+			return object, summary
+		}
+		return value, summary
+	}
 	if call.Function.Name == "list_long_term_preferences" {
 		var args struct {
 			Cursor string `json:"cursor"`
@@ -25,6 +65,8 @@ func (s *Session) executeReadTool(ctx context.Context, call modelclient.ToolCall
 
 func (s *Session) executeBaseReadTool(ctx context.Context, call modelclient.ToolCall) (any, string) {
 	switch call.Function.Name {
+	case "list_learning_goals", "get_bound_goal", "get_planning_drafts":
+		return s.readLearningContext(ctx, call)
 	case "search_knowledge":
 		var args struct {
 			Query string `json:"query"`
@@ -51,6 +93,7 @@ func (s *Session) executeBaseReadTool(ctx context.Context, call modelclient.Tool
 		}
 		return map[string]any{
 			"knowledge_revision_id": result.KnowledgeRevisionID,
+			"scope_snapshot_id":     result.ScopeSnapshotID,
 			"hits":                  hits,
 			"degraded":              result.Degraded,
 			"truncated":             result.Truncated,
@@ -62,7 +105,7 @@ func (s *Session) executeBaseReadTool(ctx context.Context, call modelclient.Tool
 		if err := decodeArguments(call.Function.Arguments, &args); err != nil || len(args.Cursor) > 4096 {
 			return toolError("invalid_arguments"), "学习进度参数无效"
 		}
-		q := api.ProgressQuery{Global: true, Limit: 20, Cursor: args.Cursor}
+		q := api.ProgressQuery{LearningSpaceID: s.options.LearningBinding.Normalize().SpaceID, GoalID: s.options.LearningBinding.GoalID, Limit: 20, Cursor: args.Cursor}
 		reader, ok := s.server.(interface {
 			Progress(context.Context, api.ProgressQuery) (api.ProgressPage, error)
 		})
@@ -126,7 +169,7 @@ func (s *Session) executeBaseReadTool(ctx context.Context, call modelclient.Tool
 		if err := decodeArguments(call.Function.Arguments, &args); err != nil || len(args.Cursor) > 4096 {
 			return toolError("invalid_arguments"), "复习任务参数无效"
 		}
-		q := api.ProgressQuery{Global: true, Limit: 20, Cursor: args.Cursor}
+		q := api.ProgressQuery{LearningSpaceID: s.options.LearningBinding.Normalize().SpaceID, GoalID: s.options.LearningBinding.GoalID, Limit: 20, Cursor: args.Cursor}
 		reader, ok := s.server.(interface {
 			ScopedReviews(context.Context, api.ProgressQuery, *time.Time) (api.ReviewsPage, error)
 		})

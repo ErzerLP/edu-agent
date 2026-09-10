@@ -40,9 +40,10 @@ type SwitchGate struct {
 }
 
 type SessionListRequest struct {
-	All   bool
-	Query string
-	Limit int
+	LearningSpaceID string
+	All             bool
+	Query           string
+	Limit           int
 }
 
 type SessionListItem struct {
@@ -77,6 +78,7 @@ type UnknownOutcome struct {
 // Selector provides the same bounded list/search/rename/delete and switch-plan
 // rules used by the in-process controller to the command-level picker.
 type Selector struct {
+	learningSpaceID  string
 	store            *agentsession.Store
 	workspaceID      string
 	provider         Provider
@@ -88,6 +90,8 @@ func NewSelector(store *agentsession.Store, workspaceID string, provider Provide
 	return &Selector{store: store, workspaceID: workspaceID, provider: provider}
 }
 
+func (s *Selector) InLearningSpace(id string) *Selector { s.learningSpaceID = id; return s }
+
 func (s *Selector) Generation() uint64 { return 1 }
 func (s *Selector) SwitchGate() SwitchGate {
 	if s == nil || s.store == nil {
@@ -98,6 +102,9 @@ func (s *Selector) SwitchGate() SwitchGate {
 func (s *Selector) ListSessions(ctx context.Context, request SessionListRequest) ([]SessionListItem, error) {
 	if s == nil || s.store == nil {
 		return nil, agentsession.ErrKeyUnavailable
+	}
+	if !request.All && request.LearningSpaceID == "" {
+		request.LearningSpaceID = s.learningSpaceID
 	}
 	return listSessionItems(ctx, s.store, s.workspaceID, s.currentID, s.currentStorageID, request, s.store.Limits())
 }
@@ -175,6 +182,9 @@ func switchBlocked(code string) SwitchGate {
 
 func (c *Controller) ListSessions(ctx context.Context, request SessionListRequest) ([]SessionListItem, error) {
 	c.mu.Lock()
+	if !request.All && request.LearningSpaceID == "" {
+		request.LearningSpaceID = c.record.LearningBinding.Normalize().SpaceID
+	}
 	store, workspaceID, currentID, currentStorageID := c.store, c.record.WorkspaceID, c.record.SessionID, c.record.StorageID
 	gate := c.switchGateLocked()
 	c.mu.Unlock()
@@ -211,6 +221,9 @@ func listSessionItems(ctx context.Context, store *agentsession.Store, workspaceI
 	}
 	items := make([]SessionListItem, 0, len(summaries))
 	for _, summary := range summaries {
+		if request.LearningSpaceID != "" && summary.LearningBinding.Normalize().SpaceID != request.LearningSpaceID {
+			continue
+		}
 		if !request.All && (workspaceID == "" || summary.WorkspaceID != workspaceID) {
 			continue
 		}
@@ -413,7 +426,7 @@ func normalizeSearchQuery(value string, limits agentsession.Limits) (string, err
 }
 
 func summaryMatches(summary agentsession.Summary, query string) bool {
-	fields := []string{summary.Title, summary.SessionID, summary.StorageID, summary.FirstUserSummary, summary.RecentUserSummary, summary.WorkspaceLabel}
+	fields := []string{summary.Title, summary.SessionID, summary.StorageID, summary.FirstUserSummary, summary.RecentUserSummary, summary.WorkspaceLabel, summary.LearningBinding.Label()}
 	fold := cases.Fold()
 	for _, field := range fields {
 		candidate := fold.String(norm.NFC.String(field))
@@ -476,7 +489,8 @@ func boundedSearchSummary(value string, limits agentsession.Limits) string {
 
 func summaryFromRecord(record agentsession.SessionRecord) agentsession.Summary {
 	return agentsession.Summary{
-		SessionID: record.SessionID, StorageID: record.StorageID, RecordRevision: record.RecordRevision, CheckpointRevision: record.CheckpointRevision,
+		LearningBinding: record.LearningBinding.Normalize(),
+		SessionID:       record.SessionID, StorageID: record.StorageID, RecordRevision: record.RecordRevision, CheckpointRevision: record.CheckpointRevision,
 		CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt, LastOpenedAt: record.LastOpenedAt,
 		Title: record.Title, TitleSource: record.TitleSource, FirstUserSummary: record.FirstUserSummary, RecentUserSummary: record.RecentUserSummary,
 		TitleRevision: record.TitleRevision, CommittedUserTurns: record.CommittedUserTurns, TranscriptCount: record.TranscriptCount,

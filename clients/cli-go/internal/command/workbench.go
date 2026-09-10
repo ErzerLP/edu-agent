@@ -30,7 +30,7 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 	a.Out, a.Err = io.Discard, io.Discard
 	p := workbench.Page{Title: "学习工作台"}
 	if req.Page == "help" {
-		p.Content = "1–7 切页；方向键/Tab 选择可见操作，Enter 执行；PgUp/PgDn 滚动正文。\n输入中 Enter 换行、Tab 切字段、Ctrl+S 提交、Esc 保留草稿返回。\n导入页 F10 返回工作台，保留草稿；预览和确认仍按导入页提示操作。\n取消仅停止等待，远端可能已提交；刷新原对象核对。\n保存目标不会启动或切换教学；目标页可明确新建教学会话，学习页可选择已有会话。\nAI 聊天历史和本地任务使用主菜单 Agent/F2 原入口。\n总览与复习页可切换到全局范围，点击续学保留真实目标和会话。Agent 区域绑定尚未接入。"
+		p.Content = "1–7 切页；方向键/Tab 选择可见操作，Enter 执行；PgUp/PgDn 滚动正文。\n输入中 Enter 换行、Tab 切字段、Ctrl+S 提交、Esc 保留草稿返回。\n导入页 F10 返回工作台，保留草稿；预览和确认仍按导入页提示操作。\n取消仅停止等待，远端可能已提交；刷新原对象核对。\n保存目标不会启动或切换教学；目标页可明确新建教学会话，学习页可选择已有会话。\n目标/教学详情可打开明确绑定的 Agent；Agent F2 恢复聊天，F7 选择其他区/目标。聊天不重放教学动作。\n总览与复习页可切换到全局范围，点击续学保留真实目标和会话。"
 		return p, nil
 	}
 	online, err := a.openOnline(onlineFlags{})
@@ -134,6 +134,7 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 	p.Stage = view.Session.State
 	if view.WorkItem != nil && view.WorkItem.GoalRevision != nil {
 		p.Goal = view.WorkItem.GoalRevision.GoalManagement().Details.Name
+		p.Entries = append(p.Entries, workbench.Entry{ID: "agent:" + view.WorkItem.GoalRevision.GoalID + "/" + view.Session.SessionID, Label: "打开绑定此教学上下文的 AI 聊天"})
 	}
 	p.Title = "区内 · 结构化学习"
 	p.Content = sessionContent(view, true)

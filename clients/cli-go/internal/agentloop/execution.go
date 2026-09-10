@@ -147,6 +147,12 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 		}
 		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: runningSummary, Status: EventRunning}, Phase: ActivityExecutingTool, File: initialFile})
 		switch call.Function.Name {
+		case "open_learning_workflow":
+			result, err := s.beginLearningWorkflow(call, calls, index, events)
+			if err != nil || result.Workflow != nil {
+				return result, err
+			}
+			continue
 		case "artifact":
 			output := s.executeArtifactTool(ctx, call)
 			if err := s.appendArtifactToolResult(call.ID, output); err != nil {

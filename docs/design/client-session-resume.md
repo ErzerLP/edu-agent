@@ -1,6 +1,8 @@
 # 客户端历史 Session 恢复实现设计
 
 > 状态：Build 实施设计，目标 change 为 `client-session-resume`，当前版本支持与验收平台为 Linux 和 macOS。
+
+> 后续版本说明：Issue #11 将 SessionRecord 扩展至 v10、checkpoint 扩展至 v2，增加不可变学习区／目标／教学绑定；旧记录固定映射默认区，不按标题推测。加密、端点确认、隐私校验和恢复不重放合同不变。实现与新工具流程见 [Agent 学习上下文](agent-learning-context.md)。下文早期版本号为原始设计记录。
 >
 > 正式用户合同见 `docs/comet/changes/client-session-resume/brief.md` 与 `specs/client-session-resume/spec.md`。本文只细化实现，不改变默认自动加密保存、无时间自动删除、模型自动标题、CLI resume + F2、provider/workspace/privacy 门禁等已确认行为。Windows 条件代码可作为后续兼容性准备保留，但不构成本版本的支持或验收承诺。
 

@@ -319,9 +319,9 @@ func (p *sessionPickerModel) render(width, height int) string {
 	width = max(minimumWidth, width)
 	height = max(minimumHeight, height)
 	inner := max(20, width-6)
-	scope := "当前工作区"
+	scope := "当前学习区/工作区"
 	if p.scopeAll {
-		scope = "全部工作区"
+		scope = "全部学习区/工作区（跨区恢复原绑定）"
 	}
 	lines := []string{
 		assistantLabelStyle.Render("◇ edu-agent · Session 选择器"),
@@ -394,6 +394,7 @@ func (p *sessionPickerModel) render(width, height int) string {
 			state = " · locked"
 		}
 		label := sessionPickerItemLabel(summary)
+		label = summary.LearningBinding.ShortLabel() + " · " + label
 		primary := fmt.Sprintf("%s%s%s", prefix, label, state)
 		if !summary.LocatorOnly && strings.TrimSpace(summary.Title) != "" {
 			primary = fmt.Sprintf("%s%s [%s]%s", prefix, label, source, state)

@@ -71,6 +71,9 @@ type Service interface {
 }
 
 type ExitMsg struct{}
+
+// AgentMsg 是用户在工作台选择的聊天绑定，不执行教学动作。
+type AgentMsg struct{ Space, Goal, Session string }
 type Failure struct {
 	Message     string
 	ClearDrafts bool
@@ -306,6 +309,12 @@ func (m *Model) begin(a Action) tea.Cmd {
 
 func (m *Model) choose(id string) tea.Cmd {
 	m.save()
+	if target, ok := strings.CutPrefix(id, "select:agent:"); ok {
+		goal, session, _ := strings.Cut(target, "/")
+		selection := AgentMsg{Space: m.space, Goal: goal, Session: session}
+		m.Suspend()
+		return func() tea.Msg { return selection }
+	}
 	switch id {
 	case "exit":
 		m.Suspend()

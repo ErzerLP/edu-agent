@@ -47,7 +47,7 @@ func TestSpaceSelectionIsPerAppAndFlagsAreTemporary(t *testing.T) {
 	if exit := one.Run(t.Context(), []string{"--space", api.DefaultLearningSpaceID, "space", "show", "--id", api.DefaultLearningSpaceID}); exit != ExitOK || one.learningSpace != other {
 		t.Fatal("temporary override changed selection")
 	}
-	if exit := one.Run(t.Context(), []string{"agent"}); exit != ExitUnavailable {
+	if exit := one.Run(t.Context(), []string{"agent"}); exit != ExitInput || strings.Contains(errOut.String(), "Agent 仍仅支持默认学习区") {
 		t.Fatalf("nondefault agent exit=%d", exit)
 	}
 	if exit := one.Run(t.Context(), []string{"--space=bad", "space", "list"}); exit != ExitInput || one.learningSpace != other {

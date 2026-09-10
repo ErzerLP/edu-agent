@@ -224,6 +224,8 @@ func (c *Controller) installPreparedTarget(target *Controller, baseGeneration ui
 	}
 
 	c.loop, c.handle, c.store = newLoop, target.handle, target.store
+	c.server = target.server
+	c.model = target.model
 	c.localSessionLease = target.localSessionLease
 	c.record, c.transcript, c.dirty = target.record, target.transcript, target.dirty
 	c.loopOptions, c.workspaceRoot = target.loopOptions, target.record.WorkspaceRoot

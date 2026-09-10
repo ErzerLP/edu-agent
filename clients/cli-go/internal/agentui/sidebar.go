@@ -51,8 +51,18 @@ func loadLearningStatusCmd(ctx context.Context, session Conversation, generation
 		return nil
 	}
 	return func() tea.Msg {
+		description := ""
+		if source, ok := session.(interface {
+			LearningDescription(context.Context) (string, error)
+		}); ok {
+			var err error
+			description, err = source.LearningDescription(ctx)
+			if err != nil {
+				return learningMsg{generation: generation, description: "学习绑定暂不可用", err: err}
+			}
+		}
 		status, err := provider.LearningStatus(ctx)
-		return learningMsg{generation: generation, status: status, err: err}
+		return learningMsg{generation: generation, status: status, err: err, description: description}
 	}
 }
 
@@ -121,6 +131,9 @@ func (m model) sidebarContent(width, budget int) []string {
 		sidebarKV("文件", m.fileModeSummary()),
 		sidebarKV("上下文", m.contextTokenSummary()),
 		sidebarKV("缓存", m.cacheSummary()),
+	}
+	if m.learningLabel != "" {
+		lines = append(lines, sidebarWrappedKV("绑定", m.learningLabel, width, 4)...)
 	}
 	if !compact {
 		lines = append(lines,

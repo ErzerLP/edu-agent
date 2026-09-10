@@ -353,6 +353,9 @@ func TestDirectoryCopyAuthenticatedFutureVersionsPreserveEvidence(t *testing.T) 
 		t.Run(fmt.Sprintf("record-chain-v%d", version), func(t *testing.T) {
 			record.SchemaVersion = version
 			plain, _ := encodeStrict(record)
+			if version < 10 {
+				plain = withoutLearningBindingForTest(t, plain)
+			}
 			got, source, err := decodeRecordPayload(plain, 1<<20)
 			if err != nil || source != version || got.SchemaVersion != recordPayloadSchemaVersion {
 				t.Fatalf("migration source=%d schema=%d err=%v", source, got.SchemaVersion, err)

@@ -121,3 +121,87 @@ func TestWorkbenchDisplaysRealActionNames(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkbenchRoutePreviewRequiresVisibleConfirmation(t *testing.T) {
+	var applied atomic.Bool
+	var proposals atomic.Int32
+	var proposalID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if workbenchSpaceHTTP(w, r) {
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/tutoring/sessions/" + commandSessionID:
+			state := "Diagnostic"
+			if applied.Load() {
+				state = "RouteActive"
+			}
+			writeJSONTest(w, 200, commandSessionView(state, "open", "", false, false))
+		case "/v1/knowledge/revisions/head":
+			writeJSONTest(w, 200, api.HeadResponse{Revision: testRevision()})
+		case "/v1/knowledge/retrievals":
+			writeJSONTest(w, 200, commandRetrieval(false, false))
+		case "/v1/tutoring/proposals":
+			var request api.TutoringProposalRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			proposal := commandProposal(request, "route", "open")
+			proposal.Route = []api.RouteProposalStep{{NodeRevisionID: commandNodeRevision, TeachingIntent: "学习并发", CompletionCondition: "解释并发"}}
+			proposalID = proposal.ProposalID
+			proposals.Add(1)
+			writeJSONTest(w, 201, proposal)
+		case "/v1/tutoring/sessions/" + commandSessionID + "/actions":
+			var request api.ActionProposalRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			if request.ProposalID != proposalID || request.Action != "apply_route" {
+				t.Error("确认没有使用已展示的原路线")
+			}
+			applied.Store(true)
+			writeJSONTest(w, 201, commandOperationResult())
+		default:
+			t.Errorf("意外请求：%s %s", r.Method, r.URL.Path)
+			http.Error(w, "意外请求", 500)
+		}
+	}))
+	defer server.Close()
+	cfg, creds := pairedStores(server.URL, "token")
+	terminal := &fakeTerminal{}
+	app, out, _ := newTestApp(cfg, creds, terminal)
+	service := workbenchService{app: *app}
+	req := workbench.Request{Space: api.DefaultLearningSpaceID, Page: "session", Resource: commandSessionID}
+	page, err := service.Load(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Version, req.Action = page.Version, "apply_route"
+	page, err = service.Load(t.Context(), req)
+	if err != nil || terminal.confirmCalls != 0 || !strings.Contains(page.Content, "学习并发") || !strings.Contains(page.Content, "解释并发") || applied.Load() {
+		t.Fatalf("路线未在工作台展示，或借用了终端确认：错误=%v，终端确认=%d，页面=%s", err, terminal.confirmCalls, page.Content)
+	}
+	var confirm workbench.Action
+	for _, action := range page.Actions {
+		if action.ID == "confirm_route" {
+			confirm = action
+		}
+	}
+	if confirm.Confirmation == "" || page.Basis != proposalID {
+		t.Fatal("路线缺少明确确认或原提案身份")
+	}
+	// 返回读取原会话相当于取消预览，不能应用或再次生成路线。
+	req.Action = ""
+	if _, err = service.Load(t.Context(), req); err != nil || applied.Load() || proposals.Load() != 1 {
+		t.Fatal("取消预览产生了路线副作用")
+	}
+	req.Action, req.Basis, req.Version = confirm.ID, page.Basis, page.Version-1
+	if _, err = service.Load(t.Context(), req); err == nil || applied.Load() {
+		t.Fatal("过期确认应用了路线")
+	}
+	req.Version = page.Version
+	page, err = service.Load(t.Context(), req)
+	if err != nil || !applied.Load() || page.Stage != "RouteActive" || proposals.Load() != 1 || out.Len() != 0 || terminal.confirmCalls != 0 {
+		t.Fatalf("明确确认没有复用原路线：%v，阶段=%s", err, page.Stage)
+	}
+}

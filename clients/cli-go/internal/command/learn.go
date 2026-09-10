@@ -215,31 +215,36 @@ func (a *App) learnLoop(ctx context.Context, client APIClient, view api.SessionV
 	}
 }
 
-func (a *App) learnDiagnostic(ctx context.Context, client APIClient, view api.SessionView) (api.SessionView, error) {
+// 路线生成只返回结构化提案，由各入口展示并获取明确确认。
+func (a *App) diagnosticRouteProposal(ctx context.Context, client APIClient, view api.SessionView) (api.TutoringProposal, api.SessionView, bool, error) {
 	if view.WorkItem == nil || view.WorkItem.GoalRevision == nil || !allowed(view.WorkItem.AllowedActions, "apply_route") {
-		return api.SessionView{}, commandError("invalid_state", "Diagnostic work item is incomplete", "refresh the session", ExitConflict)
+		return api.TutoringProposal{}, view, false, commandError("invalid_state", "Diagnostic work item is incomplete", "refresh the session", ExitConflict)
 	}
 	knowledgeID := view.WorkItem.GoalRevision.GoalManagement().Details.ScopeSnapshotID
 	if knowledgeID == "" {
 		head, err := client.KnowledgeHead(ctx)
 		if err != nil {
-			return api.SessionView{}, mapAPIError(err)
+			return api.TutoringProposal{}, view, false, mapAPIError(err)
 		}
 		knowledgeID = head.RevisionID
 	}
 	retrieval, err := a.retrieveForWorkItem(ctx, client, view, view.WorkItem.GoalRevision.Text, knowledgeID)
 	if err != nil {
-		return api.SessionView{}, err
+		return api.TutoringProposal{}, view, false, err
 	}
 	requestID, err := a.operationID()
 	if err != nil {
-		return api.SessionView{}, err
+		return api.TutoringProposal{}, view, false, err
 	}
 	request, err := proposalRequest(view, "route", retrieval, requestID)
 	if err != nil {
-		return api.SessionView{}, err
+		return api.TutoringProposal{}, view, false, err
 	}
-	proposal, fresh, stale, err := a.createProposalAndRefetch(ctx, client, view, request)
+	return a.createProposalAndRefetch(ctx, client, view, request)
+}
+
+func (a *App) learnDiagnostic(ctx context.Context, client APIClient, view api.SessionView) (api.SessionView, error) {
+	proposal, fresh, stale, err := a.diagnosticRouteProposal(ctx, client, view)
 	if err != nil {
 		return api.SessionView{}, err
 	}

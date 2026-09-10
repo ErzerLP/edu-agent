@@ -109,6 +109,18 @@ func TestWorkbenchLibraryGoalAndExplicitSessionFlow(t *testing.T) {
 	if !strings.Contains(p.Content, scopeID) || !strings.Contains(p.Content, "中文多行\n学习意图") {
 		t.Fatal("目标未保留结构化信息和资料")
 	}
+	foundAgent := false
+	for _, entry := range p.Entries {
+		if strings.HasPrefix(entry.ID, "agent:") {
+			foundAgent = true
+			if entry.ID != "agent:"+g.GoalID+"/" {
+				t.Fatalf("目标页 Agent 入口丢失当前目标：得到 %q，需要 %q", entry.ID, "agent:"+g.GoalID+"/")
+			}
+		}
+	}
+	if !foundAgent {
+		t.Fatal("目标页缺少 Agent 入口")
+	}
 	p = load(workbench.Request{Page: "goal", Resource: goalTestRevision().GoalID, Action: "new-session", Version: p.Version, Entity: commandSessionID, Operation: op})
 	if p.Redirect != "session/"+commandSessionID || sessionWrites.Load() != 1 {
 		t.Fatal("显式开始教学未接入")

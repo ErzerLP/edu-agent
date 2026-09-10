@@ -3051,7 +3051,7 @@ components:
           properties:
             knowledge: { type: string, enum: [default_only, collections_v1] }
             learning: { type: string, enum: [default_only, goals_v1] }
-            tutoring: { type: string, enum: [default_only] }
+            tutoring: { type: string, enum: [default_only, sessions_v1] }
             memory: { type: string, enum: [default_only] }
     LearningUUID:
       type: string
@@ -3990,6 +3990,8 @@ components:
               goal_id: { $ref: "#/components/schemas/LearningUUID" }
               goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
               scope_snapshot_id: { $ref: "#/components/schemas/LearningUUID" }
+              node_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+              route_revision_id: { $ref: "#/components/schemas/LearningUUID" }
               name: { type: string }
               goal_status: { type: string }
               state: { type: string }
@@ -4464,6 +4466,8 @@ components:
               learning_space_id: { type: string, format: uuid }
               goal_id: { type: string, format: uuid }
               goal_revision_id: { type: string, format: uuid }
+              node_revision_id: { type: string, format: uuid }
+              route_revision_id: { type: string, format: uuid }
               resumable: { type: boolean }
         recent_activity: { type: array, items: { $ref: "#/components/schemas/TimelineItem" } }
         recent_has_more: { type: boolean }

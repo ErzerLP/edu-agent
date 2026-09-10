@@ -37,7 +37,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 		if nullable {
 			return nil
 		}
-		return fmt.Errorf("%s must not be null", path)
+		return &decodeIssue{category: "null_field", field: path}
 	}
 	switch valueType.Kind() {
 	case reflect.Struct:
@@ -60,7 +60,7 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 				if optional {
 					continue
 				}
-				return fmt.Errorf("%s.%s is required", path, name)
+				return &decodeIssue{category: "missing_field", field: path + "." + name}
 			}
 			if err := validateJSONPresence(fieldRaw, field.Type, path+"."+name, fieldNullable); err != nil {
 				return err
@@ -81,8 +81,8 @@ func validateJSONPresence(raw json.RawMessage, valueType reflect.Type, path stri
 		if err := json.Unmarshal(raw, &entries); err != nil {
 			return fmt.Errorf("%s must be an object", path)
 		}
-		for key, entry := range entries {
-			if err := validateJSONPresence(entry, valueType.Elem(), path+"."+key, false); err != nil {
+		for _, entry := range entries {
+			if err := validateJSONPresence(entry, valueType.Elem(), path+"[*]", false); err != nil {
 				return err
 			}
 		}

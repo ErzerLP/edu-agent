@@ -110,6 +110,7 @@ type Model struct {
 	action                Action
 	confirm               bool
 	loading               bool
+	loadFailure           string
 	status                string
 	pendingAction         string
 	field                 int
@@ -199,6 +200,7 @@ func (m *Model) refresh(action string) tea.Cmd {
 	ctx, cancel := context.WithCancel(m.ctx)
 	m.cancel = cancel
 	m.loading = true
+	m.loadFailure = ""
 	m.status = "加载中；Esc 取消等待（不代表远端事务回滚）"
 	s := m.state()
 	req := Request{Space: m.space, Page: m.page, Action: action, Text: s.drafts[m.draftKey()], Search: s.search, Cursor: s.pageCursor, Session: m.data.Session, Version: m.data.Version}
@@ -440,7 +442,15 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.Reset()
 				m.goal, m.stage, m.spaceName = "", "", ""
 			}
-			m.status = "加载/操作失败：" + safeLine(msg.err.Error()) + "；可刷新或返回"
+			if msg.page.SpaceName != "" && m.spaceName == "" {
+				if failure, ok := msg.err.(*Failure); !ok || !failure.ClearDrafts {
+					m.spaceName = msg.page.SpaceName
+				}
+			}
+			m.loadFailure = safeLine(msg.err.Error())
+			m.status = "加载/操作失败；r 刷新 · Esc 返回"
+			m.renderContent()
+			m.view.GotoTop()
 			return m, nil
 		}
 		m.data = msg.page
@@ -607,7 +617,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) renderContent() {
-	lines := strings.Split(m.data.Content, "\n")
+	content := m.data.Content
+	if m.loadFailure != "" {
+		content = "加载失败\n" + m.loadFailure + "\n\n当前页数据尚未加载，不能判断是否为空。\n按 r 重新读取；1–7 切页；Esc 返回。"
+	}
+	lines := strings.Split(content, "\n")
 	for i := range lines {
 		lines[i] = safeLine(lines[i])
 	}
@@ -628,7 +642,17 @@ func (m *Model) View() string {
 		name = m.space
 	}
 	text := line("学习工作台 · 当前区："+name) + "\n"
-	text += line("教学阶段："+m.stage+" · 当前教学目标："+m.goal) + "\n"
+	stage, goal := m.stage, m.goal
+	if stage == "" {
+		stage = "未选择教学会话"
+	}
+	if goal == "" {
+		goal = "未选择教学目标"
+	}
+	if m.loading || m.loadFailure != "" {
+		stage, goal = "未加载", "未加载"
+	}
+	text += line("教学阶段："+stage+" · 当前教学目标："+goal) + "\n"
 	text += line("1概览 2资料 3目标 4学习 5复习 6切区 7帮助") + "\n"
 	text += line(m.data.Title) + "\n" + m.view.View() + "\n"
 	if m.editing {

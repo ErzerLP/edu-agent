@@ -80,8 +80,12 @@ func mapAPIError(err error) *Error {
 			mapped.Next = "更新服务端"
 		case "learning_spaces_unsupported", "learning_space_module_unavailable":
 			mapped.ExitCode = ExitUnavailable
-			mapped.Detail = "learning spaces are unsupported by this server or the selected business module"
-			mapped.Next = "upgrade the server or explicitly select the default learning space"
+			mapped.Detail = "服务端或所选业务模块不支持当前学习区"
+			mapped.Next = "升级服务端，或明确选择默认学习区"
+		case "progress_unavailable":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "服务端尚不支持目标进度概览"
+			mapped.Next = "升级服务端后刷新"
 		case "invalid_learning_space":
 			mapped.ExitCode = ExitInput
 			mapped.Detail = "learning space scope or metadata is invalid"
@@ -192,11 +196,11 @@ func mapAPIError(err error) *Error {
 	}
 	var protocolErr *api.ProtocolError
 	if errors.As(err, &protocolErr) {
-		return commandError("protocol_error", "the server response did not match the public API contract ("+protocolErr.Category+")", "check the server version and endpoint", ExitInternal)
+		return commandError("protocol_error", "服务端响应不符合公开协议（"+protocolErr.Category+"）"+protocolErr.Diagnostics(), "核对客户端与服务端版本、接口地址及上述请求诊断", ExitInternal)
 	}
 	var transportErr *api.TransportError
 	if errors.As(err, &transportErr) {
-		return commandError("service_unavailable", "the server could not be reached within the deadline", "retry later; no offline operation was queued", ExitUnavailable)
+		return commandError("service_unavailable", "无法连接服务端或请求超时（"+transportErr.Category+"）", "检查连接后重试", ExitUnavailable)
 	}
 	return commandError("internal_error", fmt.Sprintf("operation failed in category %T", err), "inspect the local installation", ExitInternal)
 }

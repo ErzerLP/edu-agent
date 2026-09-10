@@ -35,10 +35,6 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("api request failed: code=%s status=%d request_id=%s", e.Code, e.Status, e.RequestID)
 }
 
-type ProtocolError struct{ Category string }
-
-func (e *ProtocolError) Error() string { return "api protocol error: " + e.Category }
-
 type TransportError struct{ Category string }
 
 func (e *TransportError) Error() string { return "api transport error: " + e.Category }
@@ -368,7 +364,7 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, authentica
 	return 0, &TransportError{Category: "retry_exhausted"}
 }
 
-func (c *Client) attempt(ctx context.Context, method, path string, authenticated bool, body []byte, hasBody bool, success map[int]bool, target any) (bool, int, time.Duration, error) {
+func (c *Client) attempt(ctx context.Context, method, path string, authenticated bool, body []byte, hasBody bool, success map[int]bool, target any) (ok bool, status int, delay time.Duration, resultErr error) {
 	endpoint := strings.TrimSuffix(c.baseURL, "/") + path
 	var reader io.Reader
 	if hasBody {
@@ -397,6 +393,16 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 		return false, 0, 0, classifyTransport(err)
 	}
 	defer response.Body.Close()
+	defer func() {
+		var protocol *ProtocolError
+		if errors.As(resultErr, &protocol) {
+			protocol.Method = method
+			protocol.Path, _, _ = strings.Cut(path, "?")
+			protocol.Status = response.StatusCode
+			protocol.ContentType = responseContentType(response.Header.Get("Content-Type"))
+			protocol.RequestID = safeRequestID(response.Header.Get("X-Request-ID"))
+		}
+	}()
 	data, err := io.ReadAll(io.LimitReader(response.Body, c.maxBody+1))
 	if err != nil {
 		return false, response.StatusCode, 0, classifyTransport(err)
@@ -423,7 +429,8 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 			case *OfflineOperationStatus:
 				return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_offline_status_response: " + err.Error()}
 			}
-			return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_success_response"}
+			category, field := classifyDecodeError(err)
+			return false, response.StatusCode, 0, &ProtocolError{Category: "malformed_success_response", DecodeCategory: category, Field: field}
 		}
 		if err := validateDecoded(target); err != nil {
 			switch target.(type) {
@@ -523,7 +530,7 @@ func decodeStrict(data []byte, target any) error {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return errors.New("multiple JSON values")
+			return &decodeIssue{category: "multiple_values"}
 		}
 		return err
 	}
@@ -538,7 +545,7 @@ func rejectDuplicateJSONFields(data []byte) error {
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return errors.New("multiple JSON values")
+			return &decodeIssue{category: "multiple_values"}
 		}
 		return err
 	}
@@ -567,7 +574,7 @@ func scanJSONValue(decoder *json.Decoder) error {
 				return errors.New("JSON object key is not a string")
 			}
 			if _, exists := seen[key]; exists {
-				return fmt.Errorf("duplicate JSON field %q", key)
+				return &decodeIssue{category: "duplicate_field"}
 			}
 			seen[key] = struct{}{}
 			if err := scanJSONValue(decoder); err != nil {

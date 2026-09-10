@@ -7,6 +7,8 @@ import (
 )
 
 type SessionSummary struct {
+	NodeRevisionID    string `json:"node_revision_id,omitempty"`
+	RouteRevisionID   string `json:"route_revision_id,omitempty"`
 	SessionID         string `json:"session_id"`
 	LearningSpaceID   string `json:"learning_space_id"`
 	GoalID            string `json:"goal_id"`

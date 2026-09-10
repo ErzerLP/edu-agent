@@ -60,7 +60,7 @@ func (a *App) workbenchProgress(ctx context.Context, client APIClient, req workb
 			}
 		}
 		if page.Total == 0 {
-			p.Content += "没有符合条件的目标。\n"
+			p.Content += "没有符合条件的目标。\n可到资料页查看或导入资料，到目标页创建目标；保存目标不会自动开始教学。\n"
 		}
 		p.Content += progressWarnings(page.Metadata)
 	}

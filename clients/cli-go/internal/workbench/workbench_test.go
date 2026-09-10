@@ -103,9 +103,12 @@ func TestFailureClearsContentAndCanRetry(t *testing.T) {
 	if m.data.Content != "" || !strings.Contains(m.status, "失败") || strings.Contains(m.status, "\x1b") {
 		t.Fatal("错误冒充合法内容或未清理控制字符")
 	}
+	if !strings.Contains(m.view.View(), "加载失败") || strings.Contains(m.view.View(), "旧内容") || !strings.Contains(m.loadFailure, "service_unavailable") {
+		t.Fatal("主体缺少失败状态，或仍展示旧内容")
+	}
 	fail = false
 	finish(m, m.refresh(""))
-	if m.status != "" {
+	if m.status != "" || m.loadFailure != "" || !strings.Contains(m.view.View(), "旧内容") {
 		t.Fatal("错误后无法继续")
 	}
 }

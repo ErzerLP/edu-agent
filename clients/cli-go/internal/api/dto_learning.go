@@ -500,13 +500,18 @@ type FreeAnswer struct {
 }
 
 type TimelineItem struct {
-	EventSeq          int64      `json:"event_seq"`
-	EventID           string     `json:"event_id"`
-	EventType         string     `json:"event_type"`
-	AggregateID       string     `json:"aggregate_id"`
-	ReceivedAt        time.Time  `json:"received_at"`
-	OccurredAt        *time.Time `json:"occurred_at,omitempty"`
-	OccurredAtTrusted bool       `json:"occurred_at_trusted"`
+	ParentSessionID     string     `json:"parent_session_id,omitempty"`
+	Source              string     `json:"source"`
+	ArchiveDisposition  string     `json:"archive_disposition,omitempty"`
+	EvidenceDisposition string     `json:"evidence_disposition,omitempty"`
+	ActorDeviceID       string     `json:"actor_device_id"`
+	EventSeq            int64      `json:"event_seq"`
+	EventID             string     `json:"event_id"`
+	EventType           string     `json:"event_type"`
+	AggregateID         string     `json:"aggregate_id"`
+	ReceivedAt          time.Time  `json:"received_at"`
+	OccurredAt          *time.Time `json:"occurred_at,omitempty"`
+	OccurredAtTrusted   bool       `json:"occurred_at_trusted"`
 }
 
 type TimelinePage struct {

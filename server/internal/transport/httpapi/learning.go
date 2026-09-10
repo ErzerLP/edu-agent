@@ -958,23 +958,27 @@ func normalizeNodeView(view *learning.NodeView) {
 	if view.Evidence == nil {
 		view.Evidence = []learning.AcceptedEvidence{}
 	}
-	if view.Node.Misconceptions == nil {
-		view.Node.Misconceptions = []learning.MisconceptionHypothesis{}
+	normalizeNodeReduction(&view.Node)
+}
+
+func normalizeNodeReduction(node *learning.NodeReduction) {
+	if node.Misconceptions == nil {
+		node.Misconceptions = []learning.MisconceptionHypothesis{}
 	}
-	if view.Node.Mastery.Kinds == nil {
-		view.Node.Mastery.Kinds = map[learning.EvidenceKind]int{}
+	if node.Mastery.Kinds == nil {
+		node.Mastery.Kinds = map[learning.EvidenceKind]int{}
 	}
-	if view.Node.Mastery.Outcomes == nil {
-		view.Node.Mastery.Outcomes = map[learning.Outcome]int{}
+	if node.Mastery.Outcomes == nil {
+		node.Mastery.Outcomes = map[learning.Outcome]int{}
 	}
-	if view.Node.Mastery.Help == nil {
-		view.Node.Mastery.Help = map[learning.HelpLevel]int{}
+	if node.Mastery.Help == nil {
+		node.Mastery.Help = map[learning.HelpLevel]int{}
 	}
-	if view.Node.Mastery.UncertaintyReasons == nil {
-		view.Node.Mastery.UncertaintyReasons = []string{}
+	if node.Mastery.UncertaintyReasons == nil {
+		node.Mastery.UncertaintyReasons = []string{}
 	}
-	for index := range view.Node.Misconceptions {
-		item := &view.Node.Misconceptions[index]
+	for index := range node.Misconceptions {
+		item := &node.Misconceptions[index]
 		if item.SourceEvidenceIDs == nil {
 			item.SourceEvidenceIDs = []string{}
 		}

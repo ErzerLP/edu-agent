@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +16,32 @@ func (f *fakeLearning) SupportsProgress() bool { return true }
 func (f *fakeLearning) Progress(_ context.Context, q learning.ProgressQuery) (learning.ProgressPage, error) {
 	f.calls++
 	f.progressQuery = q
+	if f.progressPage != nil {
+		return *f.progressPage, f.err
+	}
 	return learning.ProgressPage{Items: []learning.GoalProgress{}, Total: 0}, f.err
+}
+
+func TestProgressNormalizesRealReducerOutput(t *testing.T) {
+	node := learning.ReduceNode("10000000-0000-4000-8000-000000000001", nil, nil, nil)
+	f := &fakeLearning{progressPage: &learning.ProgressPage{Items: []learning.GoalProgress{{Nodes: []learning.NodeReduction{node}}}, Total: 1}}
+	h := newLearningTestAPI(t, []string{"learning:read"}, f, &bytes.Buffer{})
+	r := httptest.NewRequest(http.MethodGet, "/v1/learning/progress", nil)
+	r.Header.Set("Authorization", "Bearer test-token")
+	r.Header.Set("X-Request-ID", "issue17-progress")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || w.Header().Get("X-Request-ID") != "issue17-progress" {
+		t.Fatal("进度响应缺少成功状态或关联请求标识")
+	}
+	var page learning.ProgressPage
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	n := page.Items[0].Nodes[0]
+	if n.Mastery.UncertaintyReasons == nil || n.Misconceptions == nil || n.Mastery.ValidEvidenceCount != 0 || n.Mastery.State != learning.MasteryUnseen {
+		t.Fatal("真实 reducer 的空集合未规范化，或学习事实被修改")
+	}
 }
 
 func TestProgressHTTPForwardsScopeAndRejectsAmbiguousInput(t *testing.T) {

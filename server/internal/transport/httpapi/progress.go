@@ -45,5 +45,10 @@ func (a *API) handleProgress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeProjectionMetadata(&page.Metadata)
+	for i := range page.Items {
+		for j := range page.Items[i].Nodes {
+			normalizeNodeReduction(&page.Items[i].Nodes[j])
+		}
+	}
 	writeJSON(w, 200, page)
 }

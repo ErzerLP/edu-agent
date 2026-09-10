@@ -117,6 +117,9 @@ func progressContent(g api.GoalProgress) string {
 	for _, review := range g.Reviews {
 		fmt.Fprintf(&b, "复习 %s · 到期 %s · 可开始=%t %s\n", review.TaskID, review.DueAt.Format(time.RFC3339), review.Startable, review.UnavailableReason)
 	}
+	if len(g.Sessions) == 0 {
+		b.WriteString("尚无教学会话；可到目标页开始学习。\n")
+	}
 	for _, s := range g.Sessions {
 		fmt.Fprintf(&b, "下一步 %s · 会话 %s · 可继续=%t\n", s.Position, s.SessionID, s.Resumable)
 	}

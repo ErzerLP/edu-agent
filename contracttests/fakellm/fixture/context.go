@@ -40,14 +40,45 @@ type contextRubric struct {
 }
 
 type contextGoalRevision struct {
-	GoalRevisionID     string  `json:"goal_revision_id"`
-	GoalID             string  `json:"goal_id"`
-	Revision           int64   `json:"revision"`
-	Text               string  `json:"text"`
-	Source             string  `json:"source"`
-	ActorDeviceID      string  `json:"actor_device_id"`
-	CreatedAt          string  `json:"created_at"`
-	PreviousRevisionID *string `json:"previous_revision_id,omitempty"`
+	LearningSpaceID    string                 `json:"learning_space_id,omitempty"`
+	Management         *contextGoalManagement `json:"management,omitempty"`
+	GoalRevisionID     string                 `json:"goal_revision_id"`
+	GoalID             string                 `json:"goal_id"`
+	Revision           int64                  `json:"revision"`
+	Text               string                 `json:"text"`
+	Source             string                 `json:"source"`
+	ActorDeviceID      string                 `json:"actor_device_id"`
+	CreatedAt          string                 `json:"created_at"`
+	PreviousRevisionID *string                `json:"previous_revision_id,omitempty"`
+}
+
+// 目标管理元数据沿用公开结构，夹具仍严格拒绝未声明字段。
+type contextGoalManagement struct {
+	Details struct {
+		Name               string  `json:"name"`
+		ExpectedOutcome    string  `json:"expected_outcome"`
+		Scope              string  `json:"scope"`
+		Exclusions         string  `json:"exclusions"`
+		SelfAssessment     string  `json:"self_assessment"`
+		Purpose            string  `json:"purpose"`
+		CompletionCriteria string  `json:"completion_criteria"`
+		Priority           string  `json:"priority"`
+		ScopeSnapshotID    string  `json:"scope_snapshot_id,omitempty"`
+		Timezone           string  `json:"timezone,omitempty"`
+		Deadline           *string `json:"deadline,omitempty"`
+		WeeklyMinutes      *int    `json:"weekly_minutes,omitempty"`
+	} `json:"details"`
+	Status       string `json:"status"`
+	ArchivedFrom string `json:"archived_from,omitempty"`
+	Completion   *struct {
+		Kind          string `json:"kind"`
+		Reason        string `json:"reason"`
+		ActorDeviceID string `json:"actor_device_id"`
+		At            string `json:"at"`
+	} `json:"completion,omitempty"`
+	CriteriaVerification  string   `json:"criteria_verification"`
+	ChangedFields         []string `json:"changed_fields"`
+	RouteAdjustmentNeeded bool     `json:"route_adjustment_needed"`
 }
 
 type contextRouteStep struct {

@@ -114,11 +114,21 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 		return p, mapAPIError(err)
 	}
 	explanation := ""
+	var routePreview *api.TutoringProposal
 	if req.Action != "" {
 		if view.Session.SessionID != req.Session || view.Session.AggregateVersion != req.Version {
 			return p, commandError("version_conflict", "教学上下文已改变，未重放输入", "刷新后重新确认", ExitConflict)
 		}
 		switch req.Action {
+		case "apply_route":
+			var proposal api.TutoringProposal
+			var stale bool
+			proposal, view, stale, err = a.diagnosticRouteProposal(ctx, client, view)
+			if err == nil && !stale {
+				routePreview = &proposal
+			}
+		case "confirm_route":
+			view, _, err = a.proposalAction(ctx, client, view, "apply_route", req.Basis)
 		case "record_exposure":
 			view, explanation, err = a.recordExplanation(ctx, client, view)
 		case "assessment_void", "assessment_override":
@@ -146,6 +156,15 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 		p.Content += "\n投影状态：" + strings.Join(view.Metadata.ReasonCodes, ", ")
 	}
 	p.Actions = learningActions(view)
+	if routePreview != nil {
+		p.Basis = routePreview.ProposalID
+		p.Content += "\n\n待确认路线（尚未采用）："
+		for i, step := range routePreview.Route {
+			p.Content += fmt.Sprintf("\n%d. %s\n完成依据：%s\n资料节点：%s", i+1, step.TeachingIntent, step.CompletionCondition, step.NodeRevisionID)
+		}
+		p.Content += "\n如需编辑，可返回目标的 Agent 入口打开正式规划流程，或使用 goal plan。返回或刷新不会采用本提案。"
+		p.Actions = []workbench.Action{{ID: "confirm_route", Label: "确认采用已展示路线", Confirmation: "确认将以上路线用于当前教学会话？"}}
+	}
 	for i := range p.Actions {
 		p.Actions[i].DraftKey = "/" + view.Session.SessionID + "/" + view.Session.Focus.GoalRevisionID + "/" + view.Session.Focus.ActivityID
 	}
@@ -197,7 +216,7 @@ func learningActions(view api.SessionView) []workbench.Action {
 		return nil
 	}
 	labels := map[string]string{
-		"start_diagnostic": "开始诊断", "apply_route": "生成并应用路线", "issue_activity": "开始练习", "present_review": "开始复习", "present_activity": "开始作答", "record_assessment": "获取评估反馈", "acknowledge_feedback": "确认反馈并继续", "ask_free_question": "自由提问", "record_free_answer": "获取自由回答", "resume_focus": "回到原教学焦点", "convert_free_answer_to_quiz": "将自由回答转为练习", "end_activity": "结束当前活动", "complete_session": "完成教学会话",
+		"start_diagnostic": "开始诊断", "apply_route": "生成路线预览", "issue_activity": "开始练习", "present_review": "开始复习", "present_activity": "开始作答", "record_assessment": "获取评估反馈", "acknowledge_feedback": "确认反馈并继续", "ask_free_question": "自由提问", "record_free_answer": "获取自由回答", "resume_focus": "回到原教学焦点", "convert_free_answer_to_quiz": "将自由回答转为练习", "end_activity": "结束当前活动", "complete_session": "完成教学会话",
 	}
 	var actions []workbench.Action
 	for _, id := range view.WorkItem.AllowedActions {
@@ -240,8 +259,6 @@ func (a *App) workbenchAction(ctx context.Context, client APIClient, view api.Se
 		return a.submitAttemptWithHelp(ctx, client, view, text, strings.TrimPrefix(action, "submit_attempt:"))
 	}
 	switch action {
-	case "apply_route":
-		return a.learnDiagnostic(ctx, client, view)
 	case "issue_activity", "present_review":
 		return a.issueRouteActivity(ctx, client, view, action)
 	case "record_assessment":

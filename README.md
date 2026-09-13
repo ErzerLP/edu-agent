@@ -4,6 +4,8 @@
 
 ## 使用入口
 
+浏览器学习入口为 `/app/`，提供真实学习区、目标保存/编辑/历史/生命周期与设置页，无模型、搜索或资料也能保存目标。先 `make server-build`，再启用 `WEB_UI_ENABLED=true`；loopback HTTP 开发需额外设置 `WEB_UI_ALLOW_LOOPBACK_HTTP=true`。使用本机配对码登录，学习身份与管理身份独立。详见 [Web 构建、配对、HTTPS 部署与隐私说明](clients/web/README.md)。
+
 服务端默认只监听本机回环地址。显式启用 `ADMIN_UI_ENABLED=true` 并配置独立的 `ADMIN_UI_TOKEN` 后，浏览器访问：
 
 ```text

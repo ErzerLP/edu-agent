@@ -403,6 +403,12 @@ func seedPrivacyMarkerFixture(t *testing.T, pool *pgxpool.Pool) privacyMarkerFix
 		t.Fatal(err)
 	}
 
+	if _, err := pool.Exec(ctx, `INSERT INTO identity_web_sessions(session_hash,token_id,learner_generation,expires_at)
+		SELECT $1,$2,learner_generation,clock_timestamp()+interval '12 hours' FROM privacy_owner_generation_gates WHERE owner_kind='identity'`,
+		hashBytes("web:"+fixture.marker), fixture.tokenID); err != nil {
+		t.Fatal(err)
+	}
+
 	knowledgeStore := knowledgedb.New(pool)
 	knowledgeService, err := knowledge.NewService(knowledgeStore, knowledge.NewCanonicalizer(), knowledge.ServiceOptions{})
 	if err != nil {

@@ -1,11 +1,19 @@
+FROM node:24-alpine AS web
+WORKDIR /src/clients/web
+COPY clients/web/package.json clients/web/package-lock.json ./
+RUN npm ci --no-fund
+COPY clients/web/ ./
+RUN npm run build
+
 FROM golang:1.26.6-alpine AS build
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
+COPY --from=web /src/clients/web/dist/ ./internal/webassets/dist/
 ARG TARGETOS=linux
 ARG TARGETARCH
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" -o /out/edu-agentd ./cmd/edu-agentd
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -tags web_release -trimpath -ldflags="-s -w" -o /out/edu-agentd ./cmd/edu-agentd
 
 FROM alpine:3.22
 RUN apk add --no-cache postgresql15-client \

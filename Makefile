@@ -1,7 +1,7 @@
 .PHONY: fmt server-fmt cli-fmt test server-test cli-test test-race server-test-race cli-test-race \
 	vet server-vet cli-vet build server-build cli-build cli-check cli-cross-build cli-platform-evidence cli-release \
 	cli-m1-blackbox cli-m1-blackbox-run postgres-candidate postgres-candidate-resume postgres-candidate-shard \
-	notesync-candidate check
+	notesync-candidate web-build web-check check
 
 fmt: server-fmt cli-fmt
 
@@ -37,8 +37,14 @@ cli-vet:
 
 build: server-build cli-build
 
-server-build:
-	cd server && go build -o edu-agentd ./cmd/edu-agentd
+web-build:
+	cd clients/web && npm ci --no-fund && npm run build
+
+web-check:
+	cd clients/web && npm run check && npm test
+
+server-build: web-build
+	cd server && go build -tags web_release -o edu-agentd ./cmd/edu-agentd
 
 cli-build:
 	mkdir -p clients/cli-go/bin

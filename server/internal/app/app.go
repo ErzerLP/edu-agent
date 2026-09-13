@@ -28,6 +28,7 @@ import (
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
 	learningtutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/webassets"
 	"github.com/edu-agent/edu-agent/server/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -146,6 +147,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
 		LearningSpaces: spacepostgres.New(pool),
+		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},
 		Identity:       identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
 		Learning: learningService, Offline: offlineService,
 		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,

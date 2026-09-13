@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -171,6 +172,7 @@ type Options struct {
 	MaxOfflineRequestBody   int64
 	// AdminUI exposes only loopback administration workflows and remains disabled unless explicitly configured.
 	AdminUI AdminUIOptions
+	WebUI   WebUIOptions
 }
 
 type API struct {
@@ -203,6 +205,7 @@ type API struct {
 	adminUI                 AdminUIOptions
 	adminSessions           *adminSessionStore
 	adminSettingsMu         sync.Mutex
+	webUI                   WebUIOptions
 }
 
 func New(options Options) (http.Handler, error) {
@@ -210,6 +213,9 @@ func New(options Options) (http.Handler, error) {
 		return nil, errors.New("HTTP API dependencies are required")
 	}
 	if err := validateAdminUIOptions(options.AdminUI); err != nil {
+		return nil, err
+	}
+	if err := validateWebUI(options.WebUI); err != nil {
 		return nil, err
 	}
 	if (options.Memory == nil) != (options.MemoryExporter == nil) {
@@ -261,12 +267,17 @@ func New(options Options) (http.Handler, error) {
 		maxLearningRequestBody: options.MaxLearningRequestBody,
 		maxOfflineRequestBody:  options.MaxOfflineRequestBody,
 		adminUI:                options.AdminUI,
+		webUI:                  options.WebUI,
 		adminSessions:          newAdminSessionStore(options.Now),
 	}
 	router := chi.NewRouter()
 	router.Use(middleware.RequestID)
 	router.Use(api.recoverer)
 	router.Use(api.audit)
+	router.Use(api.webSecurity)
+	if api.webUI.Enabled {
+		api.mountWeb(router)
+	}
 	router.Get("/livez", api.livez)
 	router.Get("/readyz", api.readyz)
 	if api.adminUI.Enabled {
@@ -521,14 +532,29 @@ func (a *API) authenticate(next http.Handler) http.Handler {
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "Too many authentication failures")
 			return
 		}
-		token, ok := bearerToken(r.Header.Get("Authorization"))
-		if !ok {
-			a.authenticationFailed(w, r, failureKey)
-			return
+		var credential identity.Credential
+		var err error
+		if a.webUI.Enabled {
+			if cookie, cookieErr := r.Cookie(a.webCookieName()); cookieErr == nil {
+				var principal identity.WebPrincipal
+				principal, err = a.webUI.Identity.AuthenticateWeb(r.Context(), cookie.Value)
+				if err == nil && ((r.Header.Get("X-Web-Principal-ID") != "" && r.Header.Get("X-Web-Principal-ID") != principal.Device.ID) || (r.Header.Get("X-Web-Generation") != "" && r.Header.Get("X-Web-Generation") != strconv.FormatInt(principal.Generation, 10))) {
+					err = identity.ErrUnauthenticated
+				}
+				credential = principal.Credential
+			} else {
+				credential, err = a.authenticateBearer(r)
+			}
+		} else {
+			credential, err = a.authenticateBearer(r)
 		}
-		credential, err := a.identity.Authenticate(r.Context(), token, "")
 		if err != nil {
 			if errors.Is(err, identity.ErrUnauthenticated) {
+				if a.webUI.Enabled && credential.Device.ID == "" {
+					if _, cookieErr := r.Cookie(a.webCookieName()); cookieErr == nil {
+						a.setWebCookie(w, "", time.Unix(1, 0))
+					}
+				}
 				a.authenticationFailed(w, r, failureKey)
 				return
 			}
@@ -543,6 +569,14 @@ func (a *API) authenticate(next http.Handler) http.Handler {
 		ctx := access.WithCredential(r.Context(), credential)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (a *API) authenticateBearer(r *http.Request) (identity.Credential, error) {
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		return identity.Credential{}, identity.ErrUnauthenticated
+	}
+	return a.identity.Authenticate(r.Context(), token, "")
 }
 
 func (a *API) authenticationFailed(w http.ResponseWriter, r *http.Request, failureKey string) {

@@ -8,6 +8,12 @@
 server/edu-agentd
 clients/cli-go/bin/
 clients/cli-go/dist/
+clients/web/node_modules/
+clients/web/dist/
+clients/web/test-results/
+clients/web/playwright-report/
+server/internal/webassets/dist/*
+!server/internal/webassets/dist/README.txt
 clients/cli-go/platform-evidence/
 __pycache__/
 *.py[cod]

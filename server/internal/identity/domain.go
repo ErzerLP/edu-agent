@@ -42,6 +42,7 @@ type Device struct {
 }
 
 type TokenRecord struct {
+	WebSession *WebSessionRecord
 	ID         string
 	DeviceID   string
 	TokenHash  [32]byte

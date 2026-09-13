@@ -6,6 +6,46 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/web/pairings:
+    post:
+      operationId: exchangeWebPairing
+      summary: 浏览器配对，仅通过 HttpOnly Cookie 返回不透明会话
+      description: 需要精确匹配 PUBLIC_BASE_URL 的 Origin；不接受 Authorization 或已有学习 Cookie。设备只获得配对范围内的 learning:read/write。
+      parameters:
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, display_name]
+              properties:
+                code: { type: string, maxLength: 100 }
+                display_name: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        "201": { description: 已创建浏览器学习会话，无 Bearer, content: { application/json: { schema: { $ref: "#/components/schemas/WebSession" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/session:
+    get:
+      operationId: getWebSession
+      summary: 获取当前学习身份、隐私代次及已就绪能力；响应禁止缓存
+      security: [{ webCookie: [] }]
+      responses:
+        "200": { description: 当前浏览器会话, content: { application/json: { schema: { $ref: "#/components/schemas/WebSession" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/logout:
+    post:
+      operationId: logoutWebSession
+      summary: 退出当前浏览器会话，不撤销设备
+      security: [{ webCookie: [] }]
+      parameters:
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      responses:
+        "204": { description: 会话已删除，Cookie 已清除 }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/goals/{goalID}/plans:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
@@ -13,7 +53,7 @@ paths:
     get:
       operationId: listLearningPlans
       summary: 列出目标的已保存规划草稿；列表不是当前可应用状态，确认前读取详情
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scopes: [learning:read, knowledge:read]
       responses:
         "200":
@@ -34,7 +74,7 @@ paths:
     get:
       operationId: getLearningPlan
       summary: 读取草稿、用户原文、模型建议、真实出处与过期原因
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scopes: [learning:read, knowledge:read]
       responses:
         "200": { description: 草稿详情, content: { application/json: { schema: { $ref: "#/components/schemas/PlanningDraft" } } } }
@@ -43,7 +83,7 @@ paths:
       operationId: changeLearningPlan
       summary: 创建、编辑、可选生成或明确确认学习规划
       description: create 的 expected_version 为 0；其他操作要求当前草稿版本。edit 完整替换 content。generate 仅产生独立 suggestion，错误保存为 last_error，原草稿不变。confirm 的 target 必须显式选择 goal、new_session 或 current_session；update_goal 决定是否同时修订正式目标。确认在单一事务中验证目标、范围、教学状态并调用正式应用服务。响应丢失可复用完全相同请求与 operation_id，返回真实回执；不同请求复用操作身份返回冲突。
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scopes: [learning:write, knowledge:read]
       requestBody:
         required: true
@@ -61,7 +101,7 @@ paths:
       operationId: listImportJobs
       summary: 分页查询当前设备在固定学习区及集合的持久导入任务
       x-required-scope: knowledge:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - { name: cursor, in: query, schema: { type: string, format: uuid } }
       responses:
@@ -88,7 +128,7 @@ paths:
       description: 任务最多1000文件及128 MiB原文。单文件4 MiB、单请求16 MiB；上传可用base64避免JSON转义膨胀。confirm和continue额外要求knowledge:approve。确认不立即发布，continue先对账原操作且最多启动一批；未知结果不能换任务或操作ID重传。
       x-required-scope: knowledge:write
       x-required-scopes: [knowledge:read, knowledge:write]
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -118,7 +158,7 @@ paths:
       operationId: getImportJob
       summary: 查询原任务、核对结果未知的操作，或读取单批差异和身份候选
       x-required-scope: knowledge:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - { name: batch, in: query, schema: { type: integer, minimum: 0, maximum: 999 } }
       responses:
@@ -142,7 +182,7 @@ paths:
       operationId: cancelImportJob
       summary: 取消后续批次并清理暂存，保留已入库版本及任务结果
       x-required-scope: knowledge:write
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       responses:
         "200":
           description: 密钥已清除；cleanup_pending为true时文件删除未完成，可再次清理。归档仍允许取消。
@@ -162,7 +202,7 @@ paths:
     get:
       operationId: listKnowledgeCollections
       summary: 列出本区引用的资料集合；可显式发现已共享的集合
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: knowledge:read
       parameters:
         - { name: shared, in: query, schema: { type: boolean, default: false } }
@@ -180,7 +220,7 @@ paths:
     post:
       operationId: changeKnowledgeCollection
       summary: 创建资料集合、开启共享、关联或解除本区引用
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: knowledge:write
       x-required-scopes: [knowledge:write, knowledge:approve]
       requestBody:
@@ -201,7 +241,7 @@ paths:
     post:
       operationId: freezeKnowledgeScope
       summary: 冻结多个集合版本及文档或章节选择
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: knowledge:write
       requestBody:
         required: true
@@ -221,7 +261,7 @@ paths:
       - { $ref: "#/components/parameters/KnowledgeScopeID" }
     get:
       operationId: getKnowledgeScope
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: knowledge:read
       responses:
         "200":
@@ -236,7 +276,7 @@ paths:
       - { $ref: "#/components/parameters/KnowledgeScopeID" }
     get:
       operationId: getKnowledgeScopeTree
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: knowledge:read
       responses:
         "200":
@@ -251,7 +291,7 @@ paths:
       - { $ref: "#/components/parameters/KnowledgeScopeID" }
     get:
       operationId: exportKnowledgeScope
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: knowledge:read
       responses:
         "200":
@@ -263,7 +303,7 @@ paths:
   /v1/learning-spaces/capabilities:
     get:
       operationId: getLearningSpaceCapabilities
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       responses:
         "200":
@@ -283,7 +323,7 @@ paths:
   /v1/learning-spaces:
     get:
       operationId: listLearningSpaces
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       parameters:
         - { name: search, in: query, schema: { type: string, maxLength: 120 }, description: Literal case-insensitive substring of name or description. }
@@ -307,7 +347,7 @@ paths:
         "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
     post:
       operationId: createLearningSpace
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
         required: true
@@ -337,7 +377,7 @@ paths:
         schema: { $ref: "#/components/schemas/LearningUUID" }
     get:
       operationId: getLearningSpace
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       responses:
         "200":
@@ -356,7 +396,7 @@ paths:
         "503": { description: Privacy gate closed; metadata cannot be read or mutated. }
     put:
       operationId: updateLearningSpace
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
         required: true
@@ -557,7 +597,7 @@ paths:
       operationId: previewKnowledgeImport
       summary: 检查明确提交的内容与身份决定，不发布版本
       x-required-scopes: [knowledge:write, knowledge:read]
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -587,7 +627,7 @@ paths:
       operationId: confirmKnowledgeImport
       summary: 原子提交与回执绑定的原始预览请求
       x-required-scopes: [knowledge:write, knowledge:approve]
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -624,7 +664,7 @@ paths:
       operationId: getKnowledgeImportOperation
       summary: 核对当前设备在指定区和集合提交的原操作
       x-required-scope: knowledge:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       responses:
         "200":
           description: 持久提交回执
@@ -700,7 +740,7 @@ paths:
       summary: Submit a sourced proposal against the current canonical knowledge revision
       x-required-scope: knowledge:write
       x-max-body-bytes: 16777216
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -727,7 +767,7 @@ paths:
       operationId: listKnowledgeMaintenanceProposals
       summary: List knowledge maintenance proposals with a generation-bound cursor
       x-required-scope: knowledge:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - name: status
           in: query
@@ -760,7 +800,7 @@ paths:
       summary: Submit a destructive proposal restoring an unredacted ancestor snapshot
       x-required-scope: knowledge:approve
       x-max-body-bytes: 16777216
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -790,7 +830,7 @@ paths:
       operationId: getKnowledgeMaintenanceProposal
       summary: Read one frozen knowledge maintenance proposal
       x-required-scope: knowledge:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
       responses:
         "409": { description: learning_space_archived }
@@ -813,7 +853,7 @@ paths:
       summary: Approve and atomically apply the exact frozen proposal when it is still current
       x-required-scope: knowledge:approve
       x-max-body-bytes: 16777216
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
       requestBody:
         required: true
@@ -840,7 +880,7 @@ paths:
       summary: Reject one open knowledge maintenance proposal atomically
       x-required-scope: knowledge:approve
       x-max-body-bytes: 16777216
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/KnowledgeProposalID" }]
       requestBody:
         required: true
@@ -1150,7 +1190,7 @@ paths:
       operationId: listEvidenceCarryovers
       summary: List evidence carryover proposals with a generation-bound cursor
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - name: status
           in: query
@@ -1182,7 +1222,7 @@ paths:
       operationId: getEvidenceCarryover
       summary: Read one frozen evidence carryover proposal
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
       responses:
         "409": { description: learning_space_archived }
@@ -1205,7 +1245,7 @@ paths:
       summary: Approve one open carryover as replayable provisional learning state
       x-required-scope: learning:approve
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
       requestBody:
         required: true
@@ -1233,7 +1273,7 @@ paths:
       summary: Reject one open carryover without creating projection effects
       x-required-scope: learning:approve
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/EvidenceCarryoverProposalID" }]
       requestBody:
         required: true
@@ -1260,7 +1300,7 @@ paths:
       operationId: listLearningGoals
       summary: 按学习区列出独立目标
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - { name: search, in: query, schema: { type: string, maxLength: 120 } }
         - { name: status, in: query, schema: { type: string, enum: ["", draft, active, paused, completed, archived] } }
@@ -1281,7 +1321,7 @@ paths:
       summary: 保存不可变目标修订，不创建或切换教学会话
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         {
           required: true,
@@ -1337,7 +1377,7 @@ paths:
       operationId: getLearningGoal
       summary: 读取目标最新版本与完成依据
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       responses:
         "200": { description: 目标详情。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalRevision" } } } }
         "400": { $ref: "#/components/responses/BadRequest" }
@@ -1354,7 +1394,7 @@ paths:
       description: aggregate_id 必须匹配路径，expected_version 至少为 1，并携带对应 previous_revision_id。details 完整替换结构化信息；action 与内容变更互斥。并发冲突返回 409，不覆盖他人更新。同 operation_id 同请求重试返回原结果。
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody: { required: true, content: { application/json: { schema: { $ref: "#/components/schemas/LearningGoalRequest" } } } }
       responses:
         "200": { description: 幂等重放。, content: { application/json: { schema: { $ref: "#/components/schemas/GoalOperationResult" } } } }
@@ -1378,7 +1418,7 @@ paths:
       operationId: listLearningGoalRevisions
       summary: 按版本升序分页读取目标历史
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - { name: cursor, in: query, schema: { type: string, maxLength: 2048 } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
@@ -1399,7 +1439,7 @@ paths:
       operationId: listTutoringSessions
       summary: 按学习区和目标列出教学会话及续学位置
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - { name: goal_id, in: query, schema: { $ref: "#/components/schemas/LearningUUID" } }
         - { name: status, in: query, schema: { type: string, enum: [resumable, completed] } }
@@ -1420,7 +1460,7 @@ paths:
       summary: Create a tutoring session
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         {
           required: true,
@@ -1477,7 +1517,7 @@ paths:
       summary: Generate and durably freeze a model proposal without mutating an aggregate
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         {
           required: true,
@@ -1519,7 +1559,7 @@ paths:
       summary: Apply one state-machine action to a tutoring session
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/SessionID" }]
       requestBody:
         {
@@ -1578,7 +1618,7 @@ paths:
       x-required-scope: learning:write
       x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/AssessmentID" }]
       requestBody:
         {
@@ -1639,7 +1679,7 @@ paths:
       operationId: getCurrentTutoringSession
       summary: Read the current active tutoring session
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       responses:
         "409": { description: learning_space_archived }
         "501": { description: learning_space_module_unavailable }
@@ -1666,7 +1706,7 @@ paths:
       operationId: getTutoringSession
       summary: Read one tutoring session
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/SessionID" }]
       responses:
         "409": { description: learning_space_archived }
@@ -1694,7 +1734,7 @@ paths:
       operationId: listLearningTimeline
       summary: Read event-ordered learning timeline items
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         [
           { $ref: "#/components/parameters/Cursor" },
@@ -1727,7 +1767,7 @@ paths:
       operationId: listLearningRoutes
       summary: Read immutable route revisions
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         [
           { $ref: "#/components/parameters/Cursor" },
@@ -1760,7 +1800,7 @@ paths:
       operationId: getLearningNode
       summary: Read mastery and misconception reduction for a node revision
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters: [{ $ref: "#/components/parameters/NodeRevisionID" }]
       responses:
         "409": { description: learning_space_archived }
@@ -1788,7 +1828,7 @@ paths:
       operationId: listLearningEvidence
       summary: Read accepted immutable evidence
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         [
           { $ref: "#/components/parameters/Cursor" },
@@ -1821,7 +1861,7 @@ paths:
       operationId: getLearningProgress
       summary: 读取权威目标进度、待办与明确续学位置
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - { $ref: "#/components/parameters/Cursor" }
         - { $ref: "#/components/parameters/PageLimit" }
@@ -1851,7 +1891,7 @@ paths:
       operationId: listLearningReviews
       summary: 按真实目标任务身份读取到期复习，省略截止时间时由服务端冻结分页截止时间
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         [
           { $ref: "#/components/parameters/Cursor" },
@@ -1883,7 +1923,7 @@ paths:
       operationId: getLearningProjectionStatus
       summary: Read projection generation and checkpoint status
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       responses:
         "404": { description: learning_space_not_found }
         "409": { description: learning_space_archived }
@@ -1911,7 +1951,7 @@ paths:
       summary: Sign and reserve the current Objective activity for offline use
       x-required-scope: learning:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -1946,7 +1986,7 @@ paths:
       summary: Archive independently committed offline learning operations
       x-required-scope: learning:write
       x-max-body-bytes: 8388608
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -1975,7 +2015,7 @@ paths:
       operationId: getOfflineLearningOperationStatus
       summary: Read one device-owned immutable ingest receipt and current status
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - name: operationID
           in: path
@@ -2003,7 +2043,7 @@ paths:
       operationId: listOfflineLearningAssessments
       summary: List device-owned provisional Open assessments
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - name: status
           in: query
@@ -2033,7 +2073,7 @@ paths:
       operationId: getOfflineLearningAssessment
       summary: Read one device-owned frozen offline assessment chain
       x-required-scope: learning:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/AssessmentID"
       responses:
@@ -2061,7 +2101,7 @@ paths:
       x-required-scope: learning:write
       x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/AssessmentID"
       requestBody:
@@ -2106,7 +2146,7 @@ paths:
       summary: Propose an explicit user-stated memory candidate
       x-required-scope: memory:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       requestBody:
         required: true
         content:
@@ -2148,7 +2188,7 @@ paths:
       operationId: listMemoryCandidates
       summary: List memory candidates using a stable opaque cursor
       x-required-scope: memory:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
@@ -2178,7 +2218,7 @@ paths:
       operationId: getMemoryCandidate
       summary: Read one memory candidate
       x-required-scope: memory:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/MemoryCandidateID"
       responses:
@@ -2208,7 +2248,7 @@ paths:
       summary: Admit or reject a pending memory candidate using expected revision
       x-required-scope: memory:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/MemoryCandidateID"
       requestBody:
@@ -2246,7 +2286,7 @@ paths:
       operationId: listMemoryRecords
       summary: List current memory record metadata
       x-required-scope: memory:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
@@ -2274,7 +2314,7 @@ paths:
       operationId: getMemoryRecord
       summary: Read current record metadata with live remote content availability
       x-required-scope: memory:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/LogicalMemoryID"
       responses:
@@ -2299,7 +2339,7 @@ paths:
       summary: Tombstone a logical memory and queue verified remote deletion
       x-required-scope: memory:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/LogicalMemoryID"
       requestBody:
@@ -2347,7 +2387,7 @@ paths:
       summary: Propose a correction candidate for the current record revision
       x-required-scope: memory:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/LogicalMemoryID"
       requestBody:
@@ -2395,7 +2435,7 @@ paths:
       operationId: exportMemoryRecords
       summary: Export record metadata with live remote content availability
       x-required-scope: memory:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/PageLimit"
@@ -2424,7 +2464,7 @@ paths:
       summary: Requeue one eligible dead-letter memory delivery
       x-required-scope: memory:write
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/MemoryDeliveryID"
       requestBody:
@@ -2506,7 +2546,7 @@ paths:
       operationId: getPrivacyErasureReceipt
       summary: Read the current append-only erasure receipt summary
       x-required-scope: privacy:read
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/PrivacyErasureID"
       responses:
@@ -2534,7 +2574,7 @@ paths:
       summary: Read the current offline purge challenge for the authenticated device
       description: Returns only the current generation-bound purge task for the authenticated paired device. A device with no pending purge receives 204 and cannot inspect another device's child receipt.
       x-required-scope: privacy:device
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/PrivacyErasureID"
       responses:
@@ -2559,7 +2599,7 @@ paths:
       description: The server validates the authenticated device, erasure, current challenge revision, and HMAC challenge before appending the child state revision. Failed acknowledgments carry a closed machine-readable failure code.
       x-required-scope: privacy:device
       x-max-body-bytes: 1048576
-      security: [{ deviceBearer: [] }]
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/PrivacyErasureID"
       requestBody:
@@ -2674,6 +2714,11 @@ components:
       required: true
       schema: { $ref: "#/components/schemas/MemoryUUID" }
   securitySchemes:
+    webCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-edu_web
+      description: 浏览器学习会话；HTTPS 使用 Secure/HttpOnly/SameSite=Strict/Host-only。显式 loopback HTTP 开发配置改用 edu_web_dev。所有 Cookie 身份非安全方法都要求精确 Origin 和会话绑定的 X-CSRF-Token，混用 Authorization 返回 400 ambiguous_identity；过期/撤销为 401，CSRF/权限失败为 403。Cookie 不被 admin/internal/MCP 接受。
     deviceBearer:
       type: http
       scheme: bearer
@@ -2685,6 +2730,11 @@ components:
       name: X-Privacy-Erasure-Grant
       description: One-time, device-bound, locally issued privacy erasure grant. For a new operation it is validated and consumed in the same serializable transaction as the barrier; a failed or conflicting barrier does not consume it. An exact committed-operation replay may omit it. The value is never returned or logged.
   responses:
+    WebFailure:
+      description: 400 无效请求或身份歧义；401 失效或撤销；403 Origin/CSRF 或权限不符；409 先退出已有会话；429 限流；503 暂不可用。错误不泄漏配对码或秘密。
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     KnowledgeScopeFailure:
       description: 400 无效请求；401 未认证；403 缺少权限；404 集合、版本或范围不属于本区；409 版本/幂等冲突或归档区；429 限流；500 内部错误；503 隐私清除。失败不回退全库。
       content:
@@ -2869,6 +2919,26 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    WebSession:
+      type: object
+      additionalProperties: false
+      required: [device, generation, expires_at, csrf_token, server_id, capabilities]
+      properties:
+        device: { $ref: "#/components/schemas/Device" }
+        generation: { type: integer, minimum: 1 }
+        expires_at: { type: string, format: date-time }
+        csrf_token: { type: string, minLength: 43, maxLength: 43 }
+        server_id: { type: string, format: uri }
+        capabilities:
+          type: object
+          additionalProperties: false
+          required: [spaces, goals, save_goal, start_learning, references]
+          properties:
+            spaces: { type: boolean }
+            goals: { type: boolean }
+            save_goal: { type: boolean }
+            start_learning: { type: boolean }
+            references: { type: boolean }
     ImportJobItem:
       type: object
       additionalProperties: false

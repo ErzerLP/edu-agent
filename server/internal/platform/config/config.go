@@ -33,6 +33,8 @@ type Config struct {
 	AllowInsecureNonLoopback   bool
 	InsecureNonLoopbackWarning bool
 	AdminUI                    AdminUIConfig
+	WebUIEnabled               bool
+	WebUIAllowLoopbackHTTP     bool
 	ShutdownTimeout            time.Duration
 	PairingCodeTTL             time.Duration
 	PairingCodeMaxAttempts     int
@@ -190,6 +192,12 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.AdminUI.Enabled, err = boolValue(lookup, "ADMIN_UI_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.WebUIEnabled, err = boolValue(lookup, "WEB_UI_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.WebUIAllowLoopbackHTTP, err = boolValue(lookup, "WEB_UI_ALLOW_LOOPBACK_HTTP", false); err != nil {
 		return Config{}, err
 	}
 	if cfg.AdminUI.TrustedLoopbackProxy, err = boolValue(lookup, "ADMIN_UI_TRUSTED_LOOPBACK_PROXY", false); err != nil {

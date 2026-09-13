@@ -80,6 +80,9 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 		WHERE privacy_owner_scrub_permitted('identity')`); err != nil {
 		return fmt.Errorf("redact identity token usage metadata: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM identity_web_sessions WHERE privacy_owner_scrub_permitted('identity')`); err != nil {
+		return fmt.Errorf("清除浏览器会话: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit identity privacy scrub: %w", err)
 	}
@@ -94,7 +97,8 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 	err := s.pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM devices WHERE display_name <> '[redacted]')+
-			(SELECT count(*) FROM device_tokens WHERE last_used_at IS NOT NULL)`).Scan(&residual)
+			(SELECT count(*) FROM device_tokens WHERE last_used_at IS NOT NULL)+
+			(SELECT count(*) FROM identity_web_sessions)`).Scan(&residual)
 	if err != nil {
 		return 0, fmt.Errorf("verify identity privacy scrub: %w", err)
 	}

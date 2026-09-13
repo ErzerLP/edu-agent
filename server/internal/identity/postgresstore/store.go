@@ -74,6 +74,9 @@ func (s *Store) ConsumePairingCode(
 		return nil, identity.ErrInvalidPairingCode
 	}
 
+	if token.WebSession != nil {
+		scopes = identity.WebScopes(scopes)
+	}
 	token.Scopes = append([]string(nil), scopes...)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO devices(id,display_name,created_at) VALUES($1,$2,$3)`,
@@ -85,6 +88,13 @@ func (s *Store) ConsumePairingCode(
 		VALUES($1,$2,$3,$4,$5)`,
 		token.ID, token.DeviceID, token.TokenHash[:], token.Scopes, token.CreatedAt); err != nil {
 		return nil, fmt.Errorf("insert device token: %w", err)
+	}
+	if token.WebSession != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO identity_web_sessions(session_hash,token_id,learner_generation,expires_at)
+			SELECT $1,$2,learner_generation,$3 FROM privacy_owner_generation_gates WHERE owner_kind='identity'`,
+			token.WebSession.Hash[:], token.ID, token.WebSession.ExpiresAt); err != nil {
+			return nil, fmt.Errorf("创建浏览器会话: %w", err)
+		}
 	}
 	command, err := tx.Exec(ctx, `
 		UPDATE pairing_codes SET consumed_at=$2

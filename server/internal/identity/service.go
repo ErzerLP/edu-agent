@@ -132,6 +132,10 @@ func (s *Service) CreatePairingCodeForProfile(ctx context.Context, profile Pairi
 }
 
 func (s *Service) ExchangePairingCode(ctx context.Context, code, displayName string) (IssuedCredential, error) {
+	return s.exchangePairingCode(ctx, code, displayName, nil)
+}
+
+func (s *Service) exchangePairingCode(ctx context.Context, code, displayName string, web *WebSessionRecord) (IssuedCredential, error) {
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" || !utf8.ValidString(displayName) || utf8.RuneCountInString(displayName) > 100 {
 		return IssuedCredential{}, ErrInvalidInput
@@ -157,6 +161,7 @@ func (s *Service) ExchangePairingCode(ctx context.Context, code, displayName str
 	now := s.now().UTC()
 	device := Device{ID: deviceID, DisplayName: displayName, CreatedAt: now}
 	token := TokenRecord{ID: tokenID, DeviceID: deviceID, TokenHash: tokenHash, CreatedAt: now}
+	token.WebSession = web
 	scopes, err := s.store.ConsumePairingCode(ctx, lookup, codeHash, device, token, now)
 	if err != nil {
 		if err == ErrInvalidPairingCode {

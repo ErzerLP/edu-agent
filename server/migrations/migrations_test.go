@@ -29,8 +29,8 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 19 || latest.name != "000019_learning_progress.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("学习进度迁移未正确嵌入: %s", latest.name)
+	if latest.version != 20 || latest.name != "000020_web_identity.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("浏览器身份迁移未正确嵌入: %s", latest.name)
 	}
 }
 

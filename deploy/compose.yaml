@@ -93,6 +93,8 @@ services:
       PUBLIC_BASE_URL: http://127.0.0.1:${SERVER_PORT:-8080}
       ALLOW_INSECURE_NON_LOOPBACK: "true"
       ADMIN_UI_ENABLED: ${ADMIN_UI_ENABLED:-false}
+      WEB_UI_ENABLED: ${WEB_UI_ENABLED:-false}
+      WEB_UI_ALLOW_LOOPBACK_HTTP: ${WEB_UI_ALLOW_LOOPBACK_HTTP:-false}
       ADMIN_UI_TOKEN: ${ADMIN_UI_TOKEN:-}
       ADMIN_UI_SETTINGS_FILE: /var/lib/edu-agent/private/admin-settings.json
       # 复用服务器持久卷；正文加密暂存，任务密钥由数据库隐私流程管理。

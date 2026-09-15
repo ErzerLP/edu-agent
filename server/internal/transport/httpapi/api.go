@@ -24,6 +24,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/edu-agent/edu-agent/server/internal/transport/access"
 	"github.com/edu-agent/edu-agent/server/internal/transport/mcpadmin"
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
@@ -144,6 +145,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	Settings                *settings.Service
 	LearningSpaces          LearningSpaceService
 	Identity                IdentityService
 	Model                   ModelProber
@@ -176,6 +178,7 @@ type Options struct {
 }
 
 type API struct {
+	settings                *settings.Service
 	learningSpaces          LearningSpaceService
 	identity                IdentityService
 	model                   ModelProber
@@ -254,6 +257,7 @@ func New(options Options) (http.Handler, error) {
 		options.MaxOfflineRequestBody = 8 << 20
 	}
 	api := &API{
+		settings:       options.Settings,
 		learningSpaces: options.LearningSpaces,
 		identity:       options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
 		offline: options.Offline, memory: options.Memory, memoryExporter: options.MemoryExporter,
@@ -295,6 +299,7 @@ func New(options Options) (http.Handler, error) {
 		protected.Use(api.authenticate)
 		protected.Use(api.resolveLearningSpace)
 		api.mountLearningSpaces(protected)
+		api.mountSettings(protected)
 		api.mountPlanning(protected)
 		api.mountKnowledgeSpaces(protected)
 		protected.With(api.requireScope("devices:read")).Get("/v1/devices", api.listDevices)

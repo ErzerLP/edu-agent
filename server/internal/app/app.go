@@ -26,6 +26,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
 	platformpostgres "github.com/edu-agent/edu-agent/server/internal/platform/postgres"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/edu-agent/edu-agent/server/internal/transport/httpapi"
 	learningtutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/webassets"
@@ -76,10 +77,19 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize identity service: %w", err)
 	}
-	modelClient, err := buildModelClient(cfg)
+	settingsService, err := openLearningSettings(cfg)
 	if err != nil {
 		return err
 	}
+	modelClient, err := settingsService.TeachingClient()
+	if err != nil {
+		return err
+	}
+	settingsView := settingsService.View()
+	cfg.Model.Enabled = modelClient != nil
+	cfg.Model.Name = settingsView.Teaching.Model
+	cfg.Model.ContextWindow = settingsView.Limits.ContextTokens
+	cfg.Model.Timeout = time.Duration(settingsView.Limits.IdleTimeoutSeconds) * time.Second
 	var selector knowledge.Selector
 	if modelClient != nil {
 		selector = llmselector.New(modelClient)
@@ -128,7 +138,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	readiness := health.New(health.Options{
 		Database: pool, ModelEnabled: cfg.Model.Enabled, ModelRequired: cfg.Model.Required,
-		ModelProbe: modelHealthProbe(modelClient), OpenEvaluationWorkerProbe: evaluationWorkerHealth.Probe,
+		ModelProbe: settingsService.TeachingHealth, OpenEvaluationWorkerProbe: evaluationWorkerHealth.Probe,
 		OfflineSignerAvailable: offlineService.SignerAvailable(), OfflineProtocolAvailable: offlineService.Available(),
 		NocturneEnabled: cfg.Nocturne.Enabled,
 		NocturneProbe:   optionalNocturneHealthProbe(bridge.remote),
@@ -146,6 +156,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
+		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},
 		Identity:       identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
@@ -503,6 +514,21 @@ func buildModelClient(cfg config.Config) (*llm.Client, error) {
 		return nil, fmt.Errorf("initialize model client: %w", err)
 	}
 	return client, nil
+}
+
+func openLearningSettings(cfg config.Config) (*settings.Service, error) {
+	endpoint := ""
+	if cfg.Model.BaseURL != nil {
+		endpoint = cfg.Model.BaseURL.String()
+	}
+	limits := settings.DefaultLimits()
+	if cfg.Model.Enabled {
+		limits.ContextTokens = cfg.Model.ContextWindow
+		limits.IdleTimeoutSeconds = int(cfg.Model.Timeout.Seconds())
+	}
+	return settings.Open(settings.Options{Path: cfg.LearningSettingsFile, ModelEndpoints: cfg.ModelEndpointAllowlist,
+		Teaching:    settings.Connection{Enabled: cfg.Model.Enabled, Provider: "openai_compatible", Endpoint: endpoint, Model: cfg.Model.Name, AuthMode: "bearer"},
+		TeachingKey: cfg.Model.APIKey, Limits: &limits})
 }
 
 func modelHealthProbe(client *llm.Client) health.ModelProbe {

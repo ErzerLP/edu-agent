@@ -6,11 +6,71 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/settings:
+    get:
+      operationId: getLearningSettings
+      summary: 读取非敏感模型、搜索与预算配置，不发出外部请求
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 非敏感设置，禁止缓存且不回显 Key, content: { application/json: { schema: { $ref: "#/components/schemas/LearningSettings" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    put:
+      operationId: updateLearningSettings
+      summary: 显式保存服务端设置；现有教学执行需重启应用
+      security: [{ webCookie: [] }]
+      x-required-scope: settings:write
+      parameters:
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LearningSettingsUpdate" }
+      responses:
+        "200": { description: 已保存；新的端点不会继承旧凭据, content: { application/json: { schema: { $ref: "#/components/schemas/LearningSettings" } } } }
+        "400": { description: invalid_settings，格式、范围或端点许可无效, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+        "409": { description: settings_conflict，版本冲突需重新读取, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/settings/probes:
+    post:
+      operationId: probeLearningSettings
+      summary: 显式发送固定公开样本；最多 15 秒、模型 64 输出 Token、搜索 1 条结果，可能计费
+      security: [{ webCookie: [] }]
+      x-required-scope: settings:probe
+      parameters:
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [target, expected_revision, consent]
+              properties:
+                target: { type: string, enum: [teaching, mentor, search] }
+                expected_revision: { type: integer, minimum: 0 }
+                consent: { type: boolean, const: true }
+      responses:
+        "200": { description: 包含实际探测成功或失败状态及时间；不返回提供商正文, content: { application/json: { schema: { $ref: "#/components/schemas/LearningSettings" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/capabilities:
+    get:
+      operationId: getLearningCapabilities
+      summary: 不发外部请求的能力发现；未实现研究不因搜索 Key 就绪而可执行
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 当前能力和准确不可用原因, content: { application/json: { schema: { $ref: "#/components/schemas/LearningCapabilities" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/web/pairings:
     post:
       operationId: exchangeWebPairing
       summary: 浏览器配对，仅通过 HttpOnly Cookie 返回不透明会话
-      description: 需要精确匹配 PUBLIC_BASE_URL 的 Origin；不接受 Authorization 或已有学习 Cookie。设备只获得配对范围内的 learning:read/write。
+      description: 需要精确匹配 PUBLIC_BASE_URL 的 Origin；不接受 Authorization 或已有学习 Cookie。普通档案只保留 learning:read/write；显式 settings 档案额外保留 settings:write/probe，不升级旧设备。
       parameters:
         - { name: Origin, in: header, required: true, schema: { type: string } }
       requestBody:
@@ -2919,6 +2979,115 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    SettingsConnection:
+      type: object
+      additionalProperties: false
+      required: [enabled, provider, endpoint, model, auth_mode]
+      properties:
+        enabled: { type: boolean }
+        provider: { type: string, enum: [openai_compatible, brave] }
+        endpoint: { type: string, maxLength: 2048, description: 完整模型 Base URL 或搜索请求 URL，禁止用户信息、查询、片段；空字符串表示未配置 }
+        model: { type: string, maxLength: 200, description: 搜索槽位必须为空 }
+        auth_mode: { type: string, enum: [bearer, none], description: none 只适用于明确授权的模型端点 }
+    SettingsProbe:
+      type: object
+      additionalProperties: false
+      required: [status, reason, checked_at, valid_until, structured_json, native_schema, requests, cost_estimate]
+      properties:
+        status: { type: string, enum: [ready, failed] }
+        reason: { type: string }
+        checked_at: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+        structured_json: { type: boolean }
+        native_schema: { type: boolean }
+        requests: { type: integer, minimum: 0, maximum: 2 }
+        cost_estimate: { type: string, const: unknown }
+    SettingsConnectionView:
+      type: object
+      additionalProperties: false
+      required: [enabled, provider, endpoint, model, auth_mode, has_key, configured, source, status, reason, probe]
+      properties:
+        enabled: { type: boolean }
+        provider: { type: string, enum: [openai_compatible, brave] }
+        endpoint: { type: string }
+        model: { type: string }
+        auth_mode: { type: string, enum: [bearer, none] }
+        has_key: { type: boolean }
+        configured: { type: boolean }
+        source: { type: string, enum: [environment, server] }
+        status: { type: string, enum: [ready, unavailable, probe_failed] }
+        reason: { type: string }
+        probe: { anyOf: [{ $ref: "#/components/schemas/SettingsProbe" }, { type: "null" }] }
+    SettingsLimits:
+      type: object
+      additionalProperties: false
+      required: [research_requests, research_tokens, output_tokens, context_tokens, idle_timeout_seconds, concurrency, storage_mib]
+      description: 运行接受/续行时重新执行；不代表固定教学轮数，SSE 活跃流量重置无响应计时。输出须小于上下文且不大于研究 Token 预算。
+      properties:
+        research_requests: { type: integer, minimum: 1, maximum: 1000, default: 20 }
+        research_tokens: { type: integer, minimum: 1024, maximum: 10000000, default: 100000 }
+        output_tokens: { type: integer, minimum: 64, maximum: 32768, default: 2048 }
+        context_tokens: { type: integer, minimum: 4096, maximum: 2000000, default: 32768 }
+        idle_timeout_seconds: { type: integer, minimum: 5, maximum: 600, default: 60 }
+        concurrency: { type: integer, minimum: 1, maximum: 16, default: 2 }
+        storage_mib: { type: integer, minimum: 16, maximum: 1048576, default: 512 }
+    SettingsPolicy:
+      type: object
+      additionalProperties: false
+      required: [private_queries]
+      properties:
+        private_queries: { type: boolean, default: false, description: 后续运行是否允许私人目标、正文、成绩进入外部查询；不影响固定公开探测 }
+    LearningSettingsUpdate:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      description: 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。字段缺省保留当前值；切换 endpoint/provider/auth_mode 清除旧 Key。
+      properties:
+        expected_revision: { type: integer, minimum: 0 }
+        target: { type: string, enum: [teaching, mentor, search] }
+        connection: { $ref: "#/components/schemas/SettingsConnection" }
+        new_key: { type: string, minLength: 1, maxLength: 4096, writeOnly: true, description: 仅接受可见 ASCII；只写入服务端秘密边界 }
+        clear_key: { type: boolean }
+        mentor_uses_teaching: { type: boolean }
+        limits: { $ref: "#/components/schemas/SettingsLimits" }
+        policy: { $ref: "#/components/schemas/SettingsPolicy" }
+    LearningSettings:
+      type: object
+      additionalProperties: false
+      required: [revision, writable, teaching, mentor, effective_mentor, search, mentor_uses_teaching, limits, policy, teaching_restart_required, model_endpoints]
+      properties:
+        revision: { type: integer, minimum: 0 }
+        writable: { type: boolean, description: 是否启用服务器秘密存储；设备仍需专门 scope }
+        teaching: { $ref: "#/components/schemas/SettingsConnectionView" }
+        mentor: { $ref: "#/components/schemas/SettingsConnectionView" }
+        effective_mentor: { $ref: "#/components/schemas/SettingsConnectionView" }
+        search: { $ref: "#/components/schemas/SettingsConnectionView" }
+        mentor_uses_teaching: { type: boolean }
+        limits: { $ref: "#/components/schemas/SettingsLimits" }
+        policy: { $ref: "#/components/schemas/SettingsPolicy" }
+        teaching_restart_required: { type: boolean }
+        model_endpoints: { type: array, items: { type: string } }
+    LearningCapability:
+      type: object
+      additionalProperties: false
+      required: [available, reason]
+      properties:
+        available: { type: boolean }
+        reason: { type: string, description: not_implemented / not_enabled / not_configured / not_probed / probe_expired / probe_failed 及细分类 }
+    LearningCapabilities:
+      type: object
+      additionalProperties: false
+      required: [schema_version, checked_at, schema, rendering, answering, search, persistence, research, web_mentor]
+      properties:
+        schema_version: { type: integer, const: 1 }
+        checked_at: { type: string, format: date-time }
+        schema: { $ref: "#/components/schemas/LearningCapability" }
+        rendering: { $ref: "#/components/schemas/LearningCapability" }
+        answering: { $ref: "#/components/schemas/LearningCapability" }
+        search: { $ref: "#/components/schemas/LearningCapability" }
+        persistence: { $ref: "#/components/schemas/LearningCapability" }
+        research: { $ref: "#/components/schemas/LearningCapability" }
+        web_mentor: { $ref: "#/components/schemas/LearningCapability" }
     WebSession:
       type: object
       additionalProperties: false

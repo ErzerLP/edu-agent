@@ -4,6 +4,58 @@
  */
 
 export interface paths {
+    "/v1/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取非敏感模型、搜索与预算配置，不发出外部请求 */
+        get: operations["getLearningSettings"];
+        /** 显式保存服务端设置；现有教学执行需重启应用 */
+        put: operations["updateLearningSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/settings/probes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 显式发送固定公开样本；最多 15 秒、模型 64 输出 Token、搜索 1 条结果，可能计费 */
+        post: operations["probeLearningSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 不发外部请求的能力发现；未实现研究不因搜索 Key 就绪而可执行 */
+        get: operations["getLearningCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/web/pairings": {
         parameters: {
             query?: never;
@@ -15,7 +67,7 @@ export interface paths {
         put?: never;
         /**
          * 浏览器配对，仅通过 HttpOnly Cookie 返回不透明会话
-         * @description 需要精确匹配 PUBLIC_BASE_URL 的 Origin；不接受 Authorization 或已有学习 Cookie。设备只获得配对范围内的 learning:read/write。
+         * @description 需要精确匹配 PUBLIC_BASE_URL 的 Origin；不接受 Authorization 或已有学习 Cookie。普通档案只保留 learning:read/write；显式 settings 档案额外保留 settings:write/probe，不升级旧设备。
          */
         post: operations["exchangeWebPairing"];
         delete?: never;
@@ -1587,6 +1639,120 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SettingsConnection: {
+            enabled: boolean;
+            /** @enum {string} */
+            provider: "openai_compatible" | "brave";
+            /** @description 完整模型 Base URL 或搜索请求 URL，禁止用户信息、查询、片段；空字符串表示未配置 */
+            endpoint: string;
+            /** @description 搜索槽位必须为空 */
+            model: string;
+            /**
+             * @description none 只适用于明确授权的模型端点
+             * @enum {string}
+             */
+            auth_mode: "bearer" | "none";
+        };
+        SettingsProbe: {
+            /** @enum {string} */
+            status: "ready" | "failed";
+            reason: string;
+            /** Format: date-time */
+            checked_at: string;
+            /** Format: date-time */
+            valid_until: string;
+            structured_json: boolean;
+            native_schema: boolean;
+            requests: number;
+            /** @constant */
+            cost_estimate: "unknown";
+        };
+        SettingsConnectionView: {
+            enabled: boolean;
+            /** @enum {string} */
+            provider: "openai_compatible" | "brave";
+            endpoint: string;
+            model: string;
+            /** @enum {string} */
+            auth_mode: "bearer" | "none";
+            has_key: boolean;
+            configured: boolean;
+            /** @enum {string} */
+            source: "environment" | "server";
+            /** @enum {string} */
+            status: "ready" | "unavailable" | "probe_failed";
+            reason: string;
+            probe: components["schemas"]["SettingsProbe"] | null;
+        };
+        /** @description 运行接受/续行时重新执行；不代表固定教学轮数，SSE 活跃流量重置无响应计时。输出须小于上下文且不大于研究 Token 预算。 */
+        SettingsLimits: {
+            /** @default 20 */
+            research_requests: number;
+            /** @default 100000 */
+            research_tokens: number;
+            /** @default 2048 */
+            output_tokens: number;
+            /** @default 32768 */
+            context_tokens: number;
+            /** @default 60 */
+            idle_timeout_seconds: number;
+            /** @default 2 */
+            concurrency: number;
+            /** @default 512 */
+            storage_mib: number;
+        };
+        SettingsPolicy: {
+            /**
+             * @description 后续运行是否允许私人目标、正文、成绩进入外部查询；不影响固定公开探测
+             * @default false
+             */
+            private_queries: boolean;
+        };
+        /** @description 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。字段缺省保留当前值；切换 endpoint/provider/auth_mode 清除旧 Key。 */
+        LearningSettingsUpdate: {
+            expected_revision: number;
+            /** @enum {string} */
+            target?: "teaching" | "mentor" | "search";
+            connection?: components["schemas"]["SettingsConnection"];
+            /** @description 仅接受可见 ASCII；只写入服务端秘密边界 */
+            new_key?: string;
+            clear_key?: boolean;
+            mentor_uses_teaching?: boolean;
+            limits?: components["schemas"]["SettingsLimits"];
+            policy?: components["schemas"]["SettingsPolicy"];
+        };
+        LearningSettings: {
+            revision: number;
+            /** @description 是否启用服务器秘密存储；设备仍需专门 scope */
+            writable: boolean;
+            teaching: components["schemas"]["SettingsConnectionView"];
+            mentor: components["schemas"]["SettingsConnectionView"];
+            effective_mentor: components["schemas"]["SettingsConnectionView"];
+            search: components["schemas"]["SettingsConnectionView"];
+            mentor_uses_teaching: boolean;
+            limits: components["schemas"]["SettingsLimits"];
+            policy: components["schemas"]["SettingsPolicy"];
+            teaching_restart_required: boolean;
+            model_endpoints: string[];
+        };
+        LearningCapability: {
+            available: boolean;
+            /** @description not_implemented / not_enabled / not_configured / not_probed / probe_expired / probe_failed 及细分类 */
+            reason: string;
+        };
+        LearningCapabilities: {
+            /** @constant */
+            schema_version: 1;
+            /** Format: date-time */
+            checked_at: string;
+            schema: components["schemas"]["LearningCapability"];
+            rendering: components["schemas"]["LearningCapability"];
+            answering: components["schemas"]["LearningCapability"];
+            search: components["schemas"]["LearningCapability"];
+            persistence: components["schemas"]["LearningCapability"];
+            research: components["schemas"]["LearningCapability"];
+            web_mentor: components["schemas"]["LearningCapability"];
+        };
         WebSession: {
             device: components["schemas"]["Device"];
             generation: number;
@@ -4788,6 +4954,128 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getLearningSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 非敏感设置，禁止缓存且不回显 Key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningSettings"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    updateLearningSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearningSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已保存；新的端点不会继承旧凭据 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningSettings"];
+                };
+            };
+            /** @description invalid_settings，格式、范围或端点许可无效 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description settings_conflict，版本冲突需重新读取 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    probeLearningSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    target: "teaching" | "mentor" | "search";
+                    expected_revision: number;
+                    /** @constant */
+                    consent: true;
+                };
+            };
+        };
+        responses: {
+            /** @description 包含实际探测成功或失败状态及时间；不返回提供商正文 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningSettings"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getLearningCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前能力和准确不可用原因 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningCapabilities"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     exchangeWebPairing: {
         parameters: {
             query?: never;

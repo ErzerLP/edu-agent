@@ -94,34 +94,37 @@ type Capabilities struct {
 }
 
 type Options struct {
-	BaseURL        *url.URL
-	Model          string
-	APIKey         string
-	ContextWindow  int
-	MinimumContext int
-	Timeout        time.Duration
-	ProbeCacheTTL  time.Duration
-	HTTPClient     *http.Client
+	BaseURL         *url.URL
+	Model           string
+	APIKey          string
+	ContextWindow   int
+	MinimumContext  int
+	Timeout         time.Duration
+	ProbeCacheTTL   time.Duration
+	HTTPClient      *http.Client
+	AllowNoKey      bool
+	MaxOutputTokens int
 }
 
 type Client struct {
-	endpoint       string
-	model          string
-	apiKey         string
-	contextWindow  int
-	minimumContext int
-	httpClient     *http.Client
-	probeCacheTTL  time.Duration
-	probeMu        sync.Mutex
-	probeAt        time.Time
-	probeResult    Capabilities
+	endpoint        string
+	model           string
+	apiKey          string
+	contextWindow   int
+	minimumContext  int
+	httpClient      *http.Client
+	probeCacheTTL   time.Duration
+	probeMu         sync.Mutex
+	probeAt         time.Time
+	probeResult     Capabilities
+	maxOutputTokens int
 }
 
 func New(options Options) (*Client, error) {
 	if options.BaseURL == nil || (options.BaseURL.Scheme != "http" && options.BaseURL.Scheme != "https") || options.BaseURL.Host == "" {
 		return nil, errors.New("model base URL must be absolute HTTP(S)")
 	}
-	if strings.TrimSpace(options.Model) == "" || strings.TrimSpace(options.APIKey) == "" {
+	if strings.TrimSpace(options.Model) == "" || (!options.AllowNoKey && strings.TrimSpace(options.APIKey) == "") {
 		return nil, errors.New("model name and API key are required")
 	}
 	if options.ContextWindow < options.MinimumContext || options.MinimumContext <= 0 {
@@ -149,7 +152,7 @@ func New(options Options) (*Client, error) {
 	return &Client{
 		endpoint: base.String(), model: options.Model, apiKey: options.APIKey,
 		contextWindow: options.ContextWindow, minimumContext: options.MinimumContext,
-		httpClient: &clone, probeCacheTTL: options.ProbeCacheTTL,
+		httpClient: &clone, probeCacheTTL: options.ProbeCacheTTL, maxOutputTokens: options.MaxOutputTokens,
 	}, nil
 }
 
@@ -168,6 +171,9 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 	payload := map[string]any{
 		"model": c.model, "messages": request.Messages, "stream": false,
 		"response_format": map[string]any{"type": "json_object"},
+	}
+	if c.maxOutputTokens > 0 {
+		payload["max_tokens"] = c.maxOutputTokens
 	}
 	if len(request.Schema) != 0 && request.UseNativeJSONSchema {
 		var schema any
@@ -193,7 +199,9 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Accept", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 	response, err := c.httpClient.Do(httpRequest)
 	if err != nil {
 		return ChatResult{}, classifyTransportError(ctx, err)

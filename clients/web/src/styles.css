@@ -236,6 +236,18 @@ summary {
   gap: 16px;
   margin-top: 16px;
 }
+.settings-endpoint {
+  overflow-wrap: anywhere;
+}
+.settings-card fieldset {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+input[type='checkbox'] {
+  width: 24px;
+  height: 24px;
+}
 .button {
   border: 1px solid transparent;
   border-radius: 8px;

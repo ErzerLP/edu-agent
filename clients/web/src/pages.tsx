@@ -644,46 +644,4 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
   )
 }
 
-export function SettingsPage() {
-  const { session } = useIdentity()
-  return (
-    <>
-      <section className="intro">
-        <span className="eyebrow">设置与能力</span>
-        <h1>清楚知道，现在能做什么。</h1>
-      </section>
-      <section className="panel">
-        <h2>浏览器身份</h2>
-        <p>{session.device.display_name}</p>
-        <p>会话到期：{new Date(session.expires_at).toLocaleString('zh-CN')}</p>
-        <p>退出只结束此浏览器会话；设备撤销需在本机管理入口操作。</p>
-      </section>
-      <section className="panel">
-        <h2>可用能力</h2>
-        <dl>
-          {(
-            [
-              ['spaces', '学习区管理'],
-              ['goals', '目标与历史'],
-              ['save_goal', '保存目标'],
-              ['start_learning', '自动研究与教学'],
-              ['references', '补充参考'],
-            ] as const
-          ).map(([key, name]) => (
-            <div key={key}>
-              <dt>{name}</dt>
-              <dd>{session.capabilities[key] ? '已就绪' : '尚未接入或当前设备无权限'}</dd>
-            </div>
-          ))}
-        </dl>
-      </section>
-      <section className="panel">
-        <h2>你的数据</h2>
-        <p>
-          已保存目标由服务端持久化。未提交正文仅在本标签页内存，刷新会丢失，退出或身份失效时会清除。浏览器只持久保存主题偏好。
-        </p>
-        <p>新增会话随服务端隐私清除失效，页面不保存明文答案、Token 或模型密钥。</p>
-      </section>
-    </>
-  )
-}
+export { SettingsPage } from './settings-page'

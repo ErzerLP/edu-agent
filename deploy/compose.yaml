@@ -97,6 +97,9 @@ services:
       WEB_UI_ALLOW_LOOPBACK_HTTP: ${WEB_UI_ALLOW_LOOPBACK_HTTP:-false}
       ADMIN_UI_TOKEN: ${ADMIN_UI_TOKEN:-}
       ADMIN_UI_SETTINGS_FILE: /var/lib/edu-agent/private/admin-settings.json
+      # 学习端秘密配置独立存放；Key 仅由显式授权的浏览器请求写入。
+      LEARNING_SETTINGS_FILE: /var/lib/edu-agent/learning-settings/settings.json
+      MODEL_ENDPOINT_ALLOWLIST: ${MODEL_ENDPOINT_ALLOWLIST:-[]}
       # 复用服务器持久卷；正文加密暂存，任务密钥由数据库隐私流程管理。
       IMPORT_JOB_STAGING_DIR: /var/lib/edu-agent/import-jobs
       NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK: ${NOTESYNC_ALLOW_INSECURE_NON_LOOPBACK:-false}

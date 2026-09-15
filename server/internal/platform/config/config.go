@@ -35,6 +35,8 @@ type Config struct {
 	AdminUI                    AdminUIConfig
 	WebUIEnabled               bool
 	WebUIAllowLoopbackHTTP     bool
+	LearningSettingsFile       string
+	ModelEndpointAllowlist     []string
 	ShutdownTimeout            time.Duration
 	PairingCodeTTL             time.Duration
 	PairingCodeMaxAttempts     int
@@ -200,6 +202,17 @@ func load(lookup envReader) (Config, error) {
 	if cfg.WebUIAllowLoopbackHTTP, err = boolValue(lookup, "WEB_UI_ALLOW_LOOPBACK_HTTP", false); err != nil {
 		return Config{}, err
 	}
+	if cfg.LearningSettingsFile, err = stringValue(lookup, "LEARNING_SETTINGS_FILE", ""); err != nil {
+		return Config{}, err
+	}
+	if cfg.LearningSettingsFile != "" && (!filepath.IsAbs(cfg.LearningSettingsFile) || filepath.Clean(cfg.LearningSettingsFile) != cfg.LearningSettingsFile) {
+		return Config{}, errors.New("LEARNING_SETTINGS_FILE 必须是绝对规范路径")
+	}
+	if raw, ok := lookup("MODEL_ENDPOINT_ALLOWLIST"); ok && raw != "" {
+		if json.Unmarshal([]byte(raw), &cfg.ModelEndpointAllowlist) != nil {
+			return Config{}, errors.New("MODEL_ENDPOINT_ALLOWLIST 必须是端点 URL 的 JSON 数组")
+		}
+	}
 	if cfg.AdminUI.TrustedLoopbackProxy, err = boolValue(lookup, "ADMIN_UI_TRUSTED_LOOPBACK_PROXY", false); err != nil {
 		return Config{}, err
 	}
@@ -207,6 +220,9 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.AdminUI.SettingsFile != "" {
+		if cfg.AdminUI.SettingsFile == cfg.LearningSettingsFile {
+			return Config{}, errors.New("学习配置文件必须与本机管理设置文件分开")
+		}
 		if _, err := validateAdminSettingsPath(cfg.AdminUI.SettingsFile); err != nil {
 			return Config{}, err
 		}

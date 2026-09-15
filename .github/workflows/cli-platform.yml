@@ -33,6 +33,15 @@ jobs:
           chmod 700 "$RUNNER_TEMP/cli-check/test-tmp"
           echo "TMPDIR=$(cd "$RUNNER_TEMP/cli-check/test-tmp" && pwd -P)" >> "$GITHUB_ENV"
           { git rev-parse HEAD; go version; go env GOOS GOARCH; } | tee "$RUNNER_TEMP/cli-check/identity.log"
+      - name: 验证共享核心独立模块
+        working-directory: packages/agentcore
+        run: |
+          GOWORK=off go test -race ./...
+          GOWORK=off go vet ./...
+          GOWORK=off go build ./...
+      - name: 验证服务端直接消费共享核心
+        working-directory: server
+        run: GOWORK=off go test ./internal/integrations/agentcore
       - name: Full tests
         run: go test -count=1 -timeout=10m -json ./... | tee "$RUNNER_TEMP/cli-check/test.jsonl"
       - name: Full race tests

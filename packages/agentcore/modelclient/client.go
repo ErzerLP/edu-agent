@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
+	"github.com/edu-agent/edu-agent/packages/agentcore/agentlimits"
 )
 
 const maxResponseBytes = int64(6*agentlimits.MaxAssistantTextBytes + (1 << 20))

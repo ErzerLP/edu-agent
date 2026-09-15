@@ -12,18 +12,15 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
+	core "github.com/edu-agent/edu-agent/packages/agentcore"
 )
 
-type Model interface {
-	Complete(context.Context, modelclient.Request) (modelclient.Response, error)
-}
+type Model = core.Model
 
 // StreamingModel is an optional foreground capability. Production conversations
 // prefer it when available, while Observer/Reflector and simple test fakes keep
 // using Model.Complete.
-type StreamingModel interface {
-	Stream(context.Context, modelclient.Request, func(modelclient.StreamEvent) error) (modelclient.Response, error)
-}
+type StreamingModel = core.StreamingModel
 
 type Server interface {
 	RetrieveKnowledge(context.Context, api.KnowledgeRetrievalRequest) (api.KnowledgeRetrievalResult, error)
@@ -348,42 +345,26 @@ const (
 	PreferenceRetry       PreferenceResolution = "retry"
 )
 
-type QuestionMode string
+type QuestionMode = core.QuestionMode
 
 const (
-	QuestionSingle   QuestionMode = "single"
-	QuestionMultiple QuestionMode = "multiple"
+	QuestionSingle   = core.QuestionSingle
+	QuestionMultiple = core.QuestionMultiple
 )
 
-type QuestionOption struct {
-	ID          string
-	Label       string
-	Description string
-}
+type QuestionOption = core.QuestionOption
 
-type PendingQuestion struct {
-	ID          string
-	Header      string
-	Question    string
-	Mode        QuestionMode
-	Options     []QuestionOption
-	AllowCustom bool
-}
+type PendingQuestion = core.PendingQuestion
 
-type QuestionAnswerStatus string
+type QuestionAnswerStatus = core.QuestionAnswerStatus
 
 const (
-	QuestionAnswered    QuestionAnswerStatus = "answered"
-	QuestionCancelled   QuestionAnswerStatus = "cancelled"
-	QuestionUnavailable QuestionAnswerStatus = "unavailable"
+	QuestionAnswered    = core.QuestionAnswered
+	QuestionCancelled   = core.QuestionCancelled
+	QuestionUnavailable = core.QuestionUnavailable
 )
 
-type QuestionAnswer struct {
-	QuestionID string
-	Status     QuestionAnswerStatus
-	OptionIDs  []string
-	Custom     string
-}
+type QuestionAnswer = core.QuestionAnswer
 
 var (
 	ErrPreferenceOutcomeUnknown = errors.New("长期偏好保存结果未知")

@@ -1,4 +1,4 @@
-package agentloop
+package agentcore
 
 import (
 	"crypto/sha256"
@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/packages/agentcore/agentlimits"
+	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 )
 
 type ContextPlanner struct {
@@ -44,19 +44,19 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	if p.ReservedOutputOverride > 0 {
 		outputCeiling = min(outputCeiling, p.ReservedOutputOverride)
 	}
-	safetyMargin := percentRoundUp(p.ContextWindow, 5)
+	safetyMargin := PercentRoundUp(p.ContextWindow, 5)
 	// Legacy/small windows cannot reserve the configured large ceiling. Keep
 	// useful input capacity (including committed memory) instead of spending
 	// every spare token on output. There is no old 8192-token output cap.
 	if outputCeiling >= p.ContextWindow-safetyMargin {
-		outputCeiling = min(outputCeiling, max(1024, percentRoundUp(p.ContextWindow, 15)))
+		outputCeiling = min(outputCeiling, max(1024, PercentRoundUp(p.ContextWindow, 15)))
 	}
 	minimumOutput := min(512, outputCeiling)
 	maximumInput := p.ContextWindow - safetyMargin - minimumOutput
 	if maximumInput <= 0 {
 		return ContextPlan{}, contextError(ContextBudgetInvalid, "模型窗口无法保留回答和安全余量")
 	}
-	system, conversational := splitSystemMessages(messages)
+	system, conversational := SplitSystemMessages(messages)
 	fixed := modelclient.Request{Messages: system, Tools: tools}
 	fixedTokens := p.Estimator.EstimateRequest(fixed)
 	if fixedTokens > maximumInput {
@@ -68,10 +68,10 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 		return ContextPlan{Request: fixed, EstimatedInput: fixedTokens, ReservedOutput: fixed.MaxTokens, SafetyMargin: safetyMargin}, nil
 	}
 	current := groups[len(groups)-1]
-	if fixedTokens+p.estimateAdditional(current) > maximumInput && mode != ContextCompactionOff {
+	if fixedTokens+p.EstimateAdditional(current) > maximumInput && mode != ContextCompactionOff {
 		current = projectCompletedToolCallArguments(current)
 	}
-	if fixedTokens+p.estimateAdditional(current) > maximumInput {
+	if fixedTokens+p.EstimateAdditional(current) > maximumInput {
 		return ContextPlan{}, contextError(ContextTurnTooLarge, "当前完整对话轮次超过上下文上限，请缩短输入或减少工具结果后重试")
 	}
 	if mode == ContextCompactionOff {
@@ -95,12 +95,12 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 		} else {
 			projected[index] = projectHistoryGroup(group, history)
 		}
-		fullEstimate += p.estimateAdditional(projected[index])
+		fullEstimate += p.EstimateAdditional(projected[index])
 		// A tool chain is never dropped to make room for prose. This also
 		// retains completed/unknown effects and their authorization context.
 		selected[index] = index >= recentStart || p.ProtectedGroups[index] || groupHasTools(group)
 		if selected[index] {
-			total += p.estimateAdditional(projected[index])
+			total += p.EstimateAdditional(projected[index])
 		}
 	}
 	// Prefer recent originals, first shrinking output down to its effective
@@ -112,7 +112,7 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 		}
 		candidate, changed := p.boundHistoryProse(projected[index], index)
 		if changed {
-			total += p.estimateAdditional(candidate) - p.estimateAdditional(projected[index])
+			total += p.EstimateAdditional(candidate) - p.EstimateAdditional(projected[index])
 			projected[index], bounded[index] = candidate, true
 		}
 	}
@@ -124,11 +124,11 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	var memoryMessage *modelclient.Message
 	memoryItemCount := 0
 	if mode == ContextCompactionAuto && len(p.Memory.Items) > 0 {
-		memoryCap := min(percentRoundUp(p.ContextWindow, 20), inputLimit-total)
+		memoryCap := min(PercentRoundUp(p.ContextWindow, 20), inputLimit-total)
 		if memoryCap > 0 {
 			memoryMessage, memoryItemCount = p.selectMemoryMessage(memoryCap)
 			if memoryMessage != nil {
-				total += p.estimateAdditional([]modelclient.Message{*memoryMessage})
+				total += p.EstimateAdditional([]modelclient.Message{*memoryMessage})
 			}
 		}
 	}
@@ -136,7 +136,7 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 		if selected[index] {
 			continue
 		}
-		size := p.estimateAdditional(projected[index])
+		size := p.EstimateAdditional(projected[index])
 		if total+size > inputLimit {
 			continue
 		}
@@ -166,7 +166,7 @@ func (p ContextPlanner) Plan(messages []modelclient.Message, tools []modelclient
 	}
 	return ContextPlan{
 		Request: request, EstimatedInput: estimated, ReservedOutput: request.MaxTokens, SafetyMargin: safetyMargin,
-		SoftPressure: fullEstimate >= percentRoundUp(inputLimit, 72), TotalTurns: len(groups), SelectedTurns: selectedCount,
+		SoftPressure: fullEstimate >= PercentRoundUp(inputLimit, 72), TotalTurns: len(groups), SelectedTurns: selectedCount,
 		DroppedTurns: len(groups) - selectedCount, ProjectedTurns: projectedCount, MemoryItemCount: memoryItemCount, UsedMemory: memoryMessage != nil,
 	}, nil
 }
@@ -214,7 +214,7 @@ func (p ContextPlanner) selectMemoryMessage(tokenCap int) (*modelclient.Message,
 	for _, item := range p.Memory.Items {
 		candidate := instruction + "\n\n会话记忆：\n" + strings.Join(append(selected, item), "\n")
 		message := modelclient.Message{Role: "system", Content: candidate}
-		if p.estimateAdditional([]modelclient.Message{message}) > tokenCap {
+		if p.EstimateAdditional([]modelclient.Message{message}) > tokenCap {
 			break
 		}
 		selected = append(selected, item)
@@ -225,7 +225,7 @@ func (p ContextPlanner) selectMemoryMessage(tokenCap int) (*modelclient.Message,
 	return &modelclient.Message{Role: "system", Content: instruction + "\n\n会话记忆：\n" + strings.Join(selected, "\n")}, len(selected)
 }
 
-func (p ContextPlanner) estimateAdditional(messages []modelclient.Message) int {
+func (p ContextPlanner) EstimateAdditional(messages []modelclient.Message) int {
 	base := p.Estimator.EstimateRequest(modelclient.Request{})
 	total := p.Estimator.EstimateRequest(modelclient.Request{Messages: messages}) - base
 	if total < 0 {
@@ -234,7 +234,7 @@ func (p ContextPlanner) estimateAdditional(messages []modelclient.Message) int {
 	return total
 }
 
-func splitSystemMessages(messages []modelclient.Message) ([]modelclient.Message, []modelclient.Message) {
+func SplitSystemMessages(messages []modelclient.Message) ([]modelclient.Message, []modelclient.Message) {
 	system := make([]modelclient.Message, 0, 1)
 	conversation := make([]modelclient.Message, 0, len(messages))
 	for _, message := range messages {
@@ -289,7 +289,7 @@ func appendCopy(first, second []modelclient.Message) []modelclient.Message {
 	return result
 }
 
-func clampInt(value, minimum, maximum int) int {
+func ClampInt(value, minimum, maximum int) int {
 	if value < minimum {
 		return minimum
 	}

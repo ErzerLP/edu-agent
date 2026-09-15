@@ -8,8 +8,10 @@ RUN npm run build
 FROM golang:1.26.6-alpine AS build
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
+COPY packages/agentcore/go.mod /src/packages/agentcore/go.mod
 RUN go mod download
 COPY server/ ./
+COPY packages/agentcore/ /src/packages/agentcore/
 COPY --from=web /src/clients/web/dist/ ./internal/webassets/dist/
 ARG TARGETOS=linux
 ARG TARGETARCH

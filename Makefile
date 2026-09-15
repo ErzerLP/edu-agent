@@ -1,9 +1,12 @@
 .PHONY: fmt server-fmt cli-fmt test server-test cli-test test-race server-test-race cli-test-race \
 	vet server-vet cli-vet build server-build cli-build cli-check cli-cross-build cli-platform-evidence cli-release \
 	cli-m1-blackbox cli-m1-blackbox-run postgres-candidate postgres-candidate-resume postgres-candidate-shard \
-	notesync-candidate web-build web-check check
+	notesync-candidate web-build web-check check agentcore-fmt agentcore-test agentcore-test-race agentcore-vet agentcore-build
 
-fmt: server-fmt cli-fmt
+fmt: agentcore-fmt server-fmt cli-fmt
+
+agentcore-fmt:
+	cd packages/agentcore && go fmt ./...
 
 server-fmt:
 	cd server && go fmt ./...
@@ -11,7 +14,10 @@ server-fmt:
 cli-fmt:
 	cd clients/cli-go && go fmt ./...
 
-test: server-test cli-test
+test: agentcore-test server-test cli-test
+
+agentcore-test:
+	cd packages/agentcore && GOWORK=off go test ./...
 
 server-test:
 	cd server && go test ./...
@@ -19,7 +25,10 @@ server-test:
 cli-test:
 	cd clients/cli-go && go test ./...
 
-test-race: server-test-race cli-test-race
+test-race: agentcore-test-race server-test-race cli-test-race
+
+agentcore-test-race:
+	cd packages/agentcore && GOWORK=off go test -race ./...
 
 server-test-race:
 	cd server && go test -race ./...
@@ -27,7 +36,10 @@ server-test-race:
 cli-test-race:
 	cd clients/cli-go && go test -race ./...
 
-vet: server-vet cli-vet
+vet: agentcore-vet server-vet cli-vet
+
+agentcore-vet:
+	cd packages/agentcore && GOWORK=off go vet ./...
 
 server-vet:
 	cd server && go vet ./...
@@ -35,7 +47,10 @@ server-vet:
 cli-vet:
 	cd clients/cli-go && go vet ./...
 
-build: server-build cli-build
+build: agentcore-build server-build cli-build
+
+agentcore-build:
+	cd packages/agentcore && GOWORK=off go build ./...
 
 web-build:
 	cd clients/web && npm ci --no-fund && npm run build
@@ -50,7 +65,7 @@ cli-build:
 	mkdir -p clients/cli-go/bin
 	cd clients/cli-go && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$${CLI_VERSION:-dev} -X main.commit=$${CLI_COMMIT:-unknown}" -o bin/edu-agent ./cmd/edu-agent
 
-cli-check: cli-test cli-test-race cli-vet cli-build
+cli-check: agentcore-test agentcore-test-race agentcore-vet cli-test cli-test-race cli-vet cli-build
 
 cli-m1-blackbox:
 	cd contracttests/fakellm && go test ./...

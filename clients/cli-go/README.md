@@ -79,6 +79,8 @@ edu-agent progress --global --status paused --order recent
 
 ## 客户端 AI 学习助手
 
+模型轮次、HTTP/SSE 协议和上下文预算使用 [`packages/agentcore`](../../packages/agentcore/README.md) 共享模块；TUI、凭据、加密 Session、文件/Shell/PTY 和任务仍由 CLI 适配器管理。请保留完整仓库目录布局，以便 `go.mod` 的相对依赖独立构建。
+
 Agent 会话绑定学习区、可选目标和教学会话：`edu-agent --space SPACE_UUID agent --goal GOAL_UUID [--session SESSION_UUID]`。省略目标允许区内交流；需要目标时展示正式选择列表，不选择最近更新的目标。省略教学会话不会读取全局 `current`。知识检索使用目标冻结资料范围，绑定教学时使用该教学原有冻结范围；未选资料明确提示，不回退全库。
 
 `learning_context` 工具的 `view` 为 `goals`、`goal`、`plans`、`progress`、`reviews`、`route` 或 `search`，分别读取本区目标、绑定目标详情、规划结果、进度、复习、指定教学路线和冻结资料。`open_learning_workflow` 的 `workflow` 为 `import`、`goal`、`planning` 或 `select_context`；Agent 面板按 Enter 打开与手动入口相同的选择、编辑和确认流程，Esc 取消。已有目标字段与规划草稿直接载入，不要求重复输入。模型只能申请打开流程，不能传本地路径冒充上传，也没有批准／发布字段；文件在客户端选择、扫描，正式预览通过后仍须用户确认。目标保存、规划采用沿用原版本与操作 ID 合同，取消和失败会返回结构化状态；结果未知不报告已回滚或已成功。

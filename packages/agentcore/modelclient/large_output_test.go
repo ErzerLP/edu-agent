@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
+	"github.com/edu-agent/edu-agent/packages/agentcore/agentlimits"
 )
 
 func largeOutputFrame(text string) string {

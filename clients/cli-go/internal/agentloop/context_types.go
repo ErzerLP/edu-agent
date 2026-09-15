@@ -2,20 +2,20 @@ package agentloop
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	core "github.com/edu-agent/edu-agent/packages/agentcore"
 )
 
 const (
-	ContextCompactionAuto       = "auto"
-	ContextCompactionRecentOnly = "recent-only"
-	ContextCompactionOff        = "off"
+	ContextCompactionAuto       = core.ContextCompactionAuto
+	ContextCompactionRecentOnly = core.ContextCompactionRecentOnly
+	ContextCompactionOff        = core.ContextCompactionOff
 
-	ContextBudgetInvalid       = "context_budget_invalid"
-	ContextTurnTooLarge        = "context_turn_too_large"
-	ContextRecentTurnsTooLarge = "context_recent_turns_too_large"
+	ContextBudgetInvalid       = core.ContextBudgetInvalid
+	ContextTurnTooLarge        = core.ContextTurnTooLarge
+	ContextRecentTurnsTooLarge = core.ContextRecentTurnsTooLarge
 	ContextObserverFailed      = "context_observer_failed"
 	ContextReflectorFailed     = "context_reflector_failed"
 	ContextSourceUnavailable   = "context_source_unavailable"
@@ -28,22 +28,7 @@ const (
 
 // ContextError is a stable, machine-readable failure raised before a model
 // request is sent when the safe context budget cannot be satisfied.
-type ContextError struct {
-	Code string
-	Err  error
-}
-
-func (e *ContextError) Error() string {
-	if e == nil {
-		return ""
-	}
-	if e.Err == nil {
-		return e.Code
-	}
-	return fmt.Sprintf("%s: %v", e.Code, e.Err)
-}
-
-func (e *ContextError) Unwrap() error { return e.Err }
+type ContextError = core.ContextError
 
 func contextError(code, message string) error {
 	return &ContextError{Code: code, Err: errors.New(message)}
@@ -231,10 +216,7 @@ type ToolResultProjection struct {
 	WorkspaceReference *WorkspaceReference
 }
 
-type ContextMemoryProjection struct {
-	Instruction string
-	Items       []string
-}
+type ContextMemoryProjection = core.ContextMemoryProjection
 
 type ContextStatus struct {
 	Estimated             bool
@@ -279,16 +261,4 @@ type ContextEvent struct {
 	Status           ContextStatus
 }
 
-type ContextPlan struct {
-	ProjectedTurns  int
-	Request         modelclient.Request
-	EstimatedInput  int
-	ReservedOutput  int
-	SafetyMargin    int
-	SoftPressure    bool
-	TotalTurns      int
-	SelectedTurns   int
-	DroppedTurns    int
-	MemoryItemCount int
-	UsedMemory      bool
-}
+type ContextPlan = core.ContextPlan

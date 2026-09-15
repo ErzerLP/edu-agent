@@ -49,3 +49,4 @@ make check
 ```
 
 真实 PostgreSQL 测试需要显式配置 `TEST_DATABASE_URL`，未配置时的 skip 不代表数据库行为通过。CLI 和服务端分别位于 `clients/cli-go` 与 `server`。
+共享 Go 模型循环位于独立模块 [`packages/agentcore`](packages/agentcore/README.md)，CLI 生产入口已使用；各模块通过仓库内相对依赖独立构建，无需 `go.work`。

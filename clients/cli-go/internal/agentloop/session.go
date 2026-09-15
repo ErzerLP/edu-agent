@@ -20,6 +20,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
+	core "github.com/edu-agent/edu-agent/packages/agentcore"
 )
 
 const (
@@ -473,14 +474,14 @@ func (s *Session) trimRawHistory() {
 	tokens := 0
 	planner := ContextPlanner{Estimator: s.estimator}
 	for turnID := range keep {
-		tokens += planner.estimateAdditional(turnMessages[turnID])
+		tokens += planner.EstimateAdditional(turnMessages[turnID])
 	}
 	for index := len(s.turnOrder) - 1; index >= 0; index-- {
 		turnID := s.turnOrder[index]
 		if _, exists := keep[turnID]; exists {
 			continue
 		}
-		size := planner.estimateAdditional(turnMessages[turnID])
+		size := planner.EstimateAdditional(turnMessages[turnID])
 		if tokens+size <= s.hotRawTokenLimit {
 			keep[turnID] = struct{}{}
 			tokens += size
@@ -869,32 +870,7 @@ func cloneResult(value Result) Result {
 }
 
 func validateModelMessage(message modelclient.Message) error {
-	textLimit := 64 << 10
-	if message.Role == "assistant" {
-		textLimit = maxAssistantTextBytes
-	}
-	if len(message.Content) > textLimit {
-		return errors.New("模型回答超过客户端安全上限")
-	}
-	totalArguments := 0
-	seenCallIDs := make(map[string]struct{}, len(message.ToolCalls))
-	for _, call := range message.ToolCalls {
-		if call.ID == "" || call.Type != "function" || call.Function.Name == "" {
-			return errors.New("模型工具调用身份无效")
-		}
-		if _, duplicate := seenCallIDs[call.ID]; duplicate {
-			return errors.New("模型工具调用ID重复")
-		}
-		seenCallIDs[call.ID] = struct{}{}
-		if len(call.Function.Arguments) > agentlimits.ToolArgumentsBytes(call.Function.Name) {
-			return errors.New("模型工具参数超过客户端安全上限")
-		}
-		totalArguments += len(call.Function.Arguments)
-	}
-	if totalArguments > agentlimits.MaxToolCallArgumentsTotal {
-		return errors.New("模型单轮工具参数总量超过安全上限")
-	}
-	return nil
+	return core.ValidateModelMessage(message)
 }
 
 func containsUnsafeControl(value string) bool {

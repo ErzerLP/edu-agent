@@ -1,4 +1,4 @@
-package agentloop
+package agentcore
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 )
 
 // TokenEstimator conservatively estimates complete OpenAI-compatible requests
@@ -41,7 +41,7 @@ func (e *ConservativeTokenEstimator) EstimateText(value string) int {
 	// ASCII prose is commonly near four characters/token, but JSON and code are
 	// denser. Three characters/token plus one token per CJK rune is deliberately
 	// conservative before provider calibration is available.
-	base := divideRoundUp(ascii, 3) + cjk + divideRoundUp(other, 2)
+	base := DivideRoundUp(ascii, 3) + cjk + DivideRoundUp(other, 2)
 	if value != "" && base == 0 {
 		base = 1
 	}
@@ -104,18 +104,18 @@ func (e *ConservativeTokenEstimator) Calibration() float64 {
 	return e.correction
 }
 
-func divideRoundUp(value, divisor int) int {
+func DivideRoundUp(value, divisor int) int {
 	if value <= 0 {
 		return 0
 	}
 	return 1 + (value-1)/divisor
 }
 
-// percentRoundUp avoids overflowing the intermediate product for a configured
+// PercentRoundUp avoids overflowing the intermediate product for a configured
 // window near MaxInt. Callers supply a percentage in the fixed range 0..100.
-func percentRoundUp(value, percent int) int {
+func PercentRoundUp(value, percent int) int {
 	if value <= 0 {
 		return 0
 	}
-	return value/100*percent + divideRoundUp(value%100*percent, 100)
+	return value/100*percent + DivideRoundUp(value%100*percent, 100)
 }

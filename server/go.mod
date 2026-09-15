@@ -2,6 +2,10 @@ module github.com/edu-agent/edu-agent/server
 
 go 1.26.6
 
+require github.com/edu-agent/edu-agent/packages/agentcore v0.0.0
+
+replace github.com/edu-agent/edu-agent/packages/agentcore => ../packages/agentcore
+
 require (
 	github.com/getkin/kin-openapi v0.147.0
 	github.com/go-chi/chi/v5 v5.3.1

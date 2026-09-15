@@ -3,131 +3,121 @@ package agentloop
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
+	core "github.com/edu-agent/edu-agent/packages/agentcore"
 )
 
-type continueAgentLoopError struct {
-	events []Event
-}
+type continueAgentLoopError struct{ events []Event }
 
-func (*continueAgentLoopError) Error() string {
-	return "continue agent loop"
-}
+func (*continueAgentLoopError) Error() string { return "continue agent loop" }
 
+// run 的生产调度唯一实现位于共享核心；适配器只连接 CLI 的状态与展示。
 func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
-	for {
-		result, err := s.runOnce(ctx, events)
-		var continuation *continueAgentLoopError
-		if !errors.As(err, &continuation) {
-			return result, err
-		}
-		events = continuation.events
-	}
+	adapter := &coreAdapter{session: s, events: events}
+	budget := &core.RoundBudget{Limit: s.options.MaxToolRounds, Remaining: s.remaining}
+	defer func() { s.remaining = budget.Remaining }()
+	return (core.Runner[Result]{
+		Model: s.model, Context: adapter, History: adapter, Tools: adapter, Events: adapter, Budget: budget,
+	}).Run(ctx)
 }
 
-func (s *Session) runOnce(ctx context.Context, events []Event) (Result, error) {
-	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
-	if s.options.MaxToolRounds > 0 {
-		if s.remaining <= 0 {
-			return Result{}, errors.New("Agent已达到用户配置的工具轮数保护值；将最大工具轮数设为0可取消该限制")
-		}
-		s.remaining--
-	}
-	reasoningEffort := s.frozenReasoningEffort()
-	thinkingID := s.nextThinkingActivityID()
-	summary := "正在分析问题"
-	if len(events) > 0 {
-		summary = "正在结合工具结果继续分析"
-		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: summary, Status: EventRunning}, Phase: ActivityContinuingAfterTool})
-	}
-	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: summary, Status: EventRunning}, Phase: ActivityPreparingContext})
-	plan, err := s.contextPlan()
-	if err != nil {
-		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "上下文准备失败", Status: EventFailed, Detail: "context_prepare_failed"}, Phase: ActivityValidatingResponse, StableCode: "context_prepare_failed"})
-		return Result{}, err
-	}
-	plan.Request.ReasoningEffort = reasoningEffort
-	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: summary, Status: EventRunning}, Phase: ActivityWaitingModel, ReasoningEffort: reasoningEffort})
-	response, err := s.foregroundResponse(ctx, plan.Request, thinkingID)
-	if err != nil {
-		err = preferContextError(ctx, err)
-		if ctx.Err() != nil {
-			return Result{}, err
-		}
-		code := stableActivityCode(err, "model_request_failed")
-		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "模型响应失败", Status: EventFailed, Detail: code}, Phase: ActivityValidatingResponse, StableCode: code})
-		return Result{}, err
-	}
-	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
-	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "正在校验模型响应", Status: EventRunning}, Phase: ActivityValidatingResponse})
-	if err := validateModelMessage(response.Message); err != nil {
-		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "模型响应不符合协议", Status: EventFailed, Detail: "invalid_model_response"}, Phase: ActivityValidatingResponse, StableCode: "invalid_model_response"})
-		return Result{}, err
-	}
-	recordUsage := func() {
-		if response.Usage == nil {
-			return
-		}
-		s.estimator.ObserveActual(plan.EstimatedInput, *response.Usage)
-		s.contextRuntime.UpdateUsageStatus(*response.Usage)
-	}
-	if len(response.Message.ToolCalls) == 0 {
-		text := response.Message.Content
-		if strings.TrimSpace(text) == "" {
-			return Result{}, errors.New("模型没有返回可显示的回答")
-		}
-		if err := s.commitFinalAnswer(ctx, response.Message, text); err != nil {
-			return Result{}, err
-		}
-		recordUsage()
-		s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "已完成回答组织", Status: EventSucceeded}, Phase: ActivityValidatingResponse})
-		return Result{Text: text, Events: events}, nil
-	}
-	s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: thinkingID, Summary: "已确定下一步工具操作", Status: EventSucceeded}, Phase: ActivityAssemblingTools})
-	if err := s.appendTurnMessage(s.currentTurnID, response.Message); err != nil {
-		return Result{}, err
-	}
-	recordUsage()
-	return s.processCalls(ctx, response.Message.ToolCalls, 0, events)
+type coreAdapter struct {
+	session    *Session
+	events     []Event
+	thinkingID string
+	summary    string
+	effort     modelclient.ReasoningEffort
 }
 
-func (s *Session) foregroundResponse(ctx context.Context, request modelclient.Request, activityID string) (modelclient.Response, error) {
-	streaming, ok := s.model.(StreamingModel)
-	if !ok {
-		return s.model.Complete(ctx, request)
+func (a *coreAdapter) Prepare(context.Context) (core.ContextPlan, error) {
+	plan, err := a.session.contextPlan()
+	plan.Request.ReasoningEffort = a.effort
+	return plan, err
+}
+
+func (a *coreAdapter) ObserveUsage(plan core.ContextPlan, usage modelclient.Usage) {
+	a.session.estimator.ObserveActual(plan.EstimatedInput, usage)
+	a.session.contextRuntime.UpdateUsageStatus(usage)
+}
+
+func (a *coreAdapter) AppendAssistant(_ context.Context, message modelclient.Message) error {
+	return a.session.appendTurnMessage(a.session.currentTurnID, message)
+}
+
+func (a *coreAdapter) Complete(ctx context.Context, message modelclient.Message) (Result, error) {
+	if err := a.session.commitFinalAnswer(ctx, message, message.Content); err != nil {
+		return Result{}, err
 	}
-	return streaming.Stream(ctx, request, func(event modelclient.StreamEvent) error {
-		if err := ctx.Err(); err != nil {
-			return err
+	return Result{Text: message.Content, Events: a.events}, nil
+}
+
+func (a *coreAdapter) Execute(ctx context.Context, calls []modelclient.ToolCall) (core.ToolStep[Result], error) {
+	result, err := a.session.processCalls(ctx, calls, 0, a.events)
+	var continuation *continueAgentLoopError
+	if errors.As(err, &continuation) {
+		a.events = continuation.events
+		return core.ToolStep[Result]{Continue: true}, nil
+	}
+	return core.ToolStep[Result]{Result: result}, err
+}
+
+func (a *coreAdapter) Publish(ctx context.Context, event core.RunEvent) {
+	s := a.session
+	activity := Activity{Kind: ActivityThinking, Event: Event{ID: a.thinkingID, Status: EventRunning}}
+	switch event.Kind {
+	case core.RunPreparing:
+		a.effort = s.frozenReasoningEffort()
+		a.thinkingID = s.nextThinkingActivityID()
+		a.summary = "正在分析问题"
+		if len(a.events) > 0 {
+			a.summary = "正在结合工具结果继续分析"
+			s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: a.thinkingID, Summary: a.summary, Status: EventRunning}, Phase: ActivityContinuingAfterTool})
 		}
-		switch event.Kind {
+		activity.Event.ID, activity.Event.Summary, activity.Phase = a.thinkingID, a.summary, ActivityPreparingContext
+	case core.RunWaitingModel:
+		activity.Event.Summary, activity.Phase, activity.ReasoningEffort = a.summary, ActivityWaitingModel, event.ReasoningEffort
+	case core.RunContextFailed:
+		activity.Event.Summary, activity.Event.Status, activity.Event.Detail = "上下文准备失败", EventFailed, "context_prepare_failed"
+		activity.Phase, activity.StableCode = ActivityValidatingResponse, "context_prepare_failed"
+	case core.RunModelFailed:
+		code := stableActivityCode(event.Err, "model_request_failed")
+		activity.Event.Summary, activity.Event.Status, activity.Event.Detail = "模型响应失败", EventFailed, code
+		activity.Phase, activity.StableCode = ActivityValidatingResponse, code
+	case core.RunValidating:
+		activity.Event.Summary, activity.Phase = "正在校验模型响应", ActivityValidatingResponse
+	case core.RunInvalidResponse:
+		activity.Event.Summary, activity.Event.Status, activity.Event.Detail = "模型响应不符合协议", EventFailed, "invalid_model_response"
+		activity.Phase, activity.StableCode = ActivityValidatingResponse, "invalid_model_response"
+	case core.RunCompleted:
+		activity.Event.Summary, activity.Event.Status, activity.Phase = "已完成回答组织", EventSucceeded, ActivityValidatingResponse
+	case core.RunToolsReady:
+		activity.Event.Summary, activity.Event.Status, activity.Phase = "已确定下一步工具操作", EventSucceeded, ActivityAssemblingTools
+	case core.RunStream:
+		switch event.Stream.Kind {
 		case modelclient.StreamEventResponseStarted:
-			s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: activityID, Summary: "正在接收模型响应", Status: EventRunning}, Phase: ActivityReceivingStream, ReasoningEffort: request.ReasoningEffort})
+			activity.Event.Summary, activity.Phase, activity.ReasoningEffort = "正在接收模型响应", ActivityReceivingStream, event.ReasoningEffort
 		case modelclient.StreamEventTextDelta:
-			delta := safeActivityDelta(event.Text)
-			if delta != "" {
-				s.publishActivity(ctx, Activity{Kind: ActivityTextDelta, Event: Event{ID: activityID, Summary: "正在生成回答", Status: EventRunning}, Phase: ActivityReceivingStream, ReasoningEffort: request.ReasoningEffort, Delta: delta})
+			activity.Delta = safeActivityDelta(event.Stream.Text)
+			if activity.Delta == "" {
+				return
 			}
+			activity.Kind, activity.Event.Summary, activity.Phase, activity.ReasoningEffort = ActivityTextDelta, "正在生成回答", ActivityReceivingStream, event.ReasoningEffort
 		case modelclient.StreamEventReasoningDelta:
-			if delta := safeActivityDelta(event.Text); delta != "" {
-				s.publishActivity(ctx, Activity{Kind: ActivityReasoningDelta, Event: Event{ID: activityID}, Delta: delta})
+			delta := safeActivityDelta(event.Stream.Text)
+			if delta == "" {
+				return
 			}
+			activity = Activity{Kind: ActivityReasoningDelta, Event: Event{ID: a.thinkingID}, Delta: delta}
 		case modelclient.StreamEventResponseActivity:
-			s.publishActivity(ctx, Activity{Kind: ActivityResponseProgress, Event: Event{ID: activityID}, ReceivedAt: event.ReceivedAt})
+			activity = Activity{Kind: ActivityResponseProgress, Event: Event{ID: a.thinkingID}, ReceivedAt: event.Stream.ReceivedAt}
 		case modelclient.StreamEventCompatibilityFallback:
-			s.publishActivity(ctx, Activity{Kind: ActivityThinking, Event: Event{ID: activityID, Summary: "模型已切换到兼容响应模式", Status: EventRunning, Detail: "stream_compatibility_fallback"}, Phase: ActivityWaitingModel, ReasoningEffort: request.ReasoningEffort, StableCode: "stream_compatibility_fallback"})
-		default:
-			return errors.New("模型返回未知流式事件")
+			activity.Event.Summary, activity.Event.Detail = "模型已切换到兼容响应模式", "stream_compatibility_fallback"
+			activity.Phase, activity.ReasoningEffort, activity.StableCode = ActivityWaitingModel, event.ReasoningEffort, "stream_compatibility_fallback"
 		}
-		return nil
-	})
+	}
+	s.publishActivity(ctx, activity)
 }
 
 func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall, start int, events []Event) (Result, error) {

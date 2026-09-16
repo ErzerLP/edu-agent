@@ -18,6 +18,7 @@ import {
 import type { components } from './api/schema'
 import { GoalComposer } from './components/goal-composer'
 import { Button } from './components/ui/button'
+import { MentorPanel } from './components/mentor-panel'
 import { Confirm, EmptyState, ErrorState, Pagination } from './components/common'
 
 const defaultSpace = '00000000-0000-4000-8000-000000000001'
@@ -590,6 +591,7 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
         disabled={space.data.status === 'archived' || goal.data.management.status === 'archived'}
       />
       <GoalLifecycle goal={goal.data} archivedSpace={space.data.status === 'archived'} />
+      <MentorPanel key={`${spaceId}:${goalId}`} goal={goal.data} archivedSpace={space.data.status === 'archived'} />
       <section className="section">
         <h2>修订历史</h2>
         {history.error && <ErrorState error={history.error} retry={() => void history.refetch()} />}

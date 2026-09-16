@@ -573,3 +573,8 @@ footer {
     transition: none !important;
   }
 }
+
+.mentor-panel { margin-block: 24px; overflow-wrap: anywhere; }
+.mentor-output { white-space: pre-wrap; overflow-y: auto; max-height: 420px; min-height: 80px; padding-block: 16px; overflow-wrap: anywhere; }
+.mentor-panel fieldset { margin-block: 20px; min-width: 0; }
+.mentor-panel details { margin-block: 16px; }

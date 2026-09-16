@@ -44,6 +44,13 @@ func (a *API) readSettings(w http.ResponseWriter, r *http.Request) {
 func (a *API) readCapabilities(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	capabilities := a.settingsService().Capabilities()
+	if a.mentorRuns != nil {
+		mentor := a.settingsService().View().EffectiveMentor
+		capabilities.WebMentor = settings.Capability{Available: mentor.Enabled && mentor.Configured, Reason: mentor.Reason}
+		if capabilities.WebMentor.Available {
+			capabilities.WebMentor.Reason = ""
+		}
+	}
 	if !a.webUI.Enabled {
 		capabilities.Rendering = settings.Capability{Reason: "not_enabled"}
 	}

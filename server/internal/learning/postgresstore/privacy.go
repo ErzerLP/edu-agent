@@ -179,6 +179,9 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		name string
 		sql  string
 	}{
+		{"导师运行事件", `DELETE FROM learning_mentor_events`},
+		{"导师运行正文", `UPDATE learning_mentor_runs SET checkpoint=NULL,lease_id=NULL,lease_until=NULL,call_started=FALSE,state=state||'{"body_available":false,"status":"cancelled","reason":"privacy_cleared","stage":"cancelled"}'::jsonb`},
+		{"导师操作摘要", `UPDATE learning_mentor_operations SET request_hash=decode(repeat('00',32),'hex')`},
 		{"learning space operations", `UPDATE learning_space_operations SET request_hash=decode(repeat('00',32),'hex'),result='{"redacted":true}'::jsonb`},
 		{"learning spaces", `UPDATE learning_spaces SET name='[redacted]',description='',status=CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END,version=version+1,updated_at=clock_timestamp() WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END`},
 		{"learning inbox", `UPDATE learning_inbox SET result='{"redacted":true}'::jsonb`},
@@ -376,6 +379,9 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 	err := db.QueryRow(ctx, `
 		SELECT COALESCE(sum(remaining),0)::bigint FROM (
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
+			UNION ALL SELECT count(*) FROM learning_mentor_events
+			UNION ALL SELECT count(*) FROM learning_mentor_runs WHERE checkpoint IS NOT NULL OR lease_id IS NOT NULL OR (state->>'body_available')::boolean OR state->>'reason'<>'privacy_cleared'
+			UNION ALL SELECT count(*) FROM learning_mentor_operations WHERE request_hash<>decode(repeat('00',32),'hex')
 			UNION ALL SELECT count(*) FROM learning_space_operations WHERE request_hash<>decode(repeat('00',32),'hex') OR result<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_spaces WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END
 			UNION ALL SELECT count(*) FROM learning_goal_revisions WHERE goal_text<>'[redacted]' OR source<>'privacy_erasure' OR management IS NOT NULL

@@ -6,6 +6,121 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/goals/{goalID}/runs:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getCurrentMentorRun
+      summary: 读取本设备在明确目标内的当前运行，不执行模型
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: 最小会话恢复与保存能力，无永久历史列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, save_available]
+                properties:
+                  run: { oneOf: [{ $ref: "#/components/schemas/MentorSnapshot" }, { type: "null" }] }
+                  save_available: { type: boolean }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: createMentorRun
+      summary: 唯一受理目标内导师运行；保存目标本身不调用此入口
+      description: expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, session_id, expected_version, prompt, save, request_budget, token_budget]
+              properties:
+                operation_id: { type: string, format: uuid }
+                session_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 1 }
+                prompt: { type: string, minLength: 1, maxLength: 16000, description: UTF-8 最多 16000 字节 }
+                save: { type: boolean, description: 明确同意七日内加密保存必要恢复正文；false 仅服务进程内存，跨进程不可恢复 }
+                request_budget: { type: integer, minimum: 1, maximum: 1000 }
+                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+      responses:
+        "202": { description: 已受理或返回原操作结果，Location 指向运行快照, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/MentorRunID" }
+    get:
+      operationId: getMentorRun
+      summary: 读取真实运行快照及一致 watermark
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 同一事务中的快照，正文可能已到期或临时模式无法恢复, content: { application/json: { schema: { $ref: "#/components/schemas/MentorSnapshot" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}/events:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/MentorRunID" }
+    get:
+      operationId: observeMentorRun
+      summary: 仅观察事件 outbox，不触发执行；离开页面不取消运行
+      description: 从快照 watermark 开始续读，最多保留最近 128 个变更通知。SSE event 为 run，data 为 MentorEvent；客户端按 seq 去重，缺口或 409 resync_required 后重新取快照。正文增量合并在 checkpoint，通知后读取快照。每批发送重新检查设备及隐私。Cookie 自动继承身份。代理需禁用缓冲，服务返回 X-Accel-Buffering=no。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: after, in: query, required: true, schema: { type: integer, minimum: 0 } }
+      responses:
+        "200": { description: 有界变更通知及可配置心跳, content: { text/event-stream: { schema: { type: string } } } }
+        "409": { description: resync_required，游标过期或超前；必须重新读取快照, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}/commands:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/MentorRunID" }
+    post:
+      operationId: commandMentorRun
+      summary: 回应交互、继续预算、明确停止或清除正文
+      description: expected_version 是运行版本。respond 同时绑定 interaction_id，过期回答不能授权新候选。continue_budget 显式分配新的有界额度；不继续时停止不会产生新付费调用。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, expected_version, kind]
+              properties:
+                operation_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 1 }
+                kind: { type: string, enum: [respond, continue_budget, stop, clear] }
+                interaction_id: { type: string, format: uuid }
+                answer: { type: string, maxLength: 8000 }
+                request_budget: { type: integer, minimum: 1, maximum: 1000 }
+                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+      responses:
+        "202": { description: 可通过原操作 ID 查询回执, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getMentorOperation
+      summary: 查询原操作的固定回执，不重放工具
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 原运行和受理版本, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/settings:
     get:
       operationId: getLearningSettings
@@ -2685,6 +2800,17 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    MentorSpaceID:
+      name: X-Learning-Space-ID
+      in: header
+      required: true
+      description: 明确绑定学习区，运行接口不允许省略并回落默认区
+      schema: { type: string, format: uuid }
+    MentorRunID:
+      name: runID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     KnowledgeCollectionID:
       name: X-Knowledge-Collection-ID
       in: header
@@ -2979,6 +3105,62 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    MentorReceipt:
+      type: object
+      required: [operation_id, run_id, session_id, version]
+      properties:
+        operation_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+    MentorInteraction:
+      type: object
+      required: [id, question, choices, approval, call_id]
+      properties:
+        id: { type: string, format: uuid }
+        question: { type: string, maxLength: 4000 }
+        choices: { type: array, maxItems: 8, items: { type: string, maxLength: 500 } }
+        approval: { type: boolean }
+        call_id: { type: string }
+    MentorSnapshot:
+      type: object
+      required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
+      properties:
+        run_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        goal_version: { type: integer, minimum: 1 }
+        privacy_generation: { type: integer, minimum: 1 }
+        version: { type: integer, minimum: 1 }
+        watermark: { type: integer, minimum: 1 }
+        status: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, succeeded, partial, failed, cancelling, cancelled] }
+        stage: { type: string }
+        reason: { type: string }
+        saved: { type: boolean }
+        body_available: { type: boolean }
+        requests_left: { type: integer, minimum: 0 }
+        tokens_left: { type: integer, minimum: 0 }
+        requests_used: { type: integer, minimum: 0 }
+        result_unknown: { type: boolean }
+        cost_unknown: { type: boolean, description: 提供商实际费用未核实；与结果是否已知分别表达 }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        configuration: { type: string, description: 执行配置的不可逆摘要 }
+        output: { type: string, maxLength: 65536 }
+        interaction: { $ref: "#/components/schemas/MentorInteraction" }
+    MentorEvent:
+      type: object
+      required: [run_id, session_id, space_id, goal_id, privacy_generation, version, seq, type]
+      properties:
+        run_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        version: { type: integer, minimum: 1 }
+        seq: { type: integer, minimum: 1 }
+        type: { type: string }
     SettingsConnection:
       type: object
       additionalProperties: false

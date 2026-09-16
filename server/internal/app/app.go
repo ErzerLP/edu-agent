@@ -22,6 +22,7 @@ import (
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	spacepostgres "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
+	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
@@ -86,6 +87,14 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	settingsView := settingsService.View()
+	mentorKey, err := mentorrun.LoadKey(cfg.MentorKeyFile)
+	if err != nil {
+		return fmt.Errorf("读取导师正文密钥失败: %w", err)
+	}
+	mentorRuns, err := mentorrun.New(pool, settingsService, mentorKey)
+	if err != nil {
+		return err
+	}
 	cfg.Model.Enabled = modelClient != nil
 	cfg.Model.Name = settingsView.Teaching.Model
 	cfg.Model.ContextWindow = settingsView.Limits.ContextTokens
@@ -124,6 +133,10 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	runtimeWorkers := append([]workerSpec(nil), bridge.workers...)
+	runtimeWorkers = append(runtimeWorkers, periodicWorker("mentor-cleanup", time.Second, 1, mentorRuns.Sweep))
+	for index := 0; index < settingsView.Limits.Concurrency; index++ {
+		runtimeWorkers = append(runtimeWorkers, periodicWorker(fmt.Sprintf("mentor-%d", index), 500*time.Millisecond, 1, mentorRuns.RunOnce))
+	}
 	runtimeWorkers = append(runtimeWorkers, periodicWorker("import-job-cleanup", time.Minute, 1, stores.knowledge.SweepImportJobs))
 	runtimeWorkers = append(runtimeWorkers, periodicWorker("learning-progress-upgrade", time.Minute, 1, stores.learning.EnsureProgressProjection))
 	runtimeWorkers = append(runtimeWorkers, notesyncBridge.workers...)
@@ -156,6 +169,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
+		MentorRuns: mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},

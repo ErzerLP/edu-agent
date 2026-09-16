@@ -22,6 +22,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
+	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
@@ -145,6 +146,9 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	MentorRuns              *mentorrun.Service
+	MentorHeartbeat         time.Duration
+	MentorWriteTimeout      time.Duration
 	Settings                *settings.Service
 	LearningSpaces          LearningSpaceService
 	Identity                IdentityService
@@ -178,6 +182,11 @@ type Options struct {
 }
 
 type API struct {
+	mentorRuns              *mentorrun.Service
+	mentorHeartbeat         time.Duration
+	mentorWriteTimeout      time.Duration
+	mentorStreamsMu         sync.Mutex
+	mentorStreams           map[string]int
 	settings                *settings.Service
 	learningSpaces          LearningSpaceService
 	identity                IdentityService
@@ -257,6 +266,7 @@ func New(options Options) (http.Handler, error) {
 		options.MaxOfflineRequestBody = 8 << 20
 	}
 	api := &API{
+		mentorRuns: options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
 		settings:       options.Settings,
 		learningSpaces: options.LearningSpaces,
 		identity:       options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
@@ -298,6 +308,7 @@ func New(options Options) (http.Handler, error) {
 	router.Group(func(protected chi.Router) {
 		protected.Use(api.authenticate)
 		protected.Use(api.resolveLearningSpace)
+		api.mountMentorRuns(protected)
 		api.mountLearningSpaces(protected)
 		api.mountSettings(protected)
 		api.mountPlanning(protected)

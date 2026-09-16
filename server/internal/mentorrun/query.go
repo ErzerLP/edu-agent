@@ -1,0 +1,146 @@
+package mentorrun
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+
+	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/jackc/pgx/v5"
+)
+
+func (s *Service) read(ctx context.Context, actor identity.Credential, space, id string, fn func(pgx.Tx, row) error) error {
+	if !validID(space) || !validID(id) {
+		return ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.Background())
+	generation, err := gates(ctx, tx, false)
+	if err != nil {
+		return err
+	}
+	if err = actorGate(ctx, tx, actor.Device.ID, actor.TokenID, false); err != nil {
+		return err
+	}
+	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 AND device_id=$2 AND space_id=$3 AND privacy_generation=$4 FOR SHARE`, id, actor.Device.ID, space, generation))
+	if err != nil {
+		return err
+	}
+	if err = fn(tx, item); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReadSnapshot 在短事务内发送有界响应，撤销/清除必须等待本次发送完成。
+func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, space, id string, send func(Snapshot) error) error {
+	return s.read(ctx, actor, space, id, func(_ pgx.Tx, item row) error {
+		if time.Now().After(item.ExpiresAt) {
+			item.BodyAvailable = false
+			item.Reason = "expired"
+		}
+		if err := s.decode(&item); err != nil {
+			item.BodyAvailable = false
+			if !item.Saved {
+				item.Reason = "temporary_unavailable"
+			} else {
+				return err
+			}
+		}
+		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction})
+	})
+}
+
+func (s *Service) Current(ctx context.Context, actor identity.Credential, space, goal string) (string, error) {
+	if !validID(space) || !validID(goal) {
+		return "", ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(context.Background())
+	generation, err := gates(ctx, tx, false)
+	if err != nil {
+		return "", err
+	}
+	if err = actorGate(ctx, tx, actor.Device.ID, actor.TokenID, false); err != nil {
+		return "", err
+	}
+	var id string
+	err = tx.QueryRow(ctx, `SELECT current_run_id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND current_run_id IS NOT NULL`, actor.Device.ID, space, goal, generation).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+func (s *Service) Operation(ctx context.Context, actor identity.Credential, space, id string) (Receipt, error) {
+	if !validID(id) || !validID(space) {
+		return Receipt{}, ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer tx.Rollback(context.Background())
+	generation, err := gates(ctx, tx, false)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if err = actorGate(ctx, tx, actor.Device.ID, actor.TokenID, false); err != nil {
+		return Receipt{}, err
+	}
+	var raw []byte
+	err = tx.QueryRow(ctx, `SELECT o.receipt FROM learning_mentor_operations o JOIN learning_mentor_runs r ON r.id=o.run_id WHERE o.device_id=$1 AND o.operation_id=$2 AND r.space_id=$3 AND r.privacy_generation=$4`, actor.Device.ID, id, space, generation).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Receipt{}, ErrNotFound
+	}
+	var result Receipt
+	if err != nil {
+		return result, err
+	}
+	if json.Unmarshal(raw, &result) != nil {
+		return result, ErrStorage
+	}
+	return result, nil
+}
+
+func (s *Service) Events(ctx context.Context, actor identity.Credential, space, id string, after int64, send func([]Event) error) error {
+	if after < 0 {
+		return ErrInvalid
+	}
+	return s.read(ctx, actor, space, id, func(tx pgx.Tx, item row) error {
+		if after > item.Watermark || after < item.Watermark-EventWindow {
+			return ErrResync
+		}
+		rows, err := tx.Query(ctx, `SELECT event FROM learning_mentor_events WHERE run_id=$1 AND seq>$2 ORDER BY seq`, id, after)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		events := []Event{}
+		for rows.Next() {
+			var raw []byte
+			var event Event
+			if err = rows.Scan(&raw); err != nil {
+				return err
+			}
+			if json.Unmarshal(raw, &event) != nil {
+				return ErrStorage
+			}
+			events = append(events, event)
+		}
+		if err = rows.Err(); err != nil {
+			return err
+		}
+		if len(events) > 0 && events[0].Seq != after+1 {
+			return ErrResync
+		}
+		return send(events)
+	})
+}

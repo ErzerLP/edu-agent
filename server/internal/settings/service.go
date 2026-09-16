@@ -2,6 +2,9 @@ package settings
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"slices"
@@ -9,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 )
 
@@ -290,6 +294,35 @@ func (s *Service) TeachingClient() (*llm.Client, error) {
 		return nil, nil
 	}
 	return modelClient(s.activeTeaching, s.activeLimits, false, modelTransport())
+}
+
+// MentorClient 每次承领和付费调用前重新读取配置；返回的摘要绑定端点及预算，不暴露秘密。
+func (s *Service) MentorClient(wrappers ...func(http.RoundTripper) http.RoundTripper) (*modelclient.Client, Limits, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot := s.state.Mentor
+	if s.state.MentorUsesTeaching {
+		slot = s.state.Teaching
+	}
+	limits := s.state.Limits
+	if !slot.Enabled || !configured(slot) {
+		return nil, limits, "", nil
+	}
+	raw, err := json.Marshal(struct {
+		Connection Connection
+		Key        string
+		Limits     Limits
+	}{slot.Connection, slot.Key, limits})
+	if err != nil {
+		return nil, limits, "", ErrInvalid
+	}
+	digest := sha256.Sum256(raw)
+	var transport http.RoundTripper = modelTransport()
+	for _, wrap := range wrappers {
+		transport = wrap(transport)
+	}
+	client, err := modelclient.New(slot.Endpoint, slot.Model, slot.Key, time.Duration(limits.IdleTimeoutSeconds)*time.Second, &http.Client{Transport: transport, CheckRedirect: rejectRedirect})
+	return client, limits, hex.EncodeToString(digest[:]), err
 }
 
 func modelClient(slot secretSlot, limits Limits, probe bool, transport http.RoundTripper) (*llm.Client, error) {

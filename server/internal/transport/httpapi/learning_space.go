@@ -175,7 +175,8 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 				}
 				if business {
 					jobCleanup := r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/knowledge/import-jobs/")
-					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" && !scopedTutoringPath(r.URL.Path) && !jobCleanup {
+					runtimeCommand := a.mentorRuns != nil && strings.HasPrefix(r.URL.Path, "/v1/learning/runs/") && strings.HasSuffix(r.URL.Path, "/commands")
+					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" && !scopedTutoringPath(r.URL.Path) && !jobCleanup && !runtimeCommand {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_archived"})
 						return
 					}
@@ -187,7 +188,8 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					supportsSessions := hasSessions && sessions.SupportsSessionSelection() && scopedTutoringPath(r.URL.Path)
 					progress, hasProgress := a.learning.(progressService)
 					supportsProgress := hasProgress && progress.SupportsProgress() && (r.URL.Path == "/v1/learning/progress" || r.URL.Path == "/v1/learning/reviews")
-					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions && !supportsProgress {
+					supportsMentor := a.mentorRuns != nil && mentorPath(r.URL.Path)
+					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions && !supportsProgress && !supportsMentor {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_module_unavailable"})
 						return
 					}

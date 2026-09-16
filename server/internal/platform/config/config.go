@@ -36,6 +36,9 @@ type Config struct {
 	WebUIEnabled               bool
 	WebUIAllowLoopbackHTTP     bool
 	LearningSettingsFile       string
+	MentorKeyFile              string
+	MentorHeartbeat            time.Duration
+	MentorWriteTimeout         time.Duration
 	ModelEndpointAllowlist     []string
 	ShutdownTimeout            time.Duration
 	PairingCodeTTL             time.Duration
@@ -208,6 +211,21 @@ func load(lookup envReader) (Config, error) {
 	if cfg.LearningSettingsFile != "" && (!filepath.IsAbs(cfg.LearningSettingsFile) || filepath.Clean(cfg.LearningSettingsFile) != cfg.LearningSettingsFile) {
 		return Config{}, errors.New("LEARNING_SETTINGS_FILE 必须是绝对规范路径")
 	}
+	if cfg.MentorKeyFile, err = stringValue(lookup, "MENTOR_KEY_FILE", ""); err != nil {
+		return Config{}, err
+	}
+	if cfg.MentorKeyFile != "" && (!filepath.IsAbs(cfg.MentorKeyFile) || filepath.Clean(cfg.MentorKeyFile) != cfg.MentorKeyFile || cfg.MentorKeyFile == cfg.LearningSettingsFile) {
+		return Config{}, errors.New("MENTOR_KEY_FILE 必须是独立密钥的绝对规范路径")
+	}
+	if cfg.MentorHeartbeat, err = durationValue(lookup, "MENTOR_STREAM_HEARTBEAT", 10*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.MentorWriteTimeout, err = durationValue(lookup, "MENTOR_STREAM_WRITE_TIMEOUT", 5*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.MentorHeartbeat < time.Second || cfg.MentorHeartbeat > time.Minute || cfg.MentorWriteTimeout < time.Second || cfg.MentorWriteTimeout > 30*time.Second {
+		return Config{}, errors.New("导师流心跳须为 1–60 秒，写空闲超时须为 1–30 秒")
+	}
 	if raw, ok := lookup("MODEL_ENDPOINT_ALLOWLIST"); ok && raw != "" {
 		if json.Unmarshal([]byte(raw), &cfg.ModelEndpointAllowlist) != nil {
 			return Config{}, errors.New("MODEL_ENDPOINT_ALLOWLIST 必须是端点 URL 的 JSON 数组")
@@ -220,6 +238,9 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.AdminUI.SettingsFile != "" {
+		if cfg.AdminUI.SettingsFile == cfg.MentorKeyFile {
+			return Config{}, errors.New("导师正文密钥必须与本机管理设置文件分开")
+		}
 		if cfg.AdminUI.SettingsFile == cfg.LearningSettingsFile {
 			return Config{}, errors.New("学习配置文件必须与本机管理设置文件分开")
 		}

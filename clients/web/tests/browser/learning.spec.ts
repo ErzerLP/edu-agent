@@ -74,7 +74,7 @@ test('真实配对、IME 保存、生命周期及深浅主题四个视口', asyn
   const forbidden: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
   page.on('request', (req) => {
-    if (/\/v1\/(model|tutoring)/.test(req.url())) forbidden.push(req.url())
+    if (/\/v1\/(model|tutoring)/.test(req.url()) && req.method() !== 'GET') forbidden.push(req.url())
   })
   await pair(page)
   for (const theme of ['light', 'dark']) {

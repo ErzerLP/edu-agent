@@ -6,6 +6,174 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/content/capabilities:
+    get:
+      operationId: learningContentCapabilities
+      summary: 协商独立内容协议；旧教学 DTO 不加入新枚举
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: 支持的版本、展示及交互能力；available 表示已配置正文密钥
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [protocol_version, available, blocks, interactions]
+                properties:
+                  protocol_version: { type: integer, const: 1 }
+                  available: { type: boolean }
+                  blocks: { type: array, items: { type: string } }
+                  interactions: { type: array, items: { type: string } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/tutoring/sessions/{sessionID}/content:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { name: sessionID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: ensureLearningContent
+      summary: 从原会话正规活动确定性创建或读取正式内容，重复请求不产生新版本
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [protocol_version, activity_id]
+              properties:
+                protocol_version: { type: integer, const: 1 }
+                activity_id: { type: string, format: uuid }
+      responses:
+        "200": { description: 已加密保存的正式版本, content: { application/json: { schema: { $ref: "#/components/schemas/ContentRevision" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    get:
+      operationId: getLearningContent
+      summary: 默认读正式版本；显式版本可读取草稿或失败输出但不能作答
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: version, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: 不可变内容版本, content: { application/json: { schema: { $ref: "#/components/schemas/ContentRevision" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/revisions:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    get:
+      operationId: learningContentHistory
+      summary: 读取内容版本历史
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: 最近一百个版本的元数据，不复制正文
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [version, status, created_at]
+                      properties:
+                        version: { type: integer, minimum: 1 }
+                        status: { type: string, enum: [draft, failed, committed] }
+                        created_at: { type: string, format: date-time }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: commitLearningContent
+      summary: 授权追加展示版本；原题、rubric、来源和生成依据由服务端固定
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [protocol_version, operation_id, expected_version, status, blocks, interaction]
+              properties:
+                protocol_version: { type: integer, const: 1 }
+                operation_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 1 }
+                status: { type: string, enum: [draft, failed, committed] }
+                blocks: { type: array, minItems: 1, maxItems: 256, items: { $ref: "#/components/schemas/ContentBlock" } }
+                interaction: { $ref: "#/components/schemas/ContentInteraction" }
+      responses:
+        "201": { description: 新版本或原操作回执版本, content: { application/json: { schema: { $ref: "#/components/schemas/ContentRevision" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/answers:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    post:
+      operationId: submitLearningContentAnswer
+      summary: 在原答案事务内校验正式内容版本与交互能力，再按原 rubric 作答
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, payload_schema_version, aggregate_type, aggregate_id, expected_version, action, answer, help, content_version]
+              properties:
+                operation_id: { type: string, format: uuid }
+                payload_schema_version: { type: integer, const: 1 }
+                aggregate_type: { type: string, const: session }
+                aggregate_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 0 }
+                occurred_at: { type: string, format: date-time }
+                action: { type: string, const: submit_attempt }
+                answer: { type: string, maxLength: 262144 }
+                help: { $ref: "#/components/schemas/HelpLevel" }
+                content_version: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: 原教学操作回执；丢响应后按原设备和会话核对, content: { application/json: { schema: { $ref: "#/components/schemas/SessionOperationResult" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/tutoring/sessions/{sessionID}/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: sessionID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getTutoringOperation
+      summary: 只读核对原教学操作，不重新发送答案
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: 原设备、区和会话的终态回执；404 不代表可换 ID 补发
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operation_id, session_id, status, aggregate_version]
+                properties:
+                  operation_id: { type: string, format: uuid }
+                  session_id: { type: string, format: uuid }
+                  status: { type: string, enum: [succeeded, rejected] }
+                  aggregate_version: { type: integer, minimum: 0 }
+                  code: { type: string }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/goals/{goalID}/research:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -2885,6 +3053,17 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    ContentProtocol:
+      name: X-Learning-Content-Version
+      in: header
+      required: true
+      description: 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO
+      schema: { type: string, const: "1" }
+    ContentArtifactID:
+      name: artifactID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     MentorSpaceID:
       name: X-Learning-Space-ID
       in: header
@@ -3190,6 +3369,65 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    ContentBlock:
+      type: object
+      additionalProperties: false
+      required: [block_id, kind, fallback]
+      properties:
+        block_id: { type: string, format: uuid }
+        kind: { type: string, maxLength: 64, description: 未知展示块用 fallback，不能据此发起交互 }
+        fallback: { type: string, minLength: 1 }
+        text: { type: string }
+        language: { type: string }
+        reference_id: { type: string, format: uuid }
+        rows: { type: array, maxItems: 100, items: { type: array, maxItems: 20, items: { type: string } } }
+        children: { type: array, maxItems: 256, items: { $ref: "#/components/schemas/ContentBlock" } }
+    ContentInteraction:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, description: 支持 none/text/single_choice；未知种类禁止作答 }
+        choices:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [value, label]
+            properties:
+              value: { type: string }
+              label: { type: string }
+    ContentRevision:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, artifact_id, version, committed_version, learning_space_id, goal_id, goal_revision_id, session_id, activity_id, activity_revision, privacy_generation, actor_device_id, status, created_at, body]
+      properties:
+        protocol_version: { type: integer, const: 1 }
+        artifact_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        committed_version: { type: integer, minimum: 1 }
+        learning_space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        goal_revision_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        activity_revision: { type: integer, minimum: 1 }
+        privacy_generation: { type: integer, minimum: 1 }
+        actor_device_id: { type: string, format: uuid }
+        status: { type: string, enum: [draft, failed, committed] }
+        created_at: { type: string, format: date-time }
+        body:
+          type: object
+          additionalProperties: false
+          required: [blocks, interaction, references, model_id, input_fingerprint, semantic_fingerprint]
+          properties:
+            blocks: { type: array, minItems: 1, maxItems: 256, items: { $ref: "#/components/schemas/ContentBlock" } }
+            interaction: { $ref: "#/components/schemas/ContentInteraction" }
+            references: { type: array, items: { $ref: "#/components/schemas/KnowledgeReference" } }
+            model_id: { type: string }
+            input_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
+            semantic_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
     MentorReceipt:
       type: object
       required: [operation_id, run_id, session_id, version]

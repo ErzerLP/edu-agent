@@ -82,6 +82,10 @@ export function learningClient(session: Session, spaceId?: string) {
 
 export function errorText(error: unknown) {
   if (!(error instanceof ApiError)) return '网络连接失败，输入已保留。请检查连接后重试。'
+  if (error.code === 'learning_content_key_unavailable') return '版本化内容需要服务器配置独立正文加密密钥。原会话仍然保留。'
+  if (error.code === 'learning_content_upgrade_required') return '当前内容或作答协议不受支持，请升级客户端；未提交答案。'
+  if (error.code === 'retrieval_incomplete') return '本次资料检索不完整，未据此生成活动。请检查资料范围后重试。'
+  if (error.code === 'knowledge_scope_required') return '当前目标没有可用教学资料，请先在 CLI 中选择或导入资料。'
   if (error.status === 409)
     return '内容版本已变化或当前状态不允许操作。输入已保留；请读取最新版本后检查并重试。'
   if (error.status === 401) return '浏览器会话已失效，请重新配对。'

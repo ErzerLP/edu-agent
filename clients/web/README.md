@@ -1,6 +1,6 @@
 # 知络浏览器学习入口
 
-浏览器学习入口为 `/app/`，与 Go API 同域。提供目标、学习区管理和目标内导师交流；保存目标本身不会调用模型或创建教学会话。自动研究/教学与参考绑定入口根据服务端 capability 禁用。
+浏览器学习入口为 `/app/`，与 Go API 同域。提供目标、学习区管理、研究、目标内导师交流与真实教学工作区；保存目标本身不会调用模型或创建教学会话。教学从目标详情明确选择或新建会话，能力不足时明确受限。
 
 ## 本机开发
 
@@ -14,7 +14,7 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 ./server/edu-agentd serve
 ```
 
-通过同一 `DATABASE_URL` 运行 `./server/edu-agentd pairing-code create`，或使用既有本机管理页获取一次性配对码。在 `http://127.0.0.1:8080/app/` 输入配对码，设置浏览器名称后即可使用。模型、搜索和资料都不是前置。
+通过同一 `DATABASE_URL` 运行 `./server/edu-agentd pairing-code create`，或使用既有本机管理页获取一次性配对码。在 `http://127.0.0.1:8080/app/` 输入配对码，设置浏览器名称后即可使用。保存目标不以模型、搜索或资料为前置。
 
 `make web-build` 安装锁定依赖、检查类型、生成 Vite dist，并复制到 `server/internal/webassets/dist`。`cd clients/web && npm run dev` 监听前端源码并在每次构建后复制资源；重启 `go run ./cmd/edu-agentd` 后 Go 会嵌入最新资源。开发流量始终经过 Go 的同域 Cookie/CSRF 路径。没有跨域 Vite 开发服务器或代理身份。
 
@@ -26,7 +26,7 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 
 学习 Cookie 为 `__Host-edu_web`，Secure、HttpOnly、SameSite=Strict、Path=/、无 Domain。loopback HTTP 开发例外采用 `edu_web_dev`，必须单独启用。配置必须使用访问页面的精确 scheme/host/port，HTTP 层不根据转发头推断 Origin。学习 Cookie 与 Authorization 同时存在时拒绝；所有使用学习 Cookie 的非安全请求都校验 Origin 和 `X-CSRF-Token`。
 
-浏览器会话固定有效 12 小时，存储于 PostgreSQL，可跨服务重启恢复。学习设备只获得配对权限范围中的 `learning:read/write`；每次请求读取实时权限、设备撤销、过期与隐私代次。退出只删除当前会话。管理页与学习页同源时，携带学习 Cookie 的管理请求会被拒绝；使用独立浏览器上下文访问管理面，或先退出学习会话。
+浏览器会话固定有效 12 小时，存储于 PostgreSQL，可跨服务重启恢复。普通学习设备继承配对码已有的 `learning:read/write` 与 `knowledge:read`，不会因此获得资料写入、审批或管理权限；每次请求读取实时权限、设备撤销、过期与隐私代次。旧设备不自动增权，缺少资料读取权限时需用新学习配对码重新配对。退出只删除当前会话。管理页与学习页同源时，携带学习 Cookie 的管理请求会被拒绝；使用独立浏览器上下文访问管理面，或先退出学习会话。
 
 ## 状态与隐私
 
@@ -54,9 +54,27 @@ TEST_DATABASE_URL='独立测试数据库 URL' npm run test:browser
 
 设计与验收见 [Web 入口设计](../../docs/design/web-learning-entry.md) 和 [Issue #18 验收记录](../../docs/development/issue-18-acceptance.md)。
 
+## 版本化教学工作区
+
+在目标详情的“继续学习”选择旧会话，或明确新建教学会话。地址为 `/app/spaces/:spaceId/learn/:sessionId`；始终读取 URL 中的原会话，不使用全局 current。来源栏显示真实路线范围和活动冻结的正规资料，不虚构掌握度。阅读活动无需正式答案；文本/单选答案走独立控件，Ctrl+Enter 或按钮提交。聊天使用 Enter/Shift+Enter，IME 组合态不会发送；可请求提示、分步引导和答案讲解，再返回原学习焦点。帮助等级按实际获得的帮助提交，刷新后需重新确认。
+
+版本正文页面 `/app/content/:artifactId?space=:spaceId&version=:version` 仅阅读；`/content/:artifactId` 是同源短链接入口。链接只含身份和版本，可用 `#block-:blockId` 定位稳定内容块。旧正规 Activity 确定性适配为首个正式版本，不改变旧 ID、事件或 rubric。内容版本只能追加，主学习页读取当前正式版，历史页展示最近 100 个版本，任意旧版仍可按版本号读取。新协议通过 capabilities 和 `X-Learning-Content-Version: 1` 协商；旧 CLI 继续使用原有严格 DTO 和字符串答案。
+
+正文支持 Markdown、代码、公式、表格、引用、提示、题目、输入说明和组合块；不要求固定课序。Markdown 不执行 HTML，不自动加载图片，只允许用户明确打开 HTTPS 外链。公式禁可信宏/网络资源并限制长度、展开和尺寸；代码只展示，不运行。未知块显示文本回退，未知交互禁止正式提交。导师流式半成品仍是交流草稿；非法或不完整提案无法发行活动，内容 draft/failed 版本也不能取代正式版或提交答案。
+
+旧题默认使用字符串文本答案。授权提交单选版本仅支持原题独立行的显式选项（如 `A. 2`、`B、3`）；完整选项集、标签与答案值必须一一匹配，允许重排但不能交换含义或隐藏选项。无法确定映射的旧题保留文本作答，不从 rubric 猜测或泄露答案。
+
+正式答案丢响应后保留原操作 ID，核对原设备/区/会话的回执，不自动补发。活动草稿与待核对操作只在本标签页内存，按身份、区、会话、活动修订隔离；切页与主题切换保留，刷新不保证保留未保存答案。两标签页互不共享草稿，旧页面的迟到结果不会替换新页面状态。已确认的操作和正式内容由服务端恢复。
+
+版本内容必须配置下述 `MENTOR_KEY_FILE`，新表 `000023_learning_content.sql` 使用 AES-256-GCM 保存所有版本正文、引用和生成依据，并绑定内容身份、权限主体和隐私代次。密钥缺失时保留原活动阅读，明确禁用版本化作答，不降级明文。正式内容不采用导师临时输出的七日 TTL，保留至全局学习隐私清除；清除通过 learning owner 同时删除版本、引用、操作摘要并验证无残留，既有导师流程清除运行增量与缓存。备份与密钥的恢复边界仍按下文处理。
+
+已有真实会话可独立验收，不依赖研究。新活动生成需要已有正规资料、可用教学模型及原目标范围；没有资料不假造题目。当前显示必要反馈和提交状态，完整评估复核仍使用 CLI。使用更新后的 Nginx 白名单，不能仅更新前端资源。
+
+隔离测试库：`WEB_WORKSPACE_FIXTURE=1 TEST_DATABASE_URL=... npm run test:browser -- workspace.spec.ts`。本地 HTTP 模型只提供确定性输出，配对、知识、提案、动作、版本和答案都使用真实 Go 服务及 PostgreSQL；不冒充真实外部提供商验收。开发方案及具体证据见 [内容工作区设计](../../docs/design/learning-content-workspace.md) 和 [Issue #23 验收记录](../../docs/development/issue-23-acceptance.md)。
+
 ## 模型、搜索与预算设置
 
-设置页通过 `/v1/settings` 保存和恢复服务端配置，`/v1/capabilities` 只读查询能力，不发外部请求。教学模型、Web 导师模型及搜索分别配置；导师仅在明确选择时复用教学配置，不覆盖独立配置。CLI 本机 Key 不读取、不上传、不迁移。研究需要同时配置搜索和 Web 导师；Web 作答仍未实现，导师只提供下述目标内交流。
+设置页通过 `/v1/settings` 保存和恢复服务端配置，`/v1/capabilities` 只读查询能力，不发外部请求。教学模型、Web 导师模型及搜索分别配置；导师仅在明确选择时复用教学配置，不覆盖独立配置。CLI 本机 Key 不读取、不上传、不迁移。研究需要同时配置搜索和 Web 导师；正式活动生成使用教学模型，目标内交流使用 Web 导师。
 
 操作者先设置独立绝对路径 `LEARNING_SETTINGS_FILE`，其直接父目录必须为 `0700`、文件为 `0600`，不能通过符号链接选择路径，也不能与 admin 设置共用文件。空路径只允许读取配置状态。Compose 将该文件放在服务器既有持久卷的独立 `learning-settings/` 目录。一个文件只供一个服务进程管理。
 

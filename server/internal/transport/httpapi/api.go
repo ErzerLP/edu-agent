@@ -21,6 +21,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
@@ -146,6 +147,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	LearningContent         *learningcontent.Store
 	MentorRuns              *mentorrun.Service
 	MentorHeartbeat         time.Duration
 	MentorWriteTimeout      time.Duration
@@ -182,6 +184,7 @@ type Options struct {
 }
 
 type API struct {
+	learningContent         *learningcontent.Store
 	mentorRuns              *mentorrun.Service
 	mentorHeartbeat         time.Duration
 	mentorWriteTimeout      time.Duration
@@ -266,7 +269,8 @@ func New(options Options) (http.Handler, error) {
 		options.MaxOfflineRequestBody = 8 << 20
 	}
 	api := &API{
-		mentorRuns: options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
+		learningContent: options.LearningContent,
+		mentorRuns:      options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
 		settings:       options.Settings,
 		learningSpaces: options.LearningSpaces,
 		identity:       options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
@@ -309,6 +313,7 @@ func New(options Options) (http.Handler, error) {
 		protected.Use(api.authenticate)
 		protected.Use(api.resolveLearningSpace)
 		api.mountMentorRuns(protected)
+		api.mountLearningContent(protected)
 		api.mountLearningSpaces(protected)
 		api.mountSettings(protected)
 		api.mountPlanning(protected)

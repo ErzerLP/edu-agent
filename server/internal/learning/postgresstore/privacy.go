@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -175,6 +176,9 @@ func redactLearningEventPayloads(ctx context.Context, tx pgx.Tx, request privacy
 }
 
 func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
+	if err := learningcontent.RedactTx(ctx, tx); err != nil {
+		return err
+	}
 	statements := []struct {
 		name string
 		sql  string
@@ -353,7 +357,12 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 	case privacy.StoreLearningEventPayload:
 		return verifyLearningEventPayloads(ctx, s.pool, request)
 	case privacy.StoreLearningTypedPayload:
-		return verifyLearningTypedPayloads(ctx, s.pool)
+		remaining, err := verifyLearningTypedPayloads(ctx, s.pool)
+		if err != nil {
+			return 0, err
+		}
+		content, err := learningcontent.Remaining(ctx, s.pool)
+		return remaining + content, err
 	case privacy.StoreProjectionGenerations:
 		return s.verifyLearningProjections(ctx, request)
 	default:

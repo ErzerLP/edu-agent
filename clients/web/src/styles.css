@@ -1,6 +1,248 @@
 @import 'tailwindcss';
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
+/* 教学布局沿用全站视觉变量；辅栏尺寸同时支持指针和方向键。 */
+body:has(.teaching-workspace) .main {
+  max-width: none;
+  padding: 16px 24px;
+}
+body:has(.teaching-workspace) .site-header {
+  max-width: none;
+  min-height: 68px;
+  padding: 10px 24px;
+}
+.teaching-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--background);
+}
+.teaching-header {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.teaching-header h1 {
+  font-size: 1.3rem;
+}
+.teaching-header [role='status'] {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.teaching-columns {
+  display: grid;
+  grid-template-columns: var(--knowledge-width) minmax(520px, 1fr) var(--mentor-width);
+  gap: 16px;
+  margin-top: 16px;
+  align-items: start;
+}
+.teaching-columns > .panel {
+  padding: 20px;
+}
+.knowledge-column,
+.tutor-column {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.learning-column {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.workspace-tabs {
+  display: none;
+  gap: 8px;
+  padding: 12px 0;
+}
+.column-size {
+  font-size: 0.8rem;
+}
+.column-size input {
+  padding: 0;
+}
+.content-block {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  scroll-margin-top: 160px;
+}
+.content-group {
+  display: grid;
+  gap: 16px;
+}
+.content-block pre,
+.safe-markdown pre,
+.math-block {
+  max-width: 100%;
+  overflow: auto;
+  padding: 16px;
+  background: var(--soft);
+  border-radius: 8px;
+  white-space: pre;
+}
+.content-block code,
+.safe-markdown code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+}
+.safe-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.safe-markdown p + p {
+  margin-top: 12px;
+}
+.safe-markdown h1 {
+  font-size: 1.5rem;
+}
+.safe-markdown ul,
+.safe-markdown ol {
+  padding-left: 1.5em;
+  list-style: revert;
+}
+.safe-markdown blockquote {
+  border-left: 3px solid var(--border);
+  margin: 8px 0;
+  padding-left: 12px;
+}
+.content-callout {
+  padding: 16px;
+  border-left: 3px solid var(--accent);
+  background: var(--soft);
+}
+.content-table {
+  max-width: 100%;
+  overflow: auto;
+}
+.content-table table {
+  border-collapse: collapse;
+}
+.content-table td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  min-width: 100px;
+}
+.content-meta,
+.content-page details {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+.content-page {
+  display: grid;
+  gap: 24px;
+}
+.source-dialog {
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: min(800px, calc(100vw - 32px));
+  max-height: 85dvh;
+  overflow: auto;
+  margin: auto;
+}
+.source-dialog::backdrop {
+  background: #0008;
+}
+.source-dialog > * + * {
+  margin-top: 20px;
+}
+.source-dialog details {
+  overflow-wrap: anywhere;
+}
+.teaching-discussion {
+  max-height: 55dvh;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.answer-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.session-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 16px 0;
+}
+@media (min-width: 1200px) and (max-width: 1439px) {
+  .teaching-columns {
+    grid-template-columns: 220px minmax(520px, 1fr) 320px;
+    gap: 12px;
+  }
+  .teaching-columns > .panel {
+    padding: 16px;
+  }
+  body:has(.teaching-workspace) .main {
+    padding: 12px;
+  }
+  .column-size {
+    display: none;
+  }
+}
+@media (min-width: 768px) and (max-width: 1199px) {
+  .teaching-columns {
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 12px;
+  }
+  .learning-column {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .knowledge-column,
+  .tutor-column {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .teaching-workspace[data-aux='mentor'] .knowledge-column,
+  .teaching-workspace[data-aux='knowledge'] .tutor-column {
+    display: none;
+  }
+  .workspace-tabs {
+    display: flex;
+  }
+  .column-size {
+    display: none;
+  }
+  body:has(.teaching-workspace) .main {
+    padding: 12px;
+  }
+}
+@media (max-width: 767px) {
+  body:has(.teaching-workspace) .main {
+    padding: 8px 12px max(20px, env(safe-area-inset-bottom));
+  }
+  .teaching-columns {
+    display: block;
+    margin-top: 8px;
+  }
+  .teaching-workspace[data-tab='learn'] .knowledge-column,
+  .teaching-workspace[data-tab='learn'] .tutor-column,
+  .teaching-workspace[data-tab='knowledge'] .learning-column,
+  .teaching-workspace[data-tab='knowledge'] .tutor-column,
+  .teaching-workspace[data-tab='mentor'] .learning-column,
+  .teaching-workspace[data-tab='mentor'] .knowledge-column {
+    display: none;
+  }
+  .workspace-tabs {
+    display: flex;
+  }
+  .column-size {
+    display: none;
+  }
+  .teaching-columns > .panel {
+    padding: 16px;
+  }
+  .teaching-workspace textarea {
+    scroll-margin-block: 200px 24px;
+    min-height: 120px;
+  }
+  .source-dialog {
+    padding: 16px;
+    max-height: calc(100dvh - 32px);
+  }
+}
+
 :root {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;

@@ -2,6 +2,23 @@ package learning
 
 import "context"
 
+type SessionOperationReceipt struct {
+	OperationID      string `json:"operation_id"`
+	SessionID        string `json:"session_id"`
+	Status           string `json:"status"`
+	AggregateVersion int64  `json:"aggregate_version"`
+	Code             string `json:"code,omitempty"`
+}
+
+func (s *Service) SessionOperation(ctx context.Context, device, session, operation string) (SessionOperationReceipt, error) {
+	if store, ok := s.authority.(interface {
+		SessionOperation(context.Context, string, string, string) (SessionOperationReceipt, error)
+	}); ok {
+		return store.SessionOperation(ctx, device, session, operation)
+	}
+	return SessionOperationReceipt{}, &Error{Code: CodeNotFound}
+}
+
 type SessionQuery struct {
 	GoalID string
 	Status string

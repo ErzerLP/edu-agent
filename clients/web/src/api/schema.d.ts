@@ -4,6 +4,353 @@
  */
 
 export interface paths {
+    "/v1/learning/content/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 协商独立内容协议；旧教学 DTO 不加入新枚举 */
+        get: operations["learningContentCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tutoring/sessions/{sessionID}/content": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从原会话正规活动确定性创建或读取正式内容，重复请求不产生新版本 */
+        post: operations["ensureLearningContent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        /** 默认读正式版本；显式版本可读取草稿或失败输出但不能作答 */
+        get: operations["getLearningContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/revisions": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        /** 读取内容版本历史 */
+        get: operations["learningContentHistory"];
+        put?: never;
+        /** 授权追加展示版本；原题、rubric、来源和生成依据由服务端固定 */
+        post: operations["commitLearningContent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/answers": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 在原答案事务内校验正式内容版本与交互能力，再按原 rubric 作答 */
+        post: operations["submitLearningContentAnswer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tutoring/sessions/{sessionID}/operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                sessionID: string;
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        /** 只读核对原教学操作，不重新发送答案 */
+        get: operations["getTutoringOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/goals/{goalID}/research": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                goalID: string;
+            };
+            cookie?: never;
+        };
+        /** 恢复本设备明确目标内的研究运行 */
+        get: operations["getCurrentResearch"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/runs/{runID}/sources": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        /** 按区和身份过滤后检索、分页；摘要不包含正文 */
+        get: operations["listResearchSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/runs/{runID}/sources/{sourceID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+                sourceID: string;
+            };
+            cookie?: never;
+        };
+        /** 读取真实来源片段、上下文、版本和解析覆盖 */
+        get: operations["getResearchSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/runs/{runID}/sources/{sourceID}/decisions": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+                sourceID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 终态运行的来源采纳或拒绝；采纳额外要求 knowledge:write 与 research:adopt */
+        post: operations["decideResearchSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/goals/{goalID}/runs": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                goalID: string;
+            };
+            cookie?: never;
+        };
+        /** 读取本设备在明确目标内的当前运行，不执行模型 */
+        get: operations["getCurrentMentorRun"];
+        put?: never;
+        /**
+         * 唯一受理目标内导师运行；保存目标本身不调用此入口
+         * @description expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。
+         */
+        post: operations["createMentorRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/runs/{runID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        /** 读取真实运行快照及一致 watermark */
+        get: operations["getMentorRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/runs/{runID}/events": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * 仅观察事件 outbox，不触发执行；离开页面不取消运行
+         * @description 从快照 watermark 开始续读，最多保留最近 128 个变更通知。SSE event 为 run，data 为 MentorEvent；客户端按 seq 去重，缺口或 409 resync_required 后重新取快照。正文增量合并在 checkpoint，通知后读取快照。每批发送重新检查设备及隐私。Cookie 自动继承身份。代理需禁用缓冲，服务返回 X-Accel-Buffering=no。
+         */
+        get: operations["observeMentorRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/runs/{runID}/commands": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 回应交互、继续预算、明确停止或清除正文
+         * @description expected_version 是运行版本。respond 同时绑定 interaction_id，过期回答不能授权新候选。continue_budget 显式分配新的有界额度；不继续时停止不会产生新付费调用。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
+         */
+        post: operations["commandMentorRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        /** 查询原操作的固定回执，不重放工具 */
+        get: operations["getMentorOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/settings": {
         parameters: {
             query?: never;
@@ -46,7 +393,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 不发外部请求的能力发现；未实现研究不因搜索 Key 就绪而可执行 */
+        /** 不发外部请求的能力发现；研究需要运行宿主和搜索、导师配置 */
         get: operations["getLearningCapabilities"];
         put?: never;
         post?: never;
@@ -1639,6 +1986,202 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ContentBlock: {
+            /** Format: uuid */
+            block_id: string;
+            /** @description 未知展示块用 fallback，不能据此发起交互 */
+            kind: string;
+            fallback: string;
+            text?: string;
+            language?: string;
+            /** Format: uuid */
+            reference_id?: string;
+            rows?: string[][];
+            children?: components["schemas"]["ContentBlock"][];
+        };
+        ContentInteraction: {
+            /** @description 支持 none/text/single_choice；未知种类禁止作答 */
+            kind: string;
+            choices?: {
+                value: string;
+                label: string;
+            }[];
+        };
+        ContentRevision: {
+            /** @constant */
+            protocol_version: 1;
+            /** Format: uuid */
+            artifact_id: string;
+            version: number;
+            committed_version: number;
+            /** Format: uuid */
+            learning_space_id: string;
+            /** Format: uuid */
+            goal_id: string;
+            /** Format: uuid */
+            goal_revision_id: string;
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            activity_id: string;
+            activity_revision: number;
+            privacy_generation: number;
+            /** Format: uuid */
+            actor_device_id: string;
+            /** @enum {string} */
+            status: "draft" | "failed" | "committed";
+            /** Format: date-time */
+            created_at: string;
+            body: {
+                blocks: components["schemas"]["ContentBlock"][];
+                interaction: components["schemas"]["ContentInteraction"];
+                references: components["schemas"]["KnowledgeReference"][];
+                model_id: string;
+                input_fingerprint: string;
+                semantic_fingerprint: string;
+            };
+        };
+        MentorReceipt: {
+            /** Format: uuid */
+            operation_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            session_id: string;
+            version: number;
+        };
+        MentorInteraction: {
+            /** Format: uuid */
+            id: string;
+            question: string;
+            choices: string[];
+            approval: boolean;
+            call_id: string;
+        };
+        MentorSnapshot: {
+            /** @enum {string} */
+            kind?: "mentor" | "research";
+            research?: components["schemas"]["ResearchState"];
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            space_id: string;
+            /** Format: uuid */
+            goal_id: string;
+            goal_version: number;
+            privacy_generation: number;
+            version: number;
+            watermark: number;
+            /** @enum {string} */
+            status: "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_budget" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled";
+            stage: string;
+            reason: string;
+            saved: boolean;
+            body_available: boolean;
+            requests_left: number;
+            tokens_left: number;
+            requests_used: number;
+            result_unknown: boolean;
+            /** @description 提供商实际费用未核实；与结果是否已知分别表达 */
+            cost_unknown: boolean;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description 执行配置的不可逆摘要 */
+            configuration: string;
+            output: string;
+            interaction?: components["schemas"]["MentorInteraction"];
+        };
+        ResearchRequest: {
+            /** @description 用户明确确认的去标识公开主题，UTF-8 最多 300 字节；研究 prompt 必须与此一致 */
+            topic: string;
+            /** @constant */
+            external_consent: true;
+            /** @description 仅授权本目标无冲突新来源；必须另有 knowledge:write 和 research:adopt */
+            auto_adopt: boolean;
+            policy: {
+                /** @enum {string} */
+                mode: "supplement" | "prefer" | "restrict";
+                domains: string[];
+            };
+        };
+        ResearchFragment: {
+            /** Format: uuid */
+            id: string;
+            /** @description 解析文本中的 UTF-8 字节偏移 */
+            start: number;
+            end: number;
+            text: string;
+        };
+        ResearchSource: {
+            /** Format: uuid */
+            space_id: string;
+            /** Format: uuid */
+            goal_id: string;
+            /** @enum {string} */
+            purpose: "goal_reference";
+            /** Format: uuid */
+            id: string;
+            /** @description 尚未获取正文时为空 */
+            revision_id: string;
+            locator: string;
+            final_url: string;
+            title: string;
+            kind: string;
+            /** @enum {string} */
+            status: "candidate" | "failed" | "parsed" | "partial" | "adopted" | "rejected";
+            failure: string;
+            /** Format: date-time */
+            fetched_at?: string;
+            fingerprint: string;
+            parser: string;
+            coverage: string;
+            storage_allowed: boolean;
+            text: string;
+            fragments: components["schemas"]["ResearchFragment"][];
+            knowledge_revision_id: string;
+            collection_id: string;
+        };
+        ResearchSynthesis: {
+            points: {
+                text: string;
+                citations: {
+                    /** Format: uuid */
+                    source_id: string;
+                    /** Format: uuid */
+                    revision_id: string;
+                    /** Format: uuid */
+                    fragment_id: string;
+                    quote: string;
+                }[];
+            }[];
+            gaps: string[];
+            examples: string[];
+        };
+        ResearchState: {
+            request: components["schemas"]["ResearchRequest"];
+            discovered: boolean;
+            sources: components["schemas"]["ResearchSource"][];
+            synthesis?: components["schemas"]["ResearchSynthesis"];
+            search_configuration: string;
+        };
+        MentorEvent: {
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            space_id: string;
+            /** Format: uuid */
+            goal_id: string;
+            privacy_generation: number;
+            version: number;
+            seq: number;
+            type: string;
+        };
         SettingsConnection: {
             enabled: boolean;
             /** @enum {string} */
@@ -4927,6 +5470,12 @@ export interface components {
         };
     };
     parameters: {
+        /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+        ContentProtocol: "1";
+        ContentArtifactID: string;
+        /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+        MentorSpaceID: string;
+        MentorRunID: string;
         /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
         KnowledgeCollectionID: string;
         KnowledgeScopeID: string;
@@ -4954,6 +5503,591 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    learningContentCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 支持的版本、展示及交互能力；available 表示已配置正文密钥 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        protocol_version: 1;
+                        available: boolean;
+                        blocks: string[];
+                        interactions: string[];
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    ensureLearningContent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                sessionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @constant */
+                    protocol_version: 1;
+                    /** Format: uuid */
+                    activity_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 已加密保存的正式版本 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentRevision"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getLearningContent: {
+        parameters: {
+            query?: {
+                version?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 不可变内容版本 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentRevision"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    learningContentHistory: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 最近一百个版本的元数据，不复制正文 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            version: number;
+                            /** @enum {string} */
+                            status: "draft" | "failed" | "committed";
+                            /** Format: date-time */
+                            created_at: string;
+                        }[];
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    commitLearningContent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @constant */
+                    protocol_version: 1;
+                    /** Format: uuid */
+                    operation_id: string;
+                    expected_version: number;
+                    /** @enum {string} */
+                    status: "draft" | "failed" | "committed";
+                    blocks: components["schemas"]["ContentBlock"][];
+                    interaction: components["schemas"]["ContentInteraction"];
+                };
+            };
+        };
+        responses: {
+            /** @description 新版本或原操作回执版本 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContentRevision"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    submitLearningContentAnswer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
+                "X-Learning-Content-Version": components["parameters"]["ContentProtocol"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    /** @constant */
+                    payload_schema_version: 1;
+                    /** @constant */
+                    aggregate_type: "session";
+                    /** Format: uuid */
+                    aggregate_id: string;
+                    expected_version: number;
+                    /** Format: date-time */
+                    occurred_at?: string;
+                    /** @constant */
+                    action: "submit_attempt";
+                    answer: string;
+                    help: components["schemas"]["HelpLevel"];
+                    content_version: number;
+                };
+            };
+        };
+        responses: {
+            /** @description 原教学操作回执；丢响应后按原设备和会话核对 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionOperationResult"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getTutoringOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                sessionID: string;
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原设备、区和会话的终态回执；404 不代表可换 ID 补发 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        operation_id: string;
+                        /** Format: uuid */
+                        session_id: string;
+                        /** @enum {string} */
+                        status: "succeeded" | "rejected";
+                        aggregate_version: number;
+                        code?: string;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getCurrentResearch: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                goalID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 研究会话与保存能力 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        run: components["schemas"]["MentorSnapshot"] | null;
+                        save_available: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listResearchSources: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string;
+                q?: string;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 隔离候选与实际来源列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ResearchSource"][];
+                        next_cursor: string;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getResearchSource: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+                sourceID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 获准保留的历史副本或明确缺口 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResearchSource"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    decideResearchSource: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+                sourceID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    expected_version: number;
+                    /** @enum {string} */
+                    kind: "adopt" | "reject";
+                };
+            };
+        };
+        responses: {
+            /** @description knowledge 正式写入和采纳回执同事务保存 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getCurrentMentorRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                goalID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 最小会话恢复与保存能力，无永久历史列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        run: components["schemas"]["MentorSnapshot"] | null;
+                        save_available: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    createMentorRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                goalID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    /** Format: uuid */
+                    session_id: string;
+                    expected_version: number;
+                    /** @description UTF-8 最多 16000 字节 */
+                    prompt: string;
+                    /** @description 明确同意七日内加密保存必要恢复正文；false 仅服务进程内存，跨进程不可恢复 */
+                    save: boolean;
+                    request_budget: number;
+                    token_budget: number;
+                    research?: components["schemas"]["ResearchRequest"];
+                };
+            };
+        };
+        responses: {
+            /** @description 已受理或返回原操作结果，Location 指向运行快照 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getMentorRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 同一事务中的快照，正文可能已到期或临时模式无法恢复 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorSnapshot"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    observeMentorRun: {
+        parameters: {
+            query: {
+                after: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 有界变更通知及可配置心跳 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description resync_required，游标过期或超前；必须重新读取快照 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    commandMentorRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: components["parameters"]["MentorRunID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    expected_version: number;
+                    /** @enum {string} */
+                    kind: "respond" | "continue_budget" | "stop" | "clear";
+                    /** Format: uuid */
+                    interaction_id?: string;
+                    answer?: string;
+                    request_budget?: number;
+                    token_budget?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description 可通过原操作 ID 查询回执 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getMentorOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原运行和受理版本 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     getLearningSettings: {
         parameters: {
             query?: never;
@@ -9158,108 +10292,4 @@ export interface operations {
             503: components["responses"]["DependencyUnavailable"];
         };
     };
-}
-
-// 依据当前 OpenAPI 补齐持久运行及研究合同；下一次标准生成会统一此文件。
-export interface paths {
-"/v1/learning/goals/{goalID}/research": { parameters: { path: { "goalID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "goalID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "application/json": { "run": (RuntimeSchemas["MentorSnapshot"]) | (null); "save_available": boolean; }; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post?: never;
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/goals/{goalID}/runs": { parameters: { path: { "goalID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "goalID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "application/json": { "run": (RuntimeSchemas["MentorSnapshot"]) | (null); "save_available": boolean; }; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post: { parameters: { path: { "goalID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody: { content: { "application/json": { "expected_version": number; "operation_id": string; "prompt": string; "request_budget": number; "research"?: RuntimeSchemas["ResearchRequest"]; "save": boolean; "session_id": string; "token_budget": number; }; } }; responses: { "202": { headers: { [name: string]: unknown }; content: { "application/json": RuntimeSchemas["MentorReceipt"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/operations/{operationID}": { parameters: { path: { "operationID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "operationID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "application/json": RuntimeSchemas["MentorReceipt"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post?: never;
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/runs/{runID}": { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "application/json": RuntimeSchemas["MentorSnapshot"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post?: never;
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/runs/{runID}/commands": { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get?: never;
-put?: never;
-post: { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody: { content: { "application/json": { "answer"?: string; "expected_version": number; "interaction_id"?: string; "kind": "respond" | "continue_budget" | "stop" | "clear"; "operation_id": string; "request_budget"?: number; "token_budget"?: number; }; } }; responses: { "202": { headers: { [name: string]: unknown }; content: { "application/json": RuntimeSchemas["MentorReceipt"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/runs/{runID}/events": { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query: { "after": number; }; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "text/event-stream": string; }; }; "409": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post?: never;
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/runs/{runID}/sources": { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "runID": string; }; header: { "X-Learning-Space-ID": string; }; query?: { "limit"?: number; "cursor"?: string; "q"?: string; }; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "application/json": { "items": (RuntimeSchemas["ResearchSource"])[]; "next_cursor": string; }; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post?: never;
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/runs/{runID}/sources/{sourceID}": { parameters: { path: { "runID": string; "sourceID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get: { parameters: { path: { "runID": string; "sourceID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody?: never; responses: { "200": { headers: { [name: string]: unknown }; content: { "application/json": RuntimeSchemas["ResearchSource"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-put?: never;
-post?: never;
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-"/v1/learning/runs/{runID}/sources/{sourceID}/decisions": { parameters: { path: { "runID": string; "sourceID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; };
-get?: never;
-put?: never;
-post: { parameters: { path: { "runID": string; "sourceID": string; }; header: { "X-Learning-Space-ID": string; }; query?: never; cookie?: never; }; requestBody: { content: { "application/json": { "expected_version": number; "kind": "adopt" | "reject"; "operation_id": string; }; } }; responses: { "202": { headers: { [name: string]: unknown }; content: { "application/json": RuntimeSchemas["MentorReceipt"]; }; }; "default": { headers: { [name: string]: unknown }; content: { "application/json": components["schemas"]["ErrorEnvelope"]; }; }; }; };
-delete?: never;
-options?: never;
-head?: never;
-patch?: never;
-trace?: never;
-};
-}
-interface RuntimeSchemas {
-"MentorReceipt": { "operation_id": string; "run_id": string; "session_id": string; "version": number; };
-"MentorSnapshot": { "body_available": boolean; "configuration": string; "cost_unknown": boolean; "expires_at": string; "goal_id": string; "goal_version": number; "interaction"?: RuntimeSchemas["MentorInteraction"]; "kind"?: "mentor" | "research"; "output": string; "privacy_generation": number; "reason": string; "requests_left": number; "requests_used": number; "research"?: RuntimeSchemas["ResearchState"]; "result_unknown": boolean; "run_id": string; "saved": boolean; "session_id": string; "space_id": string; "stage": string; "status": "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_budget" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled"; "tokens_left": number; "updated_at": string; "version": number; "watermark": number; };
-"ResearchRequest": { "auto_adopt": boolean; "external_consent": true; "policy": { "domains": (string)[]; "mode": "supplement" | "prefer" | "restrict"; }; "topic": string; };
-"ResearchSource": { "collection_id": string; "coverage": string; "failure": string; "fetched_at"?: string; "final_url": string; "fingerprint": string; "fragments": (RuntimeSchemas["ResearchFragment"])[]; "goal_id": string; "id": string; "kind": string; "knowledge_revision_id": string; "locator": string; "parser": string; "purpose": "goal_reference"; "revision_id": string; "space_id": string; "status": "candidate" | "failed" | "parsed" | "partial" | "adopted" | "rejected"; "storage_allowed": boolean; "text": string; "title": string; };
-"MentorInteraction": { "approval": boolean; "call_id": string; "choices": (string)[]; "id": string; "question": string; };
-"ResearchFragment": { "end": number; "id": string; "start": number; "text": string; };
-"ResearchState": { "discovered": boolean; "request": RuntimeSchemas["ResearchRequest"]; "search_configuration": string; "sources": (RuntimeSchemas["ResearchSource"])[]; "synthesis"?: RuntimeSchemas["ResearchSynthesis"]; };
-"ResearchSynthesis": { "examples": (string)[]; "gaps": (string)[]; "points": ({ "citations": ({ "fragment_id": string; "quote": string; "revision_id": string; "source_id": string; })[]; "text": string; })[]; };
 }

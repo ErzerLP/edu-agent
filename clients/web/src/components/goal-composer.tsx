@@ -240,10 +240,22 @@ export function GoalComposer({
           )}
           <div className="composer-actions">
             <CapabilityGate
-              available={session.capabilities.start_learning}
-              reason="当前可先保存目标，再从详情页研究相关知识；正式教学尚未接入。"
+              available={session.capabilities.start_learning && !!goal}
+              reason="先保存目标，再从目标详情选择或新建教学会话。"
             >
-              <Button disabled>开始学习</Button>
+              {goal && session.capabilities.start_learning ? (
+                <Button asChild>
+                  <Link
+                    to="/spaces/$spaceId/goals/$goalId"
+                    params={{ spaceId, goalId: goal.goal_id }}
+                    hash="teaching-sessions"
+                  >
+                    进入教学会话
+                  </Link>
+                </Button>
+              ) : (
+                <Button disabled>开始学习</Button>
+              )}
             </CapabilityGate>
             <Button type="submit" variant="outline">
               {form.formState.isSubmitting ? '正在保存…' : goal || base ? '保存修改' : '仅保存目标'}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	outboxpostgres "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
@@ -302,6 +303,11 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		versions[key] = current
 	}
 
+	if attempt := request.Batch.Attempt; attempt != nil {
+		if err := learningcontent.ValidateAttemptTx(ctx, tx, *attempt); err != nil {
+			return learning.OperationResult{}, err
+		}
+	}
 	if err := prepareOnlineEvidenceEligibility(ctx, tx, &request.Batch); err != nil {
 		return learning.OperationResult{}, err
 	}

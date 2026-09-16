@@ -52,7 +52,7 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
   const [error, setError] = useState<unknown>()
   const [pending, setPending] = useState(false)
   const [selected, setSelected] = useState<string>()
-  const sessionID = useRef(crypto.randomUUID())
+  const sessionID = useRef<string>(crypto.randomUUID())
   const mounted = useRef(true)
   const header = { 'X-Learning-Space-ID': goal.learning_space_id }
   const client = () => learningClient(session, goal.learning_space_id)

@@ -20,6 +20,7 @@ import (
 	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	spacepostgres "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
@@ -92,6 +93,10 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("读取导师正文密钥失败: %w", err)
 	}
 	mentorRuns, err := mentorrun.New(pool, settingsService, mentorKey)
+	if err != nil {
+		return err
+	}
+	contentStore, err := learningcontent.New(pool, stores.learning, mentorKey)
 	if err != nil {
 		return err
 	}
@@ -169,7 +174,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
-		MentorRuns: mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
+		LearningContent: contentStore,
+		MentorRuns:      mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},

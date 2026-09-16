@@ -65,7 +65,7 @@ func TestPostgreSQLWebPairingRollsBackWholeExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Generation < 1 || len(p.Device.Scopes) != 2 {
+	if p.Generation < 1 || !slices.Equal(p.Device.Scopes, []string{"knowledge:read", "learning:read", "learning:write"}) {
 		t.Fatalf("浏览器权限与代次不符: %+v", p)
 	}
 	restarted := identityIntegrationService(t, pool)

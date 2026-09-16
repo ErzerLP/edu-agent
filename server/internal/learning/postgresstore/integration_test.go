@@ -1129,7 +1129,7 @@ func assertIndependentAggregateClock(t *testing.T, store *postgresstore.Store, p
 	}
 }
 
-func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store, stopAtFeedback bool) (string, int64) {
+func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store, stopAtFeedback bool, stopAtIssued ...bool) (string, int64) {
 	t.Helper()
 	ctx := context.Background()
 	now := time.Date(2026, 8, 20, 14, 0, 0, 0, time.UTC)
@@ -1171,6 +1171,9 @@ func commitLearningAuthorityFixture(t *testing.T, store *postgresstore.Store, st
 	session.State = tutoring.StateActivityIssued
 	session.Context.ActivityID = &activity.ID
 	result = commit("51000000-0000-4000-8000-000000000003", result.AggregateVersion, learning.CommandBatch{Activity: &activity, Session: &session, TutoringState: string(session.State), Events: []learning.EventDraft{eventDraft(learning.EventActivityIssued, sessionID, activity), eventDraft(learning.EventTutoringStateChanged, sessionID, learning.SessionProjection{Session: session})}})
+	if len(stopAtIssued) > 0 && stopAtIssued[0] {
+		return sessionID, result.AggregateVersion
+	}
 
 	attempt := learning.Attempt{ID: attemptID, SessionID: sessionID, ActivityID: activityID, ActivityRevision: 1, AnswerPayloadID: "50000000-0000-4000-8000-000000000011", Answer: "ok", AnswerSHA256: learning.SHA256([]byte("ok")), Help: learning.HelpNone, ActorDeviceID: learningDeviceOne, ReceivedAt: now}
 	session.State = tutoring.StateEvaluating

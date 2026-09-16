@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -136,9 +137,40 @@ func (a *API) mountWeb(r chi.Router) {
 		http.Redirect(w, r, "/app/", http.StatusPermanentRedirect)
 	})
 	r.Get("/app/*", a.webAsset)
+	r.Get("/content/{artifactID}", a.contentEntry)
 	r.With(a.responseReadPermit("content_redacted", privacy.OwnerIdentity)).Post("/v1/web/pairings", a.webPair)
 	r.With(a.responseReadPermit("content_redacted", privacy.OwnerIdentity)).Get("/v1/web/session", a.webSession)
 	r.Post("/v1/web/logout", a.webLogout)
+}
+
+// 内容短链接仅携带身份和版本，实际页面仍共用 /app 的同源身份边界。
+func (a *API) contentEntry(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	id := chi.URLParam(r, "artifactID")
+	if !validLearningUUID(id) {
+		http.NotFound(w, r)
+		return
+	}
+	q, ok := strictLearningQuery(w, r, "space", "version")
+	if !ok {
+		return
+	}
+	if q.Has("space") && !validLearningUUID(q.Get("space")) {
+		writeLearningInvalid(w, r)
+		return
+	}
+	if q.Has("version") {
+		version, err := strconv.ParseInt(q.Get("version"), 10, 64)
+		if err != nil || version < 1 {
+			writeLearningInvalid(w, r)
+			return
+		}
+	}
+	target := "/app/content/" + id
+	if len(q) > 0 {
+		target += "?" + q.Encode()
+	}
+	http.Redirect(w, r, target, http.StatusTemporaryRedirect)
 }
 
 func (a *API) webPair(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +216,7 @@ func (a *API) writeWebSession(w http.ResponseWriter, r *http.Request, status int
 	goals, ok := a.learning.(goalManagementService)
 	save := ok && goals.SupportsGoalManagement() && access.ContainsScope(p.Credential.Scopes, "learning:write")
 	writeJSON(w, status, map[string]any{"device": p.Device, "generation": p.Generation, "expires_at": p.ExpiresAt, "csrf_token": webCSRF(cookie), "server_id": a.webUI.PublicBaseURL.Scheme + "://" + a.webUI.PublicBaseURL.Host,
-		"capabilities": map[string]any{"spaces": a.learningSpaces != nil, "goals": ok && goals.SupportsGoalManagement(), "save_goal": save, "start_learning": false, "references": false}})
+		"capabilities": map[string]any{"spaces": a.learningSpaces != nil, "goals": ok && goals.SupportsGoalManagement(), "save_goal": save, "start_learning": a.learning != nil && a.learningContent.Available() && save, "references": false}})
 }
 
 func (a *API) webSession(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +265,7 @@ func (a *API) webAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	name := strings.TrimPrefix(r.URL.Path, "/app/")
 	// 仅页面地址回退；不存在的资源、API 和扩展名请求保留 404。
-	if name == "" || name == "settings" || (strings.HasPrefix(name, "spaces/") && !strings.Contains(name, ".")) {
+	if name == "" || name == "settings" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/")) && !strings.Contains(name, ".")) {
 		name = "index.html"
 	}
 	if !fs.ValidPath(name) || path.Clean(name) != name {
@@ -252,6 +284,12 @@ func (a *API) webAsset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case ".css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	case ".woff2":
+		w.Header().Set("Content-Type", "font/woff2")
+	case ".woff":
+		w.Header().Set("Content-Type", "font/woff")
+	case ".ttf":
+		w.Header().Set("Content-Type", "font/ttf")
 	default:
 		http.NotFound(w, r)
 		return

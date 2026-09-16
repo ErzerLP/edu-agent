@@ -28,7 +28,7 @@ type WebStore interface {
 	DeleteWebSession(context.Context, [32]byte) error
 }
 
-// WebScopes 仅保留学习及显式配置/研究权限，不继承管理与审批权限。
+// WebScopes 保留学习、已有资料读取及显式配置/研究权限，不继承管理与审批权限。
 func WebScopes(scopes []string) []string {
 	result := []string{}
 	for _, scope := range scopes {
@@ -36,7 +36,7 @@ func WebScopes(scopes []string) []string {
 			result = append(result, scope)
 			continue
 		}
-		if scope == "learning:read" || scope == "learning:write" || scope == "settings:write" || scope == "settings:probe" {
+		if scope == "learning:read" || scope == "learning:write" || scope == "knowledge:read" || scope == "settings:write" || scope == "settings:probe" {
 			result = append(result, scope)
 		}
 	}

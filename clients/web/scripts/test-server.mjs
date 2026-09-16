@@ -4,36 +4,88 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
+import { workspaceModel } from './workspace-model.mjs'
 if (!process.env.TEST_DATABASE_URL) throw new Error('浏览器验收必须配置独立 TEST_DATABASE_URL')
 let child
 let restarting = false
 const settingsFile = join(mkdtempSync(join(tmpdir(), 'edu-web-settings-test-')), 'settings.json')
 const mentorKeyFile = join(mkdtempSync(join(tmpdir(), 'edu-web-key-test-')), 'mentor.key')
 writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
-if (process.env.WEB_MENTOR_FIXTURE === '1') {
+if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
   let calls = 0
   const fixture = createServer(async (request, response) => {
-    if (request.url === '/stats') { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ calls })); return }
+    if (request.url === '/stats') {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ calls }))
+      return
+    }
     const chunks = []
     for await (const chunk of request) chunks.push(chunk)
     let payload
-    try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')) }
-    catch { response.writeHead(400); response.end(); return }
+    try {
+      payload = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    } catch {
+      response.writeHead(400)
+      response.end()
+      return
+    }
     calls++
+    if (process.env.WEB_WORKSPACE_FIXTURE === '1' && !payload.stream) {
+      try {
+        const result = workspaceModel(payload)
+        response.setHeader('Content-Type', 'application/json')
+        response.end(
+          JSON.stringify({
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: JSON.stringify(result) },
+                finish_reason: 'stop',
+              },
+            ],
+          }),
+        )
+      } catch {
+        response.writeHead(400)
+        response.end()
+      }
+      return
+    }
     const messages = payload.messages ?? []
     const input = messages.findLast((message) => message.role === 'user')?.content ?? ''
-    const answered = messages.some((message) => message.role === 'tool' && message.tool_call_id === 'browser-question')
+    const answered = messages.some(
+      (message) => message.role === 'tool' && message.tool_call_id === 'browser-question',
+    )
     const delta = { role: 'assistant', content: '浏览器真实导师：已读取本次绑定目标。' }
     let finish = 'stop'
     if (input.includes('结构化') && !answered) {
       delta.content = ''
-      delta.tool_calls = [{ index: 0, id: 'browser-question', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: '先从哪个方向理解？', choices: ['直觉', '公式'] }) } }]
+      delta.tool_calls = [
+        {
+          index: 0,
+          id: 'browser-question',
+          type: 'function',
+          function: {
+            name: 'ask_user',
+            arguments: JSON.stringify({
+              question: '先从哪个方向理解？',
+              choices: ['直觉', '公式'],
+            }),
+          },
+        },
+      ]
       finish = 'tool_calls'
     }
     response.setHeader('Content-Type', 'text/event-stream')
     // 分段发送以覆盖真实增量、断线和滚动行为，不调用任何外部提供商。
     response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`)
-    const timer = setTimeout(() => response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\ndata: [DONE]\n\n`), input.includes('慢速') ? 10000 : 300)
+    const timer = setTimeout(
+      () =>
+        response.end(
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finish }] })}\n\ndata: [DONE]\n\n`,
+        ),
+      input.includes('慢速') ? 10000 : 300,
+    )
     response.on('close', () => clearTimeout(timer))
   })
   await new Promise((resolve) => fixture.listen(32930, '127.0.0.1', resolve))
@@ -55,6 +107,14 @@ function start() {
       MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1"]',
       DEVICE_RATE_LIMIT_PER_MINUTE: '10000',
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',
+      ...(process.env.WEB_WORKSPACE_FIXTURE === '1'
+        ? {
+            MODEL_BASE_URL: 'http://127.0.0.1:32930/v1',
+            MODEL_NAME: 'browser-workspace-fixture',
+            MODEL_API_KEY: 'local-fixture-only',
+            MODEL_CONTEXT_WINDOW: '128000',
+          }
+        : {}),
     },
   })
   writeFileSync(

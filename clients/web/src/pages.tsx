@@ -19,6 +19,7 @@ import type { components } from './api/schema'
 import { GoalComposer } from './components/goal-composer'
 import { Button } from './components/ui/button'
 import { MentorPanel } from './components/mentor-panel'
+import { SessionPicker } from './teaching-page'
 import { Confirm, EmptyState, ErrorState, Pagination } from './components/common'
 
 const defaultSpace = '00000000-0000-4000-8000-000000000001'
@@ -591,6 +592,7 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
         disabled={space.data.status === 'archived' || goal.data.management.status === 'archived'}
       />
       <GoalLifecycle goal={goal.data} archivedSpace={space.data.status === 'archived'} />
+      <SessionPicker goal={goal.data} archived={space.data.status === 'archived'} />
       <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }}>研究相关知识与查看来源 →</Link></p>
       <MentorPanel key={`${spaceId}:${goalId}`} goal={goal.data} archivedSpace={space.data.status === 'archived'} />
       <section className="section">

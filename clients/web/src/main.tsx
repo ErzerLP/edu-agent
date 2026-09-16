@@ -12,6 +12,7 @@ import { SessionProvider } from './lib/session'
 import { WorkspaceShell } from './components/workspace-shell'
 import { HomePage, SpacePage, GoalPage, SettingsPage } from './pages'
 import './styles.css'
+import { ResearchPage } from './research-page'
 
 const root = createRootRoute({
   component: () => (
@@ -48,8 +49,16 @@ const settings = createRoute({
   path: '/settings',
   component: SettingsPage,
 })
+const research = createRoute({
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/goals/$goalId/research',
+  component: () => {
+    const { spaceId, goalId } = useParams({ from: '/spaces/$spaceId/goals/$goalId/research' })
+    return <ResearchPage key={`${spaceId}:${goalId}`} spaceId={spaceId} goalId={goalId} />
+  },
+})
 const router = createRouter({
-  routeTree: root.addChildren([home, space, goal, settings]),
+  routeTree: root.addChildren([home, space, goal, research, settings]),
   basepath: '/app',
   defaultPreload: false,
 })

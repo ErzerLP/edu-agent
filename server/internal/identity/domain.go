@@ -20,6 +20,7 @@ const (
 	PairingProfileUser     PairingProfile = "user"
 	PairingProfileAgent    PairingProfile = "agent"
 	PairingProfileSettings PairingProfile = "settings"
+	PairingProfileResearch PairingProfile = "research"
 )
 
 type PairingCodeRecord struct {

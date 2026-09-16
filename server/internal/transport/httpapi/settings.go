@@ -50,6 +50,11 @@ func (a *API) readCapabilities(w http.ResponseWriter, r *http.Request) {
 		if capabilities.WebMentor.Available {
 			capabilities.WebMentor.Reason = ""
 		}
+		search := a.settingsService().View().Search
+		capabilities.Research = settings.Capability{Available: capabilities.WebMentor.Available && search.Enabled && search.Configured, Reason: "research_configuration_required"}
+		if capabilities.Research.Available {
+			capabilities.Research.Reason = ""
+		}
 	}
 	if !a.webUI.Enabled {
 		capabilities.Rendering = settings.Capability{Reason: "not_enabled"}

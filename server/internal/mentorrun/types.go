@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/google/uuid"
 )
 
@@ -31,13 +32,14 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
-	OperationID     string `json:"operation_id"`
-	SessionID       string `json:"session_id"`
-	ExpectedVersion int64  `json:"expected_version"`
-	Prompt          string `json:"prompt"`
-	Save            bool   `json:"save"`
-	RequestBudget   int    `json:"request_budget"`
-	TokenBudget     int    `json:"token_budget"`
+	Research        *research.Request `json:"research,omitempty"`
+	OperationID     string            `json:"operation_id"`
+	SessionID       string            `json:"session_id"`
+	ExpectedVersion int64             `json:"expected_version"`
+	Prompt          string            `json:"prompt"`
+	Save            bool              `json:"save"`
+	RequestBudget   int               `json:"request_budget"`
+	TokenBudget     int               `json:"token_budget"`
 }
 
 type Command struct {
@@ -58,6 +60,7 @@ type Receipt struct {
 }
 
 type Meta struct {
+	Kind          string    `json:"kind,omitempty"`
 	RunID         string    `json:"run_id"`
 	SessionID     string    `json:"session_id"`
 	SpaceID       string    `json:"space_id"`
@@ -90,6 +93,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	Research    *research.State        `json:"research,omitempty"`
 	Messages    []modelclient.Message  `json:"messages"`
 	Pending     []modelclient.ToolCall `json:"pending"`
 	Output      string                 `json:"output"`
@@ -98,8 +102,9 @@ type Body struct {
 
 type Snapshot struct {
 	Meta
-	Output      string       `json:"output"`
-	Interaction *Interaction `json:"interaction,omitempty"`
+	Research    *research.State `json:"research,omitempty"`
+	Output      string          `json:"output"`
+	Interaction *Interaction    `json:"interaction,omitempty"`
 }
 
 type Event struct {

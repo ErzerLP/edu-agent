@@ -3,10 +3,38 @@ package postgresstore_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 )
+
+func TestPostgreSQLWebResearchProfileAndRevocation(t *testing.T) {
+	pool := identityIntegrationPool(t)
+	service := identityIntegrationService(t, pool)
+	ctx := context.Background()
+	code, _, err := service.CreatePairingCodeForProfile(ctx, identity.PairingProfileResearch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, p, err := service.ExchangeWebPairing(ctx, code, "研究验收")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.Device.Scopes, "research:adopt") || !slices.Contains(p.Device.Scopes, "knowledge:write") || slices.Contains(p.Device.Scopes, "knowledge:approve") {
+		t.Fatal("研究配对权限不正确")
+	}
+	if _, err = pool.Exec(ctx, `UPDATE device_tokens SET scopes=array_remove(scopes,'research:adopt') WHERE device_id=$1`, p.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = service.AuthenticateWeb(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(p.Device.Scopes, "knowledge:write") {
+		t.Fatal("研究许可收回后仍可采纳")
+	}
+}
 
 func TestPostgreSQLWebPairingRollsBackWholeExchange(t *testing.T) {
 	pool := identityIntegrationPool(t)

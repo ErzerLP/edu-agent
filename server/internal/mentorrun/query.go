@@ -7,8 +7,37 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/jackc/pgx/v5"
 )
+
+// ReadSources 在运行副本到期或清除后仍能显示 knowledge 中获准保留的历史来源。
+func (s *Service) ReadSources(ctx context.Context, actor identity.Credential, space, id string, send func([]research.Source) error) error {
+	return s.read(ctx, actor, space, id, func(tx pgx.Tx, item row) error {
+		if item.Kind != "research" {
+			return ErrNotFound
+		}
+		if item.BodyAvailable && time.Now().Before(item.ExpiresAt) {
+			if err := s.decode(&item); err != nil {
+				return err
+			}
+			if item.body.Research != nil {
+				return send(item.body.Research.Sources)
+			}
+		}
+		ctx, err := learningspace.WithScope(ctx, space)
+		if err != nil {
+			return err
+		}
+		sources, err := knowledgepostgres.New(s.pool).ResearchSourcesTx(ctx, tx, id, item.GoalID)
+		if err != nil {
+			return err
+		}
+		return send(sources)
+	})
+}
 
 func (s *Service) read(ctx context.Context, actor identity.Credential, space, id string, fn func(pgx.Tx, row) error) error {
 	if !validID(space) || !validID(id) {
@@ -51,11 +80,15 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 				return err
 			}
 		}
-		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction})
+		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research})
 	})
 }
 
-func (s *Service) Current(ctx context.Context, actor identity.Credential, space, goal string) (string, error) {
+func (s *Service) Current(ctx context.Context, actor identity.Credential, space, goal string, kinds ...string) (string, error) {
+	kind := "mentor"
+	if len(kinds) > 0 {
+		kind = kinds[0]
+	}
 	if !validID(space) || !validID(goal) {
 		return "", ErrInvalid
 	}
@@ -72,7 +105,7 @@ func (s *Service) Current(ctx context.Context, actor identity.Credential, space,
 		return "", err
 	}
 	var id string
-	err = tx.QueryRow(ctx, `SELECT current_run_id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND current_run_id IS NOT NULL`, actor.Device.ID, space, goal, generation).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT current_run_id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND kind=$5 AND current_run_id IS NOT NULL`, actor.Device.ID, space, goal, generation, kind).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

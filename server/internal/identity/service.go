@@ -27,7 +27,7 @@ var agentPairingScopes = []string{
 func ParsePairingProfile(value string) (PairingProfile, error) {
 	profile := PairingProfile(strings.TrimSpace(value))
 	switch profile {
-	case PairingProfileUser, PairingProfileAgent, PairingProfileSettings:
+	case PairingProfileUser, PairingProfileAgent, PairingProfileSettings, PairingProfileResearch:
 		return profile, nil
 	default:
 		return "", ErrInvalidInput
@@ -37,6 +37,9 @@ func ParsePairingProfile(value string) (PairingProfile, error) {
 func pairingProfileScopes(profile PairingProfile) ([]string, error) {
 	var scopes []string
 	switch profile {
+	case PairingProfileResearch:
+		// 明确研究配对只增加来源采纳权限，不继承管理、审批、共享和配置权限。
+		scopes = []string{"learning:read", "learning:write", "knowledge:read", "knowledge:write", "research:adopt"}
 	case PairingProfileSettings:
 		// 只有操作者显式创建此档案才授予配置权限，既有设备不升级。
 		scopes = []string{"learning:read", "learning:write", "settings:write", "settings:probe"}

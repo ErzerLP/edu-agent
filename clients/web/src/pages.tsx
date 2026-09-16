@@ -591,6 +591,7 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
         disabled={space.data.status === 'archived' || goal.data.management.status === 'archived'}
       />
       <GoalLifecycle goal={goal.data} archivedSpace={space.data.status === 'archived'} />
+      <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }}>研究相关知识与查看来源 →</Link></p>
       <MentorPanel key={`${spaceId}:${goalId}`} goal={goal.data} archivedSpace={space.data.status === 'archived'} />
       <section className="section">
         <h2>修订历史</h2>

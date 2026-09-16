@@ -7,11 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -19,6 +22,8 @@ import (
 )
 
 type Service struct {
+	search              func(func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error)
+	fetcher             *research.Fetcher
 	pool                *pgxpool.Pool
 	settings            *settings.Service
 	aead                cipher.AEAD
@@ -42,7 +47,7 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 	if err != nil {
 		return nil, err
 	}
-	return &Service{pool: pool, settings: configuration, aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
+	return &Service{pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
 }
 func (s *Service) CanSave() bool { return s.aead != nil }
 
@@ -268,6 +273,18 @@ func receipt(ctx context.Context, tx pgx.Tx, item row, operationID string, hash 
 }
 
 func (s *Service) Create(ctx context.Context, actor identity.Credential, space, goal string, c Create) (Receipt, error) {
+	kind := "mentor"
+	searchConfiguration := ""
+	if c.Research != nil {
+		if c.Research.Validate() != nil {
+			return Receipt{}, ErrInvalid
+		}
+		kind = "research"
+		// 公开主题是唯一外发输入；私人 prompt 不进入研究模型或搜索。
+		if c.Prompt != c.Research.Topic {
+			return Receipt{}, ErrInvalid
+		}
+	}
 	if !validID(space) || !validID(goal) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
 		return Receipt{}, ErrInvalid
 	}
@@ -294,6 +311,16 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if err != nil || model == nil {
 		return Receipt{}, ErrModel
 	}
+	if c.Research != nil {
+		if _, searchConfiguration, err = s.search(nil); err != nil {
+			return Receipt{}, ErrModel
+		}
+		if c.Research.AutoAdopt {
+			if err = knowledgeActor(ctx, tx, actor.Device.ID, actor.TokenID); err != nil {
+				return Receipt{}, err
+			}
+		}
+	}
 	if c.RequestBudget > limits.ResearchRequests || c.TokenBudget > limits.ResearchTokens {
 		return Receipt{}, ErrInvalid
 	}
@@ -307,7 +334,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		return Receipt{}, err
 	}
 	var sessionID string
-	err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation) VALUES($1,$2,$3,$4,$5) ON CONFLICT(device_id,space_id,goal_id,privacy_generation) DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation).Scan(&sessionID)
+	err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation, kind).Scan(&sessionID)
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -323,6 +350,12 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.body.Messages = []modelclient.Message{{Role: "user", Content: c.Prompt}}
+	item.Kind = kind
+	if c.Research != nil {
+		item.body.Messages = nil
+		item.body.Research = &research.State{Request: *c.Research, Sources: []research.Source{}, SearchConfiguration: searchConfiguration}
+		item.Stage = "query_planned"
+	}
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, item.RunID, sessionID, item.device, item.token, space, goal, c.ExpectedVersion, generation, raw, s.process, item.ExpiresAt); err != nil {
 		return Receipt{}, err

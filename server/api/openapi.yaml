@@ -6,6 +6,90 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/goals/{goalID}/research:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getCurrentResearch
+      summary: 恢复本设备明确目标内的研究运行
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: 研究会话与保存能力
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, save_available]
+                properties:
+                  run: { oneOf: [{ $ref: "#/components/schemas/MentorSnapshot" }, { type: "null" }] }
+                  save_available: { type: boolean }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}/sources:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/MentorRunID" }
+    get:
+      operationId: listResearchSources
+      summary: 按区和身份过滤后检索、分页；摘要不包含正文
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 4 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string, maxLength: 300 } }
+      responses:
+        "200":
+          description: 隔离候选与实际来源列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ResearchSource" } }
+                  next_cursor: { type: string }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}/sources/{sourceID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/MentorRunID" }
+      - { name: sourceID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getResearchSource
+      summary: 读取真实来源片段、上下文、版本和解析覆盖
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 获准保留的历史副本或明确缺口, content: { application/json: { schema: { $ref: "#/components/schemas/ResearchSource" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}/sources/{sourceID}/decisions:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/MentorRunID" }
+      - { name: sourceID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: decideResearchSource
+      summary: 终态运行的来源采纳或拒绝；采纳额外要求 knowledge:write 与 research:adopt
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, expected_version, kind]
+              properties:
+                operation_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 1 }
+                kind: { type: string, enum: [adopt, reject] }
+      responses:
+        "202": { description: knowledge 正式写入和采纳回执同事务保存, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/goals/{goalID}/runs:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -49,6 +133,7 @@ paths:
                 save: { type: boolean, description: 明确同意七日内加密保存必要恢复正文；false 仅服务进程内存，跨进程不可恢复 }
                 request_budget: { type: integer, minimum: 1, maximum: 1000 }
                 token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+                research: { $ref: "#/components/schemas/ResearchRequest" }
       responses:
         "202": { description: 已受理或返回原操作结果，Location 指向运行快照, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -175,7 +260,7 @@ paths:
   /v1/capabilities:
     get:
       operationId: getLearningCapabilities
-      summary: 不发外部请求的能力发现；未实现研究不因搜索 Key 就绪而可执行
+      summary: 不发外部请求的能力发现；研究需要运行宿主和搜索、导师配置
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       responses:
@@ -3126,6 +3211,8 @@ components:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
+        kind: { type: string, enum: [mentor, research] }
+        research: { $ref: "#/components/schemas/ResearchState" }
         run_id: { type: string, format: uuid }
         session_id: { type: string, format: uuid }
         space_id: { type: string, format: uuid }
@@ -3149,6 +3236,87 @@ components:
         configuration: { type: string, description: 执行配置的不可逆摘要 }
         output: { type: string, maxLength: 65536 }
         interaction: { $ref: "#/components/schemas/MentorInteraction" }
+    ResearchRequest:
+      type: object
+      additionalProperties: false
+      required: [topic, external_consent, auto_adopt, policy]
+      properties:
+        topic: { type: string, minLength: 1, maxLength: 300, description: 用户明确确认的去标识公开主题，UTF-8 最多 300 字节；研究 prompt 必须与此一致 }
+        external_consent: { type: boolean, const: true }
+        auto_adopt: { type: boolean, description: 仅授权本目标无冲突新来源；必须另有 knowledge:write 和 research:adopt }
+        policy:
+          type: object
+          additionalProperties: false
+          required: [mode, domains]
+          properties:
+            mode: { type: string, enum: [supplement, prefer, restrict] }
+            domains: { type: array, maxItems: 5, items: { type: string, maxLength: 253 } }
+    ResearchFragment:
+      type: object
+      required: [id, start, end, text]
+      properties:
+        id: { type: string, format: uuid }
+        start: { type: integer, minimum: 0, description: 解析文本中的 UTF-8 字节偏移 }
+        end: { type: integer, minimum: 0 }
+        text: { type: string }
+    ResearchSource:
+      type: object
+      required: [space_id, goal_id, purpose, id, revision_id, locator, final_url, title, kind, status, failure, fingerprint, parser, coverage, storage_allowed, text, fragments, knowledge_revision_id, collection_id]
+      properties:
+        space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        purpose: { type: string, enum: [goal_reference] }
+        id: { type: string, format: uuid }
+        revision_id: { type: string, description: 尚未获取正文时为空 }
+        locator: { type: string }
+        final_url: { type: string }
+        title: { type: string }
+        kind: { type: string }
+        status: { type: string, enum: [candidate, failed, parsed, partial, adopted, rejected] }
+        failure: { type: string }
+        fetched_at: { type: string, format: date-time }
+        fingerprint: { type: string }
+        parser: { type: string }
+        coverage: { type: string }
+        storage_allowed: { type: boolean }
+        text: { type: string, maxLength: 16000 }
+        fragments: { type: array, items: { $ref: "#/components/schemas/ResearchFragment" } }
+        knowledge_revision_id: { type: string }
+        collection_id: { type: string }
+    ResearchSynthesis:
+      type: object
+      required: [points, gaps, examples]
+      properties:
+        points:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            required: [text, citations]
+            properties:
+              text: { type: string }
+              citations:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required: [source_id, revision_id, fragment_id, quote]
+                  properties:
+                    source_id: { type: string, format: uuid }
+                    revision_id: { type: string, format: uuid }
+                    fragment_id: { type: string, format: uuid }
+                    quote: { type: string }
+        gaps: { type: array, items: { type: string } }
+        examples: { type: array, items: { type: string } }
+    ResearchState:
+      type: object
+      required: [request, discovered, sources, search_configuration]
+      properties:
+        request: { $ref: "#/components/schemas/ResearchRequest" }
+        discovered: { type: boolean }
+        sources: { type: array, maxItems: 4, items: { $ref: "#/components/schemas/ResearchSource" } }
+        synthesis: { $ref: "#/components/schemas/ResearchSynthesis" }
+        search_configuration: { type: string }
     MentorEvent:
       type: object
       required: [run_id, session_id, space_id, goal_id, privacy_generation, version, seq, type]

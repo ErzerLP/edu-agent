@@ -241,7 +241,7 @@ export function GoalComposer({
           <div className="composer-actions">
             <CapabilityGate
               available={session.capabilities.start_learning}
-              reason="自动研究与教学入口尚未接入，当前可先保存目标。"
+              reason="当前可先保存目标，再从详情页研究相关知识；正式教学尚未接入。"
             >
               <Button disabled>开始学习</Button>
             </CapabilityGate>

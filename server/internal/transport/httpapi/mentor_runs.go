@@ -15,7 +15,7 @@ import (
 )
 
 func mentorPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && strings.HasSuffix(path, "/runs")
+	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research"))
 }
 
 func (a *API) mountMentorRuns(router chi.Router) {
@@ -28,6 +28,10 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/events", a.mentorEvents)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/runs/{runID}/commands", a.mentorCommand)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/operations/{operationID}", a.mentorOperation)
+	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/research", a.mentorCurrent)
+	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/sources", a.researchSources)
+	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/sources/{sourceID}", a.researchSource)
+	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/runs/{runID}/sources/{sourceID}/decisions", a.researchDecision)
 }
 
 func (a *API) mentorScope(next http.Handler) http.Handler {
@@ -85,7 +89,11 @@ func (a *API) mentorCreate(w http.ResponseWriter, r *http.Request) {
 func (a *API) mentorCurrent(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	space := learningspace.Scope(r.Context())
-	id, err := a.mentorRuns.Current(r.Context(), actor, space, chi.URLParam(r, "goalID"))
+	kind := "mentor"
+	if strings.HasSuffix(r.URL.Path, "/research") {
+		kind = "research"
+	}
+	id, err := a.mentorRuns.Current(r.Context(), actor, space, chi.URLParam(r, "goalID"), kind)
 	if err != nil {
 		mentorFailure(w, r, err)
 		return

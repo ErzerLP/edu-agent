@@ -1,9 +1,11 @@
 import { z } from 'zod'
 import { ApiError, learningClient } from './client'
 import type { Session } from './runtime'
+import { researchStateSchema } from './research'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const mentorSnapshotSchema = z.object({
+  kind: z.enum(['mentor', 'research']).optional(), research: researchStateSchema.optional(),
   run_id: z.uuid(), session_id: z.uuid(), space_id: z.uuid(), goal_id: z.uuid(),
   goal_version: positive, privacy_generation: positive, version: positive, watermark: positive,
   status: z.enum(['queued', 'running', 'waiting_input', 'waiting_approval', 'paused_budget', 'succeeded', 'partial', 'failed', 'cancelling', 'cancelled']),
@@ -95,7 +97,7 @@ async function watch(session: Session, sub: Subscription) {
       if (signal.aborted) return
       if (error instanceof ApiError && [401, 403, 404, 503].includes(error.status)) {
         // 身份失效或隐私门禁关闭后立即隐藏旧正文，不能依赖下一次成功查询。
-        sub.snapshot = { ...sub.snapshot, output: '', interaction: undefined, body_available: false }
+        sub.snapshot = { ...sub.snapshot, output: '', interaction: undefined, research: undefined, body_available: false }
         report(error)
         return
       }

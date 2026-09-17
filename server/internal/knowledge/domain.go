@@ -135,6 +135,7 @@ type KnowledgeRevision struct {
 type ImportDocument struct {
 	Path     string `json:"path"`
 	Markdown string `json:"markdown"`
+	AsNew    bool   `json:"as_new,omitempty"`
 }
 
 type DocumentResolution struct {

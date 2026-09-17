@@ -216,7 +216,7 @@ func (a *API) writeWebSession(w http.ResponseWriter, r *http.Request, status int
 	goals, ok := a.learning.(goalManagementService)
 	save := ok && goals.SupportsGoalManagement() && access.ContainsScope(p.Credential.Scopes, "learning:write")
 	writeJSON(w, status, map[string]any{"device": p.Device, "generation": p.Generation, "expires_at": p.ExpiresAt, "csrf_token": webCSRF(cookie), "server_id": a.webUI.PublicBaseURL.Scheme + "://" + a.webUI.PublicBaseURL.Host,
-		"capabilities": map[string]any{"spaces": a.learningSpaces != nil, "goals": ok && goals.SupportsGoalManagement(), "save_goal": save, "start_learning": a.learning != nil && a.learningContent.Available() && save, "references": false}})
+		"capabilities": map[string]any{"spaces": a.learningSpaces != nil, "goals": ok && goals.SupportsGoalManagement(), "save_goal": save, "start_learning": a.learning != nil && a.learningContent.Available() && save, "references": a.knowledge != nil && access.ContainsScope(p.Credential.Scopes, "references:manage")}})
 }
 
 func (a *API) webSession(w http.ResponseWriter, r *http.Request) {

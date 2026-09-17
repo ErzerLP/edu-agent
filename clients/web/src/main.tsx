@@ -15,6 +15,7 @@ import './styles.css'
 import { ResearchPage } from './research-page'
 import { TeachingPage, ContentPage } from './teaching-page'
 import { StudioPage } from './studio-page'
+import { KnowledgePage } from './knowledge-page'
 
 const root = createRootRoute({
   component: () => (
@@ -109,8 +110,14 @@ const studio = createRoute({
     return <StudioPage key={spaceId} spaceId={spaceId} />
   },
 })
+const knowledge = createRoute({
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/knowledge',
+  validateSearch: (search: Record<string, unknown>) => ({ goal: typeof search.goal === 'string' ? search.goal : undefined, session: typeof search.session === 'string' ? search.session : undefined }),
+  component: () => { const { spaceId } = knowledge.useParams(); const { goal, session } = knowledge.useSearch(); return <KnowledgePage key={`${spaceId}:${goal}:${session}`} spaceId={spaceId} goalId={goal} sessionId={session} /> },
+})
 const router = createRouter({
-  routeTree: root.addChildren([home, space, goal, research, teaching, content, settings, studio]),
+  routeTree: root.addChildren([home, space, goal, research, teaching, content, settings, studio, knowledge]),
   basepath: '/app',
   defaultPreload: false,
 })

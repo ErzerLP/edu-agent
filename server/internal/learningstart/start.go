@@ -22,8 +22,9 @@ import (
 )
 
 type Request struct {
-	NewSession   bool `json:"new_session"`
-	ModelConsent bool `json:"model_consent"`
+	NewSession         bool   `json:"new_session"`
+	ModelConsent       bool   `json:"model_consent"`
+	ReferenceContextID string `json:"reference_context_id,omitempty"`
 }
 
 // Prepared 只准备当前小活动；模型不能修改目标、掌握度或执行正式命令。
@@ -98,6 +99,11 @@ func (m preparedModel) Generate(_ context.Context, r learning.ProposalRequest) (
 
 // PublishTx 不调用外部模型。调用方必须已锁定有效运行、目标、设备及隐私代次。
 func (s *Service) PublishTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, generation int64, run, goal string, goalVersion int64, request research.Request, plan Prepared, modelID string) (Result, error) {
+	return s.PublishWithReferencesTx(ctx, tx, actor, generation, run, goal, goalVersion, request, plan, modelID, "")
+}
+
+// 显式采用用户参考开学时复用已批准范围，不重新抓取或自动改变参考政策。
+func (s *Service) PublishWithReferencesTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, generation int64, run, goal string, goalVersion int64, request research.Request, plan Prepared, modelID, referenceContext string) (Result, error) {
 	var result Result
 	if !s.Available() {
 		return result, learningcontent.ErrUnavailable
@@ -115,14 +121,31 @@ func (s *Service) PublishTx(ctx context.Context, tx pgx.Tx, actor identity.Crede
 	if g.Revision != goalVersion {
 		return result, &learning.Error{Code: learning.CodeVersionConflict}
 	}
-	sources, err := s.Knowledge.ResearchSourcesTx(ctx, tx, run, goal)
+	var sources []research.Source
+	if referenceContext == "" {
+		sources, err = s.Knowledge.ResearchSourcesTx(ctx, tx, run, goal)
+	} else {
+		head, e := s.Knowledge.ReferenceHeadTx(ctx, tx, goal, "")
+		if e != nil {
+			return result, e
+		}
+		if head.ContextID != referenceContext {
+			return result, &learning.Error{Code: learning.CodeVersionConflict}
+		}
+		sources, err = s.Knowledge.ReferenceSourcesTx(ctx, tx, referenceContext, goal)
+	}
 	if err != nil {
 		return result, err
 	}
 	if err = plan.Validate(sources); err != nil {
 		return result, err
 	}
-	result.Context, err = s.Knowledge.PublishContextTx(ctx, tx, run, goal, g.ID, actor.Device.ID, request, knowledge.ConceptRevision{SemanticKey: plan.ConceptKey, Name: plan.Name, Support: plan.Citations})
+	concept := knowledge.ConceptRevision{SemanticKey: plan.ConceptKey, Name: plan.Name, Support: plan.Citations}
+	if referenceContext == "" {
+		result.Context, err = s.Knowledge.PublishContextTx(ctx, tx, run, goal, g.ID, actor.Device.ID, request, concept)
+	} else {
+		result.Context, err = s.Knowledge.PublishReferenceTeachingTx(ctx, tx, run, goal, g.ID, referenceContext, concept)
+	}
 	if err != nil {
 		return result, err
 	}
@@ -136,7 +159,7 @@ func (s *Service) PublishTx(ctx context.Context, tx pgx.Tx, actor identity.Crede
 	}
 	refs := []learning.KnowledgeReference{}
 	for _, doc := range tree.Revision.Documents {
-		if !cited[doc.CollectionID] {
+		if referenceContext == "" && !cited[doc.CollectionID] || referenceContext != "" && !cited[doc.Revision.ID] {
 			continue
 		}
 		for _, node := range doc.Revision.Nodes {

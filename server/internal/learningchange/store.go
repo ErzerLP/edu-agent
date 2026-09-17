@@ -241,6 +241,14 @@ func (s *Service) snapshot(ctx context.Context, tx pgx.Tx, goal, session string,
 		}
 	}
 	scope := r.Session.Context.KnowledgeRevisionID
+	refs, err := s.knowledge.EffectiveReferenceTx(ctx, tx, goal, session)
+	if err != nil {
+		return r, err
+	}
+	if refs.Version > 0 {
+		// 标准变化不能默默回退到旧的更宽范围；发布时要求重新确认目标版本。
+		scope, r.AvailableContextID = refs.ScopeSnapshotID, refs.ContextID
+	}
 	if scope != "" {
 		tree, e := s.knowledge.TreeTx(ctx, tx, scope)
 		if e != nil {

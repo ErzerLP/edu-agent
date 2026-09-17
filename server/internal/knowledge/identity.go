@@ -163,6 +163,9 @@ func reviewBasisHash(expectedParent *string, documents []preparedDocument) strin
 		builder.WriteString(document.path)
 		builder.WriteByte('|')
 		builder.WriteString(reviewDocumentFingerprint(document.inspected))
+		if document.asNew {
+			builder.WriteString("|as_new")
+		}
 		builder.WriteByte('\n')
 	}
 	return sha256Hex([]byte(builder.String()))

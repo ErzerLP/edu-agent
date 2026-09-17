@@ -113,6 +113,7 @@ type preparedDocument struct {
 	nodeIDs         []string
 	old             *SnapshotDocument
 	allowHistorical bool
+	asNew           bool
 }
 
 type pendingLineage struct {
@@ -413,7 +414,14 @@ func (s *Service) prepareDocuments(input []ImportDocument) ([]preparedDocument, 
 		if err != nil {
 			return nil, err
 		}
-		prepared = append(prepared, preparedDocument{path: documentPath, inspected: inspected})
+		if item.AsNew {
+			// 用户明确新建时不继承导出标记、语义哈希或节点身份；原文交给同一规范化器。
+			inspected.ExplicitDocumentID, inspected.ExplicitRootNodeID, inspected.ExplicitSourceRevisionID = "", "", ""
+			for i := range inspected.DraftNodes {
+				inspected.DraftNodes[i].ExplicitNodeID = ""
+			}
+		}
+		prepared = append(prepared, preparedDocument{path: documentPath, inspected: inspected, asNew: item.AsNew})
 	}
 	sort.Slice(prepared, func(i, j int) bool { return prepared[i].path < prepared[j].path })
 	totalNodes := 0
@@ -448,7 +456,9 @@ func (s *Service) resolveDocuments(ctx context.Context, documents []preparedDocu
 		locator := documentLocator(basis, document.path)
 		resolution, hasResolution := resolutions[locator]
 		var selected string
-		if explicit := document.inspected.ExplicitDocumentID; explicit != "" {
+		if document.asNew {
+			selected = s.newUUID()
+		} else if explicit := document.inspected.ExplicitDocumentID; explicit != "" {
 			if old, exists := oldByID[explicit]; exists {
 				selected = explicit
 				document.old = &old
@@ -878,6 +888,7 @@ func hashImportRequest(command ImportCommand, documents []preparedDocument) stri
 	type hashDocument struct {
 		Path        string `json:"path"`
 		Fingerprint string `json:"fingerprint"`
+		AsNew       bool   `json:"as_new,omitempty"`
 	}
 	type hashNotesyncResolution struct {
 		ReviewID           string `json:"review_id"`
@@ -916,7 +927,7 @@ func hashImportRequest(command ImportCommand, documents []preparedDocument) stri
 		}
 	}
 	for _, document := range documents {
-		value.Documents = append(value.Documents, hashDocument{Path: document.path, Fingerprint: reviewDocumentFingerprint(document.inspected)})
+		value.Documents = append(value.Documents, hashDocument{Path: document.path, Fingerprint: reviewDocumentFingerprint(document.inspected), AsNew: document.asNew})
 	}
 	sort.Slice(value.Document, func(i, j int) bool { return value.Document[i].Locator < value.Document[j].Locator })
 	sort.Slice(value.Node, func(i, j int) bool { return value.Node[i].Locator < value.Node[j].Locator })

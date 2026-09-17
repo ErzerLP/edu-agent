@@ -261,6 +261,18 @@ func (s *Store) ChangeCollection(ctx context.Context, c knowledge.CollectionComm
 			return result, err
 		}
 		switch c.Action {
+		case "edit":
+			if owner != space.Scope(ctx) {
+				return knowledge.Collection{}, scopeMissing()
+			}
+			if c.ExpectedVersion != result.Version {
+				return knowledge.Collection{}, &knowledge.Error{Code: knowledge.CodeRevisionConflict}
+			}
+			if strings.TrimSpace(c.Name) == "" || !utf8.ValidString(c.Name) || utf8.RuneCountInString(c.Name) > 120 || strings.TrimSpace(c.Source) == "" || !utf8.ValidString(c.Source) || utf8.RuneCountInString(c.Source) > 500 {
+				return knowledge.Collection{}, &knowledge.Error{Code: knowledge.CodeInvalidRequest}
+			}
+			_, err = tx.Exec(ctx, `UPDATE knowledge_collections SET name=$2,source=$3,version=version+1 WHERE id=$1`, c.ID, c.Name, c.Source)
+			result.Name, result.Source, result.Version = c.Name, c.Source, result.Version+1
 		case "link":
 			if !result.Shared && owner != space.Scope(ctx) {
 				if err = checkCollection(ctx, tx, c.ID); err != nil {

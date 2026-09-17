@@ -94,6 +94,17 @@ func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (Retri
 	artifactByNode, summarySnapshot, artifactFailureReason := pinSummaryArtifacts(revision, artifacts)
 	result.SummarySnapshot = summarySnapshot
 	documents := scoreDocuments(revision.Documents, queryTokens, s.canonicalizer)
+	if reader, ok := s.store.(interface {
+		PreferredDocuments(context.Context, string) (map[string]bool, error)
+	}); ok {
+		preferred, err := reader.PreferredDocuments(ctx, revision.ID)
+		if err != nil {
+			return RetrievalResult{}, err
+		}
+		sort.SliceStable(documents, func(i, j int) bool {
+			return preferred[documents[i].revision.ID] && !preferred[documents[j].revision.ID]
+		})
+	}
 	if len(documents) > defaultDocumentShortlist {
 		documents = documents[:defaultDocumentShortlist]
 	}

@@ -25,6 +25,7 @@ export const sourceStatus: Record<ResearchSource['status'], string> = {
   candidate: '候选，尚未读取', failed: '获取失败', parsed: '已读取文本', partial: '部分解析', adopted: '已纳入本目标参考', rejected: '已拒绝',
 }
 export const researchStage: Record<string, string> = {
+  references_loaded: '已读取获准的固定参考片段',
   preparing_activity: '准备当前活动', activity_prepared: '当前活动已准备，正在发布',
   learning_started: '课堂已就绪', sources_insufficient: '来源不足，目标和已有结果已保留',
   queued: '等待执行', query_planned: '查询已拟定', running: '正在研究', discovering: '搜索候选', discovered: '候选已发现',

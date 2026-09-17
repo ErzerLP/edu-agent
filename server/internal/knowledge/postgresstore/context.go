@@ -51,7 +51,7 @@ func (s *Store) RebindContextTx(ctx context.Context, tx pgx.Tx, id, goal, revisi
 	for _, c := range old.Concepts {
 		ids = append(ids, c.RevisionID)
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO knowledge_context_revisions(id,policy_id,scope_snapshot_id,run_id,previous_revision_id,concept_revision_ids) VALUES($1,$2,$3,$4,$5,$6)`, newID, policy, old.ScopeSnapshotID, operation, id, ids)
+	_, err = tx.Exec(ctx, `INSERT INTO knowledge_context_revisions(id,policy_id,scope_snapshot_id,run_id,previous_revision_id,concept_revision_ids,reference_selection,reference_base_entries) SELECT $1,$2,$3,$4,$5,$6,reference_selection,reference_base_entries FROM knowledge_context_revisions WHERE id=$5`, newID, policy, old.ScopeSnapshotID, operation, id, ids)
 	return newID, err
 }
 
@@ -143,14 +143,18 @@ func (s *Store) PublishContextTx(ctx context.Context, tx pgx.Tx, run, goal, goal
 	if err = s.EnsureTeachingScopeWith(ctx, tx, result.ScopeSnapshotID, device); err != nil {
 		return result, err
 	}
+	return s.appendContextConceptTx(ctx, tx, run, goal, result, concept)
+}
+
+func (s *Store) appendContextConceptTx(ctx context.Context, tx pgx.Tx, run, goal string, result knowledge.KnowledgeContextRevision, concept knowledge.ConceptRevision) (knowledge.KnowledgeContextRevision, error) {
 	concept.SemanticKey = strings.ToLower(strings.Join(strings.Fields(concept.SemanticKey), " "))
 	concept.ConceptID = uuid.NewSHA1(uuid.MustParse(goal), []byte(concept.SemanticKey)).String()
 	concept.RevisionID = uuid.NewString()
-	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_concepts(id,space_id,goal_id,semantic_key) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, concept.ConceptID, learningspace.Scope(ctx), goal, concept.SemanticKey); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO knowledge_concepts(id,space_id,goal_id,semantic_key) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, concept.ConceptID, learningspace.Scope(ctx), goal, concept.SemanticKey); err != nil {
 		return result, err
 	}
-	raw, _ = json.Marshal(concept.Support)
-	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_concept_revisions(id,concept_id,name,support) VALUES($1,$2,$3,$4)`, concept.RevisionID, concept.ConceptID, concept.Name, raw); err != nil {
+	raw, _ := json.Marshal(concept.Support)
+	if _, err := tx.Exec(ctx, `INSERT INTO knowledge_concept_revisions(id,concept_id,name,support) VALUES($1,$2,$3,$4)`, concept.RevisionID, concept.ConceptID, concept.Name, raw); err != nil {
 		return result, err
 	}
 	replaced := false
@@ -171,7 +175,11 @@ func (s *Store) PublishContextTx(ctx context.Context, tx pgx.Tx, run, goal, goal
 	if result.PreviousRevisionID != "" {
 		previous = &result.PreviousRevisionID
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO knowledge_context_revisions(id,policy_id,scope_snapshot_id,run_id,previous_revision_id,concept_revision_ids) VALUES($1,$2,$3,$4,$5,$6)`, result.ID, policyID, result.ScopeSnapshotID, run, previous, ids)
+	var refs []byte
+	if result.References != nil {
+		refs, _ = json.Marshal(result.References)
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO knowledge_context_revisions(id,policy_id,scope_snapshot_id,run_id,previous_revision_id,concept_revision_ids,reference_selection,reference_base_entries) VALUES($1,$2,$3,$4,$5,$6,$7,(SELECT reference_base_entries FROM knowledge_context_revisions WHERE id=$5))`, result.ID, result.Policy.ID, result.ScopeSnapshotID, run, previous, ids, refs)
 	return result, err
 }
 
@@ -190,6 +198,16 @@ func (s *Store) ContextTx(ctx context.Context, tx pgx.Tx, id string) (knowledge.
 	}
 	if err = json.Unmarshal(raw, &result.Policy.Request); err != nil {
 		return result, err
+	}
+	var referenceRaw []byte
+	if err = tx.QueryRow(ctx, `SELECT reference_selection FROM knowledge_context_revisions WHERE id=$1`, id).Scan(&referenceRaw); err != nil {
+		return result, err
+	}
+	if len(referenceRaw) > 0 {
+		result.References = &knowledge.ReferenceSelection{}
+		if err = json.Unmarshal(referenceRaw, result.References); err != nil {
+			return result, err
+		}
 	}
 	rows, err := tx.Query(ctx, `SELECT c.id,r.id,c.semantic_key,r.name,r.support FROM knowledge_context_revisions k CROSS JOIN LATERAL unnest(k.concept_revision_ids) WITH ORDINALITY v(id,n) JOIN knowledge_concept_revisions r ON r.id=v.id JOIN knowledge_concepts c ON c.id=r.concept_id WHERE k.id=$1 ORDER BY v.n`, id)
 	if err != nil {

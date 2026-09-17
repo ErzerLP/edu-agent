@@ -883,3 +883,19 @@ footer {
 .mentor-panel details {
   margin-block: 16px;
 }
+
+.reference-scroll {
+  max-height: 28rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 0.5rem;
+}
+.reference-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 24rem;
+  overflow: auto;
+}
+.reference-context {
+  border-bottom: 1px solid var(--border);
+}

@@ -98,14 +98,15 @@ type Mode struct {
 	Version int64  `json:"version"`
 }
 type Snapshot struct {
-	Base     Base                          `json:"base"`
-	Goal     learning.GoalRevision         `json:"goal"`
-	Session  tutoring.Session              `json:"session"`
-	Steps    []Step                        `json:"steps"`
-	Content  *learningcontent.Revision     `json:"content,omitempty"`
-	Sources  []learning.KnowledgeReference `json:"sources"`
-	Evidence []learning.AcceptedEvidence   `json:"evidence"`
-	Mode     Mode                          `json:"mode"`
+	AvailableContextID string                        `json:"available_context_id,omitempty"`
+	Base               Base                          `json:"base"`
+	Goal               learning.GoalRevision         `json:"goal"`
+	Session            tutoring.Session              `json:"session"`
+	Steps              []Step                        `json:"steps"`
+	Content            *learningcontent.Revision     `json:"content,omitempty"`
+	Sources            []learning.KnowledgeReference `json:"sources"`
+	Evidence           []learning.AcceptedEvidence   `json:"evidence"`
+	Mode               Mode                          `json:"mode"`
 }
 
 func digest(v any) string {

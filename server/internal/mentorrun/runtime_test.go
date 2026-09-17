@@ -61,7 +61,7 @@ func TestCheckpointEncryptionAndToolBoundary(t *testing.T) {
 	if actual, err := LoadKey(path); err != nil || !bytes.Equal(actual, key) {
 		t.Fatal("安全密钥不可读取")
 	}
-	for _, name := range []string{"shell", "sql", "cli", "research", "rewrite"} {
+	for _, name := range []string{"shell", "sql", "cli", "research", "rewrite", "confirm_references", "import_references", "share_collection", "delete_collection", "publish_notesync"} {
 		host := executionHost{}
 		_, err := host.Execute(context.Background(), []modelclient.ToolCall{{ID: "test", Function: modelclient.ToolFunction{Name: name, Arguments: `{}`}}})
 		if !errors.Is(err, ErrInvalid) {

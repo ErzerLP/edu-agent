@@ -10,6 +10,7 @@ import (
 )
 
 func (a *API) mountLearningChanges(r chi.Router) {
+	a.mountReferences(r)
 	r.With(a.requireScope("learning:read")).Get("/v1/learning/changes/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"protocol_version": 1, "available": a.learningChanges.Available(), "modes": []string{"adaptive", "cautious"}})
 	})

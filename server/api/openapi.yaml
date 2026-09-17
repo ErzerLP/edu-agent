@@ -6,6 +6,94 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/knowledge/reference-sources:
+    post:
+      operationId: parseReferenceSource
+      summary: 明确授权后解析一个公开网页；复用研究网络边界，不保存或发布正文
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [references:manage, knowledge:write]
+      parameters:
+        - { $ref: "#/components/parameters/LearningSpaceID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [url, external_consent]
+              properties:
+                url: { type: string, maxLength: 8192 }
+                external_consent: { type: boolean, const: true }
+      responses:
+        "200": { description: 逐项解析状态、真实正文、覆盖及禁止保存原因；失败项不等于已导入, content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceSourcePreview" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/references:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readGoalReferences
+      summary: 读取目标或本次教学会话的已采用参考政策；不自动创建目标或课堂
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [references:manage, knowledge:read, learning:read]
+      parameters:
+        - { name: session_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: 未采用时 version 为零，范围为空, content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceState" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/references/previews:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: previewGoalReferences
+      summary: 无写入预览具体角色与限制差异；回执绑定设备、目标、父版本、政策及隐私代次，15分钟有效
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [references:manage, knowledge:approve, knowledge:write, learning:write]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceRequest" } } }
+      responses:
+        "200": { description: 尚未采用的差异, content: { application/json: { schema: { $ref: "#/components/schemas/ReferencePreview" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/references/confirm:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: confirmGoalReferences
+      summary: 原子采用参考及回执；未知结果必须核对原操作，不能更换 ID 自动重传
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [references:manage, knowledge:approve, knowledge:write, learning:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [request, receipt, confirm_scope]
+              properties:
+                request: { $ref: "#/components/schemas/ReferenceRequest" }
+                receipt: { type: string }
+                confirm_scope: { type: boolean, description: 限制范围有变化时必须确认具体差异 }
+      responses:
+        "200": { description: 新上下文或原操作持久回执，旧题目与引用不变, content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceState" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/references/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readReferenceOperation
+      summary: 核对本设备在原目标上的参考采用结果
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [references:manage, knowledge:read, learning:read]
+      responses:
+        "200": { description: 原操作结果, content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceState" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/changes/capabilities:
     get:
       operationId: learningChangeCapabilities
@@ -3675,6 +3763,7 @@ components:
       properties:
         new_session: { type: boolean, const: true }
         model_consent: { type: boolean, const: true }
+        reference_context_id: { type: string, format: uuid, description: 可选绑定已采用的目标参考；不传时仍遵守当前目标参考政策 }
     SourceSupport:
       type: object
       required: [source_id, revision_id, fragment_id, quote]
@@ -3689,7 +3778,20 @@ components:
       properties:
         id: { type: string, format: uuid }
         goal_revision_id: { type: string, format: uuid }
-        request: { $ref: "#/components/schemas/ResearchRequest" }
+        request:
+          type: object
+          description: 已保存的政策；用户参考可以没有外部研究授权，不能用此读取响应发起外部请求
+          required: [topic, external_consent, auto_adopt, policy]
+          properties:
+            topic: { type: string, maxLength: 300 }
+            external_consent: { type: boolean }
+            auto_adopt: { type: boolean }
+            policy:
+              type: object
+              required: [mode, domains]
+              properties:
+                mode: { type: string, enum: [supplement, prefer, restrict] }
+                domains: { type: array, items: { type: string }, maxItems: 5 }
     ConceptRevision:
       type: object
       required: [concept_id, revision_id, semantic_key, name, support]
@@ -3708,6 +3810,7 @@ components:
         scope_snapshot_id: { type: string, format: uuid }
         previous_revision_id: { type: string, format: uuid }
         concepts: { type: array, items: { $ref: "#/components/schemas/ConceptRevision" } }
+        references: { $ref: "#/components/schemas/ReferenceSelection" }
     StartLearningState:
       type: object
       required: [request]
@@ -3833,6 +3936,7 @@ components:
       required: [base, goal, session, steps, sources, evidence, mode]
       properties:
         base: { $ref: "#/components/schemas/ChangeBase" }
+        available_context_id: { type: string, format: uuid, description: 供后续安全边界使用的已采用参考上下文，不改写当前题目 }
         goal: { $ref: "#/components/schemas/GoalRevision" }
         session: { $ref: "#/components/schemas/TutoringSession" }
         steps: { type: array, items: { $ref: "#/components/schemas/ChangeStep" } }
@@ -4054,6 +4158,7 @@ components:
         choices: { type: array, maxItems: 8, items: { type: string, maxLength: 500 } }
         approval: { type: boolean }
         call_id: { type: string }
+        reference_selection: { type: boolean, description: 用户打开参考选择入口；回答此交互不等于正式采用 }
     MentorSnapshot:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
@@ -4385,11 +4490,69 @@ components:
       required: [id, action]
       properties:
         id: { type: string, format: uuid }
-        action: { type: string, enum: [create, share, link, unlink] }
+        action: { type: string, enum: [create, edit, share, link, unlink] }
         name: { type: string, maxLength: 120 }
         source: { type: string, maxLength: 500 }
         shared: { type: boolean }
         expected_version: { type: integer, minimum: 0 }
+    ReferenceSourcePreview:
+      type: object
+      additionalProperties: false
+      required: [locator, final_url, title, kind, status, failure, parser, coverage, fingerprint, storage_allowed, text]
+      properties:
+        locator: { type: string }
+        final_url: { type: string }
+        title: { type: string }
+        kind: { type: string }
+        status: { type: string, enum: [parsed, partial, failed] }
+        failure: { type: string }
+        parser: { type: string }
+        coverage: { type: string }
+        fingerprint: { type: string }
+        storage_allowed: { type: boolean }
+        text: { type: string, maxLength: 16000 }
+    ReferenceEntry:
+      type: object
+      additionalProperties: false
+      required: [collection_id, revision_id, role]
+      properties:
+        collection_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        role: { type: string, enum: [supplement, prefer, restrict], default: supplement }
+    ReferenceSelection:
+      type: object
+      additionalProperties: false
+      required: [session_id, entries]
+      properties:
+        session_id: { type: string, description: 空字符串表示目标后续学习，否则必须为当前目标的教学会话 UUID }
+        entries: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/ReferenceEntry" } }
+    ReferenceState:
+      type: object
+      required: [version, context_id, scope_snapshot_id, selection]
+      properties:
+        version: { type: integer, minimum: 0 }
+        context_id: { type: string }
+        scope_snapshot_id: { type: string }
+        selection: { $ref: "#/components/schemas/ReferenceSelection" }
+    ReferenceRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_goal_version, selection]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_goal_version: { type: integer, minimum: 1 }
+        selection: { $ref: "#/components/schemas/ReferenceSelection" }
+    ReferencePreview:
+      type: object
+      required: [receipt, before, after, requires_scope_confirmation, impact]
+      properties:
+        receipt: { type: string }
+        before: { $ref: "#/components/schemas/ReferenceState" }
+        after: { $ref: "#/components/schemas/ReferenceSelection" }
+        requires_scope_confirmation: { type: boolean }
+        impact: { type: string }
     KnowledgeScopeEntry:
       type: object
       additionalProperties: false
@@ -7782,6 +7945,9 @@ components:
                 minLength: 1
                 maxLength: 512
                 description: NFC relative path, limited to 512 Unicode code points and 1024 UTF-8 bytes.
+              as_new:
+                type: boolean
+                description: 用户明确作为新资料，生成全新文档与节点身份；名称必须未被占用，仍须预览和正式确认
               markdown:
                 type: string
                 maxLength: 4194304

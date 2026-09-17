@@ -20,9 +20,10 @@ type ConceptRevision struct {
 }
 
 type KnowledgeContextRevision struct {
-	ID                 string            `json:"id"`
-	Policy             KnowledgePolicy   `json:"policy"`
-	ScopeSnapshotID    string            `json:"scope_snapshot_id"`
-	PreviousRevisionID string            `json:"previous_revision_id,omitempty"`
-	Concepts           []ConceptRevision `json:"concepts"`
+	References         *ReferenceSelection `json:"references,omitempty"`
+	ID                 string              `json:"id"`
+	Policy             KnowledgePolicy     `json:"policy"`
+	ScopeSnapshotID    string              `json:"scope_snapshot_id"`
+	PreviousRevisionID string              `json:"previous_revision_id,omitempty"`
+	Concepts           []ConceptRevision   `json:"concepts"`
 }

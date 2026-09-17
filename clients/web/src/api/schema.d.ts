@@ -2114,12 +2114,12 @@ export interface components {
             token_budget: number;
             legacy_projection: "open_activity";
         };
-        StartLearningRequest: { new_session: true; model_consent: true; };
+        StartLearningRequest: { new_session: true; model_consent: true; reference_context_id?: string; };
         SourceSupport: { source_id: string; revision_id: string; fragment_id: string; quote: string; };
         KnowledgePolicy: {
             id: string;
             goal_revision_id: string;
-            request: components["schemas"]["ResearchRequest"];
+            request: Omit<components["schemas"]["ResearchRequest"], "external_consent"> & { external_consent: boolean };
         };
         ConceptRevision: {
             concept_id: string;
@@ -2134,7 +2134,9 @@ export interface components {
             scope_snapshot_id: string;
             previous_revision_id?: string;
             concepts: components["schemas"]["ConceptRevision"][];
+            references?: components["schemas"]["ReferenceSelection"];
         };
+        ReferenceSelection: { session_id: string; entries: (components["schemas"]["KnowledgeScopeEntry"] & { role: "supplement" | "prefer" | "restrict" })[] };
         StartLearningState: {
             model_id?: string;
             request: components["schemas"]["StartLearningRequest"];
@@ -2569,7 +2571,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            action: "create" | "share" | "link" | "unlink";
+            action: "create" | "edit" | "share" | "link" | "unlink";
             name?: string;
             source?: string;
             shared?: boolean;
@@ -4539,6 +4541,7 @@ export interface components {
                 /** @description NFC relative path, limited to 512 Unicode code points and 1024 UTF-8 bytes. */
                 path: string;
                 markdown: string;
+                as_new?: boolean;
             }[];
             identity_review_basis_hash?: string;
             /** Format: uuid */

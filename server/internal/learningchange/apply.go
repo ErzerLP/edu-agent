@@ -13,6 +13,9 @@ import (
 )
 
 func (s *Service) references(ctx context.Context, tx pgx.Tx, c Change, snap Snapshot) ([]learning.KnowledgeReference, string, error) {
+	if snap.AvailableContextID != "" && c.Candidate.ContextID != snap.AvailableContextID {
+		return nil, "", ErrConflict
+	}
 	scope := snap.Session.Context.KnowledgeRevisionID
 	if c.Candidate.ContextID != "" {
 		k, err := s.knowledge.ContextTx(ctx, tx, c.Candidate.ContextID)

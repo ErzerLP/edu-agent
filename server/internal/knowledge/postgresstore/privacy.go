@@ -70,6 +70,9 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 
 	switch request.Store {
 	case privacy.StoreKnowledgeContent:
+		if _, err := tx.Exec(ctx, `DELETE FROM knowledge_reference_operations; DELETE FROM knowledge_reference_heads`); err != nil {
+			return fmt.Errorf("清除用户参考政策和操作回执: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM knowledge_context_revisions; DELETE FROM knowledge_concept_revisions; DELETE FROM knowledge_concepts; DELETE FROM knowledge_policies`); err != nil {
 			return fmt.Errorf("清除知识上下文、概念与政策: %w", err)
 		}

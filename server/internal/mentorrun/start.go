@@ -150,7 +150,7 @@ func (h *executionHost) startLearning(ctx context.Context) error {
 			return err
 		}
 		actor := identity.Credential{Device: identity.Device{ID: item.device}, TokenID: item.token}
-		result, err := h.service.starter.PublishTx(ctx, tx, actor, item.Generation, item.RunID, item.GoalID, item.GoalVersion, h.body.Research.Request, *state.Prepared, state.ModelID)
+		result, err := h.service.starter.PublishWithReferencesTx(ctx, tx, actor, item.Generation, item.RunID, item.GoalID, item.GoalVersion, h.body.Research.Request, *state.Prepared, state.ModelID, state.Request.ReferenceContextID)
 		if err != nil {
 			return err
 		}

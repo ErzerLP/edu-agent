@@ -29,6 +29,7 @@ import { ErrorState, Pagination } from './components/common'
 import { ContentBlocks, SafeMarkdown, SourceViewer } from './components/content-blocks'
 import { MentorPanel } from './components/mentor-panel'
 import { ChangePanel } from './components/change-panel'
+import { ReferenceLink } from './knowledge-page'
 import { knowledgeContextSchema } from './api/start'
 import { ContentEditor, useContentSelection } from './components/content-editor'
 import { ContentTools } from './components/content-tools'
@@ -1040,6 +1041,9 @@ function TeachingWorkspace({
                 </div>
               )}
             </form>
+          )}
+          {goal.data && (
+            <ReferenceLink spaceId={spaceId} goalId={goal.data.goal_id} sessionId={sessionId} status />
           )}
           {goal.data && (
             <details>

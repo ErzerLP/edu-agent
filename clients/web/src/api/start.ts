@@ -11,7 +11,9 @@ export const knowledgeContextSchema = z.object({
   id: z.uuid(),
   scope_snapshot_id: z.uuid(),
   previous_revision_id: z.uuid().optional(),
-  policy: z.object({ id: z.uuid(), goal_revision_id: z.uuid(), request: researchRequestSchema }),
+  references: z.object({ session_id: z.string(), entries: z.array(z.object({ collection_id: z.uuid(), revision_id: z.uuid(), document_id: z.uuid().optional(), node_id: z.uuid().optional(), role: z.enum(['supplement', 'prefer', 'restrict']) })) }).optional(),
+  // 读取政策不是发起研究：用户参考可以没有任何外部请求授权。
+  policy: z.object({ id: z.uuid(), goal_revision_id: z.uuid(), request: researchRequestSchema.extend({ topic: z.string().max(300), external_consent: z.boolean() }) }),
   concepts: z.array(
     z.object({
       concept_id: z.uuid(),
@@ -24,7 +26,7 @@ export const knowledgeContextSchema = z.object({
 })
 export const startStateSchema = z.object({
   model_id: z.string().optional(),
-  request: z.object({ new_session: z.literal(true), model_consent: z.literal(true) }),
+  request: z.object({ new_session: z.literal(true), model_consent: z.literal(true), reference_context_id: z.uuid().optional() }),
   prepared: z
     .object({
       concept_key: z.string(),

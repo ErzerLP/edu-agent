@@ -17,10 +17,11 @@ var (
 type PairingProfile string
 
 const (
-	PairingProfileUser     PairingProfile = "user"
-	PairingProfileAgent    PairingProfile = "agent"
-	PairingProfileSettings PairingProfile = "settings"
-	PairingProfileResearch PairingProfile = "research"
+	PairingProfileUser       PairingProfile = "user"
+	PairingProfileAgent      PairingProfile = "agent"
+	PairingProfileSettings   PairingProfile = "settings"
+	PairingProfileResearch   PairingProfile = "research"
+	PairingProfileReferences PairingProfile = "references"
 )
 
 type PairingCodeRecord struct {

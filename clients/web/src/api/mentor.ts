@@ -19,7 +19,7 @@ export const mentorSnapshotSchema = z.object({
   requests_used: z.number().int().nonnegative(), result_unknown: z.boolean(), cost_unknown: z.boolean(),
   updated_at: z.iso.datetime({ offset: true }), expires_at: z.iso.datetime({ offset: true }),
   configuration: z.string(), output: z.string().max(65536),
-  interaction: z.object({ id: z.uuid(), question: z.string(), choices: z.array(z.string()).max(8), approval: z.boolean(), call_id: z.string() }).optional(),
+  interaction: z.object({ id: z.uuid(), question: z.string(), choices: z.array(z.string()).max(8), approval: z.boolean(), call_id: z.string(), reference_selection: z.boolean().optional() }).optional(),
 })
 export type MentorSnapshot = z.infer<typeof mentorSnapshotSchema>
 export const mentorCurrentSchema = z.object({ run: mentorSnapshotSchema.nullable(), save_available: z.boolean() })

@@ -8,6 +8,7 @@ import { isMentorTerminal, mentorCurrentSchema, mentorReceiptSchema, mentorSnaps
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { Confirm, ErrorState } from './common'
+import { ReferenceLink } from '@/knowledge-page'
 
 export function MentorPanel({ goal, archivedSpace, teachingSessionId }: { goal: Goal; archivedSpace: boolean; teachingSessionId?: string }) {
   const { session, prefix, drafts } = useIdentity()
@@ -126,6 +127,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId }: { goal: 
       {run.interaction && <fieldset disabled={pending || inactive}>
         <legend>{run.interaction.approval ? '确认交流方向' : '导师需要你的回答'}</legend>
         <p>{run.interaction.question}</p>
+        {run.interaction.reference_selection && <ReferenceLink spaceId={goal.learning_space_id} goalId={goal.goal_id} sessionId={teachingSessionId} />}
         {run.interaction.choices.length > 0 ? <div className="actions">{run.interaction.choices.map((choice) => <Button key={choice} variant="outline" onClick={() => void command('respond', choice)}>{choice}</Button>)}</div> : <form onSubmit={(e) => { e.preventDefault(); void command('respond') }} onKeyDown={(e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }}>
           <label>回应导师<textarea value={answer} onChange={(e) => setAnswer(e.target.value)} maxLength={2000} rows={3} /></label>
           <Button type="submit" disabled={!answer.trim()}>提交回答</Button>

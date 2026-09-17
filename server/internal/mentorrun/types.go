@@ -92,11 +92,12 @@ type Meta struct {
 }
 
 type Interaction struct {
-	ID       string   `json:"id"`
-	Question string   `json:"question"`
-	Choices  []string `json:"choices"`
-	Approval bool     `json:"approval"`
-	CallID   string   `json:"call_id"`
+	ReferenceSelection bool     `json:"reference_selection,omitempty"`
+	ID                 string   `json:"id"`
+	Question           string   `json:"question"`
+	Choices            []string `json:"choices"`
+	Approval           bool     `json:"approval"`
+	CallID             string   `json:"call_id"`
 }
 
 type Body struct {

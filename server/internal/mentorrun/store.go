@@ -364,9 +364,28 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if err != nil || model == nil {
 		return Receipt{}, ErrModel
 	}
+	referenceContext := ""
+	if c.StartLearning != nil {
+		scoped, e := learningspace.WithScope(ctx, space)
+		if e != nil {
+			return Receipt{}, e
+		}
+		head, e := s.starter.Knowledge.ReferenceHeadTx(scoped, tx, goal, "")
+		if e != nil {
+			return Receipt{}, e
+		}
+		if len(head.Selection.Entries) > 0 {
+			referenceContext = head.ContextID
+		}
+		if c.StartLearning.ReferenceContextID != "" && c.StartLearning.ReferenceContextID != referenceContext {
+			return Receipt{}, ErrConflict
+		}
+	}
 	if c.Research != nil {
-		if _, searchConfiguration, err = s.search(nil); err != nil {
-			return Receipt{}, ErrModel
+		if referenceContext == "" {
+			if _, searchConfiguration, err = s.search(nil); err != nil {
+				return Receipt{}, ErrModel
+			}
 		}
 		if c.Research.AutoAdopt {
 			if err = knowledgeActor(ctx, tx, actor.Device.ID, actor.TokenID); err != nil {
@@ -415,6 +434,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	if c.StartLearning != nil {
 		item.body.StartLearning = &learningstart.State{Request: *c.StartLearning}
+		item.body.StartLearning.Request.ReferenceContextID = referenceContext
 	}
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, item.RunID, sessionID, item.device, item.token, space, goal, c.ExpectedVersion, generation, raw, s.process, item.ExpiresAt); err != nil {

@@ -19,6 +19,7 @@ import { Button } from './ui/button'
 import { CapabilityGate, ErrorState } from './common'
 import { publicTopic, startCapabilitiesSchema, startUnavailable } from '@/api/start'
 import { mentorCurrentSchema, mentorReceiptSchema } from '@/api/mentor'
+import { ReferenceLink } from '@/knowledge-page'
 
 type SavedDraft = { values: z.input<typeof composerSchema>; id: string; base?: Goal }
 const blank = (): GoalDraft => ({ text: '', details: detailsSchema.parse({ name: '新学习目标' }) })
@@ -374,11 +375,9 @@ export function GoalComposer({
             </Button>
             <CapabilityGate
               available={session.capabilities.references}
-              reason="参考绑定将在功能就绪后开放。"
+              reason="参考管理需要显式 references 配对权限。"
             >
-              <Button variant="ghost" disabled>
-                补充参考（可选）
-              </Button>
+              {goal || base ? <ReferenceLink spaceId={spaceId} goalId={(goal ?? base)!.goal_id} status /> : <span className="hint">保存目标后可补充参考（可选）</span>}
             </CapabilityGate>
           </div>
         </fieldset>

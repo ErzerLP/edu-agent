@@ -79,6 +79,24 @@ func (t researchTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func (h *executionHost) runResearch(ctx context.Context) error {
 	state := h.body.Research
+	if !state.Discovered && h.body.StartLearning != nil && h.body.StartLearning.Request.ReferenceContextID != "" {
+		scoped, err := learningspace.WithScope(ctx, h.owned.SpaceID)
+		if err != nil {
+			return err
+		}
+		err = h.service.read(ctx, identity.Credential{Device: identity.Device{ID: h.owned.device}, TokenID: h.owned.token}, h.owned.SpaceID, h.owned.RunID, func(tx pgx.Tx, _ row) error {
+			var e error
+			state.Sources, e = h.service.starter.Knowledge.ReferenceSourcesTx(scoped, tx, h.body.StartLearning.Request.ReferenceContextID, h.owned.GoalID)
+			return e
+		})
+		if err != nil {
+			return err
+		}
+		state.Discovered = true
+		if err = h.checkpoint(ctx, "references_loaded"); err != nil {
+			return err
+		}
+	}
 	if !state.Discovered {
 		adapter, _, err := h.service.search(func(next http.RoundTripper) http.RoundTripper { return researchTransport{h, next} })
 		if err != nil {

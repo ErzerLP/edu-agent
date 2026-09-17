@@ -27,6 +27,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/edu-agent/edu-agent/server/internal/transport/access"
 	"github.com/edu-agent/edu-agent/server/internal/transport/mcpadmin"
@@ -148,6 +149,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	ReferenceFetcher        *research.Fetcher
 	LearningChanges         *learningchange.Service
 	LearningContent         *learningcontent.Store
 	MentorRuns              *mentorrun.Service
@@ -186,6 +188,7 @@ type Options struct {
 }
 
 type API struct {
+	referenceFetcher        *research.Fetcher
 	learningContent         *learningcontent.Store
 	learningChanges         *learningchange.Service
 	mentorRuns              *mentorrun.Service
@@ -272,9 +275,10 @@ func New(options Options) (http.Handler, error) {
 		options.MaxOfflineRequestBody = 8 << 20
 	}
 	api := &API{
-		learningContent: options.LearningContent,
-		learningChanges: options.LearningChanges,
-		mentorRuns:      options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
+		referenceFetcher: options.ReferenceFetcher,
+		learningContent:  options.LearningContent,
+		learningChanges:  options.LearningChanges,
+		mentorRuns:       options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
 		settings:       options.Settings,
 		learningSpaces: options.LearningSpaces,
 		identity:       options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,

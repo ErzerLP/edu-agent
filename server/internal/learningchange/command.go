@@ -12,6 +12,9 @@ import (
 )
 
 func (s *Service) candidate(ctx context.Context, tx pgx.Tx, c *Change, snap Snapshot, input Candidate) error {
+	if input.Kind == "route" && input.ContextID == "" && snap.AvailableContextID != "" {
+		input.ContextID = snap.AvailableContextID
+	}
 	if input.Steps == nil {
 		input.Steps = []Step{}
 	}

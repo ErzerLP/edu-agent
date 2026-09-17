@@ -29,6 +29,8 @@ type tutoringOwner interface {
 	LoadSession(context.Context, string) (tutoring.Session, error)
 	LoadSessionWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.Session, error)
 	LoadSessionLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.Session, error)
+	KnowledgeContextWith(context.Context, tutoringpostgres.DBTX, string) (*string, error)
+	BindKnowledgeContextWith(context.Context, tutoringpostgres.DBTX, string, string, string) error
 	LoadFreeQuestion(context.Context, string) (tutoring.FreeQuestion, error)
 	LoadFreeQuestionLockedWith(context.Context, tutoringpostgres.DBTX, string) (tutoring.FreeQuestion, error)
 	LoadFreeAnswer(context.Context, string) (tutoring.FreeAnswer, error)
@@ -46,11 +48,15 @@ type knowledgeOwner interface {
 
 // Store is the PostgreSQL transaction authority for learning commands and projections.
 type Store struct {
+	content   *learningcontent.Store
 	pool      planningDB
 	registry  *learning.EventRegistry
 	tutoring  tutoringOwner
 	knowledge knowledgeOwner
 }
+
+// ConfigureContent 在启动前接入同事务正文发布；旧活动仍按原读取路径适配。
+func (s *Store) ConfigureContent(content *learningcontent.Store) { s.content = content }
 
 func New(pool *pgxpool.Pool, tutoringStore tutoringOwner, knowledgeStores ...knowledgeOwner) *Store {
 	var knowledgeStore knowledgeOwner

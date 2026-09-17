@@ -22,6 +22,7 @@ import (
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	spacepostgres "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
@@ -100,6 +101,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	mentorRuns.ConfigureStart(&learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore})
+	stores.learning.ConfigureContent(contentStore)
 	cfg.Model.Enabled = modelClient != nil
 	cfg.Model.Name = settingsView.Teaching.Model
 	cfg.Model.ContextWindow = settingsView.Limits.ContextTokens

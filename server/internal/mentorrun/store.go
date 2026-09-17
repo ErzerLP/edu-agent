@@ -14,6 +14,7 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ import (
 )
 
 type Service struct {
+	starter             *learningstart.Service
 	search              func(func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error)
 	fetcher             *research.Fetcher
 	pool                *pgxpool.Pool
@@ -50,6 +52,10 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 	return &Service{pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
 }
 func (s *Service) CanSave() bool { return s.aead != nil }
+
+// ConfigureStart 仅在组合根启动 worker 前注入正式应用服务。
+func (s *Service) ConfigureStart(starter *learningstart.Service) { s.starter = starter }
+func (s *Service) CanStart() bool                                { return s != nil && s.CanSave() && s.starter.Available() }
 
 type row struct {
 	Meta
@@ -285,6 +291,15 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 			return Receipt{}, ErrInvalid
 		}
 	}
+	if c.StartLearning != nil {
+		if !c.StartLearning.NewSession || !c.StartLearning.ModelConsent || c.Research == nil || !c.Research.AutoAdopt || !c.Save {
+			return Receipt{}, ErrInvalid
+		}
+		if !s.CanStart() {
+			return Receipt{}, ErrStorage
+		}
+		kind = "start_learning"
+	}
 	if !validID(space) || !validID(goal) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
 		return Receipt{}, ErrInvalid
 	}
@@ -355,6 +370,9 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		item.body.Messages = nil
 		item.body.Research = &research.State{Request: *c.Research, Sources: []research.Source{}, SearchConfiguration: searchConfiguration}
 		item.Stage = "query_planned"
+	}
+	if c.StartLearning != nil {
+		item.body.StartLearning = &learningstart.State{Request: *c.StartLearning}
 	}
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, item.RunID, sessionID, item.device, item.token, space, goal, c.ExpectedVersion, generation, raw, s.process, item.ExpiresAt); err != nil {

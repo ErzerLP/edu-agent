@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { learningClient, unwrap, ApiError } from './api/client'
@@ -10,15 +10,16 @@ import { settingsSchema } from './api/settings'
 import { useIdentity } from './lib/session'
 import { Button } from './components/ui/button'
 import { ErrorState, Confirm } from './components/common'
+import { publicTopic } from './api/start'
 
-export function ResearchPage({ spaceId, goalId }: { spaceId: string; goalId: string }) {
+export function ResearchPage({ spaceId, goalId, startLearning = false }: { spaceId: string; goalId: string; startLearning?: boolean }) {
   const { session, prefix } = useIdentity()
   const goal = useQuery({ queryKey: [...prefix, spaceId, goalId, 'latest'], queryFn: ({ signal }) => unwrap(learningClient(session, spaceId).GET('/v1/learning/goals/{goalID}', { params: { path: { goalID: goalId } }, signal }), goalSchema) })
   const space = useQuery({ queryKey: [...prefix, spaceId, 'space'], queryFn: ({ signal }) => unwrap(learningClient(session).GET('/v1/learning-spaces/{spaceID}', { params: { path: { spaceID: spaceId } }, signal }), spaceSchema) })
   if (goal.error || space.error) return <ErrorState error={goal.error || space.error} />
   if (!goal.data || !space.data) return <p role="status">正在读取目标…</p>
   if (goal.data.learning_space_id !== spaceId || goal.data.goal_id !== goalId) return <ErrorState error={new ApiError(404, 'wrong_space')} />
-  return <><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId }}>← 返回目标</Link><h1>研究相关知识</h1><p>{goal.data.management.details.name}</p><ResearchPanel goal={goal.data} archived={space.data.status === 'archived'} /></>
+  return <><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId }}>← 返回目标</Link><h1>{startLearning ? '准备第一项学习活动' : '研究相关知识'}</h1><p>{goal.data.management.details.name}</p><ResearchPanel key={startLearning ? 'start' : 'research'} goal={goal.data} archived={space.data.status === 'archived'} startLearning={startLearning} /></>
 }
 
 function SourceViewer({ source, select, decide, disabled }: { source: ResearchSource; select?: string; decide: (kind: 'adopt' | 'reject') => void; disabled: boolean }) {
@@ -37,13 +38,14 @@ function SourceViewer({ source, select, decide, disabled }: { source: ResearchSo
   </article>
 }
 
-function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
+function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; archived: boolean; startLearning?: boolean }) {
   const { session, prefix, drafts } = useIdentity()
-  const key = JSON.stringify([...prefix, goal.learning_space_id, goal.goal_id, 'research'])
-  const [topic, setTopic] = useState(() => drafts.get<string>(key) ?? '')
+  const navigate = useNavigate()
+  const key = JSON.stringify([...prefix, goal.learning_space_id, goal.goal_id, startLearning ? 'start' : 'research'])
+  const [topic, setTopic] = useState(() => drafts.get<string>(key) ?? (startLearning ? publicTopic(goal.text) : ''))
   const [consent, setConsent] = useState(false)
-  const [autoAdopt, setAutoAdopt] = useState(false)
-  const [save, setSave] = useState(false)
+  const [autoAdopt, setAutoAdopt] = useState(startLearning)
+  const [save, setSave] = useState(startLearning)
   const [mode, setMode] = useState<'supplement' | 'prefer' | 'restrict'>('supplement')
   const [domains, setDomains] = useState('')
   const [requests, setRequests] = useState(10)
@@ -56,11 +58,19 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
   const mounted = useRef(true)
   const header = { 'X-Learning-Space-ID': goal.learning_space_id }
   const client = () => learningClient(session, goal.learning_space_id)
-  const current = useQuery({ queryKey: [...prefix, goal.learning_space_id, goal.goal_id, 'research-current'], queryFn: ({ signal }) => unwrap(client().GET('/v1/learning/goals/{goalID}/research', { params: { path: { goalID: goal.goal_id }, header }, signal }), mentorCurrentSchema), gcTime: 0 })
+  const current = useQuery({ queryKey: [...prefix, goal.learning_space_id, goal.goal_id, startLearning ? 'start-current' : 'research-current'], queryFn: ({ signal }) => unwrap(client().GET(startLearning ? '/v1/learning/goals/{goalID}/start' : '/v1/learning/goals/{goalID}/research', { params: { path: { goalID: goal.goal_id }, header }, signal }), mentorCurrentSchema), gcTime: 0 })
   const configuration = useQuery({ queryKey: [...prefix, 'settings'], queryFn: ({ signal }) => unwrap(learningClient(session).GET('/v1/settings', { signal }), settingsSchema) })
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  useEffect(() => { if (current.data?.run) { setRun(current.data.run); sessionID.current = current.data.run.session_id } }, [current.data])
+  useEffect(() => { if (current.data?.run) {
+    setRun(current.data.run); sessionID.current = current.data.run.session_id
+    const request = current.data.run.research?.request
+    if (startLearning && request) { setTopic(request.topic); setMode(request.policy.mode); setDomains(request.policy.domains.join(',')) }
+  } }, [current.data])
   useEffect(() => { if (run) return observeMentor(session, run, (next, failure) => { setRun(next); setError(failure) }) }, [run?.run_id, session, key])
+  useEffect(() => {
+    const result = run?.start_learning?.result
+    if (startLearning && result && run?.status === 'succeeded') void navigate({ to: '/spaces/$spaceId/learn/$sessionId', params: { spaceId: goal.learning_space_id, sessionId: result.session_id }, replace: true })
+  }, [run?.start_learning?.result?.session_id, startLearning])
   const ready = configuration.data?.search.enabled && configuration.data.search.configured && configuration.data.effective_mentor.enabled && configuration.data.effective_mentor.configured
   const inactive = archived || !['draft', 'active'].includes(goal.management.status)
   const active = run && !isMentorTerminal(run.status)
@@ -70,14 +80,14 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
   const refresh = async (id: string) => { const result = await unwrap(client().GET('/v1/learning/runs/{runID}', { params: { path: { runID: id }, header } }), mentorSnapshotSchema); if (mounted.current) setRun(result) }
   const act = async (fn: () => Promise<void>) => { setPending(true); setError(undefined); try { await fn() } catch (e) { if (mounted.current) setError(e) } finally { if (mounted.current) setPending(false) } }
   const start = () => act(async () => {
-    const payload = { session_id: run?.session_id ?? sessionID.current, expected_version: goal.revision, prompt: topic, save, request_budget: requestBudget, token_budget: tokenBudget, research: { topic, external_consent: true as const, auto_adopt: autoAdopt, policy: { mode, domains: domains.split(/[\s,，]+/).filter(Boolean) } } }
-    const operation_id = drafts.operation(key + ':create', payload)
+    const payload = { session_id: run?.session_id ?? sessionID.current, expected_version: goal.revision, prompt: topic, save, request_budget: requestBudget, token_budget: tokenBudget, research: { topic, external_consent: true as const, auto_adopt: autoAdopt, policy: { mode, domains: domains.split(/[\s,，]+/).filter(Boolean) } }, ...(startLearning ? { start_learning: { new_session: true as const, model_consent: true as const } } : {}) }
+    const operation_id = drafts.operation(key + ':create:' + (run?.run_id ?? 'new'), payload)
     const receipt = await unwrap(client().POST('/v1/learning/goals/{goalID}/runs', { params: { path: { goalID: goal.goal_id }, header }, body: { ...payload, operation_id } }), mentorReceiptSchema)
     await refresh(receipt.run_id)
   })
-  const command = (kind: 'stop' | 'clear' | 'continue_budget') => act(async () => {
+  const command = (kind: 'stop' | 'clear' | 'continue_budget' | 'retry_start') => act(async () => {
     if (!run) return
-    const payload = { expected_version: run.version, kind, ...(kind === 'continue_budget' ? { request_budget: requestBudget, token_budget: tokenBudget } : {}) }
+    const payload = { expected_version: run.version, kind, ...(['continue_budget', 'retry_start'].includes(kind) ? { request_budget: requestBudget, token_budget: tokenBudget } : {}) }
     await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id: drafts.operation(key + ':command', payload) } }), mentorReceiptSchema)
     await refresh(run.run_id)
   })
@@ -90,7 +100,7 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
   const state = run?.research
   const historical = useQuery({
     queryKey: [...prefix, goal.learning_space_id, goal.goal_id, run?.run_id, run?.watermark, 'historical-sources'],
-    enabled: !!run && !state && run.kind === 'research', gcTime: 0,
+    enabled: !!run && !state && ['research', 'start_learning'].includes(run.kind ?? ''), gcTime: 0,
     queryFn: async ({ signal }) => {
       const path = { runID: run!.run_id }
       const page = await unwrap(client().GET('/v1/learning/runs/{runID}/sources', { params: { path, header }, signal }), z.object({ items: z.array(sourceSchema), next_cursor: z.string() }))
@@ -99,7 +109,7 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
   })
   const sources = state?.sources ?? (historical.error ? [] : historical.data ?? [])
   return <>
-    <p>只将你确认的公开主题发送给搜索和模型服务。请去掉姓名、成绩、身份和私人原文；不会自动发送目标内容。研究不启动正式教学。</p>
+    <p>{startLearning ? '搜索使用确认的公开主题；模型复用目标和已填信息，准备一项小活动。来源、当前活动和正文发布完成后自动进入课堂。' : '只将你确认的公开主题发送给搜索和模型服务。请去掉姓名、成绩、身份和私人原文；不会自动发送目标内容。研究不启动正式教学。'}</p>
     {(error || current.error || configuration.error) && <ErrorState error={error || current.error || configuration.error} retry={() => { void current.refetch(); void configuration.refetch() }} />}
     {historical.error && <ErrorState error={historical.error} retry={() => void historical.refetch()} />}
     {!ready && <p>请先配置并启用搜索和 Web 导师。</p>}
@@ -110,9 +120,10 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
         <label>来源范围<select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}><option value="supplement">公开来源补充</option><option value="prefer">优先指定网站</option><option value="restrict">仅限指定网站</option></select></label>
         {mode !== 'supplement' && <label>网站域名（最多 5 个，用逗号分隔）<input value={domains} onChange={(e) => setDomains(e.target.value)} placeholder="example.org" required /></label>}
         <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />确认以上主题可外发，允许搜索、读取公共网页和模型整理，可能消耗额度</label>
-        <label><input type="checkbox" checked={autoAdopt} disabled={!session.device.scopes.includes('knowledge:write')} onChange={(e) => setAutoAdopt(e.target.checked)} />研究并将有引用的新来源纳入本目标参考</label>
-        <label><input type="checkbox" checked={save} disabled={!current.data?.save_available} onChange={(e) => setSave(e.target.checked)} />加密保存运行七天，支持重启恢复；未勾选仅保留当前进程</label>
-        <Button disabled={!ready || !consent || !topic.trim()} type="submit">{run ? '重新研究' : '研究相关知识'}</Button>
+        <label><input type="checkbox" checked={autoAdopt} disabled={startLearning || !session.device.scopes.includes('knowledge:write')} onChange={(e) => setAutoAdopt(e.target.checked)} />研究并将有引用的新来源纳入本目标参考</label>
+        <label><input type="checkbox" checked={save} disabled={startLearning || !current.data?.save_available} onChange={(e) => setSave(e.target.checked)} />加密保存运行七天，支持重启恢复；未勾选仅保留当前进程</label>
+        {startLearning && <p className="hint">开始即授权模型使用目标和已填信息，自动准备当前活动并新建教学现场。</p>}
+        <Button disabled={!ready || !consent || !topic.trim() || (startLearning && (!session.device.scopes.includes('research:adopt') || !current.data?.save_available))} type="submit">{startLearning ? '按以上主题重新准备并开学' : run ? '重新研究' : '研究相关知识'}</Button>
       </fieldset>
     </form>
     <div className="filters"><label>外部请求预算<input type="number" min={1} max={limits?.research_requests ?? 1000} value={requestBudget} onChange={(e) => setRequests(Math.max(1, Number(e.target.value)))} /></label><label>Token 预算<input type="number" min={1} max={limits?.research_tokens ?? 10000000} value={tokenBudget} onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))} /></label></div>
@@ -121,6 +132,7 @@ function ResearchPanel({ goal, archived }: { goal: Goal; archived: boolean }) {
       {!run.body_available && <p>正文已清除、到期或临时副本不可恢复。</p>}
       {active && <Button disabled={pending} variant="outline" onClick={() => void command('stop')}>停止研究</Button>}
       {run.status === 'paused_budget' && <Button disabled={pending || inactive} onClick={() => void command('continue_budget')}>按以上预算继续</Button>}
+      {startLearning && run.body_available && !run.start_learning?.result && ['partial', 'failed'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('retry_start')}>按以上预算重试并保留已有结果</Button>}
       {run.body_available && <Confirm label="清除研究运行" title="清除本次研究运行？" disabled={pending} onConfirm={() => void command('clear')}>候选正文、来源缓存和综合结果将清除。已经正式采纳的参考属于知识库，遵循知识库清除流程。</Confirm>}
     </section>}
     {state && <>

@@ -9,6 +9,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Claim 使用持久租约与全局并发配额；过期的已发出请求只结算未知结果，不重新请求。
@@ -90,6 +91,10 @@ func (s *Service) claim(ctx context.Context) (*row, error) {
 
 // mutate 在每个 checkpoint、付费请求和续租前重新核对真实授权与目标版本。
 func (s *Service) mutate(ctx context.Context, owned *row, kind string, change func(*row) error) error {
+	return s.mutateTx(ctx, owned, kind, func(_ pgx.Tx, item *row) error { return change(item) })
+}
+
+func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change func(pgx.Tx, *row) error) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -118,7 +123,7 @@ func (s *Service) mutate(ctx context.Context, owned *row, kind string, change fu
 	if err = s.decode(&item); err != nil {
 		return err
 	}
-	if err = change(&item); err != nil {
+	if err = change(tx, &item); err != nil {
 		return err
 	}
 	if kind == "" {

@@ -9,16 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/go-chi/chi/v5"
 )
 
 func mentorPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research"))
+	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research") || strings.HasSuffix(path, "/start"))
 }
 
 func (a *API) mountMentorRuns(router chi.Router) {
+	router.With(a.requireScope("learning:read")).Get("/v1/learning/start/capabilities", a.startCapabilities)
 	if a.mentorRuns == nil {
 		return
 	}
@@ -29,6 +31,8 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/runs/{runID}/commands", a.mentorCommand)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/operations/{operationID}", a.mentorOperation)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/research", a.mentorCurrent)
+	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/start", a.mentorCurrent)
+	router.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.mentorScope).Get("/v1/tutoring/sessions/{sessionID}/knowledge-context", a.sessionKnowledgeContext)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/sources", a.researchSources)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/sources/{sourceID}", a.researchSource)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/runs/{runID}/sources/{sourceID}/decisions", a.researchDecision)
@@ -93,6 +97,9 @@ func (a *API) mentorCurrent(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(r.URL.Path, "/research") {
 		kind = "research"
 	}
+	if strings.HasSuffix(r.URL.Path, "/start") {
+		kind = "start_learning"
+	}
 	id, err := a.mentorRuns.Current(r.Context(), actor, space, chi.URLParam(r, "goalID"), kind)
 	if err != nil {
 		mentorFailure(w, r, err)
@@ -109,6 +116,44 @@ func (a *API) mentorCurrent(w http.ResponseWriter, r *http.Request) {
 		response["run"] = snapshot
 		started = true
 		writeJSON(w, 200, response)
+		return http.NewResponseController(w).Flush()
+	})
+	if err != nil && !started {
+		mentorFailure(w, r, err)
+	}
+}
+
+func (a *API) startCapabilities(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	reason := ""
+	actor, _ := credentialFromContext(r.Context())
+	view := a.settingsService().View()
+	if !a.mentorRuns.CanStart() {
+		reason = "start_storage_unavailable"
+	} else if !view.EffectiveMentor.Enabled || !view.EffectiveMentor.Configured || !view.Search.Enabled || !view.Search.Configured {
+		reason = "research_configuration_required"
+	}
+	for _, scope := range []string{"learning:write", "knowledge:read", "knowledge:write", "research:adopt"} {
+		found := false
+		for _, actual := range actor.Scopes {
+			if actual == scope {
+				found = true
+			}
+		}
+		if !found {
+			reason = "research_pairing_required"
+		}
+	}
+	writeJSON(w, 200, map[string]any{"protocol_version": 1, "available": reason == "", "reason": reason, "request_budget": view.Limits.ResearchRequests, "token_budget": view.Limits.ResearchTokens, "legacy_projection": "open_activity"})
+}
+
+func (a *API) sessionKnowledgeContext(w http.ResponseWriter, r *http.Request) {
+	actor, _ := credentialFromContext(r.Context())
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
+	started := false
+	err := a.mentorRuns.ReadSessionContext(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "sessionID"), func(value *knowledge.KnowledgeContextRevision) error {
+		started = true
+		writeJSON(w, 200, map[string]any{"knowledge_context": value})
 		return http.NewResponseController(w).Flush()
 	})
 	if err != nil && !started {

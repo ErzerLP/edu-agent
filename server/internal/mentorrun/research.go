@@ -204,6 +204,9 @@ func (h *executionHost) runResearch(ctx context.Context) error {
 			state = h.body.Research
 		}
 	}
+	if h.body.StartLearning != nil {
+		return h.startLearning(ctx)
+	}
 	return h.service.mutate(ctx, &h.owned, "completed", func(item *row) error {
 		item.body = h.body
 		item.Status = "succeeded"

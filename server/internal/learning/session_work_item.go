@@ -17,7 +17,7 @@ func WorkItemActions(state tutoring.State, context WorkItemActionContext) ([]tut
 	decisions := []string{}
 	switch state {
 	case tutoring.StateGoalReady:
-		actions = append(actions, tutoring.ActionStartDiagnostic, tutoring.ActionSwitchGoal)
+		actions = append(actions, tutoring.ActionStartDiagnostic, tutoring.ActionApplyRoute, tutoring.ActionSwitchGoal)
 	case tutoring.StateDiagnostic:
 		actions = append(actions, tutoring.ActionApplyRoute, tutoring.ActionSwitchGoal)
 	case tutoring.StateRouteActive:

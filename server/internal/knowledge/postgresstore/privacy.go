@@ -70,6 +70,9 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 
 	switch request.Store {
 	case privacy.StoreKnowledgeContent:
+		if _, err := tx.Exec(ctx, `DELETE FROM knowledge_context_revisions; DELETE FROM knowledge_concept_revisions; DELETE FROM knowledge_concepts; DELETE FROM knowledge_policies`); err != nil {
+			return fmt.Errorf("清除知识上下文、概念与政策: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM knowledge_source_revisions`); err != nil {
 			return fmt.Errorf("清除来源版本与定位关系: %w", err)
 		}
@@ -217,6 +220,10 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 		query = `
 			SELECT
 				(SELECT count(*) FROM knowledge_source_revisions)+
+				(SELECT count(*) FROM knowledge_context_revisions)+
+				(SELECT count(*) FROM knowledge_concept_revisions)+
+				(SELECT count(*) FROM knowledge_concepts)+
+				(SELECT count(*) FROM knowledge_policies)+
 				(SELECT count(*) FROM knowledge_import_jobs WHERE state<>'{}'::jsonb OR staging_key IS NOT NULL)+
 				(SELECT count(*) FROM knowledge_collections WHERE name<>'[redacted]' OR source<>'privacy_erasure' OR shared)+
 				(SELECT count(*) FROM knowledge_collection_links WHERE NOT(space_id='00000000-0000-4000-8000-000000000001' AND collection_id='00000000-0000-4000-8000-000000000002'))+

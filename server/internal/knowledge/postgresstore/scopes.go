@@ -297,6 +297,20 @@ func (s *Store) ChangeCollection(ctx context.Context, c knowledge.CollectionComm
 }
 
 func (s *Store) FreezeScope(ctx context.Context, snapshot knowledge.ScopeSnapshot) (knowledge.ScopeSnapshot, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return knowledge.ScopeSnapshot{}, err
+	}
+	defer tx.Rollback(context.Background())
+	result, err := s.FreezeScopeTx(ctx, tx, snapshot)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit(ctx)
+}
+
+// FreezeScopeTx 供开学事务自动冻结已采用来源，校验与手动冻结完全相同。
+func (s *Store) FreezeScopeTx(ctx context.Context, tx pgx.Tx, snapshot knowledge.ScopeSnapshot) (knowledge.ScopeSnapshot, error) {
 	if knowledge.HasCollection(ctx) {
 		return knowledge.ScopeSnapshot{}, &knowledge.Error{Code: knowledge.CodeInvalidRequest}
 	}
@@ -305,11 +319,7 @@ func (s *Store) FreezeScope(ctx context.Context, snapshot knowledge.ScopeSnapsho
 		return knowledge.ScopeSnapshot{}, &knowledge.Error{Code: knowledge.CodeInvalidRequest}
 	}
 	snapshot.SpaceID = space.Scope(ctx)
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return knowledge.ScopeSnapshot{}, err
-	}
-	defer tx.Rollback(context.Background())
+	var err error
 	if _, err = privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
 		return knowledge.ScopeSnapshot{}, err
 	}
@@ -361,9 +371,6 @@ func (s *Store) FreezeScope(ctx context.Context, snapshot knowledge.ScopeSnapsho
 	data, _ := json.Marshal(snapshot.Entries)
 	_, err = tx.Exec(ctx, `INSERT INTO knowledge_scope_snapshots(id,space_id,entries) VALUES($1,$2,$3)`, snapshot.ID, snapshot.SpaceID, data)
 	if err != nil {
-		return knowledge.ScopeSnapshot{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return knowledge.ScopeSnapshot{}, err
 	}
 	return snapshot, nil

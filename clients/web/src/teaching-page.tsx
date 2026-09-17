@@ -28,6 +28,7 @@ import { Button } from './components/ui/button'
 import { ErrorState, Pagination } from './components/common'
 import { ContentBlocks, SafeMarkdown, SourceViewer } from './components/content-blocks'
 import { MentorPanel } from './components/mentor-panel'
+import { knowledgeContextSchema } from './api/start'
 
 export function SessionPicker({ goal, archived }: { goal: Goal; archived: boolean }) {
   const { session, prefix, drafts } = useIdentity()
@@ -264,6 +265,25 @@ function TeachingWorkspace({
     if (follow.current && output.current) output.current.scrollTop = output.current.scrollHeight
   }, [item?.free_answer?.text])
   const client = () => learningClient(session, spaceId)
+  const knowledgeContext = useQuery({
+    queryKey: [
+      ...prefix,
+      spaceId,
+      sessionId,
+      'knowledge-context',
+      view.session.focus.knowledge_revision_id,
+    ],
+    enabled: session.device.scopes.includes('knowledge:read'),
+    gcTime: 0,
+    queryFn: ({ signal }) =>
+      unwrap(
+        client().GET('/v1/tutoring/sessions/{sessionID}/knowledge-context', {
+          params: { path: { sessionID: sessionId }, header: { 'X-Learning-Space-ID': spaceId } },
+          signal,
+        }),
+        z.object({ knowledge_context: knowledgeContextSchema.nullable() }),
+      ),
+  })
   const capabilities = useQuery({
     queryKey: [...prefix, 'content-capabilities'],
     queryFn: ({ signal }) =>
@@ -551,6 +571,30 @@ function TeachingWorkspace({
         <aside className="knowledge-column panel" aria-label="知识与来源">
           <h2>知识与来源</h2>
           <p className="hint">当前会话的真实范围，不表示概念掌握度。</p>
+          {knowledgeContext.error && (
+            <ErrorState
+              error={knowledgeContext.error}
+              retry={() => void knowledgeContext.refetch()}
+            />
+          )}
+          {knowledgeContext.data?.knowledge_context && (
+            <section aria-label="当前知识概念">
+              {knowledgeContext.data.knowledge_context.concepts.map((concept) => (
+                <details key={concept.revision_id}>
+                  <summary>{concept.name} · 有来源支持</summary>
+                  <p className="hint">支持状态独立于学习表现，引用可追溯不表示结论普遍正确。</p>
+                  {concept.support.map((support, i) => (
+                    <blockquote key={i}>
+                      {support.quote}
+                      <small style={{ display: 'block', overflowWrap: 'anywhere' }}>
+                        来源修订：{support.revision_id} · 片段：{support.fragment_id}
+                      </small>
+                    </blockquote>
+                  ))}
+                </details>
+              ))}
+            </section>
+          )}
           {item?.route_revision?.steps.map((step, i) => (
             <p
               key={step.route_step_id}

@@ -123,6 +123,15 @@ func (s *Store) Ensure(ctx context.Context, actor identity.Credential, session, 
 		return Revision{}, err
 	}
 	defer tx.Rollback(context.Background())
+	r, err := s.EnsureTx(ctx, tx, actor, session, activity, g)
+	if err != nil {
+		return Revision{}, err
+	}
+	return r, tx.Commit(ctx)
+}
+
+// EnsureTx 与正式活动、上下文和开学回执在同一事务发布首版正文。
+func (s *Store) EnsureTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, session, activity string, g int64) (Revision, error) {
 	source, err := s.source.LearningContentSource(ctx, tx, session, activity)
 	if err != nil {
 		return Revision{}, err
@@ -137,7 +146,7 @@ func (s *Store) Ensure(ctx context.Context, actor identity.Credential, session, 
 	}
 	existing, e := s.read(ctx, tx, r.ArtifactID, 0, g, false)
 	if e == nil {
-		return existing, tx.Commit(ctx)
+		return existing, nil
 	}
 	if !errors.Is(e, ErrNotFound) {
 		return Revision{}, e
@@ -154,7 +163,7 @@ func (s *Store) Ensure(ctx context.Context, actor identity.Credential, session, 
 	if err != nil {
 		return Revision{}, err
 	}
-	return r, tx.Commit(ctx)
+	return r, nil
 }
 
 func (s *Store) read(ctx context.Context, tx pgx.Tx, id string, version, generation int64, lock bool) (Revision, error) {

@@ -19,11 +19,16 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	identitydb "github.com/edu-agent/edu-agent/server/internal/identity/postgresstore"
+	knowledgedb "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
+	learningdb "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
+	tutoringdb "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/google/uuid"
 )
 
@@ -58,6 +63,14 @@ func TestPostgreSQLResearchCookieSourcesAndDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	knowledgeStore := knowledgedb.New(pool)
+	learningStore := learningdb.New(pool, tutoringdb.New(pool), knowledgeStore)
+	contentStore, err := learningcontent.New(pool, learningStore, encryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	learningStore.ConfigureContent(contentStore)
+	runtime.ConfigureStart(&learningstart.Service{Learning: learningStore, Knowledge: knowledgeStore, Content: contentStore})
 	goal := uuid.NewString()
 	if _, err = pool.Exec(ctx, `INSERT INTO learning_aggregate_heads(aggregate_type,aggregate_id,aggregate_version,last_event_seq,updated_at) VALUES('goal',$1,1,0,now())`, goal); err != nil {
 		t.Fatal(err)
@@ -99,7 +112,9 @@ func TestPostgreSQLResearchCookieSourcesAndDecisions(t *testing.T) {
 		r.AddCookie(&http.Cookie{Name: "edu_web_dev", Value: cookie})
 		r.Header.Set("Origin", origin)
 		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set(learningspace.Header, space)
+		if space != "" {
+			r.Header.Set(learningspace.Header, space)
+		}
 		if csrf {
 			r.Header.Set("X-CSRF-Token", webCSRF(cookie))
 		}
@@ -140,5 +155,48 @@ func TestPostgreSQLResearchCookieSourcesAndDecisions(t *testing.T) {
 	status, data = call("GET", path+"/"+source.ID, learningspace.DefaultID, nil, true)
 	if status != 200 || !bytes.Contains(data, []byte(`"status":"adopted"`)) {
 		t.Fatal("真实采纳结果未显示")
+	}
+	status, data = call("GET", "/v1/learning/start/capabilities", "", nil, true)
+	if status != 200 || !bytes.Contains(data, []byte(`"available":true`)) || !bytes.Contains(data, []byte(`"legacy_projection":"open_activity"`)) {
+		t.Fatalf("开学能力没有同步配置和权限：%d %s", status, data)
+	}
+	request.AutoAdopt = true
+	opening := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: request.Topic, Research: &request, Save: true, RequestBudget: 8, TokenBudget: 30000, StartLearning: &learningstart.Request{NewSession: true, ModelConsent: true}}
+	goalPath := "/v1/learning/goals/" + goal
+	for _, denied := range []struct {
+		space  string
+		csrf   bool
+		status int
+	}{{learningspace.DefaultID, false, 403}, {"", true, 400}} {
+		status, data = call("POST", goalPath+"/runs", denied.space, opening, denied.csrf)
+		if status != denied.status {
+			t.Fatalf("开学绕过作用域或 CSRF：%d %s", status, data)
+		}
+	}
+	opening.StartLearning.ModelConsent = false
+	status, data = call("POST", goalPath+"/runs", learningspace.DefaultID, opening, true)
+	if status != 400 {
+		t.Fatalf("缺少模型授权仍受理：%d %s", status, data)
+	}
+	opening.StartLearning.ModelConsent = true
+	status, data = call("POST", goalPath+"/runs", learningspace.DefaultID, opening, true)
+	if status != 202 {
+		t.Fatalf("新开学协议未受理：%d %s", status, data)
+	}
+	var startReceipt mentorrun.Receipt
+	if err = json.Unmarshal(data, &startReceipt); err != nil {
+		t.Fatal(err)
+	}
+	status, data = call("GET", goalPath+"/start", learningspace.DefaultID, nil, true)
+	if status != 200 || !bytes.Contains(data, []byte(startReceipt.RunID)) || !bytes.Contains(data, []byte(`"kind":"start_learning"`)) {
+		t.Fatalf("刷新未恢复开学运行：%d %s", status, data)
+	}
+	status, data = call("GET", goalPath+"/research", learningspace.DefaultID, nil, true)
+	if status != 200 || !bytes.Contains(data, []byte(receipt.RunID)) || bytes.Contains(data, []byte(startReceipt.RunID)) {
+		t.Fatalf("开学与普通研究运行串线：%d %s", status, data)
+	}
+	status, data = call("GET", "/v1/tutoring/sessions/"+uuid.NewString()+"/knowledge-context", learningspace.DefaultID, nil, true)
+	if status != 404 {
+		t.Fatalf("不存在的教学上下文可见：%d %s", status, data)
 	}
 }

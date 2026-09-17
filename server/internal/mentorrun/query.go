@@ -16,7 +16,7 @@ import (
 // ReadSources 在运行副本到期或清除后仍能显示 knowledge 中获准保留的历史来源。
 func (s *Service) ReadSources(ctx context.Context, actor identity.Credential, space, id string, send func([]research.Source) error) error {
 	return s.read(ctx, actor, space, id, func(tx pgx.Tx, item row) error {
-		if item.Kind != "research" {
+		if item.Kind != "research" && item.Kind != "start_learning" {
 			return ErrNotFound
 		}
 		if item.BodyAvailable && time.Now().Before(item.ExpiresAt) {
@@ -80,7 +80,7 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 				return err
 			}
 		}
-		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research})
+		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning})
 	})
 }
 

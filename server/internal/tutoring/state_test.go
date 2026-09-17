@@ -20,7 +20,7 @@ func TestTransitionMatrix(t *testing.T) {
 	}{
 		{ActionCreateSession, map[State]State{StateIdle: StateGoalReady}},
 		{ActionStartDiagnostic, map[State]State{StateGoalReady: StateDiagnostic}},
-		{ActionApplyRoute, map[State]State{StateDiagnostic: StateRouteActive, StateRouteActive: StateRouteActive}},
+		{ActionApplyRoute, map[State]State{StateGoalReady: StateRouteActive, StateDiagnostic: StateRouteActive, StateRouteActive: StateRouteActive}},
 		{ActionIssueActivity, map[State]State{StateRouteActive: StateActivityIssued}},
 		{ActionPresentReview, map[State]State{StateRouteActive: StateActivityIssued}},
 		{ActionPresentActivity, map[State]State{StateActivityIssued: StateAwaitingResponse}},

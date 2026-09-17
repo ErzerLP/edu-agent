@@ -594,6 +594,7 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
       <GoalLifecycle goal={goal.data} archivedSpace={space.data.status === 'archived'} />
       <SessionPicker goal={goal.data} archived={space.data.status === 'archived'} />
       <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }}>研究相关知识与查看来源 →</Link></p>
+      <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }} search={{ start: true }}>开学过程与失败恢复 →</Link></p>
       <MentorPanel key={`${spaceId}:${goalId}`} goal={goal.data} archivedSpace={space.data.status === 'archived'} />
       <section className="section">
         <h2>修订历史</h2>

@@ -15,7 +15,7 @@ func TestWorkItemActionsCanonicalMatrix(t *testing.T) {
 		actions   []tutoring.Action
 		decisions []string
 	}{
-		{"goal ready", tutoring.StateGoalReady, WorkItemActionContext{}, []tutoring.Action{tutoring.ActionStartDiagnostic, tutoring.ActionSwitchGoal}, []string{}},
+		{"goal ready", tutoring.StateGoalReady, WorkItemActionContext{}, []tutoring.Action{tutoring.ActionStartDiagnostic, tutoring.ActionApplyRoute, tutoring.ActionSwitchGoal}, []string{}},
 		{"diagnostic", tutoring.StateDiagnostic, WorkItemActionContext{}, []tutoring.Action{tutoring.ActionApplyRoute, tutoring.ActionSwitchGoal}, []string{}},
 		{"route active", tutoring.StateRouteActive, WorkItemActionContext{}, []tutoring.Action{tutoring.ActionApplyRoute, tutoring.ActionIssueActivity, tutoring.ActionRecordExposure, tutoring.ActionAskFreeQuestion, tutoring.ActionCompleteSession, tutoring.ActionSwitchGoal}, []string{}},
 		{"route active due review", tutoring.StateRouteActive, WorkItemActionContext{DueReview: true}, []tutoring.Action{tutoring.ActionApplyRoute, tutoring.ActionIssueActivity, tutoring.ActionPresentReview, tutoring.ActionRecordExposure, tutoring.ActionAskFreeQuestion, tutoring.ActionCompleteSession, tutoring.ActionSwitchGoal}, []string{}},

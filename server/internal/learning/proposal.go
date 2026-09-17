@@ -201,7 +201,20 @@ func (s *Service) freezeProposalRequest(ctx context.Context, request ProposalReq
 			return request, err
 		}
 		if scopeID := goal.GoalManagement().Details.ScopeSnapshotID; scopeID != "" && request.KnowledgeRevisionID != scopeID {
-			return request, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "goal_scope_mismatch"}
+			// 新现场使用已经正式发布的知识上下文；旧现场仍严格遵循目标冻结范围。
+			reader, ok := s.authority.(interface {
+				SessionKnowledgeContext(context.Context, string, string, string) (bool, error)
+			})
+			if !ok {
+				return request, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "goal_scope_mismatch"}
+			}
+			valid, e := reader.SessionKnowledgeContext(ctx, session.ID, goal.ID, request.KnowledgeRevisionID)
+			if e != nil {
+				return request, e
+			}
+			if !valid {
+				return request, &Error{Code: CodeKnowledgeReferenceInvalid, Reason: "goal_scope_mismatch"}
+			}
 		}
 		if err := freezeField(&request.RouteRevisionID, session.Context.RouteRevisionID); err != nil {
 			return request, err
@@ -346,7 +359,7 @@ func validateProposalState(kind ProposalType, state tutoring.State) error {
 	valid := false
 	switch kind {
 	case ProposalRoute:
-		valid = state == tutoring.StateDiagnostic || state == tutoring.StateRouteActive
+		valid = state == tutoring.StateGoalReady || state == tutoring.StateDiagnostic || state == tutoring.StateRouteActive
 	case ProposalActivity:
 		valid = state == tutoring.StateRouteActive || state == tutoring.StateFreeAnswer
 	case ProposalAssessment:

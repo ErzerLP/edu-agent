@@ -2,6 +2,7 @@ package mentorrun
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,27 @@ func TestPostgreSQLResearchGlobalErasureCannotReviveSources(t *testing.T) {
 	if snapshot.Research.Sources[0].KnowledgeRevisionID == "" {
 		t.Fatal("没有待清除的正式来源")
 	}
+	eraseResearchFixture(t, f, r, calls)
+}
+
+func TestPostgreSQLStartLearningGlobalErasure(t *testing.T) {
+	f := startFixture(t, "数学概率")
+	r := f.accept(t)
+	f.work(t)
+	if f.snapshot(t, r.RunID).StartLearning.Result == nil {
+		t.Fatal("没有待清除的上下文与课堂")
+	}
+	eraseResearchFixture(t, f, r, f.searchCalls)
+	var remaining int
+	err := f.pool.QueryRow(context.Background(), `SELECT (SELECT count(*) FROM knowledge_context_revisions)+(SELECT count(*) FROM knowledge_concept_revisions)+(SELECT count(*) FROM knowledge_concepts)+(SELECT count(*) FROM knowledge_policies)+(SELECT count(*) FROM learning_content_artifacts)+(SELECT count(*) FROM learning_activities WHERE knowledge_context_revision_id IS NOT NULL OR artifact_id IS NOT NULL)+(SELECT count(*) FROM tutoring_sessions WHERE knowledge_context_revision_id IS NOT NULL)`).Scan(&remaining)
+	if err != nil || remaining != 0 {
+		t.Fatal("隐私清除遗留开学派生关系", remaining, err)
+	}
+}
+
+func eraseResearchFixture(t *testing.T, f *runtimeFixture, r Receipt, calls *atomic.Int32) {
+	t.Helper()
+	ctx := context.Background()
 	tutoringStore := tutoringdb.New(f.pool)
 	store := privacydb.New(f.pool, privacydb.WithReadPermits(privacy.NewReadPermitManager()), privacydb.WithLocalOwner(identitydb.New(f.pool)), privacydb.WithLocalOwner(knowledgedb.New(f.pool)), privacydb.WithLocalOwner(learningdb.New(f.pool, tutoringStore)), privacydb.WithLocalOwner(tutoringStore), privacydb.WithLocalOwner(memorydb.New(f.pool)), privacydb.WithLocalOwner(outboxdb.New(f.pool)))
 	grants, err := privacy.NewErasureGrantService(privacydb.NewGrantStore(f.pool), privacy.ErasureGrantOptions{})

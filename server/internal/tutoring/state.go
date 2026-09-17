@@ -136,7 +136,7 @@ func Apply(input Session, command Command) (Transition, error) {
 		}
 		return set(StateDiagnostic, "TutoringStateChanged")
 	case ActionApplyRoute:
-		if before != StateDiagnostic && before != StateRouteActive {
+		if before != StateGoalReady && before != StateDiagnostic && before != StateRouteActive {
 			return invalid()
 		}
 		return set(StateRouteActive, "RouteRevisionCreated", "TutoringStateChanged")

@@ -4,6 +4,49 @@
  */
 
 export interface paths {
+    "/v1/learning/start/capabilities": {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        get: operations["getStartLearningCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/goals/{goalID}/start": {
+        parameters: {
+            query?: never;
+            header: { "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"]; };
+            path: { goalID: string; };
+            cookie?: never;
+        };
+        get: operations["getCurrentStartLearning"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tutoring/sessions/{sessionID}/knowledge-context": {
+        parameters: {
+            query?: never;
+            header: { "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"]; };
+            path: { sessionID: string; };
+            cookie?: never;
+        };
+        get: operations["getSessionKnowledgeContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/content/capabilities": {
         parameters: {
             query?: never;
@@ -1986,6 +2029,53 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        StartLearningCapabilities: {
+            protocol_version: 1;
+            available: boolean;
+            reason: string;
+            request_budget: number;
+            token_budget: number;
+            legacy_projection: "open_activity";
+        };
+        StartLearningRequest: { new_session: true; model_consent: true; };
+        SourceSupport: { source_id: string; revision_id: string; fragment_id: string; quote: string; };
+        KnowledgePolicy: {
+            id: string;
+            goal_revision_id: string;
+            request: components["schemas"]["ResearchRequest"];
+        };
+        ConceptRevision: {
+            concept_id: string;
+            revision_id: string;
+            semantic_key: string;
+            name: string;
+            support: components["schemas"]["SourceSupport"][];
+        };
+        KnowledgeContextRevision: {
+            id: string;
+            policy: components["schemas"]["KnowledgePolicy"];
+            scope_snapshot_id: string;
+            previous_revision_id?: string;
+            concepts: components["schemas"]["ConceptRevision"][];
+        };
+        StartLearningState: {
+            model_id?: string;
+            request: components["schemas"]["StartLearningRequest"];
+            prepared?: {
+                concept_key: string;
+                name: string;
+                prompt: string;
+                criterion: string;
+                citations: components["schemas"]["SourceSupport"][];
+            };
+            result?: {
+                session_id: string;
+                activity_id: string;
+                artifact_id: string;
+                artifact_version: number;
+                knowledge_context: components["schemas"]["KnowledgeContextRevision"];
+            };
+        };
         ContentBlock: {
             /** Format: uuid */
             block_id: string;
@@ -2060,8 +2150,9 @@ export interface components {
         };
         MentorSnapshot: {
             /** @enum {string} */
-            kind?: "mentor" | "research";
+            kind?: "mentor" | "research" | "start_learning";
             research?: components["schemas"]["ResearchState"];
+            start_learning?: components["schemas"]["StartLearningState"];
             /** Format: uuid */
             run_id: string;
             /** Format: uuid */
@@ -5503,6 +5594,49 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getStartLearningCapabilities: {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never; };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown; };
+                content: { "application/json": components["schemas"]["StartLearningCapabilities"]; };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getCurrentStartLearning: {
+        parameters: {
+            query?: never;
+            header: { "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"]; };
+            path: { goalID: string; };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown; };
+                content: { "application/json": { run: components["schemas"]["MentorSnapshot"] | null; save_available: boolean; }; };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getSessionKnowledgeContext: {
+        parameters: {
+            query?: never;
+            header: { "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"]; };
+            path: { sessionID: string; };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: { [name: string]: unknown; };
+                content: { "application/json": { knowledge_context: components["schemas"]["KnowledgeContextRevision"] | null; }; };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     learningContentCapabilities: {
         parameters: {
             query?: never;
@@ -5942,6 +6076,7 @@ export interface operations {
                     request_budget: number;
                     token_budget: number;
                     research?: components["schemas"]["ResearchRequest"];
+                    start_learning?: components["schemas"]["StartLearningRequest"];
                 };
             };
         };
@@ -6040,7 +6175,7 @@ export interface operations {
                     operation_id: string;
                     expected_version: number;
                     /** @enum {string} */
-                    kind: "respond" | "continue_budget" | "stop" | "clear";
+                    kind: "respond" | "continue_budget" | "retry_start" | "stop" | "clear";
                     /** Format: uuid */
                     interaction_id?: string;
                     answer?: string;

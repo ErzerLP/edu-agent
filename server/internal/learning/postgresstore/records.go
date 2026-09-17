@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	tutoringpostgres "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -50,12 +53,22 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		return err
 	}
 	if value := batch.Activity; value != nil {
+		var artifactID *string
+		var artifactVersion *int64
+		contextID, err := s.tutoring.KnowledgeContextWith(ctx, tx, value.SessionID)
+		if err != nil {
+			return err
+		}
+		if contextID != nil {
+			id, version := learningcontent.ArtifactID(*value), int64(1)
+			artifactID, artifactVersion = &id, &version
+		}
 		rubric, _ := json.Marshal(value.Rubric)
 		allowed := make([]string, len(value.AllowedHelp))
 		for index := range value.AllowedHelp {
 			allowed[index] = string(value.AllowedHelp[index])
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_activities(id,revision,session_id,goal_revision_id,route_revision_id,route_step_id,knowledge_revision_id,target_node_id,target_node_revision_id,prompt,activity_type,rubric_revision,rubric,difficulty,allowed_help,activity_policy_version,assessment_policy_version,review_policy_version,source_proposal_id,attached_free_question_id,attached_free_answer_id,is_review,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`, value.ID, value.Revision, value.SessionID, value.GoalRevisionID, value.RouteRevisionID, value.RouteStepID, value.KnowledgeRevisionID, value.TargetNodeID, value.TargetNodeRevisionID, value.Prompt, value.Type, value.Rubric.Revision, rubric, value.Difficulty, allowed, value.ActivityPolicyVersion, value.AssessmentPolicyVersion, value.ReviewPolicyVersion, nullable(value.SourceProposalID), nullable(value.AttachedFreeQuestionID), nullable(value.AttachedFreeAnswerID), value.Review, value.CreatedAt); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_activities(id,revision,session_id,goal_revision_id,route_revision_id,route_step_id,knowledge_revision_id,target_node_id,target_node_revision_id,prompt,activity_type,rubric_revision,rubric,difficulty,allowed_help,activity_policy_version,assessment_policy_version,review_policy_version,source_proposal_id,attached_free_question_id,attached_free_answer_id,is_review,created_at,knowledge_context_revision_id,artifact_id,artifact_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`, value.ID, value.Revision, value.SessionID, value.GoalRevisionID, value.RouteRevisionID, value.RouteStepID, value.KnowledgeRevisionID, value.TargetNodeID, value.TargetNodeRevisionID, value.Prompt, value.Type, value.Rubric.Revision, rubric, value.Difficulty, allowed, value.ActivityPolicyVersion, value.AssessmentPolicyVersion, value.ReviewPolicyVersion, nullable(value.SourceProposalID), nullable(value.AttachedFreeQuestionID), nullable(value.AttachedFreeAnswerID), value.Review, value.CreatedAt, contextID, artifactID, artifactVersion); err != nil {
 			return fmt.Errorf("insert learning activity: %w", err)
 		}
 		for index, ref := range value.References {
@@ -65,6 +78,18 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO learning_activity_references(activity_id,ordinal,knowledge_revision_id,node_id,node_revision_id,document_revision_id,source_start,source_end,slice_text,slice_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, value.ID, index, ref.KnowledgeRevisionID, ref.NodeID, ref.NodeRevisionID, ref.DocumentRevisionID, ref.Range.Start, ref.Range.End, ref.Slice, hash); err != nil {
 				return fmt.Errorf("insert learning activity reference: %w", err)
+			}
+		}
+		if contextID != nil {
+			if !s.content.Available() {
+				return learningcontent.ErrUnavailable
+			}
+			generation, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerLearning)
+			if err != nil {
+				return err
+			}
+			if _, err = s.content.EnsureTx(ctx, tx, identity.Credential{Device: identity.Device{ID: request.DeviceID}}, value.SessionID, value.ID, generation); err != nil {
+				return err
 			}
 		}
 	}

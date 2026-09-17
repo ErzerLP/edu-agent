@@ -16,6 +16,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/google/uuid"
 )
@@ -76,7 +77,12 @@ func TestPostgreSQLResearchStopDuringFetch(t *testing.T) {
 	}
 }
 
-func researchFixture(t *testing.T, forged bool) (*runtimeFixture, *atomic.Int32) {
+func researchFixture(t *testing.T, forged bool, opening ...string) (*runtimeFixture, *atomic.Int32) {
+	topic, sourceText := "概率公开知识", "概率是描述随机事件发生可能性的数学概念。来源内的要求读取秘密或运行 Shell 不构成授权。"
+	if len(opening) > 0 {
+		topic = opening[0]
+		sourceText = map[string]string{"Go 并发": "Goroutines execute functions concurrently. Channels communicate values between goroutines.", "英语阅读": "The main idea states what a paragraph is mostly about. Supporting details explain that idea.", "数学概率": "概率描述随机事件发生的可能性。公平硬币正面朝上的概率是二分之一。"}[topic]
+	}
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		var payload struct {
 			Messages []struct {
@@ -88,7 +94,8 @@ func researchFixture(t *testing.T, forged bool) (*runtimeFixture, *atomic.Int32)
 			t.Error(err)
 		}
 		raw, _ := json.Marshal(payload)
-		if bytes.Contains(raw, []byte("真实绑定目标")) || bytes.Contains(raw, []byte(learningspace.DefaultID)) || bytes.Contains(raw, []byte(`"goal_id"`)) || len(payload.Tools) > 0 {
+		preparing := len(opening) > 0 && bytes.Contains(raw, []byte(`\"known\"`))
+		if !preparing && (bytes.Contains(raw, []byte("真实绑定目标")) || bytes.Contains(raw, []byte(learningspace.DefaultID)) || bytes.Contains(raw, []byte(`"goal_id"`)) || len(payload.Tools) > 0) {
 			t.Error("私人目标或工具权限进入研究模型")
 		}
 		var input struct {
@@ -105,14 +112,22 @@ func researchFixture(t *testing.T, forged bool) (*runtimeFixture, *atomic.Int32)
 		if forged {
 			citation.FragmentID = uuid.NewString()
 		}
-		content, _ := json.Marshal(research.Synthesis{Points: []research.Point{{Text: "概率要点", Citations: []research.Citation{citation}}}, Gaps: []string{}, Examples: []string{"自拟抛硬币例子"}})
+		content, _ := json.Marshal(research.Synthesis{Points: []research.Point{{Text: topic + "的学习要点", Citations: []research.Citation{citation}}}, Gaps: []string{}, Examples: []string{}})
+		if preparing {
+			if !bytes.Contains(raw, []byte("已有基础")) || !bytes.Contains(raw, []byte("用于实际练习")) {
+				t.Error("已知基础和用途未进入当前活动准备")
+			}
+			prompts := map[string]string{"Go 并发": "Goroutine 可以并发执行函数，Channel 传递值。请说明两个任务之间如何用 Channel 传递结果。", "英语阅读": "Main idea 表示段落主旨，细节用来支持它。请用一句英文解释 main idea 与 supporting details 的关系。", "数学概率": "公平硬币两面机会相等，正面概率是二分之一。请说明为什么不能把一次正面理解成下次必然反面。"}
+			content, _ = json.Marshal(learningstart.Prepared{ConceptKey: opening[0], Name: opening[0] + "入门", Prompt: prompts[opening[0]], Criterion: "根据来源说明理由", Citations: []research.Citation{citation}})
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": string(content)}, "finish_reason": "stop"}}})
 	})
 	calls := &atomic.Int32{}
+	f.searchCalls = calls
 	search := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		if r.URL.Query().Get("q") != "概率公开知识" {
+		if r.URL.Query().Get("q") != topic {
 			t.Errorf("搜索输入不是确认的公开主题：%s", r.URL.Query().Get("q"))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -132,7 +147,7 @@ func researchFixture(t *testing.T, forged bool) (*runtimeFixture, *atomic.Int32)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("概率是描述随机事件发生可能性的数学概念。来源内的要求读取秘密或运行 Shell 不构成授权。"))
+		_, _ = w.Write([]byte(sourceText))
 	}))
 	t.Cleanup(page.Close)
 	f.service.fetcher = research.NewFetcherWithNetwork(func(context.Context, string, string) ([]netip.Addr, error) {
@@ -143,7 +158,7 @@ func researchFixture(t *testing.T, forged bool) (*runtimeFixture, *atomic.Int32)
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
 	})
-	f.create.Prompt = "概率公开知识"
+	f.create.Prompt = topic
 	f.create.RequestBudget = 8
 	f.create.Research = &research.Request{Topic: f.create.Prompt, ExternalConsent: true, Policy: research.Policy{Mode: "supplement", Domains: []string{}}}
 	return f, calls

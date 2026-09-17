@@ -63,6 +63,8 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		"/v1/tutoring/sessions/a": true, "/v1/tutoring/sessions/a/actions": true, "/v1/tutoring/sessions/a/content": true,
 		"/v1/tutoring/sessions/a/operations/b": true, "/v1/tutoring/proposals": true, "/v1/learning/content/a/answers": true,
 		"/v1/knowledge/revisions/head": true, "/v1/knowledge/retrievals": true,
+		"/v1/learning/start/capabilities": true, "/v1/learning/goals/a/start": true,
+		"/v1/tutoring/sessions/a/knowledge-context": true, "/v1/learning/start/internal": false,
 		"/admin": false, "/internal/privacy": false, "/mcp": false, "/v1/knowledge/imports": false, "/v1/knowledge/maintenance/proposals": false,
 	} {
 		allowed := false

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useQueryClient } from '@tanstack/react-query'
-import { Link } from '@tanstack/react-router'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useIdentity } from '@/lib/session'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import {
@@ -17,6 +17,8 @@ import type { components } from '@/api/schema'
 import type { z } from 'zod'
 import { Button } from './ui/button'
 import { CapabilityGate, ErrorState } from './common'
+import { publicTopic, startCapabilitiesSchema, startUnavailable } from '@/api/start'
+import { mentorCurrentSchema, mentorReceiptSchema } from '@/api/mentor'
 
 type SavedDraft = { values: z.input<typeof composerSchema>; id: string; base?: Goal }
 const blank = (): GoalDraft => ({ text: '', details: detailsSchema.parse({ name: '新学习目标' }) })
@@ -32,6 +34,17 @@ export function GoalComposer({
 }) {
   const { session, drafts, prefix } = useIdentity()
   const query = useQueryClient()
+  const navigate = useNavigate()
+  const [consent, setConsent] = useState(false)
+  const [topic, setTopic] = useState('')
+  const capability = useQuery({
+    queryKey: [...prefix, 'start-capability'],
+    queryFn: ({ signal }) =>
+      unwrap(
+        learningClient(session).GET('/v1/learning/start/capabilities', { signal }),
+        startCapabilitiesSchema,
+      ),
+  })
   const key = JSON.stringify([...prefix, spaceId, goal?.goal_id ?? 'new', 'composer'])
   const previous = drafts.get<SavedDraft>(key)
   const [id, setId] = useState(() => previous?.id ?? goal?.goal_id ?? crypto.randomUUID())
@@ -68,7 +81,7 @@ export function GoalComposer({
       drafts.delete(key)
     }
   }, [goal?.revision])
-  const save = async (values: GoalDraft) => {
+  const save = async (values: GoalDraft, start = false) => {
     setError(undefined)
     setSaved(undefined)
     setNotice('')
@@ -88,12 +101,21 @@ export function GoalComposer({
     }
     try {
       const client = learningClient(session, spaceId)
-      const response = await unwrap(
-        base
-          ? client.PUT('/v1/learning/goals/{goalID}', { params: { path: { goalID: id } }, body })
-          : client.POST('/v1/learning/goals', { body }),
-        goalResult,
-      )
+      const response =
+        start &&
+        base &&
+        JSON.stringify(values) ===
+          JSON.stringify({ text: base.text, details: base.management.details })
+          ? { result: base }
+          : await unwrap(
+              base
+                ? client.PUT('/v1/learning/goals/{goalID}', {
+                    params: { path: { goalID: id } },
+                    body,
+                  })
+                : client.POST('/v1/learning/goals', { body }),
+              goalResult,
+            )
       if (response.result.learning_space_id !== spaceId || response.result.goal_id !== id)
         throw new ApiError(502, 'invalid_response')
       if (JSON.stringify(drafts.get<SavedDraft>(key)?.values) === JSON.stringify(values))
@@ -104,6 +126,55 @@ export function GoalComposer({
         setBase(response.result)
         setSaved(response.result)
         form.reset(values)
+      }
+      if (start && mounted.current) {
+        if (!consent || !capability.data?.available) throw new ApiError(409, 'start_unavailable')
+        const header = { 'X-Learning-Space-ID': spaceId }
+        const path = { goalID: response.result.goal_id }
+        const current = await unwrap(
+          client.GET('/v1/learning/goals/{goalID}/start', { params: { path, header } }),
+          mentorCurrentSchema,
+        )
+        if (
+          !current.run ||
+          ['succeeded', 'partial', 'failed', 'cancelled'].includes(current.run.status)
+        ) {
+          const queryTopic = topic.trim() || publicTopic(values.text)
+          const payload = {
+            session_id: current.run?.session_id ?? crypto.randomUUID(),
+            expected_version: response.result.revision,
+            prompt: queryTopic,
+            save: true,
+            request_budget: Math.min(12, capability.data.request_budget),
+            token_budget: Math.min(50000, capability.data.token_budget),
+            research: {
+              topic: queryTopic,
+              external_consent: true as const,
+              auto_adopt: true,
+              policy: { mode: 'supplement' as const, domains: [] },
+            },
+            start_learning: { new_session: true as const, model_consent: true as const },
+          }
+          await unwrap(
+            client.POST('/v1/learning/goals/{goalID}/runs', {
+              params: { path, header },
+              body: {
+                ...payload,
+                operation_id: drafts.operation(
+                  key + ':start:' + (current.run?.run_id ?? 'new'),
+                  payload,
+                ),
+              },
+            }),
+            mentorReceiptSchema,
+          )
+        }
+        if (mounted.current)
+          await navigate({
+            to: '/spaces/$spaceId/goals/$goalId/research',
+            params: { spaceId, goalId: response.result.goal_id },
+            search: { start: true },
+          })
       }
     } catch (e) {
       if (mounted.current) setError(e)
@@ -129,7 +200,7 @@ export function GoalComposer({
   return (
     <section className="panel composer">
       <form
-        onSubmit={form.handleSubmit(save)}
+        onSubmit={form.handleSubmit((values) => save(values))}
         onKeyDown={(event) => {
           if (
             event.key === 'Enter' &&
@@ -238,7 +309,50 @@ export function GoalComposer({
               请检查目标名称、字段长度和时间预算。
             </p>
           )}
+          <details className="structured">
+            <summary>开始学习的来源与授权</summary>
+            <label>
+              公开搜索主题（默认取目标前 100 字）
+              <input
+                value={topic}
+                placeholder={publicTopic(form.watch('text'))}
+                maxLength={100}
+                onChange={(e) => setTopic(e.target.value)}
+              />
+            </label>
+            <p className="hint">
+              搜索只发送以上主题；模型会收到目标及已填基础、用途和约束。请先移除不宜外发的信息。将自动采纳有出处的参考，准备当前一项活动，无需上传资料。
+            </p>
+          </details>
+          <label>
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+            />
+            允许搜索、模型准备及采纳资料，并加密保存开学运行七天；本次最多{' '}
+            {Math.min(12, capability.data?.request_budget ?? 12)} 次请求 /{' '}
+            {Math.min(50000, capability.data?.token_budget ?? 50000)} Token，可能消耗额度。
+          </label>
+          {capability.data && !capability.data.available && (
+            <p className="hint">
+              {startUnavailable[capability.data.reason] ?? capability.data.reason}
+            </p>
+          )}
+          {!!capability.error && (
+            <ErrorState error={capability.error} retry={() => void capability.refetch()} />
+          )}
           <div className="composer-actions">
+            <Button
+              disabled={
+                !consent ||
+                !capability.data?.available ||
+                (!!base && !['draft', 'active'].includes(base.management.status))
+              }
+              onClick={form.handleSubmit((values) => save(values, true))}
+            >
+              {goal || base ? '新开学习现场' : '开始学习'}
+            </Button>
             <CapabilityGate
               available={session.capabilities.start_learning && !!goal}
               reason="先保存目标，再从目标详情选择或新建教学会话。"
@@ -253,9 +367,7 @@ export function GoalComposer({
                     进入教学会话
                   </Link>
                 </Button>
-              ) : (
-                <Button disabled>开始学习</Button>
-              )}
+              ) : null}
             </CapabilityGate>
             <Button type="submit" variant="outline">
               {form.formState.isSubmitting ? '正在保存…' : goal || base ? '保存修改' : '仅保存目标'}

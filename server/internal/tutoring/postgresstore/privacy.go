@@ -87,6 +87,7 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 		sql  string
 		args []any
 	}{
+		{"知识上下文关联", `UPDATE tutoring_sessions SET knowledge_context_revision_id=NULL`, nil},
 		{"tutoring sessions", `UPDATE tutoring_sessions SET state='Completed',goal_revision_id=NULL,route_revision_id=NULL,route_step_id=NULL,knowledge_revision_id=NULL,focus_node_revision_id=NULL,activity_id=NULL,attempt_id=NULL,attached_quiz=FALSE,updated_at=$1,completed_at=$1`, []any{now.UTC()}},
 		{"tutoring focus frames", `UPDATE tutoring_focus_frames SET goal_revision_id=NULL,route_revision_id=NULL,route_step_id=NULL,knowledge_revision_id=NULL,focus_node_revision_id=NULL,activity_id=NULL,attempt_id=NULL,invalidated_at=$1,invalidation_reason='privacy_erasure',resumed_at=NULL`, []any{now.UTC()}},
 		{"tutoring free questions", `UPDATE tutoring_free_questions SET question_text='[redacted]',references_snapshot='[]'::jsonb`, nil},
@@ -120,6 +121,7 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 			WHERE state<>'Completed' OR goal_revision_id IS NOT NULL OR route_revision_id IS NOT NULL
 			   OR route_step_id IS NOT NULL OR knowledge_revision_id IS NOT NULL OR focus_node_revision_id IS NOT NULL
 			   OR activity_id IS NOT NULL OR attempt_id IS NOT NULL OR attached_quiz OR completed_at IS NULL
+			   OR knowledge_context_revision_id IS NOT NULL
 			UNION ALL SELECT count(*) FROM tutoring_focus_frames
 			WHERE goal_revision_id IS NOT NULL OR route_revision_id IS NOT NULL OR route_step_id IS NOT NULL
 			   OR knowledge_revision_id IS NOT NULL OR focus_node_revision_id IS NOT NULL

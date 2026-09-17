@@ -271,7 +271,10 @@ export async function propose(
   let knowledgeRevision = item.activity?.knowledge_revision_id ?? focus.knowledge_revision_id
   let hits: Reference[] = refs ?? []
   if (!hits.length) {
-    const scope = item.goal_revision.management?.details.scope_snapshot_id
+    // 已开课现场以实际知识版本为准，不能被目标创建时的旧冻结范围覆盖。
+    const scope = knowledgeRevision
+      ? undefined
+      : item.goal_revision.management?.details.scope_snapshot_id
     if (!knowledgeRevision && !scope) {
       const head = await unwrap(
         client.GET('/v1/knowledge/revisions/head'),

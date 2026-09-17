@@ -104,19 +104,27 @@ func runtimePool(t *testing.T) *pgxpool.Pool {
 }
 
 type runtimeFixture struct {
-	pool     *pgxpool.Pool
-	service  *Service
-	actor    identity.Credential
-	goal     string
-	create   Create
-	settings *settings.Service
-	calls    atomic.Int32
+	modelHook   func(int)
+	searchCalls *atomic.Int32
+	pool        *pgxpool.Pool
+	service     *Service
+	actor       identity.Credential
+	goal        string
+	create      Create
+	settings    *settings.Service
+	calls       atomic.Int32
 }
 
 func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)) *runtimeFixture {
 	t.Helper()
 	f := &runtimeFixture{pool: runtimePool(t), goal: uuid.NewString()}
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handler(w, r, int(f.calls.Add(1))) }))
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := int(f.calls.Add(1))
+		if f.modelHook != nil {
+			f.modelHook(call)
+		}
+		handler(w, r, call)
+	}))
 	t.Cleanup(provider.Close)
 	configuration, err := settings.Open(settings.Options{Path: filepath.Join(t.TempDir(), "private", "settings.json"), ModelEndpoints: []string{provider.URL}})
 	if err != nil {

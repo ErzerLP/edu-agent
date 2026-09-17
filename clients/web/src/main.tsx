@@ -53,9 +53,20 @@ const settings = createRoute({
 const research = createRoute({
   getParentRoute: () => root,
   path: '/spaces/$spaceId/goals/$goalId/research',
+  validateSearch: (search: Record<string, unknown>): { start?: boolean } => ({
+    start: search.start === true || search.start === 'true' ? true : undefined,
+  }),
   component: () => {
     const { spaceId, goalId } = useParams({ from: '/spaces/$spaceId/goals/$goalId/research' })
-    return <ResearchPage key={`${spaceId}:${goalId}`} spaceId={spaceId} goalId={goalId} />
+    const { start } = research.useSearch()
+    return (
+      <ResearchPage
+        key={`${spaceId}:${goalId}:${start}`}
+        spaceId={spaceId}
+        goalId={goalId}
+        startLearning={start}
+      />
+    )
   },
 })
 const teaching = createRoute({

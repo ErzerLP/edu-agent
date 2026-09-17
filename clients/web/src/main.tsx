@@ -14,6 +14,7 @@ import { HomePage, SpacePage, GoalPage, SettingsPage } from './pages'
 import './styles.css'
 import { ResearchPage } from './research-page'
 import { TeachingPage, ContentPage } from './teaching-page'
+import { StudioPage } from './studio-page'
 
 const root = createRootRoute({
   component: () => (
@@ -100,8 +101,16 @@ const content = createRoute({
     )
   },
 })
+const studio = createRoute({
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/studio',
+  component: () => {
+    const { spaceId } = studio.useParams()
+    return <StudioPage key={spaceId} spaceId={spaceId} />
+  },
+})
 const router = createRouter({
-  routeTree: root.addChildren([home, space, goal, research, teaching, content, settings]),
+  routeTree: root.addChildren([home, space, goal, research, teaching, content, settings, studio]),
   basepath: '/app',
   defaultPreload: false,
 })

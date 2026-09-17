@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -123,6 +124,11 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	if err = s.decode(&item); err != nil {
 		return err
 	}
+	if item.body.ContentEdit != nil {
+		if err = s.contentReadable(ctx, tx, item); err != nil {
+			return err
+		}
+	}
 	if err = change(tx, &item); err != nil {
 		return err
 	}
@@ -173,6 +179,12 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	wasCancelling := item.Status == "cancelling"
 	item.Status = "failed"
 	item.Reason = "model_failed"
+	if errors.Is(cause, learningcontent.ErrConflict) {
+		item.Reason = "selection_expired"
+	}
+	if errors.Is(cause, learningcontent.ErrInvalid) {
+		item.Reason = "invalid_content_candidate"
+	}
 	if item.body.Research != nil {
 		item.Reason = "research_failed"
 		var searchErr *searchFailure
@@ -242,12 +254,14 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	}()
 	host := &executionHost{service: s, owned: *item, body: item.body, limits: limits, model: model}
 	host.model, _, _, err = s.settings.MentorClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: host, next: next} })
-	if host.body.Research != nil {
+	if host.body.ContentEdit != nil {
+		err = host.editContent(execution)
+	} else if host.body.Research != nil {
 		err = host.runResearch(execution)
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.Interaction == nil && host.body.Research == nil {
+	if err == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

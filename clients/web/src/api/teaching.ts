@@ -150,6 +150,18 @@ const blockSchema: z.ZodType<Block> = z.lazy(() =>
     children: z.array(blockSchema).max(256).optional(),
   }),
 )
+export const selectionSchema = z.object({
+  space_id: id,
+  goal_id: id,
+  session_id: id,
+  artifact_id: id,
+  version,
+  block_id: id,
+  start: z.number().int().nonnegative(),
+  end: z.number().int().positive(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+})
+export type ContentSelection = z.infer<typeof selectionSchema>
 export const contentSchema = z.object({
   protocol_version: z.literal(1),
   artifact_id: id,
@@ -166,6 +178,19 @@ export const contentSchema = z.object({
   status: z.enum(['draft', 'failed', 'committed']),
   created_at: z.string(),
   body: z.object({
+    change: z
+      .object({
+        base_version: version,
+        restored_version: version.optional(),
+        action: z.string(),
+        reason: z.string(),
+        selection: selectionSchema.optional(),
+        changed_blocks: z.array(id),
+      })
+      .optional(),
+    lineage: z
+      .array(z.object({ artifact_id: id, version, block_id: id, source_block_id: id.optional() }))
+      .optional(),
     blocks: z.array(blockSchema).min(1).max(256),
     interaction: z.object({
       kind: z.string(),

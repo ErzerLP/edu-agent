@@ -53,6 +53,8 @@ type Interaction struct {
 }
 
 type Body struct {
+	Change              *Change                       `json:"change,omitempty"`
+	Lineage             []Origin                      `json:"lineage,omitempty"`
 	Blocks              []Block                       `json:"blocks"`
 	Interaction         Interaction                   `json:"interaction"`
 	References          []learning.KnowledgeReference `json:"references"`

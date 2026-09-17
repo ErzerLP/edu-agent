@@ -5,8 +5,8 @@ import AxeBuilder from '@axe-core/playwright'
 
 const space = '00000000-0000-4000-8000-000000000001'
 const origin = 'http://127.0.0.1:32929'
-const code = () =>
-  execFileSync('../../server/edu-agentd', ['pairing-code', 'create'], {
+const code = (profile = 'user') =>
+  execFileSync('../../server/edu-agentd', ['pairing-code', 'create', '--profile', profile], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
@@ -456,4 +456,109 @@ test('切区后旧答案迟到响应不修改新会话草稿', async ({ page, re
   await expect(page).toHaveURL(new RegExp(`/learn/${second.id}$`))
   expect((await first.get()).work_item.attempt.answer).toBe('A')
   expect((await second.get()).work_item.attempt).toBeUndefined()
+})
+
+test('选段模型加工、答案保留、Studio、来源、固定与补偿版本', async ({
+  page,
+  request,
+  context,
+}, testInfo) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学及选段模型 fixture')
+  test.setTimeout(180000)
+  const fixture = await legacySession(request)
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code('settings'))
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  const settingsIdentity = await (await page.request.get('/v1/web/session')).json()
+  const settingsHeaders = {
+    Origin: origin,
+    'X-CSRF-Token': settingsIdentity.csrf_token,
+    'X-Web-Principal-ID': settingsIdentity.device.id,
+    'X-Web-Generation': String(settingsIdentity.generation),
+  }
+  const configuration = await (
+    await page.request.get('/v1/settings', { headers: settingsHeaders })
+  ).json()
+  const configured = await page.request.put('/v1/settings', {
+    headers: settingsHeaders,
+    data: {
+      expected_revision: configuration.revision,
+      target: 'mentor',
+      connection: {
+        enabled: true,
+        provider: 'openai_compatible',
+        endpoint: 'http://127.0.0.1:32930/v1',
+        model: 'browser-content-fixture',
+        auth_mode: 'none',
+      },
+    },
+  })
+  expect(configured.ok(), await configured.text()).toBe(true)
+  await context.clearCookies()
+  const original = await fixture.get()
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code())
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  const answer = page.getByLabel('我的正式答案')
+  await answer.fill('加工期间保留的正式答案草稿')
+  await page.getByRole('button', { name: '选择此段', exact: true }).first().click()
+  const editor = page.getByRole('region', { name: '选段导师', exact: true })
+  await editor.getByLabel('选段动作').selectOption('example')
+  await editor.getByLabel('选段指令').fill('请用苹果说明这一段')
+  await editor.getByLabel('允许把所选正文及来源发送给已配置导师', { exact: false }).check()
+  await editor.getByLabel('选段指令').dispatchEvent('keydown', { key: 'Enter', isComposing: true })
+  await expect(editor.getByLabel('选段操作结果')).toHaveCount(0)
+  await editor.getByRole('button', { name: '执行选段请求' }).click()
+  await expect(editor.getByRole('link', { name: '本段已更新 · 查看变化' })).toBeVisible()
+  await expect(answer).toHaveValue('加工期间保留的正式答案草稿')
+  await expect(page.getByLabel('当前学习', { exact: true })).toContainText(
+    '把六个苹果每两个分成一组',
+  )
+  expect((await fixture.get()).work_item.activity).toEqual(original.work_item.activity)
+  await editor.getByRole('link', { name: '本段已更新 · 查看变化' }).click()
+  await expect(page.getByRole('heading', { name: '学习内容 · 第 2 版' })).toBeVisible()
+  await expect(page.getByLabel('本版变化')).toContainText('请用苹果说明这一段')
+  await page.getByRole('button', { name: '收藏内容', exact: true }).click()
+  await page.getByRole('button', { name: '固定当前阅读版本', exact: true }).click()
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出 Markdown', exact: true }).click()
+  expect((await download).suggestedFilename()).toContain('-v2.md')
+  await page.getByRole('button', { name: '查看原资料依据', exact: true }).first().click()
+  await expect(page.getByRole('dialog')).toContainText('偶数可以被 2 整除')
+  await page.getByRole('button', { name: '关闭来源' }).click()
+  await expect(
+    page.getByRole('button', { name: '查看原资料依据', exact: true }).first(),
+  ).toBeFocused()
+  await page.getByRole('link', { name: /第 1 版 · 正式/ }).click()
+  await page.getByRole('button', { name: '恢复为新的补偿版本' }).click()
+  await expect(page.getByRole('heading', { name: '学习内容 · 第 3 版' })).toBeVisible()
+  expect((await fixture.get()).work_item.activity).toEqual(original.work_item.activity)
+  await page.getByRole('link', { name: '查看 Studio 内容库', exact: true }).click()
+  await page.getByLabel('关联目标').selectOption(fixture.goal.goal_id)
+  await page.getByLabel('只看收藏').check()
+  const entry = page.locator('.studio-item').first()
+  await expect(entry).toContainText('第 3 版')
+  await expect(entry).toContainText('固定阅读第 2 版')
+  await entry.getByRole('link').first().click()
+  await expect(page.getByRole('heading', { name: '学习内容 · 第 2 版' })).toBeVisible()
+  for (const theme of ['light', 'dark']) {
+    if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
+    for (const width of [390, 768, 1280, 1440]) {
+      await page.setViewportSize({ width, height: 1000 })
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      )
+      await page.screenshot({
+        path: testInfo.outputPath(`content-${theme}-${width}.png`),
+        fullPage: true,
+      })
+    }
+  }
+  expect(errors).toEqual([])
 })

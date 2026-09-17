@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/google/uuid"
@@ -33,15 +34,16 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
-	StartLearning   *learningstart.Request `json:"start_learning,omitempty"`
-	Research        *research.Request      `json:"research,omitempty"`
-	OperationID     string                 `json:"operation_id"`
-	SessionID       string                 `json:"session_id"`
-	ExpectedVersion int64                  `json:"expected_version"`
-	Prompt          string                 `json:"prompt"`
-	Save            bool                   `json:"save"`
-	RequestBudget   int                    `json:"request_budget"`
-	TokenBudget     int                    `json:"token_budget"`
+	ContentEdit     *learningcontent.EditRequest `json:"content_edit,omitempty"`
+	StartLearning   *learningstart.Request       `json:"start_learning,omitempty"`
+	Research        *research.Request            `json:"research,omitempty"`
+	OperationID     string                       `json:"operation_id"`
+	SessionID       string                       `json:"session_id"`
+	ExpectedVersion int64                        `json:"expected_version"`
+	Prompt          string                       `json:"prompt"`
+	Save            bool                         `json:"save"`
+	RequestBudget   int                          `json:"request_budget"`
+	TokenBudget     int                          `json:"token_budget"`
 }
 
 type Command struct {
@@ -95,6 +97,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	ContentEdit   *ContentEditState      `json:"content_edit,omitempty"`
 	StartLearning *learningstart.State   `json:"start_learning,omitempty"`
 	Research      *research.State        `json:"research,omitempty"`
 	Messages      []modelclient.Message  `json:"messages"`
@@ -104,6 +107,7 @@ type Body struct {
 }
 
 type Snapshot struct {
+	ContentEdit *ContentEditState `json:"content_edit,omitempty"`
 	Meta
 	StartLearning *learningstart.State `json:"start_learning,omitempty"`
 	Research      *research.State      `json:"research,omitempty"`

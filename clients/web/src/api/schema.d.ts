@@ -4,6 +4,83 @@
  */
 
 export interface paths {
+    "/v1/learning/content": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get: operations["listContentLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/preferences": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get: operations["getContentPreference"];
+        put: operations["putContentPreference"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/restore": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get?: never;
+        put?: never;
+        post: operations["restoreContentVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/reuse": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get?: never;
+        put?: never;
+        post: operations["reuseContentInTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/export": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get: operations["exportContentVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/content/{artifactID}/sources/{referenceID}": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get: operations["resolveContentCitation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/goals/{goalID}/content-edits": {
+        parameters: { query?:never;header?:never;path?:never;cookie?:never; };
+        get: operations["currentContentEdit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/start/capabilities": {
         parameters: { query?: never; header?: never; path?: never; cookie?: never; };
         get: operations["getStartLearningCapabilities"];
@@ -2076,6 +2153,19 @@ export interface components {
                 knowledge_context: components["schemas"]["KnowledgeContextRevision"];
             };
         };
+        ContentSelection: { space_id:string;goal_id:string;session_id:string;artifact_id:string;version:number;block_id:string;start:number;end:number;sha256:string; };
+        ContentEditRequest: { selection:components["schemas"]["ContentSelection"];action:"explain"|"example"|"expand"|"critique"|"rewrite"; };
+        ContentEditState: { request:components["schemas"]["ContentEditRequest"];reason:string;result?:components["schemas"]["ContentEditResult"]; };
+        ContentEditResult: { artifact_id:string;version:number;changed_blocks:string[]; };
+        ContentChange: { base_version:number;restored_version?:number;action:string;reason:string;changed_blocks:string[];selection?:components["schemas"]["ContentSelection"]; };
+        ContentOrigin: { artifact_id:string;version:number;block_id:string;source_block_id?:string; };
+        ContentPreference: { favorite:boolean;pinned_version:number|null; };
+        ContentRestore: { operation_id:string;expected_version:number;version:number;reason:string; };
+        ContentReuse: { operation_id:string;expected_version:number;source_artifact_id:string;source_version:number;source_block_id:string;reason:string; };
+        ContentExport: { filename:string;media_type:string;text:string; };
+        ContentCitation: { reference:components["schemas"]["KnowledgeReference"];title:string;context:string;status:"available"|"missing_fragment";parser:string;historical:boolean;coverage:string;locator:string; };
+        ContentLibraryItem: { artifact_id:string;goal_id:string;session_id:string;version:number;title:string;kind:"reading"|"exercise";source_status:"available"|"missing"|"restricted";nodes:string[];knowledge_points:{id:string;name:string}[];updated_at:string;favorite:boolean;pinned_version:number|null; };
+        ContentLibraryPage: { items:components["schemas"]["ContentLibraryItem"][];next_cursor?:string; };
         ContentBlock: {
             /** Format: uuid */
             block_id: string;
@@ -2129,6 +2219,8 @@ export interface components {
                 model_id: string;
                 input_fingerprint: string;
                 semantic_fingerprint: string;
+                change?:components["schemas"]["ContentChange"];
+                lineage?:components["schemas"]["ContentOrigin"][];
             };
         };
         MentorReceipt: {
@@ -2150,7 +2242,8 @@ export interface components {
         };
         MentorSnapshot: {
             /** @enum {string} */
-            kind?: "mentor" | "research" | "start_learning";
+            kind?: "mentor" | "research" | "start_learning" | "content_edit";
+            content_edit?:components["schemas"]["ContentEditState"];
             research?: components["schemas"]["ResearchState"];
             start_learning?: components["schemas"]["StartLearningState"];
             /** Format: uuid */
@@ -5594,6 +5687,46 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listContentLibrary: {
+        parameters: { query?: { goal_id?:string;node_id?:string;cursor?:string;kind?:"reading"|"exercise";source_status?:"available"|"missing"|"restricted";favorite?:boolean;after?:string;before?:string;limit?:number; }; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path?: never; cookie?:never; };
+        requestBody?: never;
+        responses: { 200: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentLibraryPage"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    getContentPreference: {
+        parameters: { query?: never; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path: { artifactID:string; }; cookie?:never; };
+        requestBody?: never;
+        responses: { 200: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentPreference"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    putContentPreference: {
+        parameters: { query?: never; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path: { artifactID:string; }; cookie?:never; };
+        requestBody: { content: { "application/json":components["schemas"]["ContentPreference"]; }; };
+        responses: { 200: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentPreference"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    restoreContentVersion: {
+        parameters: { query?: never; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path: { artifactID:string; }; cookie?:never; };
+        requestBody: { content: { "application/json":components["schemas"]["ContentRestore"]; }; };
+        responses: { 201: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentRevision"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    reuseContentInTask: {
+        parameters: { query?: never; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path: { artifactID:string; }; cookie?:never; };
+        requestBody: { content: { "application/json":components["schemas"]["ContentReuse"]; }; };
+        responses: { 201: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentRevision"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    exportContentVersion: {
+        parameters: { query: { version:number;format:"markdown"|"json"; }; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path: { artifactID:string; }; cookie?:never; };
+        requestBody?: never;
+        responses: { 200: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentExport"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    resolveContentCitation: {
+        parameters: { query: { version:number; }; header: { "X-Learning-Space-ID":string; "X-Learning-Content-Version":components["parameters"]["ContentProtocol"]; }; path: { artifactID:string;referenceID:string; }; cookie?:never; };
+        requestBody?: never;
+        responses: { 200: { headers: { [name:string]:unknown }; content: { "application/json":components["schemas"]["ContentCitation"]; }; }; default:components["responses"]["WebFailure"]; };
+    };
+    currentContentEdit: {
+        parameters: { query?: never; header: { "X-Learning-Space-ID":string;  }; path: { goalID:string; }; cookie?:never; };
+        requestBody?: never;
+        responses: { 200: { headers: { [name:string]:unknown }; content: { "application/json":{run:components["schemas"]["MentorSnapshot"]|null;save_available:boolean;}; }; }; default:components["responses"]["WebFailure"]; };
+    };
     getStartLearningCapabilities: {
         parameters: { query?: never; header?: never; path?: never; cookie?: never; };
         requestBody?: never;
@@ -6077,6 +6210,7 @@ export interface operations {
                     token_budget: number;
                     research?: components["schemas"]["ResearchRequest"];
                     start_learning?: components["schemas"]["StartLearningRequest"];
+                    content_edit?:components["schemas"]["ContentEditRequest"];
                 };
             };
         };

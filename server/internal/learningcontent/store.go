@@ -19,10 +19,13 @@ import (
 )
 
 type Store struct {
-	pool   *pgxpool.Pool
-	source SourceReader
-	aead   cipher.AEAD
+	pool       *pgxpool.Pool
+	source     SourceReader
+	aead       cipher.AEAD
+	references ReferenceReader
 }
+
+func (s *Store) ConfigureReferences(reader ReferenceReader) { s.references = reader }
 
 func New(pool *pgxpool.Pool, source SourceReader, key []byte) (*Store, error) {
 	s := &Store{pool: pool, source: source}
@@ -106,6 +109,9 @@ func (s *Store) begin(ctx context.Context, actor identity.Credential, write bool
 		return nil, 0, err
 	}
 	g, err := gates(ctx, tx, actor, write)
+	if err == nil {
+		err = s.referenceAccess(ctx, tx, actor)
+	}
 	if err != nil {
 		_ = tx.Rollback(context.Background())
 		return nil, 0, err
@@ -182,6 +188,9 @@ func (s *Store) read(ctx context.Context, tx pgx.Tx, id string, version, generat
 	}
 	r.ProtocolVersion = Protocol
 	err = s.open(&r, raw)
+	if err == nil {
+		err = s.checkSources(ctx, tx, r)
+	}
 	return r, err
 }
 
@@ -284,9 +293,10 @@ func (s *Store) Commit(ctx context.Context, actor identity.Credential, id string
 		return r, err
 	}
 	// 来源与生成依据只取正规 owner；调用方不能伪造模型、引用或评分语义。
-	body := Adapt(source)
+	body := r.Body
 	body.Blocks = c.Blocks
 	body.Interaction = c.Interaction
+	body.Change = &Change{BaseVersion: r.Version, Action: "presentation", Reason: "显式提交内容版本", ChangedBlocks: changedBlocks(r.Body.Blocks, c.Blocks)}
 	if err = Validate(body, source, c.Status); err != nil {
 		return Revision{}, err
 	}
@@ -348,7 +358,7 @@ func ValidateAttemptTx(ctx context.Context, tx pgx.Tx, attempt learning.Attempt)
 
 // 清除沿用 learning owner 的授权事务；不保留可复活正文的墓碑或进程缓存。
 func RedactTx(ctx context.Context, tx pgx.Tx) error {
-	for _, table := range []string{"learning_content_operations", "learning_content_revisions", "learning_content_artifacts"} {
+	for _, table := range []string{"learning_content_preferences", "learning_content_operations", "learning_content_revisions", "learning_content_artifacts"} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table); err != nil {
 			return err
 		}
@@ -360,6 +370,6 @@ func Remaining(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }) (int64, error) {
 	var count int64
-	err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_content_artifacts)+(SELECT count(*) FROM learning_content_revisions)+(SELECT count(*) FROM learning_content_operations)`).Scan(&count)
+	err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_content_artifacts)+(SELECT count(*) FROM learning_content_revisions)+(SELECT count(*) FROM learning_content_operations)+(SELECT count(*) FROM learning_content_preferences)`).Scan(&count)
 	return count, err
 }

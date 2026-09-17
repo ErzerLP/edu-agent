@@ -227,6 +227,10 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 		t.Fatalf("并发版本未正确比较：成功 %d，冲突 %d", succeeded, conflicted)
 	}
 	// 全局隐私流程必须委派到正文 owner，并阻止旧版本与迟到提交复活。
+	pinned := int64(1)
+	if _, err = content.Preference(ctx, actor, r.ArtifactID, &learningcontent.Preference{Favorite: true, PinnedVersion: &pinned}); err != nil {
+		t.Fatal("无法保存清除验收的阅读偏好", err)
+	}
 	privacyStore := privacydb.New(pool, privacydb.WithLocalOwner(identitydb.New(pool)), privacydb.WithLocalOwner(knowledgedb.New(pool)), privacydb.WithLocalOwner(authority), privacydb.WithLocalOwner(tutoringdb.New(pool)), privacydb.WithLocalOwner(memorydb.New(pool)), privacydb.WithLocalOwner(outboxdb.New(pool)))
 	now := time.Now().UTC()
 	barrier, err := privacyStore.CommitBarrier(ctx, privacy.ErasureRequest{DeviceID: actor.Device.ID, ActorDeviceID: actor.Device.ID, OperationID: uuid.NewString(), ReasonCode: "learner_request", RequestedAt: now, ManagedBackupUnrecoverableAfter: now.Add(24 * time.Hour)})

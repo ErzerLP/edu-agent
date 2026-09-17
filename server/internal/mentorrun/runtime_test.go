@@ -104,15 +104,16 @@ func runtimePool(t *testing.T) *pgxpool.Pool {
 }
 
 type runtimeFixture struct {
-	modelHook   func(int)
-	searchCalls *atomic.Int32
-	pool        *pgxpool.Pool
-	service     *Service
-	actor       identity.Credential
-	goal        string
-	create      Create
-	settings    *settings.Service
-	calls       atomic.Int32
+	modelOverride func(http.ResponseWriter, *http.Request)
+	modelHook     func(int)
+	searchCalls   *atomic.Int32
+	pool          *pgxpool.Pool
+	service       *Service
+	actor         identity.Credential
+	goal          string
+	create        Create
+	settings      *settings.Service
+	calls         atomic.Int32
 }
 
 func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)) *runtimeFixture {
@@ -122,6 +123,10 @@ func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)
 		call := int(f.calls.Add(1))
 		if f.modelHook != nil {
 			f.modelHook(call)
+		}
+		if f.modelOverride != nil {
+			f.modelOverride(w, r)
+			return
 		}
 		handler(w, r, call)
 	}))

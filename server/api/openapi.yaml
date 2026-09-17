@@ -6,6 +6,143 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/content:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+    get:
+      operationId: listContentLibrary
+      summary: 按区和目标自动收录正式内容，收藏仅是偏好；来源受限条目不返回原正文标题
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: goal_id, in: query, schema: { type: string, format: uuid } }
+        - { name: node_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+        - { name: kind, in: query, schema: { type: string, enum: [reading, exercise] } }
+        - { name: source_status, in: query, schema: { type: string, enum: [available, missing, restricted] } }
+        - { name: favorite, in: query, schema: { type: boolean } }
+        - { name: after, in: query, schema: { type: string, format: date-time } }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200": { description: 按区和目标自动收录正式内容，收藏仅是偏好；来源受限条目不返回原正文标题, content: { application/json: { schema: { $ref: "#/components/schemas/ContentLibraryPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/preferences:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    get:
+      operationId: getContentPreference
+      summary: 读取当前设备的收藏和固定阅读版本
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 读取当前设备的收藏和固定阅读版本, content: { application/json: { schema: { $ref: "#/components/schemas/ContentPreference" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    put:
+      operationId: putContentPreference
+      summary: 固定版本只改变阅读偏好，不改变活动或评分
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentPreference" }
+      responses:
+        "200": { description: 固定版本只改变阅读偏好，不改变活动或评分, content: { application/json: { schema: { $ref: "#/components/schemas/ContentPreference" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/restore:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    post:
+      operationId: restoreContentVersion
+      summary: 恢复为新的补偿版本；不撤销已发生学习
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentRestore" }
+      responses:
+        "201": { description: 恢复为新的补偿版本；不撤销已发生学习, content: { application/json: { schema: { $ref: "#/components/schemas/ContentRevision" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/reuse:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    post:
+      operationId: reuseContentInTask
+      summary: 显式授权引用到指定任务，继承原始来源链
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContentReuse" }
+      responses:
+        "201": { description: 显式授权引用到指定任务，继承原始来源链, content: { application/json: { schema: { $ref: "#/components/schemas/ContentRevision" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/export:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    get:
+      operationId: exportContentVersion
+      summary: 导出指定真实版本；重新核对来源权限
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: format, in: query, required: true, schema: { type: string, enum: [markdown, json] } }
+      responses:
+        "200": { description: 导出指定真实版本；重新核对来源权限, content: { application/json: { schema: { $ref: "#/components/schemas/ContentExport" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/content/{artifactID}/sources/{referenceID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentProtocol" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+      - { name: referenceID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: resolveContentCitation
+      summary: 解析原始片段与受权限约束的前后文；同时要求 knowledge:read
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: 解析原始片段与受权限约束的前后文；同时要求 knowledge:read, content: { application/json: { schema: { $ref: "#/components/schemas/ContentCitation" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/content-edits:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: currentContentEdit
+      summary: 恢复此目标的局部加工运行，独立于普通导师交流
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200":
+          description: 最近加工运行与保存能力
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [run, save_available]
+                properties:
+                  run: { oneOf: [{ $ref: "#/components/schemas/MentorSnapshot" }, { type: "null" }] }
+                  save_available: { type: boolean }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/content/capabilities:
     get:
       operationId: learningContentCapabilities
@@ -354,6 +491,7 @@ paths:
                 token_budget: { type: integer, minimum: 1, maximum: 10000000 }
                 research: { $ref: "#/components/schemas/ResearchRequest" }
                 start_learning: { $ref: "#/components/schemas/StartLearningRequest" }
+                content_edit: { $ref: "#/components/schemas/ContentEditRequest" }
       responses:
         "202": { description: 已受理或返回原操作结果，Location 指向运行快照, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -3496,6 +3634,142 @@ components:
             artifact_id: { type: string, format: uuid }
             artifact_version: { type: integer, minimum: 1 }
             knowledge_context: { $ref: "#/components/schemas/KnowledgeContextRevision" }
+    ContentSelection:
+      type: object
+      additionalProperties: false
+      required: [space_id, goal_id, session_id, artifact_id, version, block_id, start, end, sha256]
+      properties:
+        space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        artifact_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        block_id: { type: string, format: uuid }
+        start: { type: integer, minimum: 0, description: 原块 text 的 UTF-8 字节偏移 }
+        end: { type: integer, minimum: 1 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    ContentEditRequest:
+      type: object
+      additionalProperties: false
+      required: [selection, action]
+      properties:
+        selection: { $ref: "#/components/schemas/ContentSelection" }
+        action: { type: string, enum: [explain, example, expand, critique, rewrite] }
+    ContentEditState:
+      type: object
+      additionalProperties: false
+      required: [request, reason]
+      properties:
+        request: { $ref: "#/components/schemas/ContentEditRequest" }
+        reason: { type: string }
+        result: { $ref: "#/components/schemas/ContentEditResult" }
+    ContentEditResult:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, version, changed_blocks]
+      properties:
+        artifact_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        changed_blocks: { type: array, items: { type: string, format: uuid } }
+    ContentChange:
+      type: object
+      additionalProperties: false
+      required: [base_version, action, reason, changed_blocks]
+      properties:
+        base_version: { type: integer, minimum: 1 }
+        restored_version: { type: integer, minimum: 1 }
+        action: { type: string }
+        reason: { type: string }
+        changed_blocks: { type: array, items: { type: string, format: uuid } }
+        selection: { $ref: "#/components/schemas/ContentSelection" }
+    ContentOrigin:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, version, block_id]
+      properties:
+        artifact_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        block_id: { type: string, format: uuid }
+        source_block_id: { type: string, format: uuid }
+    ContentPreference:
+      type: object
+      additionalProperties: false
+      required: [favorite, pinned_version]
+      properties:
+        favorite: { type: boolean }
+        pinned_version: { type: [integer, "null"], minimum: 1 }
+    ContentRestore:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, version, reason]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        version: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 1, maxLength: 16000 }
+    ContentReuse:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, source_artifact_id, source_version, source_block_id, reason]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        source_artifact_id: { type: string, format: uuid }
+        source_version: { type: integer, minimum: 1 }
+        source_block_id: { type: string, format: uuid }
+        reason: { type: string, minLength: 1, maxLength: 16000 }
+    ContentExport:
+      type: object
+      additionalProperties: false
+      required: [filename, media_type, text]
+      properties:
+        filename: { type: string }
+        media_type: { type: string }
+        text: { type: string }
+    ContentCitation:
+      type: object
+      additionalProperties: false
+      required: [reference, title, context, status, parser, historical, coverage, locator]
+      properties:
+        reference: { $ref: "#/components/schemas/KnowledgeReference" }
+        title: { type: string }
+        context: { type: string }
+        status: { type: string, enum: [available, missing_fragment] }
+        parser: { type: string }
+        historical: { type: boolean }
+        coverage: { type: string }
+        locator: { type: string }
+    ContentLibraryItem:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, goal_id, session_id, version, title, kind, source_status, nodes, knowledge_points, updated_at, favorite, pinned_version]
+      properties:
+        knowledge_points:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+        artifact_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        title: { type: string }
+        kind: { type: string, enum: [reading, exercise] }
+        source_status: { type: string, enum: [available, missing, restricted] }
+        nodes: { type: array, items: { type: string, format: uuid } }
+        updated_at: { type: string, format: date-time }
+        favorite: { type: boolean }
+        pinned_version: { type: [integer, "null"], minimum: 1 }
+    ContentLibraryPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ContentLibraryItem" } }
+        next_cursor: { type: string, format: uuid }
     ContentBlock:
       type: object
       additionalProperties: false
@@ -3555,6 +3829,8 @@ components:
             model_id: { type: string }
             input_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
             semantic_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
+            change: { $ref: "#/components/schemas/ContentChange" }
+            lineage: { type: array, items: { $ref: "#/components/schemas/ContentOrigin" } }
     MentorReceipt:
       type: object
       required: [operation_id, run_id, session_id, version]
@@ -3576,7 +3852,8 @@ components:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
-        kind: { type: string, enum: [mentor, research, start_learning] }
+        kind: { type: string, enum: [mentor, research, start_learning, content_edit] }
+        content_edit: { $ref: "#/components/schemas/ContentEditState" }
         start_learning: { $ref: "#/components/schemas/StartLearningState" }
         research: { $ref: "#/components/schemas/ResearchState" }
         run_id: { type: string, format: uuid }

@@ -1,4 +1,4 @@
-import { Link, Outlet, useParams } from '@tanstack/react-router'
+import { Link, Outlet, useParams, useSearch } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { BookOpen, Moon, Sun } from 'lucide-react'
@@ -45,6 +45,8 @@ export function SpaceSwitcher() {
 }
 
 export function WorkspaceShell() {
+  const { spaceId } = useParams({ strict: false })
+  const search = useSearch({ strict: false })
   const { logout, drafts } = useIdentity()
   const [error, setError] = useState<unknown>()
   const [theme, setTheme] = useState(() => {
@@ -76,6 +78,12 @@ export function WorkspaceShell() {
         </Link>
         <nav aria-label="全局导航">
           <Link to="/">学习目标</Link>
+          <Link
+            to="/spaces/$spaceId/studio"
+            params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}
+          >
+            Studio 内容库
+          </Link>
           <SpaceSwitcher />
           <Link to="/settings">设置与能力</Link>
           <Button

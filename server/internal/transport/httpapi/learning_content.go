@@ -14,7 +14,7 @@ import (
 )
 
 func (a *API) mountLearningContent(r chi.Router) {
-	owners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring}
+	owners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring, privacy.OwnerKnowledge}
 	r.With(a.requireScope("learning:read")).Get("/v1/learning/content/capabilities", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"protocol_version": 1, "available": a.learningContent.Available(), "blocks": []string{"markdown", "code", "math", "table", "citation", "callout", "question", "answer_input", "group"}, "interactions": []string{"none", "text", "single_choice"}})
 	})
@@ -22,6 +22,13 @@ func (a *API) mountLearningContent(r chi.Router) {
 		read := r.With(a.requireScope("learning:read"), a.contentProtocol, a.responseReadPermit("content_redacted", owners...))
 		write := r.With(a.requireScope("learning:write"), a.contentProtocol, a.responseReadPermit("privacy_clear_in_progress", owners...))
 		read.Get("/v1/learning/content/{artifactID}", a.contentGet)
+		read.Get("/v1/learning/content", a.contentLibrary)
+		read.Get("/v1/learning/content/{artifactID}/preferences", a.contentPreference)
+		write.Put("/v1/learning/content/{artifactID}/preferences", a.contentPreference)
+		read.Get("/v1/learning/content/{artifactID}/export", a.contentExport)
+		read.Get("/v1/learning/content/{artifactID}/sources/{referenceID}", a.contentCitation)
+		write.Post("/v1/learning/content/{artifactID}/restore", a.contentRestore)
+		write.Post("/v1/learning/content/{artifactID}/reuse", a.contentReuse)
 		read.Get("/v1/learning/content/{artifactID}/revisions", a.contentHistory)
 		write.Post("/v1/learning/content/{artifactID}/revisions", a.contentCommit)
 		write.Post("/v1/tutoring/sessions/{sessionID}/content", a.contentEnsure)

@@ -67,7 +67,7 @@ func (s *Service) read(ctx context.Context, actor identity.Credential, space, id
 
 // ReadSnapshot 在短事务内发送有界响应，撤销/清除必须等待本次发送完成。
 func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, space, id string, send func(Snapshot) error) error {
-	return s.read(ctx, actor, space, id, func(_ pgx.Tx, item row) error {
+	return s.read(ctx, actor, space, id, func(tx pgx.Tx, item row) error {
 		if time.Now().After(item.ExpiresAt) {
 			item.BodyAvailable = false
 			item.Reason = "expired"
@@ -80,7 +80,12 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 				return err
 			}
 		}
-		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning})
+		if item.body.ContentEdit != nil {
+			if err := s.contentReadable(ctx, tx, item); err != nil {
+				return err
+			}
+		}
+		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit})
 	})
 }
 

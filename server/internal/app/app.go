@@ -102,6 +102,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	mentorRuns.ConfigureStart(&learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore})
+	contentStore.ConfigureReferences(stores.knowledge)
 	stores.learning.ConfigureContent(contentStore)
 	cfg.Model.Enabled = modelClient != nil
 	cfg.Model.Name = settingsView.Teaching.Model

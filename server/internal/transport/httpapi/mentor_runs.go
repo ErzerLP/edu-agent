@@ -16,7 +16,7 @@ import (
 )
 
 func mentorPath(path string) bool {
-	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research") || strings.HasSuffix(path, "/start"))
+	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research") || strings.HasSuffix(path, "/start") || strings.HasSuffix(path, "/content-edits"))
 }
 
 func (a *API) mountMentorRuns(router chi.Router) {
@@ -32,6 +32,7 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/operations/{operationID}", a.mentorOperation)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/research", a.mentorCurrent)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/start", a.mentorCurrent)
+	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/content-edits", a.mentorCurrent)
 	router.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.mentorScope).Get("/v1/tutoring/sessions/{sessionID}/knowledge-context", a.sessionKnowledgeContext)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/sources", a.researchSources)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/sources/{sourceID}", a.researchSource)
@@ -50,6 +51,9 @@ func (a *API) mentorScope(next http.Handler) http.Handler {
 }
 
 func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if contentFailure(w, r, err) {
+		return
+	}
 	status, code := 503, "run_unavailable"
 	for _, candidate := range []error{mentorrun.ErrInvalid, mentorrun.ErrConflict, mentorrun.ErrOperation, mentorrun.ErrNotFound, mentorrun.ErrForbidden, mentorrun.ErrInactive, mentorrun.ErrResync, mentorrun.ErrStorage, mentorrun.ErrLimit, mentorrun.ErrModel} {
 		if errors.Is(err, candidate) {
@@ -99,6 +103,9 @@ func (a *API) mentorCurrent(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(r.URL.Path, "/start") {
 		kind = "start_learning"
+	}
+	if strings.HasSuffix(r.URL.Path, "/content-edits") {
+		kind = "content_edit"
 	}
 	id, err := a.mentorRuns.Current(r.Context(), actor, space, chi.URLParam(r, "goalID"), kind)
 	if err != nil {

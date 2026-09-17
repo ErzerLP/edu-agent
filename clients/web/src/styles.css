@@ -136,7 +136,7 @@ body:has(.teaching-workspace) .site-header {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 24px;
-  width: min(800px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   max-height: 85dvh;
   overflow: auto;
   margin: auto;
@@ -149,6 +149,54 @@ body:has(.teaching-workspace) .site-header {
 }
 .source-dialog details {
   overflow-wrap: anywhere;
+}
+.source-dialog.expanded {
+  width: min(960px, calc(100vw - 32px));
+}
+.content-editor,
+.content-editor form,
+.studio-page {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.selection-chip {
+  padding: 12px;
+  background: var(--soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.content-diff {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.content-diff > section {
+  padding: 12px;
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+.studio-item {
+  padding: 20px;
+  overflow-wrap: anywhere;
+}
+.studio-item h2 {
+  font-size: 1.15rem;
+}
+@media (max-width: 600px) {
+  .source-dialog,
+  .source-dialog.expanded {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+  .content-diff {
+    grid-template-columns: 1fr;
+  }
 }
 .teaching-discussion {
   max-height: 55dvh;
@@ -816,7 +864,22 @@ footer {
   }
 }
 
-.mentor-panel { margin-block: 24px; overflow-wrap: anywhere; }
-.mentor-output { white-space: pre-wrap; overflow-y: auto; max-height: 420px; min-height: 80px; padding-block: 16px; overflow-wrap: anywhere; }
-.mentor-panel fieldset { margin-block: 20px; min-width: 0; }
-.mentor-panel details { margin-block: 16px; }
+.mentor-panel {
+  margin-block: 24px;
+  overflow-wrap: anywhere;
+}
+.mentor-output {
+  white-space: pre-wrap;
+  overflow-y: auto;
+  max-height: 420px;
+  min-height: 80px;
+  padding-block: 16px;
+  overflow-wrap: anywhere;
+}
+.mentor-panel fieldset {
+  margin-block: 20px;
+  min-width: 0;
+}
+.mentor-panel details {
+  margin-block: 16px;
+}

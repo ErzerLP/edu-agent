@@ -53,6 +53,47 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
     }
     const messages = payload.messages ?? []
     const input = messages.findLast((message) => message.role === 'user')?.content ?? ''
+    // 选段 fixture 验证完整身份和原文，只返回该位置的独立候选。
+    if (messages[0]?.content?.includes('对指定选段提供')) {
+      let edit
+      try {
+        edit = JSON.parse(input)
+      } catch {
+        response.writeHead(400)
+        response.end()
+        return
+      }
+      if (
+        !edit.selection?.artifact_id ||
+        !edit.selection?.session_id ||
+        !edit.selection?.sha256 ||
+        !edit.selected_text ||
+        !edit.block?.block_id
+      ) {
+        response.writeHead(400)
+        response.end()
+        return
+      }
+      const text = JSON.stringify({
+        text: '选段补充：把六个苹果每两个分成一组，就能直观看到偶数的含义。',
+        reference_ids: edit.references.map((ref) => ref.node_revision_id),
+      })
+      response.setHeader('Content-Type', 'text/event-stream')
+      const first = text.slice(0, 24),
+        second = text.slice(24)
+      response.write(
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: 'assistant', content: first } }] })}\n\n`,
+      )
+      const timer = setTimeout(
+        () =>
+          response.end(
+            `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: second }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+          ),
+        edit.instruction.includes('慢速') ? 10000 : 300,
+      )
+      response.on('close', () => clearTimeout(timer))
+      return
+    }
     const answered = messages.some(
       (message) => message.role === 'tool' && message.tool_call_id === 'browser-question',
     )

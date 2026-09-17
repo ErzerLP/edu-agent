@@ -29,6 +29,9 @@ import { ErrorState, Pagination } from './components/common'
 import { ContentBlocks, SafeMarkdown, SourceViewer } from './components/content-blocks'
 import { MentorPanel } from './components/mentor-panel'
 import { knowledgeContextSchema } from './api/start'
+import { ContentEditor, useContentSelection } from './components/content-editor'
+import { ContentTools } from './components/content-tools'
+import { preferenceSchema } from './api/content'
 
 export function SessionPicker({ goal, archived }: { goal: Goal; archived: boolean }) {
   const { session, prefix, drafts } = useIdentity()
@@ -244,6 +247,19 @@ function TeachingWorkspace({
   const [knowledgeWidth, setKnowledgeWidth] = useState(272)
   const [mentorWidth, setMentorWidth] = useState(360)
   const [content, setContent] = useState<Content>()
+  const selection = useContentSelection(content)
+  const updateContent = (next: Content) => {
+    const anchor = selection.selected
+      ? document.getElementById(`block-${selection.selected.location.block_id}`)
+      : undefined
+    const top = anchor?.getBoundingClientRect().top
+    setContent(next)
+    selection.clear()
+    setNotice('本段已更新，原答案草稿已保留。')
+    requestAnimationFrame(() => {
+      if (anchor && top !== undefined) window.scrollBy(0, anchor.getBoundingClientRect().top - top)
+    })
+  }
   const [contentError, setContentError] = useState<unknown>()
   const mounted = useRef(true)
   const currentDraft = useRef({ answerKey, answer, chat })
@@ -610,6 +626,7 @@ function TeachingWorkspace({
             <SourceViewer
               key={ref.node_revision_id}
               reference={ref}
+              content={content}
               label={`原资料依据 ${i + 1}`}
             />
           ))}
@@ -637,7 +654,32 @@ function TeachingWorkspace({
                   内容与版本历史
                 </Link>
               </div>
-              <ContentBlocks blocks={content.body.blocks} references={content.body.references} />
+              <ContentBlocks
+                blocks={content.body.blocks}
+                references={content.body.references}
+                content={content}
+                onSelect={(block, start, end) => {
+                  void selection.select(block, start, end)
+                  setAux('mentor')
+                }}
+              />
+              {selection.selected && (
+                <div className="selection-chip">
+                  <span>已选正文，可交给导师解释或改写。</span>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setTab('mentor')
+                      setAux('mentor')
+                    }}
+                  >
+                    处理此选段
+                  </Button>
+                  <Button variant="ghost" onClick={selection.clear}>
+                    移除正文选区
+                  </Button>
+                </div>
+              )}
             </>
           ) : activity ? (
             <SafeMarkdown text={activity.prompt} />
@@ -864,6 +906,16 @@ function TeachingWorkspace({
         <aside className="tutor-column panel" aria-label="AI 导师">
           <h2>AI 导师</h2>
           <p className="hint">讨论当前活动。聊天不会作为正式答案。</p>
+          {content && goal.data && (
+            <ContentEditor
+              key={content.artifact_id}
+              content={content}
+              goal={goal.data}
+              selection={selection}
+              onUpdate={updateContent}
+              disabled={archived}
+            />
+          )}
           <div
             className="teaching-discussion"
             ref={output}
@@ -1009,22 +1061,37 @@ export function ContentPage({
   version?: number
 }) {
   const { session, prefix } = useIdentity()
+  const navigate = useNavigate()
   const client = () => learningClient(session, spaceId)
+  const preference = useQuery({
+    queryKey: [...prefix, spaceId, artifactId, 'content-preference'],
+    gcTime: 0,
+    queryFn: ({ signal }) =>
+      unwrap(
+        client().GET('/v1/learning/content/{artifactID}/preferences', {
+          params: { path: { artifactID: artifactId }, header: contentHeader(spaceId) },
+          signal,
+        }),
+        preferenceSchema,
+      ),
+  })
+  const readingVersion = version ?? preference.data?.pinned_version ?? undefined
   const capabilities = useQuery({
     queryKey: [...prefix, 'content-capabilities'],
     queryFn: ({ signal }) =>
       unwrap(client().GET('/v1/learning/content/capabilities', { signal }), contentCapabilities),
   })
   const content = useQuery({
-    queryKey: [...prefix, spaceId, artifactId, version, 'content'],
-    enabled: capabilities.data?.protocol_version === 1 && capabilities.data.available,
+    queryKey: [...prefix, spaceId, artifactId, readingVersion, 'content'],
+    enabled:
+      capabilities.data?.protocol_version === 1 && capabilities.data.available && !!preference.data,
     queryFn: ({ signal }) =>
       unwrap(
         client().GET('/v1/learning/content/{artifactID}', {
           params: {
             path: { artifactID: artifactId },
             header: contentHeader(spaceId),
-            query: { version },
+            query: { version: readingVersion },
           },
           signal,
         }),
@@ -1045,8 +1112,21 @@ export function ContentPage({
       ),
     gcTime: 0,
   })
-  if (content.error || capabilities.error)
-    return <ErrorState error={content.error || capabilities.error} />
+  const selection = useContentSelection(content.data)
+  const goal = useQuery({
+    queryKey: [...prefix, spaceId, content.data?.goal_id, 'latest'],
+    enabled: !!content.data,
+    queryFn: ({ signal }) =>
+      unwrap(
+        client().GET('/v1/learning/goals/{goalID}', {
+          params: { path: { goalID: content.data!.goal_id } },
+          signal,
+        }),
+        goalSchema,
+      ),
+  })
+  if (content.error || capabilities.error || preference.error)
+    return <ErrorState error={content.error || capabilities.error || preference.error} />
   if (
     capabilities.data &&
     (!capabilities.data.available || capabilities.data.protocol_version !== 1)
@@ -1065,6 +1145,14 @@ export function ContentPage({
         ← 返回教学会话
       </Link>
       <h1>学习内容 · 第 {value.version} 版</h1>
+      <Link to="/spaces/$spaceId/studio" params={{ spaceId }}>
+        查看 Studio 内容库
+      </Link>
+      {preference.data?.pinned_version && (
+        <p className="notice">
+          已固定阅读第 {preference.data.pinned_version} 版。新的加工版本不会自动替换固定版本。
+        </p>
+      )}
       <p role="status">
         {
           (
@@ -1077,7 +1165,36 @@ export function ContentPage({
         }
         。此页面只供阅读，正式作答请返回原会话。
       </p>
-      <ContentBlocks blocks={value.body.blocks} references={value.body.references} />
+      <ContentBlocks
+        blocks={value.body.blocks}
+        references={value.body.references}
+        content={value}
+        onSelect={(b, start, end) => void selection.select(b, start, end)}
+      />
+      {goal.data && (
+        <ContentEditor
+          key={value.artifact_id}
+          content={value}
+          goal={goal.data}
+          selection={selection}
+          onUpdate={() => {
+            void history.refetch()
+            if (!readingVersion) void content.refetch()
+          }}
+          onRelocate={(next) =>
+            void navigate({
+              to: '/content/$artifactId',
+              params: { artifactId: next.artifact_id },
+              search: { space: spaceId, version: next.version },
+            })
+          }
+        />
+      )}
+      <ContentTools
+        content={value}
+        preference={preference.data!}
+        refreshPreference={() => void preference.refetch()}
+      />
       <section aria-label="内容版本历史">
         <h2>版本历史</h2>
         {history.error && <ErrorState error={history.error} />}
@@ -1090,6 +1207,8 @@ export function ContentPage({
             >
               第 {item.version} 版 ·{' '}
               {item.status === 'committed' ? '正式' : item.status === 'draft' ? '草稿' : '失败'}
+              {' · '}
+              {new Date(item.created_at).toLocaleString('zh-CN')}
             </Link>
           </p>
         ))}

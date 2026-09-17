@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -60,6 +62,11 @@ func TestLearningContentNegotiationAndStrictBoundary(t *testing.T) {
 		{"新正文禁止隐式区", "GET", path, "1", "", "", 400},
 		{"未配置密钥不能降级明文", "GET", path, "1", learningspace.DefaultID, "", 503},
 		{"非法版本", "GET", path + "?version=0", "1", learningspace.DefaultID, "", 400},
+		{"Studio 拒绝非法分页", "GET", "/v1/learning/content?limit=0", "1", learningspace.DefaultID, "", 400},
+		{"来源禁止隐式版本", "GET", path + "/sources/" + testAggregateID, "1", learningspace.DefaultID, "", 400},
+		{"导出禁止隐式版本", "GET", path + "/export?format=json", "1", learningspace.DefaultID, "", 400},
+		{"恢复拒绝目标改写", "POST", path + "/restore", "1", learningspace.DefaultID, `{"goal":"改目标"}`, 400},
+		{"引用拒绝模型提供授权", "POST", path + "/reuse", "1", learningspace.DefaultID, `{"approved":true}`, 400},
 		{"重复版本", "GET", path + "?version=1&version=2", "1", learningspace.DefaultID, "", 400},
 		{"未完成 JSON", "POST", path + "/revisions", "1", learningspace.DefaultID, `{"blocks":[`, 400},
 		{"拒绝伪造评分规则", "POST", path + "/revisions", "1", learningspace.DefaultID, `{"rubric":{"answer":"伪造"}}`, 400},
@@ -94,5 +101,33 @@ func TestLearningContentNegotiationAndStrictBoundary(t *testing.T) {
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("只读身份可提交正文：%d", w.Code)
+	}
+}
+
+func TestContentCollaborationOpenAPI(t *testing.T) {
+	doc, err := openapi3.NewLoader().LoadFromFile("../../../api/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection := learningcontent.Selection{SpaceID: testAggregateID, GoalID: testAggregateID, SessionID: testAggregateID, ArtifactID: testAggregateID, Version: 1, BlockID: testAggregateID, Start: 0, End: 6, Hash: learningcontent.TextHash("中文")}
+	for name, value := range map[string]any{
+		"ContentSelection":   selection,
+		"ContentEditRequest": learningcontent.EditRequest{Selection: selection, Action: "example"},
+		"ContentPreference":  learningcontent.Preference{},
+		"ContentRestore":     learningcontent.Restore{OperationID: testAggregateID, ExpectedVersion: 2, Version: 1, Reason: "恢复原版"},
+		"ContentLibraryPage": learningcontent.LibraryPage{Items: []learningcontent.LibraryItem{}},
+		"ContentExport":      learningcontent.Export{Filename: "说明.md", MediaType: "text/markdown", Text: "正文"},
+	} {
+		raw, _ := json.Marshal(value)
+		var payload any
+		_ = json.Unmarshal(raw, &payload)
+		if err = doc.Components.Schemas[name].Value.VisitJSON(payload, openapi3.EnableJSONSchema2020()); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	for _, path := range []string{"/v1/learning/content", "/v1/learning/content/{artifactID}/restore", "/v1/learning/content/{artifactID}/reuse", "/v1/learning/content/{artifactID}/preferences", "/v1/learning/content/{artifactID}/export", "/v1/learning/content/{artifactID}/sources/{referenceID}", "/v1/learning/goals/{goalID}/content-edits"} {
+		if doc.Paths.Value(path) == nil {
+			t.Fatal("公开合同缺少路径", path)
+		}
 	}
 }

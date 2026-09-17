@@ -14,6 +14,7 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
@@ -281,6 +282,15 @@ func receipt(ctx context.Context, tx pgx.Tx, item row, operationID string, hash 
 func (s *Service) Create(ctx context.Context, actor identity.Credential, space, goal string, c Create) (Receipt, error) {
 	kind := "mentor"
 	searchConfiguration := ""
+	if c.ContentEdit != nil {
+		if c.ContentEdit.Validate() != nil || c.ContentEdit.Selection.SpaceID != space || c.ContentEdit.Selection.GoalID != goal || c.Research != nil || c.StartLearning != nil || !c.Save {
+			return Receipt{}, ErrInvalid
+		}
+		if !s.CanStart() {
+			return Receipt{}, ErrStorage
+		}
+		kind = "content_edit"
+	}
 	if c.Research != nil {
 		if c.Research.Validate() != nil {
 			return Receipt{}, ErrInvalid
@@ -321,6 +331,18 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	if _, err = goalGate(ctx, tx, space, goal, c.ExpectedVersion); err != nil {
 		return Receipt{}, err
+	}
+	if c.ContentEdit != nil {
+		ctx, err = learningspace.WithScope(ctx, space)
+		if err != nil {
+			return Receipt{}, err
+		}
+		if err = contentActor(ctx, tx, actor.TokenID); err != nil {
+			return Receipt{}, err
+		}
+		if _, _, err = s.starter.Content.SelectionTx(ctx, tx, actor, c.ContentEdit.Selection); err != nil {
+			return Receipt{}, err
+		}
 	}
 	model, limits, fingerprint, err := s.settings.MentorClient()
 	if err != nil || model == nil {
@@ -366,6 +388,9 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.body.Messages = []modelclient.Message{{Role: "user", Content: c.Prompt}}
 	item.Kind = kind
+	if c.ContentEdit != nil {
+		item.body.ContentEdit = &ContentEditState{Request: *c.ContentEdit, Reason: c.Prompt}
+	}
 	if c.Research != nil {
 		item.body.Messages = nil
 		item.body.Research = &research.State{Request: *c.Research, Sources: []research.Source{}, SearchConfiguration: searchConfiguration}

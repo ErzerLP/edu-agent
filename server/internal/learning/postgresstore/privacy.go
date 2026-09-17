@@ -183,6 +183,11 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		name string
 		sql  string
 	}{
+		{"教学变更事件", `DELETE FROM learning_change_events`},
+		{"教学变更候选", `UPDATE learning_change_revisions SET ciphertext=NULL`},
+		{"教学变更正文", `UPDATE learning_changes SET ciphertext=NULL,status='cancelled'`},
+		{"教学变更操作", `UPDATE learning_change_operations SET request_hash=''`},
+		{"教学调整模式", `DELETE FROM learning_adaptive_modes`},
 		{"开学活动关联", `UPDATE learning_activities SET knowledge_context_revision_id=NULL,artifact_id=NULL,artifact_version=NULL`},
 		{"导师运行事件", `DELETE FROM learning_mentor_events`},
 		{"导师运行正文", `UPDATE learning_mentor_runs SET checkpoint=NULL,lease_id=NULL,lease_until=NULL,call_started=FALSE,state=state||'{"body_available":false,"status":"cancelled","reason":"privacy_cleared","stage":"cancelled"}'::jsonb`},
@@ -397,6 +402,11 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			UNION ALL SELECT count(*) FROM learning_spaces WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END
 			UNION ALL SELECT count(*) FROM learning_goal_revisions WHERE goal_text<>'[redacted]' OR source<>'privacy_erasure' OR management IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_plans WHERE payload IS NOT NULL
+			UNION ALL SELECT count(*) FROM learning_change_revisions WHERE ciphertext IS NOT NULL
+			UNION ALL SELECT count(*) FROM learning_changes WHERE ciphertext IS NOT NULL OR status<>'cancelled'
+			UNION ALL SELECT count(*) FROM learning_change_operations WHERE request_hash<>''
+			UNION ALL SELECT count(*) FROM learning_change_events
+			UNION ALL SELECT count(*) FROM learning_adaptive_modes
 			UNION ALL SELECT count(*) FROM learning_plan_operations WHERE payload IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_route_steps WHERE teaching_intent<>'[redacted]' OR completion_condition<>'[redacted]'
 			UNION ALL SELECT count(*) FROM learning_activities WHERE prompt<>'[redacted]' OR rubric_revision<>'[redacted]' OR rubric<>'{"redacted":true}'::jsonb

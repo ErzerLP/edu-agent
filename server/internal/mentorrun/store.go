@@ -14,6 +14,7 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
@@ -24,6 +25,7 @@ import (
 )
 
 type Service struct {
+	changes             *learningchange.Service
 	starter             *learningstart.Service
 	search              func(func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error)
 	fetcher             *research.Fetcher
@@ -53,6 +55,8 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 	return &Service{pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
 }
 func (s *Service) CanSave() bool { return s.aead != nil }
+
+func (s *Service) ConfigureChanges(changes *learningchange.Service) { s.changes = changes }
 
 // ConfigureStart 仅在组合根启动 worker 前注入正式应用服务。
 func (s *Service) ConfigureStart(starter *learningstart.Service) { s.starter = starter }
@@ -314,6 +318,18 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		return Receipt{}, ErrInvalid
 	}
 	hash := requestHash("create", space, goal, c)
+	if c.TeachingSessionID != "" {
+		if !validID(c.TeachingSessionID) || kind != "mentor" || !s.changes.Available() {
+			return Receipt{}, ErrInvalid
+		}
+		scoped, e := learningspace.WithScope(ctx, space)
+		if e != nil {
+			return Receipt{}, e
+		}
+		if _, e = s.changes.Snapshot(scoped, actor, goal, c.TeachingSessionID); e != nil {
+			return Receipt{}, e
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Receipt{}, err
@@ -387,6 +403,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.body.Messages = []modelclient.Message{{Role: "user", Content: c.Prompt}}
+	item.TeachingSessionID = c.TeachingSessionID
 	item.Kind = kind
 	if c.ContentEdit != nil {
 		item.body.ContentEdit = &ContentEditState{Request: *c.ContentEdit, Reason: c.Prompt}

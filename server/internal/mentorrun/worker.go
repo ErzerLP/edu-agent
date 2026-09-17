@@ -111,6 +111,11 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	if err = actorGate(ctx, tx, owned.device, owned.token, true); err != nil {
 		return err
 	}
+	if owned.TeachingSessionID != "" {
+		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "learning-aggregate:goal:"+owned.GoalID); err != nil {
+			return err
+		}
+	}
 	if _, err = goalGate(ctx, tx, owned.SpaceID, owned.GoalID, owned.GoalVersion); err != nil {
 		return err
 	}

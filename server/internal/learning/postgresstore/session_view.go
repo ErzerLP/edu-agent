@@ -171,7 +171,16 @@ func (s *Store) assembleSessionWorkItem(ctx context.Context, tx pgx.Tx, generati
 		actionContext.AssessmentConfirmable = learning.ConfirmableAssessment(*item.Activity, *item.Attempt, loaded.artifact)
 	}
 
-	if session.ActiveFrame != nil {
+	if tutoring.HasAdaptiveFocus(session) {
+		frame := session.ActiveFrame
+		if frame.SessionID != session.ID || frame.SavedAggregateVersion >= session.AggregateVer || frame.CreatedEventSequence < 1 || frame.Context.ActivityID == nil {
+			return nil, projectionFailure("adaptive_focus_ownership", nil)
+		}
+		original, err := loadActivityForView(ctx, tx, *frame.Context.ActivityID)
+		if err != nil || original.SessionID != session.ID || original.GoalRevisionID != frame.Context.GoalRevisionID || original.RouteRevisionID != frame.Context.RouteRevisionID {
+			return nil, sessionTypedReadError(ctx, "adaptive_activity_ownership", err)
+		}
+	} else if session.ActiveFrame != nil {
 		if !validWorkItemFocusFrame(session) {
 			return nil, projectionFailure("active_focus_frame_ownership", nil)
 		}
@@ -217,6 +226,14 @@ func (s *Store) assembleSessionWorkItem(ctx context.Context, tx pgx.Tx, generati
 		return nil, projectionFailure("allowed_action_matrix", err)
 	}
 	item.AllowedActions = actions
+	if tutoring.HasAdaptiveFocus(session) {
+		item.AllowedActions = []tutoring.Action{}
+		for _, action := range actions {
+			if action != tutoring.ActionAskFreeQuestion {
+				item.AllowedActions = append(item.AllowedActions, action)
+			}
+		}
+	}
 	item.AllowedAssessmentDecisions = decisions
 	normalizeWorkItem(item)
 	return item, nil

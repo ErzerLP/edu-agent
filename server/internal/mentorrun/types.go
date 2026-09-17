@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
@@ -34,16 +35,17 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
-	ContentEdit     *learningcontent.EditRequest `json:"content_edit,omitempty"`
-	StartLearning   *learningstart.Request       `json:"start_learning,omitempty"`
-	Research        *research.Request            `json:"research,omitempty"`
-	OperationID     string                       `json:"operation_id"`
-	SessionID       string                       `json:"session_id"`
-	ExpectedVersion int64                        `json:"expected_version"`
-	Prompt          string                       `json:"prompt"`
-	Save            bool                         `json:"save"`
-	RequestBudget   int                          `json:"request_budget"`
-	TokenBudget     int                          `json:"token_budget"`
+	TeachingSessionID string                       `json:"teaching_session_id,omitempty"`
+	ContentEdit       *learningcontent.EditRequest `json:"content_edit,omitempty"`
+	StartLearning     *learningstart.Request       `json:"start_learning,omitempty"`
+	Research          *research.Request            `json:"research,omitempty"`
+	OperationID       string                       `json:"operation_id"`
+	SessionID         string                       `json:"session_id"`
+	ExpectedVersion   int64                        `json:"expected_version"`
+	Prompt            string                       `json:"prompt"`
+	Save              bool                         `json:"save"`
+	RequestBudget     int                          `json:"request_budget"`
+	TokenBudget       int                          `json:"token_budget"`
 }
 
 type Command struct {
@@ -64,28 +66,29 @@ type Receipt struct {
 }
 
 type Meta struct {
-	Kind          string    `json:"kind,omitempty"`
-	RunID         string    `json:"run_id"`
-	SessionID     string    `json:"session_id"`
-	SpaceID       string    `json:"space_id"`
-	GoalID        string    `json:"goal_id"`
-	GoalVersion   int64     `json:"goal_version"`
-	Generation    int64     `json:"privacy_generation"`
-	Version       int64     `json:"version"`
-	Watermark     int64     `json:"watermark"`
-	Status        string    `json:"status"`
-	Stage         string    `json:"stage"`
-	Reason        string    `json:"reason"`
-	Saved         bool      `json:"saved"`
-	BodyAvailable bool      `json:"body_available"`
-	RequestsLeft  int       `json:"requests_left"`
-	TokensLeft    int       `json:"tokens_left"`
-	RequestsUsed  int       `json:"requests_used"`
-	ResultUnknown bool      `json:"result_unknown"`
-	CostUnknown   bool      `json:"cost_unknown"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	Configuration string    `json:"configuration"`
+	TeachingSessionID string    `json:"teaching_session_id,omitempty"`
+	Kind              string    `json:"kind,omitempty"`
+	RunID             string    `json:"run_id"`
+	SessionID         string    `json:"session_id"`
+	SpaceID           string    `json:"space_id"`
+	GoalID            string    `json:"goal_id"`
+	GoalVersion       int64     `json:"goal_version"`
+	Generation        int64     `json:"privacy_generation"`
+	Version           int64     `json:"version"`
+	Watermark         int64     `json:"watermark"`
+	Status            string    `json:"status"`
+	Stage             string    `json:"stage"`
+	Reason            string    `json:"reason"`
+	Saved             bool      `json:"saved"`
+	BodyAvailable     bool      `json:"body_available"`
+	RequestsLeft      int       `json:"requests_left"`
+	TokensLeft        int       `json:"tokens_left"`
+	RequestsUsed      int       `json:"requests_used"`
+	ResultUnknown     bool      `json:"result_unknown"`
+	CostUnknown       bool      `json:"cost_unknown"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	Configuration     string    `json:"configuration"`
 }
 
 type Interaction struct {
@@ -97,6 +100,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`
 	ContentEdit   *ContentEditState      `json:"content_edit,omitempty"`
 	StartLearning *learningstart.State   `json:"start_learning,omitempty"`
 	Research      *research.State        `json:"research,omitempty"`

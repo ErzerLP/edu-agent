@@ -24,6 +24,37 @@ func (s *Store) ContextMatchesTx(ctx context.Context, tx pgx.Tx, id, goalRevisio
 	return valid, err
 }
 
+// RebindContextTx 在用户已确认同一目标的新标准后追加政策版本，保持原来源和概念不变。
+func (s *Store) RebindContextTx(ctx context.Context, tx pgx.Tx, id, goal, revision, operation string) (string, error) {
+	old, err := s.ContextTx(ctx, tx, id)
+	if err != nil {
+		return "", err
+	}
+	var owned bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM knowledge_policies WHERE id=$1 AND goal_id=$2 AND space_id=$3)`, old.Policy.ID, goal, learningspace.Scope(ctx)).Scan(&owned)
+	if err != nil {
+		return "", err
+	}
+	if !owned {
+		return "", scopeMissing()
+	}
+	policy, newID := uuid.NewString(), uuid.NewString()
+	raw, err := json.Marshal(old.Policy.Request)
+	if err != nil {
+		return "", err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO knowledge_policies(id,space_id,goal_id,goal_revision_id,request) VALUES($1,$2,$3,$4,$5)`, policy, learningspace.Scope(ctx), goal, revision, raw)
+	if err != nil {
+		return "", err
+	}
+	ids := []string{}
+	for _, c := range old.Concepts {
+		ids = append(ids, c.RevisionID)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO knowledge_context_revisions(id,policy_id,scope_snapshot_id,run_id,previous_revision_id,concept_revision_ids) VALUES($1,$2,$3,$4,$5,$6)`, newID, policy, old.ScopeSnapshotID, operation, id, ids)
+	return newID, err
+}
+
 // ConceptKeys 只提供当前目标已存在的语义身份，供后续准备复用，不读取其他目标。
 func (s *Store) ConceptKeys(ctx context.Context, goal string) ([]string, error) {
 	tx, err := s.pool.Begin(ctx)

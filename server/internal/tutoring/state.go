@@ -239,7 +239,9 @@ func Apply(input Session, command Command) (Transition, error) {
 		if before != StateActivityIssued && before != StateAwaitingResponse && before != StateEvaluating && before != StateFeedback {
 			return invalid()
 		}
-		invalidateFrame(&transition.Session, "end_activity")
+		if !HasAdaptiveFocus(input) {
+			invalidateFrame(&transition.Session, "end_activity")
+		}
 		transition.Session.AttachedQuiz = false
 		clearActivity(&transition.Session.Context)
 		return set(StateRouteActive, "ActivityEnded", "TutoringStateChanged")
@@ -255,11 +257,19 @@ func Apply(input Session, command Command) (Transition, error) {
 		if before != StateRouteActive && before != StateAdvanceOrReview {
 			return invalid()
 		}
-		invalidateFrame(&transition.Session, "complete_session")
+		if !HasAdaptiveFocus(input) {
+			invalidateFrame(&transition.Session, "complete_session")
+		}
 		return set(StateCompleted, "LearningCompleted", "TutoringStateChanged")
 	default:
 		return invalid()
 	}
+}
+
+// HasAdaptiveFocus 区分跨路线保留的原题与普通自由问答焦点，处理新题不能删除原现场。
+func HasAdaptiveFocus(session Session) bool {
+	f := session.ActiveFrame
+	return f != nil && !f.Invalidated && !session.AttachedQuiz && f.Context.RouteRevisionID != session.Context.RouteRevisionID
 }
 
 func cloneContext(value FocusContext) FocusContext {

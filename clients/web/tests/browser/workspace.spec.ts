@@ -153,6 +153,7 @@ async function webCall(page: Page, path: string, data?: unknown) {
       'X-CSRF-Token': identity.csrf_token,
       'X-Learning-Space-ID': space,
       'X-Learning-Content-Version': '1',
+      'X-Learning-Change-Version': '1',
     },
   })
 }
@@ -456,6 +457,51 @@ test('切区后旧答案迟到响应不修改新会话草稿', async ({ page, re
   await expect(page).toHaveURL(new RegExp(`/learn/${second.id}$`))
   expect((await first.get()).work_item.attempt.answer).toBe('A')
   expect((await second.get()).work_item.attempt).toBeUndefined()
+})
+
+test('教学变更显示具体差异、排队、立即切换与原题草稿焦点恢复', async ({ page, request }) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+  test.setTimeout(180000)
+  const fixture = await legacySession(request)
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code())
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+  await expect(page.getByText('内容第 1 版已保存', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  const answer = page.getByLabel('我的正式答案')
+  await expect(answer).toBeEnabled()
+  await answer.fill('原题尚未提交的草稿')
+  const panel = page.getByRole('region', { name: '教学变更', exact: true })
+  const path = `/v1/learning/goals/${fixture.goal.goal_id}`
+  const read = await webCall(page, `${path}/change-context?session_id=${fixture.id}`)
+  expect(read.ok(), await read.text()).toBe(true)
+  const current = await read.json()
+  const candidate = { kind: 'route', trigger: 'user_request', reason: '先补偶数的前置概念', evidence_ids: [], context_id: '', explanation: '', steps: [{ node_revision_id: current.sources[0].node_revision_id, name: '前置概念练习', criterion: '说明可被二整除', prompt: '请用一个例子解释偶数', difficulty: 1, prerequisites: [] }] }
+  const id = randomUUID()
+  const proposed = await webCall(page, `${path}/changes/${id}`, { session_id: fixture.id, operation_id: randomUUID(), action: 'propose', expected_revision: 0, hash: '', interaction_id: '', immediate: false, base: current.base, candidate })
+  expect(proposed.ok(), await proposed.text()).toBe(true)
+  await expect(panel.getByText('已排队，本题处理后应用', { exact: false })).toBeVisible()
+  await expect(answer).toHaveValue('原题尚未提交的草稿')
+  await panel.getByRole('button', { name: '立即切换并保留原题现场' }).click()
+  await expect(page.getByText('请用一个例子解释偶数', { exact: true }).first()).toBeVisible()
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  await answer.fill('新题草稿也要保留')
+  await panel.getByRole('button', { name: '返回原题与草稿' }).click()
+  await expect(answer).toHaveValue('原题尚未提交的草稿')
+  await expect(answer).toBeFocused()
+  const latest = await (await webCall(page, `${path}/change-context?session_id=${fixture.id}`)).json()
+  const goalCandidate = { kind: 'goal', trigger: 'goal_constraint', reason: '增加具体完成标准', evidence_ids: [], context_id: '', explanation: '', steps: [], goal: { ...latest.goal.management.details, completion_criteria: '独立给出三个偶数并解释' } }
+  const goalChange = await webCall(page, `${path}/changes/${randomUUID()}`, { session_id: fixture.id, operation_id: randomUUID(), action: 'propose', expected_revision: 0, hash: '', interaction_id: '', immediate: false, base: latest.base, candidate: goalCandidate })
+  expect(goalChange.ok(), await goalChange.text()).toBe(true)
+  await expect(panel.getByRole('table')).toContainText('独立给出三个偶数并解释')
+  expect((await fixture.call('GET', path)).management.details.completion_criteria).not.toBe('独立给出三个偶数并解释')
+  await panel.getByRole('button', { name: '采用新的目标范围和完成标准' }).click()
+  await expect.poll(async () => (await fixture.call('GET', path)).management.details.completion_criteria).toBe('独立给出三个偶数并解释')
+  expect(errors).toEqual([])
 })
 
 test('选段模型加工、答案保留、Studio、来源、固定与补偿版本', async ({

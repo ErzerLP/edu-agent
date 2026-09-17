@@ -375,6 +375,14 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 		return false, 0, 0, &ProtocolError{Category: "request_creation_failed"}
 	}
 	request.Header.Set("Accept", "application/json")
+	if strings.HasPrefix(path, "/v1/learning/goals/") && strings.Contains(path, "/changes") {
+		request.Header.Set("X-Learning-Change-Version", "1")
+		space := c.learningSpace
+		if space == "" {
+			space = DefaultLearningSpaceID
+		}
+		request.Header.Set("X-Learning-Space-ID", space)
+	}
 	if c.knowledgeCollection != "" && strings.HasPrefix(path, "/v1/knowledge/") {
 		request.Header.Set("X-Knowledge-Collection-ID", c.knowledgeCollection)
 	}

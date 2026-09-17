@@ -256,7 +256,7 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 			}
 			starting = old.Context.GoalRevisionID != session.Context.GoalRevisionID
 		}
-		if starting && session.Context.GoalRevisionID != "" {
+		if starting && session.Context.GoalRevisionID != "" && !request.Batch.ResumeFrame {
 			if err := s.checkGoalStartWith(ctx, tx, session.Context.GoalRevisionID); err != nil {
 				return learning.OperationResult{}, err
 			}

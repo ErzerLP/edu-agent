@@ -255,6 +255,25 @@ func (s *Store) Commit(ctx context.Context, actor identity.Credential, id string
 		return Revision{}, err
 	}
 	defer tx.Rollback(context.Background())
+	r, err := s.CommitTx(ctx, tx, actor, id, c, g)
+	if err != nil {
+		return r, err
+	}
+	return r, tx.Commit(ctx)
+}
+
+// CommitTx 在教学变更的外层事务内提交正文，权限与代次仍由正文 owner 重验。
+func (s *Store) CommitTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, id string, c Commit, g int64) (Revision, error) {
+	if c.ProtocolVersion != Protocol || uuid.Validate(id) != nil || uuid.Validate(c.OperationID) != nil || c.ExpectedVersion < 1 {
+		return Revision{}, ErrInvalid
+	}
+	actual, err := gates(ctx, tx, actor, true)
+	if err != nil {
+		return Revision{}, err
+	}
+	if actual != g {
+		return Revision{}, ErrConflict
+	}
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "learningcontent-operation:"+actor.Device.ID+":"+c.OperationID); err != nil {
 		return Revision{}, err
 	}
@@ -269,7 +288,7 @@ func (s *Store) Commit(ctx context.Context, actor identity.Credential, id string
 		if e != nil {
 			return r, e
 		}
-		return r, tx.Commit(ctx)
+		return r, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, err
@@ -321,7 +340,12 @@ func (s *Store) Commit(ctx context.Context, actor identity.Credential, id string
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_content_operations(device_id,operation_id,artifact_id,version,request_hash) VALUES($1,$2,$3,$4,decode($5,'hex'))`, actor.Device.ID, c.OperationID, id, r.Version, fingerprint(c)); err != nil {
 		return Revision{}, err
 	}
-	return r, tx.Commit(ctx)
+	return r, nil
+}
+
+// GetTx 与变更的基础版本快照共享事务，避免跨事务读取内容指针。
+func (s *Store) GetTx(ctx context.Context, tx pgx.Tx, id string, generation int64) (Revision, error) {
+	return s.read(ctx, tx, id, 0, generation, true)
 }
 
 type answerGuardKey struct{}

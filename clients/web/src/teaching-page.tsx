@@ -28,6 +28,7 @@ import { Button } from './components/ui/button'
 import { ErrorState, Pagination } from './components/common'
 import { ContentBlocks, SafeMarkdown, SourceViewer } from './components/content-blocks'
 import { MentorPanel } from './components/mentor-panel'
+import { ChangePanel } from './components/change-panel'
 import { knowledgeContextSchema } from './api/start'
 import { ContentEditor, useContentSelection } from './components/content-editor'
 import { ContentTools } from './components/content-tools'
@@ -261,6 +262,10 @@ function TeachingWorkspace({
     })
   }
   const [contentError, setContentError] = useState<unknown>()
+  const [contentRefresh, setContentRefresh] = useState(0)
+  const answerInput = useRef<HTMLTextAreaElement>(null)
+  const learningColumn = useRef<HTMLDivElement>(null)
+  const restoreFocusRequested = useRef('')
   const mounted = useRef(true)
   const currentDraft = useRef({ answerKey, answer, chat })
   currentDraft.current = { answerKey, answer, chat }
@@ -349,7 +354,14 @@ function TeachingWorkspace({
       active = false
       controller.abort()
     }
-  }, [activity?.activity_id, activity?.revision, capabilities.data, view.session.aggregate_version])
+  }, [activity?.activity_id, activity?.revision, capabilities.data, view.session.aggregate_version, contentRefresh])
+  useEffect(() => {
+    if (restoreFocusRequested.current && content?.activity_id === restoreFocusRequested.current && content.activity_id === activity?.activity_id) {
+      const target = answerInput.current && !answerInput.current.disabled ? answerInput.current : learningColumn.current
+      target?.focus()
+      restoreFocusRequested.current = ''
+    }
+  }, [content, activity?.activity_id])
   const write = (value: string, level = help) => {
     setAnswer(value)
     setHelp(level)
@@ -642,7 +654,7 @@ function TeachingWorkspace({
             />
           </label>
         </aside>
-        <div className="learning-column panel" aria-label="当前学习">
+        <div className="learning-column panel" aria-label="当前学习" ref={learningColumn} tabIndex={-1}>
           {content ? (
             <>
               <div className="content-meta">
@@ -742,6 +754,7 @@ function TeachingWorkspace({
                   <label>
                     我的正式答案
                     <textarea
+                      ref={answerInput}
                       rows={6}
                       maxLength={262144}
                       value={answer}
@@ -1031,10 +1044,11 @@ function TeachingWorkspace({
           {goal.data && (
             <details>
               <summary>目标内持续交流</summary>
-              <p className="hint">这里的流式输出是交流草稿，不会变成可提交活动。</p>
-              <MentorPanel goal={goal.data} archivedSpace={archived} />
+              <p className="hint">导师调用正式变更服务后，具体差异和生效状态显示在下方。</p>
+              <MentorPanel key={sessionId} goal={goal.data} archivedSpace={archived} teachingSessionId={sessionId} />
             </details>
           )}
+          {goal.data && <ChangePanel key={`${spaceId}:${sessionId}`} goal={goal.data} teachingSessionId={sessionId} archived={archived} onChanged={() => setContentRefresh((v) => v + 1)} onRestore={(activityId) => { restoreFocusRequested.current = activityId }} />}
           <label className="column-size">
             导师栏宽度
             <input

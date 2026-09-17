@@ -56,6 +56,12 @@ TEST_DATABASE_URL='独立测试数据库 URL' npm run test:browser
 
 ## 版本化教学工作区
 
+课堂中的导师可调用正式教学变更服务。“路径与教学变更”显示依据、旧新差异、影响和生效时点；
+默认同目标调整在本题处理后接入，谨慎模式先预览。目标范围与完成标准始终需要具体确认。
+明确立即切换会保留原题和按活动隔离的内存草稿，可返回原现场；补偿撤回生成新版本而不删除答案或证据。
+该能力使用独立 `X-Learning-Change-Version: 1` 协议，需配置既有正文加密密钥；
+新协议与旧教学 DTO 分离。详见 [教学变更设计](../../docs/design/adaptive-learning-changes.md)。
+
 在目标详情的“继续学习”选择旧会话，或明确新建教学会话。地址为 `/app/spaces/:spaceId/learn/:sessionId`；始终读取 URL 中的原会话，不使用全局 current。来源栏显示真实路线范围和活动冻结的正规资料，不虚构掌握度。阅读活动无需正式答案；文本/单选答案走独立控件，Ctrl+Enter 或按钮提交。聊天使用 Enter/Shift+Enter，IME 组合态不会发送；可请求提示、分步引导和答案讲解，再返回原学习焦点。帮助等级按实际获得的帮助提交，刷新后需重新确认。
 
 版本正文页面 `/app/content/:artifactId?space=:spaceId&version=:version` 支持独立阅读与内容加工，正式作答仍返回原教学会话；`/content/:artifactId` 是同源短链接入口。链接只含身份和版本，可用 `#block-:blockId` 定位稳定内容块。旧正规 Activity 确定性适配为首个正式版本，不改变旧 ID、事件或 rubric。内容版本只能追加，主学习页读取当前正式版，历史页展示最近 100 个版本，任意旧版仍可按版本号读取。新协议通过 capabilities 和 `X-Learning-Content-Version: 1` 协商；旧 CLI 继续使用原有严格 DTO 和字符串答案。

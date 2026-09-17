@@ -21,6 +21,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
@@ -147,6 +148,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	LearningChanges         *learningchange.Service
 	LearningContent         *learningcontent.Store
 	MentorRuns              *mentorrun.Service
 	MentorHeartbeat         time.Duration
@@ -185,6 +187,7 @@ type Options struct {
 
 type API struct {
 	learningContent         *learningcontent.Store
+	learningChanges         *learningchange.Service
 	mentorRuns              *mentorrun.Service
 	mentorHeartbeat         time.Duration
 	mentorWriteTimeout      time.Duration
@@ -270,6 +273,7 @@ func New(options Options) (http.Handler, error) {
 	}
 	api := &API{
 		learningContent: options.LearningContent,
+		learningChanges: options.LearningChanges,
 		mentorRuns:      options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
 		settings:       options.Settings,
 		learningSpaces: options.LearningSpaces,
@@ -314,6 +318,7 @@ func New(options Options) (http.Handler, error) {
 		protected.Use(api.resolveLearningSpace)
 		api.mountMentorRuns(protected)
 		api.mountLearningContent(protected)
+		api.mountLearningChanges(protected)
 		api.mountLearningSpaces(protected)
 		api.mountSettings(protected)
 		api.mountPlanning(protected)

@@ -272,6 +272,15 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 				return OperationResult{}, &Error{Code: CodeStaleProposal, Reason: "route_goal_changed"}
 			}
 			routeID, revision = current.RouteID, current.Revision+1
+			// 返回保存的旧现场后，当前指针不一定是该路线的最新历史版本。
+			if history, ok := s.authority.(interface {
+				NextRouteRevision(context.Context, string) (int64, error)
+			}); ok {
+				revision, err = history.NextRouteRevision(ctx, routeID)
+				if err != nil {
+					return OperationResult{}, err
+				}
+			}
 		}
 		route := RouteRevision{ID: s.newUUID(), RouteID: routeID, Revision: revision, GoalRevisionID: session.Context.GoalRevisionID, KnowledgeRevisionID: proposal.KnowledgeRevisionID, PolicyVersion: RoutePolicyVersion, SourceProposalID: proposal.ID, CreatedAt: now}
 		batch.Authority.RouteSteps = make(map[string]KnowledgeOwner, len(proposal.Route))
@@ -574,7 +583,7 @@ func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, c
 	case tutoring.ActionResumeFocus:
 		batch.ResumeFrame = true
 	case tutoring.ActionEndActivity, tutoring.ActionCompleteSession:
-		batch.InvalidateFrame = true
+		batch.InvalidateFrame = !tutoring.HasAdaptiveFocus(session)
 	case tutoring.ActionStartDiagnostic:
 	default:
 		return OperationResult{}, &Error{Code: CodeInvalidRequest}

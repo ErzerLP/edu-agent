@@ -20,6 +20,7 @@ import (
 	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	spacepostgres "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
@@ -104,6 +105,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	mentorRuns.ConfigureStart(&learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore})
 	contentStore.ConfigureReferences(stores.knowledge)
 	stores.learning.ConfigureContent(contentStore)
+	changes, err := learningchange.New(pool, stores.learning, stores.knowledge, contentStore, mentorKey)
+	if err != nil {
+		return err
+	}
+	mentorRuns.ConfigureChanges(changes)
 	cfg.Model.Enabled = modelClient != nil
 	cfg.Model.Name = settingsView.Teaching.Model
 	cfg.Model.ContextWindow = settingsView.Limits.ContextTokens
@@ -143,6 +149,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	runtimeWorkers := append([]workerSpec(nil), bridge.workers...)
 	runtimeWorkers = append(runtimeWorkers, periodicWorker("mentor-cleanup", time.Second, 1, mentorRuns.Sweep))
+	runtimeWorkers = append(runtimeWorkers, periodicWorker("learning-changes", time.Second, 1, changes.RunOnce))
 	for index := 0; index < settingsView.Limits.Concurrency; index++ {
 		runtimeWorkers = append(runtimeWorkers, periodicWorker(fmt.Sprintf("mentor-%d", index), 500*time.Millisecond, 1, mentorRuns.RunOnce))
 	}
@@ -179,6 +186,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
 		LearningContent: contentStore,
+		LearningChanges: changes,
 		MentorRuns:      mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool),

@@ -1,5 +1,9 @@
 # edu-agent Go CLI
 
+`goal changes --id 目标ID --space 学习区ID [--json]` 读取教学变更状态与差异；
+可附加 `--change 变更ID --revision 修订号` 查询不可变候选历史。批准、排队、应用和失效分别显示，
+查询不会自动批准或执行变更，旧教学接口不增加状态枚举。
+
 `clients/cli-go` is an independent Go module for the online `edu-agent` client. It uses only the public HTTP/OpenAPI boundary and does not import server internals.
 
 可恢复大批导入使用 `knowledge import jobs`：`new` 自动扫描并分段上传，`list/show` 找回原任务，`resume` 校验原来源后续传，`preview/confirm/continue --all` 按完整计划逐批发布，`cancel` 保留已入库结果并清理暂存。所有入口明确指定 `--space` 和 `--collection`；`new` 可用 `--id` 保留创建身份，列表可用 `--cursor` 翻页。TUI使用 `jobs browse --collection UUID`，也可从原导入向导来源页按F7进入本集合任务页，复用来源扫描和身份审阅组件。任务最多128 MiB/1000篇，有效24小时，单文件和请求上限不变；详情见[任务恢复与留存契约](../../docs/design/import-jobs.md)。

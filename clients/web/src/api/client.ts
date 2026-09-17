@@ -1,5 +1,6 @@
 import createClient from 'openapi-fetch'
 import type { paths } from './schema'
+import type { ChangePaths } from './changes'
 import { z } from 'zod'
 import { sessionSchema, type Session } from './runtime'
 
@@ -46,7 +47,7 @@ export const readSession = () => unwrap(publicClient.GET('/v1/web/session'), ses
 
 export function learningClient(session: Session, spaceId?: string) {
   if (session.server_id !== window.location.origin) throw new ApiError(502, 'invalid_response')
-  const client = createClient<paths>({
+  const client = createClient<paths & ChangePaths>({
     baseUrl: session.server_id,
     credentials: 'same-origin',
     cache: 'no-store',

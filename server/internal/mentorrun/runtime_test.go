@@ -106,6 +106,7 @@ func runtimePool(t *testing.T) *pgxpool.Pool {
 type runtimeFixture struct {
 	modelOverride func(http.ResponseWriter, *http.Request)
 	modelHook     func(int)
+	modelReply    func(http.ResponseWriter, *http.Request, int) bool
 	searchCalls   *atomic.Int32
 	pool          *pgxpool.Pool
 	service       *Service
@@ -123,6 +124,9 @@ func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)
 		call := int(f.calls.Add(1))
 		if f.modelHook != nil {
 			f.modelHook(call)
+		}
+		if f.modelReply != nil && f.modelReply(w, r, call) {
+			return
 		}
 		if f.modelOverride != nil {
 			f.modelOverride(w, r)

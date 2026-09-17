@@ -6,6 +6,98 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/changes/capabilities:
+    get:
+      operationId: learningChangeCapabilities
+      summary: 协商教学变更能力
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { type: object, required: [protocol_version, available, modes], properties: { protocol_version: { type: integer, const: 1 }, available: { type: boolean }, modes: { type: array, items: { type: string } } } } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/changes:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ChangeProtocol" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listLearningChanges
+      summary: 最近一百项变更时间线，包含排队和失效差异
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: "#/components/schemas/LearningChange" } } } } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/changes/{changeID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ChangeProtocol" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: changeID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getLearningChange
+      summary: 读取当前状态或不可变候选修订
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: revision, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { $ref: "#/components/schemas/LearningChange" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: commandLearningChange
+      summary: 提出、审阅、批准、取消、补偿或返回原题；批准绑定修订、hash 和交互
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LearningChangeCommand" }
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { $ref: "#/components/schemas/LearningChange" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/change-context:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ChangeProtocol" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: learningChangeContext
+      summary: 读取明确教学会话的基础版本、路线、来源及正式证据
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: session_id, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { $ref: "#/components/schemas/LearningChangeContext" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/goals/{goalID}/adaptive-mode:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ChangeProtocol" }
+      - { name: goalID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getAdaptiveMode
+      summary: 读取目标的教学调整模式
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { $ref: "#/components/schemas/AdaptiveMode" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: setAdaptiveMode
+      summary: 显式切换模式，version 为期望版本；旧候选不因此获批
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdaptiveMode" }
+      responses:
+        "200": { description: 正式变更状态, content: { application/json: { schema: { $ref: "#/components/schemas/AdaptiveMode" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/content:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -491,6 +583,7 @@ paths:
                 token_budget: { type: integer, minimum: 1, maximum: 10000000 }
                 research: { $ref: "#/components/schemas/ResearchRequest" }
                 start_learning: { $ref: "#/components/schemas/StartLearningRequest" }
+                teaching_session_id: { type: string, format: uuid, description: 可选显式教学现场，只有绑定后才提供教学变更工具 }
                 content_edit: { $ref: "#/components/schemas/ContentEditRequest" }
       responses:
         "202": { description: 已受理或返回原操作结果，Location 指向运行快照, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
@@ -3254,6 +3347,11 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    ChangeProtocol:
+      name: X-Learning-Change-Version
+      in: header
+      required: true
+      schema: { type: string, const: "1" }
     MentorSpaceID:
       name: X-Learning-Space-ID
       in: header
@@ -3634,6 +3732,114 @@ components:
             artifact_id: { type: string, format: uuid }
             artifact_version: { type: integer, minimum: 1 }
             knowledge_context: { $ref: "#/components/schemas/KnowledgeContextRevision" }
+    AdaptiveMode:
+      type: object
+      additionalProperties: false
+      required: [mode, version]
+      properties:
+        mode: { type: string, enum: [adaptive, cautious] }
+        version: { type: integer, minimum: 0 }
+    ChangeBase:
+      type: object
+      additionalProperties: false
+      required: [goal_version, goal_revision_id, session_version, route_revision_id, context_id, activity_id, artifact_id, artifact_version]
+      properties:
+        goal_version: { type: integer, minimum: 1 }
+        goal_revision_id: { type: string, format: uuid }
+        session_version: { type: integer, minimum: 1 }
+        route_revision_id: { type: string }
+        context_id: { type: string }
+        activity_id: { type: string }
+        artifact_id: { type: string }
+        artifact_version: { type: integer, minimum: 0 }
+    ChangeStep:
+      type: object
+      additionalProperties: false
+      required: [node_revision_id, name, criterion, prompt, difficulty, prerequisites]
+      properties:
+        node_revision_id: { type: string, format: uuid }
+        name: { type: string }
+        criterion: { type: string }
+        prompt: { type: string }
+        difficulty: { type: integer, minimum: 1, maximum: 5 }
+        prerequisites: { type: array, items: { type: integer, minimum: 0 } }
+    ChangeCandidate:
+      type: object
+      additionalProperties: false
+      required: [kind, trigger, reason, evidence_ids, context_id, steps, explanation]
+      properties:
+        kind: { type: string, enum: [explanation, route, goal] }
+        trigger: { type: string, enum: [user_request, activity_feedback, authorized_source, goal_constraint] }
+        reason: { type: string }
+        evidence_ids: { type: array, items: { type: string, format: uuid } }
+        context_id: { type: string }
+        steps: { type: array, items: { $ref: "#/components/schemas/ChangeStep" } }
+        goal: { $ref: "#/components/schemas/GoalDetails" }
+        explanation: { type: string }
+    ChangeDiff:
+      type: object
+      additionalProperties: false
+      required: [before_steps, after_steps, before_goal, after_goal, before_content, after_content]
+      properties:
+        before_steps: { type: array, items: { $ref: "#/components/schemas/ChangeStep" } }
+        after_steps: { type: array, items: { $ref: "#/components/schemas/ChangeStep" } }
+        before_goal: { $ref: "#/components/schemas/GoalDetails" }
+        after_goal: { $ref: "#/components/schemas/GoalDetails" }
+        before_content: { type: array, items: { $ref: "#/components/schemas/ContentBlock" } }
+        after_content: { type: array, items: { $ref: "#/components/schemas/ContentBlock" } }
+    LearningChange:
+      type: object
+      additionalProperties: false
+      required: [id, learning_space_id, goal_id, session_id, revision, hash, interaction_id, status, risk, policy, status_reason, base, candidate, diff, impact, frame_id, restored, created_at, privacy_generation]
+      properties:
+        id: { type: string, format: uuid }
+        learning_space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        session_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        hash: { type: string, minLength: 64, maxLength: 64 }
+        interaction_id: { type: string, format: uuid }
+        status: { type: string, enum: [proposed, waiting_approval, approved, queued_for_boundary, applied, stale, rejected, cancelled, needs_sources] }
+        risk: { type: string, enum: [presentation, route, goal_scope] }
+        policy: { type: string, enum: [direct, boundary, approval] }
+        status_reason: { type: string }
+        base: { $ref: "#/components/schemas/ChangeBase" }
+        candidate: { $ref: "#/components/schemas/ChangeCandidate" }
+        diff: { $ref: "#/components/schemas/ChangeDiff" }
+        applied: { $ref: "#/components/schemas/ChangeBase" }
+        compensates: { type: string, format: uuid }
+        impact: { type: string }
+        frame_id: { type: string }
+        restored: { type: boolean }
+        created_at: { type: string, format: date-time }
+        privacy_generation: { type: integer, minimum: 1 }
+    LearningChangeCommand:
+      type: object
+      additionalProperties: false
+      required: [session_id, operation_id, action, expected_revision, hash, interaction_id, immediate]
+      properties:
+        session_id: { type: string, format: uuid }
+        operation_id: { type: string, format: uuid }
+        action: { type: string, enum: [propose, revise, approve, apply_now, reject, cancel, compensate, restore_focus] }
+        expected_revision: { type: integer, minimum: 0 }
+        hash: { type: string }
+        interaction_id: { type: string }
+        immediate: { type: boolean, const: false, description: 立即切换只能通过显式 apply_now 动作 }
+        base: { $ref: "#/components/schemas/ChangeBase" }
+        candidate: { $ref: "#/components/schemas/ChangeCandidate" }
+    LearningChangeContext:
+      type: object
+      additionalProperties: false
+      required: [base, goal, session, steps, sources, evidence, mode]
+      properties:
+        base: { $ref: "#/components/schemas/ChangeBase" }
+        goal: { $ref: "#/components/schemas/GoalRevision" }
+        session: { $ref: "#/components/schemas/TutoringSession" }
+        steps: { type: array, items: { $ref: "#/components/schemas/ChangeStep" } }
+        content: { $ref: "#/components/schemas/ContentRevision" }
+        sources: { type: array, items: { $ref: "#/components/schemas/KnowledgeReference" } }
+        evidence: { type: array, items: { $ref: "#/components/schemas/AcceptedEvidence" } }
+        mode: { $ref: "#/components/schemas/AdaptiveMode" }
     ContentSelection:
       type: object
       additionalProperties: false
@@ -3852,6 +4058,7 @@ components:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
+        teaching_session_id: { type: string, format: uuid }
         kind: { type: string, enum: [mentor, research, start_learning, content_edit] }
         content_edit: { $ref: "#/components/schemas/ContentEditState" }
         start_learning: { $ref: "#/components/schemas/StartLearningState" }

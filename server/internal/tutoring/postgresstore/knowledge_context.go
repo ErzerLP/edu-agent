@@ -32,3 +32,15 @@ func (s *Store) BindKnowledgeContextWith(ctx context.Context, db DBTX, id, goalR
 	}
 	return nil
 }
+
+// ChangeKnowledgeContextWith 仅在学习 owner 已校验正式目标和资料版本后替换现场指针。
+func (s *Store) ChangeKnowledgeContextWith(ctx context.Context, db DBTX, id, goalRevision, scope string, contextID *string) error {
+	tag, err := db.Exec(ctx, `UPDATE tutoring_sessions SET knowledge_context_revision_id=$4 WHERE id=$1 AND goal_revision_id=$2 AND knowledge_revision_id=$3`, id, goalRevision, scope, contextID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotFound
+	}
+	return nil
+}

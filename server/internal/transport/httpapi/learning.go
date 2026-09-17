@@ -491,6 +491,12 @@ func (a *API) handleLearningAction(w http.ResponseWriter, r *http.Request) {
 		a.writeLearningFailure(w, r, "session_action", err)
 		return
 	}
+	if a.learningChanges.Available() {
+		// 原教学回执已经提交；队列失败由后台重试，不将成功答案改报失败。
+		if flushErr := a.learningChanges.FlushSession(r.Context(), sessionID); flushErr != nil {
+			a.logger.Error("接入教学变更队列失败", "error", flushErr)
+		}
+	}
 	writeLearningResult(w, result)
 }
 

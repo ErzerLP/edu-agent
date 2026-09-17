@@ -215,8 +215,9 @@ func (a *API) webPair(w http.ResponseWriter, r *http.Request) {
 func (a *API) writeWebSession(w http.ResponseWriter, r *http.Request, status int, cookie string, p identity.WebPrincipal) {
 	goals, ok := a.learning.(goalManagementService)
 	save := ok && goals.SupportsGoalManagement() && access.ContainsScope(p.Credential.Scopes, "learning:write")
+	_, imports := a.knowledge.(importJobService)
 	writeJSON(w, status, map[string]any{"device": p.Device, "generation": p.Generation, "expires_at": p.ExpiresAt, "csrf_token": webCSRF(cookie), "server_id": a.webUI.PublicBaseURL.Scheme + "://" + a.webUI.PublicBaseURL.Host,
-		"capabilities": map[string]any{"spaces": a.learningSpaces != nil, "goals": ok && goals.SupportsGoalManagement(), "save_goal": save, "start_learning": a.learning != nil && a.learningContent.Available() && save, "references": a.knowledge != nil && access.ContainsScope(p.Credential.Scopes, "references:manage")}})
+		"capabilities": map[string]any{"spaces": a.learningSpaces != nil, "goals": ok && goals.SupportsGoalManagement(), "save_goal": save, "start_learning": a.learning != nil && a.learningContent.Available() && save, "references": a.knowledge != nil && access.ContainsScope(p.Credential.Scopes, "references:manage"), "runs": a.mentorRuns != nil, "import_jobs": imports}})
 }
 
 func (a *API) webSession(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +266,7 @@ func (a *API) webAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	name := strings.TrimPrefix(r.URL.Path, "/app/")
 	// 仅页面地址回退；不存在的资源、API 和扩展名请求保留 404。
-	if name == "" || name == "settings" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/")) && !strings.Contains(name, ".")) {
+	if name == "" || name == "settings" || name == "runs" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/") || strings.HasPrefix(name, "runs/")) && !strings.Contains(name, ".")) {
 		name = "index.html"
 	}
 	if !fs.ValidPath(name) || path.Clean(name) != name {

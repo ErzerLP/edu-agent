@@ -13,6 +13,74 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type ListQuery struct {
+	Kind, Status, Cursor string
+	Limit                int
+}
+
+type Page struct {
+	Items      []Snapshot `json:"items"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+}
+
+// ReadList 直接读取原 owner 的元数据；不解密正文，也不建立第二份任务状态。
+func (s *Service) ReadList(ctx context.Context, actor identity.Credential, space string, q ListQuery, send func(Page) error) error {
+	if !validID(space) || q.Cursor != "" && !validID(q.Cursor) || q.Limit < 1 || q.Limit > 100 {
+		return ErrInvalid
+	}
+	switch q.Kind {
+	case "", "mentor", "research", "start_learning", "content_edit":
+	default:
+		return ErrInvalid
+	}
+	switch q.Status {
+	case "", "queued", "running", "waiting_input", "waiting_approval", "paused_budget", "succeeded", "partial", "failed", "cancelling", "cancelled":
+	default:
+		return ErrInvalid
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.Background())
+	generation, err := gates(ctx, tx, false)
+	if err != nil {
+		return err
+	}
+	if err = actorGate(ctx, tx, actor.Device.ID, actor.TokenID, false); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT state FROM learning_mentor_runs
+		WHERE device_id=$1 AND space_id=$2 AND privacy_generation=$3
+		AND ($4='' OR COALESCE(state->>'kind','mentor')=$4) AND ($5='' OR state->>'status'=$5)
+		AND ($6='' OR id>NULLIF($6,'')::uuid) ORDER BY id LIMIT $7`,
+		actor.Device.ID, space, generation, q.Kind, q.Status, q.Cursor, q.Limit+1)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	page := Page{Items: []Snapshot{}}
+	for rows.Next() {
+		var raw []byte
+		var meta Meta
+		if err = rows.Scan(&raw); err != nil {
+			return err
+		}
+		if json.Unmarshal(raw, &meta) != nil {
+			return ErrStorage
+		}
+		page.Items = append(page.Items, Snapshot{Meta: meta})
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	if len(page.Items) > q.Limit {
+		page.Items = page.Items[:q.Limit]
+		page.NextCursor = page.Items[q.Limit-1].RunID
+	}
+	return send(page)
+}
+
 // ReadSources 在运行副本到期或清除后仍能显示 knowledge 中获准保留的历史来源。
 func (s *Service) ReadSources(ctx context.Context, actor identity.Credential, space, id string, send func([]research.Source) error) error {
 	return s.read(ctx, actor, space, id, func(tx pgx.Tx, item row) error {

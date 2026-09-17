@@ -10,6 +10,7 @@ let child
 let restarting = false
 const settingsFile = join(mkdtempSync(join(tmpdir(), 'edu-web-settings-test-')), 'settings.json')
 const mentorKeyFile = join(mkdtempSync(join(tmpdir(), 'edu-web-key-test-')), 'mentor.key')
+const importStaging = mkdtempSync(join(tmpdir(), 'edu-web-import-test-'))
 writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
 if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
   let calls = 0
@@ -145,6 +146,7 @@ function start() {
       ADMIN_UI_ENABLED: 'false',
       LEARNING_SETTINGS_FILE: settingsFile,
       MENTOR_KEY_FILE: mentorKeyFile,
+      IMPORT_JOB_STAGING_DIR: importStaging,
       MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1"]',
       DEVICE_RATE_LIMIT_PER_MINUTE: '10000',
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',

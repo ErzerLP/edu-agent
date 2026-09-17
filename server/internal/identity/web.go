@@ -28,10 +28,14 @@ type WebStore interface {
 	DeleteWebSession(context.Context, [32]byte) error
 }
 
-// WebScopes 仅为显式参考档案保留资料审批；普通档案不继承管理与审批权限。
+// WebScopes 仅显式导入或参考档案保留资料审批；普通档案不继承管理与通用审批权限。
 func WebScopes(scopes []string) []string {
 	result := []string{}
 	for _, scope := range scopes {
+		if hasScope(scopes, "imports:web") && (scope == "imports:web" || scope == "knowledge:write" || scope == "knowledge:approve") {
+			result = append(result, scope)
+			continue
+		}
 		if hasScope(scopes, "references:manage") && (scope == "references:manage" || scope == "knowledge:approve" || scope == "knowledge:write") {
 			result = append(result, scope)
 			continue

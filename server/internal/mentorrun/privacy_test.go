@@ -75,6 +75,9 @@ func TestPostgreSQLMentorPrivacyBarrierClearsSavedAndInFlightTemporary(t *testin
 	if err = f.service.ReadSnapshot(ctx, f.actor, learningspace.DefaultID, current.RunID, func(Snapshot) error { t.Error("清除屏障后仍发送旧正文"); return nil }); err == nil {
 		t.Fatal("隐私屏障未关闭读取")
 	}
+	if err = f.service.ReadList(ctx, f.actor, learningspace.DefaultID, ListQuery{Limit: 20}, func(Page) error { t.Error("隐私屏障后仍发送任务列表"); return nil }); err == nil {
+		t.Fatal("隐私屏障未关闭任务列表")
+	}
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

@@ -6,6 +6,8 @@
 
 浏览器学习入口为 `/app/`，提供真实学习区、目标保存/编辑/历史/生命周期与设置页，无模型、搜索或资料也能保存目标。先 `make server-build`，再启用 `WEB_UI_ENABLED=true`；loopback HTTP 开发需额外设置 `WEB_UI_ALLOW_LOOPBACK_HTTP=true`。使用本机配对码登录，学习身份与管理身份独立。详见 [Web 构建、配对、HTTPS 部署与隐私说明](clients/web/README.md)。
 
+`/app/runs` 提供原设备的研究、内容和导入任务导航；资料导入按完整清单分段传输，刷新后先核对原任务。浏览器发布需显式 `import` 配对档案，旧身份不自动增权。见 [可恢复导入使用说明](clients/web/README.md#可恢复导入与任务中心)及 [Issue #28 验收记录](docs/development/issue-28-acceptance.md)。
+
 首页“开始学习”在明确授权搜索、模型准备与资料采纳后，可从空知识库直接准备有真实来源支持的首项活动，无需手工上传或冻结范围；“仅保存目标”仍没有模型与教学副作用。开学按目标保存运行，支持预算暂停和失败恢复，知识更新不改写旧题与目标标准。需要研究配对权限、搜索/Web 导师配置及 `MENTOR_KEY_FILE`，见[空资料开学说明](clients/web/README.md#空资料开学)。
 
 设置页支持独立教学模型、Web 导师、Brave 搜索及预算配置，专门的 `settings` 配对档案才能保存和显式测试连接。Key 仅进入服务器受保护文件；模型端点由操作者精确授权，CLI 配置不迁移。目标详情提供有预算、可停止和可恢复的目标内导师交流，以及独立的目标研究与来源页；它们不自动开学、改目标或写掌握度。能力查询不发外部请求。教学配置保存后需重启应用。详见[模型、搜索、授权与秘密生命周期](clients/web/README.md#模型搜索与预算设置)、[导师保存与恢复语义](clients/web/README.md#目标内导师运行)和[目标研究及当前验收状态](docs/development/issue-22-acceptance.md)。

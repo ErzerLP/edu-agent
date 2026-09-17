@@ -173,7 +173,7 @@ func TestPostgreSQLWebHTTPIdentityAndRealGoals(t *testing.T) {
 		}
 	}
 	pair()
-	for _, path := range []string{"/app/", "/app/spaces/" + space.DefaultID, "/app/settings", "/app/assets/main.js"} {
+	for _, path := range []string{"/app/", "/app/spaces/" + space.DefaultID, "/app/settings", "/app/runs", "/app/runs/import/" + uuid.NewString(), "/app/runs/run/" + uuid.NewString(), "/app/assets/main.js"} {
 		status, _, _ := request("GET", path, "", nil, nil)
 		if status != 200 {
 			t.Fatalf("学习入口不存在 %s: %d", path, status)

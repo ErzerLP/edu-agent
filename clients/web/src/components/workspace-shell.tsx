@@ -80,6 +80,12 @@ export function WorkspaceShell() {
           <Link to="/">学习目标</Link>
           <Link to="/spaces/$spaceId/knowledge" params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }} search={{ goal: undefined, session: undefined }}>知识与参考</Link>
           <Link
+            to="/runs"
+            search={{ space: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}
+          >
+            任务中心
+          </Link>
+          <Link
             to="/spaces/$spaceId/studio"
             params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}
           >

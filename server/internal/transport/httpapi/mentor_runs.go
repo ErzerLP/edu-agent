@@ -16,6 +16,9 @@ import (
 )
 
 func mentorPath(path string) bool {
+	if path == "/v1/learning/runs" {
+		return true
+	}
 	return strings.HasPrefix(path, "/v1/learning/runs/") || strings.HasPrefix(path, "/v1/learning/operations/") || strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research") || strings.HasSuffix(path, "/start") || strings.HasSuffix(path, "/content-edits"))
 }
 
@@ -24,6 +27,7 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	if a.mentorRuns == nil {
 		return
 	}
+	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs", a.mentorList)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/goals/{goalID}/runs", a.mentorCreate)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/runs", a.mentorCurrent)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}", a.mentorSnapshot)
@@ -92,6 +96,30 @@ func (a *API) mentorCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", "/v1/learning/runs/"+receipt.RunID)
 	writeJSON(w, 202, receipt)
+}
+
+func (a *API) mentorList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := 20
+	if q.Has("limit") {
+		var err error
+		limit, err = strconv.Atoi(q.Get("limit"))
+		if err != nil {
+			mentorFailure(w, r, mentorrun.ErrInvalid)
+			return
+		}
+	}
+	actor, _ := credentialFromContext(r.Context())
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
+	started := false
+	err := a.mentorRuns.ReadList(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.ListQuery{Kind: q.Get("task_kind"), Status: q.Get("status"), Cursor: q.Get("cursor"), Limit: limit}, func(page mentorrun.Page) error {
+		started = true
+		writeJSON(w, 200, page)
+		return http.NewResponseController(w).Flush()
+	})
+	if err != nil && !started {
+		mentorFailure(w, r, err)
+	}
 }
 
 func (a *API) mentorCurrent(w http.ResponseWriter, r *http.Request) {

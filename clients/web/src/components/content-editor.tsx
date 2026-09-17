@@ -93,7 +93,7 @@ export function ContentEditor({
   const [tokens, setTokens] = useState(30000)
   const [save, setSave] = useState(false)
   const [requests, setRequests] = useState(1)
-  const sessionId = useRef(crypto.randomUUID())
+  const sessionId = useRef<string>(crypto.randomUUID())
   const mounted = useRef(true)
   const delivered = useRef('')
   const callback = useRef(onUpdate)

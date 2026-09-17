@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+vi.hoisted(() => vi.stubGlobal('window', { location: { origin: 'http://localhost' } }))
 import { contentDiff, contentSelection } from './content'
 import type { Content, Block } from './teaching'
 

@@ -47,12 +47,17 @@ test('真实文件单批、结果未知核对、章节采用及移动端键盘',
   const collection = before.items.find((c: { name: string }) => c.name === name)
   expect(collection.head_revision_id).toBeNull()
   let operation = ''
+  let dropped!: () => void
+  const responseDropped = new Promise<void>(resolve => { dropped = resolve })
   await page.route('**/v1/knowledge/imports/confirm', async route => {
     operation = route.request().postDataJSON().request.operation_id
     await route.fetch()
     await route.abort('failed')
+    dropped()
   })
   await page.getByRole('button', { name: '确认正式导入这 2 项资料' }).click()
+  // 页面在发请求前就显示未知；必须等实际提交响应丢失后才能解除拦截。
+  await responseDropped
   await expect(page.getByText('提交结果未知。先核对原操作，当前草稿与操作编号已保留。')).toBeVisible()
   await page.unroute('**/v1/knowledge/imports/confirm')
   await page.getByRole('button', { name: '核对原操作结果', exact: true }).click()

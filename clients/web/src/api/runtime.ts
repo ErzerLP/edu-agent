@@ -14,6 +14,8 @@ export const sessionSchema = z.object({
     save_goal: z.boolean(),
     start_learning: z.boolean(),
     references: z.boolean(),
+    runs: z.boolean().default(false),
+    import_jobs: z.boolean().default(false),
   }),
 })
 export type Session = z.infer<typeof sessionSchema>

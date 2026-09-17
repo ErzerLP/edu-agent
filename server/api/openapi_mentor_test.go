@@ -30,7 +30,7 @@ func TestMentorRunContractMatchesSnapshotsAndRecoveryRoutes(t *testing.T) {
 			t.Fatalf("%s 与服务端响应不一致：%v", name, err)
 		}
 	}
-	for _, path := range []string{"/v1/learning/goals/{goalID}/runs", "/v1/learning/runs/{runID}", "/v1/learning/runs/{runID}/events", "/v1/learning/runs/{runID}/commands", "/v1/learning/operations/{operationID}"} {
+	for _, path := range []string{"/v1/learning/runs", "/v1/learning/goals/{goalID}/runs", "/v1/learning/runs/{runID}", "/v1/learning/runs/{runID}/events", "/v1/learning/runs/{runID}/commands", "/v1/learning/operations/{operationID}"} {
 		item := doc.Paths.Find(path)
 		if item == nil {
 			t.Fatalf("缺少正式运行接口：%s", path)

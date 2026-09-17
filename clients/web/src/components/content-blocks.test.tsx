@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+vi.hoisted(() => vi.stubGlobal('window', { location: { origin: 'http://localhost' } }))
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ContentBlocks, SafeMarkdown, safeLink, safeMath } from './content-blocks'
 

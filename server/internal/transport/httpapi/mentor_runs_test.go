@@ -165,6 +165,19 @@ func TestPostgreSQLMentorCookieHTTPAndSSERecovery(t *testing.T) {
 		t.Fatal("载荷冲突未拒绝")
 	}
 	runPath := "/v1/learning/runs/" + receipt.RunID
+	response, data = request("GET", "/v1/learning/runs?task_kind=mentor&status=queued&limit=1", space.ID, nil, nil)
+	var list mentorrun.Page
+	if json.Unmarshal(data, &list) != nil || response.StatusCode != 200 || len(list.Items) != 1 || list.Items[0].RunID != receipt.RunID || list.Items[0].Output != "" || response.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("非默认区原运行列表不正确：%d %s", response.StatusCode, data)
+	}
+	response, _ = request("GET", "/v1/learning/runs", "", nil, nil)
+	if response.StatusCode != 400 {
+		t.Fatal("列表允许猜测学习区")
+	}
+	response, data = request("GET", "/v1/learning/runs", learningspace.DefaultID, nil, nil)
+	if json.Unmarshal(data, &list) != nil || response.StatusCode != 200 || len(list.Items) != 0 {
+		t.Fatal("列表跨区泄漏")
+	}
 	response, data = request("GET", runPath, space.ID, nil, nil)
 	var snapshot mentorrun.Snapshot
 	json.Unmarshal(data, &snapshot)

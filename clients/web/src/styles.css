@@ -884,6 +884,33 @@ footer {
   margin-block: 16px;
 }
 
+.import-page, .main:has([aria-label="研究与内容运行"]), .main:has([aria-label="资料导入任务"]) {
+  overflow-wrap: anywhere;
+}
+.import-page pre, .main:has([aria-label="研究与内容运行"]) pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 32rem;
+  overflow-y: auto;
+}
+.import-page fieldset {
+  min-width: 0;
+}
+.import-row {
+  padding-block: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.import-row small {
+  display: block;
+}
+.task-actions {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--background, white);
+  padding-block: 0.75rem;
+  flex-wrap: wrap;
+}
 .reference-scroll {
   max-height: 28rem;
   overflow: auto;

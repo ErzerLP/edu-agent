@@ -511,6 +511,7 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
 }, testInfo) => {
   test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学及选段模型 fixture')
   test.setTimeout(180000)
+  page.setDefaultTimeout(15000)
   const fixture = await legacySession(request)
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code('settings'))
@@ -549,6 +550,7 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await page.getByRole('button', { name: '开始当前活动' }).click()
   const answer = page.getByLabel('我的正式答案')
@@ -570,13 +572,28 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await editor.getByRole('link', { name: '本段已更新 · 查看变化' }).click()
   await expect(page.getByRole('heading', { name: '学习内容 · 第 2 版' })).toBeVisible()
   await expect(page.getByLabel('本版变化')).toContainText('请用苹果说明这一段')
+  const contentURL = page.url()
+  await page.getByRole('link', { name: '任务中心', exact: true }).click()
+  await page.getByRole('combobox', { name: '任务类型', exact: true }).selectOption('content_edit')
+  await page.getByRole('combobox', { name: '运行状态', exact: true }).selectOption('succeeded')
+  await page.getByRole('link', { name: '查看原运行', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '内容生成与改写 · 已完成' })).toBeVisible()
+  await page.getByRole('link', { name: '查看正式内容版本 2', exact: true }).click()
+  await expect(page).toHaveURL(contentURL)
   await page.getByRole('button', { name: '收藏内容', exact: true }).click()
   await page.getByRole('button', { name: '固定当前阅读版本', exact: true }).click()
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出 Markdown', exact: true }).click()
   expect((await download).suggestedFilename()).toContain('-v2.md')
   await page.getByRole('button', { name: '查看原资料依据', exact: true }).first().click()
-  await expect(page.getByRole('dialog')).toContainText('偶数可以被 2 整除')
+  // 两份合法资料的检索顺序不固定，按真实出处核对对应正文。
+  const sourceDialog = page.getByRole('dialog')
+  await expect(sourceDialog).toContainText(/出处：(even|examples)\.md/)
+  await expect(sourceDialog).toContainText(
+    (await sourceDialog.textContent())?.includes('出处：even.md')
+      ? '偶数可以被 2 整除'
+      : '完成每一轮时检查问题与资料定位',
+  )
   await page.getByRole('button', { name: '关闭来源' }).click()
   await expect(
     page.getByRole('button', { name: '查看原资料依据', exact: true }).first(),

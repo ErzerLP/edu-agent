@@ -9,6 +9,35 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 )
 
+func TestPostgreSQLWebImportProfileAndRevocation(t *testing.T) {
+	pool := identityIntegrationPool(t)
+	service := identityIntegrationService(t, pool)
+	ctx := context.Background()
+	code, _, err := service.CreatePairingCodeForProfile(ctx, identity.PairingProfileImport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, p, err := service.ExchangeWebPairing(ctx, code, "导入验收")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []string{"knowledge:read", "knowledge:write", "knowledge:approve", "imports:web"} {
+		if !slices.Contains(p.Device.Scopes, scope) {
+			t.Fatalf("导入配对缺少 %s", scope)
+		}
+	}
+	if _, err = pool.Exec(ctx, `UPDATE device_tokens SET scopes=array_remove(scopes,'imports:web') WHERE device_id=$1`, p.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = service.AuthenticateWeb(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(p.Device.Scopes, "knowledge:write") || slices.Contains(p.Device.Scopes, "knowledge:approve") {
+		t.Fatal("收回导入许可后仍能写入或审批")
+	}
+}
+
 func TestPostgreSQLWebResearchProfileAndRevocation(t *testing.T) {
 	pool := identityIntegrationPool(t)
 	service := identityIntegrationService(t, pool)

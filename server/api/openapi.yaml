@@ -676,6 +676,32 @@ paths:
       responses:
         "202": { description: 已受理或返回原操作结果，Location 指向运行快照, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs:
+    get:
+      operationId: listLearningRuns
+      summary: 按原业务类型与状态分页读取当前设备运行，不含恢复正文
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - $ref: "#/components/parameters/MentorSpaceID"
+        - { name: task_kind, in: query, schema: { type: string, enum: [mentor, research, start_learning, content_edit] } }
+        - { name: status, in: query, schema: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, succeeded, partial, failed, cancelling, cancelled] } }
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: 原 owner 元数据；output 为空，正文需按原运行详情读取
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/MentorSnapshot" } }
+                  next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/runs/{runID}:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -4413,6 +4439,8 @@ components:
             save_goal: { type: boolean }
             start_learning: { type: boolean }
             references: { type: boolean }
+            runs: { type: boolean, description: 支持原设备运行列表与详情 }
+            import_jobs: { type: boolean, description: 支持既有分批导入；写入和审批仍需各自 scope }
     ImportJobItem:
       type: object
       additionalProperties: false

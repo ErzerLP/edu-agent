@@ -18,7 +18,7 @@ import {
 import type { components } from './api/schema'
 import { GoalComposer } from './components/goal-composer'
 import { Button } from './components/ui/button'
-import { MentorPanel } from './components/mentor-panel'
+import { TutorHistory } from './components/tutor-history'
 import { ChangePanel } from './components/change-panel'
 import { SessionPicker } from './teaching-page'
 import { Confirm, EmptyState, ErrorState, Pagination } from './components/common'
@@ -605,7 +605,7 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
       <ChangePanel key={`${spaceId}:${goalId}`} goal={goal.data} archived={space.data.status === 'archived'} />
       <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }}>研究相关知识与查看来源 →</Link></p>
       <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }} search={{ start: true }}>开学过程与失败恢复 →</Link></p>
-      <MentorPanel key={`${spaceId}:${goalId}`} goal={goal.data} archivedSpace={space.data.status === 'archived'} />
+      <TutorHistory key={`${spaceId}:${goalId}`} spaceId={spaceId} goalId={goalId} />
       <section className="section">
         <h2>修订历史</h2>
         {history.error && <ErrorState error={history.error} retry={() => void history.refetch()} />}

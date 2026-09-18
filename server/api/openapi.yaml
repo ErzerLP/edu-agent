@@ -828,6 +828,139 @@ paths:
       responses:
         "202": { description: 已受理或返回原操作结果，Location 指向运行快照, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+    get:
+      operationId: listTutorConversations
+      summary: 当前设备及学习区的导师历史，默认精确匹配可选目标和课堂
+      description: 标题在服务端解密检索，不存明文搜索索引。最多 200 个未删除会话，按最近活动及 ID 降序分页。仅查询不发送模型请求。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: goal_id, in: query, schema: { type: string, format: uuid } }
+        - { name: teaching_session_id, in: query, schema: { type: string, format: uuid } }
+        - { name: all_contexts, in: query, schema: { type: boolean, default: false } }
+        - { name: search, in: query, schema: { type: string, maxLength: 240 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 512 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200":
+          description: 保存状态和原始绑定，损坏项可定位删除
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, save_available]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/TutorConversation" } }
+                  next_cursor: { type: string }
+                  save_available: { type: boolean }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: createTutorConversation
+      summary: 明确保存策略后新建会话，不发起模型请求
+      description: 客户端生成 id 作为新建幂等身份。同 ID 原载荷重试返回原会话，保存策略和上下文不可后改。不会导入旧运行或 CLI 历史。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, saved]
+              properties:
+                id: { type: string, format: uuid }
+                goal_id: { type: string, format: uuid }
+                teaching_session_id: { type: string, format: uuid }
+                saved: { type: boolean }
+                title: { type: string, maxLength: 240, description: 临时模式不得提供标题 }
+      responses:
+        "201": { description: 正式确认已新建, content: { application/json: { schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations/{conversationID}:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getTutorConversation
+      summary: 恢复原绑定及分页已提交轮次，不重放历史工具或批准
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: after, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200": { description: 当前 run ID 指向真实运行，临时正文丢失有明确状态, content: { application/json: { schema: { $ref: "#/components/schemas/TutorTurnPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    patch:
+      operationId: renameTutorConversation
+      summary: 按会话版本改名，仅加密保存标题
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_version, title]
+              properties:
+                expected_version: { type: integer, minimum: 1 }
+                title: { type: string, minLength: 1, maxLength: 240 }
+      responses:
+        "200": { description: 服务端已确认, content: { application/json: { schema: { $ref: "#/components/schemas/TutorConfirmed" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    delete:
+      operationId: deleteTutorConversation
+      summary: 确认删除正文、标题与运行残留，不删除正式学习或内容事实
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expected_version, confirmed]
+              properties:
+                expected_version: { type: integer, minimum: 1 }
+                confirmed: { type: boolean, enum: [true] }
+      responses:
+        "200": { description: 服务端确认删除，重试已删除 ID 仍返回确认, content: { application/json: { schema: { $ref: "#/components/schemas/TutorConfirmed" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations/{conversationID}/turns:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: submitTutorTurn
+      summary: 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
+      description: provider 或 endpoint 变化时，confirm_destination 必须匹配详情显示的目的地摘要。未确认返回 409 且不外发。大历史达到上下文上限时明确失败，不丢弃工具组或静默概括。恢复 GET 不调用此接口。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, expected_version, prompt, request_budget, token_budget]
+              properties:
+                operation_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 1 }
+                prompt: { type: string, minLength: 1, maxLength: 16000 }
+                request_budget: { type: integer, minimum: 1, maximum: 1000 }
+                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+                confirm_destination: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "202": { description: 原运行回执，需继续查询或订阅, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/runs:
     get:
       operationId: listLearningRuns
@@ -4760,6 +4893,74 @@ components:
             semantic_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$' }
             change: { $ref: "#/components/schemas/ContentChange" }
             lineage: { type: array, items: { $ref: "#/components/schemas/ContentOrigin" } }
+    TutorConfirmed:
+      type: object
+      required: [confirmed]
+      properties:
+        confirmed: { type: boolean, enum: [true] }
+    TutorConversation:
+      type: object
+      required: [id, space_id, privacy_generation, version, saved, title, provider, endpoint, updated_at, goal_version, writable, storage_state, destination, destination_provider, destination_endpoint, confirmation_required]
+      properties:
+        id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        goal_id: { type: string, format: uuid }
+        teaching_session_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        version: { type: integer, minimum: 1 }
+        saved: { type: boolean }
+        title: { type: string }
+        provider: { type: string }
+        endpoint: { type: string }
+        updated_at: { type: string, format: date-time }
+        current_run_id: { type: string, format: uuid }
+        goal_version: { type: integer, minimum: 1 }
+        writable: { type: boolean }
+        storage_state: { type: string, enum: [saved, temporary, temporary_unavailable, run_storage_unavailable, tutor_history_schema_unsupported] }
+        destination: { type: string }
+        destination_provider: { type: string }
+        destination_endpoint: { type: string }
+        confirmation_required: { type: boolean }
+    TutorTurnPage:
+      type: object
+      required: [conversation, items]
+      properties:
+        conversation: { $ref: "#/components/schemas/TutorConversation" }
+        next_cursor: { type: integer, minimum: 1 }
+        items:
+          type: array
+          items:
+            type: object
+            required: [run_id, ordinal, status, body_available, messages, output]
+            properties:
+              run_id: { type: string, format: uuid }
+              ordinal: { type: integer, minimum: 1 }
+              status: { type: string }
+              body_available: { type: boolean }
+              output: { type: string }
+              messages:
+                type: array
+                items:
+                  type: object
+                  required: [role]
+                  properties:
+                    role: { type: string, enum: [user, assistant, tool] }
+                    content: { type: string }
+                    tool_call_id: { type: string }
+                    tool_calls:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, type, function]
+                        properties:
+                          id: { type: string }
+                          type: { type: string }
+                          function:
+                            type: object
+                            required: [name, arguments]
+                            properties:
+                              name: { type: string }
+                              arguments: { type: string }
     MentorReceipt:
       type: object
       required: [operation_id, run_id, session_id, version]
@@ -4782,6 +4983,7 @@ components:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
+        conversation_id: { type: string, format: uuid }
         teaching_session_id: { type: string, format: uuid }
         kind: { type: string, enum: [mentor, research, start_learning, content_edit] }
         content_edit: { $ref: "#/components/schemas/ContentEditState" }

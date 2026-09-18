@@ -184,6 +184,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	wasCancelling := item.Status == "cancelling"
 	item.Status = "failed"
 	item.Reason = "model_failed"
+	if errors.Is(cause, ErrLimit) {
+		item.Reason = "history_context_limit"
+	}
 	if errors.Is(cause, learningcontent.ErrConflict) {
 		item.Reason = "selection_expired"
 	}

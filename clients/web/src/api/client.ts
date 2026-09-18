@@ -3,6 +3,7 @@ import type { paths } from './schema'
 import type { ChangePaths } from './changes'
 import type { ReferencePaths } from './references'
 import type { StructurePaths } from './structure'
+import type { ConversationPaths } from './conversations'
 import { z } from 'zod'
 import { sessionSchema, type Session } from './runtime'
 
@@ -49,7 +50,7 @@ export const readSession = () => unwrap(publicClient.GET('/v1/web/session'), ses
 
 export function learningClient(session: Session, spaceId?: string) {
   if (session.server_id !== window.location.origin) throw new ApiError(502, 'invalid_response')
-  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths> & ChangePaths & ReferencePaths & StructurePaths>({
+  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths | keyof ConversationPaths> & ChangePaths & ReferencePaths & StructurePaths & ConversationPaths>({
     baseUrl: session.server_id,
     credentials: 'same-origin',
     cache: 'no-store',
@@ -85,6 +86,14 @@ export function learningClient(session: Session, spaceId?: string) {
 
 export function errorText(error: unknown) {
   if (!(error instanceof ApiError)) return '网络连接失败，输入已保留。请检查连接后重试。'
+  const tutorErrors: Record<string, string> = {
+    run_storage_limit: '导师历史或上下文已达上限，未删除旧历史。可清理不需要的对话或新建对话。',
+    run_storage_unavailable: '加密历史不可读取或保存，请检查服务器密钥及存储。未回退明文或空历史。',
+    tutor_history_schema_unsupported: '历史格式来自更高版本，请升级服务。未重写或清空历史。',
+    tutor_destination_confirmation_required: '模型目的地已变化，请核对目的地和历史范围后明确确认；尚未发送。',
+    tutor_temporary_unavailable: '临时正文已不可恢复，请新建对话；正式学习事实仍保留。',
+  }
+  if (tutorErrors[error.code]) return tutorErrors[error.code]
   if (error.code.startsWith('pdf_')) {
     const messages: Record<string, string> = { pdf_encrypted: 'PDF 已加密，不接受密码或绕过访问限制。', pdf_file_limit: 'PDF 超过 4 MiB。', pdf_page_limit: 'PDF 超过 100 页。', pdf_timeout: 'PDF 解析达到时间限制，已中止。', pdf_resource_limit: 'PDF 解析达到内存或资源限制。', pdf_partial_confirmation_required: '请核对逐页报告并明确选择仅采用可用部分。', pdf_no_usable_text: 'PDF 没有可用文本层，未运行 OCR。' }
     return messages[error.code] ?? 'PDF 损坏、格式不兼容或超过解析资源限制；未将失败内容算作有效资料。'

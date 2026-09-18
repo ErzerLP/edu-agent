@@ -14,10 +14,11 @@ const importStaging = mkdtempSync(join(tmpdir(), 'edu-web-import-test-'))
 writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
 if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
   let calls = 0
+  let historyRequests = 0
   const fixture = createServer(async (request, response) => {
     if (request.url === '/stats') {
       response.setHeader('Content-Type', 'application/json')
-      response.end(JSON.stringify({ calls }))
+      response.end(JSON.stringify({ calls, historyRequests }))
       return
     }
     const chunks = []
@@ -53,6 +54,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     const messages = payload.messages ?? []
+    if (messages.filter((message) => message.role === 'user').length >= 3) historyRequests++
     const input = messages.findLast((message) => message.role === 'user')?.content ?? ''
     // 选段 fixture 验证完整身份和原文，只返回该位置的独立候选。
     if (messages[0]?.content?.includes('对指定选段提供')) {
@@ -147,7 +149,7 @@ function start() {
       LEARNING_SETTINGS_FILE: settingsFile,
       MENTOR_KEY_FILE: mentorKeyFile,
       IMPORT_JOB_STAGING_DIR: importStaging,
-      MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1"]',
+      MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1","http://127.0.0.1:32930/alternate"]',
       DEVICE_RATE_LIMIT_PER_MINUTE: '10000',
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',
       ...(process.env.WEB_WORKSPACE_FIXTURE === '1'

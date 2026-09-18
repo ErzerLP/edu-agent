@@ -19,6 +19,7 @@ import { TasksPage, RunPage } from './tasks-page'
 import { ImportPage } from './import-page'
 import { KnowledgePage } from './knowledge-page'
 import { FeedbackListPage, FeedbackPage } from './feedback-page'
+import { TutorHistory } from './components/tutor-history'
 import { ProgressPage } from './progress-page'
 import { progressSearch } from './api/progress'
 
@@ -195,6 +196,14 @@ const feedback = createRoute({
   getParentRoute: () => root, path: '/spaces/$spaceId/feedback/$attemptId',
   component: () => { const { spaceId, attemptId } = feedback.useParams(); return <FeedbackPage key={`${spaceId}:${attemptId}`} spaceId={spaceId} attemptId={attemptId} /> },
 })
+const chats = createRoute({
+  getParentRoute: () => root, path: '/spaces/$spaceId/chat',
+  component: () => { const { spaceId } = chats.useParams(); return <TutorHistory key={spaceId} spaceId={spaceId} /> },
+})
+const chat = createRoute({
+  getParentRoute: () => root, path: '/spaces/$spaceId/chat/$conversationId',
+  component: () => { const { spaceId, conversationId } = chat.useParams(); return <TutorHistory key={`${spaceId}:${conversationId}`} spaceId={spaceId} conversationId={conversationId} /> },
+})
 const router = createRouter({
   routeTree: root.addChildren([
     home,
@@ -212,6 +221,8 @@ const router = createRouter({
     knowledge,
     feedbackList,
     feedback,
+    chats,
+    chat,
   ]),
   basepath: '/app',
   defaultPreload: false,

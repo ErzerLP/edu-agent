@@ -3,6 +3,7 @@ package mentorrun
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
@@ -55,6 +56,9 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 	if item.Version != c.ExpectedVersion {
 		return Receipt{}, ErrConflict
 	}
+	if (c.Kind == "respond" || c.Kind == "continue_budget") && (time.Now().After(item.ExpiresAt) || !item.BodyAvailable) {
+		return Receipt{}, ErrInactive
+	}
 	if c.Kind != "clear" {
 		if err = s.decode(&item); err != nil {
 			return Receipt{}, err
@@ -71,6 +75,9 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 		item.Reason = "cleared"
 		item.lease = nil
 		item.leaseUntil = nil
+		if _, err = tx.Exec(ctx, `UPDATE learning_tutor_turns SET ciphertext=NULL WHERE run_id=$1`, id); err != nil {
+			return Receipt{}, err
+		}
 		if _, err = tx.Exec(ctx, `DELETE FROM learning_mentor_events WHERE run_id=$1`, id); err != nil {
 			return Receipt{}, err
 		}

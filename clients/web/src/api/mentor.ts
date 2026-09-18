@@ -7,6 +7,7 @@ import { editStateSchema } from './content'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const mentorSnapshotSchema = z.object({
+  conversation_id: z.uuid().optional(),
   teaching_session_id: z.uuid().optional(),
   kind: z.enum(['mentor', 'research', 'start_learning', 'content_edit']).optional(), research: researchStateSchema.optional(),
   content_edit: editStateSchema.optional(),

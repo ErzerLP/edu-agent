@@ -60,6 +60,14 @@ func (h *executionHost) Prepare(ctx context.Context) (agentcore.ContextPlan, err
 		return agentcore.ContextPlan{}, err
 	}
 	request := modelclient.Request{MaxTokens: h.limits.OutputTokens, Tools: mentorTools}
+	if h.owned.GoalID == uuid.Nil.String() {
+		request.Tools = nil
+		for _, tool := range mentorTools {
+			if tool.Function.Name != "open_references" && tool.Function.Name != "read_references" && tool.Function.Name != "read_learning_progress" {
+				request.Tools = append(request.Tools, tool)
+			}
+		}
+	}
 	if h.owned.TeachingSessionID != "" && h.service.changes.Available() {
 		request.Tools = append(append([]modelclient.Tool{}, mentorTools...), changeTools...)
 	}

@@ -175,6 +175,7 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 				}
 				if business {
 					jobCleanup := r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/knowledge/import-jobs/")
+					jobCleanup = jobCleanup || r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/v1/learning/conversations/")
 					runtimeCommand := a.mentorRuns != nil && strings.HasPrefix(r.URL.Path, "/v1/learning/runs/") && strings.HasSuffix(r.URL.Path, "/commands")
 					contentAnswer := a.learningContent != nil && strings.HasPrefix(r.URL.Path, "/v1/learning/content/") && strings.HasSuffix(r.URL.Path, "/answers")
 					if item.Status == "archived" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/v1/knowledge/retrievals" && !scopedTutoringPath(r.URL.Path) && !jobCleanup && !runtimeCommand && !contentAnswer {

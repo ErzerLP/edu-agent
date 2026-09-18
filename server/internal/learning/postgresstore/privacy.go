@@ -192,6 +192,8 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"作答正文关联", `UPDATE learning_attempts SET artifact_id=NULL,artifact_version=NULL`},
 		{"复习承载关联", `DELETE FROM learning_review_sessions`},
 		{"导师运行事件", `DELETE FROM learning_mentor_events`},
+		{"导师永久轮次", `DELETE FROM learning_tutor_turns`},
+		{"导师历史标题与索引", `UPDATE learning_tutor_conversations SET title=NULL,request_hash=''::bytea,provider='',endpoint='',deleted=TRUE,version=version+1`},
 		{"导师运行正文", `UPDATE learning_mentor_runs SET checkpoint=NULL,lease_id=NULL,lease_until=NULL,call_started=FALSE,state=state||'{"body_available":false,"status":"cancelled","reason":"privacy_cleared","stage":"cancelled"}'::jsonb`},
 		{"导师操作摘要", `UPDATE learning_mentor_operations SET request_hash=decode(repeat('00',32),'hex')`},
 		{"learning space operations", `UPDATE learning_space_operations SET request_hash=decode(repeat('00',32),'hex'),result='{"redacted":true}'::jsonb`},
@@ -397,6 +399,8 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 		SELECT COALESCE(sum(remaining),0)::bigint FROM (
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_mentor_events
+			UNION ALL SELECT count(*) FROM learning_tutor_turns
+			UNION ALL SELECT count(*) FROM learning_tutor_conversations WHERE title IS NOT NULL OR request_hash<>''::bytea OR NOT deleted OR provider<>'' OR endpoint<>''
 			UNION ALL SELECT count(*) FROM learning_activities WHERE knowledge_context_revision_id IS NOT NULL OR artifact_id IS NOT NULL OR artifact_version IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_attempts WHERE artifact_id IS NOT NULL OR artifact_version IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_review_sessions

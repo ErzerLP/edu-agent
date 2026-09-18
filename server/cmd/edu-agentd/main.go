@@ -19,7 +19,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
 
-const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|agent|settings|research|references|import|assessment]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>]"
+const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|agent|settings|research|references|import|assessment]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>|mentor-key rotate --offline --new-key-file <绝对路径>]"
 
 var (
 	loadConfiguration     = config.Load
@@ -33,6 +33,7 @@ const (
 	commandPairingCode
 	commandPrivacyGrant
 	commandNocturneBackupRestore
+	commandMentorKeyRotate
 )
 
 type command struct {
@@ -91,10 +92,27 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "privacy erasure grant expires at %s\n", expiresAt.UTC().Format(time.RFC3339))
 		return nil
 	}
+	if parsed.kind == commandMentorKeyRotate {
+		if err := app.RotateMentorKey(ctx, cfg, parsed.output); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stdout, "密文轮换事务已提交。请将 MENTOR_KEY_FILE 指向新密钥，再启动服务；旧数据库备份仍需旧密钥。")
+		return nil
+	}
 	return restoreNocturneBackup(ctx, cfg, parsed.artifactPath, parsed.output)
 }
 
 func parseCommand(args []string) (command, error) {
+	if len(args) >= 2 && args[0] == "mentor-key" && args[1] == "rotate" {
+		flags := flag.NewFlagSet("mentor-key rotate", flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		offline := flags.Bool("offline", false, "确认所有服务实例已经停止")
+		path := flags.String("new-key-file", "", "独立的新密钥绝对路径")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || !*offline || *path == "" {
+			return command{}, errors.New(usage)
+		}
+		return command{kind: commandMentorKeyRotate, output: *path}, nil
+	}
 	if len(args) == 0 || len(args) == 1 && args[0] == "serve" {
 		return command{kind: commandServe}, nil
 	}

@@ -40,10 +40,10 @@ func TestPostgreSQLMentorPrivacyBarrierClearsSavedAndInFlightTemporary(t *testin
 	})
 	t.Cleanup(cancelFixture)
 	f.service.Lease = time.Second
+	f.create = historyRequest(t, f, newHistory(t, f, true, f.goal), "需要清除的持久问题")
 	f.accept(t)
 	f.work(t)
-	f.create.OperationID = uuid.NewString()
-	f.create.Save = false
+	f.create = historyRequest(t, f, newHistory(t, f, false, f.goal), "需要清除的临时问题")
 	current := f.accept(t)
 	done := make(chan error, 1)
 	go func() { _, err := f.service.RunOnce(context.Background()); done <- err }()
@@ -88,7 +88,7 @@ func TestPostgreSQLMentorPrivacyBarrierClearsSavedAndInFlightTemporary(t *testin
 	}
 	_, _ = f.service.Sweep(ctx)
 	var remaining int
-	if err = f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_mentor_runs WHERE checkpoint IS NOT NULL OR (state->>'body_available')::boolean)+(SELECT count(*) FROM learning_mentor_events)+(SELECT count(*) FROM learning_mentor_operations WHERE request_hash<>decode(repeat('00',32),'hex'))`).Scan(&remaining); err != nil {
+	if err = f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_mentor_runs WHERE checkpoint IS NOT NULL OR (state->>'body_available')::boolean)+(SELECT count(*) FROM learning_mentor_events)+(SELECT count(*) FROM learning_mentor_operations WHERE request_hash<>decode(repeat('00',32),'hex'))+(SELECT count(*) FROM learning_tutor_turns)+(SELECT count(*) FROM learning_tutor_conversations WHERE title IS NOT NULL OR NOT deleted OR request_hash<>''::bytea)`).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
 	if remaining != 0 {

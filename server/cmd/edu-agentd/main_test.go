@@ -139,3 +139,15 @@ func TestNocturneBackupRestoreParsesBeforeLoadingConfiguration(t *testing.T) {
 		t.Fatalf("restore command err=%v called=%v", err, called)
 	}
 }
+
+func TestMentorKeyRotationRequiresExplicitOfflineFlag(t *testing.T) {
+	for _, args := range [][]string{{"mentor-key", "rotate"}, {"mentor-key", "rotate", "--new-key-file", "/protected/new.key"}, {"mentor-key", "rotate", "--offline"}} {
+		if _, err := parseCommand(args); err == nil {
+			t.Fatal("缺少停机确认或新密钥路径仍接受轮换")
+		}
+	}
+	parsed, err := parseCommand([]string{"mentor-key", "rotate", "--offline", "--new-key-file", "/protected/new.key"})
+	if err != nil || parsed.kind != commandMentorKeyRotate || parsed.output != "/protected/new.key" {
+		t.Fatal("停机轮换参数未解析", err)
+	}
+}

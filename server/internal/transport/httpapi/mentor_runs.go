@@ -16,6 +16,9 @@ import (
 )
 
 func mentorPath(path string) bool {
+	if path == "/v1/learning/conversations" || strings.HasPrefix(path, "/v1/learning/conversations/") {
+		return true
+	}
 	if path == "/v1/learning/runs" {
 		return true
 	}
@@ -27,6 +30,7 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	if a.mentorRuns == nil {
 		return
 	}
+	a.mountConversations(router)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs", a.mentorList)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/goals/{goalID}/runs", a.mentorCreate)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/runs", a.mentorCurrent)
@@ -59,7 +63,7 @@ func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	status, code := 503, "run_unavailable"
-	for _, candidate := range []error{mentorrun.ErrInvalid, mentorrun.ErrConflict, mentorrun.ErrOperation, mentorrun.ErrNotFound, mentorrun.ErrForbidden, mentorrun.ErrInactive, mentorrun.ErrResync, mentorrun.ErrStorage, mentorrun.ErrLimit, mentorrun.ErrModel} {
+	for _, candidate := range []error{mentorrun.ErrHistorySchema, mentorrun.ErrDestination, mentorrun.ErrTemporary, mentorrun.ErrInvalid, mentorrun.ErrConflict, mentorrun.ErrOperation, mentorrun.ErrNotFound, mentorrun.ErrForbidden, mentorrun.ErrInactive, mentorrun.ErrResync, mentorrun.ErrStorage, mentorrun.ErrLimit, mentorrun.ErrModel} {
 		if errors.Is(err, candidate) {
 			code = candidate.Error()
 			break
@@ -68,7 +72,7 @@ func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
 	switch code {
 	case "invalid_run_request":
 		status = 400
-	case "version_conflict", "idempotency_conflict", "run_context_changed", "resync_required":
+	case "version_conflict", "idempotency_conflict", "run_context_changed", "resync_required", "tutor_destination_confirmation_required", "tutor_temporary_unavailable":
 		status = 409
 	case "run_not_found":
 		status = 404
@@ -84,7 +88,7 @@ func (a *API) mentorCreate(w http.ResponseWriter, r *http.Request) {
 	var command mentorrun.Create
 	raw, decodeErr := readJSONBody(w, r, 24<<10)
 	var fields map[string]json.RawMessage
-	if decodeErr != nil || decodeJSONData(raw, &command) != nil || json.Unmarshal(raw, &fields) != nil || (string(fields["save"]) != "true" && string(fields["save"]) != "false") {
+	if decodeErr != nil || decodeJSONData(raw, &command) != nil || command.ConversationID != "" || json.Unmarshal(raw, &fields) != nil || (string(fields["save"]) != "true" && string(fields["save"]) != "false") {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}

@@ -35,17 +35,21 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
-	TeachingSessionID string                       `json:"teaching_session_id,omitempty"`
-	ContentEdit       *learningcontent.EditRequest `json:"content_edit,omitempty"`
-	StartLearning     *learningstart.Request       `json:"start_learning,omitempty"`
-	Research          *research.Request            `json:"research,omitempty"`
-	OperationID       string                       `json:"operation_id"`
-	SessionID         string                       `json:"session_id"`
-	ExpectedVersion   int64                        `json:"expected_version"`
-	Prompt            string                       `json:"prompt"`
-	Save              bool                         `json:"save"`
-	RequestBudget     int                          `json:"request_budget"`
-	TokenBudget       int                          `json:"token_budget"`
+	operationHash       *[32]byte
+	ConversationID      string                       `json:"conversation_id,omitempty"`
+	ConversationVersion int64                        `json:"conversation_version,omitempty"`
+	ConfirmDestination  string                       `json:"confirm_destination,omitempty"`
+	TeachingSessionID   string                       `json:"teaching_session_id,omitempty"`
+	ContentEdit         *learningcontent.EditRequest `json:"content_edit,omitempty"`
+	StartLearning       *learningstart.Request       `json:"start_learning,omitempty"`
+	Research            *research.Request            `json:"research,omitempty"`
+	OperationID         string                       `json:"operation_id"`
+	SessionID           string                       `json:"session_id"`
+	ExpectedVersion     int64                        `json:"expected_version"`
+	Prompt              string                       `json:"prompt"`
+	Save                bool                         `json:"save"`
+	RequestBudget       int                          `json:"request_budget"`
+	TokenBudget         int                          `json:"token_budget"`
 }
 
 type Command struct {
@@ -66,6 +70,7 @@ type Receipt struct {
 }
 
 type Meta struct {
+	ConversationID    string    `json:"conversation_id,omitempty"`
 	TeachingSessionID string    `json:"teaching_session_id,omitempty"`
 	Kind              string    `json:"kind,omitempty"`
 	RunID             string    `json:"run_id"`
@@ -101,6 +106,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	HistoryCount int `json:"history_count,omitempty"`
 	// PDF 原件仅进入加密运行正文，不属于快照、模型输入或工具输出。
 	SourceFiles   map[string][]byte      `json:"source_files,omitempty"`
 	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`

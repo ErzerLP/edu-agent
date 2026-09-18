@@ -178,7 +178,7 @@ func (s *Service) Current(ctx context.Context, actor identity.Credential, space,
 		return "", err
 	}
 	var id string
-	err = tx.QueryRow(ctx, `SELECT current_run_id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND kind=$5 AND current_run_id IS NOT NULL`, actor.Device.ID, space, goal, generation, kind).Scan(&id)
+	err = tx.QueryRow(ctx, `SELECT current_run_id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND kind=$5 AND NOT history AND current_run_id IS NOT NULL`, actor.Device.ID, space, goal, generation, kind).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

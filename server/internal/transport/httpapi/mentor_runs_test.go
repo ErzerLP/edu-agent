@@ -247,4 +247,44 @@ func TestPostgreSQLMentorCookieHTTPAndSSERecovery(t *testing.T) {
 	if strings.Contains(logs.String(), privateGoal) || strings.Contains(logs.String(), privateOutput) || strings.Contains(logs.String(), cookie.Value) {
 		t.Fatal("日志含私人正文或 Cookie")
 	}
+	// 新会话接口在同一真实 Cookie/CSRF、非默认区和隐私边界内执行。
+	conversationID := uuid.NewString()
+	newConversation := mentorrun.NewConversation{ID: conversationID, GoalID: goal, Saved: true}
+	response, data = request("POST", "/v1/learning/conversations", space.ID, newConversation, nil)
+	if response.StatusCode != 201 {
+		t.Fatalf("新建对话失败：%d %s", response.StatusCode, data)
+	}
+	conversationPath := "/v1/learning/conversations/" + conversationID
+	response, _ = request("GET", conversationPath, learningspace.DefaultID, nil, nil)
+	if response.StatusCode != 404 {
+		t.Fatal("对话允许跨区重绑定")
+	}
+	response, data = request("POST", conversationPath+"/turns", space.ID, map[string]any{"operation_id": uuid.NewString(), "expected_version": 1, "prompt": "正式历史问题", "request_budget": 2, "token_budget": 50000}, nil)
+	if response.StatusCode != 202 {
+		t.Fatalf("新轮提交失败：%d %s", response.StatusCode, data)
+	}
+	if _, err = runtime.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	response, data = request("GET", conversationPath, space.ID, nil, nil)
+	var page mentorrun.TurnPage
+	if json.Unmarshal(data, &page) != nil || response.StatusCode != 200 || len(page.Items) != 1 || page.Items[0].Output != privateOutput {
+		t.Fatalf("历史详情错误：%d %s", response.StatusCode, data)
+	}
+	response, _ = request("DELETE", conversationPath, space.ID, map[string]any{"expected_version": page.Conversation.Version, "confirmed": false}, nil)
+	if response.StatusCode != 400 {
+		t.Fatal("未确认删除被执行")
+	}
+	response, _ = request("DELETE", conversationPath, space.ID, map[string]any{"expected_version": page.Conversation.Version, "confirmed": true}, func(r *http.Request) { r.Header.Del("X-CSRF-Token") })
+	if response.StatusCode != 403 {
+		t.Fatal("删除绕过 CSRF")
+	}
+	response, data = request("DELETE", conversationPath, space.ID, map[string]any{"expected_version": page.Conversation.Version, "confirmed": true}, nil)
+	if response.StatusCode != 200 {
+		t.Fatalf("删除未确认：%d %s", response.StatusCode, data)
+	}
+	response, _ = request("GET", conversationPath, space.ID, nil, nil)
+	if response.StatusCode != 404 || calls.Load() != 2 {
+		t.Fatal("删除后仍恢复或发生历史重放")
+	}
 }

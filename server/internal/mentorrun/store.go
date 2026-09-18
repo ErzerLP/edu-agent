@@ -186,6 +186,9 @@ func goalGate(ctx context.Context, tx pgx.Tx, space, goal string, version int64)
 	if status != "active" {
 		return "", ErrInactive
 	}
+	if goal == uuid.Nil.String() && version == 1 {
+		return "未绑定目标；只进行学习交流，不猜测或选择目标。", nil
+	}
 	var actual int64
 	if err := tx.QueryRow(ctx, `SELECT aggregate_version FROM learning_aggregate_heads WHERE aggregate_type='goal' AND aggregate_id=$1 FOR SHARE`, goal).Scan(&actual); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -244,7 +247,10 @@ func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) e
 		return err
 	}
 	_, err = tx.Exec(ctx, `DELETE FROM learning_mentor_events WHERE run_id=$1 AND seq<=$2`, item.RunID, item.Watermark-EventWindow)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.saveTurn(ctx, tx, item)
 }
 
 func requestHash(kind, space, target string, value any) [32]byte {
@@ -319,10 +325,16 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		}
 		kind = "start_learning"
 	}
-	if !validID(space) || !validID(goal) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
+	if !validID(space) || (!validID(goal) && !(validID(c.ConversationID) && goal == uuid.Nil.String())) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
+		return Receipt{}, ErrInvalid
+	}
+	if c.ConversationID != "" && (kind != "mentor" || c.ConversationID != c.SessionID || !validID(c.ConversationID) || c.ConversationVersion < 1) || c.ConversationID == "" && (c.ConversationVersion != 0 || c.ConfirmDestination != "") {
 		return Receipt{}, ErrInvalid
 	}
 	hash := requestHash("create", space, goal, c)
+	if c.operationHash != nil {
+		hash = *c.operationHash
+	}
 	if c.TeachingSessionID != "" {
 		if !validID(c.TeachingSessionID) || kind != "mentor" || !s.changes.Available() {
 			return Receipt{}, ErrInvalid
@@ -411,7 +423,13 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		return Receipt{}, err
 	}
 	var sessionID string
-	err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation, kind).Scan(&sessionID)
+	var history []modelclient.Message
+	if c.ConversationID != "" {
+		sessionID = c.ConversationID
+		history, err = s.prepareConversation(ctx, tx, actor, space, goal, generation, fingerprint, c)
+	} else {
+		err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) WHERE NOT history DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation, kind).Scan(&sessionID)
+	}
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -426,7 +444,9 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		return Receipt{}, ErrConflict
 	}
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
-	item.body.Messages = []modelclient.Message{{Role: "user", Content: c.Prompt}}
+	item.ConversationID = c.ConversationID
+	item.body.HistoryCount = len(history)
+	item.body.Messages = append(history, modelclient.Message{Role: "user", Content: c.Prompt})
 	item.TeachingSessionID = c.TeachingSessionID
 	item.Kind = kind
 	if c.ContentEdit != nil {
@@ -444,6 +464,11 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, item.RunID, sessionID, item.device, item.token, space, goal, c.ExpectedVersion, generation, raw, s.process, item.ExpiresAt); err != nil {
 		return Receipt{}, err
+	}
+	if c.ConversationID != "" {
+		if _, err = tx.Exec(ctx, `INSERT INTO learning_tutor_turns(conversation_id,run_id,ordinal) SELECT $1,$2,COALESCE(max(ordinal),0)+1 FROM learning_tutor_turns WHERE conversation_id=$1`, c.ConversationID, item.RunID); err != nil {
+			return Receipt{}, err
+		}
 	}
 	if err = s.save(ctx, tx, &item, "accepted"); err != nil {
 		return Receipt{}, err
@@ -470,7 +495,7 @@ func (s *Service) quota(ctx context.Context, tx pgx.Tx, additional int64) error 
 		return err
 	}
 	var reserved int64
-	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations))::bigint FROM learning_mentor_runs`).Scan(&reserved)
+	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations))::bigint FROM learning_mentor_runs`).Scan(&reserved)
 	if err != nil {
 		return err
 	}

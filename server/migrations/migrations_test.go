@@ -29,8 +29,12 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 31 || latest.name != "000031_review_sessions.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("复习承载迁移未正确嵌入: %s", latest.name)
+	if latest.version != 32 || latest.name != "000032_tutor_history.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("导师历史迁移未正确嵌入: %s", latest.name)
+	}
+	previous := items[len(items)-2]
+	if previous.version != 31 || previous.name != "000031_review_sessions.sql" {
+		t.Fatalf("主线复习承载迁移未保留: %s", previous.name)
 	}
 }
 

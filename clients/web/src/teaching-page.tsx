@@ -27,7 +27,7 @@ import { useIdentity } from './lib/session'
 import { Button } from './components/ui/button'
 import { ErrorState, Pagination } from './components/common'
 import { ContentBlocks, SafeMarkdown, SourceViewer } from './components/content-blocks'
-import { MentorPanel } from './components/mentor-panel'
+import { TutorHistory } from './components/tutor-history'
 import { ChangePanel } from './components/change-panel'
 import { ReferenceLink } from './knowledge-page'
 import { KnowledgeStructure } from './components/knowledge-structure'
@@ -1057,7 +1057,7 @@ function TeachingWorkspace({
             <details>
               <summary>目标内持续交流</summary>
               <p className="hint">导师调用正式变更服务后，具体差异和生效状态显示在下方。</p>
-              <MentorPanel key={sessionId} goal={goal.data} archivedSpace={archived} teachingSessionId={sessionId} />
+              <TutorHistory key={sessionId} spaceId={spaceId} goalId={goal.data.goal_id} teachingSessionId={sessionId} />
             </details>
           )}
           {goal.data && <ChangePanel key={`${spaceId}:${sessionId}`} goal={goal.data} teachingSessionId={sessionId} archived={archived} onChanged={() => setContentRefresh((v) => v + 1)} onRestore={(activityId) => { restoreFocusRequested.current = activityId }} />}

@@ -23,6 +23,7 @@ const (
 	PairingProfileResearch   PairingProfile = "research"
 	PairingProfileReferences PairingProfile = "references"
 	PairingProfileImport     PairingProfile = "import"
+	PairingProfileAssessment PairingProfile = "assessment"
 )
 
 type PairingCodeRecord struct {

@@ -189,6 +189,7 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"教学变更操作", `UPDATE learning_change_operations SET request_hash=''`},
 		{"教学调整模式", `DELETE FROM learning_adaptive_modes`},
 		{"开学活动关联", `UPDATE learning_activities SET knowledge_context_revision_id=NULL,artifact_id=NULL,artifact_version=NULL`},
+		{"作答正文关联", `UPDATE learning_attempts SET artifact_id=NULL,artifact_version=NULL`},
 		{"导师运行事件", `DELETE FROM learning_mentor_events`},
 		{"导师运行正文", `UPDATE learning_mentor_runs SET checkpoint=NULL,lease_id=NULL,lease_until=NULL,call_started=FALSE,state=state||'{"body_available":false,"status":"cancelled","reason":"privacy_cleared","stage":"cancelled"}'::jsonb`},
 		{"导师操作摘要", `UPDATE learning_mentor_operations SET request_hash=decode(repeat('00',32),'hex')`},
@@ -396,6 +397,7 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_mentor_events
 			UNION ALL SELECT count(*) FROM learning_activities WHERE knowledge_context_revision_id IS NOT NULL OR artifact_id IS NOT NULL OR artifact_version IS NOT NULL
+			UNION ALL SELECT count(*) FROM learning_attempts WHERE artifact_id IS NOT NULL OR artifact_version IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_mentor_runs WHERE checkpoint IS NOT NULL OR lease_id IS NOT NULL OR (state->>'body_available')::boolean OR state->>'reason'<>'privacy_cleared'
 			UNION ALL SELECT count(*) FROM learning_mentor_operations WHERE request_hash<>decode(repeat('00',32),'hex')
 			UNION ALL SELECT count(*) FROM learning_space_operations WHERE request_hash<>decode(repeat('00',32),'hex') OR result<>'{"redacted":true}'::jsonb

@@ -360,6 +360,15 @@ func (s *Store) WithAnswer(ctx context.Context, actor identity.Credential, id st
 	return context.WithValue(ctx, answerGuardKey{}, answerGuard{s, actor, id, version})
 }
 
+// 仅在 ValidateAttemptTx 成功后的同一事务内写入，保留实际提交版本而非当前版本。
+func AnswerVersion(ctx context.Context) (*string, *int64) {
+	guard, ok := ctx.Value(answerGuardKey{}).(answerGuard)
+	if !ok {
+		return nil, nil
+	}
+	return &guard.id, &guard.version
+}
+
 // 原 learning 提交事务调用此端口，检查与答案写入原子完成，避免检查后换版。
 func ValidateAttemptTx(ctx context.Context, tx pgx.Tx, attempt learning.Attempt) error {
 	guard, ok := ctx.Value(answerGuardKey{}).(answerGuard)

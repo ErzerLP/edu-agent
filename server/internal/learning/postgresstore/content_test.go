@@ -175,6 +175,48 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 	if _, err = apply(content.WithAnswer(ctx, actor, r.ArtifactID, committed.Version), tutoring.ActionSubmitAttempt, "ok"); err != nil {
 		t.Fatal(err)
 	}
+	accepted, err := service.Session(ctx, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attemptID := accepted.WorkItem.Attempt.ID
+	feedback, err := service.Feedback(ctx, attemptID, false)
+	if err != nil || feedback.Status != "received" || feedback.Content == nil || feedback.Content.Version != committed.Version || feedback.Receipt.OperationID == "" {
+		t.Fatalf("答案接收后缺少冻结版本或回执：%+v %v", feedback, err)
+	}
+	request := learning.ProposalRequest{RequestID: uuid.NewString(), Type: learning.ProposalAssessment,
+		AggregateType: "session", AggregateID: sessionID, AggregateVersion: accepted.Session.AggregateVer,
+		GoalRevisionID: original.GoalRevisionID, ActivityID: original.ID, AttemptID: attemptID,
+		KnowledgeRevisionID: original.KnowledgeRevisionID, Input: json.RawMessage(`{}`)}
+	requestHash, err := learning.HashJSON(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := authority.ClaimProposal(ctx, actor.Device.ID, request, requestHash, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkPhase := func(want string) {
+		t.Helper()
+		detail, e := service.Feedback(ctx, attemptID, false)
+		page, pe := service.ListFeedback(ctx, learning.FeedbackQuery{Status: "pending", SessionID: sessionID, Page: learning.CursorPageRequest{Limit: 10}})
+		if e != nil || pe != nil || detail.Status != want || len(page.Items) != 1 || page.Items[0].Status != want || detail.Receipt != feedback.Receipt {
+			t.Fatalf("原答案阶段或回执不一致：want=%s detail=%+v page=%+v errors=%v/%v", want, detail, page, e, pe)
+		}
+	}
+	checkPhase("processing")
+	if _, err = pool.Exec(ctx, `UPDATE tutoring_proposal_requests SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE request_id=$1`, request.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	checkPhase("unknown")
+	claim, err = authority.ClaimProposal(ctx, actor.Device.ID, request, requestHash, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = authority.FailProposal(ctx, actor.Device.ID, claim.LeaseToken, []string{"fixture_failure"}, "fixture_failure", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	checkPhase("failed")
 	if _, err = apply(ctx, tutoring.ActionRecordAssessment, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -203,6 +245,41 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 	if _, err = apply(ctx, tutoring.ActionAcknowledgeFeedback, ""); err != nil {
 		t.Fatal(err)
 	}
+	feedback, err = service.Feedback(ctx, attemptID, false)
+	if err != nil || feedback.Status != "settled" || len(feedback.Evidence) != 1 || len(feedback.Decisions) != 1 {
+		t.Fatalf("离开活动后无法查证原评估：%+v %v", feedback, err)
+	}
+	if _, err = service.Feedback(other, attemptID, false); learning.ErrorCode(err) != learning.CodeNotFound {
+		t.Fatalf("跨区泄漏评估：%v", err)
+	}
+	page, err := service.ListFeedback(ctx, learning.FeedbackQuery{Status: "all", Page: learning.CursorPageRequest{Limit: 1}})
+	if err != nil || len(page.Items) != 1 || page.Items[0].AttemptID != attemptID {
+		t.Fatalf("缺少历史列表：%+v %v", page, err)
+	}
+	decisionCommand := learning.AssessmentDecisionCommand{
+		Operation: learning.OperationEnvelope{OperationID: uuid.NewString(), PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: sessionID, ExpectedVersion: feedback.SessionVersion, Payload: json.RawMessage(`{"kind":"void"}`)},
+		Kind:      "void", ExpectedDispositionVersion: 1, Reason: "历史复核发现原结论有误",
+	}
+	if _, err = service.Decide(ctx, actor.Device.ID, feedback.Assessment.ID, decisionCommand); err != nil {
+		t.Fatal(err)
+	}
+	decisionReplay, err := service.Decide(ctx, actor.Device.ID, feedback.Assessment.ID, decisionCommand)
+	if err != nil || !decisionReplay.Replayed {
+		t.Fatalf("历史作废重放失败：%+v %v", decisionReplay, err)
+	}
+	if _, err = service.Decide(ctx, actor.Device.ID, uuid.NewString(), decisionCommand); learning.ErrorCode(err) != learning.CodeOperationConflict {
+		t.Fatalf("操作重放越过原评估：%v", err)
+	}
+	feedback, err = service.Feedback(ctx, attemptID, false)
+	if err != nil || len(feedback.Evidence) != 0 || len(feedback.Decisions) != 2 || feedback.Decisions[0].Disposition != learning.DispositionAccepted || feedback.Decisions[1].Disposition != learning.DispositionVoided || feedback.Attempt.Answer != "ok" {
+		t.Fatalf("作废未追加历史或改写了原答案：%+v %v", feedback, err)
+	}
+	if _, err = authority.Rebuild(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if restored, e := service.Feedback(ctx, attemptID, false); e != nil || !reflect.DeepEqual(restored, feedback) {
+		t.Fatalf("重放改变了冻结反馈：%v", e)
+	}
 	for range 2 {
 		go func() {
 			c := cmd
@@ -226,6 +303,9 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 	if succeeded != 1 || conflicted != 1 {
 		t.Fatalf("并发版本未正确比较：成功 %d，冲突 %d", succeeded, conflicted)
 	}
+	if old, e := service.Feedback(ctx, attemptID, false); e != nil || old.Content.Version != committed.Version {
+		t.Fatalf("内容更新重解释旧答案：%v", e)
+	}
 	// 全局隐私流程必须委派到正文 owner，并阻止旧版本与迟到提交复活。
 	pinned := int64(1)
 	if _, err = content.Preference(ctx, actor, r.ArtifactID, &learningcontent.Preference{Favorite: true, PinnedVersion: &pinned}); err != nil {
@@ -240,6 +320,10 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 	if _, err = privacyStore.RunLocalScrub(ctx, barrier.ErasureID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = service.Feedback(ctx, attemptID, false); err == nil {
+		t.Fatal("清除后仍可读取评估正文")
+	}
+	assertCount(t, pool, `SELECT count(*) FROM learning_attempts WHERE artifact_id IS NOT NULL OR artifact_version IS NOT NULL`, 0)
 	remaining, err := learningcontent.Remaining(ctx, pool)
 	if err != nil || remaining != 0 {
 		t.Fatalf("内容清除有残留：%d %v", remaining, err)

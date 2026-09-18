@@ -27,7 +27,7 @@ var agentPairingScopes = []string{
 func ParsePairingProfile(value string) (PairingProfile, error) {
 	profile := PairingProfile(strings.TrimSpace(value))
 	switch profile {
-	case PairingProfileUser, PairingProfileAgent, PairingProfileSettings, PairingProfileResearch, PairingProfileReferences, PairingProfileImport:
+	case PairingProfileUser, PairingProfileAgent, PairingProfileSettings, PairingProfileResearch, PairingProfileReferences, PairingProfileImport, PairingProfileAssessment:
 		return profile, nil
 	default:
 		return "", ErrInvalidInput
@@ -37,6 +37,9 @@ func ParsePairingProfile(value string) (PairingProfile, error) {
 func pairingProfileScopes(profile PairingProfile) ([]string, error) {
 	var scopes []string
 	switch profile {
+	case PairingProfileAssessment:
+		// 浏览器审批必须单独授权；不为既有身份或模型档案自动增加能力。
+		scopes = []string{"learning:read", "learning:write", "learning:approve", "knowledge:read", "assessment:web"}
 	case PairingProfileImport:
 		// 显式标记使浏览器保留资料审批，旧 user/agent 设备不会自动升级。
 		scopes = []string{"learning:read", "learning:write", "knowledge:read", "knowledge:write", "knowledge:approve", "imports:web"}

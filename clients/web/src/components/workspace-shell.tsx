@@ -78,6 +78,7 @@ export function WorkspaceShell() {
         </Link>
         <nav aria-label="全局导航">
           <Link to="/">学习目标</Link>
+          <Link to="/spaces/$spaceId/feedback" params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}>评估与证据</Link>
           <Link to="/spaces/$spaceId/knowledge" params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }} search={{ goal: undefined, session: undefined }}>知识与参考</Link>
           <Link
             to="/runs"

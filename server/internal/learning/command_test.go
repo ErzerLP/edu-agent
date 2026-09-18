@@ -112,7 +112,7 @@ func TestCoordinatorReturnsCurrentDispositionForReplacementValidationConflict(t 
 	}
 }
 
-func TestA101DecideRequiresCurrentFeedbackAssessmentChainWithoutCommit(t *testing.T) {
+func TestA101DecideRequiresOwnedAssessmentChainWithoutCommit(t *testing.T) {
 	activity, attempt, artifact := assessmentFixture()
 	artifact.SessionID = "10000000-0000-4000-8000-000000000040"
 	activity.SessionID = artifact.SessionID
@@ -124,7 +124,7 @@ func TestA101DecideRequiresCurrentFeedbackAssessmentChainWithoutCommit(t *testin
 		mutate       func(*proposalTestStore)
 	}{
 		{name: "historical assessment URL", assessmentID: "10000000-0000-4000-8000-000000000041"},
-		{name: "session not in feedback", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.session.State = tutoring.StateEvaluating }},
+		{name: "活动属于其他会话", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.activity.SessionID = "other-session" }},
 		{name: "attempt assessment ownership", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.assessment.AttemptID = "10000000-0000-4000-8000-000000000042" }},
 		{name: "decision assessment ownership", assessmentID: artifact.ID, mutate: func(store *proposalTestStore) { store.decision.AssessmentID = "10000000-0000-4000-8000-000000000043" }},
 	} {

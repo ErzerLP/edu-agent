@@ -49,7 +49,7 @@ export const readSession = () => unwrap(publicClient.GET('/v1/web/session'), ses
 
 export function learningClient(session: Session, spaceId?: string) {
   if (session.server_id !== window.location.origin) throw new ApiError(502, 'invalid_response')
-  const client = createClient<paths & ChangePaths & ReferencePaths & StructurePaths>({
+  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths> & ChangePaths & ReferencePaths & StructurePaths>({
     baseUrl: session.server_id,
     credentials: 'same-origin',
     cache: 'no-store',

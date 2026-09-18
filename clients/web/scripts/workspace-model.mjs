@@ -37,7 +37,7 @@ export function workspaceModel(payload) {
             '根据原资料，哪个是偶数？\n\nA. 2\n\nB. 3\n\n```text\n' +
             '长代码'.repeat(180) +
             '\n```',
-          type: 'objective',
+          type: item.goal_revision.text.includes('开放复核验收') ? 'open' : 'objective',
           rubric: {
             rubric_revision: 'browser-r1',
             items: [
@@ -47,7 +47,15 @@ export function workspaceModel(payload) {
                 required_reference_ids: [references[0].node_revision_id],
               },
             ],
-            objective_rule: { accepted_answers: ['A'], case_sensitive: false, trim_space: true },
+            ...(item.goal_revision.text.includes('开放复核验收')
+              ? {}
+              : {
+                  objective_rule: {
+                    accepted_answers: ['A'],
+                    case_sensitive: false,
+                    trim_space: true,
+                  },
+                }),
           },
           difficulty: 1,
           allowed_help: ['none', 'hint', 'scaffold', 'answer_revealed'],
@@ -64,7 +72,8 @@ export function workspaceModel(payload) {
       }
     case 'assessment': {
       const answer = item.attempt.answer
-      const quote = hits[0].slice
+      const reference = item.activity.knowledge_references[0]
+      const quote = reference.slice
       const hash = (text) => createHash('sha256').update(text).digest('hex')
       return {
         assessment: {
@@ -75,14 +84,14 @@ export function workspaceModel(payload) {
               answer_quote: answer,
               answer_range: { start: 0, end: Buffer.byteLength(answer) },
               answer_quote_sha256: hash(answer),
-              knowledge_reference_id: hits[0].node_revision_id,
+              knowledge_reference_id: reference.node_revision_id,
               knowledge_quote: quote,
-              knowledge_range: hits[0].range,
+              knowledge_range: { start: 0, end: Buffer.byteLength(quote) },
               knowledge_quote_sha256: hash(quote),
             },
           ],
           rubric_complete: true,
-          confidence: 1000,
+          confidence: item.goal_revision.text.includes('开放复核验收') ? 700 : 1000,
           risk_flags: [],
         },
       }

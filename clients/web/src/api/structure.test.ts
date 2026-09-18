@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
+vi.hoisted(() => { vi.stubGlobal('window', { location: { origin: 'http://localhost' } }) })
+afterAll(() => vi.unstubAllGlobals())
 import { emptyConcept, structureNode, structurePage } from './structure'
 
 const id = '00000000-0000-4000-8000-000000000011'

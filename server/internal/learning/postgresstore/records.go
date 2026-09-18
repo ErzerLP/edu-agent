@@ -101,7 +101,8 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		if _, err := tx.Exec(ctx, `INSERT INTO learning_attempt_payloads(id,answer_text,payload_hash,created_at) VALUES($1,$2,$3,$4)`, value.AnswerPayloadID, value.Answer, hash, value.ReceivedAt); err != nil {
 			return fmt.Errorf("insert attempt payload: %w", err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_attempts(id,session_id,activity_id,activity_revision,answer_payload_id,help_level,actor_device_id,occurred_at,received_at,payload_hash,evidence_eligibility,evidence_ineligible_reason,archive_disposition,offline_submission_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,NULLIF($14,'')::uuid)`, value.ID, value.SessionID, value.ActivityID, value.ActivityRevision, value.AnswerPayloadID, value.Help, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt, hash, value.EvidenceEligibility, value.EvidenceIneligibleReason, defaultArchiveDisposition(value.ArchiveDisposition), value.OfflineSubmissionID); err != nil {
+		artifactID, artifactVersion := learningcontent.AnswerVersion(ctx)
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_attempts(id,session_id,activity_id,activity_revision,answer_payload_id,help_level,actor_device_id,occurred_at,received_at,payload_hash,evidence_eligibility,evidence_ineligible_reason,archive_disposition,offline_submission_id,artifact_id,artifact_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''),$13,NULLIF($14,'')::uuid,$15,$16)`, value.ID, value.SessionID, value.ActivityID, value.ActivityRevision, value.AnswerPayloadID, value.Help, value.ActorDeviceID, value.OccurredAt, value.ReceivedAt, hash, value.EvidenceEligibility, value.EvidenceIneligibleReason, defaultArchiveDisposition(value.ArchiveDisposition), value.OfflineSubmissionID, artifactID, artifactVersion); err != nil {
 			return fmt.Errorf("insert attempt: %w", err)
 		}
 		if batch.EvidenceClaimSource != "" {

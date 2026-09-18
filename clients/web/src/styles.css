@@ -935,3 +935,8 @@ footer {
 .knowledge-structure svg { width: 100%; min-width: 480px; }
 .structure-list { padding-inline-start: 1.25rem; }
 .structure-list > li { padding-block: 1rem; border-bottom: 1px solid var(--border); }
+.feedback-detail, .feedback-detail fieldset { min-width: 0; overflow-wrap: anywhere; }
+.feedback-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+.feedback-detail section { margin-block: 1.5rem; min-width: 0; }
+.feedback-detail blockquote { white-space: pre-wrap; }
+@media (max-width: 768px) { .feedback-columns { grid-template-columns: minmax(0, 1fr); } }

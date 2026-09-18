@@ -193,8 +193,9 @@ func scanAssessmentItems(rows assessmentItemRows) ([]learning.AssessmentItem, er
 }
 
 type assessmentLoadResult struct {
-	artifact learning.AssessmentArtifact
-	decision learning.AssessmentDecision
+	artifact  learning.AssessmentArtifact
+	decision  learning.AssessmentDecision
+	decisions []learning.AssessmentDecision
 }
 
 func (s *Store) LoadAssessment(ctx context.Context, id string) (learning.AssessmentArtifact, learning.AssessmentDecision, error) {
@@ -267,6 +268,7 @@ func loadAssessmentWith(ctx context.Context, db learningLoaderDB, key string, by
 			return result, &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "assessment_decision_lineage"}
 		}
 		result.decision = decision
+		result.decisions = append(result.decisions, decision)
 		previousID = decision.ID
 		expectedVersion++
 	}
@@ -327,28 +329,32 @@ func (s *Store) LoadFreeAnswer(ctx context.Context, id string) (tutoring.FreeAns
 
 func (s *Store) LoadValidEvidence(ctx context.Context, nodeRevisionID string) ([]learning.AcceptedEvidence, error) {
 	return withLearningLoaderRead(ctx, s, func(db learningLoaderDB) ([]learning.AcceptedEvidence, error) {
-		rows, err := db.Query(ctx, `SELECT e.id,e.decision_id,e.assessment_id,e.attempt_id,e.activity_id,e.activity_revision,e.goal_revision_id,e.route_revision_id,e.knowledge_revision_id,e.node_revision_id,e.rubric_revision,e.evidence_kind,e.activity_type,e.outcome,e.help_level,e.received_at,e.accepted_event_seq,e.acceptance_policy_version,e.reducer_policy_version,e.review_policy_version,e.misconception_candidates,e.rubric_outcomes FROM learning_evidence e LEFT JOIN learning_evidence_invalidations i ON i.evidence_id=e.id WHERE e.node_revision_id=$1 AND e.accepted_event_seq IS NOT NULL AND i.id IS NULL ORDER BY e.accepted_event_seq,e.id`, nodeRevisionID)
-		if err != nil {
+		return loadValidEvidenceWith(ctx, db, nodeRevisionID)
+	})
+}
+
+func loadValidEvidenceWith(ctx context.Context, db learningLoaderDB, nodeRevisionID string) ([]learning.AcceptedEvidence, error) {
+	rows, err := db.Query(ctx, `SELECT e.id,e.decision_id,e.assessment_id,e.attempt_id,e.activity_id,e.activity_revision,e.goal_revision_id,e.route_revision_id,e.knowledge_revision_id,e.node_revision_id,e.rubric_revision,e.evidence_kind,e.activity_type,e.outcome,e.help_level,e.received_at,e.accepted_event_seq,e.acceptance_policy_version,e.reducer_policy_version,e.review_policy_version,e.misconception_candidates,e.rubric_outcomes FROM learning_evidence e LEFT JOIN learning_evidence_invalidations i ON i.evidence_id=e.id WHERE e.node_revision_id=$1 AND e.accepted_event_seq IS NOT NULL AND i.id IS NULL ORDER BY e.accepted_event_seq,e.id`, nodeRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []learning.AcceptedEvidence
+	for rows.Next() {
+		var value learning.AcceptedEvidence
+		var misconceptions, outcomes []byte
+		if err := rows.Scan(&value.ID, &value.DispositionDecisionID, &value.AssessmentID, &value.AttemptID, &value.ActivityID, &value.ActivityRevision, &value.GoalRevisionID, &value.RouteRevisionID, &value.KnowledgeRevisionID, &value.NodeRevisionID, &value.RubricRevision, &value.Kind, &value.ActivityType, &value.Outcome, &value.Help, &value.ReceivedAt, &value.AcceptedEventSequence, &value.AcceptancePolicyVersion, &value.ReducerPolicyVersion, &value.ReviewPolicyVersion, &misconceptions, &outcomes); err != nil {
 			return nil, err
 		}
-		defer rows.Close()
-		var result []learning.AcceptedEvidence
-		for rows.Next() {
-			var value learning.AcceptedEvidence
-			var misconceptions, outcomes []byte
-			if err := rows.Scan(&value.ID, &value.DispositionDecisionID, &value.AssessmentID, &value.AttemptID, &value.ActivityID, &value.ActivityRevision, &value.GoalRevisionID, &value.RouteRevisionID, &value.KnowledgeRevisionID, &value.NodeRevisionID, &value.RubricRevision, &value.Kind, &value.ActivityType, &value.Outcome, &value.Help, &value.ReceivedAt, &value.AcceptedEventSequence, &value.AcceptancePolicyVersion, &value.ReducerPolicyVersion, &value.ReviewPolicyVersion, &misconceptions, &outcomes); err != nil {
-				return nil, err
-			}
-			if err := json.Unmarshal(misconceptions, &value.Misconceptions); err != nil {
-				return nil, err
-			}
-			if err := json.Unmarshal(outcomes, &value.RubricOutcomes); err != nil {
-				return nil, err
-			}
-			result = append(result, value)
+		if err := json.Unmarshal(misconceptions, &value.Misconceptions); err != nil {
+			return nil, err
 		}
-		return result, rows.Err()
-	})
+		if err := json.Unmarshal(outcomes, &value.RubricOutcomes); err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) LoadMisconceptions(ctx context.Context, nodeRevisionID string) ([]learning.MisconceptionHypothesis, error) {

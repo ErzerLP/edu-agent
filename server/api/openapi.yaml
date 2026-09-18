@@ -2586,12 +2586,80 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/assessments:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: listLearningFeedback
+      summary: 按原学习区查询在线答案及待处理评估
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [all, pending, provisional], default: all } }
+        - { name: session_id, in: query, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 4096 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        "200":
+          description: 原答案列表，游标绑定学习区、筛选和投影版本。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningFeedbackPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/LearningCursorConflict" }
+        "501": { description: 当前服务不支持在线反馈查询 }
+        "503": { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/assessments/{assessmentID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: getLearningAssessment
+      summary: 读取在线评估的原事实、处置历史与有效 Evidence
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      parameters: [{ $ref: "#/components/parameters/AssessmentID" }]
+      responses:
+        "200":
+          description: 隐私屏障下的一致快照。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningFeedback" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: 当前服务不支持在线反馈查询 }
+        "503": { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/attempts/{attemptID}/feedback:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+    get:
+      operationId: getLearningAttemptFeedback
+      summary: 按原答案查询接收回执和真实评估阶段
+      x-required-scope: learning:read
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      parameters:
+        - { name: attemptID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: 尚未评估时仍可查到已接收答案及原版本；历史未保存的正文关联省略。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LearningFeedback" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "501": { description: 当前服务不支持在线反馈查询 }
+        "503": { $ref: "#/components/responses/WebFailure" }
   /v1/learning/assessments/{assessmentID}/decisions:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
     post:
       operationId: decideLearningAssessment
-      summary: Compensate an assessment disposition and its evidence
+      summary: 追加原会话内当前或历史评估的复核、覆盖或作废，不改变当前焦点
       x-required-scope: learning:write
       x-required-scopes: [learning:write, learning:approve]
       x-max-body-bytes: 1048576
@@ -5685,6 +5753,62 @@ components:
           confirm: "#/components/schemas/AssessmentConfirmRequest"
           override: "#/components/schemas/AssessmentOverrideRequest"
           void: "#/components/schemas/AssessmentVoidRequest"
+    LearningFeedbackPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [attempt_id, activity_id, session_id, received_at, status]
+            properties:
+              attempt_id: { type: string, format: uuid }
+              activity_id: { type: string, format: uuid }
+              session_id: { type: string, format: uuid }
+              assessment_id: { type: string, format: uuid }
+              received_at: { type: string, format: date-time }
+              status: { type: string, enum: [received, pending, processing, ready, failed, unknown, settled] }
+              disposition: { type: string, enum: [provisional, accepted, overridden, voided] }
+        next_cursor: { type: string }
+    LearningFeedback:
+      type: object
+      additionalProperties: false
+      required: [learning_space_id, session_version, status, goal_revision, activity, attempt, receipt, decisions, evidence, reasons, allowed_decisions]
+      properties:
+        learning_space_id: { type: string, format: uuid }
+        session_version: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [received, pending, processing, ready, failed, unknown, settled]
+          description: 已接收、排队、模型处理中、模型建议待提交、失败、租约过期未知、已结算；建议就绪不等于 Evidence 已接纳。
+        goal_revision: { $ref: "#/components/schemas/GoalRevision" }
+        activity: { $ref: "#/components/schemas/Activity" }
+        attempt: { $ref: "#/components/schemas/Attempt" }
+        receipt:
+          type: object
+          additionalProperties: false
+          required: [operation_id, event_seq, received_at]
+          properties:
+            operation_id: { type: string, format: uuid }
+            event_seq: { type: integer, minimum: 1 }
+            received_at: { type: string, format: date-time }
+        content:
+          type: object
+          additionalProperties: false
+          required: [artifact_id, version]
+          properties:
+            artifact_id: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+        knowledge_context_revision_id: { type: string, format: uuid }
+        assessment: { $ref: "#/components/schemas/AssessmentArtifact" }
+        decisions: { type: array, items: { $ref: "#/components/schemas/AssessmentDecision" } }
+        evidence: { type: array, items: { $ref: "#/components/schemas/AcceptedEvidence" } }
+        reasons: { type: array, items: { type: string } }
+        allowed_decisions: { type: array, items: { type: string, enum: [confirm, override, void] } }
     AssessmentConfirmRequest:
       type: object
       additionalProperties: false
@@ -5706,6 +5830,7 @@ components:
         expected_version: { type: integer, minimum: 0 }
         occurred_at: { type: string, format: date-time }
         kind: { const: confirm }
+        reason: { type: string, minLength: 1, description: 可选复核依据，旧客户端省略仍兼容 }
         expected_disposition_version: { type: integer, minimum: 1 }
     AssessmentOverrideRequest:
       type: object

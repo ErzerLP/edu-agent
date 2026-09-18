@@ -4,6 +4,109 @@
  */
 
 export interface paths {
+    "/v1/knowledge/structure/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询结构能力与当前身份审批权限 */
+        get: operations["readKnowledgeStructureCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/structure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 先授权过滤后分页；图与列表为同一有界投影，版本改变使游标失效 */
+        get: operations["readKnowledgeStructure"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/structure/concepts/{conceptID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取稳定概念及指定旧修订；来源解除关联或隐私清除后不可恢复正文 */
+        get: operations["readKnowledgeConcept"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/structure/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取知识维护记录及当前影响 */
+        get: operations["listKnowledgeStructureProposals"];
+        put?: never;
+        /** 创建冻结候选；不按名称合并、不复制证据；补偿额外要求 knowledge:approve */
+        post: operations["createKnowledgeStructureProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/structure/proposals/{proposalID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 核对提案真实结果与新增依赖 */
+        get: operations["readKnowledgeStructureProposal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/structure/proposals/{proposalID}/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 按摘要批准或拒绝；并发版本或新增依赖产生 stale，补偿生成新版本 */
+        post: operations["decideKnowledgeStructureProposal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/knowledge/source-capabilities": {
         parameters: {
             query?: never;
@@ -1916,6 +2019,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/assessments": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** 按原学习区查询在线答案及待处理评估 */
+        get: operations["listLearningFeedback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/assessments/{assessmentID}": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取在线评估的原事实、处置历史与有效 Evidence */
+        get: operations["getLearningAssessment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/attempts/{attemptID}/feedback": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** 按原答案查询接收回执和真实评估阶段 */
+        get: operations["getLearningAttemptFeedback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/assessments/{assessmentID}/decisions": {
         parameters: {
             query?: never;
@@ -1928,7 +2091,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Compensate an assessment disposition and its evidence */
+        /** 追加原会话内当前或历史评估的复核、覆盖或作废，不改变当前焦点 */
         post: operations["decideLearningAssessment"];
         delete?: never;
         options?: never;
@@ -2482,6 +2645,152 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        KnowledgeStructureSource: {
+            /** Format: uuid */
+            collection_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            node_id: string;
+            quote: string;
+        };
+        KnowledgeStructureClaim: {
+            text: string;
+            conditions: string;
+            sources: number[];
+            gap: string;
+        };
+        KnowledgeStructureRelation: {
+            /** Format: uuid */
+            target_id: string;
+            /** @enum {string} */
+            kind: "prerequisite" | "related" | "contrast" | "part_of";
+            suggested: boolean;
+            sources: number[];
+        };
+        KnowledgeStructureContent: {
+            description: string;
+            /** @enum {string} */
+            source_status: "candidate" | "included" | "unverified" | "conflict" | "superseded";
+            suggested: boolean;
+            sources: components["schemas"]["KnowledgeStructureSource"][];
+            claims: components["schemas"]["KnowledgeStructureClaim"][];
+            relations: components["schemas"]["KnowledgeStructureRelation"][];
+            replaced_by: string[];
+        };
+        KnowledgeStructureNode: {
+            /** Format: uuid */
+            concept_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            semantic_key: string;
+            name: string;
+            support: {
+                /** Format: uuid */
+                source_id: string;
+                /** Format: uuid */
+                revision_id: string;
+                /** Format: uuid */
+                fragment_id: string;
+                quote: string;
+            }[];
+            goal_id: string;
+            content: components["schemas"]["KnowledgeStructureContent"];
+            /** @enum {string} */
+            learning_state: "unseen" | "needs_practice" | "insufficient_evidence" | "evidenced";
+        };
+        KnowledgeStructureEdit: {
+            /** Format: uuid */
+            concept_id: string;
+            goal_id: string;
+            name: string;
+            content: components["schemas"]["KnowledgeStructureContent"];
+        };
+        KnowledgeStructurePage: {
+            version: number;
+            generation: number;
+            items: components["schemas"]["KnowledgeStructureNode"][];
+            edges: {
+                /** Format: uuid */
+                source_id: string;
+                /** Format: uuid */
+                target_id: string;
+                /** @enum {string} */
+                kind: "prerequisite" | "related" | "contrast" | "part_of";
+                suggested: boolean;
+                sources: number[];
+            }[];
+            next_cursor: string;
+            partial: boolean;
+            notice: string;
+        };
+        KnowledgeStructureImpact: {
+            goal_ids: string[];
+            contexts: number;
+            activities: number;
+            contents: number;
+            evidence: number;
+            fingerprint: string;
+        };
+        KnowledgeStructureCommand: {
+            /** Format: uuid */
+            operation_id: string;
+            base_version: number;
+            generation: number;
+            /** @enum {string} */
+            kind: "edit" | "merge" | "split" | "compensate";
+            reason: string;
+            edits: components["schemas"]["KnowledgeStructureEdit"][];
+            /** Format: uuid */
+            compensates?: string;
+        };
+        KnowledgeStructureDecision: {
+            /** Format: uuid */
+            operation_id: string;
+            hash: string;
+            /** @enum {string} */
+            decision: "approve" | "reject";
+            reason: string;
+        };
+        KnowledgeStructureProposal: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            operation_id: string;
+            /** @enum {string} */
+            status: "open" | "applied" | "rejected" | "stale";
+            /** @enum {string} */
+            kind: "edit" | "merge" | "split" | "compensate";
+            reason: string;
+            base_version: number;
+            generation: number;
+            hash: string;
+            before: components["schemas"]["KnowledgeStructureNode"][];
+            after: components["schemas"]["KnowledgeStructureNode"][];
+            impact: components["schemas"]["KnowledgeStructureImpact"];
+            current_impact: components["schemas"]["KnowledgeStructureImpact"];
+            compensates: string;
+            applied_version: number;
+            /** Format: date-time */
+            created_at: string;
+            decision_reason: string;
+            replayed: boolean;
+        };
+        KnowledgeStructureProposalPage: {
+            items: components["schemas"]["KnowledgeStructureProposal"][];
+            next_cursor: string;
+        };
+        KnowledgeStructureCapabilities: {
+            /** @constant */
+            protocol_version: 1;
+            available: boolean;
+            can_propose: boolean;
+            can_decide: boolean;
+            max_nodes: number;
+            max_edits: number;
+        };
         StartLearningCapabilities: {
             /** @constant */
             protocol_version: 1;
@@ -3693,6 +4002,57 @@ export interface components {
             goal_revision_id: components["schemas"]["LearningUUID"];
         };
         AssessmentDecisionRequest: components["schemas"]["AssessmentConfirmRequest"] | components["schemas"]["AssessmentOverrideRequest"] | components["schemas"]["AssessmentVoidRequest"];
+        LearningFeedbackPage: {
+            items: {
+                /** Format: uuid */
+                attempt_id: string;
+                /** Format: uuid */
+                activity_id: string;
+                /** Format: uuid */
+                session_id: string;
+                /** Format: uuid */
+                assessment_id?: string;
+                /** Format: date-time */
+                received_at: string;
+                /** @enum {string} */
+                status: "received" | "pending" | "processing" | "ready" | "failed" | "unknown" | "settled";
+                /** @enum {string} */
+                disposition?: "provisional" | "accepted" | "overridden" | "voided";
+            }[];
+            next_cursor?: string;
+        };
+        LearningFeedback: {
+            /** Format: uuid */
+            learning_space_id: string;
+            session_version: number;
+            /**
+             * @description 已接收、排队、模型处理中、模型建议待提交、失败、租约过期未知、已结算；建议就绪不等于 Evidence 已接纳。
+             * @enum {string}
+             */
+            status: "received" | "pending" | "processing" | "ready" | "failed" | "unknown" | "settled";
+            goal_revision: components["schemas"]["GoalRevision"];
+            activity: components["schemas"]["Activity"];
+            attempt: components["schemas"]["Attempt"];
+            receipt: {
+                /** Format: uuid */
+                operation_id: string;
+                event_seq: number;
+                /** Format: date-time */
+                received_at: string;
+            };
+            content?: {
+                /** Format: uuid */
+                artifact_id: string;
+                version: number;
+            };
+            /** Format: uuid */
+            knowledge_context_revision_id?: string;
+            assessment?: components["schemas"]["AssessmentArtifact"];
+            decisions: components["schemas"]["AssessmentDecision"][];
+            evidence: components["schemas"]["AcceptedEvidence"][];
+            reasons: string[];
+            allowed_decisions: ("confirm" | "override" | "void")[];
+        };
         AssessmentConfirmRequest: {
             operation_id: components["schemas"]["LearningUUID"];
             /** @constant */
@@ -3708,6 +4068,8 @@ export interface components {
              * @enum {string}
              */
             kind: "confirm";
+            /** @description 可选复核依据，旧客户端省略仍兼容 */
+            reason?: string;
             expected_disposition_version: number;
         };
         AssessmentOverrideRequest: {
@@ -6489,6 +6851,199 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readKnowledgeStructureCapabilities: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructureCapabilities"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readKnowledgeStructure: {
+        parameters: {
+            query?: {
+                goal_id?: string;
+                root_id?: string;
+                search?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructurePage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readKnowledgeConcept: {
+        parameters: {
+            query?: {
+                revision_id?: string;
+            };
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path: {
+                conceptID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructureNode"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listKnowledgeStructureProposals: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructureProposalPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    createKnowledgeStructureProposal: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeStructureCommand"];
+            };
+        };
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructureProposal"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readKnowledgeStructureProposal: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path: {
+                proposalID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructureProposal"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    decideKnowledgeStructureProposal: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path: {
+                proposalID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeStructureDecision"];
+            };
+        };
+        responses: {
+            /** @description 授权范围内的真实结果；正文不缓存 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeStructureProposal"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     readSourceCapabilities: {
         parameters: {
             query?: never;
@@ -10629,6 +11184,120 @@ export interface operations {
                 content?: never;
             };
             503: components["responses"]["DependencyUnavailable"];
+        };
+    };
+    listLearningFeedback: {
+        parameters: {
+            query?: {
+                status?: "all" | "pending" | "provisional";
+                session_id?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原答案列表，游标绑定学习区、筛选和投影版本。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningFeedbackPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["LearningCursorConflict"];
+            /** @description 当前服务不支持在线反馈查询 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["WebFailure"];
+        };
+    };
+    getLearningAssessment: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path: {
+                assessmentID: components["parameters"]["AssessmentID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 隐私屏障下的一致快照。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningFeedback"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 当前服务不支持在线反馈查询 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["WebFailure"];
+        };
+    };
+    getLearningAttemptFeedback: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path: {
+                attemptID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 尚未评估时仍可查到已接收答案及原版本；历史未保存的正文关联省略。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningFeedback"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 当前服务不支持在线反馈查询 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["WebFailure"];
         };
     };
     decideLearningAssessment: {

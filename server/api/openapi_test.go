@@ -529,7 +529,8 @@ func TestLearningOpenAPIWriteSchemasAreClosedAndDiscriminated(t *testing.T) {
 	validate("TutoringActionRequest", `{`+base+`,"action":"start_diagnostic","unknown":true}`, false)
 	validate("TutoringActionRequest", `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"aggregate_type":"session","aggregate_id":"20000000-0000-4000-8000-000000000001","action":"start_diagnostic"}`, false)
 	validate("AssessmentDecisionRequest", `{`+base+`,"kind":"confirm","expected_disposition_version":1}`, true)
-	validate("AssessmentDecisionRequest", `{`+base+`,"kind":"confirm","expected_disposition_version":1,"reason":"unrelated"}`, false)
+	validate("AssessmentDecisionRequest", `{`+base+`,"kind":"confirm","expected_disposition_version":1,"reason":"人工复核依据"}`, true)
+	validate("AssessmentDecisionRequest", `{`+base+`,"kind":"confirm","expected_disposition_version":1,"unknown":"无关字段"}`, false)
 	validate("LearningGoalRequest", `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"aggregate_type":"goal","aggregate_id":"20000000-0000-4000-8000-000000000001","expected_version":0,"text":"Learn","source":"device"}`, true)
 	validate("LearningGoalRequest", `{"operation_id":"10000000-0000-4000-8000-000000000001","payload_schema_version":1,"aggregate_type":"goal","aggregate_id":"20000000-0000-4000-8000-000000000001","text":"Learn","source":"device"}`, false)
 	validate("TutoringProposalRequest", `{"request_id":"10000000-0000-4000-8000-000000000001","proposal_type":"route","aggregate_type":"goal","aggregate_id":"20000000-0000-4000-8000-000000000001","aggregate_version":1,"knowledge_revision_id":"30000000-0000-4000-8000-000000000001","node_revision_ids":["40000000-0000-4000-8000-000000000001"],"input":{},"unknown":true}`, false)
@@ -710,6 +711,32 @@ func TestLearningOpenAPICanonicalUUIDSHACollectionAndActivityMatrix(t *testing.T
 	withUnknown := mapsClone(activityPayload)
 	withUnknown["unknown"] = true
 	validate("Activity", withUnknown, false)
+	feedback := learning.FeedbackView{
+		LearningSpaceID: canonical, SessionVersion: 3, Status: "received", Activity: activity,
+		Goal:    learning.GoalRevision{ID: canonical, GoalID: canonical, Revision: 1, Text: "原目标", Source: "device", ActorDeviceID: canonical, CreatedAt: now},
+		Attempt: learning.Attempt{ID: canonical, SessionID: canonical, ActivityID: canonical, ActivityRevision: 1, AnswerPayloadID: canonical, Answer: "原答案", AnswerSHA256: validSHA, Help: learning.HelpNone, ActorDeviceID: canonical, ReceivedAt: now, EvidenceEligibility: true, ArchiveDisposition: "online"},
+		Receipt: learning.FeedbackReceipt{OperationID: canonical, EventSequence: 1, ReceivedAt: now},
+		Content: &learning.FeedbackContent{ArtifactID: canonical, Version: 1}, KnowledgeContextID: canonical,
+		Decisions: []learning.AssessmentDecision{}, Evidence: []learning.AcceptedEvidence{}, Reasons: []string{}, AllowedDecisions: []string{},
+	}
+	encoded, err = json.Marshal(feedback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var feedbackPayload map[string]any
+	if err := json.Unmarshal(encoded, &feedbackPayload); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"received", "pending", "processing", "ready", "failed", "unknown", "settled"} {
+		feedbackPayload["status"] = status
+		validate("LearningFeedback", feedbackPayload, true)
+	}
+	feedbackPayload["status"] = "未来未知状态"
+	validate("LearningFeedback", feedbackPayload, false)
+	feedbackPayload["status"] = "received"
+	feedbackPayload["content"] = map[string]any{"artifact_id": canonical, "version": 0}
+	validate("LearningFeedback", feedbackPayload, false)
+	validate("LearningFeedbackPage", map[string]any{"items": []any{}}, true)
 
 	routeStep := map[string]any{
 		"route_step_id": canonical, "ordinal": 0, "node_id": canonical,

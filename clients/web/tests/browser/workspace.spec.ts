@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import AxeBuilder from '@axe-core/playwright'
 
 const space = '00000000-0000-4000-8000-000000000001'
@@ -16,7 +16,12 @@ const code = (profile = 'user') =>
     },
   }).trim()
 
-async function legacySession(request: APIRequestContext, spaceId = space) {
+async function legacySession(
+  request: APIRequestContext,
+  spaceId = space,
+  openAssessment = false,
+  globalKnowledge = false,
+) {
   const pair = await request.post('/v1/pairings/exchange', {
     data: { code: code(), display_name: '旧协议教学验收' },
   })
@@ -29,7 +34,8 @@ async function legacySession(request: APIRequestContext, spaceId = space) {
       method,
       headers: {
         ...headers,
-        ...(['/v1/knowledge/imports', '/v1/knowledge/revisions/head'].includes(path)
+        ...(!globalKnowledge &&
+        ['/v1/knowledge/imports', '/v1/knowledge/revisions/head'].includes(path)
           ? { 'X-Knowledge-Collection-ID': collectionId }
           : {}),
       },
@@ -38,31 +44,49 @@ async function legacySession(request: APIRequestContext, spaceId = space) {
     expect(response.ok(), `${path}: ${await response.text()}`).toBe(true)
     return response.json()
   }
-  await call('POST', '/v1/knowledge/collections', {
-    id: collectionId,
-    action: 'create',
-    name: '教学验收资料',
-    source: 'browser-workspace',
-  })
+  if (!globalKnowledge)
+    await call('POST', '/v1/knowledge/collections', {
+      id: collectionId,
+      action: 'create',
+      name: '教学验收资料',
+      source: 'browser-workspace',
+    })
+  let parent: string | null = null
+  if (globalKnowledge) {
+    const head = await request.get('/v1/knowledge/revisions/head', { headers })
+    expect([200, 404]).toContain(head.status())
+    if (head.ok()) parent = (await head.json()).revision.revision_id
+  }
+  const retained = parent
+    ? (await call('GET', `/v1/knowledge/revisions/${parent}/export`)).documents
+    : []
   await call('POST', '/v1/knowledge/imports', {
     operation_id: randomUUID(),
-    expected_parent_revision_id: null,
+    expected_parent_revision_id: parent ?? null,
     source: '浏览器工作区验收',
     documents: [
-      { path: 'even.md', markdown: '# 偶数\n\n偶数可以被 2 整除。2 是偶数，3 是奇数。\n' },
-      {
-        path: 'examples.md',
-        markdown:
-          '# 偶数的阅读与核对\n\n偶数。完成每一轮时检查问题与资料定位，保留会话和操作编号以便继续学习。确认反馈后进入下一轮。\n',
-      },
+      ...retained.map((d: { path: string; markdown: string }) => ({
+        path: d.path,
+        markdown: d.markdown,
+      })),
+      ...[
+        { path: 'even.md', markdown: '# 偶数\n\n偶数可以被 2 整除。2 是偶数，3 是奇数。\n' },
+        {
+          path: 'examples.md',
+          markdown:
+            '# 偶数的阅读与核对\n\n偶数。完成每一轮时检查问题与资料定位，保留会话和操作编号以便继续学习。确认反馈后进入下一轮。\n',
+        },
+      ].filter((d) => !retained.some((existing: { path: string }) => existing.path === d.path)),
     ],
   })
   const collectionRevision = (await call('GET', '/v1/knowledge/revisions/head')).revision
     .revision_id
-  const frozenScope = await call('POST', '/v1/knowledge/scopes', {
-    id: randomUUID(),
-    entries: [{ collection_id: collectionId, revision_id: collectionRevision }],
-  })
+  const frozenScope = globalKnowledge
+    ? { id: collectionRevision }
+    : await call('POST', '/v1/knowledge/scopes', {
+        id: randomUUID(),
+        entries: [{ collection_id: collectionId, revision_id: collectionRevision }],
+      })
   const revision = frozenScope.id
   const goal = (
     await call('POST', '/v1/learning/goals', {
@@ -71,9 +95,13 @@ async function legacySession(request: APIRequestContext, spaceId = space) {
       aggregate_type: 'goal',
       aggregate_id: randomUUID(),
       expected_version: 0,
-      text: '理解偶数并使用原资料说明依据',
+      text: openAssessment
+        ? '开放复核验收：理解偶数并使用原资料说明依据'
+        : '理解偶数并使用原资料说明依据',
       source: '旧协议教学验收',
-      details: { name: '理解偶数并使用原资料说明依据', scope_snapshot_id: revision },
+      ...(!globalKnowledge
+        ? { details: { name: '理解偶数并使用原资料说明依据', scope_snapshot_id: revision } }
+        : {}),
     })
   ).result
   const id = randomUUID()
@@ -103,7 +131,7 @@ async function legacySession(request: APIRequestContext, spaceId = space) {
     const view = await get()
     const retrieval = await call('POST', '/v1/knowledge/retrievals', {
       query: '偶数',
-      scope_snapshot_id: revision,
+      ...(globalKnowledge ? { knowledge_revision_id: revision } : { scope_snapshot_id: revision }),
       query_context_schema_version: 'query-context-v1',
       context: { session_id: id },
     })
@@ -274,6 +302,244 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
     await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })),
   ).not.toContain('草稿')
   expect(errors).toEqual([])
+})
+
+test('评估详情保留原版本、权限隔离与丢响应历史作废', async ({
+  page,
+  request,
+  browser,
+}, testInfo) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+  test.setTimeout(120000)
+  const fixture = await legacySession(request)
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  await page.getByLabel('我的正式答案').fill('A')
+  await page.getByRole('button', { name: '提交正式答案' }).click()
+  await page.getByRole('link', { name: '查看原答案、接收回执与评估详情' }).click()
+  await expect(page.getByRole('heading', { name: '评估详情' })).toBeVisible()
+  await expect(page.getByRole('status')).toContainText('答案已接收')
+  await page.getByText('原版本与来源', { exact: true }).click()
+  await expect(page.getByRole('link', { name: /第 1 版/ })).toBeVisible()
+  const original = await fixture.get()
+  const attempt = original.work_item.attempt.attempt_id
+  await page.getByRole('link', { name: '返回原教学会话' }).click()
+  await page.getByRole('button', { name: '获取教学反馈' }).click()
+  await expect(page.getByRole('region', { name: '教学反馈' })).toContainText('已接纳')
+  await page.getByRole('button', { name: '查看完毕，继续学习' }).click()
+  await expect.poll(async () => (await fixture.get()).session.state).toBe('RouteActive')
+  await page.goto(`/app/spaces/${space}/feedback/${attempt}`)
+  await expect(page.getByRole('region', { name: '正式学习证据', exact: true })).toContainText(
+    '达到要求',
+  )
+  await expect(page.getByRole('region', { name: '确定规则核验' })).toContainText(
+    '仅按原字符串规则匹配',
+  )
+  for (const width of [390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 1000 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  await page.screenshot({ path: testInfo.outputPath('assessment-feedback.png'), fullPage: true })
+  const readonly = await browser.newContext()
+  const readPage = await readonly.newPage()
+  await readPage.goto('/app/')
+  await readPage.getByLabel('配对码', { exact: true }).fill(code())
+  await readPage.getByRole('button', { name: '配对并进入' }).click()
+  await expect(readPage.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await readPage.goto(`/app/spaces/${space}/feedback/${attempt}`)
+  await expect(readPage.getByText('当前设备只有查看能力', { exact: false })).toBeVisible()
+  await expect(readPage.getByRole('button', { name: '检查处置内容' })).toHaveCount(0)
+  await readonly.close()
+  await page.getByLabel('处置原因').fill('人工复核后撤销本次证据')
+  await page.getByRole('button', { name: '检查处置内容' }).click()
+  await page.getByRole('button', { name: '作废评估', exact: true }).click()
+  await expect(page.getByRole('alertdialog')).toContainText('原题、答案与评分标准保留')
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  let decisions = 0
+  await page.route('**/v1/learning/assessments/*/decisions', async (route) => {
+    decisions++
+    const response = await route.fetch()
+    expect(response.ok(), await response.text()).toBe(true)
+    await route.abort('failed')
+  })
+  await page.getByRole('button', { name: '作废评估', exact: true }).click()
+  await page.getByRole('button', { name: '确认作废评估', exact: true }).click()
+  await expect(page.getByRole('button', { name: '核对原处置' })).toBeVisible()
+  await page.getByRole('button', { name: '核对原处置' }).click()
+  await expect(page.getByRole('region', { name: '正式学习证据', exact: true })).toContainText(
+    '没有有效',
+  )
+  expect(decisions).toBe(1)
+  const result = await (await webCall(page, `/v1/learning/attempts/${attempt}/feedback`)).json()
+  expect(result.decisions.map((d: { disposition: string }) => d.disposition)).toEqual([
+    'accepted',
+    'voided',
+  ])
+  expect(result.attempt.answer).toBe('A')
+  expect(result.content.version).toBe(1)
+  expect((await fixture.get()).session.state).toBe('RouteActive')
+  expect(
+    await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })),
+  ).not.toContain('人工复核')
+})
+
+test('开放评估明确不确定性，复核与覆盖保留原建议及追加证据', async ({ page, request }) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+  test.setTimeout(120000)
+  const fixture = await legacySession(request, space, true)
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  await page.getByLabel('我的正式答案').fill('2 可以被 2 整除，所以 2 是偶数。')
+  await page.getByRole('button', { name: '提交正式答案' }).click()
+  await page.getByRole('button', { name: '获取教学反馈' }).click()
+  await expect(page.getByRole('region', { name: '教学反馈' })).toContainText('待复核')
+  const original = await fixture.get()
+  const attempt = original.work_item.attempt.attempt_id
+  await page.getByRole('link', { name: '查看原答案、接收回执与评估详情' }).click()
+  await expect(page.getByRole('region', { name: '模型评分建议' })).toContainText(
+    '未达到自动接纳门槛',
+  )
+  await expect(page.getByRole('region', { name: '正式学习证据', exact: true })).toContainText(
+    '没有有效',
+  )
+  await page.getByLabel('处置动作').selectOption('confirm')
+  await page.getByLabel('处置原因').fill('人工核对原答案和来源，逐项依据完整')
+  await page.getByRole('button', { name: '检查处置内容' }).click()
+  await page.getByRole('button', { name: '复核接纳', exact: true }).click()
+  await page.getByRole('button', { name: '确认复核接纳', exact: true }).click()
+  await expect(page.getByRole('region', { name: '正式学习证据', exact: true })).toContainText(
+    '达到要求',
+  )
+  await page.getByLabel('处置动作').selectOption('override')
+  await page.getByLabel('处置原因').fill('保留原引文，修正为部分达到')
+  await page.getByLabel('修正结论').selectOption('partial')
+  await page.getByRole('button', { name: '检查处置内容' }).click()
+  await page.getByRole('button', { name: '覆盖评估', exact: true }).click()
+  await expect(page.getByRole('alertdialog')).toContainText('部分达到')
+  await page.getByRole('button', { name: '确认覆盖评估', exact: true }).click()
+  await expect(page.getByRole('region', { name: '正式学习证据', exact: true })).toContainText(
+    '部分达到',
+  )
+  const result = await (await webCall(page, `/v1/learning/attempts/${attempt}/feedback`)).json()
+  expect(result.decisions.map((d: { disposition: string }) => d.disposition)).toEqual([
+    'provisional',
+    'accepted',
+    'overridden',
+  ])
+  expect(result.assessment.items[0].conclusion).toBe('pass')
+  expect(result.evidence).toHaveLength(1)
+  expect(result.decisions[1].reason).toContain('人工核对')
+})
+
+test('真实继承提案明确映射、批准重放及拒绝', async ({ page, request }) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+  test.setTimeout(120000)
+  const fixture = await legacySession(request, space, false, true)
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  await page.getByLabel('我的正式答案').fill('A')
+  await page.getByRole('button', { name: '提交正式答案' }).click()
+  await page.getByRole('button', { name: '获取教学反馈' }).click()
+  await expect(page.getByRole('region', { name: '教学反馈' })).toContainText('已接纳')
+  const original = await fixture.get()
+  const attempt = original.work_item.attempt.attempt_id
+  const feedback = await fixture.call('GET', `/v1/learning/attempts/${attempt}/feedback`)
+  const evidence = feedback.evidence[0].evidence_id
+  const update = async (title: string) => {
+    const base = (await fixture.call('GET', '/v1/knowledge/revisions/head')).revision.revision_id
+    const exported = await fixture.call('GET', `/v1/knowledge/revisions/${base}/export`)
+    const excerpt = '仅修改标题，原偶数定义和正文保持不变。'
+    const proposal = await fixture.call('POST', '/v1/knowledge/maintenance/proposals', {
+      request_id: randomUUID(),
+      base_revision_id: base,
+      sources: [
+        {
+          kind: 'note',
+          locator: 'browser/assessment-review',
+          excerpt,
+          sha256: createHash('sha256').update(excerpt).digest('hex'),
+        },
+      ],
+      candidate_snapshot: exported.documents.map((d: { path: string; markdown: string }) => ({
+        path: d.path,
+        markdown: ['even.md', 'examples.md'].includes(d.path)
+          ? d.markdown.replace(/^# .*$/m, `# ${title} · ${d.path}`)
+          : d.markdown,
+      })),
+    })
+    expect(proposal.status).toBe('open')
+    await fixture.call(
+      'POST',
+      `/v1/knowledge/maintenance/proposals/${proposal.proposal_id}/approve`,
+      {
+        operation_id: randomUUID(),
+        reason: '验收既有知识变更产生的真实继承提案',
+      },
+    )
+    const candidates = await fixture.call(
+      'GET',
+      '/v1/learning/evidence-carryovers?status=open&limit=100',
+    )
+    const carryover = candidates.items.find(
+      (p: { knowledge_proposal_id: string; source_evidence_id: string }) =>
+        p.knowledge_proposal_id === proposal.proposal_id && p.source_evidence_id === evidence,
+    )
+    expect(carryover).toBeTruthy()
+    return carryover
+  }
+  const first = await update('偶数第一次修订')
+  await page.goto(`/app/spaces/${space}/feedback`)
+  const card = (id: string) => page.getByRole('article').filter({ hasText: id })
+  await expect(card(first.proposal_id)).toContainText(first.source_evidence_id)
+  await expect(card(first.proposal_id)).toContainText(first.candidates[0].node_revision_id)
+  await card(first.proposal_id)
+    .getByLabel('继承处置原因')
+    .fill('核对来源和唯一目标映射，不迁移掌握度')
+  await card(first.proposal_id).getByRole('button', { name: '批准继承', exact: true }).click()
+  await expect(page.getByRole('alertdialog')).toContainText(first.target_knowledge_revision_id)
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  let command: unknown
+  await page.route(
+    `**/v1/learning/evidence-carryovers/${first.proposal_id}/approve`,
+    async (route) => {
+      command = route.request().postDataJSON()
+      const response = await route.fetch()
+      expect(response.ok(), await response.text()).toBe(true)
+      await route.abort('failed')
+    },
+  )
+  await card(first.proposal_id).getByRole('button', { name: '批准继承', exact: true }).click()
+  await page.getByRole('button', { name: '确认批准继承', exact: true }).click()
+  await expect(card(first.proposal_id)).toContainText('已批准待验证映射')
+  const replayResponse = await webCall(
+    page,
+    `/v1/learning/evidence-carryovers/${first.proposal_id}/approve`,
+    command,
+  )
+  expect(replayResponse.ok(), await replayResponse.text()).toBe(true)
+  const replay = await replayResponse.json()
+  expect(replay.replayed).toBe(true)
+  expect(replay.links).toHaveLength(1)
+  const second = await update('偶数第二次修订')
+  await page.getByRole('button', { name: '刷新继承提案' }).click()
+  await card(second.proposal_id).getByLabel('继承处置原因').fill('拒绝此次候选，不影响原证据')
+  await card(second.proposal_id).getByRole('button', { name: '拒绝继承', exact: true }).click()
+  await page.getByRole('button', { name: '确认拒绝继承', exact: true }).click()
+  await expect(card(second.proposal_id)).toContainText('已拒绝')
+  const current = await fixture.call('GET', `/v1/learning/attempts/${attempt}/feedback`)
+  expect(current.evidence.map((e: { evidence_id: string }) => e.evidence_id)).toEqual([evidence])
 })
 
 test('内容草稿、未知交互、来源安全与指定版本', async ({ page, request }) => {
@@ -480,9 +746,36 @@ test('教学变更显示具体差异、排队、立即切换与原题草稿焦�
   const read = await webCall(page, `${path}/change-context?session_id=${fixture.id}`)
   expect(read.ok(), await read.text()).toBe(true)
   const current = await read.json()
-  const candidate = { kind: 'route', trigger: 'user_request', reason: '先补偶数的前置概念', evidence_ids: [], context_id: '', explanation: '', steps: [{ node_revision_id: current.sources[0].node_revision_id, name: '前置概念练习', criterion: '说明可被二整除', prompt: '请用一个例子解释偶数', difficulty: 1, prerequisites: [] }] }
+  const candidate = {
+    kind: 'route',
+    trigger: 'user_request',
+    reason: '先补偶数的前置概念',
+    evidence_ids: [],
+    context_id: '',
+    explanation: '',
+    steps: [
+      {
+        node_revision_id: current.sources[0].node_revision_id,
+        name: '前置概念练习',
+        criterion: '说明可被二整除',
+        prompt: '请用一个例子解释偶数',
+        difficulty: 1,
+        prerequisites: [],
+      },
+    ],
+  }
   const id = randomUUID()
-  const proposed = await webCall(page, `${path}/changes/${id}`, { session_id: fixture.id, operation_id: randomUUID(), action: 'propose', expected_revision: 0, hash: '', interaction_id: '', immediate: false, base: current.base, candidate })
+  const proposed = await webCall(page, `${path}/changes/${id}`, {
+    session_id: fixture.id,
+    operation_id: randomUUID(),
+    action: 'propose',
+    expected_revision: 0,
+    hash: '',
+    interaction_id: '',
+    immediate: false,
+    base: current.base,
+    candidate,
+  })
   expect(proposed.ok(), await proposed.text()).toBe(true)
   await expect(panel.getByText('已排队，本题处理后应用', { exact: false })).toBeVisible()
   await expect(answer).toHaveValue('原题尚未提交的草稿')
@@ -493,14 +786,39 @@ test('教学变更显示具体差异、排队、立即切换与原题草稿焦�
   await panel.getByRole('button', { name: '返回原题与草稿' }).click()
   await expect(answer).toHaveValue('原题尚未提交的草稿')
   await expect(answer).toBeFocused()
-  const latest = await (await webCall(page, `${path}/change-context?session_id=${fixture.id}`)).json()
-  const goalCandidate = { kind: 'goal', trigger: 'goal_constraint', reason: '增加具体完成标准', evidence_ids: [], context_id: '', explanation: '', steps: [], goal: { ...latest.goal.management.details, completion_criteria: '独立给出三个偶数并解释' } }
-  const goalChange = await webCall(page, `${path}/changes/${randomUUID()}`, { session_id: fixture.id, operation_id: randomUUID(), action: 'propose', expected_revision: 0, hash: '', interaction_id: '', immediate: false, base: latest.base, candidate: goalCandidate })
+  const latest = await (
+    await webCall(page, `${path}/change-context?session_id=${fixture.id}`)
+  ).json()
+  const goalCandidate = {
+    kind: 'goal',
+    trigger: 'goal_constraint',
+    reason: '增加具体完成标准',
+    evidence_ids: [],
+    context_id: '',
+    explanation: '',
+    steps: [],
+    goal: { ...latest.goal.management.details, completion_criteria: '独立给出三个偶数并解释' },
+  }
+  const goalChange = await webCall(page, `${path}/changes/${randomUUID()}`, {
+    session_id: fixture.id,
+    operation_id: randomUUID(),
+    action: 'propose',
+    expected_revision: 0,
+    hash: '',
+    interaction_id: '',
+    immediate: false,
+    base: latest.base,
+    candidate: goalCandidate,
+  })
   expect(goalChange.ok(), await goalChange.text()).toBe(true)
   await expect(panel.getByRole('table')).toContainText('独立给出三个偶数并解释')
-  expect((await fixture.call('GET', path)).management.details.completion_criteria).not.toBe('独立给出三个偶数并解释')
+  expect((await fixture.call('GET', path)).management.details.completion_criteria).not.toBe(
+    '独立给出三个偶数并解释',
+  )
   await panel.getByRole('button', { name: '采用新的目标范围和完成标准' }).click()
-  await expect.poll(async () => (await fixture.call('GET', path)).management.details.completion_criteria).toBe('独立给出三个偶数并解释')
+  await expect
+    .poll(async () => (await fixture.call('GET', path)).management.details.completion_criteria)
+    .toBe('独立给出三个偶数并解释')
   expect(errors).toEqual([])
 })
 

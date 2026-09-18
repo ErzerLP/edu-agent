@@ -805,6 +805,7 @@ function TeachingWorkspace({
               <p className="hint">
                 帮助状态：{helpLabels[item.attempt.help as Help] ?? item.attempt.help}
               </p>
+              <Link to="/spaces/$spaceId/feedback/$attemptId" params={{ spaceId, attemptId: item.attempt.attempt_id }}>查看原答案、接收回执与评估详情</Link>
             </section>
           )}
           {item?.assessment && (
@@ -836,7 +837,7 @@ function TeachingWorkspace({
               ))}
               {item.assessment_decision?.disposition === 'provisional' && (
                 <p className="hint">
-                  此反馈尚未形成正式学习证据。可以结束当前活动继续；完整证据复核请使用 CLI。
+                  此反馈尚未形成正式学习证据。请展开评估详情查看依据并进行正式复核。
                 </p>
               )}
             </section>

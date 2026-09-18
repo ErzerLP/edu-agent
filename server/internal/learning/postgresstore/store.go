@@ -239,7 +239,7 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		if err != nil {
 			return learning.OperationResult{}, err
 		}
-		newTask := request.Operation.ExpectedVersion == 0 || session.State == tutoring.StateDiagnostic || request.Batch.RouteRevision != nil || request.Batch.Activity != nil || request.Batch.FreeQuestion != nil
+		newTask := request.Operation.ExpectedVersion == 0 || (session.State == tutoring.StateDiagnostic && len(request.Batch.Decisions) == 0) || request.Batch.RouteRevision != nil || request.Batch.Activity != nil || request.Batch.FreeQuestion != nil
 		if err := setTeachingWriteScope(ctx, tx, goal.LearningSpaceID(), !newTask); err != nil {
 			return learning.OperationResult{}, err
 		}

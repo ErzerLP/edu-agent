@@ -221,7 +221,10 @@ type decisionBaseInput struct {
 	Kind                       *string `json:"kind"`
 	ExpectedDispositionVersion *int64  `json:"expected_disposition_version"`
 }
-type decisionConfirmInput struct{ decisionBaseInput }
+type decisionConfirmInput struct {
+	decisionBaseInput
+	Reason *string `json:"reason,omitempty"`
+}
 type decisionVoidInput struct {
 	decisionBaseInput
 	Reason *string `json:"reason"`
@@ -530,6 +533,13 @@ func (a *API) handleLearningDecision(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		base = input.decisionBaseInput
+		if input.Reason != nil {
+			if strings.TrimSpace(*input.Reason) == "" || !utf8.ValidString(*input.Reason) {
+				writeLearningInvalid(w, r)
+				return
+			}
+			command.Reason = *input.Reason
+		}
 	case "void":
 		var input decisionVoidInput
 		if decodeLearningData(data, &input) != nil || input.Reason == nil || strings.TrimSpace(*input.Reason) == "" || !utf8.ValidString(*input.Reason) {

@@ -116,9 +116,17 @@ func (s *Service) Decide(ctx context.Context, deviceID, assessmentID string, com
 	if err := s.validateSessionScope(ctx, command.Operation.AggregateID); err != nil {
 		return OperationResult{}, err
 	}
-	return s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
+	result, err := s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
 		return s.decide(ctx, deviceID, assessmentID, command)
 	})
+	// 保留旧请求摘要的重放兼容，同时禁止同一操作身份重放到另一评估路径。
+	if err == nil && result.Replayed {
+		var decision AssessmentDecision
+		if json.Unmarshal(result.Result, &decision) != nil || decision.AssessmentID != assessmentID {
+			return OperationResult{}, &Error{Code: CodeOperationConflict}
+		}
+	}
+	return result, err
 }
 
 func (s *Service) authorityOperation(ctx context.Context, deviceID string, operation OperationEnvelope, command any, execute func() (OperationResult, error)) (OperationResult, error) {
@@ -638,25 +646,25 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 	if session.AggregateVer != command.Operation.ExpectedVersion {
 		return OperationResult{}, &Error{Code: CodeVersionConflict, AggregateType: "session", AggregateID: session.ID, ExpectedVersion: command.Operation.ExpectedVersion, CurrentVersion: session.AggregateVer, AsOfEventSequence: authority.AsOfEventSequence}
 	}
-	if session.State != tutoring.StateFeedback || session.Context.ActivityID == nil || session.Context.AttemptID == nil {
-		return OperationResult{}, &Error{Code: CodeActivityStateConflict, Reason: "assessment_decision_requires_current_feedback"}
-	}
-	artifact, current, err := s.authority.LoadAssessmentForAttempt(ctx, *session.Context.AttemptID)
+	artifact, current, err := s.authority.LoadAssessment(ctx, assessmentID)
 	if err != nil {
 		return OperationResult{}, err
 	}
-	if artifact.ID != assessmentID || artifact.SessionID != session.ID || artifact.ActivityID != *session.Context.ActivityID || artifact.AttemptID != *session.Context.AttemptID || current.AssessmentID != artifact.ID {
+	if artifact.ID != assessmentID || artifact.SessionID != session.ID || current.AssessmentID != artifact.ID {
 		return OperationResult{}, &Error{Code: CodeActivityStateConflict, Reason: "assessment_decision_not_current"}
 	}
-	activity, err := s.authority.LoadActivity(ctx, *session.Context.ActivityID)
+	activity, err := s.authority.LoadActivity(ctx, artifact.ActivityID)
 	if err != nil {
 		return OperationResult{}, err
 	}
-	attempt, err := s.authority.LoadAttempt(ctx, *session.Context.AttemptID)
+	attempt, err := s.authority.LoadAttempt(ctx, artifact.AttemptID)
 	if err != nil {
 		return OperationResult{}, err
 	}
-	if !activityOwnsCurrentAssessment(session, activity, attempt, artifact) {
+	// 历史纠错只校验原不可变链，当前焦点可以已经指向另一活动或目标。
+	if activity.SessionID != session.ID || attempt.SessionID != session.ID ||
+		activity.ID != artifact.ActivityID || activity.Revision != artifact.ActivityRevision ||
+		attempt.ID != artifact.AttemptID || attempt.ActivityID != activity.ID || attempt.ActivityRevision != activity.Revision || attempt.OfflineSubmissionID != "" {
 		return OperationResult{}, &Error{Code: CodeActivityStateConflict, Reason: "assessment_decision_chain_mismatch"}
 	}
 	effect, err := DecideAssessment(current, artifact, DecisionCommand{Kind: command.Kind, ExpectedVersion: command.ExpectedDispositionVersion, Reason: command.Reason, Items: command.Items}, ConfirmableAssessment(activity, attempt, artifact))
@@ -727,24 +735,6 @@ func (s *Service) decide(ctx context.Context, deviceID, assessmentID string, com
 	batch.Events = events
 	batch.TypedResult = mustJSON(decision)
 	return s.commit(ctx, deviceID, command.Operation, []AggregateExpectation{{Type: "session", ID: artifact.SessionID, ExpectedVersion: command.Operation.ExpectedVersion}}, batch, command, now)
-}
-
-func activityOwnsCurrentAssessment(session tutoring.Session, activity Activity, attempt Attempt, artifact AssessmentArtifact) bool {
-	return activity.ID == *session.Context.ActivityID &&
-		activity.SessionID == session.ID &&
-		activity.GoalRevisionID == session.Context.GoalRevisionID &&
-		activity.RouteRevisionID == session.Context.RouteRevisionID &&
-		activity.RouteStepID == session.Context.RouteStepID &&
-		activity.KnowledgeRevisionID == session.Context.KnowledgeRevisionID &&
-		activity.TargetNodeRevisionID == session.Context.FocusNodeRevisionID &&
-		attempt.ID == *session.Context.AttemptID &&
-		attempt.SessionID == session.ID &&
-		attempt.ActivityID == activity.ID &&
-		attempt.ActivityRevision == activity.Revision &&
-		artifact.SessionID == session.ID &&
-		artifact.ActivityID == activity.ID &&
-		artifact.ActivityRevision == activity.Revision &&
-		artifact.AttemptID == attempt.ID
 }
 
 func (s *Service) commit(ctx context.Context, deviceID string, operation OperationEnvelope, expectations []AggregateExpectation, batch CommandBatch, hashValue any, now time.Time) (OperationResult, error) {

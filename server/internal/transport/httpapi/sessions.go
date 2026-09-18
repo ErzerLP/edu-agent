@@ -42,5 +42,5 @@ func (a *API) handleSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func scopedTutoringPath(path string) bool {
-	return path == "/v1/tutoring/sessions" || strings.HasPrefix(path, "/v1/tutoring/sessions/") || path == "/v1/tutoring/proposals" || strings.HasPrefix(path, "/v1/learning/offline/") || strings.HasPrefix(path, "/v1/learning/assessments/")
+	return path == "/v1/tutoring/sessions" || strings.HasPrefix(path, "/v1/tutoring/sessions/") || path == "/v1/tutoring/proposals" || strings.HasPrefix(path, "/v1/learning/offline/") || path == "/v1/learning/assessments" || strings.HasPrefix(path, "/v1/learning/assessments/") || strings.HasPrefix(path, "/v1/learning/attempts/")
 }

@@ -20,6 +20,11 @@ import (
 )
 
 type fakeLearning struct {
+	feedbackQuery        learning.FeedbackQuery
+	feedbackID           string
+	feedbackByAssessment bool
+	feedbackFn           func(context.Context) (learning.FeedbackView, error)
+
 	progressQuery     learning.ProgressQuery
 	progressPage      *learning.ProgressPage
 	actor             string
@@ -395,7 +400,7 @@ func TestLearningHTTPStrictActionAndWriteDecoding(t *testing.T) {
 		{"/v1/learning/goals", strings.TrimSuffix(bodies["goal"], "}") + `,"actor_device_id":"` + testRelatedID + `"}`},
 		{"/v1/tutoring/sessions", strings.Replace(bodies["session"], `,"expected_version":0`, "", 1)},
 		{"/v1/tutoring/proposals", strings.TrimSuffix(bodies["proposal"], "}") + `,"unknown":true}`},
-		{"/v1/learning/assessments/" + testAssessment + "/decisions", strings.TrimSuffix(bodies["decision"], "}") + `,"reason":"unrelated"}`},
+		{"/v1/learning/assessments/" + testAssessment + "/decisions", strings.TrimSuffix(bodies["decision"], "}") + `,"unknown":"无关字段"}`},
 	}
 	for _, item := range closedWrites {
 		var logs bytes.Buffer

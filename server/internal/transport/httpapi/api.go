@@ -362,6 +362,10 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/proposals", api.learningProposal)
 			protected.With(api.requireScope("learning:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/tutoring/sessions/{sessionID}/actions", api.learningAction)
 			protected.With(api.requireScope("learning:write"), api.requireScope("learning:approve"), api.responseReadPermit(memory.CodePrivacyClearInProgress, learningOwners...)).Post("/v1/learning/assessments/{assessmentID}/decisions", api.learningDecision)
+			feedbackOwners := []privacy.OwnerKind{privacy.OwnerLearning, privacy.OwnerTutoring, privacy.OwnerKnowledge}
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, feedbackOwners...)).Get("/v1/learning/assessments", api.learningFeedbackList)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, feedbackOwners...)).Get("/v1/learning/assessments/{assessmentID}", api.learningFeedback)
+			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, feedbackOwners...)).Get("/v1/learning/attempts/{attemptID}/feedback", api.learningFeedback)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions", api.handleSessions)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions/current", api.learningCurrentSession)
 			protected.With(api.requireScope("learning:read"), api.responseReadPermit(memory.CodeContentRedacted, learningOwners...)).Get("/v1/tutoring/sessions/{sessionID}", api.learningSession)

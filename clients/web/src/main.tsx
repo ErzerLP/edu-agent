@@ -18,6 +18,7 @@ import { StudioPage } from './studio-page'
 import { TasksPage, RunPage } from './tasks-page'
 import { ImportPage } from './import-page'
 import { KnowledgePage } from './knowledge-page'
+import { FeedbackListPage, FeedbackPage } from './feedback-page'
 
 const root = createRootRoute({
   component: () => (
@@ -178,6 +179,14 @@ const knowledge = createRoute({
     )
   },
 })
+const feedbackList = createRoute({
+  getParentRoute: () => root, path: '/spaces/$spaceId/feedback',
+  component: () => { const { spaceId } = feedbackList.useParams(); return <FeedbackListPage key={spaceId} spaceId={spaceId} /> },
+})
+const feedback = createRoute({
+  getParentRoute: () => root, path: '/spaces/$spaceId/feedback/$attemptId',
+  component: () => { const { spaceId, attemptId } = feedback.useParams(); return <FeedbackPage key={`${spaceId}:${attemptId}`} spaceId={spaceId} attemptId={attemptId} /> },
+})
 const router = createRouter({
   routeTree: root.addChildren([
     home,
@@ -192,6 +201,8 @@ const router = createRouter({
     importTask,
     runTask,
     knowledge,
+    feedbackList,
+    feedback,
   ]),
   basepath: '/app',
   defaultPreload: false,

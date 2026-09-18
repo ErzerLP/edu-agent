@@ -4,6 +4,7 @@ import type { ChangePaths } from './changes'
 import type { ReferencePaths } from './references'
 import type { StructurePaths } from './structure'
 import type { ConversationPaths } from './conversations'
+import type { NotesyncPaths } from './notesync'
 import { z } from 'zod'
 import { sessionSchema, type Session } from './runtime'
 
@@ -50,7 +51,7 @@ export const readSession = () => unwrap(publicClient.GET('/v1/web/session'), ses
 
 export function learningClient(session: Session, spaceId?: string) {
   if (session.server_id !== window.location.origin) throw new ApiError(502, 'invalid_response')
-  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths | keyof ConversationPaths> & ChangePaths & ReferencePaths & StructurePaths & ConversationPaths>({
+  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths | keyof ConversationPaths | keyof NotesyncPaths> & ChangePaths & ReferencePaths & StructurePaths & ConversationPaths & NotesyncPaths>({
     baseUrl: session.server_id,
     credentials: 'same-origin',
     cache: 'no-store',

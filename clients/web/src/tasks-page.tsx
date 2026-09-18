@@ -17,6 +17,7 @@ import { Button } from './components/ui/button'
 import { ErrorState, Pagination, Confirm } from './components/common'
 import { ImportCounts, ImportError } from './import-page'
 import { SafeMarkdown } from './components/content-blocks'
+import { NotesyncTasks } from './notesync-page'
 
 export function TasksPage({ spaceId, collectionId }: { spaceId: string; collectionId?: string }) {
   const { session, prefix } = useIdentity()
@@ -67,7 +68,7 @@ export function TasksPage({ spaceId, collectionId }: { spaceId: string; collecti
           <option value="">全部已接入类型</option>
           {Object.entries(taskKinds)
             .filter(([key]) =>
-              key === 'import_job' ? session.capabilities.import_jobs : session.capabilities.runs,
+              key === 'notesync' ? session.device.scopes.includes('knowledge:read') : key === 'import_job' ? session.capabilities.import_jobs : session.capabilities.runs,
             )
             .map(([key, label]) => (
               <option key={key} value={key}>
@@ -113,7 +114,8 @@ export function TasksPage({ spaceId, collectionId }: { spaceId: string; collecti
           )}
         </section>
       )}
-      {session.capabilities.runs && kind !== 'import_job' && (
+      {session.device.scopes.includes('knowledge:read') && (!kind || kind === 'notesync') && <NotesyncTasks spaceId={spaceId} collectionId={collectionId} />}
+      {session.capabilities.runs && kind !== 'import_job' && kind !== 'notesync' && (
         <RunList key={`${spaceId}:${kind}`} spaceId={spaceId} kind={kind || undefined} />
       )}
     </>

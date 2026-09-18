@@ -183,6 +183,7 @@ type ReviewSummary struct {
 }
 
 type ReviewStatus struct {
+	ConfigurationSource     string `json:"configuration_source,omitempty"`
 	LearningSpaceID         string `json:"learning_space_id,omitempty"`
 	CollectionID            string `json:"collection_id,omitempty"`
 	Configured              bool   `json:"configured"`
@@ -554,6 +555,20 @@ func (s *ReviewService) Review(ctx context.Context, reviewID string) (Review, er
 }
 
 func (s *ReviewService) Resolve(ctx context.Context, command ResolutionCommand) (ResolutionResult, error) {
+	return s.resolve(ctx, command, nil)
+}
+
+// 解决预览共用原校验与知识计划器；只生成差异、影响和身份审阅，不提交修订。
+func (s *ReviewService) PreviewResolution(ctx context.Context, command ResolutionCommand) (knowledge.ImportPreview, error) {
+	if command.Kind != ResolutionAcceptRemote && command.Kind != ResolutionMerged {
+		return knowledge.ImportPreview{}, &ReviewError{Code: CodeReviewInvalidRequest}
+	}
+	var preview knowledge.ImportPreview
+	_, err := s.resolve(ctx, command, &preview)
+	return preview, err
+}
+
+func (s *ReviewService) resolve(ctx context.Context, command ResolutionCommand, preview *knowledge.ImportPreview) (ResolutionResult, error) {
 	if err := requireDefaultMapping(ctx); err != nil {
 		return ResolutionResult{}, err
 	}
@@ -582,7 +597,7 @@ func (s *ReviewService) Resolve(ctx context.Context, command ResolutionCommand) 
 	requestHash := resolutionRequestHash(command)
 	if stored, exists, err := s.store.LookupNotesyncResolution(ctx, command.DeviceID, command.OperationID); err != nil {
 		return ResolutionResult{}, err
-	} else if exists {
+	} else if exists && preview == nil {
 		if stored.RequestHash != requestHash {
 			return ResolutionResult{}, &ReviewError{Code: CodeReviewIdempotencyConflict}
 		}
@@ -637,7 +652,7 @@ func (s *ReviewService) Resolve(ctx context.Context, command ResolutionCommand) 
 		expectedParent = &value
 	}
 	knowledgeOperationID := knowledgeImportOperationID(command)
-	importResult, err := s.importer.Import(ctx, knowledge.ImportCommand{
+	importCommand := knowledge.ImportCommand{
 		OperationID: knowledgeOperationID, ExpectedParentRevisionID: expectedParent, ExpectedParentProvided: true,
 		Source: KnowledgeImportSource, Documents: []knowledge.ImportDocument{{Path: review.CanonicalPath, Markdown: markdown}},
 		IdentityReviewBasisHash: command.IdentityReviewBasisHash, IdentityReviewOperationID: command.IdentityReviewOperationID,
@@ -651,7 +666,18 @@ func (s *ReviewService) Resolve(ctx context.Context, command ResolutionCommand) 
 			ObservedRemoteLastTime: observed.RemoteLastTime,
 			CanonicalPath:          review.CanonicalPath, ExpectedDocumentID: expectedDocumentID, ResolvedAt: now,
 		},
-	})
+	}
+	if preview != nil {
+		planner, ok := s.importer.(interface {
+			PreviewImport(context.Context, knowledge.ImportCommand) (knowledge.ImportPreview, error)
+		})
+		if !ok {
+			return ResolutionResult{}, &ReviewError{Code: CodeReviewUnavailable}
+		}
+		*preview, err = planner.PreviewImport(ctx, importCommand)
+		return ResolutionResult{}, err
+	}
+	importResult, err := s.importer.Import(ctx, importCommand)
 	if err != nil {
 		return ResolutionResult{}, err
 	}
@@ -670,6 +696,24 @@ func (s *ReviewService) Resolve(ctx context.Context, command ResolutionCommand) 
 		return ResolutionResult{}, errors.New("notesync resolution result lacks canonical document")
 	}
 	return result, nil
+}
+
+// 核对只读原设备收据，不执行远端写入，也不将尚无收据解释为操作失败。
+func (s *ReviewService) Operation(ctx context.Context, deviceID, operationID string) (ResolutionResult, error) {
+	if err := requireDefaultMapping(ctx); err != nil {
+		return ResolutionResult{}, err
+	}
+	if uuid.Validate(deviceID) != nil || uuid.Validate(operationID) != nil {
+		return ResolutionResult{}, &ReviewError{Code: CodeReviewInvalidRequest}
+	}
+	record, exists, err := s.store.LookupNotesyncResolution(ctx, deviceID, operationID)
+	if err != nil {
+		return ResolutionResult{}, err
+	}
+	if !exists {
+		return ResolutionResult{}, &ReviewError{Code: CodeReviewNotFound}
+	}
+	return record.Result, nil
 }
 
 func (s *ReviewService) recheckRemote(ctx context.Context, review Review) (ReviewSnapshot, error) {

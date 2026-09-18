@@ -148,17 +148,41 @@ func exerciseNotesyncAcceptRemoteRepublish(
 	if item.Remote.SHA256 == "" || item.Remote.RemoteVersion != drifted.Version {
 		t.Fatalf("remote drift snapshot=%+v note=%+v", item.Remote, drifted)
 	}
-	resolved, err := reviews.Resolve(ctx, notesyncintegration.ResolutionCommand{
+	command := notesyncintegration.ResolutionCommand{
 		ReviewID: item.ReviewID, BasisHash: item.BasisHash,
 		OperationID: "37000000-0000-4000-8000-000000000003",
 		DeviceID:    integrationActorID,
 		Kind:        notesyncintegration.ResolutionAcceptRemote,
-	})
+	}
+	plan, err := reviews.PreviewResolution(ctx, command)
+	if err != nil || plan.Status != "ready" || plan.Summary.Updated != 1 {
+		t.Fatalf("解决预览没有给出实际知识计划：%+v %v", plan, err)
+	}
+	head, err := service.Head(ctx)
+	if err != nil || head.ID != first.Revision.ID {
+		t.Fatal("解决预览写入了知识修订")
+	}
+	if _, err = reviews.Operation(ctx, integrationActorID, command.OperationID); notesyncintegration.ReviewErrorCode(err) != notesyncintegration.CodeReviewNotFound {
+		t.Fatal("预览错误产生已提交收据")
+	}
+	resolved, err := reviews.Resolve(ctx, command)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resolved.KnowledgeRevisionID == first.Revision.ID || resolved.DocumentRevisionID == "" {
 		t.Fatalf("accept_remote result=%+v", resolved)
+	}
+	receipt, err := reviews.Operation(ctx, integrationActorID, command.OperationID)
+	if err != nil || receipt.KnowledgeRevisionID != resolved.KnowledgeRevisionID {
+		t.Fatalf("响应丢失后无法核对原操作：%+v %v", receipt, err)
+	}
+	replayed, err := reviews.Resolve(ctx, command)
+	if err != nil || !replayed.Replayed || replayed.KnowledgeRevisionID != resolved.KnowledgeRevisionID {
+		t.Fatal("同一原操作未幂等返回原修订")
+	}
+	old, err := service.Export(ctx, first.Revision.ID)
+	if err != nil || old.Documents[0].Markdown != firstExport.Documents[0].Markdown {
+		t.Fatal("同步解决覆盖了历史引用原文")
 	}
 	secondMessage := claimNotesyncPublication(t, messageStore, time.Now().UTC().Add(2*time.Minute))
 	secondIntent, err := notesyncintegration.DecodePublicationIntent(secondMessage)

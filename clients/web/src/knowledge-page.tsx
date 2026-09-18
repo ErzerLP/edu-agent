@@ -6,6 +6,7 @@ import { goalSchema, pageOf, spaceSchema } from './api/runtime'
 import { knowledgeAPI, referencePreview, referenceState, roleNames, type Collection, type ImportResult, type ReferenceEntry, type ReferencePreview, type ReferenceRequest } from './api/references'
 import { useIdentity } from './lib/session'
 import { Button } from './components/ui/button'
+import { notesyncCollection } from './api/notesync'
 import { Confirm, ErrorState } from './components/common'
 import { ReferenceImport } from './components/reference-import'
 import { PDFCoverage, PDFPageViewer } from './components/pdf-source'
@@ -91,6 +92,7 @@ export function KnowledgePage({ spaceId, goalId, sessionId }: { spaceId: string;
       {goalId && <div className="actions"><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId }}>返回目标</Link>{sessionId && <><Link to="/spaces/$spaceId/learn/$sessionId" params={{ spaceId, sessionId }}>返回原课堂</Link><ReferenceLink spaceId={spaceId} goalId={goalId} /></>}</div>}
       {!canManage && <p>当前身份可浏览已有资料。导入、共享和正式采用需要管理员明确创建“参考管理”配对码后重新配对。</p>}
     </section>
+    <nav className="actions" aria-label="来源视图"><Link to="/spaces/$spaceId/notesync" params={{ spaceId }} search={{ collection: collectionId || notesyncCollection }}>同步：查看当前来源映射、状态与审阅</Link></nav>
     <KnowledgeStructure key={`${spaceId}:${goalId}:${sessionId}`} spaceId={spaceId} goalId={goalId} sessionId={sessionId} />
     <KnowledgeMaintenance key={spaceId} spaceId={spaceId} />
     {!!(error || collections.error || discovery.error || space.error || goal.error || current.error || tree.error || body.error || frozenInfo.error) && <ErrorState error={error || collections.error || discovery.error || space.error || goal.error || current.error || tree.error || body.error || frozenInfo.error} />}

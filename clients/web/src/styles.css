@@ -945,3 +945,12 @@ footer {
 .conversation-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-block: .75rem; }
 .conversation-message, .tutor-history pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .tutor-history pre { max-height: 18rem; overflow: auto; }
+/* 三方正文在桌面保留列关系，窄屏只展示用户选择的面板。 */
+.sync-bodies { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.sync-body { min-width: 0; overflow-wrap: anywhere; }
+.sync-body pre { max-height: 34rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sync-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+@media (max-width: 760px) {
+  .sync-bodies { display: block; }
+  .sync-body:not(.selected) { display: none; }
+}

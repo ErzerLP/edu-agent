@@ -607,9 +607,16 @@ func (r *reviewFixtureRemote) ListNotes(context.Context, string, int, int) (Note
 
 type reviewFixtureImporter struct {
 	calls   int
+	plans   int
 	command knowledge.ImportCommand
 	result  knowledge.ImportResult
 	err     error
+}
+
+func (i *reviewFixtureImporter) PreviewImport(_ context.Context, command knowledge.ImportCommand) (knowledge.ImportPreview, error) {
+	i.plans++
+	i.command = command
+	return knowledge.ImportPreview{Status: "ready", ImpactKnown: true, AffectedEvidence: 2}, i.err
 }
 
 func (i *reviewFixtureImporter) Import(_ context.Context, command knowledge.ImportCommand) (knowledge.ImportResult, error) {

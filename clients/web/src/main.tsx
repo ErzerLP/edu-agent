@@ -22,6 +22,8 @@ import { FeedbackListPage, FeedbackPage } from './feedback-page'
 import { TutorHistory } from './components/tutor-history'
 import { ProgressPage } from './progress-page'
 import { progressSearch } from './api/progress'
+import { NotesyncPage, NotesyncReviewPage } from './notesync-page'
+import { notesyncCollection } from './api/notesync'
 
 const root = createRootRoute({
   component: () => (
@@ -192,6 +194,18 @@ const feedbackList = createRoute({
   getParentRoute: () => root, path: '/spaces/$spaceId/feedback',
   component: () => { const { spaceId } = feedbackList.useParams(); return <FeedbackListPage key={spaceId} spaceId={spaceId} /> },
 })
+const notesyncSearch = (search: Record<string, unknown>): { collection: string; operation?: string } => ({
+  collection: typeof search.collection === 'string' ? search.collection : notesyncCollection,
+  operation: typeof search.operation === 'string' ? search.operation : undefined,
+})
+const notesync = createRoute({
+  getParentRoute: () => root, path: '/spaces/$spaceId/notesync', validateSearch: notesyncSearch,
+  component: () => { const { spaceId } = notesync.useParams(); const { collection } = notesync.useSearch(); return <NotesyncPage key={`${spaceId}:${collection}`} spaceId={spaceId} collectionId={collection} /> },
+})
+const notesyncReview = createRoute({
+  getParentRoute: () => root, path: '/spaces/$spaceId/notesync/$reviewId', validateSearch: notesyncSearch,
+  component: () => { const { spaceId, reviewId } = notesyncReview.useParams(); const { collection, operation } = notesyncReview.useSearch(); return <NotesyncReviewPage key={`${spaceId}:${collection}:${reviewId}`} spaceId={spaceId} collectionId={collection} reviewId={reviewId} operationId={operation} /> },
+})
 const feedback = createRoute({
   getParentRoute: () => root, path: '/spaces/$spaceId/feedback/$attemptId',
   component: () => { const { spaceId, attemptId } = feedback.useParams(); return <FeedbackPage key={`${spaceId}:${attemptId}`} spaceId={spaceId} attemptId={attemptId} /> },
@@ -219,6 +233,8 @@ const router = createRouter({
     importTask,
     runTask,
     knowledge,
+    notesync,
+    notesyncReview,
     feedbackList,
     feedback,
     chats,

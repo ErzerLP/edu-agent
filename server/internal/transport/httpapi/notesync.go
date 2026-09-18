@@ -1,12 +1,14 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/go-chi/chi/v5"
@@ -34,7 +36,7 @@ type notesyncResolutionRequest struct {
 }
 
 func (a *API) notesyncStatus(w http.ResponseWriter, r *http.Request) {
-	if !notesyncQuery(w, r) {
+	if !notesyncQuery(w, r) || !a.notesyncMapping(w, r) {
 		return
 	}
 	if a.notesync == nil {
@@ -44,7 +46,17 @@ func (a *API) notesyncStatus(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	writeJSON(w, http.StatusOK, a.notesync.Status(r.Context()))
+	status := a.notesync.Status(r.Context())
+	// 只为学习浏览器补充配置来源，保持旧严格解码 CLI 的响应兼容。
+	if a.webUI.Enabled {
+		if _, err := r.Cookie(a.webCookieName()); err == nil {
+			status.ConfigurationSource = "environment"
+			if a.adminUI.NotesyncSource == "admin_settings" {
+				status.ConfigurationSource = "admin_settings"
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (a *API) notesyncPreview(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +136,14 @@ func (a *API) notesyncReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) notesyncResolution(w http.ResponseWriter, r *http.Request) {
+	a.notesyncResolveRequest(w, r, false)
+}
+
+func (a *API) notesyncResolutionPreview(w http.ResponseWriter, r *http.Request) {
+	a.notesyncResolveRequest(w, r, true)
+}
+
+func (a *API) notesyncResolveRequest(w http.ResponseWriter, r *http.Request, preview bool) {
 	if !notesyncQuery(w, r) || !a.notesyncConfigured(w, r) {
 		return
 	}
@@ -142,7 +162,14 @@ func (a *API) notesyncResolution(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusUnauthorized, "authentication_failed", "Device credentials are invalid")
 		return
 	}
-	result, err := a.notesync.Resolve(r.Context(), notesync.ResolutionCommand{
+	// 研究采纳的写权限不等于同步审批；浏览器复用显式导入/参考管理档案。
+	if !preview && a.webUI.Enabled {
+		if _, err := r.Cookie(a.webCookieName()); err == nil && !contains(credential.Scopes, "knowledge:approve") {
+			writeError(w, r, http.StatusForbidden, "forbidden", "同步解决需要明确的知识审批权限")
+			return
+		}
+	}
+	command := notesync.ResolutionCommand{
 		ReviewID: chi.URLParam(r, "reviewID"), BasisHash: request.BasisHash,
 		OperationID: request.OperationID, DeviceID: credential.Device.ID, Kind: request.Kind,
 		MergedMarkdown:            request.MergedMarkdown,
@@ -151,7 +178,24 @@ func (a *API) notesyncResolution(w http.ResponseWriter, r *http.Request) {
 		IdentityReviewReceipt:     request.IdentityReviewReceipt,
 		DocumentResolutions:       request.DocumentResolutions,
 		NodeResolutions:           request.NodeResolutions,
-	})
+	}
+	if preview {
+		service, ok := a.notesync.(interface {
+			PreviewResolution(context.Context, notesync.ResolutionCommand) (knowledge.ImportPreview, error)
+		})
+		if !ok {
+			writeError(w, r, http.StatusNotImplemented, "not_supported", "NoteSync resolution preview is unavailable")
+			return
+		}
+		result, err := service.PreviewResolution(r.Context(), command)
+		if err != nil {
+			a.writeNotesyncFailure(w, r, "resolution_preview", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	result, err := a.notesync.Resolve(r.Context(), command)
 	if err != nil {
 		a.writeNotesyncFailure(w, r, "resolve", err)
 		return
@@ -164,11 +208,57 @@ func (a *API) notesyncResolution(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) notesyncConfigured(w http.ResponseWriter, r *http.Request) bool {
+	if !a.notesyncMapping(w, r) {
+		return false
+	}
 	if a.notesync != nil {
 		return true
 	}
 	writeError(w, r, http.StatusServiceUnavailable, notesyncNotConfigured, "NoteSync is not configured")
 	return false
+}
+
+// 每次读取都核对固定映射及当前引用，包括不访问正文存储的状态探测。
+func (a *API) notesyncMapping(w http.ResponseWriter, r *http.Request) bool {
+	if learningspace.Scope(r.Context()) != learningspace.DefaultID || knowledge.CollectionID(r.Context()) != knowledge.DefaultCollectionID {
+		writeError(w, r, http.StatusNotFound, knowledge.CodeNotFound, "NoteSync source mapping is unavailable")
+		return false
+	}
+	if service, ok := a.knowledge.(knowledgeSpaces); ok && service.SupportsKnowledgeScopes() {
+		collections, err := service.Collections(r.Context(), false)
+		if err != nil {
+			a.writeKnowledgeFailure(w, r, "notesync_mapping", err)
+			return false
+		}
+		for _, collection := range collections {
+			if collection.ID == knowledge.DefaultCollectionID {
+				return true
+			}
+		}
+		writeError(w, r, http.StatusNotFound, knowledge.CodeNotFound, "NoteSync source mapping is unavailable")
+		return false
+	}
+	return true
+}
+
+func (a *API) notesyncOperation(w http.ResponseWriter, r *http.Request) {
+	if !notesyncQuery(w, r) || !a.notesyncConfigured(w, r) {
+		return
+	}
+	service, ok := a.notesync.(interface {
+		Operation(context.Context, string, string) (notesync.ResolutionResult, error)
+	})
+	if !ok {
+		writeError(w, r, http.StatusNotImplemented, "not_supported", "NoteSync operation lookup is unavailable")
+		return
+	}
+	credential, _ := credentialFromContext(r.Context())
+	result, err := service.Operation(r.Context(), credential.Device.ID, chi.URLParam(r, "operationID"))
+	if err != nil {
+		a.writeNotesyncFailure(w, r, "operation", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func notesyncQuery(w http.ResponseWriter, r *http.Request) bool {

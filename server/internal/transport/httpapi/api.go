@@ -336,6 +336,8 @@ func New(options Options) (http.Handler, error) {
 		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/notesync/reviews", api.notesyncReviews)
 		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/notesync/reviews/{reviewID}", api.notesyncReview)
 		protected.With(api.requireScope("knowledge:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerKnowledge)).Post("/v1/knowledge/notesync/reviews/{reviewID}/resolutions", api.notesyncResolution)
+		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Post("/v1/knowledge/notesync/reviews/{reviewID}/resolution-previews", api.notesyncResolutionPreview)
+		protected.With(api.requireScope("knowledge:read"), api.responseReadPermit(memory.CodeContentRedacted, privacy.OwnerKnowledge)).Get("/v1/knowledge/notesync/operations/{operationID}", api.notesyncOperation)
 		if api.knowledge != nil {
 			api.mountImportPreview(protected)
 			proposalOwners := []privacy.OwnerKind{privacy.OwnerKnowledge, privacy.OwnerLearning}

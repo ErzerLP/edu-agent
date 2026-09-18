@@ -2128,6 +2128,7 @@ paths:
   /v1/knowledge/notesync/status:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
     get:
       operationId: getKnowledgeNotesyncStatus
       summary: Read the Fast Note Sync bridge capability status
@@ -2135,6 +2136,7 @@ paths:
       x-required-scope: knowledge:read
       security:
         - deviceBearer: []
+        - webCookie: []
       responses:
         "404": { description: learning_space_not_found }
         "409": { description: learning_space_archived }
@@ -2153,6 +2155,7 @@ paths:
   /v1/knowledge/notesync/previews:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
     post:
       operationId: previewKnowledgeNotesync
       summary: Preview managed Fast Note Sync notes without importing them
@@ -2161,6 +2164,7 @@ paths:
       x-max-body-bytes: 16777216
       security:
         - deviceBearer: []
+        - webCookie: []
       requestBody:
         required: true
         content:
@@ -2185,6 +2189,7 @@ paths:
   /v1/knowledge/notesync/reviews:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
     get:
       operationId: listKnowledgeNotesyncReviews
       summary: List explicit Fast Note Sync reviews
@@ -2192,6 +2197,7 @@ paths:
       x-required-scope: knowledge:read
       security:
         - deviceBearer: []
+        - webCookie: []
       parameters:
         - name: status
           in: query
@@ -2230,6 +2236,7 @@ paths:
   /v1/knowledge/notesync/reviews/{reviewID}:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
     get:
       operationId: getKnowledgeNotesyncReview
       summary: Read one complete Fast Note Sync review
@@ -2237,6 +2244,7 @@ paths:
       x-required-scope: knowledge:read
       security:
         - deviceBearer: []
+        - webCookie: []
       parameters:
         - $ref: "#/components/parameters/NotesyncReviewID"
       responses:
@@ -2257,14 +2265,16 @@ paths:
   /v1/knowledge/notesync/reviews/{reviewID}/resolutions:
     parameters:
       - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
     post:
       operationId: resolveKnowledgeNotesyncReview
       summary: Resolve one Fast Note Sync review through the canonical knowledge importer
-      description: Resolution is bound to the review basis and authenticated device. The external Fast Note Sync service is not treated as providing an atomic CAS.
+      description: 解决绑定原审阅基线与设备；浏览器还需要 knowledge:approve（既有 import/references 档案），研究采纳权限不能代替同步审批。远端没有原子 CAS；响应未知时先只读核对 operations 原操作。
       x-required-scope: knowledge:write
       x-max-body-bytes: 16777216
       security:
         - deviceBearer: []
+        - webCookie: []
       parameters:
         - $ref: "#/components/parameters/NotesyncReviewID"
       requestBody:
@@ -2292,6 +2302,69 @@ paths:
         "413": { $ref: "#/components/responses/NotesyncPayloadTooLarge" }
         "429": { $ref: "#/components/responses/NotesyncRateLimited" }
         "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/knowledge/notesync/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+      - name: operationID
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getKnowledgeNotesyncOperation
+      summary: 只读核对当前学习设备的原同步解决收据
+      description: 不重放解决或远端写入。404 仅表示尚无可读收据，不能证明原操作未执行；仍需核对同一审阅。映射、引用、隐私代次与原审阅读取相同。
+      x-required-scope: knowledge:read
+      security:
+        - deviceBearer: []
+        - webCookie: []
+      responses:
+        "200":
+          description: 已持久化的原操作结果。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotesyncResolutionResult" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "404": { $ref: "#/components/responses/NotesyncNotFound" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "501": { description: 当前服务或学习区不支持操作核对。 }
+        "503": { $ref: "#/components/responses/NotesyncUnavailable" }
+  /v1/knowledge/notesync/reviews/{reviewID}/resolution-previews:
+    parameters:
+      - { $ref: "#/components/parameters/LearningSpaceID" }
+      - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+      - { $ref: "#/components/parameters/NotesyncReviewID" }
+    post:
+      operationId: previewKnowledgeNotesyncResolution
+      summary: 通过既有知识预览检查采用或合并的实际影响与身份冲突
+      description: 复用正式解决的基线、远端复核和知识导入计划器，只支持 accept_remote 和 merged，不提交修订或回发。身份决定沿用原 identity_review 合同。
+      x-required-scope: knowledge:read
+      x-max-body-bytes: 16777216
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NotesyncResolutionRequest" }
+      responses:
+        "200":
+          description: 原知识导入计划、差异、影响与身份审阅。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "400": { $ref: "#/components/responses/NotesyncBadRequest" }
+        "401": { $ref: "#/components/responses/NotesyncUnauthorized" }
+        "403": { $ref: "#/components/responses/NotesyncForbidden" }
+        "404": { $ref: "#/components/responses/NotesyncNotFound" }
+        "409": { $ref: "#/components/responses/NotesyncConflict" }
+        "413": { $ref: "#/components/responses/NotesyncPayloadTooLarge" }
+        "429": { $ref: "#/components/responses/NotesyncRateLimited" }
+        "500": { $ref: "#/components/responses/NotesyncInternalError" }
+        "501": { description: 当前服务或学习区不支持解决预览。 }
         "503": { $ref: "#/components/responses/NotesyncUnavailable" }
   /v1/learning/evidence-carryovers:
     parameters:
@@ -9608,6 +9681,7 @@ components:
       additionalProperties: false
       required: [configured, compatible, reason, external_cleanup_required]
       properties:
+        configuration_source: { type: string, enum: [environment, admin_settings], description: 仅配置来源，不含地址凭据或密钥。 }
         configured: { type: boolean }
         compatible: { type: boolean }
         reason:

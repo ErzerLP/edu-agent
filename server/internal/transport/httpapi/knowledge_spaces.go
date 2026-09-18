@@ -18,6 +18,9 @@ type knowledgeSpaces interface {
 }
 
 func collectionSelectionPath(path string) bool {
+	if strings.HasPrefix(path, "/v1/knowledge/notesync/") {
+		return true
+	}
 	if path == "/v1/knowledge/import-jobs" || strings.HasPrefix(path, "/v1/knowledge/import-jobs/") {
 		return true
 	}

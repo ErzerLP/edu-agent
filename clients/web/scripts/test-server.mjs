@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { workspaceModel } from './workspace-model.mjs'
+import { startNotesyncFixture } from './notesync-fixture.mjs'
 if (!process.env.TEST_DATABASE_URL) throw new Error('浏览器验收必须配置独立 TEST_DATABASE_URL')
 let child
 let restarting = false
@@ -12,6 +13,7 @@ const settingsFile = join(mkdtempSync(join(tmpdir(), 'edu-web-settings-test-')),
 const mentorKeyFile = join(mkdtempSync(join(tmpdir(), 'edu-web-key-test-')), 'mentor.key')
 const importStaging = mkdtempSync(join(tmpdir(), 'edu-web-import-test-'))
 writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
+if (process.env.WEB_NOTESYNC_FIXTURE === '1') await startNotesyncFixture()
 if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
   let calls = 0
   let historyRequests = 0
@@ -152,6 +154,11 @@ function start() {
       MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1","http://127.0.0.1:32930/alternate"]',
       DEVICE_RATE_LIMIT_PER_MINUTE: '10000',
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',
+      ...(process.env.WEB_NOTESYNC_FIXTURE === '1' ? {
+        NOTESYNC_ENABLED: 'true', NOTESYNC_BASE_URL: 'http://127.0.0.1:32931',
+        NOTESYNC_API_TOKEN: 'browser-notesync-fixture-only', NOTESYNC_VAULT: 'Knowledge',
+        NOTESYNC_WORKER_INTERVAL: '1h',
+      } : {}),
       ...(process.env.WEB_WORKSPACE_FIXTURE === '1'
         ? {
             MODEL_BASE_URL: 'http://127.0.0.1:32930/v1',

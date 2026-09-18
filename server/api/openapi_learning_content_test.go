@@ -59,6 +59,11 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		}
 	}
 	for path, want := range map[string]bool{
+		"/v1/knowledge/notesync/status": true, "/v1/knowledge/notesync/previews": true,
+		"/v1/knowledge/notesync/reviews": true, "/v1/knowledge/notesync/reviews/a": true,
+		"/v1/knowledge/notesync/reviews/a/resolutions": true, "/v1/knowledge/notesync/reviews/a/resolution-previews": true,
+		"/v1/knowledge/notesync/operations/a": true, "/v1/knowledge/notesync/settings": false,
+		"/v1/knowledge/notesync/reviews/a/force": false, "/admin/api/notesync": false,
 		"/app/spaces/a/learn/b": true, "/content/a": true, "/v1/tutoring/sessions": true,
 		"/v1/tutoring/sessions/a": true, "/v1/tutoring/sessions/a/actions": true, "/v1/tutoring/sessions/a/content": true,
 		"/v1/tutoring/sessions/a/operations/b": true, "/v1/tutoring/proposals": true, "/v1/learning/content/a/answers": true,

@@ -514,6 +514,22 @@ func (s *Store) Receipt(ctx context.Context, erasureID string) (privacy.ErasureR
 	return value, nil
 }
 
+// ReceiptForOperation 用无正文的原设备/操作身份恢复丢失响应，不再次消费清除 grant。
+func (s *Store) ReceiptForOperation(ctx context.Context, deviceID, operationID string) (privacy.ErasureReceipt, error) {
+	if !privacy.CanonicalUUID(deviceID) || !privacy.CanonicalUUID(operationID) {
+		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeInvalidRequest}
+	}
+	var id string
+	err := s.pool.QueryRow(ctx, `SELECT id::text FROM privacy_erasures WHERE device_id=$1 AND operation_id=$2`, deviceID, operationID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeNotFound}
+	}
+	if err != nil {
+		return privacy.ErasureReceipt{}, err
+	}
+	return s.Receipt(ctx, id)
+}
+
 func (s *Store) RunLocalScrub(ctx context.Context, erasureID string) (privacy.ErasureReceipt, error) {
 	for _, store := range privacy.LocalManagedSlots {
 		if store == privacy.StoreProcessCache {

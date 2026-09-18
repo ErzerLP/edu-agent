@@ -46,6 +46,16 @@ func (a *privacyHTTPAdapter) Receipt(ctx context.Context, erasureID string) (pri
 	return a.store.Receipt(ctx, erasureID)
 }
 
+func (a *privacyHTTPAdapter) ReceiptForOperation(ctx context.Context, deviceID, operationID string) (privacy.ErasureReceipt, error) {
+	reader, ok := a.store.(interface {
+		ReceiptForOperation(context.Context, string, string) (privacy.ErasureReceipt, error)
+	})
+	if !ok {
+		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeNotFound}
+	}
+	return reader.ReceiptForOperation(ctx, deviceID, operationID)
+}
+
 func (a *privacyHTTPAdapter) RunLocal(ctx context.Context, erasureID string) (privacy.ErasureReceipt, error) {
 	return a.store.RunLocalScrub(ctx, erasureID)
 }

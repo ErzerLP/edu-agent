@@ -122,6 +122,13 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       ]
       finish = 'tool_calls'
     }
+    if (input.includes('申请保存长期偏好') && !messages.some(message => message.role === 'tool' && message.tool_call_id === 'browser-memory')) {
+      delta.content = ''
+      delta.tool_calls = [{ index: 0, id: 'browser-memory', type: 'function', function: {
+        name: 'request_memory', arguments: JSON.stringify({ content: '我长期偏好先看直觉再看公式', reason: '用户明确提出长期教学偏好', category: 'interaction_preference', sensitivity: 'non_sensitive', stability: 'stable' }),
+      } }]
+      finish = 'tool_calls'
+    }
     response.setHeader('Content-Type', 'text/event-stream')
     // 分段发送以覆盖真实增量、断线和滚动行为，不调用任何外部提供商。
     response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`)

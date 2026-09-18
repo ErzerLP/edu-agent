@@ -32,6 +32,10 @@ type WebStore interface {
 func WebScopes(scopes []string) []string {
 	result := []string{}
 	for _, scope := range scopes {
+		if hasScope(scopes, "memory:web") && (scope == "memory:web" || scope == "memory:write" || scope == "devices:manage") {
+			result = append(result, scope)
+			continue
+		}
 		if hasScope(scopes, "assessment:web") && (scope == "assessment:web" || scope == "learning:approve") {
 			result = append(result, scope)
 			continue
@@ -48,7 +52,7 @@ func WebScopes(scopes []string) []string {
 			result = append(result, scope)
 			continue
 		}
-		if scope == "learning:read" || scope == "learning:write" || scope == "knowledge:read" || scope == "settings:write" || scope == "settings:probe" {
+		if scope == "learning:read" || scope == "learning:write" || scope == "knowledge:read" || scope == "settings:write" || scope == "settings:probe" || scope == "memory:read" || scope == "privacy:read" || scope == "devices:read" {
 			result = append(result, scope)
 		}
 	}

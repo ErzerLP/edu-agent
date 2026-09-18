@@ -3767,6 +3767,8 @@ paths:
       security:
         - deviceBearer: []
           privacyErasureGrant: []
+        - webCookie: []
+          privacyErasureGrant: []
       requestBody:
         required: true
         content:
@@ -3792,6 +3794,35 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/privacy/operations/{operationID}:
+    get:
+      operationId: getPrivacyErasureOperation
+      summary: 使用原设备和操作身份核对清除回执
+      description: 仅返回原 privacy owner 回执，不消费 grant 或重发清除。全局单用户 privacy:read 可在清除后重新配对核对旧操作；地址不含正文或秘密。
+      x-required-scope: privacy:read
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      parameters:
+        - name: operationID
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/MemoryUUID" }
+        - name: device_id
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/MemoryUUID" }
+      responses:
+        "200":
+          description: 真实清除回执，部分完成、失败和外部限制分别展示。
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivacyErasureReceipt" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "501": { description: 服务未配置按原操作查询的能力 }
   /v1/privacy/erasures/{erasureID}:
     get:
       operationId: getPrivacyErasureReceipt
@@ -5052,6 +5083,16 @@ components:
         approval: { type: boolean }
         call_id: { type: string }
         reference_selection: { type: boolean, description: 用户打开参考选择入口；回答此交互不等于正式采用 }
+        memory_candidate_id: { type: string, format: uuid, description: 正式待审阅候选。普通 respond 不批准；在 memory API 明确审批后继续时查询真实记录及交付回执。取消则拒绝尚待审阅的候选。 }
+    MentorMemorySource:
+      type: object
+      additionalProperties: false
+      required: [memory_id, candidate_id, revision, scope]
+      properties:
+        memory_id: { type: string, format: uuid }
+        candidate_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        scope: { type: string, description: 既有全局长期信息范围，不授予其他学习区正文读取权限 }
     MentorSnapshot:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
@@ -5085,6 +5126,11 @@ components:
         configuration: { type: string, description: 执行配置的不可逆摘要 }
         output: { type: string, maxLength: 65536 }
         interaction: { $ref: "#/components/schemas/MentorInteraction" }
+        memory_sources:
+          type: array
+          maxItems: 10
+          items: { $ref: "#/components/schemas/MentorMemorySource" }
+        memory_status: { type: string, enum: [not_authorized, unavailable, available, partial] }
     ResearchRequest:
       type: object
       additionalProperties: false
@@ -10181,6 +10227,7 @@ components:
       pattern: "^[0-9a-f]{64}$"
     MemoryCandidateRequest:
       type: object
+      description: 使用 memory:web 明确授权的 Web 设备创建时强制等待具体审阅，禁止内容仍由原政策拒绝；不自动创建长期记录。其他调用方沿用原准入政策。
       additionalProperties: false
       required:
         [
@@ -10235,6 +10282,7 @@ components:
         valid_until: { type: string, format: date-time }
     MemoryCorrectionCandidateRequest:
       type: object
+      description: Web 纠正始终创建待审阅候选；批准时携带看到的记录版本和代次，过期冲突不覆盖当前记录。
       additionalProperties: false
       required:
         [

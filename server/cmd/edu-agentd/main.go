@@ -19,7 +19,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
 
-const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|agent|settings|research|references|import|assessment]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>|mentor-key rotate --offline --new-key-file <绝对路径>]"
+const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|agent|settings|research|references|import|assessment|memory]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>|mentor-key rotate --offline --new-key-file <绝对路径>]"
 
 var (
 	loadConfiguration     = config.Load

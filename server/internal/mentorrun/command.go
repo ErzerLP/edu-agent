@@ -99,7 +99,14 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 		if !validText(c.Answer, 8000) || (len(pending.Choices) > 0 && !slices.Contains(pending.Choices, c.Answer)) {
 			return Receipt{}, ErrInvalid
 		}
-		item.body.Messages = append(item.body.Messages, modelclient.Message{Role: "tool", ToolCallID: pending.CallID, Content: c.Answer})
+		answer := c.Answer
+		if pending.MemoryCandidateID != "" {
+			answer, err = s.memoryResponse(ctx, tx, item, pending, c.Answer, c.OperationID)
+			if err != nil {
+				return Receipt{}, err
+			}
+		}
+		item.body.Messages = append(item.body.Messages, modelclient.Message{Role: "tool", ToolCallID: pending.CallID, Content: answer})
 		item.body.Interaction = nil
 		item.Status = "queued"
 		item.Reason = ""

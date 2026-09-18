@@ -18,6 +18,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
@@ -26,6 +27,8 @@ import (
 )
 
 type Service struct {
+	memories            memoryReader
+	memoryPermits       *privacy.ReadPermitManager
 	progress            learning.ProgressStore
 	changes             *learningchange.Service
 	starter             *learningstart.Service

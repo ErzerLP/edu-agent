@@ -9,6 +9,7 @@ import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { Confirm, ErrorState } from './common'
 import { ReferenceLink } from '@/knowledge-page'
+import { CandidateReview } from '@/memory-page'
 
 export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversation, onChange }: { goal: { learning_space_id: string; goal_id: string; revision: number; management: { status: string } }; archivedSpace: boolean; teachingSessionId?: string; conversation?: TutorConversation; onChange?: () => void }) {
   const { session, prefix, drafts } = useIdentity()
@@ -164,14 +165,19 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       <p className="hint">剩余预算：{run.requests_left} 次请求 / {run.tokens_left} Token 预留额度。</p>
       {run.saved && run.body_available && <p className="hint">{conversation ? '已提交轮次保留至主动删除；' : ''}本次运行恢复缓存最晚保留至 {new Date(run.expires_at).toLocaleString('zh-CN')}。</p>}
       {run.interaction && <fieldset disabled={pending || inactive || !!conversation?.confirmation_required}>
-        <legend>{run.interaction.approval ? '确认交流方向' : '导师需要你的回答'}</legend>
+        <legend>{run.interaction.memory_candidate_id ? '长期记忆申请：等待具体审批' : run.interaction.approval ? '确认交流方向' : '导师需要你的回答'}</legend>
         <p>{run.interaction.question}</p>
         {run.interaction.reference_selection && <ReferenceLink spaceId={goal.learning_space_id} goalId={goal.goal_id} sessionId={teachingSessionId} />}
+        {run.interaction.memory_candidate_id && <CandidateReview key={run.interaction.memory_candidate_id} candidateId={run.interaction.memory_candidate_id} />}
         {run.interaction.choices.length > 0 ? <div className="actions">{run.interaction.choices.map((choice) => <Button key={choice} variant="outline" onClick={() => void command('respond', choice)}>{choice}</Button>)}</div> : <form onSubmit={(e) => { e.preventDefault(); void command('respond') }} onKeyDown={(e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }}>
           <label>回应导师<textarea value={answer} onChange={(e) => setAnswer(e.target.value)} maxLength={2000} rows={3} /></label>
           <Button type="submit" disabled={!answer.trim()}>提交回答</Button>
         </form>}
       </fieldset>}
+      {run.memory_status && <details><summary>个性化使用的来源与范围</summary>
+        <p>{run.memory_status === 'not_authorized' ? '未授权读取长期记忆。' : run.memory_status === 'unavailable' ? '长期记忆不可用，本轮没有使用。' : run.memory_status === 'partial' ? '仅读取部分可用信息；其他记录未使用。' : '本轮读取获准的全局长期信息。'} 学习事实使用本次绑定学习区的正式证据；Nocturne 不作为掌握度真值。</p>
+        <ul>{run.memory_sources?.map(source => <li key={source.memory_id}><a href={`/app/memory?record=${source.memory_id}`}>记忆来源 · 版本 {source.revision}</a><p>{source.scope}</p></li>)}</ul>
+      </details>}
       <div className="actions">
         {active && <Button variant="outline" disabled={pending || run.status === 'cancelling'} onClick={() => void command('stop')}>{run.status === 'cancelling' ? '正在停止…' : '停止运行'}</Button>}
         {run.body_available && <Confirm label="清除本次正文" title="清除本次运行正文？" disabled={pending} onConfirm={() => void command('clear')}>正文和事件缓存将被清除，在途运行将停止，正式操作回执仍保留。</Confirm>}

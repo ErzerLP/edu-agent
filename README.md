@@ -6,6 +6,8 @@
 
 浏览器学习入口为 `/app/`，提供真实学习区、目标保存/编辑/历史/生命周期与设置页，无模型、搜索或资料也能保存目标。先 `make server-build`，再启用 `WEB_UI_ENABLED=true`；loopback HTTP 开发需额外设置 `WEB_UI_ALLOW_LOOPBACK_HTTP=true`。使用本机配对码登录，学习身份与管理身份独立。详见 [Web 构建、配对、HTTPS 部署与隐私说明](clients/web/README.md)。
 
+`/app/memory` 接通全局长期偏好的逐条审阅、纠正、删除、导出与交付回执；Web 导师只能申请候选，普通聊天不构成长久授权。设置的数据/设备页复用原隐私清除与撤销服务，管理操作需要显式 `memory` 配对档案，隐私清除另需本机一次性 grant。详见[权限和删除边界](clients/web/README.md#长期记忆数据与设备)及[本次验收范围](docs/development/issue-34-acceptance.md)。
+
 “导师历史”支持按学习区和目标/课堂查找、新建、恢复、改名和删除对话。课堂侧栏与独立聊天页共享同一会话；已保存轮次不会随七日运行缓存到期而删除。临时模式不持久聊天正文，模型目的地改变后须先确认历史外发。详见 [导师历史、临时对话与密钥轮换](clients/web/README.md#导师历史与临时对话)。
 
 `/app/runs` 提供原设备的研究、内容和导入任务导航；资料导入按完整清单分段传输，刷新后先核对原任务。浏览器发布需显式 `import` 配对档案，旧身份不自动增权。见 [可恢复导入使用说明](clients/web/README.md#可恢复导入与任务中心)及 [Issue #28 验收记录](docs/development/issue-28-acceptance.md)。

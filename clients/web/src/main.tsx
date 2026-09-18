@@ -24,6 +24,9 @@ import { ProgressPage } from './progress-page'
 import { progressSearch } from './api/progress'
 import { NotesyncPage, NotesyncReviewPage } from './notesync-page'
 import { notesyncCollection } from './api/notesync'
+import { MemoryPage } from './memory-page'
+import { memorySearch } from './api/memory'
+import { DataPage, DevicesPage, dataSearch } from './data-page'
 
 const root = createRootRoute({
   component: () => (
@@ -218,6 +221,17 @@ const chat = createRoute({
   getParentRoute: () => root, path: '/spaces/$spaceId/chat/$conversationId',
   component: () => { const { spaceId, conversationId } = chat.useParams(); return <TutorHistory key={`${spaceId}:${conversationId}`} spaceId={spaceId} conversationId={conversationId} /> },
 })
+const memories = createRoute({
+  getParentRoute: () => root, path: '/memory', validateSearch: (search: Record<string, unknown>) => memorySearch.parse(search),
+  component: () => { const { candidate, record } = memories.useSearch(); return <MemoryPage candidateId={candidate} memoryId={record} /> },
+  errorComponent: () => <p>记忆地址无效。<a href="/app/memory">返回记忆列表</a></p>,
+})
+const data = createRoute({
+  getParentRoute: () => root, path: '/settings/data', validateSearch: (search: Record<string, unknown>) => dataSearch.parse(search),
+  component: () => <DataPage search={data.useSearch()} />,
+  errorComponent: () => <p>回执地址无效。<a href="/app/settings/data">返回数据页</a></p>,
+})
+const devices = createRoute({ getParentRoute: () => root, path: '/settings/devices', component: DevicesPage })
 const router = createRouter({
   routeTree: root.addChildren([
     home,
@@ -228,6 +242,9 @@ const router = createRouter({
     teaching,
     content,
     settings,
+    memories,
+    data,
+    devices,
     studio,
     tasks,
     importTask,

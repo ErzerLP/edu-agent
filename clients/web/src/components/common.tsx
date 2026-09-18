@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import * as AlertDialog from '@radix-ui/react-alert-dialog'
 import { Button } from './ui/button'
-import { errorText } from '@/api/client'
+import { ApiError, errorText } from '@/api/client'
 
 export function ErrorState({ error, retry }: { error: unknown; retry?: () => void }) {
   return (
     <div className="notice error" role="alert">
       <p>{errorText(error)}</p>
+      {error instanceof ApiError && error.requestId && <p>请求 ID：{error.requestId}</p>}
       {retry && (
         <Button variant="outline" onClick={retry}>
           重试

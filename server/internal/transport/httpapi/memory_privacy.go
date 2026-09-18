@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/edu-agent/edu-agent/server/internal/transport/access"
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -186,7 +188,8 @@ func (a *API) handleMemoryCreateCandidate(w http.ResponseWriter, r *http.Request
 	}
 	credential, _ := credentialFromContext(r.Context())
 	result, err := a.memory.CreateCandidate(r.Context(), memory.DevicePrincipal{DeviceID: credential.Device.ID}, memory.CreateCandidateCommand{
-		OperationID: *input.OperationID, Content: *input.Content,
+		RequireReview: access.ContainsScope(credential.Scopes, "memory:web"),
+		OperationID:   *input.OperationID, Content: *input.Content,
 		Reason: *input.Reason, Category: *input.Category, Sensitivity: *input.Sensitivity,
 		Stability: *input.Stability, ValidUntil: input.ValidUntil.UTC(),
 	})
@@ -312,7 +315,8 @@ func (a *API) handleMemoryCreateCorrectionCandidate(w http.ResponseWriter, r *ht
 	}
 	credential, _ := credentialFromContext(r.Context())
 	result, err := a.memory.CreateCorrectionCandidate(r.Context(), memory.DevicePrincipal{DeviceID: credential.Device.ID}, memory.CreateCorrectionCandidateCommand{
-		OperationID: *input.OperationID, LogicalMemoryID: memoryID,
+		RequireReview: access.ContainsScope(credential.Scopes, "memory:web"),
+		OperationID:   *input.OperationID, LogicalMemoryID: memoryID,
 		ExpectedRevision: *input.ExpectedRecordRevision, ExpectedRecordGeneration: *input.ExpectedRecordGeneration,
 		Content: *input.Content, Reason: *input.Reason,
 		Category: *input.Category, Sensitivity: *input.Sensitivity, Stability: *input.Stability,
@@ -521,6 +525,35 @@ func (a *API) handlePrivacyErasureReceipt(w http.ResponseWriter, r *http.Request
 	receipt, err := a.privacy.Receipt(r.Context(), id)
 	if err != nil {
 		a.writePrivacyFailure(w, r, "receipt", err)
+		return
+	}
+	if receipt.Steps == nil {
+		receipt.Steps = []privacy.StepReceipt{}
+	}
+	writeJSON(w, http.StatusOK, receipt)
+}
+
+func (a *API) privacyOperationReceipt(w http.ResponseWriter, r *http.Request) {
+	query, ok := strictMemoryQuery(w, r, "device_id")
+	if !ok {
+		return
+	}
+	operationID := chi.URLParam(r, "operationID")
+	deviceID := query.Get("device_id")
+	if !privacy.CanonicalUUID(operationID) || !privacy.CanonicalUUID(deviceID) {
+		writeMemoryInvalid(w, r)
+		return
+	}
+	reader, ok := a.privacy.(interface {
+		ReceiptForOperation(context.Context, string, string) (privacy.ErasureReceipt, error)
+	})
+	if !ok {
+		writeError(w, r, 501, "not_supported", "服务尚不支持按原操作核对清除回执")
+		return
+	}
+	receipt, err := reader.ReceiptForOperation(r.Context(), deviceID, operationID)
+	if err != nil {
+		a.writePrivacyFailure(w, r, "operation_receipt", err)
 		return
 	}
 	if receipt.Steps == nil {

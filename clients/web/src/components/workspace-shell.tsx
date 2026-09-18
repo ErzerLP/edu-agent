@@ -97,6 +97,7 @@ export function WorkspaceShell() {
           </Link>
           <SpaceSwitcher />
           <Link to="/settings">设置与能力</Link>
+          <Link to="/memory">长期记忆</Link>
           <Button
             variant="ghost"
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}

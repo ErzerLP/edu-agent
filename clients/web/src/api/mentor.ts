@@ -20,7 +20,9 @@ export const mentorSnapshotSchema = z.object({
   requests_used: z.number().int().nonnegative(), result_unknown: z.boolean(), cost_unknown: z.boolean(),
   updated_at: z.iso.datetime({ offset: true }), expires_at: z.iso.datetime({ offset: true }),
   configuration: z.string(), output: z.string().max(65536),
-  interaction: z.object({ id: z.uuid(), question: z.string(), choices: z.array(z.string()).max(8), approval: z.boolean(), call_id: z.string(), reference_selection: z.boolean().optional() }).optional(),
+  memory_sources: z.array(z.object({ memory_id: z.uuid(), candidate_id: z.uuid(), revision: positive, scope: z.string() })).max(10).optional(),
+  memory_status: z.enum(['not_authorized', 'unavailable', 'available', 'partial']).optional(),
+  interaction: z.object({ id: z.uuid(), question: z.string(), choices: z.array(z.string()).max(8), approval: z.boolean(), call_id: z.string(), reference_selection: z.boolean().optional(), memory_candidate_id: z.uuid().optional() }).optional(),
 })
 export type MentorSnapshot = z.infer<typeof mentorSnapshotSchema>
 export const mentorCurrentSchema = z.object({ run: mentorSnapshotSchema.nullable(), save_available: z.boolean() })
@@ -103,7 +105,7 @@ async function watch(session: Session, sub: Subscription) {
       if (signal.aborted) return
       if (error instanceof ApiError && [401, 403, 404, 503].includes(error.status)) {
         // 身份失效或隐私门禁关闭后立即隐藏旧正文，不能依赖下一次成功查询。
-        sub.snapshot = { ...sub.snapshot, output: '', interaction: undefined, research: undefined, start_learning: undefined, content_edit: undefined, body_available: false }
+        sub.snapshot = { ...sub.snapshot, output: '', interaction: undefined, research: undefined, start_learning: undefined, content_edit: undefined, memory_sources: undefined, memory_status: undefined, body_available: false }
         report(error)
         return
       }

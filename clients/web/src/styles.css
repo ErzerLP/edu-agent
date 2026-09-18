@@ -950,6 +950,12 @@ footer {
 .sync-body { min-width: 0; overflow-wrap: anywhere; }
 .sync-body pre { max-height: 34rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sync-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0; }
+.memory-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }
+.memory-metadata { display: grid; grid-template-columns: minmax(6rem, 1fr) minmax(0, 4fr); gap: .75rem; }
+.memory-metadata dd { margin: 0; overflow-wrap: anywhere; }
+.panel, .panel fieldset, .dialog { min-width: 0; overflow-wrap: anywhere; }
+.dialog { max-height: 85dvh; overflow-y: auto; }
+@media (max-width: 600px) { .memory-metadata { display: block; } .memory-metadata dt { margin-top: 1rem; font-weight: 600; } }
 @media (max-width: 760px) {
   .sync-bodies { display: block; }
   .sync-body:not(.selected) { display: none; }

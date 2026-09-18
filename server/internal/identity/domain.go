@@ -24,6 +24,7 @@ const (
 	PairingProfileReferences PairingProfile = "references"
 	PairingProfileImport     PairingProfile = "import"
 	PairingProfileAssessment PairingProfile = "assessment"
+	PairingProfileMemory     PairingProfile = "memory"
 )
 
 type PairingCodeRecord struct {

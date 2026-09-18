@@ -26,7 +26,51 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 
 学习 Cookie 为 `__Host-edu_web`，Secure、HttpOnly、SameSite=Strict、Path=/、无 Domain。loopback HTTP 开发例外采用 `edu_web_dev`，必须单独启用。配置必须使用访问页面的精确 scheme/host/port，HTTP 层不根据转发头推断 Origin。学习 Cookie 与 Authorization 同时存在时拒绝；所有使用学习 Cookie 的非安全请求都校验 Origin 和 `X-CSRF-Token`。
 
-浏览器会话固定有效 12 小时，存储于 PostgreSQL，可跨服务重启恢复。普通学习设备继承配对码已有的 `learning:read/write` 与 `knowledge:read`，不会因此获得资料写入、审批或管理权限；每次请求读取实时权限、设备撤销、过期与隐私代次。旧设备不自动增权，缺少资料读取权限时需用新学习配对码重新配对。退出只删除当前会话。管理页与学习页同源时，携带学习 Cookie 的管理请求会被拒绝；使用独立浏览器上下文访问管理面，或先退出学习会话。
+浏览器会话固定有效 12 小时，存储于 PostgreSQL，可跨服务重启恢复。普通学习设备继承配对码已有的 `learning:read/write` 与 `knowledge:read`，新配对也保留原有 `memory:read`、`privacy:read`、`devices:read`，不会因此获得资料写入、审批或管理权限；每次请求读取实时权限、设备撤销、过期与隐私代次。旧设备不自动增权，缺少资料读取权限时需用新学习配对码重新配对。退出只删除当前会话。管理页与学习页同源时，携带学习 Cookie 的管理请求会被拒绝；使用独立浏览器上下文访问管理面，或先退出学习会话。
+
+## 长期记忆、数据与设备
+
+`/app/memory` 提供候选、已保存、纠正和交付状态。操作者通过本机
+`edu-agentd pairing-code create --profile memory` 明确授予新设备
+`memory:web`、`memory:read/write`、`privacy:read`、`devices:read/manage`，
+以及普通学习所需的 `learning:read/write`、`knowledge:read`。旧身份不会自动升级；
+收回 `memory:web` 后 Web 写记忆和撤销设备均失效。此档案不含 settings、资料审批、
+配对管理或 admin 权限；隐私清除仍另需一次性本机授权。
+
+候选展示具体正文、理由、类别、敏感性、稳定性、期限、版本和实际全局范围。
+Web 新建及纠正必须另行明确批准，拒绝或取消不会创建正式记录。纠正须先读取
+已交付原记录；审批按候选及原记录版本执行，过期或冲突需重新审阅。
+批准产生正式记录和交付队列，不代表 Nocturne 已完成。删除及重放也使用原
+memory 服务、版本和权限；等待、拒绝、未知和已验证状态分别显示。
+导出经确认后仅下载全局正式记录当前页（最多 25 条），下一页须单独导出；
+远端未配置/不可用时保留缺失状态，不虚构正文。导出不包含模型或搜索配置 Key，
+但可能含敏感记忆正文，下载副本不受服务端清除控制。
+
+Web 导师仅能通过 `request_memory` 申请具体长期偏好并暂停，用户在内嵌记忆面板
+审批后点击“核对回执”继续；普通回复“好”、确认交流方向和保存聊天均不批准记忆。
+今天、本次等临时要求仅用于本次。导师按原权限读取已批准且已交付的全局信息，
+显示来源记录、版本和范围；正文实时读取，不另存到运行 checkpoint，发送前再核对
+撤权、删除与版本。正式学习事实沿用当前目标/教学会话的原工具，Nocturne 不是
+成绩册或 mastery 真值，不自动授权读取其他学习区私人正文。
+
+`/app/settings/data` 明确区分临时聊天、删除聊天、归档目标、移除资料引用、逐条
+删除长期记忆和全局隐私清除。全局清除需本机
+`edu-agentd privacy-grant create --device <当前设备 UUID>` 签发短时一次性授权。
+输入授权并二次确认后才调用原服务；不把本地清缓存当作服务器完成。地址在提交前
+保留无正文的原操作和设备 ID；旧会话失效后重新配对，再打开该地址通过
+`GET /v1/privacy/operations/{operationID}?device_id=...` 查询真实逐 owner 回执，
+不要因丢响应重复发起。授权不进入 URL 或浏览器存储。
+
+清除是全局、不可逆的旧代次屏障；运行、历史、checkpoint、来源、索引和记忆由
+各自 owner 清理，失败或部分完成保持可见。最小审计及回执保留。外部提供商留存、
+自行导出、WAL、宿主快照和非受管理备份不在物理擦除保证内；模型/搜索 Key
+需另行在配置页清除及向提供商撤销。
+
+`/app/settings/devices` 展示当前 Web 会话及已有权限下的设备列表；撤销须二次确认，
+使该设备新请求和活动订阅的实时权限检查失效，不删除学习正文。所有危险对话框
+默认聚焦取消；错误只显示固定说明及请求 ID。参见
+[开发方案](../../docs/design/web-memory-privacy.md)和
+[验收记录](../../docs/development/issue-34-acceptance.md)。
 
 ## 评估反馈与证据审批
 

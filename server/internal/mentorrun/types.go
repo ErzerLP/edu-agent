@@ -97,6 +97,7 @@ type Meta struct {
 }
 
 type Interaction struct {
+	MemoryCandidateID  string   `json:"memory_candidate_id,omitempty"`
 	ReferenceSelection bool     `json:"reference_selection,omitempty"`
 	ID                 string   `json:"id"`
 	Question           string   `json:"question"`
@@ -106,7 +107,9 @@ type Interaction struct {
 }
 
 type Body struct {
-	HistoryCount int `json:"history_count,omitempty"`
+	MemorySources []MemorySource `json:"memory_sources,omitempty"`
+	MemoryStatus  string         `json:"memory_status,omitempty"`
+	HistoryCount  int            `json:"history_count,omitempty"`
 	// PDF 原件仅进入加密运行正文，不属于快照、模型输入或工具输出。
 	SourceFiles   map[string][]byte      `json:"source_files,omitempty"`
 	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`
@@ -120,7 +123,9 @@ type Body struct {
 }
 
 type Snapshot struct {
-	ContentEdit *ContentEditState `json:"content_edit,omitempty"`
+	MemorySources []MemorySource    `json:"memory_sources,omitempty"`
+	MemoryStatus  string            `json:"memory_status,omitempty"`
+	ContentEdit   *ContentEditState `json:"content_edit,omitempty"`
 	Meta
 	StartLearning *learningstart.State `json:"start_learning,omitempty"`
 	Research      *research.State      `json:"research,omitempty"`

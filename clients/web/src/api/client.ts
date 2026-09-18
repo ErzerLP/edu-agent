@@ -5,6 +5,7 @@ import type { ReferencePaths } from './references'
 import type { StructurePaths } from './structure'
 import type { ConversationPaths } from './conversations'
 import type { NotesyncPaths } from './notesync'
+import type { MemoryPaths } from './memory'
 import { z } from 'zod'
 import { sessionSchema, type Session } from './runtime'
 
@@ -12,6 +13,7 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public code: string,
+    public requestId?: string,
   ) {
     super(code)
   }
@@ -40,8 +42,8 @@ export async function unwrap<T>(
 ): Promise<T> {
   const { data, response, error } = await promise
   if (!response.ok) {
-    const parsed = z.object({ error: z.object({ code: z.string() }) }).safeParse(error)
-    throw new ApiError(response.status, parsed.success ? parsed.data.error.code : 'request_failed')
+    const parsed = z.object({ error: z.object({ code: z.string(), request_id: z.string().regex(/^[A-Za-z0-9_./:-]{1,200}$/).optional() }) }).safeParse(error)
+    throw new ApiError(response.status, parsed.success ? parsed.data.error.code : 'request_failed', parsed.success ? parsed.data.error.request_id : undefined)
   }
   const parsed = schema.safeParse(data)
   if (!parsed.success) throw new ApiError(502, 'invalid_response')
@@ -51,7 +53,7 @@ export const readSession = () => unwrap(publicClient.GET('/v1/web/session'), ses
 
 export function learningClient(session: Session, spaceId?: string) {
   if (session.server_id !== window.location.origin) throw new ApiError(502, 'invalid_response')
-  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths | keyof ConversationPaths | keyof NotesyncPaths> & ChangePaths & ReferencePaths & StructurePaths & ConversationPaths & NotesyncPaths>({
+  const client = createClient<Omit<paths, keyof ChangePaths | keyof ReferencePaths | keyof StructurePaths | keyof ConversationPaths | keyof NotesyncPaths | keyof MemoryPaths> & ChangePaths & ReferencePaths & StructurePaths & ConversationPaths & NotesyncPaths & MemoryPaths>({
     baseUrl: session.server_id,
     credentials: 'same-origin',
     cache: 'no-store',

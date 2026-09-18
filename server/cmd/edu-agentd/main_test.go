@@ -95,7 +95,7 @@ func TestPrivacyGrantUsageRequiresCanonicalDeviceBeforeLoadingConfig(t *testing.
 }
 
 func TestUsageDocumentsLocalPrivacyGrantCommand(t *testing.T) {
-	if !strings.Contains(usage, "pairing-code create [--profile user|agent|settings|research|references|import|assessment]") {
+	if !strings.Contains(usage, "pairing-code create [--profile user|agent|settings|research|references|import|assessment|memory]") {
 		t.Fatalf("pairing profile command missing from usage: %s", usage)
 	}
 	if !strings.Contains(usage, "privacy-grant create --device <uuid>") {

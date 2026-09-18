@@ -141,6 +141,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err := verifyNocturneStartupPreflightForRuntime(ctx, pool, bridge.preflight); err != nil {
 		return err
 	}
+	mentorRuns.ConfigureMemory(bridge.memoryExporter, bridge.readPermits)
 	notesyncBridge, err := composeNotesync(cfg, notesyncDependencies{
 		publicationStore: stores.knowledge, reviewStore: stores.knowledge, outboxStore: stores.outbox,
 		importer: knowledgeService, canonicalizer: canonicalizer,

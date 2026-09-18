@@ -25,10 +25,26 @@ type DBTX interface {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool interface {
+		DBTX
+		BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+	}
 }
 
 func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+
+// InTransaction 使原准入、审计与 Outbox 和调用方 checkpoint 原子提交。
+// 内部 Commit 只释放保存点，外层回滚仍撤销全部写入。
+func InTransaction(tx pgx.Tx) *Store { return &Store{pool: transactionPool{tx}} }
+
+type transactionPool struct{ pgx.Tx }
+
+func (t transactionPool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
+	if options.IsoLevel != "" && options.IsoLevel != pgx.ReadCommitted {
+		return nil, errors.New("调用方事务不支持改变记忆操作隔离级别")
+	}
+	return t.Begin(ctx)
+}
 
 type operationRecord struct {
 	requestHash      []byte

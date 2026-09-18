@@ -153,7 +153,7 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 				return err
 			}
 		}
-		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit})
+		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
 	})
 }
 

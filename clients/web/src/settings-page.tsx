@@ -450,6 +450,7 @@ export function SettingsPage() {
       </section>
       <section className="panel">
         <h2>会话数据</h2>
+        <a href="/app/settings/data">数据与隐私：查看删除范围、发起清除及查询回执</a>
         <p>
           已保存目标由服务端持久化；未提交正文和新 Key
           仅在本标签页内存，刷新、退出或身份失效时清除。模型与搜索密钥属于服务器配置，不随学习记录删除；需在此显式清除并处理备份。
@@ -460,8 +461,9 @@ export function SettingsPage() {
         <p>{session.device.display_name}</p>
         <p>会话到期：{new Date(session.expires_at).toLocaleString('zh-CN')}</p>
         <p>
-          退出只结束此浏览器会话；设备撤销需在本机管理入口操作。撤销后配置写入与探测权限立即失效。
+          退出只结束此浏览器会话；拥有明确授权的设备可以在设备页撤销。撤销后写入与活动订阅立即失效。
         </p>
+        <a href="/app/settings/devices">设备列表与撤销</a>
       </section>
     </>
   )

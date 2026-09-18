@@ -405,6 +405,7 @@ func New(options Options) (http.Handler, error) {
 			protected.With(api.requireScope("memory:write"), api.responseReadPermit(memory.CodePrivacyClearInProgress, privacy.OwnerMemory)).Post("/v1/memory/deliveries/{deliveryID}/replays", api.memoryReplayDelivery)
 		}
 		if api.privacy != nil {
+			protected.With(api.requireScope("privacy:read")).Get("/v1/privacy/operations/{operationID}", api.privacyOperationReceipt)
 			protected.With(api.limitPrivacyErasure).Post("/v1/privacy/erasures", api.privacyCreateErasure)
 			protected.With(api.requireScope("privacy:read")).Get("/v1/privacy/erasures/{erasureID}", api.privacyErasureReceipt)
 			protected.With(api.requireScope("privacy:device")).Get("/v1/privacy/erasures/{erasureID}/offline-device-purge", api.privacyOfflineDevicePurge)

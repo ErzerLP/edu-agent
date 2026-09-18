@@ -39,6 +39,7 @@ func (p ModelPrincipal) Validate() error {
 }
 
 type CreateCandidateCommand struct {
+	RequireReview     bool
 	OperationID       string
 	Content           string
 	SourceEventID     string
@@ -68,6 +69,7 @@ type CreateModelCandidateCommand struct {
 }
 
 type CreateCorrectionCandidateCommand struct {
+	RequireReview            bool
 	OperationID              string
 	LogicalMemoryID          string
 	ExpectedRevision         int64
@@ -204,7 +206,7 @@ func (s *Service) CreateCandidate(ctx context.Context, principal DevicePrincipal
 	reference := SourceReference{EventID: command.SourceEventID, OperationID: command.SourceOperationID}
 	return s.createCandidate(ctx, principal.DeviceID, command.OperationID, command.Content, SourceUserStatement,
 		reference, principal.DeviceID, command.Reason, command.Category, command.Sensitivity,
-		command.Stability, command.ValidUntil, false, "", 0, 0)
+		command.Stability, command.ValidUntil, false, "", 0, 0, command.RequireReview)
 }
 
 func (s *Service) CreateModelCandidate(ctx context.Context, command CreateModelCandidateCommand) (OperationResult, error) {
@@ -223,7 +225,7 @@ func (s *Service) CreateModelCandidate(ctx context.Context, command CreateModelC
 	return s.createCandidate(ctx, s.modelPrincipal.DeviceID, command.OperationID, command.Content, command.Source,
 		reference, s.modelPrincipal.ProposerID, command.Reason, command.Category, command.Sensitivity,
 		command.Stability, command.ValidUntil, correction, command.LogicalMemoryID,
-		command.ExpectedRevision, command.ExpectedRecordGeneration)
+		command.ExpectedRevision, command.ExpectedRecordGeneration, false)
 }
 
 func (s *Service) CreateCorrectionCandidate(
@@ -238,10 +240,11 @@ func (s *Service) CreateCorrectionCandidate(
 	return s.createCandidate(ctx, principal.DeviceID, command.OperationID, command.Content, SourceUserStatement,
 		reference, principal.DeviceID, command.Reason, command.Category, command.Sensitivity,
 		command.Stability, command.ValidUntil, true, command.LogicalMemoryID,
-		command.ExpectedRevision, command.ExpectedRecordGeneration)
+		command.ExpectedRevision, command.ExpectedRecordGeneration, command.RequireReview)
 }
 
 type createCandidateRequestV1 struct {
+	RequireReview            bool            `json:"require_review,omitempty"`
 	SchemaVersion            string          `json:"schema_version"`
 	OperationKind            OperationKind   `json:"operation_kind"`
 	Content                  string          `json:"content"`
@@ -271,6 +274,7 @@ func (s *Service) createCandidate(
 	correction bool,
 	logicalMemoryID string,
 	expectedRecordRevision, expectedRecordGeneration int64,
+	requireReview bool,
 ) (OperationResult, error) {
 	if !validUUID(deviceID) || !validUUID(operationID) || !validUUID(proposerID) || validUntil.IsZero() || !isUTC(validUntil) {
 		return OperationResult{}, invalid("invalid_create_candidate_command")
@@ -290,6 +294,7 @@ func (s *Service) createCandidate(
 		schemaVersion = "memory-create-correction-candidate-v1"
 	}
 	requestHash, err := CanonicalRequestHash(createCandidateRequestV1{
+		RequireReview: requireReview,
 		SchemaVersion: schemaVersion, OperationKind: OperationCreateCandidate,
 		Content: content, Source: source, SourceReference: reference, ProposerID: proposerID,
 		Reason: reason, Category: category, Sensitivity: sensitivity, Stability: stability, ValidUntil: validUntil,
@@ -319,6 +324,10 @@ func (s *Service) createCandidate(
 		LogicalMemoryID: logicalMemoryID,
 	}
 	automaticStatus := EvaluateAdmission(candidate, content, now)
+	// Web 先展示具体内容再批准；禁止内容仍由原政策直接拒绝。
+	if requireReview && automaticStatus == CandidateAdmitted {
+		automaticStatus = CandidatePending
+	}
 	if automaticStatus != CandidatePending {
 		candidate.Status = automaticStatus
 		candidate.Revision = 2

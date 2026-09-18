@@ -5426,6 +5426,15 @@ components:
         expected_version: { const: 0 }
         occurred_at: { type: string, format: date-time }
         goal_revision_id: { $ref: "#/components/schemas/LearningUUID" }
+        review_source:
+          type: object
+          additionalProperties: false
+          description: 用户显式为原复习任务新建承载，沿用原答案的目标、路线及 context；不迁移原会话，不复制 Evidence。
+          required: [task_id, evidence_id, attempt_id]
+          properties:
+            task_id: { $ref: "#/components/schemas/LearningUUID" }
+            evidence_id: { $ref: "#/components/schemas/LearningUUID" }
+            attempt_id: { $ref: "#/components/schemas/LearningUUID" }
     TutoringProposalRequest:
       type: object
       additionalProperties: false
@@ -6735,6 +6744,8 @@ components:
       additionalProperties: false
       required: [node_revision_id, step, due_at, intervals, policy_version]
       properties:
+        attempt_id: { type: string, format: uuid }
+        carrier_session_id: { type: string, format: uuid, description: 用户显式创建的仍在原节点的承载；session_id 始终保留证据来源会话。 }
         goal_name: { type: string }
         space_name: { type: string }
         task_id: { type: string, format: uuid }
@@ -6759,6 +6770,7 @@ components:
       additionalProperties: false
       required: [metadata, items]
       properties:
+        data_cleared: { type: boolean, description: 此范围历史数据已清除且没有新目标，不等同于筛选后为空 }
         total: { type: integer, minimum: 0 }
         updated_at: { type: string, format: date-time }
         due_before: { type: string, format: date-time }
@@ -6772,6 +6784,7 @@ components:
       additionalProperties: false
       required: [metadata, updated_at, committed_event_high_water, items, total]
       properties:
+        data_cleared: { type: boolean, description: 此范围历史数据已清除且没有新目标，不等同于筛选后为空 }
         metadata: { $ref: "#/components/schemas/ProjectionMetadata" }
         updated_at: { type: string, format: date-time }
         committed_event_high_water: { type: integer }
@@ -6793,6 +6806,7 @@ components:
           items:
             type: object
             properties:
+              attempt_id: { type: string, format: uuid }
               evidence_id: { type: string, format: uuid }
               goal_revision_id: { type: string, format: uuid }
               knowledge_revision_id: { type: string, format: uuid }
@@ -6811,6 +6825,9 @@ components:
               basis: { type: string, enum: [acknowledged_route_steps] }
               current_goal_revision: { type: boolean }
               completed_steps: { type: array, items: { type: string, format: uuid } }
+              previous_revision_id: { type: string, format: uuid }
+              added_steps: { type: array, items: { type: string, format: uuid }, description: 相对同路线前版新增或改变知识版本、意图、完成标准的活动。 }
+              removed_steps: { type: array, items: { type: string, format: uuid } }
         nodes: { type: array, items: { $ref: "#/components/schemas/NodeReduction" } }
         sessions:
           type: array
@@ -6825,6 +6842,14 @@ components:
               node_revision_id: { type: string, format: uuid }
               route_revision_id: { type: string, format: uuid }
               resumable: { type: boolean }
+              name: { type: string }
+              state: { type: string }
+              position: { type: string }
+              goal_status: { type: string }
+              scope_snapshot_id: { type: string, format: uuid }
+              route_step_id: { type: string, format: uuid }
+              activity_id: { type: string, format: uuid }
+              last_event_seq: { type: integer }
         recent_activity: { type: array, items: { $ref: "#/components/schemas/TimelineItem" } }
         recent_has_more: { type: boolean }
         reviews: { type: array, items: { $ref: "#/components/schemas/ReviewSchedule" } }

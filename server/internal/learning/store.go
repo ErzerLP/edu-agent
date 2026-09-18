@@ -59,6 +59,7 @@ type AuthorityProvenance struct {
 }
 
 type CommandBatch struct {
+	ReviewSource          *ReviewSessionSource
 	GoalRevision          *GoalRevision
 	RouteRevision         *RouteRevision
 	Session               *tutoring.Session
@@ -201,12 +202,13 @@ type EvidencePage struct {
 }
 
 type ReviewsPage struct {
-	DueBefore  time.Time          `json:"due_before"`
-	Total      int                `json:"total"`
-	UpdatedAt  time.Time          `json:"updated_at"`
-	Metadata   ProjectionMetadata `json:"metadata"`
-	Items      []ReviewSchedule   `json:"items"`
-	NextCursor string             `json:"next_cursor,omitempty"`
+	DataCleared bool               `json:"data_cleared"`
+	DueBefore   time.Time          `json:"due_before"`
+	Total       int                `json:"total"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	Metadata    ProjectionMetadata `json:"metadata"`
+	Items       []ReviewSchedule   `json:"items"`
+	NextCursor  string             `json:"next_cursor,omitempty"`
 }
 
 type SessionView struct {

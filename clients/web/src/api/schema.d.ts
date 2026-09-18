@@ -3817,6 +3817,12 @@ export interface components {
             /** Format: date-time */
             occurred_at?: string;
             goal_revision_id: components["schemas"]["LearningUUID"];
+            /** @description 用户显式为原复习任务新建承载，沿用原答案的目标、路线及 context；不迁移原会话，不复制 Evidence。 */
+            review_source?: {
+                task_id: components["schemas"]["LearningUUID"];
+                evidence_id: components["schemas"]["LearningUUID"];
+                attempt_id: components["schemas"]["LearningUUID"];
+            };
         };
         /** @description Proposal context is frozen by the server. An assessment for an attached quiz must provide focus_frame_id, free_question_id, and free_answer_id together; omission or ownership mismatch is rejected. */
         TutoringProposalRequest: {
@@ -4622,6 +4628,9 @@ export interface components {
             next_cursor?: string;
         };
         ReviewSchedule: {
+            attempt_id?: string;
+            /** @description 用户显式创建的仍在原节点的承载；session_id 始终保留证据来源会话。 */
+            carrier_session_id?: string;
             goal_name?: string;
             space_name?: string;
             /** Format: uuid */
@@ -4651,6 +4660,8 @@ export interface components {
             policy_version: string;
         };
         ReviewsPage: {
+            /** 此范围历史数据已清除且没有新目标，不等同于筛选后为空 */
+            data_cleared?: boolean;
             total?: number;
             /** Format: date-time */
             updated_at?: string;
@@ -4661,6 +4672,8 @@ export interface components {
             next_cursor?: string;
         };
         ProgressPage: {
+            /** 此范围历史数据已清除且没有新目标，不等同于筛选后为空 */
+            data_cleared?: boolean;
             metadata: components["schemas"]["ProjectionMetadata"];
             /** Format: date-time */
             updated_at: string;
@@ -4676,6 +4689,7 @@ export interface components {
             /** @enum {string} */
             evidence_basis?: "same_goal_valid_history";
             evidence_sources?: {
+                attempt_id?: string;
                 /** Format: uuid */
                 evidence_id?: string;
                 /** Format: uuid */
@@ -4696,6 +4710,10 @@ export interface components {
                 basis?: "acknowledged_route_steps";
                 current_goal_revision?: boolean;
                 completed_steps?: string[];
+                previous_revision_id?: string;
+                /** @description 相对同路线前版新增或改变知识版本、意图、完成标准的活动。 */
+                added_steps?: string[];
+                removed_steps?: string[];
             }[];
             nodes: components["schemas"]["NodeReduction"][];
             sessions: {
@@ -4712,6 +4730,14 @@ export interface components {
                 /** Format: uuid */
                 route_revision_id?: string;
                 resumable?: boolean;
+                name?: string;
+                state?: string;
+                position?: string;
+                goal_status?: string;
+                scope_snapshot_id?: string;
+                route_step_id?: string;
+                activity_id?: string;
+                last_event_seq?: number;
             }[];
             recent_activity: components["schemas"]["TimelineItem"][];
             recent_has_more: boolean;

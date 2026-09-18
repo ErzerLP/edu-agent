@@ -867,6 +867,11 @@ function TeachingWorkspace({
                 生成下一活动
               </Button>
             )}
+            {allowed('present_review') && (
+              <Button disabled={!canWrite || !!inactive} onClick={() => void generate('activity', 'present_review')}>
+                生成本任务复习活动
+              </Button>
+            )}
             {allowed('record_assessment') && (
               <Button
                 disabled={!canWrite}

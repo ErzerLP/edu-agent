@@ -47,3 +47,31 @@ func TestGoalProgressSeparatesSharedNodesAndPreservesEvidence(t *testing.T) {
 		t.Fatal("相同权威输入结果不确定")
 	}
 }
+
+func TestProgressExplainsRouteVersionsWithoutInventingMastery(t *testing.T) {
+	goal := GoalRevision{ID: "goal-v1", GoalID: "goal"}
+	first := RouteRevision{ID: "route-v1", RouteID: "route", Revision: 1, GoalRevisionID: goal.ID, Steps: []RouteStep{{ID: "one", NodeRevisionID: "node-v1", TeachingIntent: "回忆"}}}
+	second := first
+	second.ID, second.Revision = "route-v2", 2
+	second.Steps = []RouteStep{{ID: "one-new-id", NodeRevisionID: "node-v1", TeachingIntent: "回忆"}, {ID: "two", NodeRevisionID: "node-v2", TeachingIntent: "运用"}}
+	p := Projection{Routes: []RouteProjection{{Route: second}, {Route: first}}}
+	item := BuildGoalProgress(goal, map[string]GoalRevision{goal.ID: goal}, p, nil, nil, map[string]map[string]bool{first.ID: {"one": true}})
+	if len(item.Routes) != 2 || item.Routes[1].PreviousRevisionID != first.ID || !reflect.DeepEqual(item.Routes[1].AddedSteps, []string{"two"}) || len(item.Routes[1].RemovedSteps) != 0 {
+		t.Fatalf("动态版本依据错误：%+v", item.Routes)
+	}
+	if item.Routes[0].Numerator != 1 || item.Routes[1].Numerator != 0 || item.Routes[1].Denominator != 2 || item.EvidenceCount != 0 {
+		t.Fatalf("将旧版完成或动态分母误计为掌握：%+v", item)
+	}
+	for _, node := range item.Nodes {
+		if node.Mastery.State != MasteryUnseen {
+			t.Fatal("新节点凭空掌握")
+		}
+	}
+	unknown := BuildGoalProgress(goal, map[string]GoalRevision{goal.ID: goal}, Projection{}, nil, nil, nil)
+	if unknown.Goal.SpaceID == "" || unknown.Goal.Management == nil || unknown.Recent == nil {
+		t.Fatal("旧目标缺少明确归属或合法空列表")
+	}
+	if len(unknown.Routes) != 0 || unknown.EvidenceCount != 0 {
+		t.Fatal("空目标不应产生百分比")
+	}
+}

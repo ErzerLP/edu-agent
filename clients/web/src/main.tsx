@@ -19,6 +19,8 @@ import { TasksPage, RunPage } from './tasks-page'
 import { ImportPage } from './import-page'
 import { KnowledgePage } from './knowledge-page'
 import { FeedbackListPage, FeedbackPage } from './feedback-page'
+import { ProgressPage } from './progress-page'
+import { progressSearch } from './api/progress'
 
 const root = createRootRoute({
   component: () => (
@@ -34,6 +36,12 @@ const root = createRootRoute({
   ),
 })
 const home = createRoute({ getParentRoute: () => root, path: '/', component: HomePage })
+const progress = createRoute({
+  getParentRoute: () => root, path: '/progress',
+  validateSearch: (search: Record<string, unknown>) => progressSearch.parse(search),
+  component: () => <ProgressPage search={progress.useSearch()} />,
+  errorComponent: () => <section><h1>进度筛选无效</h1><p>学习区、目标或截止时间格式不正确，未扩大查询范围。</p><a href="/app/progress">重新选择筛选</a></section>,
+})
 const space = createRoute({
   getParentRoute: () => root,
   path: '/spaces/$spaceId',
@@ -190,6 +198,7 @@ const feedback = createRoute({
 const router = createRouter({
   routeTree: root.addChildren([
     home,
+    progress,
     space,
     goal,
     research,

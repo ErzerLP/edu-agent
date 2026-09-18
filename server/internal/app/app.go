@@ -110,6 +110,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	mentorRuns.ConfigureChanges(changes)
+	mentorRuns.ConfigureProgress(stores.learning)
 	cfg.Model.Enabled = modelClient != nil
 	cfg.Model.Name = settingsView.Teaching.Model
 	cfg.Model.ContextWindow = settingsView.Limits.ContextTokens

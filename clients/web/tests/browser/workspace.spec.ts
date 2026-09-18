@@ -171,6 +171,59 @@ async function legacySession(
   return { id, goal, call, get, action }
 }
 
+test('动态进度真实跨区续学、版本、范围、失败与原答案入口', async ({ page, request }, testInfo) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+  test.setTimeout(180000)
+  const first = await legacySession(request)
+  const second = await legacySession(request)
+  const other = await first.call('POST', '/v1/learning-spaces', { operation_id: randomUUID(), expected_version: 0, name: '进度验收英语区', description: '', status: 'active' })
+  const third = await legacySession(request, other.id)
+  for (const item of [first, second, third]) {
+    await item.call('POST', '/v1/learning/goals', { operation_id: randomUUID(), payload_schema_version: 1, aggregate_type: 'goal', aggregate_id: item.goal.goal_id, expected_version: item.goal.revision, previous_revision_id: item.goal.goal_revision_id, text: item.goal.text, source: '进度验收', action: 'start' })
+  }
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(e.message))
+  await page.goto('/app/progress')
+  await page.getByLabel('配对码', { exact: true }).fill(code())
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '学习进度与复习' })).toBeVisible()
+  for (const [fixture, spaceId] of [[first, space], [second, space], [third, other.id]] as const) {
+    const item = page.locator(`[data-goal-id="${fixture.goal.goal_id}"]`)
+    await expect(item.getByRole('link', { name: /继续学习 ·/ })).toHaveAttribute('href', `/app/spaces/${spaceId}/learn/${fixture.id}`)
+    await expect(item).toContainText('0/2 个活动完成')
+    await expect(item).toContainText('掌握情况未知')
+  }
+  await page.getByLabel('范围', { exact: true }).selectOption(other.id)
+  await expect(page.locator('[data-goal-id]')).toHaveCount(1)
+  await page.locator(`[data-goal-id="${third.goal.goal_id}"]`).getByRole('link', { name: '仅查看此目标' }).click()
+  await expect(page).toHaveURL(new RegExp(`goal=${third.goal.goal_id}`))
+  await page.locator(`[data-goal-id="${third.goal.goal_id}"]`).getByRole('link', { name: /继续学习 ·/ }).click()
+  await expect(page).toHaveURL(`/app/spaces/${other.id}/learn/${third.id}`)
+  await third.action('present_activity')
+  await third.action('submit_attempt', { answer: 'A', help: 'none' })
+  await third.action('record_assessment')
+  const answered = await third.get()
+  await page.goto(`/app/progress?space=${other.id}&goal=${third.goal.goal_id}&status=all`)
+  await expect(page.getByRole('link', { name: '查看正式证据及原答案' })).toHaveAttribute('href', `/app/spaces/${other.id}/feedback/${answered.work_item.attempt.attempt_id}`)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.locator('[data-goal-id]')).toHaveCount(1)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('progress-mobile.png'), fullPage: true })
+  // 真实正常读取已完成；只替换失败响应以验证错误绝不伪装为空。
+  await page.route('**/v1/learning/progress?**', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'projection_unavailable' } }) }))
+  await page.reload()
+  await expect(page.getByText('进度投影或网络暂不可用，不能据此判断没有复习。')).toBeVisible()
+  await expect(page.getByText('当前筛选内没有目标进度。')).toHaveCount(0)
+  await page.getByRole('button', { name: '查看已保存的作答记录' }).click()
+  await expect(page.getByRole('heading', { name: /评估/ }).first()).toBeVisible()
+  await page.unroute('**/v1/learning/progress?**')
+  await page.reload()
+  await expect(page.locator('[data-goal-id]')).toHaveCount(1)
+  await page.getByLabel('列表', { exact: true }).selectOption('reviews')
+  await expect(page.getByText('当前筛选和截止时间内没有到期复习。')).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 async function webCall(page: Page, path: string, data?: unknown) {
   const identity = await (await page.request.get('/v1/web/session')).json()
   return page.request.fetch(path, {

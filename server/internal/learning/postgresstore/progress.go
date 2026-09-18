@@ -39,17 +39,22 @@ func replaceProgress(ctx context.Context, tx pgx.Tx, generation string, p learni
 		return err
 	}
 	activities := map[string]learning.Activity{}
-	rows, err = tx.Query(ctx, `SELECT id,session_id FROM learning_activities UNION ALL SELECT id,parent_session_id FROM offline_activities`)
+	rows, err = tx.Query(ctx, `SELECT id,session_id,true FROM learning_activities UNION ALL SELECT id,parent_session_id,false FROM offline_activities`)
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
 		var a learning.Activity
-		if err = rows.Scan(&a.ID, &a.SessionID); err != nil {
+		var id string
+		var online bool
+		if err = rows.Scan(&id, &a.SessionID, &online); err != nil {
 			rows.Close()
 			return err
 		}
-		activities[a.ID] = a
+		if online {
+			a.ID = id
+		}
+		activities[id] = a
 	}
 	err = rows.Err()
 	rows.Close()
@@ -136,7 +141,7 @@ func replaceProgress(ctx context.Context, tx pgx.Tx, generation string, p learni
 			return err
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE learning_projection_generations SET progress_version=1 WHERE id=$1`, generation)
+	_, err = tx.Exec(ctx, `UPDATE learning_projection_generations SET progress_version=2 WHERE id=$1`, generation)
 	return err
 }
 
@@ -206,10 +211,17 @@ func progressReady(ctx context.Context, tx pgx.Tx, m learning.ProjectionMetadata
 	var updated time.Time
 	var high int64
 	err := tx.QueryRow(ctx, `SELECT g.progress_version,COALESCE(g.completed_at,g.created_at),c.current_event_seq FROM learning_projection_generations g CROSS JOIN learning_event_clock c WHERE g.id=$1`, m.GenerationID).Scan(&version, &updated, &high)
-	if err == nil && version != 1 {
+	if err == nil && version != 2 {
 		err = &learning.Error{Code: learning.CodeProjectionUnavailable, Reason: "progress_rebuild_required"}
 	}
 	return updated, high, err
+}
+
+// 清除墓碑与当前状态过滤无关；暂停目标不能被误报为已清除。
+func progressDataCleared(ctx context.Context, tx pgx.Tx, scope string) (bool, error) {
+	var cleared bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_goal_revisions WHERE source='privacy_erasure' AND ($1='' OR space_id::text=$1)) AND NOT EXISTS(SELECT 1 FROM learning_goal_revisions WHERE source<>'privacy_erasure' AND ($1='' OR space_id::text=$1))`, scope).Scan(&cleared)
+	return cleared, err
 }
 
 // 所有过滤、计数和分页在同一个投影快照中执行，生命周期读取同事务的最新权威记录。
@@ -244,6 +256,11 @@ func (s *Store) Progress(ctx context.Context, q learning.ProgressQuery) (learnin
 		if err = tx.QueryRow(ctx, progressCTE+`SELECT count(*) FROM scoped`, args...).Scan(&result.Total); err != nil {
 			return result, err
 		}
+		if result.Total == 0 {
+			if result.DataCleared, err = progressDataCleared(ctx, tx, c.Scope); err != nil {
+				return result, err
+			}
+		}
 		order := `CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END,deadline,goal_id`
 		if c.Order == "recent" {
 			order = `COALESCE((item->'sessions'->0->>'last_event_seq')::bigint,0) DESC,goal_id`
@@ -276,6 +293,16 @@ func (s *Store) Progress(ctx context.Context, q learning.ProgressQuery) (learnin
 			result.Items = append(result.Items, item)
 		}
 		if err = rows.Err(); err != nil {
+			return result, err
+		}
+		rows.Close()
+		var reviews []*learning.ReviewSchedule
+		for i := range result.Items {
+			for j := range result.Items[i].Reviews {
+				reviews = append(reviews, &result.Items[i].Reviews[j])
+			}
+		}
+		if err = s.reviewCarriers(ctx, tx, reviews); err != nil {
 			return result, err
 		}
 		if c.Offset+len(result.Items) < result.Total {
@@ -322,6 +349,11 @@ func (s *Store) scopedReviews(ctx context.Context, q learning.ReviewQuery) (lear
 		if err = tx.QueryRow(ctx, cte+`SELECT count(*) FROM tasks`, args...).Scan(&result.Total); err != nil {
 			return result, err
 		}
+		if result.Total == 0 {
+			if result.DataCleared, err = progressDataCleared(ctx, tx, c.Scope); err != nil {
+				return result, err
+			}
+		}
 		rows, err := tx.Query(ctx, cte+`SELECT review,space_status,status,item->'sessions',space_name,COALESCE(item->'goal'->'management'->'details'->>'name',item->'goal'->>'text') FROM tasks ORDER BY (review->>'due_at')::timestamptz,review->>'task_id' LIMIT $6 OFFSET $7`, append(args, q.Page.Limit, c.Offset)...)
 		if err != nil {
 			return result, err
@@ -347,6 +379,14 @@ func (s *Store) scopedReviews(ctx context.Context, q learning.ReviewQuery) (lear
 			result.Items = append(result.Items, review)
 		}
 		if err = rows.Err(); err != nil {
+			return result, err
+		}
+		rows.Close()
+		reviews := make([]*learning.ReviewSchedule, len(result.Items))
+		for i := range result.Items {
+			reviews[i] = &result.Items[i]
+		}
+		if err = s.reviewCarriers(ctx, tx, reviews); err != nil {
 			return result, err
 		}
 		if c.Offset+len(result.Items) < result.Total {
@@ -381,7 +421,7 @@ func setReviewAvailability(review *learning.ReviewSchedule, sessions []learning.
 // EnsureProgressProjection 只在升级缺少读模型时使用既有重放租约；不写学习事实。
 func (s *Store) EnsureProgressProjection(ctx context.Context) (int, error) {
 	var ready bool
-	if err := s.pool.QueryRow(ctx, `SELECT g.progress_version=1 FROM learning_projection_head h JOIN learning_projection_generations g ON g.id=h.active_generation_id WHERE h.singleton_id=1`).Scan(&ready); err != nil {
+	if err := s.pool.QueryRow(ctx, `SELECT g.progress_version=2 FROM learning_projection_head h JOIN learning_projection_generations g ON g.id=h.active_generation_id WHERE h.singleton_id=1`).Scan(&ready); err != nil {
 		return 0, err
 	}
 	if ready {

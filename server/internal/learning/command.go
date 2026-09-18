@@ -26,8 +26,9 @@ type GoalCommand struct {
 	PreviousRevisionID *string           `json:"previous_revision_id,omitempty"`
 }
 type SessionCommand struct {
-	Operation      OperationEnvelope `json:"operation"`
-	GoalRevisionID string            `json:"goal_revision_id"`
+	Operation      OperationEnvelope    `json:"operation"`
+	GoalRevisionID string               `json:"goal_revision_id"`
+	ReviewSource   *ReviewSessionSource `json:"review_source,omitempty"`
 }
 type ActionCommand struct {
 	Operation      OperationEnvelope    `json:"operation"`
@@ -95,8 +96,12 @@ func (s *Service) CreateGoal(ctx context.Context, deviceID string, command GoalC
 }
 
 func (s *Service) CreateSession(ctx context.Context, deviceID string, command SessionCommand) (OperationResult, error) {
-	if _, err := s.authority.LoadGoalRevision(ctx, command.GoalRevisionID); err != nil {
+	goal, err := s.authority.LoadGoalRevision(ctx, command.GoalRevisionID)
+	if err != nil {
 		return OperationResult{}, err
+	}
+	if command.ReviewSource != nil && goal.Source == "privacy_erasure" {
+		return OperationResult{}, &Error{Code: CodeContentRedacted}
 	}
 	return s.authorityOperation(ctx, deviceID, command.Operation, command, func() (OperationResult, error) {
 		return s.createSession(ctx, deviceID, command)
@@ -236,8 +241,17 @@ func (s *Service) createSession(ctx context.Context, deviceID string, command Se
 	}
 	session = transition.Session
 	batch := CommandBatch{Session: &session, TutoringState: string(session.State), ResultSession: true}
+	expectations := []AggregateExpectation{{Type: "session", ID: session.ID, ExpectedVersion: 0}}
+	if command.ReviewSource != nil {
+		if err := s.prepareReviewSession(ctx, command, &session, &batch, &expectations); err != nil {
+			return OperationResult{}, err
+		}
+		transition.Session = session
+		transition.After = session.State
+		batch.TutoringState = string(session.State)
+	}
 	batch.Events = transitionDrafts(session.ID, transition, nil)
-	return s.commit(ctx, deviceID, command.Operation, []AggregateExpectation{{Type: "session", ID: session.ID, ExpectedVersion: 0}}, batch, command, now)
+	return s.commit(ctx, deviceID, command.Operation, expectations, batch, command, now)
 }
 
 func (s *Service) applyAction(ctx context.Context, deviceID, sessionID string, command ActionCommand) (OperationResult, error) {

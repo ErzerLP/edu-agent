@@ -14,6 +14,7 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
@@ -25,6 +26,7 @@ import (
 )
 
 type Service struct {
+	progress            learning.ProgressStore
 	changes             *learningchange.Service
 	starter             *learningstart.Service
 	search              func(func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error)
@@ -57,6 +59,9 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 func (s *Service) CanSave() bool { return s.aead != nil }
 
 func (s *Service) ConfigureChanges(changes *learningchange.Service) { s.changes = changes }
+
+// ConfigureProgress 复用正式聚合，不从聊天内容推断进度。
+func (s *Service) ConfigureProgress(reader learning.ProgressStore) { s.progress = reader }
 
 // ConfigureStart 仅在组合根启动 worker 前注入正式应用服务。
 func (s *Service) ConfigureStart(starter *learningstart.Service) { s.starter = starter }

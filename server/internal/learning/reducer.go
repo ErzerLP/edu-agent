@@ -18,6 +18,8 @@ const (
 )
 
 type ReviewSchedule struct {
+	AttemptID           string          `json:"attempt_id,omitempty"`
+	CarrierSessionID    string          `json:"carrier_session_id,omitempty"`
 	GoalName            string          `json:"goal_name,omitempty"`
 	SpaceName           string          `json:"space_name,omitempty"`
 	TaskID              string          `json:"task_id,omitempty"`

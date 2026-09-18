@@ -595,6 +595,8 @@ type EvidencePage struct {
 }
 
 type ReviewSchedule struct {
+	AttemptID           string    `json:"attempt_id,omitempty"`
+	CarrierSessionID    string    `json:"carrier_session_id,omitempty"`
 	GoalName            string    `json:"goal_name,omitempty"`
 	SpaceName           string    `json:"space_name,omitempty"`
 	TaskID              string    `json:"task_id,omitempty"`
@@ -615,12 +617,13 @@ type ReviewSchedule struct {
 }
 
 type ReviewsPage struct {
-	DueBefore  time.Time          `json:"due_before"`
-	Total      int                `json:"total"`
-	UpdatedAt  time.Time          `json:"updated_at"`
-	Metadata   ProjectionMetadata `json:"metadata"`
-	Items      []ReviewSchedule   `json:"items"`
-	NextCursor string             `json:"next_cursor,omitempty"`
+	DataCleared bool               `json:"data_cleared"`
+	DueBefore   time.Time          `json:"due_before"`
+	Total       int                `json:"total"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	Metadata    ProjectionMetadata `json:"metadata"`
+	Items       []ReviewSchedule   `json:"items"`
+	NextCursor  string             `json:"next_cursor,omitempty"`
 }
 
 type KindCounts struct {

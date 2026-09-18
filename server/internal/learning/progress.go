@@ -19,6 +19,9 @@ type ProgressQuery struct {
 }
 
 type RouteProgress struct {
+	PreviousRevisionID  string        `json:"previous_revision_id,omitempty"`
+	AddedSteps          []string      `json:"added_steps"`
+	RemovedSteps        []string      `json:"removed_steps"`
 	Route               RouteRevision `json:"route"`
 	CompletedSteps      []string      `json:"completed_steps"`
 	Numerator           int           `json:"numerator"`
@@ -47,6 +50,7 @@ type GoalProgress struct {
 }
 
 type EvidenceSource struct {
+	AttemptID           string `json:"attempt_id,omitempty"`
 	EvidenceID          string `json:"evidence_id"`
 	GoalRevisionID      string `json:"goal_revision_id"`
 	KnowledgeRevisionID string `json:"knowledge_revision_id"`
@@ -55,12 +59,13 @@ type EvidenceSource struct {
 }
 
 type ProgressPage struct {
-	Metadata   ProjectionMetadata `json:"metadata"`
-	UpdatedAt  time.Time          `json:"updated_at"`
-	HighWater  int64              `json:"committed_event_high_water"`
-	Items      []GoalProgress     `json:"items"`
-	Total      int                `json:"total"`
-	NextCursor string             `json:"next_cursor,omitempty"`
+	DataCleared bool               `json:"data_cleared"`
+	Metadata    ProjectionMetadata `json:"metadata"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	HighWater   int64              `json:"committed_event_high_water"`
+	Items       []GoalProgress     `json:"items"`
+	Total       int                `json:"total"`
+	NextCursor  string             `json:"next_cursor,omitempty"`
 }
 
 type ProgressStore interface {
@@ -82,6 +87,10 @@ func ReviewTaskID(goal, node string) string {
 
 // BuildGoalProgress 仅使用权威投影，评分与间隔继续由 ReduceNode 计算。
 func BuildGoalProgress(goal GoalRevision, revisions map[string]GoalRevision, p Projection, activities map[string]Activity, pendingGoals map[string]string, completed map[string]map[string]bool) GoalProgress {
+	// 聚合显式解释旧目标的默认归属，不改写旧 typed record 或操作回执。
+	goal.SpaceID = goal.LearningSpaceID()
+	management := goal.GoalManagement()
+	goal.Management = &management
 	r := GoalProgress{Goal: goal, Routes: []RouteProgress{}, Nodes: []NodeReduction{}, Sessions: []SessionSummary{}, Recent: []TimelineItem{}, Reviews: []ReviewSchedule{}, Pending: []PendingAssessment{}, Estimated: true}
 	belongs := func(revision string) bool { return revisions[revision].GoalID == goal.GoalID }
 	nodes := map[string]bool{}
@@ -89,7 +98,7 @@ func BuildGoalProgress(goal GoalRevision, revisions map[string]GoalRevision, p P
 		if !belongs(route.Route.GoalRevisionID) {
 			continue
 		}
-		rp := RouteProgress{Route: route.Route, CompletedSteps: []string{}, Denominator: len(route.Route.Steps), Basis: "acknowledged_route_steps", CurrentGoalRevision: route.Route.GoalRevisionID == goal.ID}
+		rp := RouteProgress{Route: route.Route, AddedSteps: []string{}, RemovedSteps: []string{}, CompletedSteps: []string{}, Denominator: len(route.Route.Steps), Basis: "acknowledged_route_steps", CurrentGoalRevision: route.Route.GoalRevisionID == goal.ID}
 		for _, step := range route.Route.Steps {
 			nodes[step.NodeRevisionID] = true
 			if completed[route.Route.ID][step.ID] {
@@ -102,6 +111,40 @@ func BuildGoalProgress(goal GoalRevision, revisions map[string]GoalRevision, p P
 			rp.Percent = &percent
 		}
 		r.Routes = append(r.Routes, rp)
+	}
+	// 路线族内按不可变修订比较；概念版本、教学意图或完成标准变更均属于新活动。
+	sort.Slice(r.Routes, func(i, j int) bool {
+		a, b := r.Routes[i].Route, r.Routes[j].Route
+		if a.RouteID != b.RouteID {
+			return a.RouteID < b.RouteID
+		}
+		return a.Revision < b.Revision
+	})
+	stepKey := func(s RouteStep) string {
+		return s.NodeRevisionID + "\x00" + s.TeachingIntent + "\x00" + s.CompletionCondition
+	}
+	for i := range r.Routes {
+		current := &r.Routes[i]
+		if i == 0 || r.Routes[i-1].Route.RouteID != current.Route.RouteID {
+			continue
+		}
+		previous := r.Routes[i-1].Route
+		current.PreviousRevisionID = previous.ID
+		before, after := map[string]bool{}, map[string]bool{}
+		for _, step := range previous.Steps {
+			before[stepKey(step)] = true
+		}
+		for _, step := range current.Route.Steps {
+			after[stepKey(step)] = true
+			if !before[stepKey(step)] {
+				current.AddedSteps = append(current.AddedSteps, step.ID)
+			}
+		}
+		for _, step := range previous.Steps {
+			if !after[stepKey(step)] {
+				current.RemovedSteps = append(current.RemovedSteps, step.ID)
+			}
+		}
 	}
 	var evidence []AcceptedEvidence
 	for _, e := range p.Evidence {
@@ -116,7 +159,12 @@ func BuildGoalProgress(goal GoalRevision, revisions map[string]GoalRevision, p P
 	r.EvidenceBasis = "same_goal_valid_history"
 	r.EvidenceSources = []EvidenceSource{}
 	for _, e := range evidence {
-		r.EvidenceSources = append(r.EvidenceSources, EvidenceSource{EvidenceID: e.ID, GoalRevisionID: e.GoalRevisionID, KnowledgeRevisionID: e.KnowledgeRevisionID, NodeRevisionID: e.NodeRevisionID, CurrentGoalRevision: e.GoalRevisionID == goal.ID})
+		// 离线作答有独立读取协议，不能伪造在线反馈入口。
+		attempt := ""
+		if activities[e.ActivityID].ID != "" {
+			attempt = e.AttemptID
+		}
+		r.EvidenceSources = append(r.EvidenceSources, EvidenceSource{AttemptID: attempt, EvidenceID: e.ID, GoalRevisionID: e.GoalRevisionID, KnowledgeRevisionID: e.KnowledgeRevisionID, NodeRevisionID: e.NodeRevisionID, CurrentGoalRevision: e.GoalRevisionID == goal.ID})
 	}
 	for id, pending := range p.Pending {
 		if belongs(pendingGoals[id]) {
@@ -144,6 +192,11 @@ func BuildGoalProgress(goal GoalRevision, revisions map[string]GoalRevision, p P
 					review.GoalRevisionID = e.GoalRevisionID
 					review.KnowledgeRevisionID = e.KnowledgeRevisionID
 					review.EvidenceID = e.ID
+					if activities[e.ActivityID].ID != "" {
+						review.AttemptID = e.AttemptID
+					} else {
+						review.AttemptID = ""
+					}
 					review.SessionID = activities[e.ActivityID].SessionID
 					if review.SessionID == "" {
 						for _, event := range p.Timeline {

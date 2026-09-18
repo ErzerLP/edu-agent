@@ -67,9 +67,15 @@ func (a *App) runScopedProgress(ctx context.Context, args []string, reviews bool
 			return json.NewEncoder(a.Out).Encode(page)
 		}
 		printProjectionWarning(a.Err, page.Metadata)
+		if page.DataCleared {
+			fmt.Fprintln(a.Out, "此范围的学习数据已清除；旧复习记录不可恢复。")
+		}
 		fmt.Fprintf(a.Out, "到期复习：%d 项 · 截止 %s · as-of=%d\n", page.Total, page.DueBefore.Format(time.RFC3339), page.Metadata.AsOfEventSeq)
 		for _, r := range page.Items {
 			fmt.Fprintln(a.Out, safeText(fmt.Sprintf("任务 %s · 区 %s · 目标 %s\n到期 %s · 可开始=%t %s\n原会话 %s · 来源证据 %s\n", r.TaskID, r.SpaceName+"（"+r.LearningSpaceID+"）", r.GoalName+"（"+r.GoalID+"）", r.DueAt.Format(time.RFC3339), r.Startable, r.UnavailableReason, r.SessionID, r.EvidenceID)))
+			if r.CarrierSessionID != "" {
+				fmt.Fprintf(a.Out, "用户创建的复习承载：%s（原出处保留）\n", safeText(r.CarrierSessionID))
+			}
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(a.Out, "下一页：--cursor %s\n", safeText(page.NextCursor))
@@ -84,6 +90,9 @@ func (a *App) runScopedProgress(ctx context.Context, args []string, reviews bool
 		return json.NewEncoder(a.Out).Encode(page)
 	}
 	printProjectionWarning(a.Err, page.Metadata)
+	if page.DataCleared {
+		fmt.Fprintln(a.Out, "此范围的学习数据已清除；旧进度记录不可恢复。")
+	}
 	fmt.Fprintf(a.Out, "目标：%d · as-of=%d · 更新时间 %s\n", page.Total, page.Metadata.AsOfEventSeq, page.UpdatedAt.Format(time.RFC3339))
 	for _, g := range page.Items {
 		fmt.Fprintln(a.Out, progressContent(g))
@@ -107,6 +116,9 @@ func progressContent(g api.GoalProgress) string {
 	}
 	for _, r := range g.Routes {
 		fmt.Fprintf(&b, "路线 %s：%d/%d；依据 %s；对应当前目标版本=%t\n", r.Route.RouteRevisionID, r.Numerator, r.Denominator, r.Basis, r.CurrentGoalRevision)
+		if r.PreviousRevisionID != "" {
+			fmt.Fprintf(&b, "相对前版 %s：本版新增活动 %d 项，移除或替换 %d 项；不代表能力变化。\n", r.PreviousRevisionID, len(r.AddedSteps), len(r.RemovedSteps))
+		}
 	}
 	for _, n := range g.Nodes {
 		fmt.Fprintf(&b, "节点 %s：掌握=%s，证据=%d，待确认=%d\n", n.Mastery.NodeRevisionID, n.Mastery.State, n.Mastery.ValidEvidenceCount, n.Mastery.PendingAssessments)

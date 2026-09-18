@@ -52,6 +52,11 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 	}); err != nil {
 		return err
 	}
+	if batch.ReviewSource != nil {
+		if err := s.persistReviewSession(ctx, tx, request); err != nil {
+			return err
+		}
+	}
 	if value := batch.Activity; value != nil {
 		var artifactID *string
 		var artifactVersion *int64

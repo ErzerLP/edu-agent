@@ -22,6 +22,8 @@ import { MentorPanel } from './components/mentor-panel'
 import { ChangePanel } from './components/change-panel'
 import { SessionPicker } from './teaching-page'
 import { Confirm, EmptyState, ErrorState, Pagination } from './components/common'
+import { HomeProgress, ProgressPanel } from './progress-page'
+import { progressSearch } from './api/progress'
 
 const defaultSpace = '00000000-0000-4000-8000-000000000001'
 
@@ -198,6 +200,7 @@ export function HomePage() {
   })
   return (
     <>
+      <HomeProgress />
       <section className="intro">
         <span className="eyebrow">你的学习，从一个目标开始</span>
         <h1>今天想学会什么？</h1>
@@ -594,6 +597,11 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
       />
       <GoalLifecycle goal={goal.data} archivedSpace={space.data.status === 'archived'} />
       <SessionPicker goal={goal.data} archived={space.data.status === 'archived'} />
+      <section className="section">
+        <h2>此目标的活动、证据与复习</h2>
+        <ProgressPanel key={`${spaceId}:${goalId}`} search={progressSearch.parse({ space: spaceId, goal: goalId, status: 'all' })} />
+        <Link to="/progress" search={progressSearch.parse({ space: spaceId, goal: goalId, status: 'all' })}>筛选此目标进度 →</Link>
+      </section>
       <ChangePanel key={`${spaceId}:${goalId}`} goal={goal.data} archived={space.data.status === 'archived'} />
       <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }}>研究相关知识与查看来源 →</Link></p>
       <p><Link to="/spaces/$spaceId/goals/$goalId/research" params={{ spaceId, goalId }} search={{ start: true }}>开学过程与失败恢复 →</Link></p>

@@ -63,6 +63,47 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 请同步更新 Nginx 白名单、Web 资产和服务端。方案与测试见
 [评估设计](../../docs/design/assessment-feedback.md)及[验收记录](../../docs/development/issue-31-acceptance.md)。
 
+## 动态进度、复习与跨目标继续
+
+`/app/progress` 和侧栏“进度与复习”读取服务端正式聚合；首页先显示继续位置及到期复习，
+目标详情使用同一组件和服务。可按全局、学习区、目标、目标状态筛选，按优先级/目标截止
+时间或近期学习排序；复习按到期时间排序。总数与游标均来自服务端，不下载全库再筛选。
+筛选可深链接，URL 仅含身份和筛选条件，不含私人正文。非法区/目标不会回退全局。
+
+默认显示进行中目标及活跃区；显式选择暂停、完成、归档或全部状态可读取历史。隐藏不
+删除复习、重设日期或开始任务。复习默认截止时间由服务端冻结并保存在游标中；手选截止
+时间输入使用 UTC。投影、学习事实或区生命周期变化导致 `stale_cursor` 时明确回到第一页，
+不拼接不同快照。网络/投影失败、重建/延迟、合法空结果与数据已清除分别说明；失败时可
+展开原评估记录，全局回退默认区并提示选择其他区，不将失败显示为“没有复习”。
+
+路线比例只代表明确修订内已确认的步骤，展示分子、分母、版本、更新时间和相对前版的
+新增/移除项；不自动继承旧步骤完成。无路线时比例未知，无 Evidence 时掌握未知。
+手动目标完成、路线步骤完成、模型反馈和正式 Evidence 分开解释。活跃时间标为事件间隔
+估算，不是在线计时。原答案/证据链接复用 #31 的详情，不另设评分页面。
+
+可继续入口绑定原区、目标、会话和活动。复习按 `task_id` 区分，不按节点 ID 跨目标合并。
+原会话已完成或已离开原节点时，显示原因并保留原会话入口；在线来源可明确确认“新建复习
+承载”。此操作沿用原目标/路线/知识 context，单独保存原任务、证据、答案身份，不迁移旧
+会话或复制 Evidence。课堂再明确生成“本任务复习活动”并作答，新题和新答案各有新身份，
+沿用既有调度算法。离线来源没有在线反馈身份时仍走原离线 API/CLI，不伪造在线答案入口。
+同一承载创建丢响应后核对正式列表；同标签页重试复用原操作身份，其他标签页重复创建由
+服务端拒绝。旧承载完成后只能由用户再次明确创建，历史关系保留。
+
+API 沿用 `GET /v1/learning/progress`、`GET /v1/learning/reviews`；新增可选
+`POST /v1/tutoring/sessions` 的 `review_source`（`task_id`、`evidence_id`、`attempt_id`）。
+复习结果分别保留来源 `session_id` 和用户新建的 `carrier_session_id`；在线来源附带
+`attempt_id`，可由 `GET /v1/learning/attempts/:attemptId/feedback` 读取原作答和结果。
+CLI 的 `edu-agent progress --global --json`、`edu-agent reviews --global --json` 读取同一结果；
+`edu-agent assessment show --session 会话ID` 可核对该会话当前评估，历史答案使用上述 API。
+导师通过只读 `read_learning_progress` 获取其绑定目标的同一正式聚合，不能自行换区/目标。
+
+迁移 `000031_review_sessions.sql` 只保存来源身份关系，隐私清除一并移除并验证无残留。
+进度读模型版本升级为 2，启动时沿用既有重放租约重建，不改 Evidence、旧活动或复习间隔。
+旧读模型未就绪返回 `projection_unavailable`，不伪造新字段。空范围的 `data_cleared`
+根据权威清除墓碑判断，暂停或归档导致的空列表不是清除。Web 不增加持久正文缓存。
+设计与验收状态见[进度设计](../../docs/design/web-learning-progress.md)及
+[Issue #32 验收记录](../../docs/development/issue-32-acceptance.md)。
+
 ## 动态知识结构与维护
 
 `/app/spaces/:spaceId/knowledge` 的“动态知识结构”按当前授权范围分页。局部图与下方

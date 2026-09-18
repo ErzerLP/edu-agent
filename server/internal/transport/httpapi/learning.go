@@ -59,7 +59,8 @@ type learningGoalInput struct {
 
 type tutoringSessionInput struct {
 	operationInput
-	GoalRevisionID *string `json:"goal_revision_id"`
+	GoalRevisionID *string                       `json:"goal_revision_id"`
+	ReviewSource   *learning.ReviewSessionSource `json:"review_source,omitempty"`
 }
 
 type tutoringProposalInput struct {
@@ -328,7 +329,7 @@ func (a *API) handleLearningCreateSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 	credential, _ := credentialFromContext(r.Context())
-	result, err := a.learning.CreateSession(r.Context(), credential.Device.ID, learning.SessionCommand{Operation: operation, GoalRevisionID: *request.GoalRevisionID})
+	result, err := a.learning.CreateSession(r.Context(), credential.Device.ID, learning.SessionCommand{Operation: operation, GoalRevisionID: *request.GoalRevisionID, ReviewSource: request.ReviewSource})
 	if err != nil {
 		a.writeLearningFailure(w, r, "create_session", err)
 		return

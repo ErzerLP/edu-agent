@@ -46,6 +46,7 @@ func (h *executionHost) goal(ctx context.Context) (string, error) {
 }
 
 var mentorTools = []modelclient.Tool{
+	{Type: "function", Function: modelclient.ToolDefinition{Name: "read_learning_progress", Description: "读取本次绑定目标的正式活动、概念证据、复习和原会话位置。来源版本、待确认及手动完成分别解释，不计算能力百分比。", Parameters: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)}},
 	{Type: "function", Function: modelclient.ToolDefinition{Name: "open_references", Description: "申请用户打开当前目标或课堂的参考选择与审阅。此工具不上传、不采用、不覆盖、不共享、不删除，也不发布 NoteSync。", Parameters: json.RawMessage(`{"type":"object","properties":{"reason":{"type":"string"}},"required":["reason"],"additionalProperties":false}`)}},
 	{Type: "function", Function: modelclient.ToolDefinition{Name: "read_references", Description: "只读取用户已正式采用的参考范围和角色，供本次交流整理；不能扩大范围或更改原文。", Parameters: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)}},
 	{Type: "function", Function: modelclient.ToolDefinition{Name: "read_goal", Description: "读取本次运行明确绑定的真实目标；不能选择其他目标。", Parameters: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)}},
@@ -135,6 +136,16 @@ func (h *executionHost) Execute(ctx context.Context, calls []modelclient.ToolCal
 		var result string
 		var interaction *Interaction
 		switch call.Function.Name {
+		case "read_learning_progress":
+			var args struct{}
+			if agentcore.DecodeArguments(call.Function.Arguments, &args) != nil {
+				return agentcore.ToolStep[struct{}]{}, ErrInvalid
+			}
+			var err error
+			result, err = h.readProgress(ctx)
+			if err != nil {
+				return agentcore.ToolStep[struct{}]{}, err
+			}
 		case "open_references":
 			var args struct {
 				Reason string `json:"reason"`

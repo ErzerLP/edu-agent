@@ -17,6 +17,9 @@ type ProgressQuery struct {
 	Limit           int    `json:"limit,omitempty"`
 }
 type RouteProgress struct {
+	PreviousRevisionID  string        `json:"previous_revision_id,omitempty"`
+	AddedSteps          []string      `json:"added_steps"`
+	RemovedSteps        []string      `json:"removed_steps"`
 	Route               RouteRevision `json:"route"`
 	CompletedSteps      []string      `json:"completed_steps"`
 	Numerator           int           `json:"numerator"`
@@ -49,6 +52,7 @@ type GoalProgress struct {
 }
 
 type EvidenceSource struct {
+	AttemptID           string `json:"attempt_id,omitempty"`
 	EvidenceID          string `json:"evidence_id"`
 	GoalRevisionID      string `json:"goal_revision_id"`
 	KnowledgeRevisionID string `json:"knowledge_revision_id"`
@@ -56,12 +60,13 @@ type EvidenceSource struct {
 	CurrentGoalRevision bool   `json:"current_goal_revision"`
 }
 type ProgressPage struct {
-	Metadata   ProjectionMetadata `json:"metadata"`
-	UpdatedAt  time.Time          `json:"updated_at"`
-	HighWater  int64              `json:"committed_event_high_water"`
-	Items      []GoalProgress     `json:"items"`
-	Total      int                `json:"total"`
-	NextCursor string             `json:"next_cursor,omitempty"`
+	DataCleared bool               `json:"data_cleared"`
+	Metadata    ProjectionMetadata `json:"metadata"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+	HighWater   int64              `json:"committed_event_high_water"`
+	Items       []GoalProgress     `json:"items"`
+	Total       int                `json:"total"`
+	NextCursor  string             `json:"next_cursor,omitempty"`
 }
 
 func progressValues(q ProgressQuery) url.Values {

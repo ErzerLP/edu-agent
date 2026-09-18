@@ -9,6 +9,8 @@ import { Button } from './components/ui/button'
 import { Confirm, ErrorState } from './components/common'
 import { ReferenceImport } from './components/reference-import'
 import { PDFCoverage, PDFPageViewer } from './components/pdf-source'
+import { KnowledgeStructure } from './components/knowledge-structure'
+import { KnowledgeMaintenance } from './components/knowledge-maintenance'
 
 type AdoptionDraft = { entries: ReferenceEntry[]; request?: ReferenceRequest; preview?: ReferencePreview; unknown?: boolean; done?: boolean }
 const entryKey = (e: ReferenceEntry) => JSON.stringify([e.collection_id, e.revision_id, e.document_id, e.node_id])
@@ -89,6 +91,8 @@ export function KnowledgePage({ spaceId, goalId, sessionId }: { spaceId: string;
       {goalId && <div className="actions"><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId }}>返回目标</Link>{sessionId && <><Link to="/spaces/$spaceId/learn/$sessionId" params={{ spaceId, sessionId }}>返回原课堂</Link><ReferenceLink spaceId={spaceId} goalId={goalId} /></>}</div>}
       {!canManage && <p>当前身份可浏览已有资料。导入、共享和正式采用需要管理员明确创建“参考管理”配对码后重新配对。</p>}
     </section>
+    <KnowledgeStructure key={`${spaceId}:${goalId}:${sessionId}`} spaceId={spaceId} goalId={goalId} sessionId={sessionId} />
+    <KnowledgeMaintenance key={spaceId} spaceId={spaceId} />
     {!!(error || collections.error || discovery.error || space.error || goal.error || current.error || tree.error || body.error || frozenInfo.error) && <ErrorState error={error || collections.error || discovery.error || space.error || goal.error || current.error || tree.error || body.error || frozenInfo.error} />}
     {notice && <p role="status">{notice}</p>}
     {!goalId && <section className="panel"><h2>选择参考的使用目标（可选）</h2>{goals.data?.items.map(g => <p key={g.goal_id}><ReferenceLink spaceId={spaceId} goalId={g.goal_id} /> · {g.management.details.name}</p>)}{goals.data?.next_cursor && <p>这里只显示前 100 个目标；其余目标可从学习区搜索后进入“补充参考”。</p>}</section>}

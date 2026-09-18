@@ -17,6 +17,7 @@ import (
 )
 
 type Store struct {
+	structureLearning   StructureLearningReader
 	importJobDirectory  string
 	pool                *pgxpool.Pool
 	notesyncPublication bool

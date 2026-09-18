@@ -15,6 +15,19 @@ func (s *Service) candidate(ctx context.Context, tx pgx.Tx, c *Change, snap Snap
 	if input.Kind == "route" && input.ContextID == "" && snap.AvailableContextID != "" {
 		input.ContextID = snap.AvailableContextID
 	}
+	if input.Kind == "route" {
+		base := input.ContextID
+		if base == "" {
+			base = snap.Base.ContextID
+		}
+		updated, err := s.knowledge.ReviewedStructureContextTx(ctx, tx, base)
+		if err != nil {
+			return err
+		}
+		if updated != base {
+			input.ContextID = updated
+		}
+	}
 	if input.Steps == nil {
 		input.Steps = []Step{}
 	}

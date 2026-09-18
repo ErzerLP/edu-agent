@@ -30,6 +30,7 @@ import { ContentBlocks, SafeMarkdown, SourceViewer } from './components/content-
 import { MentorPanel } from './components/mentor-panel'
 import { ChangePanel } from './components/change-panel'
 import { ReferenceLink } from './knowledge-page'
+import { KnowledgeStructure } from './components/knowledge-structure'
 import { knowledgeContextSchema } from './api/start'
 import { ContentEditor, useContentSelection } from './components/content-editor'
 import { ContentTools } from './components/content-tools'
@@ -599,6 +600,7 @@ function TeachingWorkspace({
       <div className="teaching-columns">
         <aside className="knowledge-column panel" aria-label="知识与来源">
           <h2>知识与来源</h2>
+          {goal.data && <KnowledgeStructure key={`${spaceId}:${sessionId}`} spaceId={spaceId} goalId={goal.data.goal_id} sessionId={sessionId} compact />}
           <p className="hint">当前会话的真实范围，不表示概念掌握度。</p>
           {knowledgeContext.error && (
             <ErrorState

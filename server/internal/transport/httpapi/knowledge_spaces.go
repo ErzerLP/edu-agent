@@ -103,6 +103,9 @@ func (a *API) mountKnowledgeSpaces(r chi.Router) {
 }
 
 func scopedKnowledgePath(path string) bool {
+	if path == "/v1/knowledge/structure" || strings.HasPrefix(path, "/v1/knowledge/structure/") {
+		return true
+	}
 	if path == "/v1/knowledge/import-jobs" || strings.HasPrefix(path, "/v1/knowledge/import-jobs/") {
 		return true
 	}

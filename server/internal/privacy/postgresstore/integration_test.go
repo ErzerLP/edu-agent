@@ -348,6 +348,15 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	nodeRevisionID := first.Revision.Documents[0].Revision.Nodes[1].ID
+	conceptID := uuid.NewString()
+	structureRequest := knowledge.StructureCommand{OperationID: uuid.NewString(), Generation: 1, Kind: "edit", Reason: "隐私结构验收", ActorDeviceID: deviceID, Edits: []knowledge.StructureEdit{{ConceptID: conceptID, Name: "私密概念正文", Content: knowledge.ConceptContent{SourceStatus: "unverified", Description: "私密关系摘要", Claims: []knowledge.ConceptClaim{{Text: "私密主张", Gap: "私密缺口"}}}}}}
+	structureProposal, err := knowledgeService.CreateStructureProposal(ctx, structureRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = knowledgeService.DecideStructureProposal(ctx, structureProposal.ID, knowledge.StructureDecision{OperationID: uuid.NewString(), Hash: structureProposal.Hash, Decision: "approve", Reason: "隐私审阅正文", ActorDeviceID: deviceID}); err != nil {
+		t.Fatal(err)
+	}
 	snapshot, err := knowledgeService.FreezeScope(ctx, knowledge.ScopeSnapshot{ID: uuid.NewString(), Entries: []knowledge.ScopeEntry{{CollectionID: knowledge.DefaultCollectionID, RevisionID: first.Revision.ID}}})
 	if err != nil {
 		t.Fatal(err)
@@ -384,6 +393,19 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 	}
 	if _, err := store.RunLocalScrub(ctx, barrier.ErasureID); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := knowledgeService.ReadConcept(ctx, conceptID, ""); err == nil {
+		t.Fatal("清除后旧概念恢复正文")
+	}
+	if _, err := knowledgeService.ReadStructureProposal(ctx, structureProposal.ID); err == nil {
+		t.Fatal("清除后旧维护提案恢复正文")
+	}
+	if _, err := knowledgeService.CreateStructureProposal(ctx, structureRequest); err == nil {
+		t.Fatal("清除后旧请求重新创建正文")
+	}
+	var structureResidual int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM knowledge_structure_proposals)+(SELECT count(*) FROM knowledge_structure_operations)+(SELECT count(*) FROM knowledge_structure_heads)+(SELECT count(*) FROM knowledge_concept_revisions)`).Scan(&structureResidual); err != nil || structureResidual != 0 {
+		t.Fatalf("知识结构清除残留: %d %v", structureResidual, err)
 	}
 
 	head, err := knowledgeService.Head(ctx)

@@ -42,9 +42,11 @@ type applicationStores struct {
 func newApplicationStores(pool *pgxpool.Pool, knowledgeOptions ...knowledgepostgres.Option) applicationStores {
 	tutoringStore := tutoringpostgres.New(pool)
 	knowledgeStore := knowledgepostgres.New(pool, knowledgeOptions...)
+	learningStore := learningpostgres.New(pool, tutoringStore, knowledgeStore)
+	knowledgeStore.SetStructureLearningReader(learningStore)
 	return applicationStores{
 		identity: identitypostgres.New(pool), knowledge: knowledgeStore,
-		tutoring: tutoringStore, learning: learningpostgres.New(pool, tutoringStore, knowledgeStore),
+		tutoring: tutoringStore, learning: learningStore,
 		memory: memorypostgres.New(pool), outbox: outboxpostgres.New(pool),
 		notesyncPublication: len(knowledgeOptions) != 0,
 	}

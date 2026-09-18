@@ -327,6 +327,7 @@ func New(options Options) (http.Handler, error) {
 		api.mountSettings(protected)
 		api.mountPlanning(protected)
 		api.mountKnowledgeSpaces(protected)
+		api.mountKnowledgeStructure(protected)
 		protected.With(api.requireScope("devices:read")).Get("/v1/devices", api.listDevices)
 		protected.With(api.requireScope("devices:manage")).Delete("/v1/devices/{deviceID}", api.revokeDevice)
 		protected.With(api.requireScope("model:probe")).Get("/v1/model/capabilities", api.modelCapabilities)

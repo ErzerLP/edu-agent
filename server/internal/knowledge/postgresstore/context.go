@@ -65,7 +65,7 @@ func (s *Store) ConceptKeys(ctx context.Context, goal string) ([]string, error) 
 	if _, err = privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT semantic_key FROM knowledge_concepts WHERE space_id=$1 AND goal_id=$2 ORDER BY semantic_key LIMIT 100`, learningspace.Scope(ctx), goal)
+	rows, err := tx.Query(ctx, `SELECT semantic_key FROM knowledge_concepts c WHERE space_id=$1 AND goal_id=$2 AND COALESCE((SELECT structure->>'source_status' FROM knowledge_concept_heads h JOIN knowledge_concept_revisions r ON r.id=h.revision_id WHERE h.concept_id=c.id),'')<>'superseded' ORDER BY semantic_key LIMIT 100`, learningspace.Scope(ctx), goal)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +150,20 @@ func (s *Store) appendContextConceptTx(ctx context.Context, tx pgx.Tx, run, goal
 	concept.SemanticKey = strings.ToLower(strings.Join(strings.Fields(concept.SemanticKey), " "))
 	concept.ConceptID = uuid.NewSHA1(uuid.MustParse(goal), []byte(concept.SemanticKey)).String()
 	concept.RevisionID = uuid.NewString()
+	var retired bool
+	if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT structure->>'source_status'='superseded' FROM knowledge_concept_heads h JOIN knowledge_concept_revisions r ON r.id=h.revision_id WHERE h.concept_id=$1),false)`, concept.ConceptID).Scan(&retired); err != nil {
+		return result, err
+	}
+	if retired {
+		return result, &knowledge.Error{Code: knowledge.CodeRevisionConflict}
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO knowledge_concepts(id,space_id,goal_id,semantic_key) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, concept.ConceptID, learningspace.Scope(ctx), goal, concept.SemanticKey); err != nil {
 		return result, err
 	}
 	raw, _ := json.Marshal(concept.Support)
-	if _, err := tx.Exec(ctx, `INSERT INTO knowledge_concept_revisions(id,concept_id,name,support) VALUES($1,$2,$3,$4)`, concept.RevisionID, concept.ConceptID, concept.Name, raw); err != nil {
+	// 研究追加保留已审阅关系与章节出处，但新解释重新标记为 AI 建议和待核实。
+	if _, err := tx.Exec(ctx, `INSERT INTO knowledge_concept_revisions(id,concept_id,name,support,structure) VALUES($1,$2,$3,$4,
+ COALESCE((SELECT structure || '{"suggested":true,"source_status":"unverified"}'::jsonb FROM knowledge_concept_heads h JOIN knowledge_concept_revisions r ON r.id=h.revision_id WHERE h.concept_id=$2),'{}'::jsonb))`, concept.RevisionID, concept.ConceptID, concept.Name, raw); err != nil {
 		return result, err
 	}
 	replaced := false

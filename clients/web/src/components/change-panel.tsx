@@ -58,12 +58,27 @@ export function ChangePanel({ goal, teachingSessionId, archived, onChanged, onRe
     catch (e) { if (mounted.current) setError(e) }
     finally { if (mounted.current) setPending(false) }
   }
+  const adoptKnowledge = async () => {
+    if (!teachingSessionId || pending) return
+    setPending(true); setError(undefined)
+    try {
+      const snap = await current.refetch()
+      if (!snap.data) return
+      const candidate = { kind: 'route' as const, trigger: 'authorized_source', reason: '接入已审阅知识维护，保留原课堂', evidence_ids: [], context_id: '', steps: snap.data.steps, explanation: '' }
+      const payload = { session_id: teachingSessionId, base: snap.data.base, candidate }
+      const id = drafts.operation(JSON.stringify([...key, teachingSessionId, 'knowledge-change']), payload)
+      await unwrap(client().POST('/v1/learning/goals/{goalID}/changes/{changeID}', { params: { ...params, path: { goalID: goal.goal_id, changeID: id } }, body: { ...payload, operation_id: id, action: 'propose', expected_revision: 0, hash: '', interaction_id: '', immediate: false } }), changeSchema)
+      if (mounted.current) await changes.refetch()
+    } catch (e) { if (mounted.current) setError(e) }
+    finally { if (mounted.current) setPending(false) }
+  }
   if (!enabled) return <p className="hint">当前服务器尚未提供教学变更能力。</p>
   const items = changes.data?.items.filter((c) => !teachingSessionId || c.session_id === teachingSessionId) ?? []
   return <section className="panel" aria-label="教学变更">
     <h2>路径与教学变更</h2>
     <label>调整模式 <select value={mode.data?.mode ?? 'adaptive'} disabled={pending || inactive || !mode.data} onChange={(e) => void setMode(e.target.value as 'adaptive' | 'cautious')}><option value="adaptive">自适应：同目标调整在安全点应用</option><option value="cautious">谨慎：先预览后采用</option></select></label>
     <p className="hint">目标范围与完成标准始终需要具体确认。路径是建议，可跳过；跳过和自述不会记为掌握。</p>
+    {teachingSessionId && <Button variant="outline" disabled={pending || inactive || !current.data?.steps.length} onClick={() => void adoptKnowledge()}>接入已审阅知识维护</Button>}
     {!!(error || changes.error || mode.error || current.error) && <ErrorState error={error || changes.error || mode.error || current.error} retry={() => { void changes.refetch(); void mode.refetch(); if (teachingSessionId) void current.refetch() }} />}
     {current.data && <details><summary>当前建议路径</summary><ol>{current.data.steps.map((step, i) => <li key={i}>{step.name} · {step.criterion}</li>)}</ol></details>}
     {items.length === 0 && <p>尚无教学变更。在课堂导师中提出“先补一个前置概念”或“换一种安排”。</p>}

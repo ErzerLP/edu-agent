@@ -13,7 +13,11 @@ import (
 )
 
 func (s *Service) references(ctx context.Context, tx pgx.Tx, c Change, snap Snapshot) ([]learning.KnowledgeReference, string, error) {
-	if snap.AvailableContextID != "" && c.Candidate.ContextID != snap.AvailableContextID {
+	valid, err := s.knowledge.ReviewedStructureContextMatchesTx(ctx, tx, snap.AvailableContextID, c.Candidate.ContextID)
+	if err != nil {
+		return nil, "", err
+	}
+	if !valid {
 		return nil, "", ErrConflict
 	}
 	scope := snap.Session.Context.KnowledgeRevisionID

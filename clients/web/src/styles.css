@@ -926,3 +926,12 @@ footer {
 .reference-context {
   border-bottom: 1px solid var(--border);
 }
+.knowledge-structure, [aria-label="既有文档与章节维护"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.knowledge-structure fieldset { min-width: 0; }
+.knowledge-structure pre, [aria-label="既有文档与章节维护"] pre { white-space: pre-wrap; }
+.knowledge-structure svg { width: 100%; min-width: 480px; }
+.structure-list { padding-inline-start: 1.25rem; }
+.structure-list > li { padding-block: 1rem; border-bottom: 1px solid var(--border); }

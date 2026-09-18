@@ -25,12 +25,12 @@ const (
 	maintenanceBaseID     = "a0000000-0000-4000-8000-000000000003"
 )
 
-func newKnowledgeMaintenanceHTTP(t *testing.T, id *fakeIdentity, service *fakeKnowledge, maxBody int64) http.Handler {
+func newKnowledgeMaintenanceHTTP(t *testing.T, id *fakeIdentity, service KnowledgeService, maxBody int64) http.Handler {
 	t.Helper()
 	return newKnowledgeMaintenanceHTTPWithPermits(t, id, service, maxBody, privacy.NewReadPermitManager())
 }
 
-func newKnowledgeMaintenanceHTTPWithPermits(t *testing.T, id *fakeIdentity, service *fakeKnowledge, maxBody int64, permits *privacy.ReadPermitManager) http.Handler {
+func newKnowledgeMaintenanceHTTPWithPermits(t *testing.T, id *fakeIdentity, service KnowledgeService, maxBody int64, permits *privacy.ReadPermitManager) http.Handler {
 	t.Helper()
 	handler, err := New(Options{
 		Identity: id, Knowledge: service, ReadPermits: permits,

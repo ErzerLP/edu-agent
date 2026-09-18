@@ -6,6 +6,129 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/knowledge/structure/capabilities:
+    get:
+      operationId: "readKnowledgeStructureCapabilities"
+      summary: "查询结构能力与当前身份审批权限"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:read"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"}]
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructureCapabilities"
+        default:
+          $ref: "#/components/responses/WebFailure"
+  /v1/knowledge/structure:
+    get:
+      operationId: "readKnowledgeStructure"
+      summary: "先授权过滤后分页；图与列表为同一有界投影，版本改变使游标失效"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:read"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"},{"name":"goal_id","in":"query","schema":{"type":"string","format":"uuid"}},{"name":"root_id","in":"query","schema":{"type":"string","format":"uuid"}},{"name":"search","in":"query","schema":{"type":"string"}},{"name":"cursor","in":"query","schema":{"type":"string"}},{"name":"limit","in":"query","schema":{"type":"integer","minimum":1,"maximum":100}}]
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructurePage"
+        default:
+          $ref: "#/components/responses/WebFailure"
+  /v1/knowledge/structure/concepts/{conceptID}:
+    get:
+      operationId: "readKnowledgeConcept"
+      summary: "读取稳定概念及指定旧修订；来源解除关联或隐私清除后不可恢复正文"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:read"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"},{"name":"conceptID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}},{"name":"revision_id","in":"query","schema":{"type":"string","format":"uuid"}}]
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructureNode"
+        default:
+          $ref: "#/components/responses/WebFailure"
+  /v1/knowledge/structure/proposals:
+    get:
+      operationId: "listKnowledgeStructureProposals"
+      summary: "读取知识维护记录及当前影响"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:read"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"},{"name":"cursor","in":"query","schema":{"type":"string","format":"uuid"}},{"name":"limit","in":"query","schema":{"type":"integer","minimum":1,"maximum":100}}]
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructureProposalPage"
+        default:
+          $ref: "#/components/responses/WebFailure"
+    post:
+      operationId: "createKnowledgeStructureProposal"
+      summary: "创建冻结候选；不按名称合并、不复制证据；补偿额外要求 knowledge:approve"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:write"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeStructureCommand"
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructureProposal"
+        default:
+          $ref: "#/components/responses/WebFailure"
+  /v1/knowledge/structure/proposals/{proposalID}:
+    get:
+      operationId: "readKnowledgeStructureProposal"
+      summary: "核对提案真实结果与新增依赖"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:read"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"},{"name":"proposalID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructureProposal"
+        default:
+          $ref: "#/components/responses/WebFailure"
+  /v1/knowledge/structure/proposals/{proposalID}/decisions:
+    post:
+      operationId: "decideKnowledgeStructureProposal"
+      summary: "按摘要批准或拒绝；并发版本或新增依赖产生 stale，补偿生成新版本"
+      security: [{"deviceBearer":[]},{"webCookie":[]}]
+      x-required-scope: "knowledge:approve"
+      parameters: [{"$ref":"#/components/parameters/LearningSpaceID"},{"name":"proposalID","in":"path","required":true,"schema":{"type":"string","format":"uuid"}}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KnowledgeStructureDecision"
+      responses:
+        200:
+          description: "授权范围内的真实结果；正文不缓存"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KnowledgeStructureProposal"
+        default:
+          $ref: "#/components/responses/WebFailure"
   /v1/knowledge/source-capabilities:
     get:
       operationId: readSourceCapabilities
@@ -3800,6 +3923,371 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    KnowledgeStructureSource:
+      type: "object"
+      additionalProperties: false
+      required: ["collection_id","revision_id","document_id","node_id","quote"]
+      properties:
+        collection_id:
+          type: "string"
+          format: "uuid"
+        revision_id:
+          type: "string"
+          format: "uuid"
+        document_id:
+          type: "string"
+          format: "uuid"
+        node_id:
+          type: "string"
+          format: "uuid"
+        quote:
+          type: "string"
+          minLength: 1
+          maxLength: 2000
+    KnowledgeStructureClaim:
+      type: "object"
+      additionalProperties: false
+      required: ["text","conditions","sources","gap"]
+      properties:
+        text:
+          type: "string"
+          minLength: 1
+          maxLength: 2000
+        conditions:
+          type: "string"
+          maxLength: 2000
+        sources:
+          type: "array"
+          items:
+            type: "integer"
+            minimum: 0
+            maximum: 9007199254740991
+          maxItems: 16
+        gap:
+          type: "string"
+          maxLength: 2000
+    KnowledgeStructureRelation:
+      type: "object"
+      additionalProperties: false
+      required: ["target_id","kind","suggested","sources"]
+      properties:
+        target_id:
+          type: "string"
+          format: "uuid"
+        kind:
+          type: "string"
+          enum: ["prerequisite","related","contrast","part_of"]
+        suggested:
+          type: "boolean"
+        sources:
+          type: "array"
+          items:
+            type: "integer"
+            minimum: 0
+            maximum: 9007199254740991
+          maxItems: 16
+    KnowledgeStructureContent:
+      type: "object"
+      additionalProperties: false
+      required: ["description","source_status","suggested","sources","claims","relations","replaced_by"]
+      properties:
+        description:
+          type: "string"
+          maxLength: 8000
+        source_status:
+          type: "string"
+          enum: ["candidate","included","unverified","conflict","superseded"]
+        suggested:
+          type: "boolean"
+        sources:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureSource"
+          maxItems: 16
+        claims:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureClaim"
+          maxItems: 16
+        relations:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureRelation"
+          maxItems: 40
+        replaced_by:
+          type: "array"
+          items:
+            type: "string"
+            format: "uuid"
+          maxItems: 20
+    KnowledgeStructureNode:
+      type: "object"
+      additionalProperties: false
+      required: ["concept_id","revision_id","semantic_key","name","support","goal_id","content","learning_state"]
+      properties:
+        concept_id:
+          type: "string"
+          format: "uuid"
+        revision_id:
+          type: "string"
+          format: "uuid"
+        semantic_key:
+          type: "string"
+        name:
+          type: "string"
+        support:
+          type: "array"
+          items:
+            type: "object"
+            additionalProperties: false
+            required: ["source_id","revision_id","fragment_id","quote"]
+            properties:
+              source_id:
+                type: "string"
+                format: "uuid"
+              revision_id:
+                type: "string"
+                format: "uuid"
+              fragment_id:
+                type: "string"
+                format: "uuid"
+              quote:
+                type: "string"
+        goal_id:
+          type: "string"
+        content:
+          $ref: "#/components/schemas/KnowledgeStructureContent"
+        learning_state:
+          type: "string"
+          enum: ["unseen","needs_practice","insufficient_evidence","evidenced"]
+    KnowledgeStructureEdit:
+      type: "object"
+      additionalProperties: false
+      required: ["concept_id","goal_id","name","content"]
+      properties:
+        concept_id:
+          type: "string"
+          format: "uuid"
+        goal_id:
+          type: "string"
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 300
+        content:
+          $ref: "#/components/schemas/KnowledgeStructureContent"
+    KnowledgeStructurePage:
+      type: "object"
+      additionalProperties: false
+      required: ["version","generation","items","edges","next_cursor","partial","notice"]
+      properties:
+        version:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        generation:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureNode"
+          maxItems: 100
+        edges:
+          type: "array"
+          items:
+            type: "object"
+            additionalProperties: false
+            required: ["source_id","target_id","kind","suggested","sources"]
+            properties:
+              source_id:
+                type: "string"
+                format: "uuid"
+              target_id:
+                type: "string"
+                format: "uuid"
+              kind:
+                type: "string"
+                enum: ["prerequisite","related","contrast","part_of"]
+              suggested:
+                type: "boolean"
+              sources:
+                type: "array"
+                items:
+                  type: "integer"
+                  minimum: 0
+                  maximum: 9007199254740991
+                maxItems: 16
+        next_cursor:
+          type: "string"
+        partial:
+          type: "boolean"
+        notice:
+          type: "string"
+    KnowledgeStructureImpact:
+      type: "object"
+      additionalProperties: false
+      required: ["goal_ids","contexts","activities","contents","evidence","fingerprint"]
+      properties:
+        goal_ids:
+          type: "array"
+          items:
+            type: "string"
+            format: "uuid"
+        contexts:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        activities:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        contents:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        evidence:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        fingerprint:
+          type: "string"
+    KnowledgeStructureCommand:
+      type: "object"
+      additionalProperties: false
+      required: ["operation_id","base_version","generation","kind","reason","edits"]
+      properties:
+        operation_id:
+          type: "string"
+          format: "uuid"
+        base_version:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        generation:
+          type: "integer"
+          minimum: 1
+          maximum: 9007199254740991
+        kind:
+          type: "string"
+          enum: ["edit","merge","split","compensate"]
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 2000
+        edits:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureEdit"
+          maxItems: 20
+        compensates:
+          type: "string"
+          format: "uuid"
+    KnowledgeStructureDecision:
+      type: "object"
+      additionalProperties: false
+      required: ["operation_id","hash","decision","reason"]
+      properties:
+        operation_id:
+          type: "string"
+          format: "uuid"
+        hash:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        decision:
+          type: "string"
+          enum: ["approve","reject"]
+        reason:
+          type: "string"
+          minLength: 1
+          maxLength: 2000
+    KnowledgeStructureProposal:
+      type: "object"
+      additionalProperties: false
+      required: ["id","operation_id","status","kind","reason","base_version","generation","hash","before","after","impact","current_impact","compensates","applied_version","created_at","decision_reason","replayed"]
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+        operation_id:
+          type: "string"
+          format: "uuid"
+        status:
+          type: "string"
+          enum: ["open","applied","rejected","stale"]
+        kind:
+          type: "string"
+          enum: ["edit","merge","split","compensate"]
+        reason:
+          type: "string"
+        base_version:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        generation:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        hash:
+          type: "string"
+        before:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureNode"
+        after:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureNode"
+        impact:
+          $ref: "#/components/schemas/KnowledgeStructureImpact"
+        current_impact:
+          $ref: "#/components/schemas/KnowledgeStructureImpact"
+        compensates:
+          type: "string"
+        applied_version:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        created_at:
+          type: "string"
+          format: "date-time"
+        decision_reason:
+          type: "string"
+        replayed:
+          type: "boolean"
+    KnowledgeStructureProposalPage:
+      type: "object"
+      additionalProperties: false
+      required: ["items","next_cursor"]
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/KnowledgeStructureProposal"
+        next_cursor:
+          type: "string"
+    KnowledgeStructureCapabilities:
+      type: "object"
+      additionalProperties: false
+      required: ["protocol_version","available","can_propose","can_decide","max_nodes","max_edits"]
+      properties:
+        protocol_version:
+          const: 1
+        available:
+          type: "boolean"
+        can_propose:
+          type: "boolean"
+        can_decide:
+          type: "boolean"
+        max_nodes:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        max_edits:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
     StartLearningCapabilities:
       type: object
       required: [protocol_version, available, reason, request_budget, token_budget, legacy_projection]

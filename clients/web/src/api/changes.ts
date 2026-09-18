@@ -26,7 +26,7 @@ export const changeStatus: Record<LearningChange['status'], string> = { proposed
 // 独立变更协议的客户端合同；旧教学 DTO 不增加字段或状态枚举。
 type Response<T> = { responses: { 200: { content: { 'application/json': T } } } }
 type Parameters = { header: ReturnType<typeof changeHeader>; path: { goalID: string } }
-type Command = { session_id: string; operation_id: string; action: 'approve' | 'apply_now' | 'reject' | 'cancel' | 'compensate' | 'restore_focus'; expected_revision: number; hash: string; interaction_id: string; immediate: false }
+type Command = { session_id: string; operation_id: string; action: 'approve' | 'apply_now' | 'reject' | 'cancel' | 'compensate' | 'restore_focus' | 'propose'; expected_revision: number; hash: string; interaction_id: string; immediate: false; base?: z.infer<typeof changeBase>; candidate?: LearningChange['candidate'] }
 export interface ChangePaths {
   '/v1/learning/changes/capabilities': { get: Response<z.infer<typeof changeCapabilities>> }
   '/v1/learning/goals/{goalID}/changes': { get: Response<z.infer<typeof changesSchema>> & { parameters: Parameters } }

@@ -65,7 +65,16 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		"/v1/knowledge/revisions/head": true, "/v1/knowledge/retrievals": true,
 		"/v1/learning/start/capabilities": true, "/v1/learning/goals/a/start": true,
 		"/v1/tutoring/sessions/a/knowledge-context": true, "/v1/learning/start/internal": false,
-		"/admin": false, "/internal/privacy": false, "/mcp": false, "/v1/knowledge/imports": false, "/v1/knowledge/maintenance/proposals": false,
+		"/v1/knowledge/structure": true, "/v1/knowledge/structure/capabilities": true,
+		"/v1/knowledge/structure/concepts/a": true, "/v1/knowledge/structure/proposals": true,
+		"/v1/knowledge/structure/proposals/a": true, "/v1/knowledge/structure/proposals/a/decisions": true,
+		"/v1/knowledge/maintenance/proposals": true, "/v1/knowledge/maintenance/proposals/a": true,
+		"/v1/knowledge/maintenance/proposals/a/approve": true, "/v1/knowledge/maintenance/proposals/a/reject": true,
+		"/v1/knowledge/maintenance/rollbacks": true, "/v1/knowledge/revisions/a/tree": true, "/v1/knowledge/revisions/a/export": true,
+		"/v1/knowledge/structure/internal": false, "/v1/knowledge/structure/concepts/a/clear": false,
+		"/v1/knowledge/structure/proposals/a/force": false, "/v1/knowledge/maintenance/internal": false,
+		"/v1/knowledge/maintenance/proposals/a/force": false, "/v1/knowledge/revisions/a/delete": false,
+		"/admin": false, "/internal/privacy": false, "/mcp": false, "/v1/knowledge/imports": false,
 	} {
 		allowed := false
 		for _, p := range patterns {

@@ -81,7 +81,11 @@ func (s *Service) drain(ctx context.Context, actor identity.Credential, goal, se
 			return false, e
 		}
 		stale := snap.Base.GoalRevisionID != c.Base.GoalRevisionID || snap.Base.RouteRevisionID != c.Base.RouteRevisionID || snap.Base.ContextID != c.Base.ContextID || snap.Base.ActivityID != "" && snap.Base.ActivityID != c.Base.ActivityID
-		stale = stale || snap.AvailableContextID != "" && c.Candidate.ContextID != snap.AvailableContextID
+		valid, e := s.knowledge.ReviewedStructureContextMatchesTx(ctx, tx, snap.AvailableContextID, c.Candidate.ContextID)
+		if e != nil {
+			return false, e
+		}
+		stale = stale || !valid
 		if c.Base.ArtifactID != "" {
 			r, e := s.content.GetTx(ctx, tx, c.Base.ArtifactID, g)
 			if e != nil {

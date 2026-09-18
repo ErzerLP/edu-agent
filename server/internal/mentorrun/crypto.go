@@ -8,7 +8,32 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/edu-agent/edu-agent/server/internal/research"
 )
+
+const maxSealedBody = MaxBody + research.MaxSources*(research.MaxDecoded*4/3+1024)
+
+func sourceFilesValid(body Body) bool {
+	if len(body.SourceFiles) == 0 {
+		return true
+	}
+	if body.Research == nil || len(body.SourceFiles) > research.MaxSources {
+		return false
+	}
+	for id, data := range body.SourceFiles {
+		found := false
+		for _, source := range body.Research.Sources {
+			if source.ID == id && source.PDF != nil {
+				found = true
+			}
+		}
+		if !found || len(data) > research.MaxDecoded {
+			return false
+		}
+	}
+	return true
+}
 
 // 密钥由操作者独立挂载；不自动生成丢失密钥，不将密钥或正文写入错误。
 func LoadKey(path string) ([]byte, error) {
@@ -57,7 +82,7 @@ func seal(a cipher.AEAD, id string, body Body) ([]byte, error) {
 		return nil, ErrStorage
 	}
 	raw, err := json.Marshal(body)
-	if err != nil || len(raw) > MaxBody {
+	if err != nil || len(raw) > maxSealedBody || checkpointJSONSize(body) > MaxBody {
 		return nil, ErrLimit
 	}
 	nonce := make([]byte, a.NonceSize())
@@ -69,11 +94,11 @@ func seal(a cipher.AEAD, id string, body Body) ([]byte, error) {
 
 func unseal(a cipher.AEAD, id string, raw []byte) (Body, error) {
 	var body Body
-	if a == nil || len(raw) < a.NonceSize() || len(raw) > MaxBody+64 {
+	if a == nil || len(raw) < a.NonceSize() || len(raw) > maxSealedBody+64 {
 		return body, ErrStorage
 	}
 	plain, err := a.Open(nil, raw[:a.NonceSize()], raw[a.NonceSize():], []byte(id))
-	if err != nil || json.Unmarshal(plain, &body) != nil {
+	if err != nil || json.Unmarshal(plain, &body) != nil || checkpointJSONSize(body) > MaxBody {
 		return body, ErrStorage
 	}
 	return body, nil

@@ -357,4 +357,11 @@ func (s *Service) Sweep(ctx context.Context) (int, error) {
 }
 
 // checkpointJSONSize 用于确保所有模型协议载荷共享正文上限。
-func checkpointJSONSize(body Body) int { raw, _ := json.Marshal(body); return len(raw) }
+func checkpointJSONSize(body Body) int {
+	if !sourceFilesValid(body) {
+		return MaxBody + 1
+	}
+	body.SourceFiles = nil
+	raw, _ := json.Marshal(body)
+	return len(raw)
+}

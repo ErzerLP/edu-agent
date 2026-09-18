@@ -8,6 +8,7 @@ import { useIdentity } from './lib/session'
 import { Button } from './components/ui/button'
 import { Confirm, ErrorState } from './components/common'
 import { ReferenceImport } from './components/reference-import'
+import { PDFCoverage, PDFPageViewer } from './components/pdf-source'
 
 type AdoptionDraft = { entries: ReferenceEntry[]; request?: ReferenceRequest; preview?: ReferencePreview; unknown?: boolean; done?: boolean }
 const entryKey = (e: ReferenceEntry) => JSON.stringify([e.collection_id, e.revision_id, e.document_id, e.node_id])
@@ -103,6 +104,7 @@ export function KnowledgePage({ spaceId, goalId, sessionId }: { spaceId: string;
       {goalId && canManage && <label>新选择的角色<select disabled={busy} value={role} onChange={e => setRole(e.target.value as ReferenceEntry['role'])}>{Object.entries(roleNames).map(([v, label]) => <option key={v} value={v}>{label}</option>)}</select></label>}
       {goalId && collection && revisionId && !frozen && <Button disabled={busy || inactive} onClick={() => add({ collection_id: collection.id, revision_id: revisionId })}>选择此集合版本</Button>}
       <div className="reference-scroll" tabIndex={0}>{tree.data?.revision.documents.filter(d => `${d.path} ${d.document.nodes.map(n => n.title).join(' ')}`.includes(search)).map(d => <article className="panel compact" key={d.document.document_id}><h3>{d.path}</h3>{goalId && <><Button variant="outline" disabled={busy || inactive || !canManage} onClick={() => add({ collection_id: collectionId, revision_id: revisionId, document_id: d.document.document_id })}>选择整篇「{d.path}」</Button><ul>{d.document.nodes.filter(n => n.heading_level > 0).map(n => <li key={n.node_id}>{n.title}<Button variant="ghost" disabled={busy || inactive || !canManage} onClick={() => add({ collection_id: collectionId, revision_id: revisionId, document_id: d.document.document_id, node_id: n.node_id })}>选择章节「{n.title}」</Button></li>)}</ul></>}</article>)}</div>
+      {tree.data?.revision.documents.filter(d => d.document.pdf).map(d => <section key={d.document.document_revision_id} aria-label={`PDF 来源 ${d.path}`}><h3>{d.path} · 历史 PDF</h3><PDFCoverage report={d.document.pdf!.report} /><PDFPageViewer spaceId={spaceId} revisionId={frozen || revisionId} documentId={d.document.document_revision_id} collectionId={frozen ? undefined : collectionId} pages={d.document.pdf!.report.pages.filter(p => !frozen || d.document.pdf!.ranges.some(r => r.number === p.number && d.document.nodes.some(n => n.section_range.start <= r.range.start && n.section_range.end >= r.range.end))).map(p => p.number)} /></section>)}
       <div className="reference-scroll" tabIndex={0}>{body.data?.documents.filter(d => `${d.path} ${d.markdown}`.includes(search)).map((d, i) => <details key={`${d.path}:${i}`}><summary>{d.path}</summary><pre className="reference-text">{d.markdown}</pre><Button variant="outline" onClick={() => download(d.path, d.markdown)}>导出「{d.path}」Markdown</Button></details>)}</div>
     </section>}
     {goalId && canManage && <section className="panel" aria-label="参考采用与角色"><h2>用于{sessionId ? '本次会话' : '此目标'}的参考</h2><p>补充参考允许与已有来源一起使用；优先依据先进入检索候选；存在限制范围时，仅使用所选限制条目。不会影响其他目标。</p>

@@ -197,7 +197,10 @@ func (s *Service) RunImportJob(ctx context.Context, actor string, c ImportJobCom
 		if b.Status != "pending" && b.Status != "missing" {
 			return j, nil
 		}
-		if _, err = s.prepareDocuments([]ImportDocument{*c.Document}); err != nil {
+		if c.Document.PDF != nil {
+			return j, jobError(CodeInvalidRequest)
+		}
+		if _, err = s.prepareDocuments(ctx, []ImportDocument{*c.Document}); err != nil {
 			return j, err
 		}
 		request := ImportCommand{OperationID: b.OperationID, Source: "import-job-v1", ActorDeviceID: actor, ExpectedParentProvided: true, Documents: []ImportDocument{*c.Document}}

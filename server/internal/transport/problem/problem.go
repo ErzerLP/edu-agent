@@ -3,6 +3,7 @@ package problem
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
@@ -70,6 +71,9 @@ func learningSpaceArchive(err error) (Problem, bool) {
 }
 
 func Knowledge(err error) Problem {
+	if code := knowledge.ErrorCode(err); strings.HasPrefix(code, "pdf_") {
+		return Problem{Status: 422, Code: code, Message: "PDF 解析或可用范围确认未完成，请核对逐页报告"}
+	}
 	var scoped *learningspace.Error
 	if errors.As(err, &scoped) {
 		status := 400

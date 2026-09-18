@@ -8,6 +8,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/jackc/pgx/v5"
@@ -54,14 +55,23 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 	}
 	document := prepared.Revision.Documents[0].Revision
 	encoded := "    " + strings.ReplaceAll(c.Text, "\n", "\n    ") + "\n"
-	if !strings.HasSuffix(document.CanonicalMarkdown, encoded) {
+	if document.PDF == nil && !strings.HasSuffix(document.CanonicalMarkdown, encoded) {
 		return knowledge.ImportResult{}, &knowledge.Error{Code: knowledge.CodeInvalidMarkdown}
 	}
 	metadata := c.Metadata
 	metadata.Status = "adopted"
 	metadata.CollectionID = c.SourceID
 	metadata.KnowledgeRevisionID = prepared.Revision.ID
+	metadata.DocumentRevisionID = document.ID
 	metadata.Text = ""
+	if metadata.PDF != nil {
+		report := *metadata.PDF
+		report.Pages = append([]pdfsource.Page{}, report.Pages...)
+		for i := range report.Pages {
+			report.Pages[i].Text = ""
+		}
+		metadata.PDF = &report
+	}
 	metadata.Fragments = append([]research.Fragment{}, metadata.Fragments...)
 	for i := range metadata.Fragments {
 		metadata.Fragments[i].Text = ""
@@ -70,7 +80,11 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 	if err != nil {
 		return knowledge.ImportResult{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_source_revisions(source_id,source_revision_id,run_id,space_id,goal_id,knowledge_revision_id,document_revision_id,text_start,text_end,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.SourceID, c.SourceRevisionID, c.RunID, learningspace.Scope(ctx), c.GoalID, prepared.Revision.ID, document.ID, len(document.CanonicalMarkdown)-len(encoded), len(document.CanonicalMarkdown)-1, raw); err != nil {
+	start, end := len(document.CanonicalMarkdown)-len(encoded), len(document.CanonicalMarkdown)-1
+	if document.PDF != nil {
+		start, end = 0, 0
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_source_revisions(source_id,source_revision_id,run_id,space_id,goal_id,knowledge_revision_id,document_revision_id,text_start,text_end,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.SourceID, c.SourceRevisionID, c.RunID, learningspace.Scope(ctx), c.GoalID, prepared.Revision.ID, document.ID, start, end, raw); err != nil {
 		return knowledge.ImportResult{}, err
 	}
 	return knowledge.ImportResult{Revision: prepared.Revision}, nil
@@ -81,24 +95,31 @@ func (s *Store) ResearchSourcesTx(ctx context.Context, tx pgx.Tx, run, goal stri
 	if _, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT s.metadata,p.canonical_markdown,s.text_start,s.text_end FROM knowledge_source_revisions s JOIN knowledge_document_payloads p ON p.document_revision_id=s.document_revision_id JOIN knowledge_revisions r ON r.id=s.knowledge_revision_id WHERE s.space_id=$1 AND s.goal_id=$2 AND s.run_id=$3 AND r.redacted_at IS NULL AND EXISTS(SELECT 1 FROM knowledge_collection_links l WHERE l.space_id=s.space_id AND l.collection_id=s.source_id) ORDER BY s.source_id`, learningspace.Scope(ctx), goal, run)
+	rows, err := tx.Query(ctx, `SELECT s.metadata,p.canonical_markdown,s.text_start,s.text_end,p.pdf_metadata FROM knowledge_source_revisions s JOIN knowledge_document_payloads p ON p.document_revision_id=s.document_revision_id JOIN knowledge_revisions r ON r.id=s.knowledge_revision_id WHERE s.space_id=$1 AND s.goal_id=$2 AND s.run_id=$3 AND r.redacted_at IS NULL AND EXISTS(SELECT 1 FROM knowledge_collection_links l WHERE l.space_id=s.space_id AND l.collection_id=s.source_id) ORDER BY s.source_id`, learningspace.Scope(ctx), goal, run)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := []research.Source{}
 	for rows.Next() {
-		var raw []byte
+		var raw, pdfRaw []byte
 		var markdown string
 		var start, end int
 		var source research.Source
-		if err = rows.Scan(&raw, &markdown, &start, &end); err != nil {
+		if err = rows.Scan(&raw, &markdown, &start, &end, &pdfRaw); err != nil {
 			return nil, err
 		}
 		if json.Unmarshal(raw, &source) != nil || start < 0 || end > len(markdown) || end < start {
 			return nil, &knowledge.Error{Code: knowledge.CodeInvalidMarkdown}
 		}
 		source.Text = strings.ReplaceAll(strings.TrimPrefix(markdown[start:end], "    "), "\n    ", "\n")
+		if len(pdfRaw) > 0 {
+			var m knowledge.PDFMetadata
+			if err = json.Unmarshal(pdfRaw, &m); err != nil {
+				return nil, err
+			}
+			source.PDF, source.Text = &m.Report, m.Report.Text()
+		}
 		for i := range source.Fragments {
 			f := &source.Fragments[i]
 			if f.Start < 0 || f.End > len(source.Text) || f.End < f.Start {

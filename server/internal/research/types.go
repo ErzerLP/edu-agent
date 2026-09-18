@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 )
 
 const MaxSources = 4
@@ -76,6 +78,7 @@ func (r Request) Query() string {
 }
 
 type Fragment struct {
+	Page  int    `json:"page,omitempty"`
 	ID    string `json:"id"`
 	Start int    `json:"start"`
 	End   int    `json:"end"`
@@ -83,26 +86,29 @@ type Fragment struct {
 }
 
 type Source struct {
-	SpaceID             string     `json:"space_id"`
-	GoalID              string     `json:"goal_id"`
-	Purpose             string     `json:"purpose"`
-	ID                  string     `json:"id"`
-	RevisionID          string     `json:"revision_id"`
-	Locator             string     `json:"locator"`
-	FinalURL            string     `json:"final_url"`
-	Title               string     `json:"title"`
-	Kind                string     `json:"kind"`
-	Status              string     `json:"status"`
-	Failure             string     `json:"failure"`
-	FetchedAt           *time.Time `json:"fetched_at,omitempty"`
-	Fingerprint         string     `json:"fingerprint"`
-	Parser              string     `json:"parser"`
-	Coverage            string     `json:"coverage"`
-	StorageAllowed      bool       `json:"storage_allowed"`
-	Text                string     `json:"text"`
-	Fragments           []Fragment `json:"fragments"`
-	KnowledgeRevisionID string     `json:"knowledge_revision_id"`
-	CollectionID        string     `json:"collection_id"`
+	DocumentRevisionID  string            `json:"document_revision_id,omitempty"`
+	PDF                 *pdfsource.Report `json:"pdf,omitempty"`
+	PDFOriginal         []byte            `json:"-"`
+	SpaceID             string            `json:"space_id"`
+	GoalID              string            `json:"goal_id"`
+	Purpose             string            `json:"purpose"`
+	ID                  string            `json:"id"`
+	RevisionID          string            `json:"revision_id"`
+	Locator             string            `json:"locator"`
+	FinalURL            string            `json:"final_url"`
+	Title               string            `json:"title"`
+	Kind                string            `json:"kind"`
+	Status              string            `json:"status"`
+	Failure             string            `json:"failure"`
+	FetchedAt           *time.Time        `json:"fetched_at,omitempty"`
+	Fingerprint         string            `json:"fingerprint"`
+	Parser              string            `json:"parser"`
+	Coverage            string            `json:"coverage"`
+	StorageAllowed      bool              `json:"storage_allowed"`
+	Text                string            `json:"text"`
+	Fragments           []Fragment        `json:"fragments"`
+	KnowledgeRevisionID string            `json:"knowledge_revision_id"`
+	CollectionID        string            `json:"collection_id"`
 }
 
 type Citation struct {

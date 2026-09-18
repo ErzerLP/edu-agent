@@ -114,6 +114,8 @@ type preparedDocument struct {
 	old             *SnapshotDocument
 	allowHistorical bool
 	asNew           bool
+	pdf             *PDFMetadata
+	pdfOriginal     []byte
 }
 
 type pendingLineage struct {
@@ -143,7 +145,7 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 		}
 		command.ExpectedParentRevisionID = &value
 	}
-	prepared, err := s.prepareDocuments(command.Documents)
+	prepared, err := s.prepareDocuments(ctx, command.Documents)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -227,6 +229,7 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 		if err != nil {
 			return ImportResult{}, err
 		}
+		attachPDF(&document, prepared[i].pdf, prepared[i].pdfOriginal)
 		built[i] = document
 		incomingDocumentIDs[document.DocumentID] = struct{}{}
 	}
@@ -397,7 +400,7 @@ func (s *Service) materializeLineages(drafts []pendingLineage, built []DocumentR
 	return lineages, nil
 }
 
-func (s *Service) prepareDocuments(input []ImportDocument) ([]preparedDocument, error) {
+func (s *Service) prepareDocuments(ctx context.Context, input []ImportDocument) ([]preparedDocument, error) {
 	prepared := make([]preparedDocument, 0, len(input))
 	paths := map[string]struct{}{}
 	for _, item := range input {
@@ -410,6 +413,18 @@ func (s *Service) prepareDocuments(input []ImportDocument) ([]preparedDocument, 
 			return nil, &Error{Code: CodeInvalidPath}
 		}
 		paths[folded] = struct{}{}
+		var metadata *PDFMetadata
+		var original []byte
+		if item.PDF != nil {
+			if item.Markdown != "" {
+				return nil, &Error{Code: CodeInvalidRequest}
+			}
+			item.Markdown, metadata, err = preparePDF(ctx, *item.PDF)
+			if err != nil {
+				return nil, err
+			}
+			original = item.PDF.Data
+		}
 		inspected, err := s.canonicalizer.Inspect(item.Markdown)
 		if err != nil {
 			return nil, err
@@ -421,7 +436,7 @@ func (s *Service) prepareDocuments(input []ImportDocument) ([]preparedDocument, 
 				inspected.DraftNodes[i].ExplicitNodeID = ""
 			}
 		}
-		prepared = append(prepared, preparedDocument{path: documentPath, inspected: inspected, asNew: item.AsNew})
+		prepared = append(prepared, preparedDocument{path: documentPath, inspected: inspected, asNew: item.AsNew, pdf: metadata, pdfOriginal: original})
 	}
 	sort.Slice(prepared, func(i, j int) bool { return prepared[i].path < prepared[j].path })
 	totalNodes := 0

@@ -18,6 +18,7 @@ import (
 	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
 	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	memorydb "github.com/edu-agent/edu-agent/server/internal/memory/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/pdffixture"
 	outboxdb "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	privacydb "github.com/edu-agent/edu-agent/server/internal/privacy/postgresstore"
@@ -341,7 +342,7 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 	first, err := knowledgeService.Import(ctx, knowledge.ImportCommand{
 		OperationID: uuid.NewString(), ExpectedParentProvided: true,
 		Source: "private-import-source", ActorDeviceID: deviceID,
-		Documents: []knowledge.ImportDocument{{Path: "private.md", Markdown: "# Private title\nprivate body needle\n"}},
+		Documents: []knowledge.ImportDocument{{Path: "private.md", Markdown: "# Private title\nprivate body needle\n"}, {Path: "secret.pdf.md", PDF: &knowledge.PDFImport{Data: pdffixture.Build("私密 PDF 原文"), AcceptPartial: true}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -396,6 +397,13 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 	if _, err := knowledgeService.Export(ctx, first.Revision.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
 		t.Fatalf("old revision export error=%v", err)
 	}
+	for _, doc := range first.Revision.Documents {
+		if doc.Revision.PDF != nil {
+			if _, err := knowledgeService.PDFPage(ctx, first.Revision.ID, doc.Revision.ID, 1); err == nil {
+				t.Fatal("清除后旧页码恢复了 PDF")
+			}
+		}
+	}
 	if _, err := knowledgeService.Export(ctx, snapshot.ID); knowledge.ErrorCode(err) != knowledge.CodeContentRedacted {
 		t.Fatalf("清除后冻结范围仍可导出: %v", err)
 	}
@@ -415,7 +423,7 @@ func TestKnowledgeRedactedRevisionTombstoneAllowsFreshImport(t *testing.T) {
 		  (SELECT count(*) FROM knowledge_snapshot_documents WHERE canonical_path LIKE '%[redacted]%' OR folded_path LIKE '%[redacted]%')+
 		  (SELECT count(*) FROM knowledge_revisions WHERE source LIKE '%[redacted]%')+
 		  (SELECT count(*) FROM knowledge_lineages WHERE reason LIKE '%[redacted]%'),
-		  (SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown<>'')+
+		  (SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown<>'' OR pdf_original IS NOT NULL OR pdf_metadata IS NOT NULL)+
 		  (SELECT count(*) FROM knowledge_node_revisions WHERE title<>'')+
 		  (SELECT count(*) FROM knowledge_node_artifacts WHERE content<>'')`).Scan(&placeholderRows, &residualBodies); err != nil {
 		t.Fatal(err)

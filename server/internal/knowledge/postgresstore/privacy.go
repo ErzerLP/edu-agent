@@ -93,7 +93,7 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE knowledge_document_payloads
-			SET canonical_markdown=''
+			SET canonical_markdown='',pdf_original=NULL,pdf_metadata=NULL
 			WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
 			return fmt.Errorf("redact knowledge canonical markdown: %w", err)
 		}
@@ -231,7 +231,7 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 				(SELECT count(*) FROM knowledge_collections WHERE name<>'[redacted]' OR source<>'privacy_erasure' OR shared)+
 				(SELECT count(*) FROM knowledge_collection_links WHERE NOT(space_id='00000000-0000-4000-8000-000000000001' AND collection_id='00000000-0000-4000-8000-000000000002'))+
 				(SELECT count(*) FROM knowledge_scope_snapshots WHERE entries<>'[]'::jsonb OR NOT redacted)+
-				(SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown <> '')+
+				(SELECT count(*) FROM knowledge_document_payloads WHERE canonical_markdown <> '' OR pdf_original IS NOT NULL OR pdf_metadata IS NOT NULL)+
 				(SELECT count(*) FROM knowledge_snapshot_documents WHERE canonical_path NOT LIKE 'erased/%')+
 				(SELECT count(*) FROM knowledge_snapshot_documents WHERE folded_path NOT LIKE 'erased/%')+
 				(SELECT count(*) FROM knowledge_revisions

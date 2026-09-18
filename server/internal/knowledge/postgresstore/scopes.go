@@ -11,6 +11,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5"
 )
@@ -132,6 +133,22 @@ func loadScopedRevision(ctx context.Context, db queryer, id string) (knowledge.K
 					return knowledge.KnowledgeRevision{}, scopeMissing()
 				}
 				doc.SelectedRange = &selected.SectionRange
+				if doc.Revision.PDF != nil {
+					metadata := *doc.Revision.PDF
+					metadata.Report.Pages = append([]pdfsource.Page{}, metadata.Report.Pages...)
+					for i := range metadata.Report.Pages {
+						allowed := false
+						for _, p := range metadata.Ranges {
+							if p.Number == i+1 && p.Range.Start >= selected.SectionRange.Start && p.Range.End <= selected.SectionRange.End {
+								allowed = true
+							}
+						}
+						if !allowed {
+							metadata.Report.Pages[i].Text = ""
+						}
+					}
+					doc.Revision.PDF = &metadata
+				}
 				if selected.HeadingLevel != 0 {
 					root := doc.Revision.Nodes[0]
 					root.Title = ""

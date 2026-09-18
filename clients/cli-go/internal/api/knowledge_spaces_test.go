@@ -24,3 +24,13 @@ func TestFrozenKnowledgeScopeSurvivesStrictClientDecoder(t *testing.T) {
 		t.Fatalf("客户端拒绝合法范围响应: %+v %v", result, err)
 	}
 }
+
+func TestPDFSourceExtensionKeepsCanonicalTextFallback(t *testing.T) {
+	var doc DocumentRevision
+	if err := decodeStrict([]byte(`{"document_revision_id":"10000000-0000-4000-8000-000000000001","document_id":"10000000-0000-4000-8000-000000000002","root_node_id":"10000000-0000-4000-8000-000000000003","canonical_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","semantic_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","pdf":{"kind":"uploaded_pdf","report":{"parser":"future-parser","pages":[{"number":2,"text":"旧版本第二页原文"}]}},"nodes":[]}`), &doc); err != nil {
+		t.Fatal("PDF 元数据破坏兼容文本读取", err)
+	}
+	if !json.Valid(doc.PDF) {
+		t.Fatal("来源元数据未保留")
+	}
+}

@@ -12,6 +12,7 @@ import { Button } from './components/ui/button'
 import { ErrorState, Confirm } from './components/common'
 import { publicTopic } from './api/start'
 import { referenceState } from './api/references'
+import { PDFCoverage, PDFPageViewer } from './components/pdf-source'
 
 export function ResearchPage({ spaceId, goalId, startLearning = false }: { spaceId: string; goalId: string; startLearning?: boolean }) {
   const { session, prefix } = useIdentity()
@@ -23,19 +24,23 @@ export function ResearchPage({ spaceId, goalId, startLearning = false }: { space
   return <><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId }}>← 返回目标</Link><h1>{startLearning ? '准备第一项学习活动' : '研究相关知识'}</h1><p>{goal.data.management.details.name}</p><ResearchPanel key={startLearning ? 'start' : 'research'} goal={goal.data} archived={space.data.status === 'archived'} startLearning={startLearning} /></>
 }
 
-function SourceViewer({ source, select, decide, disabled }: { source: ResearchSource; select?: string; decide: (kind: 'adopt' | 'reject') => void; disabled: boolean }) {
+function SourceViewer({ source, select, decide, disabled }: { source: ResearchSource; select?: string; decide: (kind: 'adopt' | 'reject', acceptPartial?: boolean) => void; disabled: boolean }) {
+  const [acceptPartial, setAcceptPartial] = useState(false)
+  const partialPDF = !!source.pdf && source.coverage !== 'complete_text'
   return <article className="panel" id={`source-${source.id}`}>
     <h3>{source.title}</h3><p>{sourceStatus[source.status]}</p>
     <p className="hint">原始来源：{source.locator}</p>
     {source.final_url && <p className="hint">实际读取：{source.final_url}</p>}
     {source.fetched_at && <p>获取于 {new Date(source.fetched_at).toLocaleString('zh-CN')} · {source.coverage === 'complete_text' ? '完整文本' : '部分解析，可能有遗漏'}</p>}
     {source.failure && <p role="alert">缺口：{source.failure}。未以搜索摘要替代正文。</p>}
+    {source.pdf && <PDFCoverage report={source.pdf} />}
+    {source.pdf && source.status === 'adopted' && source.document_revision_id && <PDFPageViewer spaceId={source.space_id} revisionId={source.knowledge_revision_id} documentId={source.document_revision_id} collectionId={source.collection_id} pages={source.pdf.pages.map(p => p.number)} />}
     {source.text ? <>
       <p className="hint">这是获准保存的历史文本副本；网页可能已改变。用途：本目标参考，不代表结论已证实。</p>
-      {source.fragments.map((fragment, index) => <details key={fragment.id} open={select === fragment.id || undefined} id={`fragment-${fragment.id}`}><summary>原文片段 {index + 1}（字节 {fragment.start}–{fragment.end}）</summary><blockquote style={{ whiteSpace: 'pre-wrap' }}>{fragment.text}</blockquote></details>)}
+      {source.fragments.map((fragment, index) => <details key={fragment.id} open={select === fragment.id || undefined} id={`fragment-${fragment.id}`}><summary>原文片段 {index + 1}{fragment.page ? ` · 第 ${fragment.page} 页` : ''}（字节 {fragment.start}–{fragment.end}）</summary><blockquote style={{ whiteSpace: 'pre-wrap' }}>{fragment.text}</blockquote></details>)}
       <details><summary>查看上下文与版本</summary><p>修订：{source.revision_id}</p><p>指纹：{source.fingerprint}</p><p>解析器：{source.parser}</p><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{source.text}</pre></details>
     </> : <p>没有可显示的原文副本。</p>}
-    {['parsed', 'partial'].includes(source.status) && <div className="actions"><Button disabled={disabled} onClick={() => decide('adopt')}>纳入本目标参考</Button><Button variant="outline" disabled={disabled} onClick={() => decide('reject')}>拒绝此来源</Button></div>}
+    {['parsed', 'partial'].includes(source.status) && <>{partialPDF && <label><input type="checkbox" checked={acceptPartial} disabled={disabled} onChange={e => setAcceptPartial(e.target.checked)} />我已核对逐页缺口，仅纳入可用文本</label>}<div className="actions"><Button disabled={disabled || !source.text || partialPDF && !acceptPartial} onClick={() => decide('adopt', acceptPartial)}>纳入本目标参考</Button><Button variant="outline" disabled={disabled} onClick={() => decide('reject')}>拒绝此来源</Button></div></>}
   </article>
 }
 
@@ -94,9 +99,9 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
     await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id: drafts.operation(key + ':command', payload) } }), mentorReceiptSchema)
     await refresh(run.run_id)
   })
-  const decide = (source: ResearchSource, kind: 'adopt' | 'reject') => act(async () => {
+  const decide = (source: ResearchSource, kind: 'adopt' | 'reject', acceptPartial = false) => act(async () => {
     if (!run) return
-    const payload = { expected_version: run.version, kind }
+    const payload = { expected_version: run.version, kind, accept_partial: acceptPartial }
     await unwrap(client().POST('/v1/learning/runs/{runID}/sources/{sourceID}/decisions', { params: { path: { runID: run.run_id, sourceID: source.id }, header }, body: { ...payload, operation_id: drafts.operation(key + ':source:' + source.id, payload) } }), mentorReceiptSchema)
     await refresh(run.run_id)
   })
@@ -147,6 +152,6 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
         {state.synthesis?.examples.map((example, i) => <p key={i}>自拟例子（非外部原文）：{example}</p>)}
       </section>
     </>}
-    {sources.length > 0 && <><h2>{state ? '实际来源' : '已获准保留的历史来源'}</h2>{sources.map((source) => <SourceViewer key={source.id} source={source} select={selected} disabled={pending || !!active || inactive || !session.device.scopes.includes('knowledge:write')} decide={(kind) => void decide(source, kind)} />)}</>}
+    {sources.length > 0 && <><h2>{state ? '实际来源' : '已获准保留的历史来源'}</h2>{sources.map((source) => <SourceViewer key={source.revision_id || source.id} source={source} select={selected} disabled={pending || !!active || inactive || !session.device.scopes.includes('knowledge:write')} decide={(kind, partial) => void decide(source, kind, partial)} />)}</>}
   </>
 }

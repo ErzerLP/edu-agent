@@ -15,7 +15,7 @@ func (a *App) runKnowledgeLibrary(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(a.Out, "knowledge library scope --id 范围ID（查看冻结版本及更新提示）\nknowledge library retrieve --id 范围ID 查询词")
+		_, err = fmt.Fprintln(a.Out, "knowledge library scope --id 范围ID（查看冻结版本及更新提示）\nknowledge library retrieve --id 范围ID 查询词\nPDF 请在 Web 单批上传并确认；CLI 的 tree/preview 可读取来源报告和带页码的规范文本，不支持原 PDF 查看或 OCR。")
 		return err
 	}
 	set := newFlagSet("knowledge library")

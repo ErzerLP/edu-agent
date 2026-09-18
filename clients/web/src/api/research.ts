@@ -1,16 +1,18 @@
 import { z } from 'zod'
+import { pdfReportSchema } from './pdf'
 
 export const researchRequestSchema = z.object({
   topic: z.string().min(1).max(300), external_consent: z.literal(true), auto_adopt: z.boolean(),
   policy: z.object({ mode: z.enum(['supplement', 'prefer', 'restrict']), domains: z.array(z.string()).max(5) }),
 })
 export const sourceSchema = z.object({
+  pdf: pdfReportSchema.optional(), document_revision_id: z.string().optional(),
   space_id: z.uuid(), goal_id: z.uuid(), purpose: z.literal('goal_reference'),
   id: z.uuid(), revision_id: z.string(), locator: z.string(), final_url: z.string(), title: z.string(),
   kind: z.string(), status: z.enum(['candidate', 'failed', 'parsed', 'partial', 'adopted', 'rejected']),
   failure: z.string(), fetched_at: z.string().optional(), fingerprint: z.string(), parser: z.string(),
   coverage: z.string(), storage_allowed: z.boolean(), text: z.string().max(16000),
-  fragments: z.array(z.object({ id: z.uuid(), start: z.number().int().nonnegative(), end: z.number().int().nonnegative(), text: z.string() })),
+  fragments: z.array(z.object({ id: z.uuid(), start: z.number().int().nonnegative(), end: z.number().int().nonnegative(), text: z.string(), page: z.number().int().positive().optional() })),
   knowledge_revision_id: z.string(), collection_id: z.string(),
 })
 export const researchStateSchema = z.object({

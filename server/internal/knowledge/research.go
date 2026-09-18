@@ -35,6 +35,14 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 		FetchedAt                                                                                               time.Time
 	}{"external_original", c.SourceID, c.SourceRevisionID, c.GoalID, c.Locator, c.Title, c.Fingerprint, c.Coverage, c.Metadata.FinalURL, c.Metadata.Parser, c.FetchedAt})
 	markdown := "# 外部来源原文\n\n    " + string(metadata) + "\n\n    " + strings.ReplaceAll(c.Text, "\n", "\n    ") + "\n"
+	var pdfMetadata *PDFMetadata
+	if c.Metadata.PDF != nil {
+		if len(c.Metadata.PDFOriginal) == 0 || c.Metadata.PDF.Text() != c.Text || sha256Hex(c.Metadata.PDFOriginal) != c.Metadata.PDF.Fingerprint {
+			return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
+		}
+		pdfMetadata = &PDFMetadata{Kind: "web_pdf", Locator: c.Metadata.FinalURL, Report: *c.Metadata.PDF}
+		markdown = PDFMarkdown(*pdfMetadata)
+	}
 	canonicalizer := NewCanonicalizer()
 	inspected, err := canonicalizer.Inspect(markdown)
 	if err != nil {
@@ -48,6 +56,7 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 	if err != nil {
 		return PreparedCommit{}, err
 	}
+	attachPDF(&document, pdfMetadata, c.Metadata.PDFOriginal)
 	documents := []SnapshotDocument{{Path: "source.md", Revision: document}}
 	raw, _ := json.Marshal(c)
 	hash := sha256.Sum256(raw)

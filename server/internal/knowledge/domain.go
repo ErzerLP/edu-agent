@@ -104,6 +104,8 @@ type DocumentRevision struct {
 	SemanticHash      string         `json:"semantic_hash"`
 	CanonicalMarkdown string         `json:"-"`
 	Nodes             []NodeRevision `json:"nodes"`
+	PDF               *PDFMetadata   `json:"pdf,omitempty"`
+	PDFOriginal       []byte         `json:"-"`
 }
 
 type SnapshotDocument struct {
@@ -133,9 +135,10 @@ type KnowledgeRevision struct {
 }
 
 type ImportDocument struct {
-	Path     string `json:"path"`
-	Markdown string `json:"markdown"`
-	AsNew    bool   `json:"as_new,omitempty"`
+	Path     string     `json:"path"`
+	Markdown string     `json:"markdown"`
+	AsNew    bool       `json:"as_new,omitempty"`
+	PDF      *PDFImport `json:"pdf,omitempty"`
 }
 
 type DocumentResolution struct {

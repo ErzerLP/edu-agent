@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { pdfPageSchema } from './pdf'
 import {
   referenceSchema,
   selectionSchema,
@@ -32,6 +33,7 @@ export const librarySchema = z.object({
   next_cursor: z.uuid().optional(),
 })
 export const citationSchema = z.object({
+  pdf: z.object({ fingerprint: z.string(), page_count: z.number().int(), pages: z.array(pdfPageSchema), collection_id: z.uuid().optional() }).optional(),
   reference: referenceSchema,
   title: z.string(),
   context: z.string(),

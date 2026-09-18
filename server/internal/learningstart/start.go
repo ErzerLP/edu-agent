@@ -162,16 +162,46 @@ func (s *Service) PublishWithReferencesTx(ctx context.Context, tx pgx.Tx, actor 
 		if referenceContext == "" && !cited[doc.CollectionID] || referenceContext != "" && !cited[doc.Revision.ID] {
 			continue
 		}
+		pages := map[int]bool{}
+		if doc.Revision.PDF != nil {
+			for _, source := range sources {
+				if source.DocumentRevisionID != doc.Revision.ID {
+					continue
+				}
+				for _, citation := range plan.Citations {
+					if citation.SourceID == source.ID && citation.RevisionID == source.RevisionID {
+						for _, fragment := range source.Fragments {
+							if fragment.ID == citation.FragmentID {
+								pages[fragment.Page] = true
+							}
+						}
+					}
+				}
+			}
+		}
 		for _, node := range doc.Revision.Nodes {
 			if node.SectionRange.End <= node.SectionRange.Start {
 				continue
+			}
+			if doc.Revision.PDF != nil {
+				matched := false
+				for _, page := range doc.Revision.PDF.Ranges {
+					if pages[page.Number] && node.LocalBodyRange == page.Range {
+						matched = true
+					}
+				}
+				if !matched {
+					continue
+				}
 			}
 			ref, e := resolver.Resolve(ctx, result.Context.ScopeSnapshotID, node.ID)
 			if e != nil {
 				return result, e
 			}
 			refs = append(refs, ref)
-			break
+			if doc.Revision.PDF == nil {
+				break
+			}
 		}
 	}
 	if len(refs) == 0 {

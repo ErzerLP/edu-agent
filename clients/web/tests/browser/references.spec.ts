@@ -30,7 +30,7 @@ test('真实文件单批、结果未知核对、章节采用及移动端键盘',
   await page.getByLabel('集合名称', { exact: true }).fill(name)
   await page.getByRole('button', { name: '创建私有集合' }).click()
   await expect(page.getByRole('heading', { name: `单批导入到「${name}」` })).toBeVisible()
-  await page.getByLabel('选择 Markdown / UTF-8 文件（可多选）').setInputFiles([
+  await page.getByLabel('选择 Markdown / UTF-8 / PDF 文件（可多选）').setInputFiles([
     { name: '笔记.md', mimeType: 'text/markdown', buffer: Buffer.from('# 原始资料\n\n## 第一章\n\n不在限制范围内的正文\n\n## 第二章\n\n获准的章节正文\n' + '长内容可滚动检索。'.repeat(200)) },
     { name: '文字.txt', mimeType: 'text/plain', buffer: Buffer.from('UTF-8 实际文件正文') },
     { name: '错误编码.txt', mimeType: 'text/plain', buffer: Buffer.from([0xff, 0xfe]) },

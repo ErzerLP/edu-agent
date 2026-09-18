@@ -5,6 +5,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -17,6 +18,14 @@ type Citation struct {
 	Historical bool                        `json:"historical"`
 	Coverage   string                      `json:"coverage"`
 	Locator    string                      `json:"locator"`
+	PDF        *PDFCitation                `json:"pdf,omitempty"`
+}
+
+type PDFCitation struct {
+	Fingerprint  string           `json:"fingerprint"`
+	PageCount    int              `json:"page_count"`
+	Pages        []pdfsource.Page `json:"pages"`
+	CollectionID string           `json:"collection_id,omitempty"`
 }
 
 type ReferenceReader interface {

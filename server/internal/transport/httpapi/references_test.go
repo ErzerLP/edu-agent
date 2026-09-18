@@ -26,6 +26,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/pdffixture"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	tutoringdb "github.com/edu-agent/edu-agent/server/internal/tutoring/postgresstore"
 	"github.com/google/uuid"
@@ -67,8 +68,13 @@ func TestPostgreSQLReferencesCookieImportCollectionAndScope(t *testing.T) {
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/office" {
+			w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+			_, _ = w.Write([]byte("未实现 Office 格式"))
+			return
+		}
+		if r.URL.Path == "/pdf" {
 			w.Header().Set("Content-Type", "application/pdf")
-			_, _ = w.Write([]byte("%PDF 未实现格式"))
+			_, _ = w.Write(pdffixture.Build("网页第一页", "Second page", ""))
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -196,4 +202,45 @@ func TestPostgreSQLReferencesCookieImportCollectionAndScope(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM tutoring_sessions`).Scan(&sessions); err != nil || sessions != 0 {
 		t.Fatal("导入或采用隐式开课", sessions, err)
 	}
+	// 同源真实上传和已授权网页 PDF 共用预览确认合同。
+	pdfCollection := uuid.NewString()
+	call("POST", "/v1/knowledge/collections", space, "", knowledge.CollectionCommand{ID: pdfCollection, Action: "create", Name: "PDF 集合", Source: "授权原件"}, true, 200)
+	raw := pdffixture.Build("中文第一页", "English second page", "")
+	upload := map[string]any{"pdf_data": raw, "storage_consent": true}
+	call("POST", "/v1/knowledge/reference-sources", space, "", upload, false, 403)
+	parsed := call("POST", "/v1/knowledge/reference-sources", space, "", upload, true, 200)
+	if !bytes.Contains(parsed, []byte(`"status":"no_text"`)) || !bytes.Contains(parsed, []byte("English second page")) {
+		t.Fatal("上传没有真实逐页解析", string(parsed))
+	}
+	call("POST", "/v1/knowledge/reference-sources", space, "", map[string]any{"pdf_data": raw}, true, 400)
+	request = knowledge.ImportCommand{OperationID: uuid.NewString(), ExpectedParentProvided: true, Source: "浏览器 PDF", Documents: []knowledge.ImportDocument{{Path: "课程.pdf.md", PDF: &knowledge.PDFImport{Data: raw}}}}
+	call("POST", "/v1/knowledge/imports/previews", space, pdfCollection, request, true, 422)
+	request.Documents[0].PDF.AcceptPartial = true
+	if err = json.Unmarshal(call("POST", "/v1/knowledge/imports/previews", space, pdfCollection, request, true, 200), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(call("POST", "/v1/knowledge/imports/confirm", space, pdfCollection, knowledge.ConfirmImportCommand{Request: request, Receipt: preview.Receipt}, true, 200), &result); err != nil {
+		t.Fatal(err)
+	}
+	var pdfTree knowledge.TreeResult
+	if err = json.Unmarshal(call("GET", "/v1/knowledge/revisions/"+result.Revision.ID+"/tree", space, pdfCollection, nil, true, 200), &pdfTree); err != nil {
+		t.Fatal(err)
+	}
+	pagePath := "/v1/knowledge/revisions/" + result.Revision.ID + "/documents/" + pdfTree.Revision.Documents[0].Revision.ID + "/pages/2"
+	if data = call("GET", pagePath, space, pdfCollection, nil, true, 200); !bytes.HasPrefix(data, []byte("\x89PNG")) {
+		t.Fatal("未返回安全页图")
+	}
+	call("GET", pagePath, space, collection, nil, true, 404)
+	var webPDF struct {
+		PDFData  []byte `json:"pdf_data"`
+		Receipt  string `json:"source_receipt"`
+		FinalURL string `json:"final_url"`
+	}
+	if err = json.Unmarshal(call("POST", "/v1/knowledge/reference-sources", space, "", map[string]any{"url": "http://example.org/pdf", "external_consent": true}, true, 200), &webPDF); err != nil || len(webPDF.PDFData) == 0 || webPDF.Receipt == "" {
+		t.Fatal("网页 PDF 没有原件与来源回执", err)
+	}
+	request.OperationID = uuid.NewString()
+	request.ExpectedParentRevisionID = &result.Revision.ID
+	request.Documents = []knowledge.ImportDocument{{Path: "web-pdf.md", PDF: &knowledge.PDFImport{Data: webPDF.PDFData, AcceptPartial: true, Locator: webPDF.FinalURL, SourceReceipt: webPDF.Receipt}}}
+	call("POST", "/v1/knowledge/imports/previews", space, pdfCollection, request, true, 200)
 }

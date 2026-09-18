@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
+
 	"github.com/google/uuid"
 )
 
@@ -130,7 +132,7 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("User-Agent", "edu-agent-research/1.0")
-		req.Header.Set("Accept", "text/html,text/plain,text/markdown")
+		req.Header.Set("Accept", "text/html,text/plain,text/markdown,application/pdf")
 		resp, err := client.Do(req)
 		if err != nil {
 			source.Status = "failed"
@@ -188,12 +190,12 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		source.FetchedAt = &now
 		source.FinalURL = u.String()
 		source.Kind = media
-		if err != nil || media != "text/html" && media != "text/plain" && media != "text/markdown" {
+		if err != nil || media != "text/html" && media != "text/plain" && media != "text/markdown" && media != "application/pdf" {
 			source.Status = "failed"
 			source.Failure = "unsupported_format"
 			return source, nil
 		}
-		if params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8") && !strings.EqualFold(params["charset"], "us-ascii") || !utf8.Valid(body) || bytes.ContainsRune(body, 0) {
+		if media != "application/pdf" && (params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8") && !strings.EqualFold(params["charset"], "us-ascii") || !utf8.Valid(body) || bytes.ContainsRune(body, 0)) {
 			source.Status = "failed"
 			source.Failure = "unsupported_encoding"
 			return source, nil
@@ -203,6 +205,32 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		if restricted(restrictions) {
 			source.Status = "failed"
 			source.Failure = "storage_restricted"
+			return source, nil
+		}
+		if media == "application/pdf" {
+			report, err := pdfsource.Parse(ctx, body)
+			if err != nil {
+				source.Status, source.Failure = "failed", pdfsource.Code(err)
+				return source, nil
+			}
+			source.PDF, source.PDFOriginal = &report, body
+			source.Text, source.Coverage, source.Parser, source.Fingerprint = report.Text(), report.Coverage, report.Parser, report.Fingerprint
+			source.RevisionID = uuid.NewString()
+			source.Status, source.StorageAllowed = "parsed", true
+			if report.Coverage != "complete_text" {
+				source.Status = "partial"
+			}
+			for _, page := range report.Pages {
+				if page.Text == "" {
+					continue
+				}
+				for _, f := range fragments(page.Text) {
+					f.Start += page.Start
+					f.End += page.Start
+					f.Page = page.Number
+					source.Fragments = append(source.Fragments, f)
+				}
+			}
 			return source, nil
 		}
 		text, coverage := string(body), "complete_text"

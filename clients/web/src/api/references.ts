@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { learningClient, unwrap } from './client'
 import type { Session } from './runtime'
 import type { components } from './schema'
+import { pdfMetadataSchema, pdfReportSchema } from './pdf'
 
 const id = z.uuid()
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -19,7 +20,7 @@ export type ReferencePreview = z.infer<typeof referencePreview>
 export type ReferenceRequest = { operation_id: string; expected_goal_version: number; selection: z.infer<typeof selectionSchema> }
 export const roleNames = { supplement: '补充参考', prefer: '优先依据', restrict: '限制范围' }
 const node = z.object({ node_id: id, node_revision_id: id, title: z.string(), heading_level: count, section_range: z.object({ start: count, end: count }) })
-export const treeSchema = z.object({ revision: z.object({ revision_id: id, parent_revision_id: id.nullable(), revision_no: count, documents: z.array(z.object({ path: z.string(), collection_id: id.optional(), document: z.object({ document_id: id, document_revision_id: id, nodes: z.array(node) }) })).default([]) }) })
+export const treeSchema = z.object({ revision: z.object({ revision_id: id, parent_revision_id: id.nullable(), revision_no: count, documents: z.array(z.object({ path: z.string(), collection_id: id.optional(), document: z.object({ document_id: id, document_revision_id: id, nodes: z.array(node), pdf: pdfMetadataSchema.optional() }) })).default([]) }) })
 export const exportSchema = z.object({ revision_id: id, documents: z.array(z.object({ path: z.string(), markdown: z.string(), collection_id: id.optional() })) })
 export const scopeSchema = z.object({ id, space_id: id, entries: z.array(entrySchema), updates: z.array(entrySchema).optional() })
 export const summarySchema = z.object({ operation_id: id, space_id: id, collection_id: id, actor_device_id: id, document_ids: z.array(id).nullable().transform(v => v ?? []), added: count, updated: count, unchanged: count })
@@ -36,13 +37,13 @@ export const importResultSchema = z.object({ summary: summarySchema, revision: z
 export type ImportRequest = components['schemas']['KnowledgeImportRequest']
 export type ImportPreview = z.infer<typeof importPreviewSchema>
 export type ImportResult = z.infer<typeof importResultSchema>
-export const sourceSchema = z.object({ locator: z.string(), final_url: z.string(), title: z.string(), kind: z.string(), status: z.string(), failure: z.string(), fingerprint: z.string(), parser: z.string(), coverage: z.string(), storage_allowed: z.boolean(), text: z.string() })
+export const sourceSchema = z.object({ locator: z.string(), final_url: z.string(), title: z.string(), kind: z.string(), status: z.string(), failure: z.string(), fingerprint: z.string(), parser: z.string(), coverage: z.string(), storage_allowed: z.boolean(), text: z.string(), pdf: pdfReportSchema.optional(), pdf_data: z.string().optional(), source_receipt: z.string().optional() })
 
 type Response<T> = { responses: { 200: { content: { 'application/json': T } } } }
 type Post<B, R> = Response<R> & { requestBody: { content: { 'application/json': B } } }
 type GoalParams = { parameters: { path: { goalID: string }; query?: { session_id?: string } } }
 export interface ReferencePaths {
-  '/v1/knowledge/reference-sources': { post: Post<{ url: string; external_consent: boolean }, z.infer<typeof sourceSchema>> }
+  '/v1/knowledge/reference-sources': { post: Post<{ url?: string; external_consent?: boolean; pdf_data?: string; storage_consent?: boolean }, z.infer<typeof sourceSchema>> }
   '/v1/learning/goals/{goalID}/references': { get: GoalParams & Response<z.infer<typeof referenceState>> }
   '/v1/learning/goals/{goalID}/references/previews': { post: GoalParams & Post<ReferenceRequest, ReferencePreview> }
   '/v1/learning/goals/{goalID}/references/confirm': { post: GoalParams & Post<{ request: ReferenceRequest; receipt: string; confirm_scope: boolean }, z.infer<typeof referenceState>> }
@@ -63,5 +64,6 @@ export function knowledgeAPI(session: Session, space: string) {
     confirm: (collection: string, request: ImportRequest, receipt: string) => unwrap(client().POST('/v1/knowledge/imports/confirm', { params: { header: header(collection) }, body: { request, receipt } }), importResultSchema),
     operation: (collection: string, operationID: string) => unwrap(client().GET('/v1/knowledge/imports/operations/{operationID}', { params: { path: { operationID }, header: header(collection) } }), importResultSchema),
     source: (url: string) => unwrap(client().POST('/v1/knowledge/reference-sources', { body: { url, external_consent: true } }), sourceSchema),
+    pdf: (data: string) => unwrap(client().POST('/v1/knowledge/reference-sources', { body: { pdf_data: data, storage_consent: true } }), sourceSchema),
   }
 }

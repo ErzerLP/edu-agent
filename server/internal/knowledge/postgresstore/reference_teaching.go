@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
@@ -43,6 +44,18 @@ func (s *Store) ReferenceSourcesTx(ctx context.Context, tx pgx.Tx, id, goal stri
 	sort.SliceStable(r.Documents, func(i, j int) bool { return preferred(r.Documents[i]) && !preferred(r.Documents[j]) })
 	remaining := research.MaxText
 	for _, d := range r.Documents {
+		if d.Revision.PDF != nil {
+			source := pdfReferenceSource(ctx, goal, d, min(4000, remaining))
+			if source.Text == "" {
+				continue
+			}
+			sources = append(sources, source)
+			remaining -= len(source.Text)
+			if len(sources) == research.MaxSources || remaining == 0 {
+				break
+			}
+			continue
+		}
 		text := d.Revision.CanonicalMarkdown
 		origin := 0
 		if d.SelectedRange != nil {
@@ -68,6 +81,40 @@ func (s *Store) ReferenceSourcesTx(ctx context.Context, tx pgx.Tx, id, goal stri
 		}
 	}
 	return sources, nil
+}
+
+// 模型只接收获准物理页的原始提取片段，不把规范正文中的说明当作来源证据。
+func pdfReferenceSource(ctx context.Context, goal string, d knowledge.SnapshotDocument, limit int) research.Source {
+	m := d.Revision.PDF
+	r := m.Report
+	s := research.Source{SpaceID: learningspace.Scope(ctx), GoalID: goal, Purpose: "goal_reference", ID: d.Revision.ID, RevisionID: d.KnowledgeRevisionID, Locator: d.Path, Title: d.Path, Kind: "reference", Status: "adopted", Fingerprint: r.Fingerprint, Parser: r.Parser, Coverage: r.Coverage, StorageAllowed: true, Fragments: []research.Fragment{}, KnowledgeRevisionID: d.KnowledgeRevisionID, CollectionID: d.CollectionID, DocumentRevisionID: d.Revision.ID, PDF: &r}
+	var text strings.Builder
+	for _, p := range m.Ranges {
+		if d.SelectedRange != nil && (p.Range.Start < d.SelectedRange.Start || p.Range.End > d.SelectedRange.End) {
+			continue
+		}
+		part := r.Pages[p.Number-1].Text
+		separator := ""
+		if text.Len() > 0 {
+			separator = "\n\n"
+		}
+		available := max(0, limit-text.Len()-len(separator))
+		if len(part) > available {
+			for available > 0 && !utf8.RuneStart(part[available]) {
+				available--
+			}
+			part, s.Coverage = part[:available], "partial_pdf"
+		}
+		if part == "" {
+			continue
+		}
+		text.WriteString(separator)
+		start := text.Len()
+		text.WriteString(part)
+		s.Fragments = append(s.Fragments, research.Fragment{ID: uuid.NewSHA1(uuid.MustParse(d.Revision.ID), []byte(fmt.Sprintf("pdf-reference:%d:%d", p.Number, len(part)))).String(), Page: p.Number, Start: start, End: text.Len(), Text: part})
+	}
+	s.Text = text.String()
+	return s
 }
 
 // 已确认范围只追加概念版本；不会发布新政策，也不会变更旧课堂的上下文。

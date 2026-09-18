@@ -101,6 +101,8 @@ type Interaction struct {
 }
 
 type Body struct {
+	// PDF 原件仅进入加密运行正文，不属于快照、模型输入或工具输出。
+	SourceFiles   map[string][]byte      `json:"source_files,omitempty"`
 	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`
 	ContentEdit   *ContentEditState      `json:"content_edit,omitempty"`
 	StartLearning *learningstart.State   `json:"start_learning,omitempty"`

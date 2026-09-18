@@ -78,7 +78,7 @@ func TestFetchParsingLimitsAndRestrictions(t *testing.T) {
 	for _, tc := range []struct{ name, media, encoding, restriction, body, want string }{
 		{"正文", "text/plain; charset=utf-8", "", "", "概率原文", ""},
 		{"HTML", "text/html; charset=utf-8", "", "", "<html><head><title>隐藏标题</title></head><body><p>概率原文</p><script>秘密指令</script></body></html>", ""},
-		{"PDF", "application/pdf", "", "", "%PDF", "unsupported_format"},
+		{"损坏 PDF", "application/pdf", "", "", "%PDF", "pdf_invalid"},
 		{"压缩炸弹", "text/plain", "gzip", "", compressed.String(), "decoded_limit"},
 		{"正文超限", "text/plain", "", "", strings.Repeat("x", MaxWire+1), "body_limit"},
 		{"禁止归档", "text/plain", "", "noarchive", "不能缓存", "storage_restricted"},

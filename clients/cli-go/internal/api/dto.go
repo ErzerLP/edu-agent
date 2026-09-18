@@ -1,6 +1,9 @@
 package api
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ErrorBody struct {
 	Code      string `json:"code"`
@@ -132,12 +135,14 @@ type SnapshotDocument struct {
 }
 
 type DocumentRevision struct {
-	DocumentRevisionID string         `json:"document_revision_id"`
-	DocumentID         string         `json:"document_id"`
-	RootNodeID         string         `json:"root_node_id"`
-	CanonicalHash      string         `json:"canonical_hash"`
-	SemanticHash       string         `json:"semantic_hash"`
-	Nodes              []NodeRevision `json:"nodes"`
+	// 原文件格式扩展保留为来源元数据；CLI 始终使用规范文本，不执行未知查看器。
+	PDF                json.RawMessage `json:"pdf,omitempty"`
+	DocumentRevisionID string          `json:"document_revision_id"`
+	DocumentID         string          `json:"document_id"`
+	RootNodeID         string          `json:"root_node_id"`
+	CanonicalHash      string          `json:"canonical_hash"`
+	SemanticHash       string          `json:"semantic_hash"`
+	Nodes              []NodeRevision  `json:"nodes"`
 }
 
 type NodeRevision struct {

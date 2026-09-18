@@ -6,10 +6,34 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/knowledge/source-capabilities:
+    get:
+      operationId: readSourceCapabilities
+      summary: 查询格式能力和固定资源限制；不访问网络、不解析文件
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: knowledge:read
+      responses:
+        "200": { description: 支持的具体格式、PDF 限制和安全查看方式, content: { application/json: { schema: { $ref: "#/components/schemas/SourceCapabilities" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/knowledge/revisions/{revisionID}/documents/{documentID}/pages/{page}:
+    get:
+      operationId: readPDFPageImage
+      summary: 读取不可变 PDF 版本的安全 PNG 页图；重新核对集合、冻结范围及清除代次，无持久图像缓存
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: knowledge:read
+      parameters:
+        - { $ref: "#/components/parameters/LearningSpaceID" }
+        - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+        - { name: revisionID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: documentID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: page, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 100 } }
+      responses:
+        "200": { description: 不超过 1000×1400 像素的栅格页，Cache-Control 为 no-store，不包含脚本或可点击链接, content: { image/png: { schema: { type: string, format: binary } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/knowledge/reference-sources:
     post:
       operationId: parseReferenceSource
-      summary: 明确授权后解析一个公开网页；复用研究网络边界，不保存或发布正文
+      summary: 明确授权后解析一个公开网页或上传 PDF；复用研究网络边界，仅返回候选，不发布正文
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scopes: [references:manage, knowledge:write]
       parameters:
@@ -21,10 +45,14 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [url, external_consent]
+              oneOf:
+                - required: [url, external_consent]
+                - required: [pdf_data, storage_consent]
               properties:
                 url: { type: string, maxLength: 8192 }
                 external_consent: { type: boolean, const: true }
+                pdf_data: { type: string, format: byte, maxLength: 5592408, description: 原始 PDF 的 base64，解码后最多 4 MiB；不得同时提供 url }
+                storage_consent: { type: boolean, const: true, description: 用户确认有权保存原件及派生文本 }
       responses:
         "200": { description: 逐项解析状态、真实正文、覆盖及禁止保存原因；失败项不等于已导入, content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceSourcePreview" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -623,6 +651,7 @@ paths:
                 operation_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
                 kind: { type: string, enum: [adopt, reject] }
+                accept_partial: { type: boolean, default: false, description: 对本次逐页覆盖报告明确确认仅采用可用文本；有缺口的 PDF 禁止自动采纳 }
       responses:
         "202": { description: knowledge 正式写入和采纳回执同事务保存, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -4075,6 +4104,14 @@ components:
         historical: { type: boolean }
         coverage: { type: string }
         locator: { type: string }
+        pdf:
+          type: object
+          required: [fingerprint, page_count, pages]
+          properties:
+            fingerprint: { type: string }
+            page_count: { type: integer }
+            pages: { type: array, items: { $ref: "#/components/schemas/PDFPage" }, description: 仅包含与已核验引用范围重叠的物理页，由服务端计算 }
+            collection_id: { type: string, format: uuid }
     ContentLibraryItem:
       type: object
       additionalProperties: false
@@ -4240,10 +4277,12 @@ components:
         start: { type: integer, minimum: 0, description: 解析文本中的 UTF-8 字节偏移 }
         end: { type: integer, minimum: 0 }
         text: { type: string }
+        page: { type: integer, minimum: 1, description: PDF 的物理页码；来自解析片段，不接收模型页码 }
     ResearchSource:
       type: object
       required: [space_id, goal_id, purpose, id, revision_id, locator, final_url, title, kind, status, failure, fingerprint, parser, coverage, storage_allowed, text, fragments, knowledge_revision_id, collection_id]
       properties:
+        document_revision_id: { type: string, format: uuid, description: 正式采纳后的不可变文档版本 }
         space_id: { type: string, format: uuid }
         goal_id: { type: string, format: uuid }
         purpose: { type: string, enum: [goal_reference] }
@@ -4264,6 +4303,7 @@ components:
         fragments: { type: array, items: { $ref: "#/components/schemas/ResearchFragment" } }
         knowledge_revision_id: { type: string }
         collection_id: { type: string }
+        pdf: { $ref: "#/components/schemas/PDFReport" }
     ResearchSynthesis:
       type: object
       required: [points, gaps, examples]
@@ -4539,6 +4579,79 @@ components:
         fingerprint: { type: string }
         storage_allowed: { type: boolean }
         text: { type: string, maxLength: 16000 }
+        pdf: { $ref: "#/components/schemas/PDFReport" }
+        pdf_data: { type: string, format: byte, description: 网页 PDF 原件；仅在允许保存时返回，供用户正式预览确认 }
+        source_receipt: { type: string, description: 服务器签发的网页指纹与定位回执，重启后需重新抓取；不授予导入权限 }
+    SourceCapabilities:
+      type: object
+      required: [formats, pdf]
+      properties:
+        formats: { type: array, items: { type: string } }
+        pdf:
+          type: object
+          required: [parser, max_bytes, max_pages, max_text_bytes, memory_mib, timeout_seconds, concurrency, web_max_wire_bytes, web_max_decoded_bytes, ocr, encrypted, viewer, original_export, limitations]
+          properties:
+            parser: { type: string }
+            max_bytes: { type: integer, const: 4194304 }
+            max_pages: { type: integer, const: 100 }
+            max_text_bytes: { type: integer, const: 16000 }
+            memory_mib: { type: integer, const: 128 }
+            timeout_seconds: { type: integer, const: 10 }
+            concurrency: { type: integer, const: 2 }
+            web_max_wire_bytes: { type: integer, const: 1048576 }
+            web_max_decoded_bytes: { type: integer, const: 2097152 }
+            ocr: { type: boolean, const: false }
+            encrypted: { type: boolean, const: false }
+            viewer: { type: string, const: server_png }
+            original_export: { type: boolean, const: false }
+            limitations: { type: array, items: { type: string } }
+    PDFPage:
+      type: object
+      additionalProperties: false
+      required: [number, status, gaps, text, fingerprint, start, end]
+      properties:
+        number: { type: integer, minimum: 1, maximum: 100, description: 从 1 开始的原文件物理页码，不使用印刷页标签 }
+        status: { type: string, enum: [text, partial, no_text, failed] }
+        gaps: { type: array, items: { type: string }, description: 页级未解析或未验证范围；表格公式图片不承诺语义 }
+        text: { type: string }
+        fingerprint: { type: string, description: 该页实际提取文本的 SHA-256；无文本时为空 }
+        duplicate_of: { type: integer, minimum: 1, description: 提取文本相同的首个页码，不自动去重或合并页 }
+        start: { type: integer, minimum: 0, description: 拼接提取文本中的 UTF-8 起始字节 }
+        end: { type: integer, minimum: 0 }
+    PDFReport:
+      type: object
+      additionalProperties: false
+      required: [parser, fingerprint, page_count, coverage, pages]
+      properties:
+        parser: { type: string }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{64}$", description: 原始 PDF 字节 SHA-256，不是 AI 摘要 }
+        page_count: { type: integer, minimum: 1, maximum: 100 }
+        coverage: { type: string, enum: [complete_text, partial_pdf], description: complete_text 仅表示文本提取无已知缺口，不表示已理解版式或验证知识 }
+        pages: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/PDFPage" } }
+    PDFImport:
+      type: object
+      additionalProperties: false
+      required: [data, accept_partial]
+      properties:
+        data: { type: string, format: byte, maxLength: 5592408 }
+        accept_partial: { type: boolean, description: 有缺口时必须明确选择可用部分；不能将扫描页标为已验证 }
+        locator: { type: string, maxLength: 8192 }
+        source_receipt: { type: string, description: 网页来源必须回传抓取器签发的回执；普通上传不提供 locator }
+    PDFMetadata:
+      type: object
+      required: [kind, locator, report, ranges]
+      properties:
+        kind: { type: string, enum: [uploaded_pdf, web_pdf] }
+        locator: { type: string }
+        report: { $ref: "#/components/schemas/PDFReport" }
+        ranges:
+          type: array
+          items:
+            type: object
+            required: [number, range]
+            properties:
+              number: { type: integer, minimum: 1 }
+              range: { $ref: "#/components/schemas/SourceRange" }
     ReferenceEntry:
       type: object
       additionalProperties: false
@@ -7976,6 +8089,7 @@ components:
               as_new:
                 type: boolean
                 description: 用户明确作为新资料，生成全新文档与节点身份；名称必须未被占用，仍须预览和正式确认
+              pdf: { $ref: "#/components/schemas/PDFImport", description: PDF 必须提供原文件，由服务器重新解析；markdown 此时必须为空。仅单批预览确认支持，不进入 Markdown 可恢复导入任务 }
               markdown:
                 type: string
                 maxLength: 4194304
@@ -8159,6 +8273,7 @@ components:
           nodes,
         ]
       properties:
+        pdf: { $ref: "#/components/schemas/PDFMetadata" }
         document_revision_id:
           type: string
           format: uuid

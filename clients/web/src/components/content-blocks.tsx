@@ -11,6 +11,8 @@ import { learningClient, unwrap } from '@/api/client'
 import { citationSchema } from '@/api/content'
 import { contentHeader } from '@/api/teaching'
 import { ErrorState } from './common'
+import { PDFPageViewer } from './pdf-source'
+import { pdfGaps } from '@/api/pdf'
 
 export function safeLink(value: string) {
   try {
@@ -196,6 +198,11 @@ function ResolvedCitation({ content, reference }: { content: Content; reference:
       <p className="hint">
         出处：{value.locator} · 解析覆盖范围：{value.coverage || '未记录，不推断完整性'}
       </p>
+      {value.pdf && <>
+        <p>PDF 原文件物理页：{value.pdf.pages.map(p => p.number).join('、')} / 共 {value.pdf.page_count} 页。原件指纹：{value.pdf.fingerprint}</p>
+        {value.pdf.pages.map(p => p.gaps.length > 0 && <p key={p.number}>第 {p.number} 页缺口：{p.gaps.map(g => pdfGaps[g] ?? g).join('；')}</p>)}
+        {value.reference.document_revision_id && <PDFPageViewer spaceId={content.learning_space_id} revisionId={value.reference.knowledge_revision_id} documentId={value.reference.document_revision_id} collectionId={value.pdf.collection_id} pages={value.pdf.pages.map(p => p.number)} selectedText={value.reference.slice} />}
+      </>}
       <details>
         <summary>片段前后文 · 历史版本</summary>
         <SafeMarkdown text={value.context} />

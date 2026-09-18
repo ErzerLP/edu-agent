@@ -9,6 +9,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5"
 )
@@ -108,6 +109,24 @@ func (s *Store) ContentCitationTx(ctx context.Context, tx pgx.Tx, ref learning.K
 				hi--
 			}
 			result.Context = text[lo:hi]
+			if m := doc.Revision.PDF; m != nil {
+				result.Parser, result.Coverage = m.Report.Parser, m.Report.Coverage
+				if m.Locator != "" {
+					result.Locator = m.Locator
+				}
+				result.PDF = &learningcontent.PDFCitation{Fingerprint: m.Report.Fingerprint, PageCount: m.Report.PageCount, Pages: []pdfsource.Page{}}
+				if collection != nil {
+					result.PDF.CollectionID = *collection
+				}
+				for _, p := range m.Ranges {
+					if start < p.Range.End && end > p.Range.Start {
+						page := m.Report.Pages[p.Number-1]
+						// 章节权限仅提供其已获准的片段；完整页图另经范围校验。
+						page.Text = ""
+						result.PDF.Pages = append(result.PDF.Pages, page)
+					}
+				}
+			}
 			return result, nil
 		}
 	}

@@ -84,6 +84,10 @@ export function learningClient(session: Session, spaceId?: string) {
 
 export function errorText(error: unknown) {
   if (!(error instanceof ApiError)) return '网络连接失败，输入已保留。请检查连接后重试。'
+  if (error.code.startsWith('pdf_')) {
+    const messages: Record<string, string> = { pdf_encrypted: 'PDF 已加密，不接受密码或绕过访问限制。', pdf_file_limit: 'PDF 超过 4 MiB。', pdf_page_limit: 'PDF 超过 100 页。', pdf_timeout: 'PDF 解析达到时间限制，已中止。', pdf_resource_limit: 'PDF 解析达到内存或资源限制。', pdf_partial_confirmation_required: '请核对逐页报告并明确选择仅采用可用部分。', pdf_no_usable_text: 'PDF 没有可用文本层，未运行 OCR。' }
+    return messages[error.code] ?? 'PDF 损坏、格式不兼容或超过解析资源限制；未将失败内容算作有效资料。'
+  }
   if (error.code === 'learning_content_key_unavailable')
     return '版本化内容需要服务器配置独立正文加密密钥。原会话仍然保留。'
   if (error.code === 'learning_content_upgrade_required')

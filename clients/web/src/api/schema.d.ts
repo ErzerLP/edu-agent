@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/knowledge/source-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询格式能力和固定资源限制；不访问网络、不解析文件 */
+        get: operations["readSourceCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/revisions/{revisionID}/documents/{documentID}/pages/{page}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取不可变 PDF 版本的安全 PNG 页图；重新核对集合、冻结范围及清除代次，无持久图像缓存 */
+        get: operations["readPDFPageImage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/knowledge/reference-sources": {
         parameters: {
             query?: never;
@@ -13,7 +47,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 明确授权后解析一个公开网页；复用研究网络边界，不保存或发布正文 */
+        /** 明确授权后解析一个公开网页或上传 PDF；复用研究网络边界，仅返回候选，不发布正文 */
         post: operations["parseReferenceSource"];
         delete?: never;
         options?: never;
@@ -2735,6 +2769,14 @@ export interface components {
             historical: boolean;
             coverage: string;
             locator: string;
+            pdf?: {
+                fingerprint: string;
+                page_count: number;
+                /** @description 仅包含与已核验引用范围重叠的物理页，由服务端计算 */
+                pages: components["schemas"]["PDFPage"][];
+                /** Format: uuid */
+                collection_id?: string;
+            };
         };
         ContentLibraryItem: {
             knowledge_points: {
@@ -2902,8 +2944,15 @@ export interface components {
             start: number;
             end: number;
             text: string;
+            /** @description PDF 的物理页码；来自解析片段，不接收模型页码 */
+            page?: number;
         };
         ResearchSource: {
+            /**
+             * Format: uuid
+             * @description 正式采纳后的不可变文档版本
+             */
+            document_revision_id?: string;
             /** Format: uuid */
             space_id: string;
             /** Format: uuid */
@@ -2931,6 +2980,7 @@ export interface components {
             fragments: components["schemas"]["ResearchFragment"][];
             knowledge_revision_id: string;
             collection_id: string;
+            pdf?: components["schemas"]["PDFReport"];
         };
         ResearchSynthesis: {
             points: {
@@ -3195,6 +3245,92 @@ export interface components {
             fingerprint: string;
             storage_allowed: boolean;
             text: string;
+            pdf?: components["schemas"]["PDFReport"];
+            /**
+             * Format: byte
+             * @description 网页 PDF 原件；仅在允许保存时返回，供用户正式预览确认
+             */
+            pdf_data?: string;
+            /** @description 服务器签发的网页指纹与定位回执，重启后需重新抓取；不授予导入权限 */
+            source_receipt?: string;
+        };
+        SourceCapabilities: {
+            formats: string[];
+            pdf: {
+                parser: string;
+                /** @constant */
+                max_bytes: 4194304;
+                /** @constant */
+                max_pages: 100;
+                /** @constant */
+                max_text_bytes: 16000;
+                /** @constant */
+                memory_mib: 128;
+                /** @constant */
+                timeout_seconds: 10;
+                /** @constant */
+                concurrency: 2;
+                /** @constant */
+                web_max_wire_bytes: 1048576;
+                /** @constant */
+                web_max_decoded_bytes: 2097152;
+                /** @constant */
+                ocr: false;
+                /** @constant */
+                encrypted: false;
+                /** @constant */
+                viewer: "server_png";
+                /** @constant */
+                original_export: false;
+                limitations: string[];
+            };
+        };
+        PDFPage: {
+            /** @description 从 1 开始的原文件物理页码，不使用印刷页标签 */
+            number: number;
+            /** @enum {string} */
+            status: "text" | "partial" | "no_text" | "failed";
+            /** @description 页级未解析或未验证范围；表格公式图片不承诺语义 */
+            gaps: string[];
+            text: string;
+            /** @description 该页实际提取文本的 SHA-256；无文本时为空 */
+            fingerprint: string;
+            /** @description 提取文本相同的首个页码，不自动去重或合并页 */
+            duplicate_of?: number;
+            /** @description 拼接提取文本中的 UTF-8 起始字节 */
+            start: number;
+            end: number;
+        };
+        PDFReport: {
+            parser: string;
+            /** @description 原始 PDF 字节 SHA-256，不是 AI 摘要 */
+            fingerprint: string;
+            page_count: number;
+            /**
+             * @description complete_text 仅表示文本提取无已知缺口，不表示已理解版式或验证知识
+             * @enum {string}
+             */
+            coverage: "complete_text" | "partial_pdf";
+            pages: components["schemas"]["PDFPage"][];
+        };
+        PDFImport: {
+            /** Format: byte */
+            data: string;
+            /** @description 有缺口时必须明确选择可用部分；不能将扫描页标为已验证 */
+            accept_partial: boolean;
+            locator?: string;
+            /** @description 网页来源必须回传抓取器签发的回执；普通上传不提供 locator */
+            source_receipt?: string;
+        };
+        PDFMetadata: {
+            /** @enum {string} */
+            kind: "uploaded_pdf" | "web_pdf";
+            locator: string;
+            report: components["schemas"]["PDFReport"];
+            ranges: {
+                number: number;
+                range: components["schemas"]["SourceRange"];
+            }[];
         };
         ReferenceEntry: {
             /** Format: uuid */
@@ -5200,6 +5336,8 @@ export interface components {
                 path: string;
                 /** @description 用户明确作为新资料，生成全新文档与节点身份；名称必须未被占用，仍须预览和正式确认 */
                 as_new?: boolean;
+                /** @description PDF 必须提供原文件，由服务器重新解析；markdown 此时必须为空。仅单批预览确认支持，不进入 Markdown 可恢复导入任务 */
+                pdf?: components["schemas"]["PDFImport"];
                 markdown: string;
             }[];
             identity_review_basis_hash?: string;
@@ -5291,6 +5429,7 @@ export interface components {
             document: components["schemas"]["DocumentRevision"];
         };
         DocumentRevision: {
+            pdf?: components["schemas"]["PDFMetadata"];
             /** Format: uuid */
             document_revision_id: string;
             /** Format: uuid */
@@ -6350,6 +6489,57 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readSourceCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 支持的具体格式、PDF 限制和安全查看方式 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceCapabilities"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readPDFPageImage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
+            };
+            path: {
+                revisionID: string;
+                documentID: string;
+                page: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 不超过 1000×1400 像素的栅格页，Cache-Control 为 no-store，不包含脚本或可点击链接 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     parseReferenceSource: {
         parameters: {
             query?: never;
@@ -6363,10 +6553,20 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    url: string;
+                    url?: string;
                     /** @constant */
-                    external_consent: true;
-                };
+                    external_consent?: true;
+                    /**
+                     * Format: byte
+                     * @description 原始 PDF 的 base64，解码后最多 4 MiB；不得同时提供 url
+                     */
+                    pdf_data?: string;
+                    /**
+                     * @description 用户确认有权保存原件及派生文本
+                     * @constant
+                     */
+                    storage_consent?: true;
+                } & (unknown | unknown);
             };
         };
         responses: {
@@ -7402,6 +7602,11 @@ export interface operations {
                     expected_version: number;
                     /** @enum {string} */
                     kind: "adopt" | "reject";
+                    /**
+                     * @description 对本次逐页覆盖报告明确确认仅采用可用文本；有缺口的 PDF 禁止自动采纳
+                     * @default false
+                     */
+                    accept_partial?: boolean;
                 };
             };
         };

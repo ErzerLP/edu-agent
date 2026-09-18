@@ -131,6 +131,13 @@ func (h *executionHost) runResearch(ctx context.Context) error {
 			return err
 		}
 		state.Sources[i] = source
+		if source.PDF != nil {
+			if h.body.SourceFiles == nil {
+				h.body.SourceFiles = map[string][]byte{}
+			}
+			h.body.SourceFiles[source.ID] = source.PDFOriginal
+			state.Sources[i].PDFOriginal = nil
+		}
 		if err = h.checkpoint(ctx, "parsed"); err != nil {
 			return err
 		}
@@ -207,7 +214,7 @@ func (h *executionHost) runResearch(ctx context.Context) error {
 			}
 		}
 		for i := range state.Sources {
-			if !cited[state.Sources[i].ID] || state.Sources[i].Status == "adopted" {
+			if !cited[state.Sources[i].ID] || state.Sources[i].Status == "adopted" || state.Sources[i].PDF != nil && state.Sources[i].Coverage != "complete_text" {
 				continue
 			}
 			if err := h.service.adoptAutomatic(ctx, &h.owned, state.Sources[i].ID); err != nil {
@@ -275,13 +282,16 @@ func (s *Service) adoptTx(ctx context.Context, tx pgx.Tx, item *row, sourceID st
 		if err != nil {
 			return err
 		}
-		result, err := knowledgepostgres.New(s.pool).AdoptSourceTx(ctx, tx, knowledge.SourceImport{RunID: item.RunID, Metadata: *source, OperationID: source.RevisionID, SourceID: source.ID, SourceRevisionID: source.RevisionID, GoalID: item.GoalID, ActorDeviceID: item.device, Locator: source.Locator, Title: source.Title, Fingerprint: source.Fingerprint, Coverage: source.Coverage, Text: source.Text, FetchedAt: *source.FetchedAt})
+		metadata := *source
+		metadata.PDFOriginal = item.body.SourceFiles[source.ID]
+		result, err := knowledgepostgres.New(s.pool).AdoptSourceTx(ctx, tx, knowledge.SourceImport{RunID: item.RunID, Metadata: metadata, OperationID: source.RevisionID, SourceID: source.ID, SourceRevisionID: source.RevisionID, GoalID: item.GoalID, ActorDeviceID: item.device, Locator: source.Locator, Title: source.Title, Fingerprint: source.Fingerprint, Coverage: source.Coverage, Text: source.Text, FetchedAt: *source.FetchedAt})
 		if err != nil {
 			return err
 		}
 		source.Status = "adopted"
 		source.CollectionID = source.ID
 		source.KnowledgeRevisionID = result.Revision.ID
+		source.DocumentRevisionID = result.Revision.Documents[0].Revision.ID
 		return nil
 	}
 	return ErrNotFound
@@ -292,6 +302,7 @@ func (s *Service) adoptAutomatic(ctx context.Context, owned *row, id string) err
 }
 
 type SourceDecision struct {
+	AcceptPartial   bool   `json:"accept_partial,omitempty"`
 	OperationID     string `json:"operation_id"`
 	ExpectedVersion int64  `json:"expected_version"`
 	Kind            string `json:"kind"`
@@ -355,6 +366,11 @@ func (s *Service) researchDecision(ctx context.Context, owned *row, source strin
 		return ErrConflict
 	}
 	if kind == "adopt" {
+		for _, candidate := range item.body.Research.Sources {
+			if candidate.ID == source && candidate.PDF != nil && candidate.Coverage != "complete_text" && (automatic || c == nil || !c.AcceptPartial) {
+				return ErrInvalid
+			}
+		}
 		if err = s.adoptTx(ctx, tx, &item, source); err != nil {
 			return err
 		}

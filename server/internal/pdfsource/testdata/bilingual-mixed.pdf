@@ -1,0 +1,84 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 3 /Kids [6 0 R 8 0 R 10 0 R] >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /STSong-Light /Encoding /UniGB-UCS2-H /DescendantFonts [4 0 R] /ToUnicode 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /CIDFontType0 /BaseFont /STSong-Light /FontDescriptor << /Type /FontDescriptor /FontName /STSong-Light /Flags 4 /FontBBox [-1000 -1000 2000 2000] /ItalicAngle 0 /Ascent 1000 /Descent -200 /CapHeight 700 /StemV 80 >> /CIDSystemInfo << /Registry (Adobe) /Ordering (GB1) /Supplement 4 >> >>
+endobj
+5 0 obj
+<< /Length 335 >>
+stream
+/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Fixture def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+1 beginbfrange
+<0000> <FFFF> <0000>
+endbfrange
+endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 238 >>
+stream
+BT /F1 16 Tf 72 760 Td <7b2c4e00726974069875ff1a4e2d658765596750> Tj
+0 -24 Td <0045006e0067006c00690073006800200066006900720073007400200070006100670065003a0020006f0072006900670069006e0061006c002000650076006900640065006e00630065002e> Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 9 0 R >>
+endobj
+9 0 obj
+<< /Length 258 >>
+stream
+BT /F1 16 Tf 72 760 Td <7b2c4e8c726974069875ff1a7248672c5f1575284fdd630151c6786e> Tj
+0 -24 Td <005300650063006f006e006400200070006100670065003a00200069006d006d0075007400610062006c006500200073006f00750072006300650020006300690074006100740069006f006e002e> Tj
+ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents 11 0 R >>
+endobj
+11 0 obj
+<< /Length 76 >>
+stream
+q 100 0 0 100 72 600 cm BI /W 1 /H 1 /BPC 8 /CS /RGB /F /AHx ID ff0000> EI Q
+endstream
+endobj
+xref
+0 12
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000128 00000 n 
+0000000267 00000 n 
+0000000594 00000 n 
+0000000980 00000 n 
+0000001106 00000 n 
+0000001395 00000 n 
+0000001521 00000 n 
+0000001830 00000 n 
+0000001958 00000 n 
+trailer
+<< /Size 12 /Root 1 0 R >>
+startxref
+2085
+%%EOF

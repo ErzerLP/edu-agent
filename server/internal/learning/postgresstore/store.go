@@ -310,7 +310,7 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 	}
 
 	if attempt := request.Batch.Attempt; attempt != nil {
-		if err := learningcontent.ValidateAttemptTx(ctx, tx, *attempt); err != nil {
+		if err := learningcontent.ValidateAttemptTx(ctx, tx, *attempt, s.content); err != nil {
 			return learning.OperationResult{}, err
 		}
 	}

@@ -10,6 +10,13 @@ import (
 )
 
 func (a *App) runGoal(ctx context.Context, args []string) error {
+	if len(args) > 0 && (args[0] == "research" || args[0] == "start-learning") {
+		action := "research"
+		if args[0] == "start-learning" {
+			action = "start"
+		}
+		return a.runStudy(ctx, append([]string{action}, args[1:]...))
+	}
 	if len(args) > 0 && args[0] == "changes" {
 		return a.runChanges(ctx, args[1:])
 	}

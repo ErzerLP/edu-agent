@@ -4,6 +4,11 @@
 
 ## 使用入口
 
+CLI 的 `study help` 接入与 Web 共用的研究/空资料开学、运行、来源、正文版本、具体变更
+审阅及采用。工作台目标页和课堂页提供对应选择入口；正式课堂与已保存答案共享，
+未提交草稿仍属于原进程/标签页。本地加密聊天不会自动上传或转换为 Web 对话。
+见 [CLI 跨端使用说明](clients/cli-go/README.md#新学习服务与-web-继续)。
+
 浏览器学习入口为 `/app/`，提供真实学习区、目标保存/编辑/历史/生命周期与设置页，无模型、搜索或资料也能保存目标。先 `make server-build`，再启用 `WEB_UI_ENABLED=true`；loopback HTTP 开发需额外设置 `WEB_UI_ALLOW_LOOPBACK_HTTP=true`。使用本机配对码登录，学习身份与管理身份独立。详见 [Web 构建、配对、HTTPS 部署与隐私说明](clients/web/README.md)。
 
 `/app/memory` 接通全局长期偏好的逐条审阅、纠正、删除、导出与交付回执；Web 导师只能申请候选，普通聊天不构成长久授权。设置的数据/设备页复用原隐私清除与撤销服务，管理操作需要显式 `memory` 配对档案，隐私清除另需本机一次性 grant。详见[权限和删除边界](clients/web/README.md#长期记忆数据与设备)及[本次验收范围](docs/development/issue-34-acceptance.md)。

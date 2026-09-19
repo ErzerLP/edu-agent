@@ -78,6 +78,9 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 		p.Content = "当前服务仅支持默认学习区的此项能力；没有读取其他区数据。"
 		return p, nil
 	}
+	if strings.HasPrefix(req.Page, "study-") {
+		return a.workbenchStudy(ctx, client, req, p)
+	}
 	switch req.Page {
 	case "overview", "global-overview", "goal-progress", "global-reviews":
 		return a.workbenchProgress(ctx, client, req, p)
@@ -145,6 +148,7 @@ func (s workbenchService) Load(ctx context.Context, req workbench.Request) (resu
 	if view.WorkItem != nil && view.WorkItem.GoalRevision != nil {
 		p.Goal = view.WorkItem.GoalRevision.GoalManagement().Details.Name
 		p.Entries = append(p.Entries, workbench.Entry{ID: "agent:" + view.WorkItem.GoalRevision.GoalID + "/" + view.Session.SessionID, Label: "打开绑定此教学上下文的 AI 聊天"})
+		p.Entries = append(p.Entries, workbench.Entry{ID: "page:study-adjust/" + view.WorkItem.GoalRevision.GoalID + "/" + view.Session.SessionID, Label: "请求服务端导师调整此课堂路径"}, workbench.Entry{ID: "page:study-current/" + view.Session.SessionID, Label: "阅读/作答当前正式正文（含 Web 更新）"})
 	}
 	p.Title = "区内 · 结构化学习"
 	p.Content = sessionContent(view, true)

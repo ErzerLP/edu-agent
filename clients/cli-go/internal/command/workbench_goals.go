@@ -148,6 +148,7 @@ func (a *App) workbenchGoals(ctx context.Context, client APIClient, req workbenc
 	p.Actions = []workbench.Action{{ID: "save", Label: "编辑并保存结构化目标", Fields: goalFields(g), DraftKey: fmt.Sprintf("/%s/%d", g.GoalID, g.Revision)}}
 	if req.Page == "goal" {
 		p.Entries = append(p.Entries, workbench.Entry{ID: "agent:" + g.GoalID + "/", Label: "打开此目标的 AI 聊天（与教学续学独立）"})
+		p.Entries = append(p.Entries, workbench.Entry{ID: "page:study-goal/" + g.GoalID, Label: "研究、空资料开学、内容与教学变更"})
 		p.Entries = append(p.Entries, workbench.Entry{ID: "page:history/" + g.GoalID, Label: "查看历史修订"}, workbench.Entry{ID: "page:sessions/" + g.GoalID, Label: "选择此目标的教学会话"})
 		p.Entries = append(p.Entries, workbench.Entry{ID: "page:goal-progress/" + g.GoalID, Label: "查看目标进度"}, workbench.Entry{ID: "page:reviews/" + g.GoalID, Label: "查看目标到期复习"})
 		p.Actions = append(p.Actions, workbench.Action{ID: "bind-scope", Label: "绑定本进程已选择的资料范围", Confirmation: "绑定已冻结的资料范围？不会改写旧题目。"})

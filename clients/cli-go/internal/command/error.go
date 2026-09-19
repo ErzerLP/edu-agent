@@ -52,6 +52,18 @@ func mapAPIError(err error) *Error {
 	if errors.As(err, &apiErr) {
 		mapped := &Error{Code: apiErr.Code, RequestID: apiErr.RequestID, ExitCode: ExitConflict}
 		switch apiErr.Code {
+		case "learning_services_upgrade_required", "learning_content_upgrade_required":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "当前服务或客户端不支持此协议/交互，未提交答案或变更"
+			mapped.Next = "升级对应端；图形专用交互请使用支持的 Web 客户端"
+		case "learning_services_disabled":
+			mapped.ExitCode = ExitUnavailable
+			mapped.Detail = "新学习服务未启用或配置未就绪"
+			mapped.Next = "查看 study capabilities；已有结果仍可读取和清理"
+		case "invalid_study_request":
+			mapped.ExitCode = ExitInput
+			mapped.Detail = "缺少明确身份、版本、同意或有效操作 ID"
+			mapped.Next = "查看 study help 与 OpenAPI 请求合同"
 		case "import_job_busy":
 			mapped.Detail = "任务正在处理一个批次"
 			mapped.Next = "稍后用 jobs show 查询原任务，再继续或取消"

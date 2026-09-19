@@ -195,7 +195,7 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		if a.interactiveDashboardAvailable() {
 			return a.runDashboard(ctx)
 		}
-		return a.fail(commandError("usage", "a command is required", "use edu-agent version, pair, device, config, space, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput))
+		return a.fail(commandError("usage", "a command is required", "使用 edu-agent version, pair, device, config, space, knowledge, goal, study, learn, assessment, route, progress, evidence, reviews, logout 或 clear", ExitInput))
 	}
 	if err := a.dispatch(ctx, args); err != nil {
 		return a.fail(err)
@@ -382,6 +382,8 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		return commandError("usage", "a command is required", "use space help", ExitInput)
 	}
 	switch args[0] {
+	case "study":
+		return a.runStudy(ctx, args[1:])
 	case "space":
 		return a.runSpace(ctx, args[1:])
 	case "version":
@@ -439,7 +441,7 @@ func (a *App) dispatch(ctx context.Context, args []string) error {
 		}
 		return nil
 	default:
-		return commandError("usage", "unknown command "+args[0], "use edu-agent version, pair, device, config, space, knowledge, goal, learn, assessment, route, progress, evidence, reviews, logout, or clear", ExitInput)
+		return commandError("usage", "unknown command "+args[0], "使用 edu-agent version, pair, device, config, space, knowledge, goal, study, learn, assessment, route, progress, evidence, reviews, logout 或 clear", ExitInput)
 	}
 }
 

@@ -286,6 +286,7 @@ paths:
     post:
       operationId: commandLearningChange
       summary: 提出、审阅、批准、取消、补偿或返回原题；批准绑定修订、hash 和交互
+      description: Web 与 CLI study change-command 共用本命令；脚本保留原 operation_id 和已审阅依据，断线后先读取原变更，不自动重放或采用新版本。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
@@ -593,6 +594,7 @@ paths:
     post:
       operationId: submitLearningContentAnswer
       summary: 在原答案事务内校验正式内容版本与交互能力，再按原 rubric 作答
+      description: CLI study answer 仅支持 text/single_choice，未知显示块使用 fallback。未知交互返回 learning_content_upgrade_required；旧 actions 入口同样在原事务中检查当前正文交互，不能绕过此限制。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
@@ -802,7 +804,7 @@ paths:
     post:
       operationId: createMentorRun
       summary: 唯一受理目标内导师运行；保存目标本身不调用此入口
-      description: expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。
+      description: expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。CLI study research/start/mentor 共用此入口，研究和开学需明确外发同意与预算，mentor 调整显式绑定 teaching_session_id；本地聊天不上传或转换为 Web conversation。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:

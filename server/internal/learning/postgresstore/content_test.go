@@ -37,6 +37,7 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	authority.ConfigureContent(content)
 	view, err := authority.Session(ctx, sessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -163,6 +164,10 @@ func TestPostgreSQLLearningContentVersionsAnswersAndErasure(t *testing.T) {
 		if err == nil {
 			t.Fatalf("旧版本/草稿/未知交互仍能正式作答，version=%d", v)
 		}
+	}
+	assertCount(t, pool, `SELECT count(*) FROM learning_attempts`, 0)
+	if _, err = apply(ctx, tutoring.ActionSubmitAttempt, "ok"); !errors.Is(err, learningcontent.ErrUnsupported) {
+		t.Fatalf("旧入口必须拒绝未知作答规则，实际：%v", err)
 	}
 	assertCount(t, pool, `SELECT count(*) FROM learning_attempts`, 0)
 	cmd.OperationID = uuid.NewString()

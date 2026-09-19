@@ -20,6 +20,15 @@ import (
 
 type contentTestSpaces struct{ LearningSpaceService }
 
+func TestLegacyAnswerReportsContentUpgrade(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/v1/tutoring/sessions/"+testAggregateID+"/actions", nil)
+	(&API{}).writeLearningFailure(w, r, "session_action", learningcontent.ErrUnsupported)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "learning_content_upgrade_required") {
+		t.Fatalf("旧客户端没有得到明确升级提示：%d %s", w.Code, w.Body.String())
+	}
+}
+
 func (contentTestSpaces) Get(context.Context, string) (learningspace.Space, error) {
 	return learningspace.Space{ID: learningspace.DefaultID, Status: "active"}, nil
 }

@@ -375,8 +375,20 @@ func (c *Client) attempt(ctx context.Context, method, path string, authenticated
 		return false, 0, 0, &ProtocolError{Category: "request_creation_failed"}
 	}
 	request.Header.Set("Accept", "application/json")
-	if strings.HasPrefix(path, "/v1/learning/goals/") && strings.Contains(path, "/changes") {
+	if strings.HasPrefix(path, "/v1/learning/goals/") && (strings.Contains(path, "/changes") || strings.Contains(path, "/change-context")) {
 		request.Header.Set("X-Learning-Change-Version", "1")
+		space := c.learningSpace
+		if space == "" {
+			space = DefaultLearningSpaceID
+		}
+		request.Header.Set("X-Learning-Space-ID", space)
+	}
+	if strings.HasPrefix(path, "/v1/learning/content") || strings.HasPrefix(path, "/v1/tutoring/sessions/") && strings.HasSuffix(path, "/content") {
+		request.Header.Set("X-Learning-Content-Version", "1")
+	}
+	if strings.HasPrefix(path, "/v1/learning/content") || strings.HasPrefix(path, "/v1/learning/runs") || strings.HasPrefix(path, "/v1/learning/operations/") ||
+		strings.HasPrefix(path, "/v1/learning/goals/") && (strings.HasSuffix(path, "/runs") || strings.HasSuffix(path, "/research") || strings.HasSuffix(path, "/start") || strings.HasSuffix(path, "/content-edits")) ||
+		strings.HasPrefix(path, "/v1/tutoring/sessions/") && (strings.HasSuffix(path, "/content") || strings.HasSuffix(path, "/knowledge-context") || strings.Contains(path, "/operations/")) {
 		space := c.learningSpace
 		if space == "" {
 			space = DefaultLearningSpaceID

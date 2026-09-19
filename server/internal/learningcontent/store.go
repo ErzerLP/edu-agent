@@ -370,10 +370,30 @@ func AnswerVersion(ctx context.Context) (*string, *int64) {
 }
 
 // 原 learning 提交事务调用此端口，检查与答案写入原子完成，避免检查后换版。
-func ValidateAttemptTx(ctx context.Context, tx pgx.Tx, attempt learning.Attempt) error {
+func ValidateAttemptTx(ctx context.Context, tx pgx.Tx, attempt learning.Attempt, legacy *Store) error {
 	guard, ok := ctx.Value(answerGuardKey{}).(answerGuard)
 	if !ok {
-		return nil
+		// 旧协议没有正文版本，但仍须在原作答事务内校验当前交互。
+		// 没有正文的旧活动继续沿用原合同，未知交互不能绕过新版入口。
+		var id string
+		var generation int64
+		err := tx.QueryRow(ctx, `SELECT id,privacy_generation FROM learning_content_artifacts
+			WHERE session_id=$1 AND activity_id=$2 AND activity_revision=$3 AND space_id=$4 FOR SHARE`,
+			attempt.SessionID, attempt.ActivityID, attempt.ActivityRevision, learningspace.Scope(ctx)).Scan(&id, &generation)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !legacy.Available() {
+			return ErrUnsupported
+		}
+		r, err := legacy.read(ctx, tx, id, 0, generation, true)
+		if err != nil {
+			return err
+		}
+		return CanAnswer(r, attempt.Answer)
 	}
 	g, err := gates(ctx, tx, guard.actor, true)
 	if err != nil {

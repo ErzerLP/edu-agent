@@ -1012,6 +1012,9 @@ func writeLearningResult(w http.ResponseWriter, result learning.OperationResult)
 	writeJSON(w, status, result)
 }
 func (a *API) writeLearningFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	if contentFailure(w, r, err) {
+		return
+	}
 	mapped := problem.Learning(err)
 	if mapped.Code == "internal_error" {
 		a.logger.ErrorContext(r.Context(), "learning request failed", "request_id", middleware.GetReqID(r.Context()), "operation", operation, "error_category", "internal")

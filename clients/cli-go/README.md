@@ -1,5 +1,54 @@
 # edu-agent Go CLI
 
+## 新学习服务与 Web 继续
+
+`study help` 列出正式研究、开学、运行、来源、正文/版本和变更命令。
+工作台选择目标后进入“研究、空资料开学、内容与教学变更”；课堂页可阅读/作答 Web
+更新的正式正文，或请求服务端导师调整原课堂路径。运行、来源和内容按名称与状态选择，
+无需复制 UUID。刷新读取原对象，返回页面不会重放写操作。
+
+脚本默认输出服务端 JSON，`--text` 提供终端安全文本。所有命令支持 `--space UUID`；
+目标和教学会话始终显式指定。先用 `study capabilities` 检查协议与当前配置。
+`goal research` 是 `study research` 的别名，`goal start-learning` 是 `study start` 的别名；
+`goal set` 仍只保存目标，不发模型请求。完整流程见[跨端命令与能力矩阵](../../docs/design/cli-learning-services.md#脚本使用与能力矩阵)。
+
+新写命令的 `--input 文件.json`（或 `--input -`）使用 OpenAPI 的原请求字段，必须提供
+稳定的 `operation_id`。运行的 `session_id` 是服务端导师运行容器，
+`teaching_session_id` 才是导师调整所绑定的教学会话；自动开学后的教学 ID 位于
+`start_learning.result.session_id`。两者都不是 CLI 本地加密聊天 Session。
+
+```text
+edu-agent study capabilities
+edu-agent study current --goal 目标ID --kind start_learning --space 学习区ID
+edu-agent study start --goal 目标ID --space 学习区ID --input 开学.json
+edu-agent study run --run 运行ID --space 学习区ID --wait
+edu-agent study operation --operation 原操作ID --space 学习区ID
+edu-agent study content --artifact 正文ID --space 学习区ID --text
+edu-agent learn --session 教学会话ID --space 学习区ID
+edu-agent study mentor --goal 目标ID --space 学习区ID --input 调整请求.json
+edu-agent study changes --goal 目标ID --space 学习区ID
+edu-agent study change-command --goal 目标ID --change 变更ID --space 学习区ID --input 审批.json
+edu-agent progress --goal-id 目标ID --space 学习区ID --json
+```
+
+研究必须明确公开主题、搜索/模型外发同意与预算；自动开学另需采纳权限、自动采纳及
+模型准备同意。普通配对权限不足时，用研究档案重新配对，不给旧设备自动增权。
+`--wait` 只轮询指定运行，遇到等待输入/审批或预算暂停会返回；不会自行回答或续费。
+运行仍归原设备，另一设备直接读取共享的正式课堂、正文、知识上下文、变更及进度。
+同设备同目标同类型再次发起时复用 `current` 返回的 `run.session_id`，
+仅无历史时创建新的运行会话 ID；工作台自动保留已展示的运行归属，失败重试不重选。
+
+作答只支持 `text` 和 `single_choice`，选择题提交选项值；未知展示使用文字 fallback，
+未知交互明确要求升级/支持的图形界面。`study answer` 绑定具体正文及会话版本；
+旧 `learn` 作答也由服务端校验当前交互。已保存答案可跨端读取，未提交草稿只属于原进程/
+标签页。写响应未知时查询原操作或对象，不自动重放；审批必须沿用已审阅的
+`expected_revision/hash/interaction_id`，排队不表示已生效。
+
+能力关闭后停止新研究/变更请求，仍可读取已有记录及通过 `run-command` 的 `clear`
+清除运行正文。清除运行不会撤销正式采用的知识或已提交答案，完整清除继续走原隐私服务。
+密钥缺失与功能关闭是不同状态；没有解密密钥时不能承诺读取加密正文。
+本次不迁移本地聊天，不改模型端点/钥匙串、加密历史、`--no-save`、Shell/PTY 或离线包。
+
 `goal changes --id 目标ID --space 学习区ID [--json]` 读取教学变更状态与差异；
 可附加 `--change 变更ID --revision 修订号` 查询不可变候选历史。批准、排队、应用和失效分别显示，
 查询不会自动批准或执行变更，旧教学接口不增加状态枚举。

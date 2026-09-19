@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, generateKeyPairSync } from 'node:crypto'
 import { createServer } from 'node:http'
 import { workspaceModel } from './workspace-model.mjs'
 import { startNotesyncFixture } from './notesync-fixture.mjs'
@@ -12,6 +12,12 @@ let restarting = false
 const settingsFile = join(mkdtempSync(join(tmpdir(), 'edu-web-settings-test-')), 'settings.json')
 const mentorKeyFile = join(mkdtempSync(join(tmpdir(), 'edu-web-key-test-')), 'mentor.key')
 const importStaging = mkdtempSync(join(tmpdir(), 'edu-web-import-test-'))
+const offlineKey = generateKeyPairSync('ed25519')
+const offlineSecret = Buffer.concat([
+  offlineKey.privateKey.export({ format: 'der', type: 'pkcs8' }).subarray(-32),
+  offlineKey.publicKey.export({ format: 'der', type: 'spki' }).subarray(-32),
+]).toString('base64url')
+const offlineChallengeKey = randomBytes(32).toString('base64url')
 writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
 if (process.env.WEB_NOTESYNC_FIXTURE === '1') await startNotesyncFixture()
 if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
@@ -154,6 +160,14 @@ function start() {
       MIGRATE_ON_START: 'true',
       WEB_UI_ENABLED: 'true',
       WEB_UI_ALLOW_LOOPBACK_HTTP: 'true',
+      ...(process.env.WEB_OFFLINE_FIXTURE === '1' ? {
+        WEB_OFFLINE_ENABLED: 'true',
+        OFFLINE_SIGNER_KEY_ID: 'browser-offline-test',
+        OFFLINE_SIGNER_PRIVATE_KEY: offlineSecret,
+        OFFLINE_SIGNER_ISSUED_AT: '2026-01-01T00:00:00Z',
+        OFFLINE_SIGNER_NOT_AFTER: '2030-01-01T00:00:00Z',
+        PRIVACY_OFFLINE_CHALLENGE_KEYS: `2:${offlineChallengeKey}`,
+      } : {}),
       ADMIN_UI_ENABLED: 'false',
       LEARNING_SETTINGS_FILE: settingsFile,
       MENTOR_KEY_FILE: mentorKeyFile,

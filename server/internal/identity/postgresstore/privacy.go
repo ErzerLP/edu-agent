@@ -83,6 +83,8 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 	if _, err := tx.Exec(ctx, `DELETE FROM identity_web_sessions WHERE privacy_owner_scrub_permitted('identity')`); err != nil {
 		return fmt.Errorf("清除浏览器会话: %w", err)
 	}
+	// 离线专用身份与 device_tokens 一样只保留凭据摘要和设备/代次，供该设备核对 purge。
+	// 旧代次正文访问立即关闭；不能删除恢复身份后虚称真正离线设备已经清除。
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit identity privacy scrub: %w", err)
 	}

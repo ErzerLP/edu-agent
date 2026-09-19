@@ -31,6 +31,7 @@ type WebIdentityService interface {
 
 type WebUIOptions struct {
 	Enabled           bool
+	OfflineEnabled    bool
 	AllowLoopbackHTTP bool
 	PublicBaseURL     *url.URL
 	Identity          WebIdentityService
@@ -89,6 +90,11 @@ func (a *API) webOriginOK(r *http.Request) bool {
 // webSecurity 放在整个路由器上，既有写 API 也必须经过 Cookie/CSRF 检查。
 func (a *API) webSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 离线专用入口独立校验 Cookie/CSRF，不能被已过期的在线会话阻断清除。
+		if strings.HasPrefix(r.URL.Path, "/v1/web/offline/") && r.URL.Path != "/v1/web/offline/enable" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		var cookie *http.Cookie
 		count := 0
 		for _, c := range r.Cookies() {
@@ -141,6 +147,7 @@ func (a *API) mountWeb(r chi.Router) {
 	r.With(a.responseReadPermit("content_redacted", privacy.OwnerIdentity)).Post("/v1/web/pairings", a.webPair)
 	r.With(a.responseReadPermit("content_redacted", privacy.OwnerIdentity)).Get("/v1/web/session", a.webSession)
 	r.Post("/v1/web/logout", a.webLogout)
+	a.mountWebOffline(r)
 }
 
 // 内容短链接仅携带身份和版本，实际页面仍共用 /app 的同源身份边界。
@@ -266,7 +273,7 @@ func (a *API) webAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	name := strings.TrimPrefix(r.URL.Path, "/app/")
 	// 仅页面地址回退；不存在的资源、API 和扩展名请求保留 404。
-	if name == "" || name == "settings" || name == "settings/data" || name == "settings/devices" || name == "progress" || name == "memory" || name == "runs" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/") || strings.HasPrefix(name, "runs/")) && !strings.Contains(name, ".")) {
+	if name == "" || name == "offline" || name == "settings" || name == "settings/data" || name == "settings/devices" || name == "progress" || name == "memory" || name == "runs" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/") || strings.HasPrefix(name, "runs/")) && !strings.Contains(name, ".")) {
 		name = "index.html"
 	}
 	if !fs.ValidPath(name) || path.Clean(name) != name {

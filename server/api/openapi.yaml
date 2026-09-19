@@ -1209,6 +1209,168 @@ paths:
       responses:
         "200": { description: 当前能力和准确不可用原因, content: { application/json: { schema: { $ref: "#/components/schemas/LearningCapabilities" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/offline/capabilities:
+    get:
+      operationId: getWebOfflineCapabilities
+      summary: 浏览器离线独立发布开关与版本协商，不创建本地库或服务端身份
+      responses:
+        "200":
+          description: 当前适配能力
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [adapter_version, enabled, answer_protocols, content_protocols]
+                properties:
+                  adapter_version: { type: integer, const: 1 }
+                  enabled: { type: boolean }
+                  answer_protocols: { type: array, items: { type: string, enum: [text-answer-v1] } }
+                  content_protocols: { type: array, items: { type: string, enum: [offline-pack-v1] } }
+  /v1/web/offline/enable:
+    post:
+      operationId: enableWebOffline
+      summary: 明确同意后保留原设备的专用离线同步身份，最长 37 天
+      description: 要求当前在线浏览器身份及原有 learning:read/write、knowledge:read。只在 WEB_OFFLINE_ENABLED=true 时允许启用；Cookie 为 HttpOnly，不返回 Bearer。初始信任根来自认证的同源 HTTPS；loopback HTTP 仅供开发。
+      security: [{ webCookie: [] }]
+      parameters:
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [adapter_version, save_consent]
+              properties:
+                adapter_version: { type: integer, const: 1 }
+                save_consent: { type: boolean, const: true }
+      responses:
+        "201":
+          description: 原设备恢复身份与原始签名信任根
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [adapter_version, device_id, generation, expires_at, csrf_token, bootstrap]
+                properties:
+                  adapter_version: { type: integer, const: 1 }
+                  device_id: { $ref: "#/components/schemas/LearningUUID" }
+                  generation: { $ref: "#/components/schemas/Uint63Decimal" }
+                  expires_at: { type: string, format: date-time }
+                  csrf_token: { type: string, minLength: 43, maxLength: 43 }
+                  bootstrap: { $ref: "#/components/schemas/OfflinePairingBootstrap" }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/offline/session:
+    parameters:
+      - { $ref: "#/components/parameters/WebOfflineAdapter" }
+    get:
+      operationId: getWebOfflineSession
+      summary: 核对原设备、服务端时间及清除任务；不包含正文，允许旧代次处理清除
+      security: [{ webOfflineCookie: [] }]
+      responses:
+        "200":
+          description: 专用离线身份；content_allowed=false 时禁止正文同步，先清除
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WebOfflineSession" }
+        default: { $ref: "#/components/responses/WebFailure" }
+    delete:
+      operationId: disableWebOffline
+      summary: 删除当前离线恢复身份；不表示本地正文或服务器事实已清除
+      security: [{ webOfflineCookie: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/WebOfflineDevice" }
+        - { $ref: "#/components/parameters/WebOfflineGeneration" }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      responses:
+        "204": { description: 当前专用身份已删除 }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/offline/packs:
+    post:
+      operationId: prepareWebOfflinePack
+      summary: 复用原 offline owner 签发；明确指定原学习区与 session_id，并将专用同步身份续期最多 37 天
+      security: [{ webOfflineCookie: [] }]
+      x-required-scopes: [learning:write, knowledge:read]
+      parameters:
+        - { $ref: "#/components/parameters/WebOfflineAdapter" }
+        - { $ref: "#/components/parameters/WebOfflineDevice" }
+        - { $ref: "#/components/parameters/WebOfflineGeneration" }
+        - { $ref: "#/components/parameters/LearningSpaceID" }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/OfflinePrepareRequest" }
+                - { type: object, required: [session_id] }
+      responses:
+        "201": { description: 原始签名包, content: { application/json: { schema: { $ref: "#/components/schemas/OfflinePrepareResponse" } } } }
+        "200": { description: 原请求幂等重放, content: { application/json: { schema: { $ref: "#/components/schemas/OfflinePrepareResponse" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/offline/sync:
+    post:
+      operationId: syncWebOffline
+      summary: 原 offline owner 按原提交归属、服务端时间和 Inbox 规则逐条处理
+      description: 不使用当前页面学习区，不更改签名 payload，不推进在线教学会话。原设备撤销、代次关闭或有待清除任务时拒绝正文。
+      security: [{ webOfflineCookie: [] }]
+      x-required-scopes: [learning:write]
+      parameters:
+        - { $ref: "#/components/parameters/WebOfflineAdapter" }
+        - { $ref: "#/components/parameters/WebOfflineDevice" }
+        - { $ref: "#/components/parameters/WebOfflineGeneration" }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflineSyncRequest" }
+      responses:
+        "200": { description: 逐条正式回执与接纳状态, content: { application/json: { schema: { $ref: "#/components/schemas/OfflineSyncResponse" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/offline/operations/{operationID}:
+    get:
+      operationId: getWebOfflineOperation
+      summary: 核对原操作；先解决结果未知再提交新记录
+      security: [{ webOfflineCookie: [] }]
+      x-required-scopes: [learning:read]
+      parameters:
+        - { name: operationID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+        - { $ref: "#/components/parameters/WebOfflineAdapter" }
+        - { $ref: "#/components/parameters/WebOfflineDevice" }
+        - { $ref: "#/components/parameters/WebOfflineGeneration" }
+      responses:
+        "200": { description: 原始持久回执及最新评估状态, content: { application/json: { schema: { $ref: "#/components/schemas/OfflineOperationStatus" } } } }
+        "404": { $ref: "#/components/responses/WebFailure" }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/web/offline/purge/{erasureID}/ack:
+    post:
+      operationId: acknowledgeWebOfflinePurge
+      summary: 复用原设备 possession 与版本化 challenge 的正式清除回执
+      security: [{ webOfflineCookie: [] }]
+      parameters:
+        - { name: erasureID, in: path, required: true, schema: { $ref: "#/components/schemas/LearningUUID" } }
+        - { $ref: "#/components/parameters/WebOfflineAdapter" }
+        - { $ref: "#/components/parameters/WebOfflineDevice" }
+        - { $ref: "#/components/parameters/WebOfflineGeneration" }
+        - { name: Origin, in: header, required: true, schema: { type: string } }
+        - { name: X-CSRF-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OfflinePurgeAckRequest" }
+      responses:
+        "200": { description: 原设备清除回执, content: { application/json: { schema: { $ref: "#/components/schemas/OfflinePurgeAckResponse" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/web/pairings:
     post:
       operationId: exchangeWebPairing
@@ -4000,6 +4162,21 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    WebOfflineAdapter:
+      name: X-Offline-Adapter
+      in: header
+      required: true
+      schema: { type: string, const: "1" }
+    WebOfflineDevice:
+      name: X-Web-Principal-ID
+      in: header
+      required: true
+      schema: { $ref: "#/components/schemas/LearningUUID" }
+    WebOfflineGeneration:
+      name: X-Web-Generation
+      in: header
+      required: true
+      schema: { $ref: "#/components/schemas/Uint63Decimal" }
     ContentProtocol:
       name: X-Learning-Content-Version
       in: header
@@ -4116,6 +4293,11 @@ components:
       required: true
       schema: { $ref: "#/components/schemas/MemoryUUID" }
   securitySchemes:
+    webOfflineCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-edu_offline
+      description: 仅供 /v1/web/offline 专用合同的原设备恢复身份，HTTPS 使用 Secure/HttpOnly/SameSite=Strict，loopback 开发使用 edu_offline_dev。不能登录在线学习、管理或 MCP；非安全方法要求 Origin 和专用 CSRF。失效或撤销返回 401，归属冲突或清除中返回 409，适配版本不兼容返回 400。所有响应禁止缓存。
     webCookie:
       type: apiKey
       in: cookie
@@ -5492,6 +5674,27 @@ components:
         persistence: { $ref: "#/components/schemas/LearningCapability" }
         research: { $ref: "#/components/schemas/LearningCapability" }
         web_mentor: { $ref: "#/components/schemas/LearningCapability" }
+    WebOfflineSession:
+      type: object
+      additionalProperties: false
+      required: [adapter_version, device_id, generation, expires_at, server_time, csrf_token, content_allowed, purge, purge_receipt]
+      properties:
+        adapter_version: { type: integer, const: 1 }
+        device_id: { $ref: "#/components/schemas/LearningUUID" }
+        generation: { $ref: "#/components/schemas/Uint63Decimal" }
+        expires_at: { type: string, format: date-time }
+        server_time: { type: string, format: date-time }
+        csrf_token: { type: string, minLength: 43, maxLength: 43 }
+        content_allowed: { type: boolean }
+        purge_receipt:
+          description: 原设备原代次已完成的正式清除回执，供 ack 响应丢失后恢复；不表示其他设备已清除
+          oneOf:
+            - { $ref: "#/components/schemas/OfflinePurgeAckResponse" }
+            - { type: "null" }
+        purge:
+          oneOf:
+            - { $ref: "#/components/schemas/OfflinePurgeTask" }
+            - { type: "null" }
     WebSession:
       type: object
       additionalProperties: false

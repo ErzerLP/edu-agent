@@ -940,6 +940,12 @@ footer {
 .feedback-detail section { margin-block: 1.5rem; min-width: 0; }
 .feedback-detail blockquote { white-space: pre-wrap; }
 @media (max-width: 768px) { .feedback-columns { grid-template-columns: minmax(0, 1fr); } }
+/* 离线内容不加载远端图片或嵌入，长文本在手机软键盘出现时仍可换行。 */
+.offline-page { max-width: 960px; overflow-wrap: anywhere; }
+.offline-page .panel { margin-block: 1rem; padding: 1.25rem; }
+.offline-page article { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 1rem; }
+.offline-page textarea { width: 100%; min-height: 8rem; scroll-margin-bottom: 8rem; }
+.offline-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .tutor-history, .tutor-history fieldset { min-width: 0; overflow-wrap: anywhere; }
 .conversation-list { list-style: none; padding: 0; }
 .conversation-list li { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-block: .75rem; }

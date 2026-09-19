@@ -34,6 +34,7 @@ type Config struct {
 	InsecureNonLoopbackWarning bool
 	AdminUI                    AdminUIConfig
 	WebUIEnabled               bool
+	WebOfflineEnabled          bool
 	CompanionEnabled           bool
 	WebUIAllowLoopbackHTTP     bool
 	LearningSettingsFile       string
@@ -201,6 +202,9 @@ func load(lookup envReader) (Config, error) {
 		return Config{}, err
 	}
 	if cfg.WebUIEnabled, err = boolValue(lookup, "WEB_UI_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.WebOfflineEnabled, err = boolValue(lookup, "WEB_OFFLINE_ENABLED", false); err != nil {
 		return Config{}, err
 	}
 	if cfg.CompanionEnabled, err = boolValue(lookup, "COMPANION_ENABLED", false); err != nil {
@@ -380,6 +384,9 @@ func load(lookup envReader) (Config, error) {
 	}
 	if cfg.Privacy.OfflineChallengeKeys, err = offlineChallengeKeys(lookup); err != nil {
 		return Config{}, err
+	}
+	if cfg.WebOfflineEnabled && (!cfg.WebUIEnabled || !cfg.Offline.SignerEnabled() || len(cfg.Privacy.OfflineChallengeKeys) == 0) {
+		return Config{}, errors.New("WEB_OFFLINE_ENABLED 需要启用 Web、配置离线签发器及持久化 PRIVACY_OFFLINE_CHALLENGE_KEYS")
 	}
 
 	if cfg.ShutdownTimeout <= 0 || cfg.PairingCodeTTL <= 0 || cfg.TokenLastUsedTouchInterval <= 0 || cfg.Model.Timeout <= 0 || cfg.Model.ProbeCacheTTL <= 0 || cfg.Privacy.ErasureGrantTTL <= 0 {

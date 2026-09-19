@@ -38,6 +38,16 @@ func (a *privacyHTTPAdapter) CurrentOfflineDevicePurge(ctx context.Context, devi
 	return a.store.CurrentOfflineDevicePurge(ctx, deviceID)
 }
 
+func (a *privacyHTTPAdapter) OfflineDevicePurgeReceipt(ctx context.Context, deviceID string, generation int64) (privacy.OfflineDeviceChildReceipt, bool, error) {
+	reader, ok := a.store.(interface {
+		OfflineDevicePurgeReceipt(context.Context, string, int64) (privacy.OfflineDeviceChildReceipt, bool, error)
+	})
+	if !ok {
+		return privacy.OfflineDeviceChildReceipt{}, false, &privacy.Error{Code: privacy.CodeOfflineChallengeUnavailable, Reason: "offline_device_receipt_unavailable"}
+	}
+	return reader.OfflineDevicePurgeReceipt(ctx, deviceID, generation)
+}
+
 func (a *privacyHTTPAdapter) AcknowledgeOfflineDevicePurge(ctx context.Context, erasureID, deviceID string, acknowledgment privacy.OfflineDevicePurgeAcknowledgment) (privacy.OfflineDeviceChildReceipt, error) {
 	return a.store.AcknowledgeOfflineDevicePurge(ctx, erasureID, deviceID, acknowledgment)
 }

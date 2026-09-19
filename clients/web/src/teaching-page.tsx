@@ -563,6 +563,16 @@ function TeachingWorkspace({
             )}
           </div>
           <h1>{stateLabels[view.session.state] ?? '当前版本尚不支持的教学阶段'}</h1>
+          {item?.goal_revision && (
+            <a href={`/app/offline?${new URLSearchParams({
+              space: spaceId,
+              goal: item.goal_revision.goal_id,
+              session: sessionId,
+              version: String(view.session.aggregate_version),
+            })}`}>
+              下载离线学习包
+            </a>
+          )}
           <p role="status">
             {busy
               ? '正在处理…'

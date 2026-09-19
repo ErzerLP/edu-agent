@@ -1002,6 +1002,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/web/offline/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 浏览器离线独立发布开关与版本协商，不创建本地库或服务端身份 */
+        get: operations["getWebOfflineCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/web/offline/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 明确同意后保留原设备的专用离线同步身份，最长 37 天
+         * @description 要求当前在线浏览器身份及原有 learning:read/write、knowledge:read。只在 WEB_OFFLINE_ENABLED=true 时允许启用；Cookie 为 HttpOnly，不返回 Bearer。初始信任根来自认证的同源 HTTPS；loopback HTTP 仅供开发。
+         */
+        post: operations["enableWebOffline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/web/offline/session": {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** 核对原设备、服务端时间及清除任务；不包含正文，允许旧代次处理清除 */
+        get: operations["getWebOfflineSession"];
+        put?: never;
+        post?: never;
+        /** 删除当前离线恢复身份；不表示本地正文或服务器事实已清除 */
+        delete: operations["disableWebOffline"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/web/offline/packs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 复用原 offline owner 签发；明确指定原学习区与 session_id，并将专用同步身份续期最多 37 天 */
+        post: operations["prepareWebOfflinePack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/web/offline/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 原 offline owner 按原提交归属、服务端时间和 Inbox 规则逐条处理
+         * @description 不使用当前页面学习区，不更改签名 payload，不推进在线教学会话。原设备撤销、代次关闭或有待清除任务时拒绝正文。
+         */
+        post: operations["syncWebOffline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/web/offline/operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 核对原操作；先解决结果未知再提交新记录 */
+        get: operations["getWebOfflineOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/web/offline/purge/{erasureID}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 复用原设备 possession 与版本化 challenge 的正式清除回执 */
+        post: operations["acknowledgeWebOfflinePurge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/web/pairings": {
         parameters: {
             query?: never;
@@ -3441,6 +3569,21 @@ export interface components {
             persistence: components["schemas"]["LearningCapability"];
             research: components["schemas"]["LearningCapability"];
             web_mentor: components["schemas"]["LearningCapability"];
+        };
+        WebOfflineSession: {
+            /** @constant */
+            adapter_version: 1;
+            device_id: components["schemas"]["LearningUUID"];
+            generation: components["schemas"]["Uint63Decimal"];
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            server_time: string;
+            csrf_token: string;
+            content_allowed: boolean;
+            /** @description 原设备原代次已完成的正式清除回执，供 ack 响应丢失后恢复；不表示其他设备已清除 */
+            purge_receipt: components["schemas"]["OfflinePurgeAckResponse"] | null;
+            purge: components["schemas"]["OfflinePurgeTask"] | null;
         };
         WebSession: {
             device: components["schemas"]["Device"];
@@ -6843,6 +6986,9 @@ export interface components {
         };
     };
     parameters: {
+        WebOfflineAdapter: "1";
+        WebOfflineDevice: components["schemas"]["LearningUUID"];
+        WebOfflineGeneration: components["schemas"]["Uint63Decimal"];
         /** @description 先查询 capabilities；不协商新协议的客户端继续使用旧严格 DTO */
         ContentProtocol: "1";
         ContentArtifactID: string;
@@ -8567,6 +8713,256 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LearningCapabilities"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getWebOfflineCapabilities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前适配能力 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        adapter_version: 1;
+                        enabled: boolean;
+                        answer_protocols: "text-answer-v1"[];
+                        content_protocols: "offline-pack-v1"[];
+                    };
+                };
+            };
+        };
+    };
+    enableWebOffline: {
+        parameters: {
+            query?: never;
+            header: {
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @constant */
+                    adapter_version: 1;
+                    /** @constant */
+                    save_consent: true;
+                };
+            };
+        };
+        responses: {
+            /** @description 原设备恢复身份与原始签名信任根 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        adapter_version: 1;
+                        device_id: components["schemas"]["LearningUUID"];
+                        generation: components["schemas"]["Uint63Decimal"];
+                        /** Format: date-time */
+                        expires_at: string;
+                        csrf_token: string;
+                        bootstrap: components["schemas"]["OfflinePairingBootstrap"];
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getWebOfflineSession: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 专用离线身份；content_allowed=false 时禁止正文同步，先清除 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebOfflineSession"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    disableWebOffline: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+                "X-Web-Principal-ID": components["parameters"]["WebOfflineDevice"];
+                "X-Web-Generation": components["parameters"]["WebOfflineGeneration"];
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前专用身份已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    prepareWebOfflinePack: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+                "X-Web-Principal-ID": components["parameters"]["WebOfflineDevice"];
+                "X-Web-Generation": components["parameters"]["WebOfflineGeneration"];
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OfflinePrepareRequest"] & Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description 原请求幂等重放 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfflinePrepareResponse"];
+                };
+            };
+            /** @description 原始签名包 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfflinePrepareResponse"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    syncWebOffline: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+                "X-Web-Principal-ID": components["parameters"]["WebOfflineDevice"];
+                "X-Web-Generation": components["parameters"]["WebOfflineGeneration"];
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OfflineSyncRequest"];
+            };
+        };
+        responses: {
+            /** @description 逐条正式回执与接纳状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfflineSyncResponse"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getWebOfflineOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+                "X-Web-Principal-ID": components["parameters"]["WebOfflineDevice"];
+                "X-Web-Generation": components["parameters"]["WebOfflineGeneration"];
+            };
+            path: {
+                operationID: components["schemas"]["LearningUUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原始持久回执及最新评估状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfflineOperationStatus"];
+                };
+            };
+            404: components["responses"]["WebFailure"];
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    acknowledgeWebOfflinePurge: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Offline-Adapter": components["parameters"]["WebOfflineAdapter"];
+                "X-Web-Principal-ID": components["parameters"]["WebOfflineDevice"];
+                "X-Web-Generation": components["parameters"]["WebOfflineGeneration"];
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path: {
+                erasureID: components["schemas"]["LearningUUID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OfflinePurgeAckRequest"];
+            };
+        };
+        responses: {
+            /** @description 原设备清除回执 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OfflinePurgeAckResponse"];
                 };
             };
             default: components["responses"]["WebFailure"];

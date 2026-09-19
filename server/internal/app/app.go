@@ -193,7 +193,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		MentorRuns:       mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool),
-		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},
+		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, OfflineEnabled: cfg.WebOfflineEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},
 		Identity:       identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
 		Learning: learningService, Offline: offlineService,
 		Memory: bridge.memoryService, MemoryExporter: bridge.memoryExporter,

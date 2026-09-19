@@ -6,6 +6,8 @@ import {
   createRouter,
   RouterProvider,
   useParams,
+  useLocation,
+  Outlet,
 } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionProvider } from './lib/session'
@@ -19,6 +21,7 @@ import { TasksPage, RunPage } from './tasks-page'
 import { ImportPage } from './import-page'
 import { KnowledgePage } from './knowledge-page'
 import { FeedbackListPage, FeedbackPage } from './feedback-page'
+import { OfflinePage } from './offline-page'
 import { TutorHistory } from './components/tutor-history'
 import { ProgressPage } from './progress-page'
 import { progressSearch } from './api/progress'
@@ -28,12 +31,18 @@ import { MemoryPage } from './memory-page'
 import { memorySearch } from './api/memory'
 import { DataPage, DevicesPage, dataSearch } from './data-page'
 
-const root = createRootRoute({
-  component: () => (
+function RootLayout() {
+  const { pathname } = useLocation()
+  if (pathname === '/app/offline' || pathname === '/offline') return <Outlet />
+  return (
     <SessionProvider>
       <WorkspaceShell />
     </SessionProvider>
-  ),
+  )
+}
+
+const root = createRootRoute({
+  component: RootLayout,
   notFoundComponent: () => (
     <section>
       <h1>页面不存在</h1>
@@ -42,6 +51,7 @@ const root = createRootRoute({
   ),
 })
 const home = createRoute({ getParentRoute: () => root, path: '/', component: HomePage })
+const offline = createRoute({ getParentRoute: () => root, path: '/offline', component: OfflinePage })
 const progress = createRoute({
   getParentRoute: () => root, path: '/progress',
   validateSearch: (search: Record<string, unknown>) => progressSearch.parse(search),
@@ -235,6 +245,7 @@ const devices = createRoute({ getParentRoute: () => root, path: '/settings/devic
 const router = createRouter({
   routeTree: root.addChildren([
     home,
+    offline,
     progress,
     space,
     goal,

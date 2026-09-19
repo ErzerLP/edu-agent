@@ -74,6 +74,9 @@ Service Worker 只缓存本构建的白名单资产和固定离线页壳，注�
 切换/关闭对话、撤销或程序退出会按租约收尾；刷新或重启不自动恢复授权。
 命令/输入响应未知时查询原回执，不重新执行。文件权限不限制 Shell，私人文件和终端回显
 会经学习服务器传输，授权模型外发后按当前对话保存模式处理。
+通过 Nginx 部署时，采用更新后的 [代理白名单](../../deploy/web/nginx.conf)，转发
+`/v1/companion/browser`、`/v1/companion/attach`、`/v1/companion/channel`；
+浏览器配对和本机主动轮询都依赖这些路径。服务端仍需显式启用 `COMPANION_ENABLED` 并完成双端授权。
 安装、卸载、风险和详细生命周期见 [companion 使用说明](../cli-go/README.md#可选本地-companion)。
 当前仅取得 Linux 原生证据，Web 构建/浏览器与 macOS 原生验收缺口见
 [Issue #38 验收记录](../../docs/development/issue-38-acceptance.md)，未通过前不视为发布完成。

@@ -59,6 +59,10 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		}
 	}
 	for path, want := range map[string]bool{
+		"/v1/companion/browser": true, "/v1/companion/attach": true, "/v1/companion/channel": true,
+		"/v1/companion": false, "/v1/companion/": false, "/v1/companion/internal": false,
+		"/v1/companion/browser/": false, "/v1/companion/browser/force": false,
+		"/v1/companion/attach/force": false, "/v1/companion/channel/force": false,
 		"/v1/knowledge/notesync/status": true, "/v1/knowledge/notesync/previews": true,
 		"/v1/knowledge/notesync/reviews": true, "/v1/knowledge/notesync/reviews/a": true,
 		"/v1/knowledge/notesync/reviews/a/resolutions": true, "/v1/knowledge/notesync/reviews/a/resolution-previews": true,

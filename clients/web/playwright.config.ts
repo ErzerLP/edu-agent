@@ -8,8 +8,19 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:32929',
     headless: true,
-    launchOptions: { executablePath: process.env.WEB_CHROMIUM_PATH },
   },
+  projects: [
+    {
+      name: 'chromium',
+      use: { browserName: 'chromium', launchOptions: { executablePath: process.env.WEB_CHROMIUM_PATH } },
+    },
+    ...(process.env.WEB_RELEASE_MATRIX === '1'
+      ? [
+          { name: 'firefox', use: { browserName: 'firefox' as const } },
+          { name: 'webkit', use: { browserName: 'webkit' as const } },
+        ]
+      : []),
+  ],
   webServer: {
     command: 'node scripts/test-server.mjs',
     url: 'http://127.0.0.1:32929/livez',

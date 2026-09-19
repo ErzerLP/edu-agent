@@ -1,7 +1,7 @@
 .PHONY: fmt server-fmt cli-fmt test server-test cli-test test-race server-test-race cli-test-race \
 	vet server-vet cli-vet build server-build cli-build cli-check cli-cross-build cli-platform-evidence cli-release \
 	cli-m1-blackbox cli-m1-blackbox-run postgres-candidate postgres-candidate-resume postgres-candidate-shard \
-	notesync-candidate web-build web-check check agentcore-fmt agentcore-test agentcore-test-race agentcore-vet agentcore-build
+	notesync-candidate web-build web-check web-release-check web-release-candidate check agentcore-fmt agentcore-test agentcore-test-race agentcore-vet agentcore-build
 
 fmt: agentcore-fmt server-fmt cli-fmt
 
@@ -57,6 +57,15 @@ web-build:
 
 web-check:
 	cd clients/web && npm run check && npm test
+
+# 不自动安装依赖；候选检查必须显式提供独立测试数据库。
+web-release-check:
+	node --test scripts/web-release-results.test.mjs
+	node scripts/check-web-release.mjs
+
+web-release-candidate:
+	node --test scripts/web-release-results.test.mjs
+	node scripts/check-web-release.mjs --candidate
 
 server-build: web-build
 	cd server && go build -tags web_release -o edu-agentd ./cmd/edu-agentd

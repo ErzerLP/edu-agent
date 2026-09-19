@@ -20,6 +20,13 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 
 若只检查 Go 代码且不启用 Web，可直接运行 Go 命令；启用 Web 但没有真实资产时服务启动失败。发行必须用 `make server-build` 或 `go build -tags web_release`，缺少入口或 assets 会在编译时失败。Dockerfile 也先构建真实前端再嵌入 Go。
 
+发布检查入口为仓库根目录的 `make web-release-check`；完整自动化候选为
+`TEST_DATABASE_URL=专用测试库 make web-release-candidate`，其中包含全局清除用例，
+不可使用既有部署数据。候选串行运行 Chromium/Firefox/WebKit，每个测试文件独立重启
+夹具。日常 `npm run test:browser` 仍只选 Chromium；设置 `WEB_RELEASE_MATRIX=1`
+可用 `--project=firefox` 或 `--project=webkit` 定向诊断。需要按锁文件准备依赖和对应引擎，
+脚本不自动安装。完整发布仍须通过[外部/人工门禁与 A01–A36](../../docs/development/issue-37-acceptance.md)。
+
 ## HTTPS 部署
 
 设置 `WEB_UI_ENABLED=true`、`PUBLIC_BASE_URL=https://你的域名`，关闭 `WEB_UI_ALLOW_LOOPBACK_HTTP`。保持 Go 监听 loopback，使用 [Nginx 白名单示例](../../deploy/web/nginx.conf) 终结 TLS，只暴露 `/app` 与本次学习 API；`/admin`、`/internal`、`/mcp` 均不公开。不要把完整服务端口绑定到公网，也不要将旧管理代理信任配置用于公开入口。现有管理网络配置和独立管理凭据要求不变。

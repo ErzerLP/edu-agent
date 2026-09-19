@@ -266,7 +266,7 @@ func (a *API) webAsset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	name := strings.TrimPrefix(r.URL.Path, "/app/")
 	// 仅页面地址回退；不存在的资源、API 和扩展名请求保留 404。
-	if name == "" || name == "settings" || name == "runs" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/") || strings.HasPrefix(name, "runs/")) && !strings.Contains(name, ".")) {
+	if name == "" || name == "settings" || name == "settings/data" || name == "settings/devices" || name == "progress" || name == "memory" || name == "runs" || ((strings.HasPrefix(name, "spaces/") || strings.HasPrefix(name, "content/") || strings.HasPrefix(name, "runs/")) && !strings.Contains(name, ".")) {
 		name = "index.html"
 	}
 	if !fs.ValidPath(name) || path.Clean(name) != name {

@@ -68,5 +68,10 @@ make build
 make check
 ```
 
+Web 发布候选使用 `make web-release-check` 和 `make web-release-candidate`。
+它们复核生成类型、生产资产、代理边界及真实浏览器/CLI；不会自动安装依赖。
+自动化结果与完整在线发布结论分开，当前范围及未通过项见
+[Issue #37 发布验收记录](docs/development/issue-37-acceptance.md)。
+
 真实 PostgreSQL 测试需要显式配置 `TEST_DATABASE_URL`，未配置时的 skip 不代表数据库行为通过。CLI 和服务端分别位于 `clients/cli-go` 与 `server`。
 共享 Go 模型循环位于独立模块 [`packages/agentcore`](packages/agentcore/README.md)，CLI 生产入口已使用；各模块通过仓库内相对依赖独立构建，无需 `go.work`。

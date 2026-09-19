@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/edu-agent/edu-agent/packages/agentcore/companion"
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
@@ -27,6 +28,7 @@ import (
 )
 
 type Service struct {
+	companion           *companion.Broker
 	memories            memoryReader
 	memoryPermits       *privacy.ReadPermitManager
 	progress            learning.ProgressStore

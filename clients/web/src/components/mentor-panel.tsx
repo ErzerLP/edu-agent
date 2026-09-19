@@ -10,6 +10,7 @@ import { Button } from './ui/button'
 import { Confirm, ErrorState } from './common'
 import { ReferenceLink } from '@/knowledge-page'
 import { CandidateReview } from '@/memory-page'
+import { CompanionPanel } from './companion-panel'
 
 export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversation, onChange }: { goal: { learning_space_id: string; goal_id: string; revision: number; management: { status: string } }; archivedSpace: boolean; teachingSessionId?: string; conversation?: TutorConversation; onChange?: () => void }) {
   const { session, prefix, drafts } = useIdentity()
@@ -138,6 +139,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
   }
   return <section className="panel mentor-panel" aria-label="目标内导师">
     <h2>目标内导师</h2>
+    {conversation && <CompanionPanel key={conversation.id} conversation={conversation} />}
     <p className="hint">{teachingSessionId ? '导师可以追加解释、建议新安排；路线按教学调整模式接入，目标范围和完成标准会先展示差异供你确认。' : '围绕这个目标交流、澄清想法。进入具体课堂后可调整教学安排。'}</p>
     {current.error && <ErrorState error={current.error} retry={() => void current.refetch()} />}
     {otherActive && <p role="status">该目标的导师正在另一处交流，本课堂不会显示或接入那里的输出。{other?.teaching_session_id

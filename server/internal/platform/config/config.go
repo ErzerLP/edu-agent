@@ -34,6 +34,7 @@ type Config struct {
 	InsecureNonLoopbackWarning bool
 	AdminUI                    AdminUIConfig
 	WebUIEnabled               bool
+	CompanionEnabled           bool
 	WebUIAllowLoopbackHTTP     bool
 	LearningSettingsFile       string
 	MentorKeyFile              string
@@ -201,6 +202,12 @@ func load(lookup envReader) (Config, error) {
 	}
 	if cfg.WebUIEnabled, err = boolValue(lookup, "WEB_UI_ENABLED", false); err != nil {
 		return Config{}, err
+	}
+	if cfg.CompanionEnabled, err = boolValue(lookup, "COMPANION_ENABLED", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.CompanionEnabled && !cfg.WebUIEnabled {
+		return Config{}, errors.New("COMPANION_ENABLED 需要 WEB_UI_ENABLED")
 	}
 	if cfg.WebUIAllowLoopbackHTTP, err = boolValue(lookup, "WEB_UI_ALLOW_LOOPBACK_HTTP", false); err != nil {
 		return Config{}, err

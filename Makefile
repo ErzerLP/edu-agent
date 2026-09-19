@@ -74,6 +74,12 @@ cli-build:
 	mkdir -p clients/cli-go/bin
 	cd clients/cli-go && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$${CLI_VERSION:-dev} -X main.commit=$${CLI_COMMIT:-unknown}" -o bin/edu-agent ./cmd/edu-agent
 
+# 可选本机适配器单独构建，不随服务端安装或自动启动。
+.PHONY: companion-build
+companion-build:
+	mkdir -p clients/cli-go/bin
+	cd clients/cli-go && CGO_ENABLED=0 go build -trimpath -o bin/edu-companion ./cmd/edu-companion
+
 cli-check: agentcore-test agentcore-test-race agentcore-vet cli-test cli-test-race cli-vet cli-build
 
 cli-m1-blackbox:

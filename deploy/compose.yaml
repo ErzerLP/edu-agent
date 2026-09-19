@@ -95,6 +95,7 @@ services:
       ADMIN_UI_ENABLED: ${ADMIN_UI_ENABLED:-false}
       WEB_UI_ENABLED: ${WEB_UI_ENABLED:-false}
       WEB_UI_ALLOW_LOOPBACK_HTTP: ${WEB_UI_ALLOW_LOOPBACK_HTTP:-false}
+      COMPANION_ENABLED: ${COMPANION_ENABLED:-false}
       ADMIN_UI_TOKEN: ${ADMIN_UI_TOKEN:-}
       ADMIN_UI_SETTINGS_FILE: /var/lib/edu-agent/private/admin-settings.json
       # 学习端秘密配置独立存放；Key 仅由显式授权的浏览器请求写入。

@@ -46,6 +46,24 @@ func TestLoadDefaultsToLoopback(t *testing.T) {
 	}
 }
 
+func TestCompanionRequiresIndependentFeatureGate(t *testing.T) {
+	values := baseEnv()
+	cfg, err := load(env(values))
+	if err != nil || cfg.CompanionEnabled {
+		t.Fatal("本地桥接必须默认关闭", err)
+	}
+	values["COMPANION_ENABLED"] = "true"
+	if _, err = load(env(values)); err == nil {
+		t.Fatal("没有学习 Web 却启用桥接")
+	}
+	values["WEB_UI_ENABLED"] = "true"
+	values["WEB_UI_ALLOW_LOOPBACK_HTTP"] = "true"
+	cfg, err = load(env(values))
+	if err != nil || !cfg.CompanionEnabled {
+		t.Fatal("显式本地桥接配置未生效", err)
+	}
+}
+
 func TestPublicBaseURLFollowsCustomLoopbackAddress(t *testing.T) {
 	values := baseEnv()
 	values["LISTEN_ADDR"] = "127.0.0.1:9090"

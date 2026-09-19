@@ -4,6 +4,11 @@
 
 ## 使用入口
 
+可选本地 companion 使用独立程序和默认关闭的 `COMPANION_ENABLED`。双端配对并对当前
+导师对话明确授权后，可转发本机文件和受管任务；服务端没有 OS 执行器。
+安装/撤销与权限说明见 [companion 使用说明](clients/cli-go/README.md#可选本地-companion)，
+发布前仍需补齐 [Web 与 macOS 验收缺口](docs/development/issue-38-acceptance.md)。
+
 CLI 的 `study help` 接入与 Web 共用的研究/空资料开学、运行、来源、正文版本、具体变更
 审阅及采用。工作台目标页和课堂页提供对应选择入口；正式课堂与已保存答案共享，
 未提交草稿仍属于原进程/标签页。本地加密聊天不会自动上传或转换为 Web 对话。

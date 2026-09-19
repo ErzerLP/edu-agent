@@ -14,6 +14,7 @@ import {
 import type { components } from './api/schema'
 import { Button } from './components/ui/button'
 import { Confirm, ErrorState } from './components/common'
+import { LocalConnectionSettings } from './components/companion-panel'
 
 type Target = 'teaching' | 'mentor' | 'search'
 type Update = components['schemas']['LearningSettingsUpdate']
@@ -340,6 +341,7 @@ export function SettingsPage() {
         <span className="eyebrow">设置与能力</span>
         <h1>清楚知道，现在能做什么。</h1>
       </section>
+      <LocalConnectionSettings />
       <section className="panel">
         <h2>显示</h2>
         <p>可使用页面顶部的主题按钮切换深浅主题。浏览器只持久保存主题偏好。</p>

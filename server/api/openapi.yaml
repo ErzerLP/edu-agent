@@ -6,6 +6,97 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/companion/browser:
+    post:
+      operationId: localCompanionBrowser
+      summary: 显式配对、授权、撤销和查询本地设备；默认关闭，不提供服务端 OS 执行
+      description: 精确验证 Origin/Host 与学习 Cookie/CSRF。配对后各操作还必须持有独立 secret；授权绑定真实对话、设备和隐私代次。调用仅投递一次，响应丢失时使用 receipt 查询原身份。
+      security: [{webCookie: []}]
+      parameters:
+        - {name: Origin, in: header, required: true, schema: {type: string}}
+        - {name: X-CSRF-Token, in: header, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: {type: string, enum: [capabilities, pair, status, grant, revoke, submit, receipt]}
+                id: {type: string, maxLength: 104}
+                secret: {type: string, maxLength: 104}
+                device: {type: string, maxLength: 104}
+                grant: {$ref: '#/components/schemas/CompanionGrant'}
+                operation: {$ref: '#/components/schemas/CompanionOperation'}
+                operation_id: {type: string, maxLength: 160}
+      responses:
+        '200':
+          description: 当前能力、一次性配对凭据、授权确认、设备状态或原操作回执；不缓存且不持久化秘密
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - {$ref: '#/components/schemas/CompanionPair'}
+                  - {$ref: '#/components/schemas/CompanionView'}
+                  - {$ref: '#/components/schemas/CompanionReceipt'}
+                  - {type: object, additionalProperties: {type: boolean}}
+        default: {$ref: '#/components/responses/WebFailure'}
+  /v1/companion/attach:
+    post:
+      operationId: localCompanionAttach
+      summary: 本机主动消费五分钟一次性配对码，Cookie 和管理凭据不适用
+      security: []
+      parameters:
+        - {name: Origin, in: header, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, code, device]
+              properties:
+                id: {type: string, maxLength: 104}
+                code: {type: string, maxLength: 104}
+                device: {$ref: '#/components/schemas/CompanionDevice'}
+      responses:
+        '200':
+          description: 仅本机保存于内存的通道 MAC 密钥；响应丢失须重新配对
+          content:
+            application/json:
+              schema: {type: object, required: [token], properties: {token: {type: string}}}
+        default: {$ref: '#/components/responses/WebFailure'}
+  /v1/companion/channel:
+    post:
+      operationId: localCompanionExchange
+      summary: 本机认证轮询及结算；领取即消费，断连不重投
+      description: MAC 为 HMAC-SHA256(token, Origin + 换行 + ID + 换行 + 序号十进制 + 换行 + 原始正文) 的十六进制。序号严格递增；每次检查原学习身份与对话授权。没有本地监听端口。
+      security: []
+      parameters:
+        - {name: Origin, in: header, required: true, schema: {type: string}}
+        - {name: X-Companion-ID, in: header, required: true, schema: {type: string}}
+        - {name: X-Companion-Sequence, in: header, required: true, schema: {type: string, pattern: '^[1-9][0-9]*$'}}
+        - {name: X-Companion-MAC, in: header, required: true, schema: {type: string, pattern: '^[a-f0-9]{64}$'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, properties: {receipt: {$ref: '#/components/schemas/CompanionReceipt'}}}
+      responses:
+        '200':
+          description: 当前授权与至多一个新操作；无操作时为空对象
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  grant: {$ref: '#/components/schemas/CompanionGrant'}
+                  operation: {$ref: '#/components/schemas/CompanionOperation'}
+        default: {$ref: '#/components/responses/WebFailure'}
   /v1/knowledge/structure/capabilities:
     get:
       operationId: "readKnowledgeStructureCapabilities"
@@ -4230,6 +4321,69 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    CompanionDevice:
+      type: object
+      additionalProperties: false
+      required: [id, host, user, os, workspace]
+      properties:
+        id: {type: string, maxLength: 104}
+        host: {type: string, maxLength: 256}
+        user: {type: string, maxLength: 256}
+        os: {type: string, enum: ['', linux, darwin], description: 未配对的状态视图为空字符串，配对请求只接受 linux 或 darwin}
+        workspace: {type: string, maxLength: 4096}
+    CompanionPair:
+      type: object
+      additionalProperties: false
+      required: [id, code, secret]
+      properties:
+        id: {type: string}
+        code: {type: string}
+        secret: {type: string}
+    CompanionGrant:
+      type: object
+      additionalProperties: false
+      required: [generation, space, conversation, files, shell, model, destination]
+      properties:
+        generation: {type: integer, minimum: 1}
+        space: {type: string, format: uuid}
+        conversation: {type: string, format: uuid}
+        files: {type: boolean}
+        shell: {type: boolean}
+        model: {type: boolean}
+        destination: {type: string}
+    CompanionOperation:
+      type: object
+      additionalProperties: false
+      required: [id, run, tool, arguments]
+      properties:
+        id: {type: string, maxLength: 160}
+        run: {type: string, maxLength: 160, description: 模型运行由宿主固定，浏览器手动操作强制使用 manual 加操作身份}
+        tool: {type: string, enum: [list, read, stat, prepare_write, prepare_edit, commit, discard, shell, task]}
+        arguments: {type: object, additionalProperties: true, description: 原 CLI provider 参数合同；Shell 无新增沙箱，文件 commit 只接受本机冻结 plan 身份}
+    CompanionReceipt:
+      type: object
+      additionalProperties: false
+      required: [id, device, conversation, run, state]
+      properties:
+        id: {type: string}
+        device: {type: string}
+        conversation: {type: string}
+        run: {type: string}
+        state: {type: string, enum: [queued, dispatched, completed, unknown, not_executed]}
+        task: {type: string, description: 原生任务身份，非 PID}
+        task_run: {type: string, description: 创建该任务的原运行身份，控制操作不改变归属}
+        error: {type: string}
+        value: {description: 有界原 provider 结果；任务状态、退出码、部分输入、输出缺口及持久化分别解释，不能从 completed 推断命令成功}
+    CompanionView:
+      type: object
+      additionalProperties: false
+      required: [id, state, device, receipts]
+      properties:
+        id: {type: string}
+        state: {type: string, enum: [pairing, awaiting_authorization, connected, disconnected, revoked]}
+        device: {$ref: '#/components/schemas/CompanionDevice'}
+        grant: {$ref: '#/components/schemas/CompanionGrant'}
+        receipts: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/CompanionReceipt'}}
     KnowledgeStructureSource:
       type: "object"
       additionalProperties: false

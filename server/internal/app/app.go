@@ -187,9 +187,10 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
-		LearningContent: contentStore,
-		LearningChanges: changes,
-		MentorRuns:      mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
+		CompanionEnabled: cfg.CompanionEnabled,
+		LearningContent:  contentStore,
+		LearningChanges:  changes,
+		MentorRuns:       mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},

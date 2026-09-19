@@ -23,6 +23,12 @@ func localExecutionTools() []modelclient.Tool {
 
 func isLocalExecutionTool(name string) bool { return name == "shell" || name == "task" }
 
+// 解码器供独立 companion 复用同一原生执行合同。
+func DecodeShell(raw, cwd string) (localexec.StartArgs, time.Duration, error) {
+	return decodeLocalShell(raw, cwd)
+}
+func DecodeTask(raw string) (localTaskArgs, error) { return decodeLocalTask(raw) }
+
 // Parse an exact object, including duplicate-key and null rejection. Local
 // execution must not reinterpret case-insensitive Go field names or ignore
 // action-inapplicable fields.

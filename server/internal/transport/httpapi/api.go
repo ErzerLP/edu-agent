@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/packages/agentcore/companion"
+
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/notesync"
@@ -149,6 +151,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	CompanionEnabled        bool
 	ReferenceFetcher        *research.Fetcher
 	LearningChanges         *learningchange.Service
 	LearningContent         *learningcontent.Store
@@ -188,6 +191,7 @@ type Options struct {
 }
 
 type API struct {
+	companion               *companion.Broker
 	referenceFetcher        *research.Fetcher
 	learningContent         *learningcontent.Store
 	learningChanges         *learningchange.Service
@@ -303,6 +307,17 @@ func New(options Options) (http.Handler, error) {
 	router.Use(api.webSecurity)
 	if api.webUI.Enabled {
 		api.mountWeb(router)
+	}
+	if options.CompanionEnabled && api.webUI.Enabled {
+		api.companion = companion.New(api.webUI.PublicBaseURL.Scheme + "://" + api.webUI.PublicBaseURL.Host)
+		if api.mentorRuns != nil {
+			api.mentorRuns.ConfigureCompanion(api.companion)
+		}
+		router.Post("/v1/companion/attach", api.companionAttach)
+		router.Post("/v1/companion/channel", api.companionChannel)
+	}
+	if api.webUI.Enabled {
+		router.With(api.authenticate).Post("/v1/companion/browser", api.companionBrowser)
 	}
 	router.Get("/livez", api.livez)
 	router.Get("/readyz", api.readyz)

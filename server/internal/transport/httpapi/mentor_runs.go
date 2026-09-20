@@ -276,6 +276,7 @@ func (a *API) mentorEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	controller := http.NewResponseController(w)
 	started := false
+	flushPending := false
 	last := time.Time{}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -289,7 +290,7 @@ func (a *API) mentorEvents(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		err = a.mentorRuns.Events(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "runID"), after, func(events []mentorrun.Event) error {
-			if started && len(events) == 0 && time.Since(last) < heartbeat {
+			if started && !flushPending && len(events) == 0 && time.Since(last) < heartbeat {
 				return nil
 			}
 			if err := controller.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
@@ -316,6 +317,8 @@ func (a *API) mentorEvents(w http.ResponseWriter, r *http.Request) {
 				}
 				after = event.Seq
 			}
+			// WebKit 可能暂存 fetch 流的事件尾部；下一轮补发心跳促使其交付，避免等到空闲心跳。
+			flushPending = len(events) > 0
 			last = time.Now()
 			return controller.Flush()
 		})

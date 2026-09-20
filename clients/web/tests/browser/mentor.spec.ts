@@ -70,8 +70,11 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await expect(panel.getByLabel('导师输出')).toContainText('浏览器真实导师')
   expect((await (await page.request.get('http://127.0.0.1:32930/stats')).json()).calls).toBe(stats.calls)
   const other = await context.newPage()
+  // 先确认第二页已建立订阅，避免仅由初始快照请求碰巧读到清除结果。
+  const subscribed = other.waitForResponse((response) => response.url().includes('/events?after=') && response.status() === 200)
   await other.goto(goalURL)
   await expect(other.getByLabel('导师输出')).toContainText('浏览器真实导师')
+  await subscribed
   await panel.getByRole('button', { name: '清除本次正文', exact: true }).click()
   await page.getByRole('button', { name: '确认清除本次正文' }).click()
   await expect(panel.getByLabel('导师输出')).not.toContainText('浏览器真实导师')

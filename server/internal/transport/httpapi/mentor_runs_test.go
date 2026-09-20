@@ -247,6 +247,63 @@ func TestPostgreSQLMentorCookieHTTPAndSSERecovery(t *testing.T) {
 	if strings.Contains(logs.String(), privateGoal) || strings.Contains(logs.String(), privateOutput) || strings.Contains(logs.String(), cookie.Value) {
 		t.Fatal("日志含私人正文或 Cookie")
 	}
+	t.Run("清除通知后及时补发心跳", func(t *testing.T) {
+		// WebKit 可能暂存事件尾部；下一次网络写入必须早于默认十秒空闲心跳。
+		streamCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+		r, err := http.NewRequestWithContext(streamCtx, "GET", origin+runPath+fmt.Sprintf("/events?after=%d", snapshot.Watermark), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.AddCookie(cookie)
+		r.Header.Set(learningspace.Header, space.ID)
+		stream, err := server.Client().Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer stream.Body.Close()
+		if stream.StatusCode != 200 {
+			t.Fatalf("订阅已完成运行失败：%d", stream.StatusCode)
+		}
+		scanner := bufio.NewScanner(stream.Body)
+		if !scanner.Scan() || scanner.Text() != ": heartbeat" {
+			t.Fatalf("未收到初始心跳：%v", scanner.Err())
+		}
+		response, data := request("POST", runPath+"/commands", space.ID, mentorrun.Command{OperationID: uuid.NewString(), ExpectedVersion: snapshot.Version, Kind: "clear"}, nil)
+		if response.StatusCode != 202 {
+			t.Fatalf("清除正文失败：%d %s", response.StatusCode, data)
+		}
+		var cleared mentorrun.Receipt
+		if err := json.Unmarshal(data, &cleared); err != nil {
+			t.Fatal(err)
+		}
+		notified, heartbeat := false, false
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "data: ") {
+				var event mentorrun.Event
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+					t.Fatal(err)
+				}
+				if event.Type != "command" || event.RunID != receipt.RunID || event.Version != cleared.Version || event.Seq != snapshot.Watermark+1 {
+					t.Fatalf("清除通知身份或版本不正确：%+v", event)
+				}
+				notified = true
+			}
+			if notified && line == ": heartbeat" {
+				heartbeat = true
+				break
+			}
+		}
+		if !notified || !heartbeat {
+			t.Fatalf("清除通知后没有及时补发心跳：通知=%t，心跳=%t，错误=%v", notified, heartbeat, scanner.Err())
+		}
+		response, data = request("GET", runPath, space.ID, nil, nil)
+		var result mentorrun.Snapshot
+		if err := json.Unmarshal(data, &result); err != nil || response.StatusCode != 200 || result.BodyAvailable || result.Output != "" || result.Version != cleared.Version || calls.Load() != 1 {
+			t.Fatalf("清除后仍有正文或订阅触发了模型重放：%d %s", response.StatusCode, data)
+		}
+	})
 	// 新会话接口在同一真实 Cookie/CSRF、非默认区和隐私边界内执行。
 	conversationID := uuid.NewString()
 	newConversation := mentorrun.NewConversation{ID: conversationID, GoalID: goal, Saved: true}

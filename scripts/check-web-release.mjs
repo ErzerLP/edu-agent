@@ -91,7 +91,10 @@ try {
         step(`${project} / ${file}`, () => {
           const json = join(output, `${project}-${file}.json`)
           const fixture = !['learning.spec.ts', 'settings.spec.ts'].includes(file)
-          const log = command('npm', ['run', 'test:browser', '--', file, `--project=${project}`, '--reporter=json'], web, {
+          const browserCommand = file === 'offline.spec.ts'
+            ? ['run', 'test:offline', '--']
+            : ['run', 'test:browser', '--', file]
+          const log = command('npm', [...browserCommand, `--project=${project}`, '--reporter=json'], web, {
             WEB_RELEASE_MATRIX: '1', WEB_WORKSPACE_FIXTURE: fixture ? '1' : '0', WEB_MENTOR_FIXTURE: fixture ? '1' : '0', WEB_NOTESYNC_FIXTURE: file === 'notesync.spec.ts' ? '1' : '0', PLAYWRIGHT_JSON_OUTPUT_FILE: json,
           }, 1200000)
           checkBrowserResults(JSON.parse(readFileSync(json, 'utf8')), project)

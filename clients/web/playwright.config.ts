@@ -12,12 +12,24 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { browserName: 'chromium', launchOptions: { executablePath: process.env.WEB_CHROMIUM_PATH } },
+      use: {
+        browserName: 'chromium',
+        launchOptions: { executablePath: process.env.WEB_CHROMIUM_PATH },
+      },
     },
     ...(process.env.WEB_RELEASE_MATRIX === '1'
       ? [
-          { name: 'firefox', use: { browserName: 'firefox' as const } },
-          { name: 'webkit', use: { browserName: 'webkit' as const } },
+          // 完整离线流程依赖 Chromium 的真实持久存储授权；其他引擎执行能力降级验收。
+          {
+            name: 'firefox',
+            grepInvert: /@chromium-offline/,
+            use: { browserName: 'firefox' as const },
+          },
+          {
+            name: 'webkit',
+            grepInvert: /@chromium-offline/,
+            use: { browserName: 'webkit' as const },
+          },
         ]
       : []),
   ],

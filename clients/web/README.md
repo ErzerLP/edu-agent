@@ -363,6 +363,20 @@ TEST_DATABASE_URL='独立测试数据库 URL' npm run test:browser
 
 浏览器检查需要与锁文件一致的 Playwright Chromium；可以设置 `WEB_CHROMIUM_PATH` 使用已有兼容浏览器。测试启动生产 Go 二进制、真实配对和使用 PostgreSQL，保留各主题/视口截图到被 Git 忽略的 `test-results/`。数据库应独占，HTTP/隐私集成测试和浏览器检查串行运行；不要连接生产数据库。宿主缺浏览器依赖时可使用版本匹配的 Playwright 容器。
 
+离线文件使用专用入口，它会同时启用本地教学模型和离线签发器夹具：
+
+```bash
+TEST_DATABASE_URL='全新独立测试数据库 URL' npm run test:offline -- --project=chromium
+```
+
+运行前需构建 Web 生产资产及 `server/edu-agentd`（`web_release` 标签）。设置
+`WEB_RELEASE_MATRIX=1` 后可分别指定 `firefox` 或 `webkit`，每个引擎使用独立空库。
+原四项完整离线场景标记为 `@chromium-offline`，仅在 Chromium 运行；其他引擎执行
+自身 Storage API 探测及缺少存储/跨页广播能力时的拒绝保存验收，不代表完整离线支持。
+发布候选自动复用此入口。直接运行 `test:browser -- offline.spec.ts` 时须自行设置
+`WEB_WORKSPACE_FIXTURE=1 WEB_OFFLINE_FIXTURE=1`，否则前置检查会明确失败。
+详见 [Issue #49 验收记录](../../docs/development/issue-49-acceptance.md)。
+
 设计与验收见 [Web 入口设计](../../docs/design/web-learning-entry.md) 和 [Issue #18 验收记录](../../docs/development/issue-18-acceptance.md)。
 
 ## 版本化教学工作区

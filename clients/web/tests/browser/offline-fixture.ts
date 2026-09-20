@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 
@@ -151,6 +151,7 @@ export async function createVault(page: Page, path: string) {
   await page.getByLabel('解锁口令', { exact: true }).fill(offlinePassword)
   await page.getByLabel('再次输入口令').fill(offlinePassword)
   await page.getByRole('checkbox').check()
+  await expect(page.getByRole('button', { name: '授权并创建加密离线库' })).toBeEnabled()
   await page.getByRole('button', { name: '授权并创建加密离线库' }).click()
   await expect(page.getByRole('heading', { name: '离线包列表' })).toBeVisible()
 }
@@ -158,4 +159,24 @@ export async function unlockVault(page: Page) {
   await page.getByLabel('解锁口令', { exact: true }).fill(offlinePassword)
   await page.getByRole('button', { name: '解锁', exact: true }).click()
   await expect(page.getByRole('heading', { name: '离线包列表' })).toBeVisible()
+}
+
+export async function reconnectOffline(context: BrowserContext) {
+  const pages = context.pages()
+  // Playwright 先恢复页面，再恢复 Service Worker；待两者完成后才交付重连事件，
+  // 避免页面已 online 而身份查询仍被模拟网络以 ERR_INTERNET_DISCONNECTED 拒绝。
+  await Promise.all(
+    pages.map((page) =>
+      page.evaluate(() => {
+        window.addEventListener('online', (event) => event.stopImmediatePropagation(), {
+          capture: true,
+          once: true,
+        })
+      }),
+    ),
+  )
+  await context.setOffline(false)
+  await Promise.all(
+    pages.map((page) => page.evaluate(() => window.dispatchEvent(new Event('online')))),
+  )
 }

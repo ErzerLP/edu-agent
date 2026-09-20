@@ -15,6 +15,7 @@
     "check": "tsc --noEmit",
     "test": "vitest run",
     "test:browser": "playwright test",
+    "test:offline": "node scripts/test-offline.mjs",
     "format": "prettier --write src tests scripts *.ts *.json index.html",
     "build": "npm run check && vite build"
   },

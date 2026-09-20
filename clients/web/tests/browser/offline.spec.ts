@@ -9,11 +9,29 @@ import {
   offlineOrigin,
   offlinePassword,
   pairOffline,
+  reconnectOffline,
   unlockVault,
   serverCommand,
 } from './offline-fixture'
 
-test('真实签名包断网作答、浏览器重启和响应丢失后核对原操作', async ({ request }) => {
+test.beforeAll(async ({ request }) => {
+  const response = await request.get(`${offlineOrigin}/v1/web/offline/capabilities`)
+  expect(response.ok(), await response.text()).toBe(true)
+  expect(
+    await response.json(),
+    '离线验收请使用 npm run test:offline，需启用离线签发器夹具',
+  ).toMatchObject({
+    enabled: true,
+  })
+  expect(
+    process.env.WEB_WORKSPACE_FIXTURE,
+    '离线验收请使用 npm run test:offline，需启用本地教学模型夹具',
+  ).toBe('1')
+})
+
+test('真实签名包断网作答、浏览器重启和响应丢失后核对原操作 @chromium-offline', async ({
+  request,
+}) => {
   test.setTimeout(150_000)
   const fixture = await offlineFixture(request)
   const profile = await mkdtemp(join(tmpdir(), 'edu-offline-browser-'))
@@ -72,7 +90,9 @@ test('真实签名包断网作答、浏览器重启和响应丢失后核对原�
     await unlockVault(page)
     await expect(page.getByText('已保存未同步', { exact: true })).toBeVisible()
     await expect(
-      page.getByText(`原学习区 ${fixture.path.split('space=')[1].split('&')[0]}`, { exact: false }),
+      page.getByText(`原学习区 ${fixture.path.split('space=')[1].split('&')[0]}`, {
+        exact: false,
+      }),
     ).toBeVisible()
     const calls: string[] = []
     let lost = false
@@ -88,7 +108,8 @@ test('真实签名包断网作答、浏览器重启和响应丢失后核对原�
     page.on('request', (req) => {
       if (req.url().includes('/offline/operations/')) calls.push('status')
     })
-    await context.setOffline(false)
+    await reconnectOffline(context)
+    await expect.poll(() => calls).toEqual(['sync'])
     await expect(page.getByText('同步结果未知', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '核对原操作并同步' }).click()
     await expect(page.getByText('服务端已确认', { exact: true })).toBeVisible()
@@ -105,7 +126,9 @@ test('真实签名包断网作答、浏览器重启和响应丢失后核对原�
   }
 })
 
-test('存储故障不假保存、两个标签页只保存一次、损坏与本地清除可核对', async ({ request }) => {
+test('存储故障不假保存、两个标签页只保存一次、损坏与本地清除可核对 @chromium-offline', async ({
+  request,
+}) => {
   test.setTimeout(150_000)
   const fixture = await offlineFixture(request)
   const profile = await mkdtemp(join(tmpdir(), 'edu-offline-fault-'))
@@ -186,7 +209,7 @@ test('存储故障不假保存、两个标签页只保存一次、损坏与本�
   }
 })
 
-test('没有持久化许可或配额时不创建离线库，也不写明文', async ({ page }) => {
+test('没有持久化许可或配额时不创建离线库，也不写明文 @chromium-offline', async ({ page }) => {
   await pairOffline(page)
   await page.goto(`${offlineOrigin}/app/offline`)
   expect(await page.evaluate(() => indexedDB.databases())).toEqual([])
@@ -208,15 +231,50 @@ test('没有持久化许可或配额时不创建离线库，也不写明文', as
   await page.getByRole('button', { name: '授权并创建加密离线库' }).click()
   await expect(page.getByRole('alert')).toContainText('配额不足')
   expect(await page.evaluate(() => indexedDB.databases())).toEqual([])
-  await page.addInitScript(() => {
-    Object.defineProperty(window, 'BroadcastChannel', { value: undefined })
-  })
-  await page.reload()
-  await expect(page.getByRole('alert')).toContainText('浏览器缺少')
-  await expect(page.getByRole('button', { name: '授权并创建加密离线库' })).not.toBeVisible()
 })
 
-test('真实断网设备重连清除，丢失 purge 响应后刷新核对原回执', async ({ request }) => {
+test('当前引擎按实际 Storage API 显示创建入口或拒绝保存', async ({ page }) => {
+  await page.goto(`${offlineOrigin}/app/offline`)
+  const persistentStorage = await page.evaluate(
+    () => typeof navigator.storage?.persist === 'function',
+  )
+  if (persistentStorage) {
+    await expect(page.getByRole('button', { name: '授权并创建加密离线库' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '授权并创建加密离线库' })).toBeDisabled()
+    await expect(page.getByRole('alert')).not.toBeVisible()
+  } else {
+    await expect(page.getByRole('alert')).toContainText('浏览器缺少')
+    await expect(page.getByRole('button', { name: '授权并创建加密离线库' })).not.toBeVisible()
+  }
+  expect(await page.evaluate(() => indexedDB.databases())).toEqual([])
+  expect(
+    await page.evaluate(() => localStorage.getItem('edu-browser-offline-presence-v1')),
+  ).toBeNull()
+})
+
+for (const missing of ['storage', 'BroadcastChannel'] as const) {
+  test(`缺少 ${missing} 时拒绝保存且不创建本地离线数据`, async ({ page }) => {
+    await page.addInitScript((missing) => {
+      Object.defineProperty(missing === 'storage' ? navigator : window, missing, {
+        value: undefined,
+      })
+    }, missing)
+    await page.goto(`${offlineOrigin}/app/offline`)
+    await expect(page.getByRole('alert')).toContainText('浏览器缺少')
+    await expect(page.getByRole('button', { name: '授权并创建加密离线库' })).not.toBeVisible()
+    expect(
+      await page.evaluate(async () => ({
+        databases: await indexedDB.databases(),
+        marker: localStorage.getItem('edu-browser-offline-presence-v1'),
+        caches: await caches.keys(),
+      })),
+    ).toEqual({ databases: [], marker: null, caches: [] })
+  })
+}
+
+test('真实断网设备重连清除，丢失 purge 响应后刷新核对原回执 @chromium-offline', async ({
+  request,
+}) => {
   test.setTimeout(150_000)
   const fixture = await offlineFixture(request)
   const profile = await mkdtemp(join(tmpdir(), 'edu-offline-purge-'))
@@ -268,7 +326,7 @@ test('真实断网设备重连清除，丢失 purge 响应后刷新核对原回�
       // 服务端已提交清除回执，但两个页面都收不到响应。
       await route.abort('failed')
     })
-    await context.setOffline(false)
+    await reconnectOffline(context)
     await expect.poll(() => ack?.status).toBe('succeeded')
     expect(ack?.device_id).toBe(session.device_id)
     await expect(page.getByLabel('离线答案')).not.toBeVisible()

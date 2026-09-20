@@ -283,7 +283,12 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
   await page.getByRole('button', { name: '切换深色主题' }).click()
   await expect(input).toHaveValue('还没提交的草稿')
   await page.getByRole('button', { name: '切换浅色主题' }).click()
-  const source = page.getByRole('button', { name: '原资料依据 1', exact: true })
+  // 等分资料的检索顺序取决于版本 ID，应按活动冻结的原文定位引用。
+  const sourceIndex = before.work_item.activity.knowledge_references.findIndex(
+    (reference: { slice: string }) => reference.slice.includes('偶数可以被 2 整除'),
+  )
+  expect(sourceIndex, '活动必须冻结包含偶数定义的原资料引用').toBeGreaterThanOrEqual(0)
+  const source = page.getByRole('button', { name: `原资料依据 ${sourceIndex + 1}`, exact: true })
   await source.click()
   await expect(page.getByRole('dialog', { name: '原资料依据' })).toContainText('偶数可以被 2 整除')
   await page.getByRole('button', { name: '关闭来源' }).click()

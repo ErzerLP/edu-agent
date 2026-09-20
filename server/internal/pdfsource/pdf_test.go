@@ -87,6 +87,22 @@ func TestPDFExecutionDeadline(t *testing.T) {
 	}
 }
 
+func TestPDFPreparationContextDoesNotOwnFileInstances(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if err := Prepare(ctx); err != nil {
+		t.Fatal("预编译失败", err)
+	}
+	cancel()
+	if err := Prepare(ctx); Code(err) != "pdf_timeout" {
+		t.Fatal("已取消的预编译未拒绝", err)
+	}
+	r, err := Parse(t.Context(), pdffixture.Build("独立文件实例"))
+	if err != nil || r.Text() != "独立文件实例" {
+		t.Fatal("预编译上下文取消影响后续文件实例", r, err)
+	}
+}
+
 func TestPDFCompressedMemoryLimit(t *testing.T) {
 	data := pdffixture.CompressedPadding((MemoryMiB + 32) << 20)
 	if len(data) > MaxBytes {

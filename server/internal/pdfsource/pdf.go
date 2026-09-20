@@ -81,6 +81,33 @@ var slots = make(chan struct{}, 2)
 // 仅缓存可信解析器机器码；每个文件使用新的内存实例，不缓存文件或解压正文。
 var compilationCache = wazero.NewCompilationCache()
 
+// Prepare 在接收文件任务前编译可信解析器，避免冷编译消耗文件处理的超时预算。
+// 不读取 PDF 或创建文件实例；调用方负责启动阶段的取消和超时。
+func Prepare(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return &Error{"pdf_timeout"}
+	}
+	pool, err := newPool(ctx)
+	if err == nil {
+		defer pool.Close()
+	}
+	if ctx.Err() != nil {
+		return &Error{"pdf_timeout"}
+	}
+	if err != nil {
+		return &Error{"pdf_resource_limit"}
+	}
+	return nil
+}
+
+func newPool(ctx context.Context) (pdfium.Pool, error) {
+	return webassembly.Init(webassembly.Config{
+		Context: ctx, MaxTotal: 1, FSConfig: wazero.NewFSConfig(), Stdout: io.Discard, Stderr: io.Discard,
+		RuntimeConfig: wazero.NewRuntimeConfig().WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
+			WithMemoryLimitPages(MemoryMiB * 16).WithCloseOnContextDone(true).WithCompilationCache(compilationCache),
+	})
+}
+
 func sandbox(ctx context.Context, data []byte, fn func(context.Context, pdfium.Pdfium, references.FPDF_DOCUMENT, int) error) (err error) {
 	if len(data) > MaxBytes {
 		return &Error{"pdf_file_limit"}
@@ -104,11 +131,7 @@ func sandbox(ctx context.Context, data []byte, fn func(context.Context, pdfium.P
 			err = &Error{"pdf_timeout"}
 		}
 	}()
-	pool, err := webassembly.Init(webassembly.Config{
-		Context: ctx, MaxTotal: 1, FSConfig: wazero.NewFSConfig(), Stdout: io.Discard, Stderr: io.Discard,
-		RuntimeConfig: wazero.NewRuntimeConfig().WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
-			WithMemoryLimitPages(MemoryMiB * 16).WithCloseOnContextDone(true).WithCompilationCache(compilationCache),
-	})
+	pool, err := newPool(ctx)
 	if err != nil {
 		return &Error{"pdf_resource_limit"}
 	}

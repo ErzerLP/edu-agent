@@ -26,6 +26,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
@@ -54,6 +55,9 @@ func verifyNocturneStartupPreflightForRuntime(ctx context.Context, pool *pgxpool
 }
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	if err := pdfsource.Prepare(ctx); err != nil {
+		return fmt.Errorf("初始化 PDF 解析器失败: %w", err)
+	}
 	pool, err := platformpostgres.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err

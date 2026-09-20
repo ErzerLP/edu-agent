@@ -297,9 +297,31 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
     if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
     for (const width of [390, 768, 1280, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
-        true,
-      )
+      const viewport = `${theme} / ${width}px`
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+        `${viewport}：整页不应横向溢出`,
+      ).toBeLessThanOrEqual(width)
+      const code = page.locator('pre[aria-label="代码，可横向滚动"]').first()
+      expect(
+        await code.evaluate((element) => element.scrollWidth > element.clientWidth),
+        `${viewport}：长代码仍应在代码块内滚动`,
+      ).toBe(true)
+      if (width < 768) await page.getByRole('button', { name: '导师', exact: true }).click()
+      const mode = page.getByLabel('调整模式', { exact: true })
+      await expect(mode).toBeVisible()
+      expect(
+        await mode.evaluate((element) => {
+          const label = element.closest('label')!
+          return label.scrollWidth <= label.clientWidth
+        }),
+        `${viewport}：调整模式标签不应被长选项撑出横向滚动范围`,
+      ).toBe(true)
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+        `${viewport}：导师栏显示时整页不应横向溢出`,
+      ).toBeLessThanOrEqual(width)
+      if (width < 768) await page.getByRole('button', { name: '学习', exact: true }).click()
       const audit = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
         .analyze()

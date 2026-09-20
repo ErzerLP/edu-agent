@@ -60,6 +60,10 @@ body:has(.teaching-workspace) .site-header {
 .column-size input {
   padding: 0;
 }
+.teaching-workspace select {
+  /* 防止 WebKit 将原生下拉框的长选项计入窄栏的横向溢出。 */
+  white-space: normal;
+}
 .content-block {
   min-width: 0;
   overflow-wrap: anywhere;

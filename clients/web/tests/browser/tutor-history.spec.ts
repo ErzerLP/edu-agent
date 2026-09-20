@@ -22,6 +22,7 @@ test('真实导师历史：多轮、展开草稿、回执核对、端点确认�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code)
   await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
   await configure(page)
   await page.goto('/app/')
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(`历史验收 ${randomUUID().slice(0, 8)}`)

@@ -75,7 +75,7 @@ function GoalItem({ item, compact, refresh }: { item: GoalProgress; compact?: bo
   }
   const mastery: Record<string, string> = { unseen: '未知，尚无证据', learning: '待巩固', provisional: '待确认', retained: '已有保持证据' }
   return <article className="panel section" aria-label={`目标进度：${name}`} data-goal-id={item.goal.goal_id}>
-    <h3><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId: item.goal.goal_id }}>{name}</Link> <small>{item.space_name} · {labels[item.goal.management.status]}</small></h3>
+    <h3><Link className="underline" to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId: item.goal.goal_id }}>{name}</Link> <small>{item.space_name} · {labels[item.goal.management.status]}</small></h3>
     <Link to="/progress" search={progressSearch.parse({ space: spaceId, goal: item.goal.goal_id, status: 'all' })}>仅查看此目标</Link>
     {item.goal.management.completion && <p>手动完成依据：{item.goal.management.completion.reason}。此状态独立于路线与掌握证据。</p>}
     <p className="hint">截止：{item.goal.management.details.deadline ? when(item.goal.management.details.deadline) : '未设置'} · 活跃时间约 {Math.round(item.estimated_active_seconds / 60)} 分钟（按学习事件间隔估算）</p>

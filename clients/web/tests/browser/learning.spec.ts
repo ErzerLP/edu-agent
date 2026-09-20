@@ -133,10 +133,17 @@ test('真实配对、IME 保存、生命周期及深浅主题四个视口', asyn
   await page.getByRole('button', { name: '恢复目标', exact: true }).click()
   await page.getByRole('button', { name: '确认恢复目标' }).click()
   await expect(page.getByText('当前：已完成。', { exact: false })).toBeVisible()
+  const progressTitle = page.locator('[data-goal-id] h3 > a')
+  await expect(progressTitle).toBeVisible()
+  await expect(progressTitle).toHaveAttribute('aria-current', 'page')
   for (const theme of ['light', 'dark']) {
     if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
     for (const width of [390, 768, 1280, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
+      // 移开指针，确保标题在未悬停、未聚焦时也能与旁边的学习区及状态文字区分。
+      await page.mouse.move(0, 0)
+      await expect(progressTitle).not.toBeFocused()
+      await expect(progressTitle).toHaveCSS('text-decoration-line', 'underline')
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
       ).toBeTruthy()

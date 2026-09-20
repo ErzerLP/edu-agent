@@ -500,7 +500,12 @@ function TeachingWorkspace({
   }
   const generate = async (
     kind: 'route' | 'activity' | 'assessment' | 'free_answer',
-    action: 'apply_route' | 'issue_activity' | 'record_assessment' | 'record_free_answer',
+    action:
+      | 'apply_route'
+      | 'issue_activity'
+      | 'present_review'
+      | 'record_assessment'
+      | 'record_free_answer',
   ) => {
     if (busyRef.current || pending) return
     busyRef.current = true

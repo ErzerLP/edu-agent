@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomBytes, generateKeyPairSync } from 'node:crypto'
 import { createServer } from 'node:http'
 import { workspaceModel } from './workspace-model.mjs'
-import { startNotesyncFixture } from './notesync-fixture.mjs'
+import { notesyncFixtureToken, startNotesyncFixture } from './notesync-fixture.mjs'
 if (!process.env.TEST_DATABASE_URL) throw new Error('浏览器验收必须配置独立 TEST_DATABASE_URL')
 let child
 let restarting = false
@@ -177,7 +177,7 @@ function start() {
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',
       ...(process.env.WEB_NOTESYNC_FIXTURE === '1' ? {
         NOTESYNC_ENABLED: 'true', NOTESYNC_BASE_URL: 'http://127.0.0.1:32931',
-        NOTESYNC_API_TOKEN: 'browser-notesync-fixture-only', NOTESYNC_VAULT: 'Knowledge',
+        NOTESYNC_API_TOKEN: notesyncFixtureToken, NOTESYNC_VAULT: 'Knowledge',
         NOTESYNC_WORKER_INTERVAL: '1h',
       } : {}),
       ...(process.env.WEB_WORKSPACE_FIXTURE === '1'

@@ -1,5 +1,7 @@
 import { createServer } from 'node:http'
 
+export const notesyncFixtureToken = 'browser-notesync-fixture-only-token'
+
 // 复用固定 3.6.1 REST 包装、版本、权限探测和笔记字段；不代表真实上游验收。
 export async function startNotesyncFixture() {
   const notes = new Map()
@@ -22,7 +24,7 @@ export async function startNotesyncFixture() {
       return send({ writes, notes: [...notes.values()] })
     }
     if (!available) { response.writeHead(503); response.end(); return }
-    if (request.headers.authorization !== 'Bearer browser-notesync-fixture-only' || request.headers['x-client'] !== 'CLI') return send(null, 315)
+    if (request.headers.authorization !== `Bearer ${notesyncFixtureToken}` || request.headers['x-client'] !== 'CLI') return send(null, 315)
     if (url.pathname === '/api/version') return send({ version: '3.6.1', gitTag: 'v3.6.1', buildTime: 'fixed', versionIsNew: false, versionNewName: '', versionNewLink: '', versionNewChangelog: '', versionNewChangelogContent: '', versionHistory: [], pluginVersionNewName: '', pluginVersionNewLink: '', pluginVersionNewChangelog: '', pluginVersionNewChangelogContent: '', pluginVersionHistory: [] })
     if (url.pathname === '/api/health') return send({ status: 'healthy', version: '3.6.1', uptime: 1, database: 'connected' })
     if (url.pathname === '/api/vault') return send([{ id: 1, vault: 'Knowledge', noteCount: notes.size, noteSize: 0, fileCount: 0, fileSize: 0, size: 0, createdAt: 'now', updatedAt: 'now' }])

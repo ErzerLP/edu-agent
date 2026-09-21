@@ -7,7 +7,9 @@ async function pair(page: Page, profile = 'memory') {
   const code = execFileSync('../../server/edu-agentd', ['pairing-code', 'create', '--profile', profile], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: env() }).trim()
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code)
+  const paired = page.waitForResponse(response => response.url().endsWith('/v1/web/pairings') && response.request().method() === 'POST')
   await page.getByRole('button', { name: '配对并进入' }).click()
+  expect((await paired).status()).toBe(201)
   await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
 }
 async function confirm(page: Page, label: string) {
@@ -87,14 +89,27 @@ test('设备撤销即时失效、隐私清除重新配对核对原回执', async
   const grant = execFileSync('../../server/edu-agentd', ['privacy-grant', 'create', '--device', session.device.id], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: env() }).trim()
   await page.goto('/app/settings/data')
   await page.getByLabel('一次性清除授权').fill(grant)
+  const erased = page.waitForResponse(response => response.url().endsWith('/v1/privacy/erasures') && response.request().method() === 'POST')
   await confirm(page, '发起全局隐私清除')
   await expect(page).toHaveURL(/operation=.*device=/)
   const receiptURL = page.url()
+  // 旧会话失效早于本地清除完成；先读完原响应，避免刷新取消其余 owner 的清除。
+  const response = await erased
+  expect(response.status()).toBe(202)
+  const receipt = await response.json()
+  for (const store of ['identity_metadata', 'knowledge_content', 'learning_event_payload']) {
+    expect(receipt.steps).toContainEqual(expect.objectContaining({ store, status: 'succeeded' }))
+  }
   await expect.poll(async () => (await page.request.get('/v1/web/session')).status()).toBe(401)
   await page.reload()
   await pair(page)
+  const repaired = await (await page.request.get('/v1/web/session')).json()
+  expect(repaired.device.id).not.toBe(session.device.id)
+  expect(repaired.generation).toBe(receipt.learner_generation)
+  expect(repaired.generation).toBeGreaterThan(session.generation)
   await page.goto(receiptURL)
   await expect(page.getByRole('region', { name: '隐私清除回执' })).toBeVisible()
+  await expect(page.getByRole('region', { name: '隐私清除回执' })).toContainText(receipt.erasure_id)
   await expect(page.getByRole('region', { name: '隐私清除回执' })).toContainText('不在物理擦除保证内')
   expect(await page.content()).not.toContain(grant)
 })

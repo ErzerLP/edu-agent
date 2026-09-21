@@ -13,6 +13,8 @@ const (
 	productionModelProtocolProfile = "openai-chat-completions-v1"
 	productionProposalSchema       = 1
 	productionPromptRevision       = "tutor-proposal-v1"
+	// 学习设置要求空闲超时至少为 5 秒；故障延迟由同一值推导，确保触发真实超时。
+	productionModelTimeout = 5 * time.Second
 )
 
 type productionModelProfile struct {
@@ -105,7 +107,7 @@ func TestBlackBoxProductionFakeModelVerticalPostgreSQL(t *testing.T) {
 			h := newHarnessWithOptions(t, harnessOptions{
 				offlineSigner: false,
 				modelName:     profile.modelID,
-				modelTimeout:  2 * time.Second,
+				modelTimeout:  productionModelTimeout,
 			})
 			h.pairBoth(h.serverURL)
 			h.importFixture(h.primaryHome)
@@ -126,7 +128,7 @@ func runProductionModelCorpus(t *testing.T, h *harness, profile productionModelP
 	schemaProtocol, schemaFailure, exhaustionFailure, laterSuccess := runSchemaExhaustionAndLaterSuccess(t, h, profile)
 	lowProtocol, lowAssessment := runLowConfidenceProvisional(t, h, profile)
 	timeoutProtocol, timeoutAssessment := runTransientAssessmentRetry(t, h, profile,
-		"timeout", fakeScenario{Kind: "timeout", DelayMillis: 3000}, 0)
+		"timeout", fakeScenario{Kind: "timeout", DelayMillis: (productionModelTimeout + time.Second).Milliseconds()}, 0)
 	rateProtocol, rateAssessment := runTransientAssessmentRetry(t, h, profile,
 		"rate_limit", fakeScenario{Kind: "rate_limited", RetryAfter: "0"}, http.StatusTooManyRequests)
 

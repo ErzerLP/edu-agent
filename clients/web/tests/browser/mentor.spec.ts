@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { reconnectAndWaitForReads } from './network-recovery'
 
 test('真实浏览器导师、结构化等待、断线重启恢复、预算与清除', async ({ page, context }) => {
   test.skip(process.env.WEB_MENTOR_FIXTURE !== '1', '需要显式启用本地模型 fixture')
@@ -58,8 +59,7 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await expect(panel.getByRole('status')).toContainText('已完成')
   await expect(panel.getByLabel('导师输出')).toContainText('浏览器真实导师：已读取本次绑定目标。')
   const stats = await (await page.request.get('http://127.0.0.1:32930/stats')).json()
-  await context.setOffline(true)
-  await context.setOffline(false)
+  await reconnectAndWaitForReads(page, context, '/v1/tutoring/sessions')
   await page.reload()
   await expect(panel.getByRole('status')).toContainText('已完成')
   const supervisor = JSON.parse(await readFile('/tmp/edu-web-test-server-32929.json', 'utf8'))

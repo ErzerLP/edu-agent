@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { reconnectAndWaitForReads } from './network-recovery'
 
 test.use({ actionTimeout: 15000 })
 
@@ -179,8 +180,7 @@ test('大清单分段、刷新重启、来源变化与提交响应丢失按原�
     await api(page, space, collection, 'GET', '/v1/knowledge/revisions/head')
   ).json()
   expect(head.revision.revision_no).toBe(5)
-  await context.setOffline(true)
-  await context.setOffline(false)
+  await reconnectAndWaitForReads(page, context, `/v1/knowledge/import-jobs/${job}`)
   await page.reload()
   await expect(page.getByRole('status')).toContainText('已发布 5')
   await page.getByRole('link', { name: '返回任务中心' }).click()

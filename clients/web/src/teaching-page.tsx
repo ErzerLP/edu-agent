@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { ApiError, learningClient, unwrap } from './api/client'
 import { goalSchema, spaceSchema, type Goal } from './api/runtime'
@@ -1102,10 +1102,12 @@ export function ContentPage({
   version?: number
 }) {
   const { session, prefix } = useIdentity()
+  const queryClient = useQueryClient()
   const navigate = useNavigate()
   const client = () => learningClient(session, spaceId)
+  const preferenceKey = [...prefix, spaceId, artifactId, 'content-preference']
   const preference = useQuery({
-    queryKey: [...prefix, spaceId, artifactId, 'content-preference'],
+    queryKey: preferenceKey,
     gcTime: 0,
     queryFn: ({ signal }) =>
       unwrap(
@@ -1234,7 +1236,11 @@ export function ContentPage({
       <ContentTools
         content={value}
         preference={preference.data!}
-        refreshPreference={() => void preference.refetch()}
+        updatePreference={async (saved) => {
+          // 使用服务端已确认的偏好，避免迟到的旧查询覆盖本次保存。
+          await queryClient.cancelQueries({ queryKey: preferenceKey, exact: true })
+          queryClient.setQueryData(preferenceKey, saved)
+        }}
       />
       <section aria-label="内容版本历史">
         <h2>版本历史</h2>

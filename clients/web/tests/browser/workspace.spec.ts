@@ -983,8 +983,33 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await expect(page.getByRole('heading', { name: '内容生成与改写 · 已完成' })).toBeVisible()
   await page.getByRole('link', { name: '查看正式内容版本 2', exact: true }).click()
   await expect(page).toHaveURL(contentURL)
-  await page.getByRole('button', { name: '收藏内容', exact: true }).click()
-  await page.getByRole('button', { name: '固定当前阅读版本', exact: true }).click()
+  // 暂停后续偏好读取，稳定覆盖连续收藏、固定时读取尚未刷新的情况。
+  const preferenceRoute = '**/v1/learning/content/*/preferences'
+  let releasePreferenceReads!: () => void
+  const preferenceReads = new Promise<void>((resolve) => {
+    releasePreferenceReads = resolve
+  })
+  const preferenceWrites: unknown[] = []
+  await page.route(preferenceRoute, async (route) => {
+    if (route.request().method() === 'GET') await preferenceReads
+    else if (route.request().method() === 'PUT')
+      preferenceWrites.push(route.request().postDataJSON())
+    await route.continue()
+  })
+  try {
+    await page.getByRole('button', { name: '收藏内容', exact: true }).click()
+    await page.getByRole('button', { name: '固定当前阅读版本', exact: true }).click()
+    await expect.poll(() => preferenceWrites.length).toBe(2)
+    expect(preferenceWrites).toEqual([
+      { favorite: true, pinned_version: null },
+      { favorite: true, pinned_version: 2 },
+    ])
+    await expect(page.getByRole('button', { name: '取消收藏', exact: true })).toBeEnabled()
+    await expect(page.getByRole('button', { name: '取消固定阅读版本', exact: true })).toBeEnabled()
+  } finally {
+    releasePreferenceReads()
+    await page.unrouteAll({ behavior: 'wait' })
+  }
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: '导出 Markdown', exact: true }).click()
   expect((await download).suggestedFilename()).toContain('-v2.md')

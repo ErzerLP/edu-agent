@@ -18,11 +18,11 @@ import { SafeMarkdown } from './content-blocks'
 export function ContentTools({
   content,
   preference,
-  refreshPreference,
+  updatePreference,
 }: {
   content: Content
   preference: { favorite: boolean; pinned_version: number | null }
-  refreshPreference: () => void
+  updatePreference: (next: typeof preference) => Promise<void>
 }) {
   const { session, drafts, prefix } = useIdentity()
   const navigate = useNavigate()
@@ -89,11 +89,11 @@ export function ContentTools({
     }
   }
   const preferenceChange = async (next: typeof preference) => {
-    await unwrap(
+    const saved = await unwrap(
       client().PUT('/v1/learning/content/{artifactID}/preferences', { params, body: next }),
       preferenceSchema,
     )
-    refreshPreference()
+    if (mounted.current) await updatePreference(saved)
   }
   const download = async (format: 'json' | 'markdown') => {
     const result = await unwrap(

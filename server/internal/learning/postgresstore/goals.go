@@ -92,7 +92,8 @@ func (s *Store) queryGoals(ctx context.Context, id string, q learning.GoalQuery)
 			}
 			rows, err = db.Query(ctx, "SELECT "+goalColumns+" FROM learning_goal_revisions WHERE goal_id=$1 AND space_id=$2 AND revision>$3 ORDER BY revision LIMIT $4", id, c.Space, c.Revision, q.Limit+1)
 		} else {
-			rows, err = db.Query(ctx, "SELECT "+goalColumns+` FROM (SELECT DISTINCT ON (goal_id) * FROM learning_goal_revisions WHERE space_id=$1 ORDER BY goal_id,revision DESC) g WHERE goal_id>$2 AND ($3='' OR COALESCE(management->>'status','active')=$3) AND strpos(lower(COALESCE(management->'details'->>'name',goal_text)||' '||goal_text),lower($4))>0 ORDER BY goal_id LIMIT $5`, c.Space, c.After, c.Status, c.Search, q.Limit+1)
+			// 清除标记保留历史引用，但不再作为当前可选目标参与筛选和分页。
+			rows, err = db.Query(ctx, "SELECT "+goalColumns+` FROM (SELECT DISTINCT ON (goal_id) * FROM learning_goal_revisions WHERE space_id=$1 ORDER BY goal_id,revision DESC) g WHERE source<>'privacy_erasure' AND goal_id>$2 AND ($3='' OR COALESCE(management->>'status','active')=$3) AND strpos(lower(COALESCE(management->'details'->>'name',goal_text)||' '||goal_text),lower($4))>0 ORDER BY goal_id LIMIT $5`, c.Space, c.After, c.Status, c.Search, q.Limit+1)
 		}
 		if err != nil {
 			return page, err

@@ -76,6 +76,31 @@ test('记忆候选显式批准、拒绝、真实排队导出与移动焦点', as
 test('设备撤销即时失效、隐私清除重新配对核对原回执', async ({ page, browser }) => {
   await pair(page)
   const session = await (await page.request.get('/v1/web/session')).json()
+  const saveGoal = async (name: string) => {
+    const identity = await (await page.request.get('/v1/web/session')).json()
+    const response = await page.request.post('/v1/learning/goals', {
+      headers: {
+        Origin: 'http://127.0.0.1:32929',
+        'X-CSRF-Token': identity.csrf_token,
+        'X-Web-Principal-ID': identity.device.id,
+        'X-Web-Generation': String(identity.generation),
+        'X-Learning-Space-ID': '00000000-0000-4000-8000-000000000001',
+      },
+      data: {
+        operation_id: randomUUID(),
+        payload_schema_version: 1,
+        aggregate_type: 'goal',
+        aggregate_id: randomUUID(),
+        expected_version: 0,
+        text: name,
+        source: '清除后 Studio 验收',
+        details: { name },
+      },
+    })
+    expect(response.ok(), await response.text()).toBe(true)
+    return (await response.json()).result
+  }
+  await saveGoal('清除前的旧教学目标')
   const other = await browser.newContext()
   const victim = await other.newPage()
   await pair(victim)
@@ -112,6 +137,12 @@ test('设备撤销即时失效、隐私清除重新配对核对原回执', async
   await expect(page.getByRole('region', { name: '隐私清除回执' })).toContainText(receipt.erasure_id)
   await expect(page.getByRole('region', { name: '隐私清除回执' })).toContainText('不在物理擦除保证内')
   expect(await page.content()).not.toContain(grant)
+  const goal = await saveGoal('清除后新建的教学目标')
+  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001/studio')
+  await page.getByLabel('关联目标').selectOption(goal.goal_id)
+  await expect(page.getByLabel('关联目标')).toHaveValue(goal.goal_id)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByRole('option', { name: '[redacted]', exact: true })).toHaveCount(0)
 })
 
 test('导师申请必须在内嵌候选面板批准才可取得回执', async ({ page, context }) => {

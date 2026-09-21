@@ -56,7 +56,7 @@ type routeStep struct {
 type rubricItem struct {
 	RubricItemID         string   `json:"rubric_item_id"`
 	Criterion            string   `json:"criterion"`
-	RequiredReferenceIDs []string `json:"required_reference_ids,omitempty"`
+	RequiredReferenceIDs []string `json:"required_reference_ids"`
 }
 
 type objectiveRule struct {
@@ -68,7 +68,7 @@ type objectiveRule struct {
 type rubric struct {
 	RubricRevision string         `json:"rubric_revision"`
 	Items          []rubricItem   `json:"items"`
-	ObjectiveRule  *objectiveRule `json:"objective_rule,omitempty"`
+	ObjectiveRule  *objectiveRule `json:"objective_rule"`
 }
 
 type activity struct {
@@ -90,7 +90,7 @@ type assessmentItem struct {
 	KnowledgeQuote         string      `json:"knowledge_quote"`
 	KnowledgeRange         sourceRange `json:"knowledge_range"`
 	KnowledgeQuoteSHA256   string      `json:"knowledge_quote_sha256"`
-	MisconceptionCandidate string      `json:"misconception_candidate,omitempty"`
+	MisconceptionCandidate string      `json:"misconception_candidate"`
 }
 
 func renderArtifact(kind RequestKind, request proposalRequest, scenario Scenario) ([]byte, error) {

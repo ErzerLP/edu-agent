@@ -240,6 +240,42 @@ func TestProposalStrictRecursiveDecodeFailsPermanently(t *testing.T) {
 	}
 }
 
+func TestNullableActivityProposalPreservesDomainValidation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		kind       ActivityType
+		rule       string
+		wantReason string
+	}{
+		{name: "开放题无需客观题规则", kind: ActivityOpen, rule: `null`},
+		{name: "客观题有完整规则", kind: ActivityObjective, rule: `{"accepted_answers":["2"],"case_sensitive":false,"trim_space":true}`},
+		{name: "客观题仍需规则", kind: ActivityObjective, rule: `null`, wantReason: "objective_rule_missing"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := routeProposalRequest()
+			request.Type = ProposalActivity
+			request.FocusNodeRevisionID = "node-revision"
+			service := newProposalTestService(t, routeProposalStore(), &proposalTestRepository{}, nil)
+			raw := json.RawMessage(`{"activity":{"prompt":"识别偶数","type":"` + string(test.kind) + `","rubric":{"rubric_revision":"r1","items":[{"rubric_item_id":"i1","criterion":"正确识别","required_reference_ids":null}],"objective_rule":` + test.rule + `},"difficulty":1,"allowed_help":["none"],"knowledge_references":[{"node_revision_id":"node-revision","slice_sha256":null,"range":null}]}}`)
+			artifact, err := service.decodeProposal(context.Background(), request, "input-hash", raw, []string{"success"})
+			if test.wantReason != "" {
+				var domainErr *Error
+				if !errors.As(err, &domainErr) || domainErr.Code != CodeProposalRejected || domainErr.Reason != test.wantReason {
+					t.Fatalf("领域校验失效：%v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref := artifact.Activity.References[0]
+			if ref.Slice != "topic" || ref.SliceSHA256 != SHA256([]byte("topic")) || ref.Range != (SourceRange{Start: 0, End: 5}) {
+				t.Fatalf("空引用元数据未从权威资料补齐：%+v", ref)
+			}
+		})
+	}
+}
+
 func TestA101FreeAnswerProposalChecksActiveFrameBeforeQuestionLookup(t *testing.T) {
 	sessionID := "10000000-0000-4000-8000-000000000060"
 	session := tutoring.Session{

@@ -53,13 +53,13 @@ const activitySchemaContract = `{
 						"properties":{
 							"rubric_item_id":{"type":"string"},
 							"criterion":{"type":"string"},
-							"required_reference_ids":{"type":"array","items":{"type":"string"}}
+							"required_reference_ids":{"type":["array","null"],"items":{"type":"string"}}
 						},
-						"required":["rubric_item_id","criterion"],
+						"required":["rubric_item_id","criterion","required_reference_ids"],
 						"additionalProperties":false
 					}},
 					"objective_rule":{
-						"type":"object",
+						"type":["object","null"],
 						"properties":{
 							"accepted_answers":{"type":"array","items":{"type":"string"}},
 							"case_sensitive":{"type":"boolean"},
@@ -69,7 +69,7 @@ const activitySchemaContract = `{
 						"additionalProperties":false
 					}
 				},
-				"required":["rubric_revision","items"],
+				"required":["rubric_revision","items","objective_rule"],
 				"additionalProperties":false
 			},
 			"difficulty":{"type":"integer"},
@@ -78,15 +78,15 @@ const activitySchemaContract = `{
 				"type":"object",
 				"properties":{
 					"node_revision_id":{"type":"string"},
-					"slice_sha256":{"type":"string"},
+					"slice_sha256":{"type":["string","null"]},
 					"range":{
-						"type":"object",
+						"type":["object","null"],
 						"properties":{"start":{"type":"integer"},"end":{"type":"integer"}},
 						"required":["start","end"],
 						"additionalProperties":false
 					}
 				},
-				"required":["node_revision_id"],
+				"required":["node_revision_id","slice_sha256","range"],
 				"additionalProperties":false
 			}}
 		},
@@ -114,9 +114,9 @@ const assessmentSchemaContract = `{
 					"knowledge_quote":{"type":"string"},
 					"knowledge_range":{"type":"object","properties":{"start":{"type":"integer"},"end":{"type":"integer"}},"required":["start","end"],"additionalProperties":false},
 					"knowledge_quote_sha256":{"type":"string"},
-					"misconception_candidate":{"type":"string"}
+					"misconception_candidate":{"type":["string","null"]}
 				},
-				"required":["rubric_item_id","conclusion","answer_quote","answer_range","answer_quote_sha256","knowledge_reference_id","knowledge_quote","knowledge_range","knowledge_quote_sha256"],
+				"required":["rubric_item_id","conclusion","answer_quote","answer_range","answer_quote_sha256","knowledge_reference_id","knowledge_quote","knowledge_range","knowledge_quote_sha256","misconception_candidate"],
 				"additionalProperties":false
 			}},
 			"rubric_complete":{"type":"boolean"},
@@ -140,10 +140,10 @@ const freeAnswerSchemaContract = `{
 				"type":"object",
 				"properties":{
 					"node_revision_id":{"type":"string"},
-					"slice_sha256":{"type":"string"},
-					"range":{"type":"object","properties":{"start":{"type":"integer"},"end":{"type":"integer"}},"required":["start","end"],"additionalProperties":false}
+					"slice_sha256":{"type":["string","null"]},
+					"range":{"type":["object","null"],"properties":{"start":{"type":"integer"},"end":{"type":"integer"}},"required":["start","end"],"additionalProperties":false}
 				},
-				"required":["node_revision_id"],
+				"required":["node_revision_id","slice_sha256","range"],
 				"additionalProperties":false
 			}}
 		},

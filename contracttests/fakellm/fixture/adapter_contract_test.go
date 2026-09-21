@@ -362,6 +362,39 @@ func TestStrictChatRequestParsingAndMetadataOnlyAudit(t *testing.T) {
 	}
 }
 
+func TestFixtureValidatesOutputTokenBudget(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		value any
+		valid bool
+	}{
+		{name: "未指定预算", valid: true},
+		{name: "默认预算", value: 2048, valid: true},
+		{name: "零预算", value: 0},
+		{name: "负预算", value: -1},
+		{name: "小数预算", value: 1.5},
+		{name: "字符串预算", value: "2048"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := capabilityContractRequestBody(t, decodeContractSchema(t, capabilitySchemaContract), capabilitySystemPrompt, capabilityAssistantPrompt, capabilityUserPrompt, "system")
+			var request map[string]any
+			if err := json.Unmarshal(body, &request); err != nil {
+				t.Fatal(err)
+			}
+			if test.value != nil {
+				request["max_tokens"] = test.value
+			}
+			body, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := decodeChatRequest("application/json", body); (err == nil) != test.valid {
+				t.Fatalf("输出预算校验不符合预期：%v", err)
+			}
+		})
+	}
+}
+
 func TestFixtureRejectsEveryFrozenSchemaDriftWithoutProductionValidator(t *testing.T) {
 	tests := []struct {
 		kind   RequestKind

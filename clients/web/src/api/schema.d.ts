@@ -4,6 +4,63 @@
  */
 
 export interface paths {
+    "/v1/companion/browser": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 显式配对、授权、撤销和查询本地设备；默认关闭，不提供服务端 OS 执行
+         * @description 精确验证 Origin/Host 与学习 Cookie/CSRF。配对后各操作还必须持有独立 secret；授权绑定真实对话、设备和隐私代次。调用仅投递一次，响应丢失时使用 receipt 查询原身份。
+         */
+        post: operations["localCompanionBrowser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/companion/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 本机主动消费五分钟一次性配对码，Cookie 和管理凭据不适用 */
+        post: operations["localCompanionAttach"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/companion/channel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 本机认证轮询及结算；领取即消费，断连不重投
+         * @description MAC 为 HMAC-SHA256(token, Origin + 换行 + ID + 换行 + 序号十进制 + 换行 + 原始正文) 的十六进制。序号严格递增；每次检查原学习身份与对话授权。没有本地监听端口。
+         */
+        post: operations["localCompanionExchange"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/knowledge/structure/capabilities": {
         parameters: {
             query?: never;
@@ -304,7 +361,10 @@ export interface paths {
         /** 读取当前状态或不可变候选修订 */
         get: operations["getLearningChange"];
         put?: never;
-        /** 提出、审阅、批准、取消、补偿或返回原题；批准绑定修订、hash 和交互 */
+        /**
+         * 提出、审阅、批准、取消、补偿或返回原题；批准绑定修订、hash 和交互
+         * @description Web 与 CLI study change-command 共用本命令；脚本保留原 operation_id 和已审阅依据，断线后先读取原变更，不自动重放或采用新版本。
+         */
         post: operations["commandLearningChange"];
         delete?: never;
         options?: never;
@@ -631,7 +691,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 在原答案事务内校验正式内容版本与交互能力，再按原 rubric 作答 */
+        /**
+         * 在原答案事务内校验正式内容版本与交互能力，再按原 rubric 作答
+         * @description CLI study answer 仅支持 text/single_choice，未知显示块使用 fallback。未知交互返回 learning_content_upgrade_required；旧 actions 入口同样在原事务中检查当前正文交互，不能绕过此限制。
+         */
         post: operations["submitLearningContentAnswer"];
         delete?: never;
         options?: never;
@@ -830,9 +893,85 @@ export interface paths {
         put?: never;
         /**
          * 唯一受理目标内导师运行；保存目标本身不调用此入口
-         * @description expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。
+         * @description expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。CLI study research/start/mentor 共用此入口，研究和开学需明确外发同意与预算，mentor 调整显式绑定 teaching_session_id；本地聊天不上传或转换为 Web conversation。
          */
         post: operations["createMentorRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/conversations": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 当前设备及学习区的导师历史，默认精确匹配可选目标和课堂
+         * @description 标题在服务端解密检索，不存明文搜索索引。最多 200 个未删除会话，按最近活动及 ID 降序分页。仅查询不发送模型请求。
+         */
+        get: operations["listTutorConversations"];
+        put?: never;
+        /**
+         * 明确保存策略后新建会话，不发起模型请求
+         * @description 客户端生成 id 作为新建幂等身份。同 ID 原载荷重试返回原会话，保存策略和上下文不可后改。不会导入旧运行或 CLI 历史。
+         */
+        post: operations["createTutorConversation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/conversations/{conversationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        /** 恢复原绑定及分页已提交轮次，不重放历史工具或批准 */
+        get: operations["getTutorConversation"];
+        put?: never;
+        post?: never;
+        /** 确认删除正文、标题与运行残留，不删除正式学习或内容事实 */
+        delete: operations["deleteTutorConversation"];
+        options?: never;
+        head?: never;
+        /** 按会话版本改名，仅加密保存标题 */
+        patch: operations["renameTutorConversation"];
+        trace?: never;
+    };
+    "/v1/learning/conversations/{conversationID}/turns": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
+         * @description provider 或 endpoint 变化时，confirm_destination 必须匹配详情显示的目的地摘要。未确认返回 409 且不外发。大历史达到上下文上限时明确失败，不丢弃工具组或静默概括。恢复 GET 不调用此接口。
+         */
+        post: operations["submitTutorTurn"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1828,6 +1967,8 @@ export interface paths {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -1851,6 +1992,8 @@ export interface paths {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -1874,6 +2017,8 @@ export interface paths {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -1897,6 +2042,8 @@ export interface paths {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -1920,6 +2067,8 @@ export interface paths {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -1928,9 +2077,63 @@ export interface paths {
         put?: never;
         /**
          * Resolve one Fast Note Sync review through the canonical knowledge importer
-         * @description Resolution is bound to the review basis and authenticated device. The external Fast Note Sync service is not treated as providing an atomic CAS.
+         * @description 解决绑定原审阅基线与设备；浏览器还需要 knowledge:approve（既有 import/references 档案），研究采纳权限不能代替同步审批。远端没有原子 CAS；响应未知时先只读核对 operations 原操作。
          */
         post: operations["resolveKnowledgeNotesyncReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/notesync/operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 只读核对当前学习设备的原同步解决收据
+         * @description 不重放解决或远端写入。404 仅表示尚无可读收据，不能证明原操作未执行；仍需核对同一审阅。映射、引用、隐私代次与原审阅读取相同。
+         */
+        get: operations["getKnowledgeNotesyncOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/notesync/reviews/{reviewID}/resolution-previews": {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
+            };
+            path: {
+                reviewID: components["parameters"]["NotesyncReviewID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 通过既有知识预览检查采用或合并的实际影响与身份冲突
+         * @description 复用正式解决的基线、远端复核和知识导入计划器，只支持 accept_remote 和 merged，不提交修订或回发。身份决定沿用原 identity_review 合同。
+         */
+        post: operations["previewKnowledgeNotesyncResolution"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2712,6 +2915,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/privacy/operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 使用原设备和操作身份核对清除回执
+         * @description 仅返回原 privacy owner 回执，不消费 grant 或重发清除。全局单用户 privacy:read 可在清除后重新配对核对旧操作；地址不含正文或秘密。
+         */
+        get: operations["getPrivacyErasureOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/privacy/erasures/{erasureID}": {
         parameters: {
             query?: never;
@@ -2773,6 +2996,67 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CompanionDevice: {
+            id: string;
+            host: string;
+            user: string;
+            /**
+             * @description 未配对的状态视图为空字符串，配对请求只接受 linux 或 darwin
+             * @enum {string}
+             */
+            os: "" | "linux" | "darwin";
+            workspace: string;
+        };
+        CompanionPair: {
+            id: string;
+            code: string;
+            secret: string;
+        };
+        CompanionGrant: {
+            generation: number;
+            /** Format: uuid */
+            space: string;
+            /** Format: uuid */
+            conversation: string;
+            files: boolean;
+            shell: boolean;
+            model: boolean;
+            destination: string;
+        };
+        CompanionOperation: {
+            id: string;
+            /** @description 模型运行由宿主固定，浏览器手动操作强制使用 manual 加操作身份 */
+            run: string;
+            /** @enum {string} */
+            tool: "list" | "read" | "stat" | "prepare_write" | "prepare_edit" | "commit" | "discard" | "shell" | "task";
+            /** @description 原 CLI provider 参数合同；Shell 无新增沙箱，文件 commit 只接受本机冻结 plan 身份 */
+            arguments: {
+                [key: string]: unknown;
+            };
+        };
+        CompanionReceipt: {
+            id: string;
+            device: string;
+            conversation: string;
+            run: string;
+            /** @enum {string} */
+            state: "queued" | "dispatched" | "completed" | "unknown" | "not_executed";
+            /** @description 原生任务身份，非 PID */
+            task?: string;
+            /** @description 创建该任务的原运行身份，控制操作不改变归属 */
+            task_run?: string;
+            error?: string;
+            /** @description 有界原 provider 结果；任务状态、退出码、部分输入、输出缺口及持久化分别解释，不能从 completed 推断命令成功 */
+            value?: unknown;
+        };
+        CompanionView: {
+            id: string;
+            /** @enum {string} */
+            state: "pairing" | "awaiting_authorization" | "connected" | "disconnected" | "revoked";
+            device: components["schemas"]["CompanionDevice"];
+            grant?: components["schemas"]["CompanionGrant"];
+            receipts: components["schemas"]["CompanionReceipt"][];
+        };
         KnowledgeStructureSource: {
             /** Format: uuid */
             collection_id: string;
@@ -3301,6 +3585,64 @@ export interface components {
                 lineage?: components["schemas"]["ContentOrigin"][];
             };
         };
+        TutorConfirmed: {
+            /** @enum {boolean} */
+            confirmed: true;
+        };
+        TutorConversation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            space_id: string;
+            /** Format: uuid */
+            goal_id?: string;
+            /** Format: uuid */
+            teaching_session_id?: string;
+            privacy_generation: number;
+            version: number;
+            saved: boolean;
+            title: string;
+            provider: string;
+            endpoint: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            current_run_id?: string;
+            goal_version: number;
+            writable: boolean;
+            /** @enum {string} */
+            storage_state: "saved" | "temporary" | "temporary_unavailable" | "run_storage_unavailable" | "tutor_history_schema_unsupported";
+            destination: string;
+            destination_provider: string;
+            destination_endpoint: string;
+            confirmation_required: boolean;
+        };
+        TutorTurnPage: {
+            conversation: components["schemas"]["TutorConversation"];
+            next_cursor?: number;
+            items: {
+                /** Format: uuid */
+                run_id: string;
+                ordinal: number;
+                status: string;
+                body_available: boolean;
+                output: string;
+                messages: {
+                    /** @enum {string} */
+                    role: "user" | "assistant" | "tool";
+                    content?: string;
+                    tool_call_id?: string;
+                    tool_calls?: {
+                        id: string;
+                        type: string;
+                        function: {
+                            name: string;
+                            arguments: string;
+                        };
+                    }[];
+                }[];
+            }[];
+        };
         MentorReceipt: {
             /** Format: uuid */
             operation_id: string;
@@ -3319,8 +3661,24 @@ export interface components {
             call_id: string;
             /** @description 用户打开参考选择入口；回答此交互不等于正式采用 */
             reference_selection?: boolean;
+            /**
+             * Format: uuid
+             * @description 正式待审阅候选。普通 respond 不批准；在 memory API 明确审批后继续时查询真实记录及交付回执。取消则拒绝尚待审阅的候选。
+             */
+            memory_candidate_id?: string;
+        };
+        MentorMemorySource: {
+            /** Format: uuid */
+            memory_id: string;
+            /** Format: uuid */
+            candidate_id: string;
+            revision: number;
+            /** @description 既有全局长期信息范围，不授予其他学习区正文读取权限 */
+            scope: string;
         };
         MentorSnapshot: {
+            /** Format: uuid */
+            conversation_id?: string;
             /** Format: uuid */
             teaching_session_id?: string;
             /** @enum {string} */
@@ -3360,6 +3718,9 @@ export interface components {
             configuration: string;
             output: string;
             interaction?: components["schemas"]["MentorInteraction"];
+            memory_sources?: components["schemas"]["MentorMemorySource"][];
+            /** @enum {string} */
+            memory_status?: "not_authorized" | "unavailable" | "available" | "partial";
         };
         ResearchRequest: {
             /** @description 用户明确确认的去标识公开主题，UTF-8 最多 300 字节；研究 prompt 必须与此一致 */
@@ -4771,8 +5132,12 @@ export interface components {
             next_cursor?: string;
         };
         ReviewSchedule: {
+            /** Format: uuid */
             attempt_id?: string;
-            /** @description 用户显式创建的仍在原节点的承载；session_id 始终保留证据来源会话。 */
+            /**
+             * Format: uuid
+             * @description 用户显式创建的仍在原节点的承载；session_id 始终保留证据来源会话。
+             */
             carrier_session_id?: string;
             goal_name?: string;
             space_name?: string;
@@ -4803,7 +5168,7 @@ export interface components {
             policy_version: string;
         };
         ReviewsPage: {
-            /** 此范围历史数据已清除且没有新目标，不等同于筛选后为空 */
+            /** @description 此范围历史数据已清除且没有新目标，不等同于筛选后为空 */
             data_cleared?: boolean;
             total?: number;
             /** Format: date-time */
@@ -4815,7 +5180,7 @@ export interface components {
             next_cursor?: string;
         };
         ProgressPage: {
-            /** 此范围历史数据已清除且没有新目标，不等同于筛选后为空 */
+            /** @description 此范围历史数据已清除且没有新目标，不等同于筛选后为空 */
             data_cleared?: boolean;
             metadata: components["schemas"]["ProjectionMetadata"];
             /** Format: date-time */
@@ -4832,6 +5197,7 @@ export interface components {
             /** @enum {string} */
             evidence_basis?: "same_goal_valid_history";
             evidence_sources?: {
+                /** Format: uuid */
                 attempt_id?: string;
                 /** Format: uuid */
                 evidence_id?: string;
@@ -4853,6 +5219,7 @@ export interface components {
                 basis?: "acknowledged_route_steps";
                 current_goal_revision?: boolean;
                 completed_steps?: string[];
+                /** Format: uuid */
                 previous_revision_id?: string;
                 /** @description 相对同路线前版新增或改变知识版本、意图、完成标准的活动。 */
                 added_steps?: string[];
@@ -4877,8 +5244,11 @@ export interface components {
                 state?: string;
                 position?: string;
                 goal_status?: string;
+                /** Format: uuid */
                 scope_snapshot_id?: string;
+                /** Format: uuid */
                 route_step_id?: string;
+                /** Format: uuid */
                 activity_id?: string;
                 last_event_seq?: number;
             }[];
@@ -6157,6 +6527,11 @@ export interface components {
             provenance: "canonical_markdown";
         };
         NotesyncStatus: {
+            /**
+             * @description 仅配置来源，不含地址凭据或密钥。
+             * @enum {string}
+             */
+            configuration_source?: "environment" | "admin_settings";
             configured: boolean;
             compatible: boolean;
             /** @enum {string} */
@@ -6357,6 +6732,7 @@ export interface components {
         /** Format: uuid */
         MemoryUUID: string;
         MemorySHA256: string;
+        /** @description 使用 memory:web 明确授权的 Web 设备创建时强制等待具体审阅，禁止内容仍由原政策拒绝；不自动创建长期记录。其他调用方沿用原准入政策。 */
         MemoryCandidateRequest: {
             operation_id: components["schemas"]["MemoryUUID"];
             /** @constant */
@@ -6372,6 +6748,7 @@ export interface components {
             /** Format: date-time */
             valid_until: string;
         };
+        /** @description Web 纠正始终创建待审阅候选；批准时携带看到的记录版本和代次，过期冲突不覆盖当前记录。 */
         MemoryCorrectionCandidateRequest: {
             operation_id: components["schemas"]["MemoryUUID"];
             /** @constant */
@@ -7023,6 +7400,113 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    localCompanionBrowser: {
+        parameters: {
+            query?: never;
+            header: {
+                Origin: string;
+                "X-CSRF-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    action: "capabilities" | "pair" | "status" | "grant" | "revoke" | "submit" | "receipt";
+                    id?: string;
+                    secret?: string;
+                    device?: string;
+                    grant?: components["schemas"]["CompanionGrant"];
+                    operation?: components["schemas"]["CompanionOperation"];
+                    operation_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 当前能力、一次性配对凭据、授权确认、设备状态或原操作回执；不缓存且不持久化秘密 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanionPair"] | components["schemas"]["CompanionView"] | components["schemas"]["CompanionReceipt"] | {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    localCompanionAttach: {
+        parameters: {
+            query?: never;
+            header: {
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    id: string;
+                    code: string;
+                    device: components["schemas"]["CompanionDevice"];
+                };
+            };
+        };
+        responses: {
+            /** @description 仅本机保存于内存的通道 MAC 密钥；响应丢失须重新配对 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token: string;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    localCompanionExchange: {
+        parameters: {
+            query?: never;
+            header: {
+                Origin: string;
+                "X-Companion-ID": string;
+                "X-Companion-Sequence": string;
+                "X-Companion-MAC": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    receipt?: components["schemas"]["CompanionReceipt"];
+                };
+            };
+        };
+        responses: {
+            /** @description 当前授权与至多一个新操作；无操作时为空对象 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        grant?: components["schemas"]["CompanionGrant"];
+                        operation?: components["schemas"]["CompanionOperation"];
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     readKnowledgeStructureCapabilities: {
         parameters: {
             query?: never;
@@ -8418,6 +8902,216 @@ export interface operations {
         };
         responses: {
             /** @description 已受理或返回原操作结果，Location 指向运行快照 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listTutorConversations: {
+        parameters: {
+            query?: {
+                goal_id?: string;
+                teaching_session_id?: string;
+                all_contexts?: boolean;
+                search?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 保存状态和原始绑定，损坏项可定位删除 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["TutorConversation"][];
+                        next_cursor?: string;
+                        save_available: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    createTutorConversation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    id: string;
+                    /** Format: uuid */
+                    goal_id?: string;
+                    /** Format: uuid */
+                    teaching_session_id?: string;
+                    saved: boolean;
+                    /** @description 临时模式不得提供标题 */
+                    title?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 正式确认已新建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getTutorConversation: {
+        parameters: {
+            query?: {
+                after?: number;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前 run ID 指向真实运行，临时正文丢失有明确状态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TutorTurnPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    deleteTutorConversation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expected_version: number;
+                    /** @enum {boolean} */
+                    confirmed: true;
+                };
+            };
+        };
+        responses: {
+            /** @description 服务端确认删除，重试已删除 ID 仍返回确认 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TutorConfirmed"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    renameTutorConversation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expected_version: number;
+                    title: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 服务端已确认 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TutorConfirmed"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    submitTutorTurn: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    expected_version: number;
+                    prompt: string;
+                    request_budget: number;
+                    token_budget: number;
+                    confirm_destination?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 原运行回执，需继续查询或订阅 */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -10688,6 +11382,8 @@ export interface operations {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -10738,6 +11434,8 @@ export interface operations {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -10785,6 +11483,8 @@ export interface operations {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path?: never;
             cookie?: never;
@@ -10829,6 +11529,8 @@ export interface operations {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path: {
                 reviewID: components["parameters"]["NotesyncReviewID"];
@@ -10869,6 +11571,8 @@ export interface operations {
             header?: {
                 /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
                 "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
             };
             path: {
                 reviewID: components["parameters"]["NotesyncReviewID"];
@@ -10908,6 +11612,94 @@ export interface operations {
             429: components["responses"]["NotesyncRateLimited"];
             500: components["responses"]["NotesyncInternalError"];
             /** @description learning_space_module_unavailable */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["NotesyncUnavailable"];
+        };
+    };
+    getKnowledgeNotesyncOperation: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已持久化的原操作结果。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotesyncResolutionResult"];
+                };
+            };
+            400: components["responses"]["NotesyncBadRequest"];
+            401: components["responses"]["NotesyncUnauthorized"];
+            403: components["responses"]["NotesyncForbidden"];
+            404: components["responses"]["NotesyncNotFound"];
+            429: components["responses"]["NotesyncRateLimited"];
+            500: components["responses"]["NotesyncInternalError"];
+            /** @description 当前服务或学习区不支持操作核对。 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: components["responses"]["NotesyncUnavailable"];
+        };
+    };
+    previewKnowledgeNotesyncResolution: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
+            };
+            path: {
+                reviewID: components["parameters"]["NotesyncReviewID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotesyncResolutionRequest"];
+            };
+        };
+        responses: {
+            /** @description 原知识导入计划、差异、影响与身份审阅。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportPreview"];
+                };
+            };
+            400: components["responses"]["NotesyncBadRequest"];
+            401: components["responses"]["NotesyncUnauthorized"];
+            403: components["responses"]["NotesyncForbidden"];
+            404: components["responses"]["NotesyncNotFound"];
+            409: components["responses"]["NotesyncConflict"];
+            413: components["responses"]["NotesyncPayloadTooLarge"];
+            429: components["responses"]["NotesyncRateLimited"];
+            500: components["responses"]["NotesyncInternalError"];
+            /** @description 当前服务或学习区不支持解决预览。 */
             501: {
                 headers: {
                     [name: string]: unknown;
@@ -13059,6 +13851,43 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["DependencyUnavailable"];
+        };
+    };
+    getPrivacyErasureOperation: {
+        parameters: {
+            query: {
+                device_id: components["schemas"]["MemoryUUID"];
+            };
+            header?: never;
+            path: {
+                operationID: components["schemas"]["MemoryUUID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 真实清除回执，部分完成、失败和外部限制分别展示。 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivacyErasureReceipt"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["InternalError"];
+            /** @description 服务未配置按原操作查询的能力 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getPrivacyErasureReceipt: {

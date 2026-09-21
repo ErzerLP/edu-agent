@@ -12,6 +12,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var nocturneManagedStores = [...]privacy.StoreKind{
@@ -25,9 +26,25 @@ type remoteReceiptHead struct {
 	scope   []byte
 }
 
-// RunNocturneErase invokes the remote eraser without holding a database
-// transaction, then atomically advances all Nocturne receipt heads.
+// RunNocturneErase 串行推进同一清除的远端步骤，避免竞争者替换在途维护授权。
+// 会话锁覆盖远端调用和回执提交，远端 I/O 期间不持有数据库事务。
 func (s *Store) RunNocturneErase(ctx context.Context, erasureID string, eraser privacy.RemoteEraser) (privacy.ErasureReceipt, error) {
+	connection, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return privacy.ErasureReceipt{}, err
+	}
+	var locked bool
+	if err := connection.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtextextended('privacy-nocturne-erasure:'||$1::uuid::text,0))`, erasureID).Scan(&locked); err != nil {
+		// 请求取消时无法确定锁是否已经取得，先解锁或关闭连接再退出。
+		releaseNocturneEraseLock(connection, erasureID)
+		return privacy.ErasureReceipt{}, err
+	}
+	if !locked {
+		connection.Release()
+		return s.Receipt(ctx, erasureID)
+	}
+	defer releaseNocturneEraseLock(connection, erasureID)
+
 	current, err := s.Receipt(ctx, erasureID)
 	if err != nil {
 		return privacy.ErasureReceipt{}, err
@@ -70,6 +87,21 @@ func (s *Store) RunNocturneErase(ctx context.Context, erasureID string, eraser p
 		return latest, err
 	}
 	return s.Receipt(ctx, erasureID)
+}
+
+func releaseNocturneEraseLock(connection *pgxpool.Conn, erasureID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var unlocked bool
+	if err := connection.QueryRow(ctx, `SELECT pg_advisory_unlock(hashtextextended('privacy-nocturne-erasure:'||$1::uuid::text,0))`, erasureID).Scan(&unlocked); err == nil && unlocked {
+		connection.Release()
+		return
+	}
+	// 不把可能仍持有会话锁的连接归还池。
+	raw := connection.Hijack()
+	closeCtx, cancelClose := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelClose()
+	_ = raw.Close(closeCtx)
 }
 
 func currentNocturneReceipts(receipt privacy.ErasureReceipt) (map[privacy.StoreKind]privacy.StepReceipt, privacy.StepReceipt, error) {

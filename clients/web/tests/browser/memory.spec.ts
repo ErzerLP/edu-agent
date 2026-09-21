@@ -95,8 +95,8 @@ test('设备撤销即时失效、隐私清除重新配对核对原回执', async
   const receiptURL = page.url()
   // 旧会话失效早于本地清除完成；先读完原响应，避免刷新取消其余 owner 的清除。
   const response = await erased
-  expect(response.status()).toBe(202)
   const receipt = await response.json()
+  expect(response.status(), JSON.stringify(receipt)).toBe(202)
   for (const store of ['identity_metadata', 'knowledge_content', 'learning_event_payload']) {
     expect(receipt.steps).toContainEqual(expect.objectContaining({ store, status: 'succeeded' }))
   }

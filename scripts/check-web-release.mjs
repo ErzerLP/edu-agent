@@ -79,13 +79,15 @@ try {
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
   if (candidate) {
+    const browserDatabase = join(output, platform() === 'win32' ? 'webdatabase.exe' : 'webdatabase')
+    step('浏览器数据库隔离工具', () => command('go', ['build', '-o', browserDatabase, './testutil/webdatabase'], join(root, 'server')))
     step('生产 CLI 构建', () => command('make', ['cli-build']))
     step('真实 PostgreSQL、空库研究、CLI 同一教学、竞态和 SSE', () => {
       const log = command('go', ['test', '-json', '-p=1', '-count=1', '-timeout=10m', './internal/transport/httpapi', './internal/mentorrun', '-run', '^TestPostgreSQL(Web|StudyCLI|StartLearning|Research|Adaptive|MentorCookieHTTPAndSSERecovery)'], join(root, 'server'), { EDU_AGENT_INTEGRATION_CLI: join(root, 'clients/cli-go/bin/edu-agent') }, 1500000)
       checkGoResults(log, ['TestPostgreSQLStudyCLIResearchAndWebContent', 'TestPostgreSQLStartLearningEmptyLibrary', 'TestPostgreSQLAdaptiveQueueImmediateAndCompensation', 'TestPostgreSQLResearchGlobalErasureCannotReviveSources', 'TestPostgreSQLMentorCookieHTTPAndSSERecovery'])
       return log
     })
-    // 每个文件重启夹具：设置探测、全局清除与导师端点变更不可污染下一套用例。
+    // 每个浏览器/文件使用独立 schema 并重启夹具，隔离持久清除状态和模型配置。
     for (const project of ['chromium', 'firefox', 'webkit']) {
       for (const file of readdirSync(join(web, 'tests/browser')).filter(file => file.endsWith('.spec.ts')).sort()) {
         step(`${project} / ${file}`, () => {
@@ -94,7 +96,7 @@ try {
           const browserCommand = file === 'offline.spec.ts'
             ? ['run', 'test:offline', '--']
             : ['run', 'test:browser', '--', file]
-          const log = command('npm', [...browserCommand, `--project=${project}`, '--reporter=json'], web, {
+          const log = command(browserDatabase, ['npm', ...browserCommand, `--project=${project}`, '--reporter=json'], web, {
             WEB_RELEASE_MATRIX: '1', WEB_WORKSPACE_FIXTURE: fixture ? '1' : '0', WEB_MENTOR_FIXTURE: fixture ? '1' : '0', WEB_NOTESYNC_FIXTURE: file === 'notesync.spec.ts' ? '1' : '0', PLAYWRIGHT_JSON_OUTPUT_FILE: json,
           }, 1200000)
           checkBrowserResults(JSON.parse(readFileSync(json, 'utf8')), project)

@@ -101,10 +101,24 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 
 发布检查入口为仓库根目录的 `make web-release-check`；完整自动化候选为
 `TEST_DATABASE_URL=专用测试库 make web-release-candidate`，其中包含全局清除用例，
-不可使用既有部署数据。候选串行运行 Chromium/Firefox/WebKit，每个测试文件独立重启
-夹具。日常 `npm run test:browser` 仍只选 Chromium；设置 `WEB_RELEASE_MATRIX=1`
+不可使用既有部署数据。候选串行运行 Chromium/Firefox/WebKit，每个浏览器/测试文件
+自动创建独立临时 schema 并重启夹具，结束后仅删除该 schema；测试数据库用户需要
+创建 schema 的权限。服务及配对/grant 命令共享隔离后的连接参数。
+日常 `npm run test:browser` 仍只选 Chromium；设置 `WEB_RELEASE_MATRIX=1`
 可用 `--project=firefox` 或 `--project=webkit` 定向诊断。需要按锁文件准备依赖和对应引擎，
 脚本不自动安装。完整发布仍须通过[外部/人工门禁与 A01–A36](../../docs/development/issue-37-acceptance.md)。
+
+定向复测全局隐私清除时也应隔离持久状态：若前序离线设备尚未确认清除等原因使
+上次操作未完成，共用原 schema 再次发起会按合同返回 `409 erasure_conflict`。
+可以复用候选隔离工具：
+
+```bash
+# 在仓库根目录构建一次，再从 clients/web 执行。
+go -C server build -o /tmp/edu-webdatabase ./testutil/webdatabase
+cd clients/web
+TEST_DATABASE_URL=专用测试库 WEB_RELEASE_MATRIX=1 WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 \
+  /tmp/edu-webdatabase npm run test:browser -- memory.spec.ts --project=firefox
+```
 
 ## HTTPS 部署
 

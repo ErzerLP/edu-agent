@@ -25,7 +25,9 @@ func TestPostgreSQLWebMemoryApprovalPrivacyAndRevocation(t *testing.T) {
 	ctx := context.Background()
 	pool := appIntegrationPool(t)
 	stores := newApplicationStores(pool)
-	bridge, err := composeMemoryBridge(pool, stores, bridgeTestConfig(t, false), memoryBridgeDependencies{})
+	cfg := bridgeTestConfig(t, false)
+	cfg.Privacy.OfflineChallengeKeys = map[int][]byte{1: bytes.Repeat([]byte{0x63}, 32)}
+	bridge, err := composeMemoryBridge(pool, stores, cfg, memoryBridgeDependencies{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,6 +149,23 @@ func TestPostgreSQLWebMemoryApprovalPrivacyAndRevocation(t *testing.T) {
 	managerCookie, managerCSRF, managerDevice := cookie, csrf, device
 	pair(identity.PairingProfileMemory)
 	revokedCookie, revokedCSRF, revokedDevice := cookie, csrf, device
+	// 模拟前序离线用例下载过包、但不会再上线确认清除的浏览器设备。
+	offlineSession, pack := uuid.NewString(), uuid.NewString()
+	if _, err = pool.Exec(ctx, `INSERT INTO tutoring_sessions(id,aggregate_version,state,started_at,updated_at)
+		VALUES($1,1,'GoalReady',now(),now())`, offlineSession); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO offline_packs(
+		id,revision,prepare_device_id,prepare_operation_id,learner_generation,parent_session_id,
+		response_body,response_hash,signer_key_id,signature,issued_at,eligible_until,archive_until,created_at)
+		VALUES($1,1,$2,$3,1,$4,'{}',decode(repeat('00',32),'hex'),'test-key',decode(repeat('00',64),'hex'),
+		now(),now()+interval '1 hour',now()+interval '24 hours',now())`, pack, revokedDevice, uuid.NewString(), offlineSession); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO offline_device_possessions(id,device_id,learner_generation,first_pack_id,first_seen_at)
+		VALUES($1,$2,1,$3,now())`, uuid.NewString(), revokedDevice, pack); err != nil {
+		t.Fatal(err)
+	}
 	cookie, csrf, device = managerCookie, managerCSRF, managerDevice
 	request("DELETE", "/v1/devices/"+revokedDevice, nil, "", 204)
 	cookie, csrf = revokedCookie, revokedCSRF
@@ -175,6 +194,52 @@ func TestPostgreSQLWebMemoryApprovalPrivacyAndRevocation(t *testing.T) {
 	data = request("GET", "/v1/memory/candidates/"+candidate.ID, nil, "", 200)
 	if strings.Contains(string(data), content) || !strings.Contains(string(data), `"content_status":"scrubbed"`) {
 		t.Fatal("隐私清除后仍可恢复旧正文", string(data))
+	}
+	// 重建服务并推进后台恢复，证明冲突来自持久的离线确认，而非等待后台任务的竞态。
+	restarted, err := composeMemoryBridge(pool, newApplicationStores(pool), bridgeTestConfig(t, false), memoryBridgeDependencies{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovered, err = resumePrivacyErasure(ctx, restarted.privacyService, recovered)
+	if err != nil || recovered.Status != privacy.StatusPartial {
+		t.Fatal("遗留离线设备未确认时不应宣称清除已完成", err, recovered)
+	}
+	pendingOffline := false
+	for _, step := range recovered.Steps {
+		if step.Store == privacy.StoreOfflineDeviceCache {
+			pendingOffline = step.Status == privacy.StepPending
+		}
+	}
+	if !pendingOffline {
+		t.Fatal("未保留前序设备的待确认清除状态", recovered)
+	}
+	nextGrant, err := bridge.privacyGrant.Issue(ctx, device, "本机测试操作者")
+	if err != nil {
+		t.Fatal(err)
+	}
+	erase["operation_id"] = uuid.NewString()
+	erase["expected_current_learner_generation"] = receipt.LearnerGeneration
+	data = request("POST", "/v1/privacy/erasures", erase, nextGrant.Token, 409)
+	var conflict struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err = json.Unmarshal(data, &conflict); err != nil || conflict.Error.Code != "erasure_conflict" {
+		t.Fatal("未完成清除没有返回稳定冲突码", err, string(data))
+	}
+	request("GET", "/v1/privacy/operations/"+erase["operation_id"].(string)+"?device_id="+device, nil, "", 404)
+	data = request("GET", "/v1/web/session", nil, "", 200)
+	var current struct {
+		Generation int64 `json:"generation"`
+	}
+	if err = json.Unmarshal(data, &current); err != nil || current.Generation != receipt.LearnerGeneration {
+		t.Fatal("被拒绝的清除推进了代次或使当前会话失效", err, string(data))
+	}
+	data = request("GET", "/v1/privacy/operations/"+operation+"?device_id="+managerDevice, nil, "", 200)
+	var unchanged privacy.ErasureReceipt
+	if err = json.Unmarshal(data, &unchanged); err != nil || unchanged.ErasureID != recovered.ErasureID || unchanged.SummaryVersion != recovered.SummaryVersion {
+		t.Fatal("被拒绝的新清除修改了原回执", err, string(data))
 	}
 	if strings.Contains(logs.String(), content) || strings.Contains(logs.String(), issued.Token) || strings.Contains(logs.String(), managerCookie.Value) {
 		t.Fatal("日志泄漏正文或凭据")

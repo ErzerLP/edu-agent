@@ -1114,9 +1114,49 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await expect(
     page.getByRole('button', { name: '查看原资料依据', exact: true }).first(),
   ).toBeFocused()
-  await page.getByRole('link', { name: /第 1 版 · 正式/ }).click()
-  await page.getByRole('button', { name: '恢复为新的补偿版本' }).click()
+  // 让真实选段回执在按下和松开之间到达，覆盖面板增高导致恢复按钮移位的竞态。
+  let releaseResult!: () => void
+  const resultGate = new Promise<void>((resolve) => {
+    releaseResult = resolve
+  })
+  await page.route('**/content-edits', async (route) => {
+    const response = await route.fetch()
+    await resultGate
+    await route.fulfill({ response })
+  })
+  let restores = 0
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/restore'))
+      restores++
+  })
+  let restorePosition
+  let resultPosition
+  try {
+    await page.getByRole('link', { name: /第 1 版 · 正式/ }).click()
+    await expect(page.getByRole('heading', { name: '学习内容 · 第 1 版' })).toBeVisible()
+    await expect(editor).toBeVisible()
+    await expect(editor.getByLabel('选段操作结果')).toHaveCount(0)
+    const restore = page.getByRole('button', { name: '恢复为新的补偿版本' })
+    await restore.scrollIntoViewIfNeeded()
+    restorePosition = await restore.boundingBox()
+    expect(restorePosition).not.toBeNull()
+    await page.mouse.move(
+      restorePosition!.x + restorePosition!.width / 2,
+      restorePosition!.y + restorePosition!.height / 2,
+    )
+    await page.mouse.down()
+    releaseResult()
+    await expect(editor.getByLabel('选段操作结果')).toBeAttached()
+    resultPosition = await restore.boundingBox()
+  } finally {
+    releaseResult()
+    await page.mouse.up()
+    await page.unroute('**/content-edits')
+  }
   await expect(page.getByRole('heading', { name: '学习内容 · 第 3 版' })).toBeVisible()
+  expect(resultPosition).toEqual(restorePosition)
+  expect(restores).toBe(1)
+  await expect(page.getByText('已固定阅读第 2 版。', { exact: false })).toBeVisible()
   expect((await fixture.get()).work_item.activity).toEqual(original.work_item.activity)
   await page.getByRole('link', { name: '查看 Studio 内容库', exact: true }).click()
   await page.getByLabel('关联目标').selectOption(fixture.goal.goal_id)

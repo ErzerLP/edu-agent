@@ -1224,6 +1224,16 @@ export function ContentPage({
         content={value}
         onSelect={(b, start, end) => void selection.select(b, start, end)}
       />
+      {/* 版本操作放在异步选段面板之前，避免回执到达时移动点击目标。 */}
+      <ContentTools
+        content={value}
+        preference={preference.data!}
+        updatePreference={async (saved) => {
+          // 使用服务端已确认的偏好，避免迟到的旧查询覆盖本次保存。
+          await queryClient.cancelQueries({ queryKey: preferenceKey, exact: true })
+          queryClient.setQueryData(preferenceKey, saved)
+        }}
+      />
       {goal.data && (
         <ContentEditor
           key={value.artifact_id}
@@ -1243,15 +1253,6 @@ export function ContentPage({
           }
         />
       )}
-      <ContentTools
-        content={value}
-        preference={preference.data!}
-        updatePreference={async (saved) => {
-          // 使用服务端已确认的偏好，避免迟到的旧查询覆盖本次保存。
-          await queryClient.cancelQueries({ queryKey: preferenceKey, exact: true })
-          queryClient.setQueryData(preferenceKey, saved)
-        }}
-      />
       <section aria-label="内容版本历史">
         <h2>版本历史</h2>
         {history.error && <ErrorState error={history.error} />}

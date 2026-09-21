@@ -324,7 +324,8 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
         `${viewport}：长代码仍应在代码块内滚动`,
       ).toBe(true)
       if (width < 768) await page.getByRole('button', { name: '导师', exact: true }).click()
-      const mode = page.getByLabel('调整模式', { exact: true })
+      // 包裹式标签的文本还包含选项；按控件角色与精确可访问名称定位。
+      const mode = page.getByRole('combobox', { name: '调整模式', exact: true })
       await expect(mode).toBeVisible()
       expect(
         await mode.evaluate((element) => {

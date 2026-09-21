@@ -57,9 +57,19 @@ async function legacySession(
     expect([200, 404]).toContain(head.status())
     if (head.ok()) parent = (await head.json()).revision.revision_id
   }
-  const retained = parent
-    ? (await call('GET', `/v1/knowledge/revisions/${parent}/export`)).documents
-    : []
+  let retained: { path: string; markdown: string }[] = []
+  let redactedParent: string | null = null
+  if (parent) {
+    const exported = await request.get(`/v1/knowledge/revisions/${parent}/export`, { headers })
+    const body = await exported.json()
+    if (exported.ok()) retained = body.documents
+    else {
+      // 候选数据库可能已全局清除；墓碑仍是父版本，正文拒绝不能当作导出成功。
+      expect(exported.status()).toBe(503)
+      expect(body.error.code, JSON.stringify(body)).toBe('content_redacted')
+      redactedParent = parent
+    }
+  }
   await call('POST', '/v1/knowledge/imports', {
     operation_id: randomUUID(),
     expected_parent_revision_id: parent ?? null,
@@ -81,6 +91,12 @@ async function legacySession(
   })
   const collectionRevision = (await call('GET', '/v1/knowledge/revisions/head')).revision
     .revision_id
+  if (redactedParent) {
+    expect(collectionRevision).not.toBe(redactedParent)
+    const old = await request.get(`/v1/knowledge/revisions/${redactedParent}/export`, { headers })
+    expect(old.status()).toBe(503)
+    expect((await old.json()).error.code).toBe('content_redacted')
+  }
   const frozenScope = globalKnowledge
     ? { id: collectionRevision }
     : await call('POST', '/v1/knowledge/scopes', {

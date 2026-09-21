@@ -34,14 +34,36 @@ test('真实学习身份、预览差异、过期、未知结果核对和解除�
   await login(page)
   await api(page, 'POST', '/v1/knowledge/collections', { id: collection, action: 'link' })
   const initialHead = await api(page, 'GET', '/v1/knowledge/revisions/head')
+  expect([200, 404]).toContain(initialHead.status())
   const parent = initialHead.ok() ? (await initialHead.json()).revision.revision_id : null
+  const body = `# 同步资料\nshared lesson body uses enough stable words for identity continuity alpha state\n验收批次 ${randomUUID()}\n`
+  // 模拟前一引擎留下的相似正文；随机路径本身不构成新身份授权。
+  const previousPath = `历史同步验收-${randomUUID()}.md`
+  const previous = await api(page, 'POST', '/v1/knowledge/imports', {
+    operation_id: randomUUID(), expected_parent_revision_id: parent, source: '浏览器同步历史准备',
+    documents: [{ path: previousPath, markdown: body.replace('alpha state', 'gamma state'), as_new: true }],
+  })
+  expect(previous.ok(), await previous.text()).toBe(true)
+  const previousRevision = (await previous.json()).revision
   const path = `同步验收-${randomUUID()}.md`
+  const ambiguous = await api(page, 'POST', '/v1/knowledge/imports', {
+    operation_id: randomUUID(), expected_parent_revision_id: previousRevision.revision_id, source: '浏览器同步身份保护验收',
+    documents: [{ path, markdown: body }],
+  })
+  expect(ambiguous.status()).toBe(409)
+  expect(await ambiguous.json()).toMatchObject({ error: { code: 'identity_review_required' }, identity_review: {
+    document_reviews: expect.arrayContaining([expect.objectContaining({ path, reason_code: 'document_match_ambiguous' })]),
+  } })
   const imported = await api(page, 'POST', '/v1/knowledge/imports', {
-    operation_id: randomUUID(), expected_parent_revision_id: parent, source: '浏览器同步验收',
-    documents: [{ path, markdown: '# 同步资料\nshared lesson body uses enough stable words for identity continuity alpha state\n' }],
+    operation_id: randomUUID(), expected_parent_revision_id: previousRevision.revision_id, source: '浏览器同步验收',
+    documents: [{ path, markdown: body, as_new: true }],
   })
   expect(imported.ok(), await imported.text()).toBe(true)
-  const revision = (await imported.json()).revision.revision_id
+  const currentRevision = (await imported.json()).revision
+  const document = (documentPath: string) => currentRevision.documents.find((d: { path: string }) => d.path === documentPath).document
+  expect(document(path).document_id).not.toBe(document(previousPath).document_id)
+  expect(document(previousPath).document_id).toBe(previousRevision.documents.find((d: { path: string }) => d.path === previousPath).document.document_id)
+  const revision = currentRevision.revision_id
   const exported = await api(page, 'GET', `/v1/knowledge/revisions/${revision}/export`)
   expect(exported.ok()).toBe(true)
   const markdown = (await exported.json()).documents.find((d: { path: string }) => d.path === path).markdown as string

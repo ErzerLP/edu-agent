@@ -4,6 +4,12 @@
 
 The `blackbox` package builds and executes the actual `edu-agent`, `edu-agentd`, strict fake LLM, and response-loss proxy binaries. Each test creates a random PostgreSQL schema, random loopback ports, and two independent CLI configuration homes. Both CLI homes pair through one-time codes created by the real server command. Long-running processes receive SIGTERM and a bounded kill fallback during cleanup.
 
+教学场景在保存目标后显式创建会话，后续 `learn`、`assessment` 和 `offline prepare`
+均传入该场景的 `--session`。每次 CLI 调用都是新进程，不能依赖进程内选择或全局最新会话；
+无参数 `learn` 会进入目标/会话选择器。教学输入分别确认检索降级和采用路线，
+准备题目后用 `:quit` 正常退出并核对 `AwaitingResponse`，不以 EOF 错误证明准备成功。
+问题确认、修复范围与验收结果见 [Issue #56 验收记录](../../docs/development/issue-56-acceptance.md)。
+
 Run the candidate gate exactly once. It first runs the strict fake LLM and response-loss proxy contracts, then requires PostgreSQL and runs the real black-box scenarios serially:
 
 ```sh

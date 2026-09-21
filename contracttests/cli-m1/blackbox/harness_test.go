@@ -590,21 +590,20 @@ func (h *harness) setGoal(home, text string) string {
 		h.t.Fatal("目标保存未返回目标版本")
 	}
 	// 教学场景显式创建会话，避免依赖目标保存的旧副作用。
+	return h.createTeachingSession(fields[1])
+}
+
+func (h *harness) createTeachingSession(goalRevisionID string) string {
+	h.t.Helper()
 	credential := h.pairCredential("", "blackbox-session-setup")
 	sessionID := randomUUID(h.t)
 	var response json.RawMessage
 	h.authenticatedJSON(http.MethodPost, h.serverURL+"/v1/tutoring/sessions", credential.Token, map[string]any{
 		"operation_id": randomUUID(h.t), "payload_schema_version": 1,
 		"aggregate_type": "session", "aggregate_id": sessionID, "expected_version": 0,
-		"goal_revision_id": fields[1],
+		"goal_revision_id": goalRevisionID,
 	}, http.StatusCreated, &response)
 	return sessionID
-}
-
-func (h *harness) latestSession() (id, state string) {
-	h.t.Helper()
-	fields := h.queryFields("latest session metadata", `SELECT id,state FROM tutoring_sessions ORDER BY started_at DESC,id DESC LIMIT 1`, 2)
-	return fields[0], fields[1]
 }
 
 func (h *harness) scalarInt(label, query string, args ...any) int64 {

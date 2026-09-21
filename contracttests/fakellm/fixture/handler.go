@@ -38,6 +38,7 @@ type chatRequest struct {
 		Content string `json:"content"`
 	} `json:"messages"`
 	Stream         *bool `json:"stream"`
+	MaxTokens      *int  `json:"max_tokens,omitempty"`
 	ResponseFormat struct {
 		Type       string `json:"type"`
 		JSONSchema *struct {
@@ -216,6 +217,9 @@ func decodeChatRequest(contentType string, body []byte) (chatRequest, RequestKin
 	}
 	if strings.TrimSpace(request.Model) == "" || request.Stream == nil || *request.Stream {
 		return request, "", nil, fmt.Errorf("model and stream=false are required")
+	}
+	if request.MaxTokens != nil && *request.MaxTokens <= 0 {
+		return request, "", nil, fmt.Errorf("max_tokens 必须为正整数")
 	}
 	if len(request.Messages) != 3 || request.Messages[0].Role != "system" || request.Messages[1].Role != "assistant" || request.Messages[2].Role != "user" {
 		return request, "", nil, fmt.Errorf("ordered system, assistant, and user messages are required")

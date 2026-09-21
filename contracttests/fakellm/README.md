@@ -9,6 +9,9 @@ go run .
 
 It listens on `127.0.0.1:18081`, requires `Bearer fake-development-key`, and exposes `/v1/chat/completions`. The command has no server production-code imports; the module's server dependency is used only by adapter contract tests.
 
+请求支持生产客户端发送的可选正整数 `max_tokens` 输出预算；未知字段、非整数及非正数
+仍按严格协议拒绝。真实适配器合同测试携带输出预算，覆盖教学请求和能力探测。
+
 `FAKE_LLM_MODE` keeps the existing `success`, `invalid-json`, `schema-mismatch`, `unauthorized`, `rate-limited`, `server-error`, `timeout`, and `no-native-schema` modes. It also accepts `accepted`, `provisional`, `malformed`, and `risk:<risk_flag>`. `FAKE_LLM_ADDR`, `FAKE_LLM_API_KEY`, `FAKE_LLM_CONTROL_KEY`, and `FAKE_LLM_TIMEOUT_MS` override command defaults.
 
 For multi-step black-box scenarios, configure a sticky sequence per request kind. The last scenario repeats after the sequence is consumed:

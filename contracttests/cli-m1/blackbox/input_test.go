@@ -15,7 +15,7 @@ func TestStandardTeachingInputOrder(t *testing.T) {
 		defaultHelp().
 		acknowledgeFeedback().
 		String()
-	want := "y\n\ny\ny\n\naccepted response\n\n\n"
+	want := "y\ny\n\ny\ny\n\naccepted response\n\n\n"
 	if got != want {
 		t.Fatalf("standard teaching input order changed")
 	}
@@ -24,6 +24,7 @@ func TestStandardTeachingInputOrder(t *testing.T) {
 func standardTeachingInput() *learnInput {
 	return newLearnInput().
 		confirmRouteRetrieval().
+		acceptProposedRoute().
 		continueFromRoute().
 		confirmExplanationRetrieval().
 		confirmActivityRetrieval().
@@ -33,6 +34,7 @@ func standardTeachingInput() *learnInput {
 func dueReviewInput() *learnInput {
 	return newLearnInput().
 		confirmRouteRetrieval().
+		acceptProposedRoute().
 		continueFromRoute().
 		confirmDueReview().
 		confirmReviewActivityRetrieval()
@@ -43,6 +45,10 @@ func newLearnInput() *learnInput {
 }
 
 func (input *learnInput) confirmRouteRetrieval() *learnInput {
+	return input.line("y")
+}
+
+func (input *learnInput) acceptProposedRoute() *learnInput {
 	return input.line("y")
 }
 

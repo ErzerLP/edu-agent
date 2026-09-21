@@ -89,6 +89,41 @@ func TestRealTutorModelAdapterDecodesEveryProposalSchema(t *testing.T) {
 	}
 }
 
+func TestFixtureOutputBudgetContract(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		fields map[string]any
+		valid  bool
+	}{
+		{name: "省略预算", valid: true},
+		{name: "探测预算", fields: map[string]any{"max_tokens": 64}, valid: true},
+		{name: "教学预算", fields: map[string]any{"max_tokens": 2048}, valid: true},
+		{name: "零预算", fields: map[string]any{"max_tokens": 0}},
+		{name: "负数预算", fields: map[string]any{"max_tokens": -1}},
+		{name: "小数预算", fields: map[string]any{"max_tokens": 1.5}},
+		{name: "字符串预算", fields: map[string]any{"max_tokens": "2048"}},
+		{name: "未知字段仍拒绝", fields: map[string]any{"max_tokens": 2048, "unknown_field": true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := proposalContractRequestBody(t, KindRoute, decodeContractSchema(t, routeSchemaContract), proposalSystemPrompt, proposalAssistantPrompt, "system")
+			var request map[string]any
+			if err := json.Unmarshal(body, &request); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range test.fields {
+				request[key] = value
+			}
+			body, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := decodeChatRequest("application/json", body); (err == nil) != test.valid {
+				t.Fatalf("输出预算契约不符：期望接受=%t，错误=%v", test.valid, err)
+			}
+		})
+	}
+}
+
 func TestCapabilityProbeRemainsCompatibleWithoutNativeSchema(t *testing.T) {
 	controller := NewController()
 	if err := controller.Configure(KindCapabilityProbe, Scenario{Kind: ScenarioNoNativeSchema}); err != nil {
@@ -704,7 +739,7 @@ func newLLMClient(t *testing.T, rawURL string, timeout time.Duration) *llm.Clien
 	}
 	client, err := llm.New(llm.Options{
 		BaseURL: base, Model: "strict-fake", APIKey: "test-key",
-		ContextWindow: 8192, MinimumContext: 4096, Timeout: timeout,
+		ContextWindow: 8192, MinimumContext: 4096, Timeout: timeout, MaxOutputTokens: 2048,
 	})
 	if err != nil {
 		t.Fatal(err)

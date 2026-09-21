@@ -186,7 +186,7 @@ func runSchemaExhaustionAndLaterSuccess(t *testing.T, h *harness, profile produc
 	failed := h.runCLI(h.primaryHome, newLearnInput().
 		answer("fixed production model corpus response").
 		defaultHelp().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	if code := requireNonZero(t, failed, "schema mismatch assessment"); code != "proposal_rejected" {
 		t.Fatalf("schema mismatch error_code=%s want=proposal_rejected", code)
 	}
@@ -205,7 +205,7 @@ func runSchemaExhaustionAndLaterSuccess(t *testing.T, h *harness, profile produc
 		fakeScenario{Kind: "accepted"},
 	)
 	cursor = h.fakeAuditCursor()
-	exhausted := h.runCLI(h.primaryHome, "", "learn")
+	exhausted := h.runCLI(h.primaryHome, "", "learn", "--session", sessionID)
 	code := requireNonZero(t, exhausted, "rate-limit retry exhaustion")
 	if code != "model_unavailable" && code != "dependency_unavailable" {
 		t.Fatalf("rate-limit exhaustion error_code=%s", code)
@@ -222,7 +222,7 @@ func runSchemaExhaustionAndLaterSuccess(t *testing.T, h *harness, profile produc
 	exhaustionFailure := failedAssessmentProposal(t, h, sessionID, "rate_limited", "rate_limited,rate_limited")
 
 	cursor = h.fakeAuditCursor()
-	accepted := h.runCLI(h.primaryHome, newLearnInput().acknowledgeFeedback().String(), "learn")
+	accepted := h.runCLI(h.primaryHome, newLearnInput().acknowledgeFeedback().String(), "learn", "--session", sessionID)
 	requireModelSuccess(t, accepted, "later accepted assessment")
 	laterAudit := assertProductionFakeAttempts(t, h, cursor, profile, true,
 		productionFakeAttempt{Scenario: "accepted", Status: http.StatusOK})
@@ -251,7 +251,7 @@ func runLowConfidenceProvisional(t *testing.T, h *harness, profile productionMod
 		answer("fixed production model corpus response").
 		defaultHelp().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireModelSuccess(t, result, "low-confidence assessment")
 	audit := assertProductionFakeAttempts(t, h, cursor, profile, true,
 		productionFakeAttempt{Scenario: "provisional", Status: http.StatusOK})
@@ -272,9 +272,9 @@ func runLowConfidenceProvisional(t *testing.T, h *harness, profile productionMod
 	}
 	observation := assertProductionAssessmentPersistence(t, h, sessionID, profile, 1, "success")
 
-	confirmed := h.runCLI(h.primaryHome, "", "assessment", "confirm")
+	confirmed := h.runCLI(h.primaryHome, "", "assessment", "confirm", "--session", sessionID)
 	requireModelSuccess(t, confirmed, "explicit provisional confirmation")
-	acknowledged := h.runCLI(h.primaryHome, newLearnInput().acknowledgeFeedback().String(), "learn")
+	acknowledged := h.runCLI(h.primaryHome, newLearnInput().acknowledgeFeedback().String(), "learn", "--session", sessionID)
 	requireModelSuccess(t, acknowledged, "acknowledge confirmed assessment")
 	assertSessionModelCounts(t, h, sessionID, "Completed", 1, 1, 2, 1)
 	masteryConfirmed := productionModelMastery(t, h, nodeID)
@@ -293,7 +293,7 @@ func runTransientAssessmentRetry(t *testing.T, h *harness, profile productionMod
 		answer("fixed production model corpus response").
 		defaultHelp().
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireModelSuccess(t, result, label+" transient retry")
 	orderedAudit := first.Kind != "timeout"
 	audit := assertProductionFakeAttempts(t, h, cursor, profile, orderedAudit,
@@ -311,10 +311,8 @@ func runTransientAssessmentRetry(t *testing.T, h *harness, profile productionMod
 func materializeProductionModelAssessment(t *testing.T, h *harness, label string) (string, string, productionModelMasterySnapshot) {
 	t.Helper()
 	sessionID := h.setGoal(h.primaryHome, "Verify the stable concept with production model vertical "+label)
-	result := h.runCLI(h.primaryHome, standardTeachingInput().String(), "learn")
-	if result.exit == 0 {
-		t.Fatalf("%s setup unexpectedly completed before answer submission", label)
-	}
+	result := h.runCLI(h.primaryHome, standardTeachingInput().quit().String(), "learn", "--session", sessionID)
+	requireExit(t, result, 0, "模型对照评估前生成题目并退出课堂")
 	if state := h.scalarString(label+" setup session state", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID); state != "AwaitingResponse" {
 		code := stableErrorCode(result.stderr)
 		if code == "" {

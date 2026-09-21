@@ -80,7 +80,7 @@ func TestBlackBoxKnowledgeMaintenanceSharesProposalAcrossHTTPMCPAndCLI(t *testin
 		answer("accepted response").
 		defaultHelp().
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", learningSessionID)
 	requireExit(t, learned, 0, "knowledge maintenance accepted evidence setup")
 	acceptedEvidenceID := h.scalarString("knowledge maintenance accepted evidence", `
 		SELECT id::text FROM learning_evidence WHERE session_id=$1`, learningSessionID)

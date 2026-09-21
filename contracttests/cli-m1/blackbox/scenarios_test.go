@@ -48,12 +48,13 @@ func TestBlackBoxOfflineObjectivePrepareLearnSyncStatus(t *testing.T) {
 	h.importFixture(h.primaryHome)
 	sessionID := h.setGoal(h.primaryHome, "Practice the stable concept while disconnected")
 
-	materialize := h.runCLI(h.primaryHome, standardTeachingInput().String(), "learn")
-	requireNonZero(t, materialize, "materialize objective activity before offline preparation")
+	materialize := h.runCLI(h.primaryHome, standardTeachingInput().quit().String(), "learn", "--session", sessionID)
+	requireExit(t, materialize, 0, "离线准备前生成题目并退出课堂")
 	requireContains(t, materialize.stdout, "Question:", "materialized objective activity")
+	assertSessionCount(t, h, "离线准备前等待作答", `SELECT count(*) FROM tutoring_sessions WHERE id=$1 AND state='AwaitingResponse'`, sessionID, 1)
 
 	passphrase := "blackbox offline passphrase"
-	prepared := h.runCLI(h.primaryHome, passphrase+"\n"+passphrase+"\n", "offline", "prepare", "--count", "1")
+	prepared := h.runCLI(h.primaryHome, passphrase+"\n"+passphrase+"\n", "offline", "prepare", "--session", sessionID, "--count", "1")
 	if prepared.exit != 0 {
 		prepareClaims := h.scalarInt("offline prepare failure metadata", `SELECT count(*) FROM offline_prepare_claims`)
 		t.Fatalf("offline prepare failed: exit=%d code=%s claims=%d bootstrap=%s stderr=%q", prepared.exit, stableErrorCode(prepared.stderr), prepareClaims, h.offlineBootstrapWarning(), prepared.stderr)
@@ -90,12 +91,15 @@ func TestBlackBoxAcceptedTeachingFlow(t *testing.T) {
 	h.pairBoth(h.serverURL)
 	h.importFixture(h.primaryHome)
 	sessionID := h.setGoal(h.primaryHome, "Understand the stable concept and its verification step")
+	// 后创建的会话成为全局 current，用于证明教学仍绑定显式指定的原会话。
+	otherSessionID := h.setGoal(h.primaryHome, "暂不开始的另一教学目标")
+	otherVersion := h.scalarInt("其他会话初始版本", `SELECT aggregate_version FROM tutoring_sessions WHERE id=$1`, otherSessionID)
 
 	result := h.runCLI(h.primaryHome, standardTeachingInput().
 		answer("accepted response").
 		defaultHelp().
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, result, 0, "accepted teaching flow")
 	for marker, label := range map[string]string{
 		"Current: proposed route":           "route proposal",
@@ -106,9 +110,9 @@ func TestBlackBoxAcceptedTeachingFlow(t *testing.T) {
 	} {
 		requireContains(t, result.stdout, marker, label)
 	}
-	latestID, state := h.latestSession()
-	if latestID != sessionID || state != "Completed" {
-		t.Fatalf("accepted flow assertion failed: session state metadata")
+	assertSessionCount(t, h, "指定会话完成", `SELECT count(*) FROM tutoring_sessions WHERE id=$1 AND state='Completed'`, sessionID, 1)
+	if !h.scalarBool("其他会话未开始教学", `SELECT state='GoalReady' AND aggregate_version=$2 FROM tutoring_sessions WHERE id=$1`, otherSessionID, otherVersion) {
+		t.Fatal("显式续学改变了其他会话")
 	}
 	assertSessionCount(t, h, "route revision", `SELECT count(*) FROM learning_route_revisions r JOIN learning_goal_revisions g ON g.id=r.goal_revision_id JOIN tutoring_sessions s ON s.goal_revision_id=g.id WHERE s.id=$1`, sessionID, 1)
 	assertSessionCount(t, h, "explanation exposure", `SELECT count(*) FROM learning_exposures WHERE session_id=$1 AND exposure_kind='explanation'`, sessionID, 1)
@@ -136,7 +140,7 @@ func TestBlackBoxMultilineAnswerAndNonDefaultHelp(t *testing.T) {
 		multilineAnswer("first private line", "second private line").
 		selectHelp("hint").
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, result, 0, "multiline answer flow")
 	requireContains(t, result.stdout, "Allowed help: hint,scaffold", "non-default help choices")
 	requireContains(t, result.stderr, "a single . ends the block", "multiline terminator prompt")
@@ -159,7 +163,7 @@ func TestBlackBoxProvisionalSurvivesExitAndSecondCLIConfirms(t *testing.T) {
 	sessionID := h.setGoal(h.primaryHome, "Confirm a provisional stable concept assessment")
 	assessmentID := reachProvisionalFeedback(t, h, sessionID)
 
-	result := h.runCLI(h.secondaryHome, "", "assessment", "confirm")
+	result := h.runCLI(h.secondaryHome, "", "assessment", "confirm", "--session", sessionID)
 	requireExit(t, result, 0, "second CLI confirm")
 	requireContains(t, result.stdout, "disposition=accepted", "confirmed assessment")
 	assertSecondDeviceDecision(t, h, assessmentID, "accepted")
@@ -173,7 +177,7 @@ func TestBlackBoxProvisionalSurvivesExitAndSecondCLIOverrides(t *testing.T) {
 	sessionID := h.setGoal(h.primaryHome, "Override a provisional stable concept assessment")
 	assessmentID := reachProvisionalFeedback(t, h, sessionID)
 
-	result := h.runCLI(h.secondaryHome, "second device correction\n\n\n", "assessment", "override")
+	result := h.runCLI(h.secondaryHome, "second device correction\n\n\n", "assessment", "override", "--session", sessionID)
 	requireExit(t, result, 0, "second CLI override")
 	requireContains(t, result.stdout, "disposition=overridden", "overridden assessment")
 	assertSecondDeviceDecision(t, h, assessmentID, "overridden")
@@ -198,8 +202,9 @@ func TestBlackBoxFreeAnswerAttachedQuizFeedbackAndExplicitResume(t *testing.T) {
 
 	paused := h.runCLI(h.primaryHome, newLearnInput().
 		confirmRouteRetrieval().
+		acceptProposedRoute().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, paused, 0, "pause at route")
 	if state := h.scalarString("route pause", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID); state != "RouteActive" {
 		t.Fatalf("focus assertion failed: initial state=%s want=RouteActive", state)
@@ -216,7 +221,7 @@ func TestBlackBoxFreeAnswerAttachedQuizFeedbackAndExplicitResume(t *testing.T) {
 		defaultHelp().
 		acknowledgeFeedback().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	if quiz.exit != 0 {
 		t.Fatalf("free answer attached quiz failed: exit=%d error_code=%s state=%s fake_calls=%v", quiz.exit, stableErrorCode(quiz.stderr), h.scalarString("free answer failure state", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID), h.fakeAuditCounts())
 	}
@@ -241,7 +246,7 @@ func TestBlackBoxFreeAnswerAttachedQuizFeedbackAndExplicitResume(t *testing.T) {
 	resumed := h.runCLI(h.secondaryHome, newLearnInput().
 		resumeFocus().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, resumed, 0, "explicit resume")
 	if state := h.scalarString("explicit resume state", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID); state != "RouteActive" {
 		t.Fatalf("focus assertion failed: resumed state=%s want=RouteActive", state)
@@ -261,7 +266,7 @@ func TestBlackBoxDueReviewOnlyAcceptedEvidenceAdvances(t *testing.T) {
 		answer("baseline response").
 		defaultHelp().
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", baselineSession)
 	requireExit(t, baseline, 0, "baseline evidence")
 	if state := h.scalarString("baseline completion", `SELECT state FROM tutoring_sessions WHERE id=$1`, baselineSession); state != "Completed" {
 		t.Fatalf("review assertion failed: baseline state=%s", state)
@@ -272,11 +277,13 @@ func TestBlackBoxDueReviewOnlyAcceptedEvidenceAdvances(t *testing.T) {
 		fakeScenario{Kind: "accepted"},
 	)
 
-	reviewSession := h.setGoal(h.primaryHome, "Review the stable concept when it is due")
-	// Diagnostic route -> RouteActive due-review confirmation -> review ActivityIssued.
+	// 复习按目标归属隔离；在原目标下新建会话，才能使用基线证据的到期计划。
+	goalRevisionID := h.scalarString("复习来源目标版本", `SELECT goal_revision_id FROM tutoring_sessions WHERE id=$1`, baselineSession)
+	reviewSession := h.createTeachingSession(goalRevisionID)
+	// 采用诊断路线后确认到期复习，进入复习题目的 ActivityIssued。
 	presented := h.runCLI(h.primaryHome, dueReviewInput().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", reviewSession)
 	requireExit(t, presented, 0, "present due review")
 	stepAfterPresent, dueAfterPresent := reviewMetadata(t, h, nodeID)
 	if stepAfterPresent != 0 || !dueAfterPresent.Before(time.Now().UTC()) {
@@ -292,7 +299,7 @@ func TestBlackBoxDueReviewOnlyAcceptedEvidenceAdvances(t *testing.T) {
 		answer("provisional review response").
 		defaultHelp().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", reviewSession)
 	requireExit(t, provisional, 0, "provisional review assessment")
 	stepAfterProvisional, dueAfterProvisional := reviewMetadata(t, h, nodeID)
 	if stepAfterProvisional != stepAfterPresent || !dueAfterProvisional.Equal(dueAfterPresent) {
@@ -308,7 +315,7 @@ func TestBlackBoxDueReviewOnlyAcceptedEvidenceAdvances(t *testing.T) {
 	}
 	assertGlobalCount(t, h, "evidence after provisional", `SELECT count(*) FROM learning_evidence`, 1)
 
-	voided := h.runCLI(h.secondaryHome, "review result excluded\n", "assessment", "void")
+	voided := h.runCLI(h.secondaryHome, "review result excluded\n", "assessment", "void", "--session", reviewSession)
 	requireExit(t, voided, 0, "void provisional review")
 	stepAfterVoid, dueAfterVoid := reviewMetadata(t, h, nodeID)
 	if stepAfterVoid != stepAfterPresent || !dueAfterVoid.Equal(dueAfterPresent) {
@@ -318,16 +325,16 @@ func TestBlackBoxDueReviewOnlyAcceptedEvidenceAdvances(t *testing.T) {
 
 	acknowledged := h.runCLI(h.secondaryHome, newLearnInput().
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", reviewSession)
 	requireExit(t, acknowledged, 0, "acknowledge voided review")
-	acceptedSession := h.setGoal(h.secondaryHome, "Complete an accepted stable concept due review")
+	acceptedSession := h.createTeachingSession(goalRevisionID)
 	// A due review skips explanation generation but still confirms review-activity retrieval.
 	accepted := h.runCLI(h.secondaryHome, dueReviewInput().
 		presentActivity().
 		answer("accepted review response").
 		defaultHelp().
 		acknowledgeFeedback().
-		String(), "learn")
+		String(), "learn", "--session", acceptedSession)
 	requireExit(t, accepted, 0, "accepted due review")
 	acceptedStep, acceptedDue := reviewMetadata(t, h, nodeID)
 	if acceptedStep != 1 || !acceptedDue.After(time.Now().UTC().Add(48*time.Hour)) {
@@ -346,7 +353,7 @@ func TestBlackBoxModelFailurePreservesAuthoritativeStateAndCanRetry(t *testing.T
 
 	failed := h.runCLI(h.primaryHome, newLearnInput().
 		confirmRouteRetrieval().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	code := requireNonZero(t, failed, "route model failure")
 	if code != "model_unavailable" && code != "dependency_unavailable" {
 		t.Fatalf("model failure assertion failed: error_code=%s", code)
@@ -363,8 +370,9 @@ func TestBlackBoxModelFailurePreservesAuthoritativeStateAndCanRetry(t *testing.T
 	h.configureFake("route", fakeScenario{Kind: "accepted", RouteStepLimit: 1})
 	retried := h.runCLI(h.primaryHome, newLearnInput().
 		confirmRouteRetrieval().
+		acceptProposedRoute().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, retried, 0, "route retry")
 	if state := h.scalarString("state after route retry", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID); state != "RouteActive" {
 		t.Fatalf("model retry assertion failed: state=%s want=RouteActive", state)
@@ -386,7 +394,7 @@ func TestBlackBoxResponseLossReplaysSameBodyWithoutDuplicateAuthority(t *testing
 	failed := h.runCLI(h.primaryHome, standardTeachingInput().
 		answer("response loss candidate").
 		defaultHelp().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	failureCode := requireNonZero(t, failed, "prepare evaluating state")
 	if state := h.scalarString("evaluating state before response loss", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID); state != "Evaluating" {
 		t.Fatalf("response-loss setup failed: state=%s want=Evaluating error_code=%s fake_calls=%v", state, failureCode, h.fakeAuditCounts())
@@ -399,7 +407,7 @@ func TestBlackBoxResponseLossReplaysSameBodyWithoutDuplicateAuthority(t *testing
 	h.armCapture(actionPath)
 	replayed := h.runCLI(h.primaryHome, newLearnInput().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, replayed, 0, "assessment response-loss replay")
 	requireContains(t, replayed.stdout, "disposition=accepted", "accepted replay result")
 
@@ -461,7 +469,7 @@ func reachProvisionalFeedback(t *testing.T, h *harness, sessionID string) string
 		answer("provisional response").
 		defaultHelp().
 		quit().
-		String(), "learn")
+		String(), "learn", "--session", sessionID)
 	requireExit(t, result, 0, "provisional feedback and process exit")
 	requireContains(t, result.stdout, "disposition=provisional", "provisional disposition")
 	if state := h.scalarString("provisional feedback state", `SELECT state FROM tutoring_sessions WHERE id=$1`, sessionID); state != "Feedback" {

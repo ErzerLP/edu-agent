@@ -426,6 +426,34 @@ func TestPostgreSQLMentorTemporaryClearAndCursorExpiry(t *testing.T) {
 	}
 }
 
+func TestPostgreSQLMentorStopStateTransitions(t *testing.T) {
+	f := fixture(t, func(http.ResponseWriter, *http.Request, int) {
+		t.Error("受控状态转换不应调用模型")
+	})
+	r := f.accept(t)
+	ctx := context.Background()
+	owned, err := f.service.claim(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned == nil || owned.RunID != r.RunID || owned.Status != "running" {
+		t.Fatalf("未领取待停止运行：%+v", owned)
+	}
+	if _, err = f.service.Command(ctx, f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: owned.Version, Kind: "stop"}); err != nil {
+		t.Fatal(err)
+	}
+	// 暂不启动并发 worker，确保在结算前严格检查已持久化的中间态。
+	if snapshot := f.snapshot(t, r.RunID); snapshot.Status != "cancelling" || snapshot.Reason != "user_stopped" {
+		t.Fatalf("停止命令未保存取消中状态：%+v", snapshot.Meta)
+	}
+	if err = f.service.finish(ctx, *owned, ErrLease); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot := f.snapshot(t, r.RunID); snapshot.Status != "cancelled" || snapshot.Reason != "user_stopped" {
+		t.Fatalf("停止结算后状态错误：%+v", snapshot.Meta)
+	}
+}
+
 func TestPostgreSQLMentorInFlightCancellationAndLifecycleFences(t *testing.T) {
 	for _, action := range []string{"stop", "pause", "archive", "revoke", "scope"} {
 		t.Run(action, func(t *testing.T) {
@@ -466,8 +494,12 @@ func TestPostgreSQLMentorInFlightCancellationAndLifecycleFences(t *testing.T) {
 			case "stop":
 				snapshot := f.snapshot(t, r.RunID)
 				_, err = f.service.Command(ctx, f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: snapshot.Version, Kind: "stop"})
-				if err == nil && f.snapshot(t, r.RunID).Status != "cancelling" {
-					t.Fatal("未显示取消中")
+				if err == nil {
+					// worker 可能已在命令返回后的快照读取前完成取消。
+					stopped := f.snapshot(t, r.RunID)
+					if (stopped.Status != "cancelling" && stopped.Status != "cancelled") || stopped.Reason != "user_stopped" {
+						t.Fatalf("停止后状态错误：%+v", stopped.Meta)
+					}
 				}
 			case "pause", "archive":
 				status := "paused"

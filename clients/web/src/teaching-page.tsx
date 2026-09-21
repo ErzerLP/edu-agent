@@ -532,6 +532,14 @@ function TeachingWorkspace({
     }
   }
   const canWrite = session.device.scopes.includes('learning:write') && !busy && !pending
+  // 正文替换原题回退时会移动反馈按钮；加载完成或明确失败后再允许点击。
+  const contentLoading =
+    !!activity &&
+    (capabilities.isPending ||
+      (capabilities.data?.available &&
+        capabilities.data.protocol_version === 1 &&
+        !content &&
+        !contentError))
   const inactive =
     archived || (goal.data && !['active', 'draft'].includes(goal.data.management.status))
   const refs = content?.body.references ?? activity?.knowledge_references ?? []
@@ -583,9 +591,11 @@ function TeachingWorkspace({
               ? '正在处理…'
               : pending
                 ? '提交结果待核对'
-                : content
-                  ? `内容第 ${content.version} 版已保存`
-                  : '已读取服务端会话'}{' '}
+                : contentLoading
+                  ? '正在加载教学正文…'
+                  : content
+                    ? `内容第 ${content.version} 版已保存`
+                    : '已读取服务端会话'}{' '}
             ·{' '}
             {activity
               ? `当前活动：${activity.type === 'explanation' ? '阅读' : '练习'}`
@@ -889,7 +899,7 @@ function TeachingWorkspace({
             )}
             {allowed('record_assessment') && (
               <Button
-                disabled={!canWrite}
+                disabled={!canWrite || contentLoading}
                 onClick={() =>
                   activity?.type === 'objective'
                     ? void perform({ action: 'record_assessment' })

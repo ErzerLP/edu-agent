@@ -429,9 +429,41 @@ test('评估详情保留原版本、权限隔离与丢响应历史作废', async
   await expect(page.getByRole('link', { name: /第 1 版/ })).toBeVisible()
   const original = await fixture.get()
   const attempt = original.work_item.attempt.attempt_id
+  // 返回课堂时保留真实正文响应，覆盖原题回退替换正文前的布局窗口。
+  let releaseContent!: () => void
+  const contentGate = new Promise<void>((resolve) => {
+    releaseContent = resolve
+  })
+  await page.route(
+    `**/v1/tutoring/sessions/${fixture.id}/content`,
+    async (route) => {
+      const response = await route.fetch()
+      await contentGate
+      await route.fulfill({ response })
+    },
+    { times: 1 },
+  )
+  let assessments = 0
+  page.on('request', (request) => {
+    if (
+      request.url().endsWith(`/sessions/${fixture.id}/actions`) &&
+      request.postDataJSON()?.action === 'record_assessment'
+    ) assessments++
+  })
+  const readingContent = page.waitForRequest(`**/v1/tutoring/sessions/${fixture.id}/content`)
   await page.getByRole('link', { name: '返回原教学会话' }).click()
-  await page.getByRole('button', { name: '获取教学反馈' }).click()
+  await readingContent
+  const feedback = page.getByRole('button', { name: '获取教学反馈' })
+  try {
+    await expect(feedback).toBeDisabled()
+    await expect(page.getByText('正在加载教学正文…', { exact: false })).toBeVisible()
+    expect(assessments).toBe(0)
+  } finally {
+    releaseContent()
+  }
+  await feedback.click()
   await expect(page.getByRole('region', { name: '教学反馈' })).toContainText('已接纳')
+  expect(assessments).toBe(1)
   await page.getByRole('button', { name: '查看完毕，继续学习' }).click()
   await expect.poll(async () => (await fixture.get()).session.state).toBe('RouteActive')
   await page.goto(`/app/spaces/${space}/feedback/${attempt}`)
@@ -488,6 +520,45 @@ test('评估详情保留原版本、权限隔离与丢响应历史作废', async
     await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })),
   ).not.toContain('人工复核')
 })
+
+for (const condition of ['正文不可用', '正文协议不支持', '正文读取失败'] as const) {
+  test(`${condition}仍可按原题获取教学反馈`, async ({ page, request }) => {
+    test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+    const fixture = await legacySession(request)
+    await fixture.action('present_activity')
+    await fixture.action('submit_attempt', { answer: 'A', help: 'none' })
+    await page.goto('/app/')
+    await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
+    await page.getByRole('button', { name: '配对并进入' }).click()
+    await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+    if (condition === '正文读取失败') {
+      await page.route(`**/v1/tutoring/sessions/${fixture.id}/content`, (route) =>
+        route.fulfill({
+          status: 503,
+          json: { error: { code: 'learning_content_key_unavailable' } },
+        }),
+      )
+    } else {
+      await page.route('**/v1/learning/content/capabilities', (route) =>
+        route.fulfill({
+          json: {
+            protocol_version: condition === '正文协议不支持' ? 2 : 1,
+            available: condition !== '正文不可用',
+            blocks: [],
+            interactions: [],
+          },
+        }),
+      )
+    }
+    await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+    if (condition === '正文读取失败') {
+      await expect(page.getByRole('alert')).toContainText('原会话仍然保留')
+    }
+    await page.getByRole('button', { name: '获取教学反馈' }).click()
+    await expect(page.getByRole('region', { name: '教学反馈' })).toContainText('已接纳')
+    expect((await fixture.get()).session.state).toBe('Feedback')
+  })
+}
 
 test('开放评估明确不确定性，复核与覆盖保留原建议及追加证据', async ({ page, request }) => {
   test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')

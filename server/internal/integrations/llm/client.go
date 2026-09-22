@@ -290,6 +290,7 @@ func (c *Client) probe(ctx context.Context) Capabilities {
 		Profile: "openai-chat-completions-v1", ContextWindow: c.contextWindow,
 		MinimumContextWindow: c.minimumContext,
 		NativeJSONSchema:     false, Streaming: false, ToolCalls: false,
+		IncompatibilityReasons: []string{},
 	}
 	schema := json.RawMessage(`{"type":"object","properties":{"capability_probe":{"type":"boolean"}},"required":["capability_probe"],"additionalProperties":false}`)
 	request := ChatRequest{
@@ -327,7 +328,7 @@ func markCoreCapabilities(capabilities *Capabilities) {
 }
 
 func cloneCapabilities(value Capabilities) Capabilities {
-	value.IncompatibilityReasons = append([]string(nil), value.IncompatibilityReasons...)
+	value.IncompatibilityReasons = append([]string{}, value.IncompatibilityReasons...)
 	return value
 }
 

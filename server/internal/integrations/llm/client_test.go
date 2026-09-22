@@ -23,6 +23,47 @@ func TestChatAndCapabilityProbe(t *testing.T) {
 	}
 }
 
+func TestProbeReasonsJSONContract(t *testing.T) {
+	for _, test := range []struct {
+		mode       string
+		compatible bool
+		reasons    string
+	}{
+		{mode: "success", compatible: true, reasons: `[]`},
+		{mode: "no-native-schema", compatible: true, reasons: `[]`},
+		{mode: "unauthorized", reasons: `["unauthorized"]`},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			server := fakeServer(t, test.mode, "test-key")
+			defer server.Close()
+			client := newTestClient(t, server.URL, time.Second)
+			for _, phase := range []string{"首次探测", "缓存命中", "再次缓存命中"} {
+				t.Run(phase, func(t *testing.T) {
+					result := client.Probe(t.Context())
+					if result.Compatible != test.compatible {
+						t.Fatalf("模型兼容状态错误：%+v", result)
+					}
+					body, err := json.Marshal(result)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var fields map[string]json.RawMessage
+					if err := json.Unmarshal(body, &fields); err != nil {
+						t.Fatal(err)
+					}
+					if got := string(fields["incompatibility_reasons"]); got != test.reasons {
+						t.Errorf("原因列表违反数组协议：得到 %s，期望 %s", got, test.reasons)
+					}
+					if len(result.IncompatibilityReasons) > 0 {
+						// 修改调用方结果后，后续探测仍应返回原缓存原因。
+						result.IncompatibilityReasons[0] = "调用方修改"
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestFakeServerContractFailures(t *testing.T) {
 	tests := []struct {
 		mode     string

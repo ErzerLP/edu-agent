@@ -41,20 +41,27 @@ func TestPostgreSQLGoalListExcludesErasedGoalsBeforePagination(t *testing.T) {
 	const erased = "10000000-0000-4000-8000-000000000001"
 	const current = "20000000-0000-4000-8000-000000000001"
 	const legacy = "30000000-0000-4000-8000-000000000001"
-	insert := func(goalID string, revision int, text, source string, management *learning.GoalManagement) {
+	insert := func(goalID string, revision int, previousRevisionID *string, text, source string, management *learning.GoalManagement) string {
 		t.Helper()
-		if _, err := pool.Exec(ctx, `INSERT INTO learning_goal_revisions(id,goal_id,revision,goal_text,source,actor_device_id,created_at,management) VALUES($1,$2,$3,$4,$5,$6,now(),$7)`, uuid.NewString(), goalID, revision, text, source, actor, management); err != nil {
+		id := uuid.NewString()
+		var previousGoalID, previousRevision any
+		if previousRevisionID != nil {
+			previousGoalID = goalID
+			previousRevision = revision - 1
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO learning_goal_revisions(id,goal_id,revision,goal_text,source,actor_device_id,created_at,management,previous_revision_id,previous_goal_id,previous_revision) VALUES($1,$2,$3,$4,$5,$6,now(),$7,$8,$9,$10)`, id, goalID, revision, text, source, actor, management, previousRevisionID, previousGoalID, previousRevision); err != nil {
 			t.Fatal(err)
 		}
+		return id
 	}
 	// 使用清除流程实际保留的标记格式，不把缺少管理信息的所有旧目标都当成已清除。
-	insert(erased, 1, "[redacted]", "privacy_erasure", nil)
-	insert(erased, 2, "[redacted]", "privacy_erasure", nil)
-	insert(current, 1, "新的教学目标", "目标验收", &learning.GoalManagement{
+	erasedFirst := insert(erased, 1, nil, "[redacted]", "privacy_erasure", nil)
+	erasedSecond := insert(erased, 2, &erasedFirst, "[redacted]", "privacy_erasure", nil)
+	insert(current, 1, nil, "新的教学目标", "目标验收", &learning.GoalManagement{
 		Details: learning.GoalDetails{Name: "新的教学目标", Priority: "normal"},
 		Status:  "draft", CriteriaVerification: "unverified", ChangedFields: []string{},
 	})
-	insert(legacy, 1, "未清除的旧目标", "旧协议", nil)
+	insert(legacy, 1, nil, "未清除的旧目标", "旧协议", nil)
 
 	page, err := store.ListGoals(ctx, learning.GoalQuery{Limit: 1})
 	if err != nil || len(page.Items) != 1 || page.Items[0].GoalID != current || page.NextCursor == "" {
@@ -74,8 +81,17 @@ func TestPostgreSQLGoalListExcludesErasedGoalsBeforePagination(t *testing.T) {
 		}
 	}
 	history, err := store.GoalHistory(ctx, erased, learning.GoalQuery{Limit: 100})
-	if err != nil || len(history.Items) != 2 || history.Items[1].Source != "privacy_erasure" {
+	if err != nil || len(history.Items) != 2 {
 		t.Fatalf("清除后的历史引用被改写：%+v %v", history, err)
+	}
+	for i, id := range []string{erasedFirst, erasedSecond} {
+		g := history.Items[i]
+		if g.ID != id || g.GoalID != erased || g.Revision != int64(i+1) || g.Source != "privacy_erasure" {
+			t.Fatalf("清除后的历史修订身份被改写：%+v", g)
+		}
+	}
+	if history.Items[0].PreviousRevisionID != nil || history.Items[1].PreviousRevisionID == nil || *history.Items[1].PreviousRevisionID != erasedFirst {
+		t.Fatalf("清除后的历史修订链被改写：%+v", history.Items)
 	}
 }
 

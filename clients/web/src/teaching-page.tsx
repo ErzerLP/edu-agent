@@ -239,6 +239,7 @@ function TeachingWorkspace({
   const pendingKey = `${base}:pending`
   const [answer, setAnswer] = useState(() => drafts.get<AnswerDraft>(answerKey)?.answer ?? '')
   const [help, setHelp] = useState<Help>(() => drafts.get<AnswerDraft>(answerKey)?.help ?? 'none')
+  const helpAllowed = activity?.allowed_help.includes(help) ?? false
   const [chat, setChat] = useState(() => drafts.get<string>(chatKey) ?? '')
   const [pending, setPending] = useState(() => drafts.get<Pending>(pendingKey))
   const [busy, setBusy] = useState(false)
@@ -545,7 +546,7 @@ function TeachingWorkspace({
   const refs = content?.body.references ?? activity?.knowledge_references ?? []
   const draftContent = content?.status !== 'committed'
   const submit = () => {
-    if (canWrite && answerable(content) && answer.trim())
+    if (canWrite && answerable(content) && helpAllowed && answer.trim())
       void perform({ action: 'submit_attempt', answer, help }, true)
   }
   const ask = (question = chat) => {
@@ -803,7 +804,17 @@ function TeachingWorkspace({
                 )}
                 <label>
                   作答帮助等级
-                  <select value={help} onChange={(e) => write(answer, e.target.value as Help)}>
+                  <select
+                    value={helpAllowed ? help : ''}
+                    onChange={(e) => write(answer, e.target.value as Help)}
+                    required
+                    aria-describedby={!helpAllowed ? 'answer-help-restriction' : undefined}
+                  >
+                    {!helpAllowed && (
+                      <option value="" disabled>
+                        请选择实际获得的帮助
+                      </option>
+                    )}
                     {activity.allowed_help.map((level) => (
                       <option key={level} value={level}>
                         {helpLabels[level]}
@@ -811,10 +822,17 @@ function TeachingWorkspace({
                     ))}
                   </select>
                 </label>
+                {!helpAllowed && (
+                  <p id="answer-help-restriction" role="alert">
+                    {activity.allowed_help.length === 0
+                      ? '当前活动没有可用的帮助等级，暂时无法提交正式答案。'
+                      : `当前活动不支持“${helpLabels[help]}”。请在获得相应帮助后选择实际帮助等级；未获得相应帮助时请勿提交。`}
+                  </p>
+                )}
                 <p className="hint">
                   按实际获得的帮助选择；刷新后需重新确认。答案与聊天分开提交；Ctrl+Enter 提交答案。
                 </p>
-                <Button type="submit" disabled={!answer.trim()}>
+                <Button type="submit" disabled={!answer.trim() || !helpAllowed}>
                   提交正式答案
                 </Button>
               </fieldset>

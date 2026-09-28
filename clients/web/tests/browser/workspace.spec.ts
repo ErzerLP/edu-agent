@@ -21,6 +21,7 @@ async function legacySession(
   spaceId = space,
   openAssessment = false,
   globalKnowledge = false,
+  restrictedHelp = false,
 ) {
   const pair = await request.post('/v1/pairings/exchange', {
     data: { code: code(), display_name: '旧协议教学验收' },
@@ -111,9 +112,11 @@ async function legacySession(
       aggregate_type: 'goal',
       aggregate_id: randomUUID(),
       expected_version: 0,
-      text: openAssessment
-        ? '开放复核验收：理解偶数并使用原资料说明依据'
-        : '理解偶数并使用原资料说明依据',
+      text: restrictedHelp
+        ? '帮助等级验收：区分偶数与奇数，仅需一个短步骤和一个简单练习'
+        : openAssessment
+          ? '开放复核验收：理解偶数并使用原资料说明依据'
+          : '理解偶数并使用原资料说明依据',
       source: '旧协议教学验收',
       ...(!globalKnowledge
         ? { details: { name: '理解偶数并使用原资料说明依据', scope_snapshot_id: revision } }
@@ -186,6 +189,67 @@ async function legacySession(
   }
   return { id, goal, call, get, action }
 }
+
+test('正式答案遵守活动帮助限制并保留草稿，明确选择后进入反馈阶段', async ({ page, request }) => {
+  test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')
+  const fixture = await legacySession(request, space, false, false, true)
+  const initial = await fixture.get()
+  expect(initial.work_item.activity.type).toBe('open')
+  expect(initial.work_item.activity.allowed_help).toEqual(['hint', 'scaffold', 'answer_revealed'])
+  const sent: { help: string; answer: string }[] = []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().endsWith('/answers'))
+      sent.push(request.postDataJSON())
+  })
+  await page.goto('/app/')
+  await page.getByLabel('配对码', { exact: true }).fill(code())
+  await page.getByRole('button', { name: '配对并进入' }).click()
+  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
+  await page.getByRole('button', { name: '开始当前活动' }).click()
+  const answer = page.getByLabel('我的正式答案')
+  const help = page.getByLabel('作答帮助等级')
+  const submit = page.getByRole('button', { name: '提交正式答案' })
+  const text =
+    '偶数可以被 2 整除，2 和 4 是偶数；奇数不能被 2 整除，1 和 3 是奇数。依据是本次提供的偶数与奇数资料。'
+  await expect(answer).toBeEnabled()
+  await answer.fill(text)
+  await expect(submit).toBeDisabled()
+  await expect(help).toHaveValue('')
+  await expect(page.getByRole('alert')).toContainText('当前活动不支持“独立作答”')
+  await answer.press('Control+Enter')
+  expect((await fixture.get()).work_item.attempt).toBeUndefined()
+  expect(sent).toEqual([])
+
+  // 同一标签页往返正文历史，恢复含非法默认等级的旧草稿时仍须阻止提交。
+  await page.getByRole('link', { name: '内容与版本历史' }).click()
+  await expect(page.getByRole('heading', { name: '学习内容 · 第 1 版' })).toBeVisible()
+  await page.getByRole('link', { name: '← 返回教学会话' }).click()
+  await expect(answer).toHaveValue(text)
+  await expect(help).toHaveValue('')
+  await expect(submit).toBeDisabled()
+
+  await help.selectOption('hint')
+  await expect(submit).toBeEnabled()
+  // 用户明确选择过的实际帮助等级和正文一起恢复，不自动改报为其他等级。
+  await page.getByRole('link', { name: '内容与版本历史' }).click()
+  await expect(page.getByRole('heading', { name: '学习内容 · 第 1 版' })).toBeVisible()
+  await page.getByRole('link', { name: '← 返回教学会话' }).click()
+  await expect(answer).toHaveValue(text)
+  await expect(help).toHaveValue('hint')
+  await expect(submit).toBeEnabled()
+  const response = page.waitForResponse(
+    (r) => r.request().method() === 'POST' && r.url().endsWith('/answers'),
+  )
+  await answer.press('Control+Enter')
+  expect((await response).status()).toBe(200)
+  await expect(page.getByRole('button', { name: '获取教学反馈' })).toBeVisible()
+  expect(sent).toHaveLength(1)
+  expect(sent[0]).toMatchObject({ answer: text, help: 'hint' })
+  const saved = await fixture.get()
+  expect(saved.session.state).toBe('Evaluating')
+  expect(saved.work_item.attempt).toMatchObject({ answer: text, help: 'hint' })
+})
 
 test('动态进度真实跨区续学、版本、范围、失败与原答案入口', async ({ page, request }, testInfo) => {
   test.skip(process.env.WEB_WORKSPACE_FIXTURE !== '1', '需要本地教学模型 fixture')

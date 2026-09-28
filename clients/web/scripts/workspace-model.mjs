@@ -21,6 +21,7 @@ export function workspaceModel(payload) {
     slice_sha256: hit.slice_sha256,
   }))
   const item = input.input.work_item
+  const restrictedHelp = item.goal_revision.text.includes('帮助等级验收')
   switch (input.proposal_type) {
     case 'route':
       return {
@@ -33,11 +34,15 @@ export function workspaceModel(payload) {
     case 'activity':
       return {
         activity: {
-          prompt:
-            '根据原资料，哪个是偶数？\n\nA. 2\n\nB. 3\n\n```text\n' +
-            '长代码'.repeat(180) +
-            '\n```',
-          type: item.goal_revision.text.includes('开放复核验收') ? 'open' : 'objective',
+          prompt: restrictedHelp
+            ? '小规则：能被 2 整除的数是偶数，例如 2 和 4。请用一句话说说，怎样判断一个数是不是偶数？'
+            : '根据原资料，哪个是偶数？\n\nA. 2\n\nB. 3\n\n```text\n' +
+              '长代码'.repeat(180) +
+              '\n```',
+          type:
+            restrictedHelp || item.goal_revision.text.includes('开放复核验收')
+              ? 'open'
+              : 'objective',
           rubric: {
             rubric_revision: 'browser-r1',
             items: [
@@ -47,18 +52,22 @@ export function workspaceModel(payload) {
                 required_reference_ids: [references[0].node_revision_id],
               },
             ],
-            ...(item.goal_revision.text.includes('开放复核验收')
-              ? {}
-              : {
-                  objective_rule: {
-                    accepted_answers: ['A'],
-                    case_sensitive: false,
-                    trim_space: true,
-                  },
-                }),
+            ...(restrictedHelp
+              ? { objective_rule: null }
+              : item.goal_revision.text.includes('开放复核验收')
+                ? {}
+                : {
+                    objective_rule: {
+                      accepted_answers: ['A'],
+                      case_sensitive: false,
+                      trim_space: true,
+                    },
+                  }),
           },
           difficulty: 1,
-          allowed_help: ['none', 'hint', 'scaffold', 'answer_revealed'],
+          allowed_help: restrictedHelp
+            ? ['hint', 'scaffold', 'answer_revealed']
+            : ['none', 'hint', 'scaffold', 'answer_revealed'],
           knowledge_references: references,
         },
       }

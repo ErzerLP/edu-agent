@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { emptyConcept, type StructureProposal } from '../../src/api/structure'
+import type { ConceptContent, StructureProposal } from '../../src/api/structure'
 
 const space = '00000000-0000-4000-8000-000000000001'
 async function api(page: Page, path: string, body?: unknown) {
@@ -25,9 +25,14 @@ test('真实知识列表、局部图、审阅、未知结果恢复和键盘替�
   // 固定保留同名已应用记录，单文件执行也必须能区分历史提案和本次操作。
   const reason = '明确的可审阅概念提案'
   const structure = await api(page, '/v1/knowledge/structure')
+  // 用例在 Node.js 中收集，夹具只引用协议类型，避免加载依赖 window 的浏览器客户端。
+  const historicalContent: ConceptContent = {
+    description: '', source_status: 'candidate', suggested: false,
+    sources: [], claims: [], relations: [], replaced_by: [],
+  }
   const historical = await api(page, '/v1/knowledge/structure/proposals', {
     operation_id: randomUUID(), base_version: structure.version, generation: structure.generation,
-    kind: 'edit', reason, edits: [{ concept_id: randomUUID(), goal_id: '', name: '历史独立概念', content: emptyConcept() }],
+    kind: 'edit', reason, edits: [{ concept_id: randomUUID(), goal_id: '', name: '历史独立概念', content: historicalContent }],
   })
   const applied = await api(page, `/v1/knowledge/structure/proposals/${historical.id}/decisions`, {
     operation_id: randomUUID(), hash: historical.hash, decision: 'approve', reason: '保留历史审阅结果',

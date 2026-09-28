@@ -1135,6 +1135,8 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await expect(page.getByRole('heading', { name: '内容生成与改写 · 已完成' })).toBeVisible()
   await page.getByRole('link', { name: '查看正式内容版本 2', exact: true }).click()
   await expect(page).toHaveURL(contentURL)
+  // URL 更新早于初始偏好和正文加载；按钮就绪后才能暂停后续读取。
+  await expect(page.getByRole('button', { name: '收藏内容', exact: true })).toBeEnabled()
   // 暂停后续偏好读取，稳定覆盖连续收藏、固定时读取尚未刷新的情况。
   const preferenceRoute = '**/v1/learning/content/*/preferences'
   let releasePreferenceReads!: () => void

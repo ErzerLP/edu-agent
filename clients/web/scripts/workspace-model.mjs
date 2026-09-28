@@ -52,17 +52,14 @@ export function workspaceModel(payload) {
                 required_reference_ids: [references[0].node_revision_id],
               },
             ],
-            ...(restrictedHelp
-              ? { objective_rule: null }
-              : item.goal_revision.text.includes('开放复核验收')
-                ? {}
+            objective_rule:
+              restrictedHelp || item.goal_revision.text.includes('开放复核验收')
+                ? null
                 : {
-                    objective_rule: {
-                      accepted_answers: ['A'],
-                      case_sensitive: false,
-                      trim_space: true,
-                    },
-                  }),
+                    accepted_answers: ['A'],
+                    case_sensitive: false,
+                    trim_space: true,
+                  },
           },
           difficulty: 1,
           allowed_help: restrictedHelp
@@ -97,6 +94,7 @@ export function workspaceModel(payload) {
               knowledge_quote: quote,
               knowledge_range: { start: 0, end: Buffer.byteLength(quote) },
               knowledge_quote_sha256: hash(quote),
+              misconception_candidate: null,
             },
           ],
           rubric_complete: true,

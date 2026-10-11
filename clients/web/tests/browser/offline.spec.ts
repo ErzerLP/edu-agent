@@ -95,9 +95,12 @@ test('真实签名包断网作答、浏览器重启和响应丢失后核对原�
       }),
     ).toBeVisible()
     const calls: string[] = []
+    const statusQueries: { method: string; operationID: string }[] = []
+    let operationID = ''
     let lost = false
     await page.route('**/v1/web/offline/sync', async (route) => {
       calls.push('sync')
+      operationID = route.request().postDataJSON().operations[0].operation_id
       expect(route.request().headers()['x-learning-space-id']).toBeUndefined()
       if (!lost) {
         lost = true
@@ -106,14 +109,24 @@ test('真实签名包断网作答、浏览器重启和响应丢失后核对原�
       } else await route.continue()
     })
     page.on('request', (req) => {
-      if (req.url().includes('/offline/operations/')) calls.push('status')
+      if (req.url().includes('/offline/operations/')) {
+        calls.push('status')
+        statusQueries.push({
+          method: req.method(),
+          operationID: new URL(req.url()).pathname.split('/').pop()!,
+        })
+      }
     })
     await reconnectOffline(context)
     await expect.poll(() => calls).toEqual(['sync'])
     await expect(page.getByText('同步结果未知', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '核对原操作并同步' }).click()
     await expect(page.getByText('服务端已确认', { exact: true })).toBeVisible()
-    expect(calls).toEqual(['sync', 'status'])
+    // 原生与夹具重派的 online 事件可能各触发核对；已确认项也会刷新评估结果。
+    // 允许重复 GET 原操作，但响应丢失后绝不能重发写请求。
+    expect(calls.filter((call) => call === 'sync')).toEqual(['sync'])
+    expect(statusQueries.length).toBeGreaterThanOrEqual(1)
+    for (const query of statusQueries) expect(query).toEqual({ method: 'GET', operationID })
     await expect(page.getByText('服务端已接纳学习证据', { exact: true })).toBeVisible()
     expect((await fixture.get()).session).toEqual(fixture.view.session)
     await page.getByRole('button', { name: '锁定离线库', exact: true }).click()
@@ -121,6 +134,7 @@ test('真实签名包断网作答、浏览器重启和响应丢失后核对原�
     await page.getByLabel('解锁口令', { exact: true }).fill('错误口令-123456789')
     await page.getByRole('button', { name: '解锁', exact: true }).click()
     await expect(page.getByRole('alert')).toContainText('无法解锁')
+    expect(calls.filter((call) => call === 'sync')).toEqual(['sync'])
   } finally {
     await context.close()
   }

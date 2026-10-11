@@ -95,7 +95,7 @@ test('真实 Brave：空资料目标的候选、正文、归纳、采纳与可�
       .fill('https://api.search.brave.com/res/v1/web/search')
     await search.getByLabel('启用搜索', { exact: true }).check()
     // fill(value) 的失败调用日志可能打印参数；只在浏览器内写原生密码输入框。
-    await search.getByLabel('新 Key（留空保留同端点旧值）').evaluate((input, key) => {
+    await search.getByLabel('新 Key（留空保留同连接旧值）').evaluate((input, key) => {
       ;(input as HTMLInputElement).value = key
     }, braveKey)
     const savedResponse = settingsPage.waitForResponse(

@@ -225,7 +225,7 @@ func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) e
 	var err error
 	if item.BodyAvailable {
 		raw, e := json.Marshal(item.body)
-		if e != nil || len(raw) > MaxBody {
+		if e != nil || len(raw) > maxSealedBody || checkpointJSONSize(item.body) > MaxBody {
 			return ErrLimit
 		}
 		if item.Saved {

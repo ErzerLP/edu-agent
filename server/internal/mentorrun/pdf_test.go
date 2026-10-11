@@ -112,9 +112,14 @@ func TestPostgreSQLPDFResearchExplicitPartialAdoption(t *testing.T) {
 	if _, err := f.pool.Exec(ctx, `UPDATE device_tokens SET scopes=scopes||ARRAY['knowledge:write','research:adopt'] WHERE id=$1`, f.actor.TokenID); err != nil {
 		t.Fatal(err)
 	}
+	// 合法原件超过模型正文预算，仍应按独立附件边界持久保存与恢复。
+	original := pdffixture.BuildWithOptions(false, "/Padding ("+strings.Repeat("x", MaxBody)+")", "研究第一物理页", "第二页真实证据", "")
+	if len(original) <= MaxBody || len(original) > research.MaxWire {
+		t.Fatal("夹具未覆盖模型正文上限与网页原件上限之间的合法 PDF")
+	}
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/pdf")
-		_, _ = w.Write(pdffixture.Build("研究第一物理页", "第二页真实证据", ""))
+		_, _ = w.Write(original)
 	}))
 	defer page.Close()
 	f.service.fetcher = research.NewFetcherWithNetwork(func(context.Context, string, string) ([]netip.Addr, error) {
@@ -132,7 +137,7 @@ func TestPostgreSQLPDFResearchExplicitPartialAdoption(t *testing.T) {
 	}
 	snapshot := f.snapshot(t, r.RunID)
 	if snapshot.Research == nil || snapshot.Research.Sources[0].Status != "partial" {
-		t.Fatal("有缺口的 PDF 被自动采纳", snapshot)
+		t.Fatal("较大 PDF 未完成解析与持久 checkpoint，或有缺口来源被自动采纳", snapshot)
 	}
 	source := snapshot.Research.Sources[0]
 	raw, _ := json.Marshal(snapshot)

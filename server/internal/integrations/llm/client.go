@@ -21,15 +21,17 @@ import (
 type ErrorCategory string
 
 const (
-	ErrorUnauthorized    ErrorCategory = "unauthorized"
-	ErrorRateLimited     ErrorCategory = "rate_limited"
-	ErrorUpstream        ErrorCategory = "upstream_error"
-	ErrorTimeout         ErrorCategory = "timeout"
-	ErrorUnavailable     ErrorCategory = "unavailable"
-	ErrorInvalidResponse ErrorCategory = "invalid_response"
-	ErrorSchemaMismatch  ErrorCategory = "schema_mismatch"
-	ErrorIncompatible    ErrorCategory = "incompatible"
-	ErrorInvalidRequest  ErrorCategory = "invalid_request"
+	ErrorUnauthorized         ErrorCategory = "unauthorized"
+	ErrorRateLimited          ErrorCategory = "rate_limited"
+	ErrorUpstream             ErrorCategory = "upstream_error"
+	ErrorTimeout              ErrorCategory = "timeout"
+	ErrorUnavailable          ErrorCategory = "unavailable"
+	ErrorInvalidResponse      ErrorCategory = "invalid_response"
+	ErrorSchemaMismatch       ErrorCategory = "schema_mismatch"
+	ErrorIncompatible         ErrorCategory = "incompatible"
+	ErrorInvalidRequest       ErrorCategory = "invalid_request"
+	ErrorOutputBudgetExceeded ErrorCategory = "output_budget_exceeded"
+	ErrorResponseNotCompleted ErrorCategory = "response_not_completed"
 )
 
 type Error struct {
@@ -76,8 +78,23 @@ type ChatRequest struct {
 }
 
 type ChatResult struct {
-	JSON json.RawMessage
+	JSON  json.RawMessage
+	Usage TokenUsage
 }
+
+type TokenUsage struct {
+	InputTokens     int
+	OutputTokens    int
+	ReasoningTokens int
+	TotalTokens     int
+}
+
+type WireAPI string
+
+const (
+	ChatCompletions WireAPI = "chat_completions"
+	Responses       WireAPI = "responses"
+)
 
 type Capabilities struct {
 	Profile                string   `json:"profile"`
@@ -95,6 +112,7 @@ type Capabilities struct {
 
 type Options struct {
 	BaseURL         *url.URL
+	WireAPI         WireAPI
 	Model           string
 	APIKey          string
 	ContextWindow   int
@@ -108,6 +126,7 @@ type Options struct {
 
 type Client struct {
 	endpoint        string
+	wireAPI         WireAPI
 	model           string
 	apiKey          string
 	contextWindow   int
@@ -133,12 +152,22 @@ func New(options Options) (*Client, error) {
 	if options.Timeout <= 0 {
 		return nil, errors.New("model timeout must be positive")
 	}
+	if options.WireAPI == "" {
+		options.WireAPI = ChatCompletions
+	}
+	if options.WireAPI != ChatCompletions && options.WireAPI != Responses {
+		return nil, errors.New("model API style must be chat_completions or responses")
+	}
 	base := *options.BaseURL
 	path := strings.TrimSuffix(base.Path, "/")
+	endpoint := "/chat/completions"
+	if options.WireAPI == Responses {
+		endpoint = "/responses"
+	}
 	if strings.HasSuffix(path, "/v1") {
-		base.Path = path + "/chat/completions"
+		base.Path = path + endpoint
 	} else {
-		base.Path = path + "/v1/chat/completions"
+		base.Path = path + "/v1" + endpoint
 	}
 	client := options.HTTPClient
 	if client == nil {
@@ -150,7 +179,7 @@ func New(options Options) (*Client, error) {
 		options.ProbeCacheTTL = 15 * time.Minute
 	}
 	return &Client{
-		endpoint: base.String(), model: options.Model, apiKey: options.APIKey,
+		endpoint: base.String(), wireAPI: options.WireAPI, model: options.Model, apiKey: options.APIKey,
 		contextWindow: options.ContextWindow, minimumContext: options.MinimumContext,
 		httpClient: &clone, probeCacheTTL: options.ProbeCacheTTL, maxOutputTokens: options.MaxOutputTokens,
 	}, nil
@@ -175,6 +204,15 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 	if c.maxOutputTokens > 0 {
 		payload["max_tokens"] = c.maxOutputTokens
 	}
+	if c.wireAPI == Responses {
+		payload = map[string]any{
+			"model": c.model, "input": request.Messages, "stream": false,
+			"text": map[string]any{"format": map[string]any{"type": "json_object"}},
+		}
+		if c.maxOutputTokens > 0 {
+			payload["max_output_tokens"] = c.maxOutputTokens
+		}
+	}
 	if len(request.Schema) != 0 && request.UseNativeJSONSchema {
 		var schema any
 		if err := json.Unmarshal(request.Schema, &schema); err != nil {
@@ -184,9 +222,13 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 		if name == "" {
 			name = "edu_agent_response"
 		}
-		payload["response_format"] = map[string]any{
-			"type":        "json_schema",
-			"json_schema": map[string]any{"name": name, "strict": true, "schema": schema},
+		if c.wireAPI == Responses {
+			payload["text"] = map[string]any{"format": map[string]any{"type": "json_schema", "name": name, "strict": true, "schema": responsesSchema(schema)}}
+		} else {
+			payload["response_format"] = map[string]any{
+				"type":        "json_schema",
+				"json_schema": map[string]any{"name": name, "strict": true, "schema": schema},
+			}
 		}
 	}
 	body, err := json.Marshal(payload)
@@ -211,18 +253,27 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 		return ChatResult{}, classifyHTTPError(response.StatusCode)
 	}
-	var envelope struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
-	if err := decoder.Decode(&envelope); err != nil || len(envelope.Choices) == 0 {
-		return ChatResult{}, &Error{Category: ErrorInvalidResponse, Cause: err}
+	var content []byte
+	var usage TokenUsage
+	if c.wireAPI == Responses {
+		content, usage, err = decodeResponse(decoder)
+		if err != nil {
+			return ChatResult{}, err
+		}
+	} else {
+		var envelope struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := decoder.Decode(&envelope); err != nil || len(envelope.Choices) == 0 {
+			return ChatResult{}, &Error{Category: ErrorInvalidResponse, Cause: err}
+		}
+		content = []byte(envelope.Choices[0].Message.Content)
 	}
-	content := []byte(envelope.Choices[0].Message.Content)
 	if !json.Valid(content) {
 		return ChatResult{}, &Error{Category: ErrorInvalidResponse}
 	}
@@ -231,7 +282,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 			return ChatResult{}, &Error{Category: ErrorSchemaMismatch, Cause: err}
 		}
 	}
-	return ChatResult{JSON: append(json.RawMessage(nil), content...)}, nil
+	return ChatResult{JSON: append(json.RawMessage(nil), content...), Usage: usage}, nil
 }
 
 func (c *Client) Probe(ctx context.Context) Capabilities {
@@ -286,8 +337,12 @@ func (c *Client) checkAvailability(ctx context.Context) error {
 }
 
 func (c *Client) probe(ctx context.Context) Capabilities {
+	profile := "openai-chat-completions-v1"
+	if c.wireAPI == Responses {
+		profile = "openai-responses-v1"
+	}
 	capabilities := Capabilities{
-		Profile: "openai-chat-completions-v1", ContextWindow: c.contextWindow,
+		Profile: profile, ContextWindow: c.contextWindow,
 		MinimumContextWindow: c.minimumContext,
 		NativeJSONSchema:     false, Streaming: false, ToolCalls: false,
 		IncompatibilityReasons: []string{},

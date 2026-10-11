@@ -72,6 +72,9 @@ func Open(o Options) (*Service, error) {
 		return nil, ErrInvalid
 	}
 	for _, target := range []Target{Teaching, Mentor, Search} {
+		if s.state.slot(target).APIStyle == "" {
+			s.state.slot(target).APIStyle = string(llm.ChatCompletions)
+		}
 		if err := s.validate(target, *s.state.slot(target)); err != nil {
 			return nil, err
 		}
@@ -82,6 +85,13 @@ func Open(o Options) (*Service, error) {
 }
 
 func (s *Service) validate(target Target, slot secretSlot) error {
+	if slot.APIStyle != string(llm.ChatCompletions) && slot.APIStyle != string(llm.Responses) {
+		return ErrInvalid
+	}
+	// Responses is a teaching-client option; mentor execution still uses agentcore Chat Completions.
+	if target != Teaching && slot.APIStyle != string(llm.ChatCompletions) {
+		return ErrInvalid
+	}
 	if !validKey(slot.Key) || len(slot.Model) > 200 || strings.TrimSpace(slot.Model) != slot.Model || strings.ContainsAny(slot.Model, "\r\n\t") || (slot.AuthMode != "bearer" && slot.AuthMode != "none") {
 		return ErrInvalid
 	}
@@ -121,6 +131,7 @@ func (s *Service) view() View {
 	mentor := s.state.Mentor
 	if s.state.MentorUsesTeaching {
 		mentor = s.state.Teaching
+		mentor.APIStyle = string(llm.ChatCompletions)
 		mentor.Probe = s.state.Mentor.Probe
 	}
 	return View{Revision: s.state.Revision, Writable: s.path != "", Teaching: connectionView(s.state.Teaching, now), Mentor: connectionView(s.state.Mentor, now), EffectiveMentor: connectionView(mentor, now), Search: connectionView(s.state.Search, now), MentorUsesTeaching: s.state.MentorUsesTeaching, Limits: s.state.Limits, Policy: s.state.Policy, TeachingRestartRequired: !sameConnection(s.activeTeaching, s.state.Teaching) || s.activeLimits != s.state.Limits, ModelEndpoints: append([]string{}, s.modelEndpoints...)}
@@ -152,10 +163,14 @@ func (s *Service) Update(u Update) (View, error) {
 	if u.Target.valid() {
 		slot := next.slot(u.Target)
 		if u.Connection != nil {
-			if slot.Provider != u.Connection.Provider || slot.Endpoint != u.Connection.Endpoint || slot.AuthMode != u.Connection.AuthMode {
+			connection := *u.Connection
+			if connection.APIStyle == "" {
+				connection.APIStyle = string(llm.ChatCompletions)
+			}
+			if slot.Provider != connection.Provider || slot.Endpoint != connection.Endpoint || slot.AuthMode != connection.AuthMode || slot.APIStyle != connection.APIStyle {
 				slot.Key = ""
 			}
-			slot.Connection = *u.Connection
+			slot.Connection = connection
 		}
 		if u.NewKey != nil {
 			if *u.NewKey == "" {
@@ -254,6 +269,7 @@ func (s *Service) Probe(ctx context.Context, target Target, revision int64, cons
 	slot := *s.state.slot(target)
 	if target == Mentor && s.state.MentorUsesTeaching {
 		slot = s.state.Teaching
+		slot.APIStyle = string(llm.ChatCompletions)
 	}
 	limits := s.state.Limits
 	s.probing = true
@@ -308,11 +324,16 @@ func (s *Service) MentorClient(wrappers ...func(http.RoundTripper) http.RoundTri
 	if !slot.Enabled || !configured(slot) {
 		return nil, limits, "", nil
 	}
+	connection := slot.Connection
+	// Preserve pre-api_style fingerprints for unchanged Chat Completions connections.
+	if connection.APIStyle == string(llm.ChatCompletions) {
+		connection.APIStyle = ""
+	}
 	raw, err := json.Marshal(struct {
 		Connection Connection
 		Key        string
 		Limits     Limits
-	}{slot.Connection, slot.Key, limits})
+	}{connection, slot.Key, limits})
 	if err != nil {
 		return nil, limits, "", ErrInvalid
 	}
@@ -328,10 +349,10 @@ func (s *Service) MentorClient(wrappers ...func(http.RoundTripper) http.RoundTri
 func modelClient(slot secretSlot, limits Limits, probe bool, transport http.RoundTripper) (*llm.Client, error) {
 	u, _ := url.Parse(slot.Endpoint)
 	output := limits.OutputTokens
-	if probe {
+	if probe && slot.APIStyle != string(llm.Responses) {
 		output = 64
 	}
-	return llm.New(llm.Options{BaseURL: u, Model: slot.Model, APIKey: slot.Key, AllowNoKey: slot.AuthMode == "none", ContextWindow: limits.ContextTokens, MinimumContext: 4096, Timeout: time.Duration(limits.IdleTimeoutSeconds) * time.Second, MaxOutputTokens: output, HTTPClient: &http.Client{Transport: transport, CheckRedirect: rejectRedirect}})
+	return llm.New(llm.Options{BaseURL: u, WireAPI: llm.WireAPI(slot.APIStyle), Model: slot.Model, APIKey: slot.Key, AllowNoKey: slot.AuthMode == "none", ContextWindow: limits.ContextTokens, MinimumContext: 4096, Timeout: time.Duration(limits.IdleTimeoutSeconds) * time.Second, MaxOutputTokens: output, HTTPClient: &http.Client{Transport: transport, CheckRedirect: rejectRedirect}})
 }
 
 // 保存的探测记录只供状态查询，readiness 不再触发外部请求。

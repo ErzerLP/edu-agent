@@ -72,6 +72,10 @@ function ConnectionCard({
       endpoint: String(fields.get('endpoint') ?? '').trim(),
       model: target === 'search' ? '' : String(fields.get('model') ?? '').trim(),
       auth_mode: fields.get('auth_mode') === 'none' ? ('none' as const) : ('bearer' as const),
+      api_style:
+        fields.get('api_style') === 'responses'
+          ? ('responses' as const)
+          : ('chat_completions' as const),
     }
     await update({ target, connection, ...(newKey ? { new_key: newKey } : {}) })
   }
@@ -86,6 +90,14 @@ function ConnectionCard({
         数据发送位置：<span className="settings-endpoint">{effective.endpoint || '尚未配置'}</span>
       </p>
       {target !== 'search' && <p>模型：{effective.model || '尚未配置'}</p>}
+      {target !== 'search' && (
+        <p>
+          接口类型：
+          {effective.api_style === 'responses'
+            ? 'Responses（响应接口）'
+            : 'Chat Completions（聊天补全）'}
+        </p>
+      )}
       <p>
         凭据：
         {effective.has_key
@@ -102,7 +114,12 @@ function ConnectionCard({
           {effective.probe.native_schema && ' 支持原生 Schema。'}
         </p>
       )}
-      {reused && <p>显式复用教学模型。独立导师配置仍保留；关闭复用后继续使用。</p>}
+      {reused && (
+        <p>
+          显式复用教学模型的端点、模型和凭据；导师仍使用 Chat
+          Completions。独立导师配置仍保留；关闭复用后继续使用。
+        </p>
+      )}
       {target === 'mentor' && (
         <Button
           variant="outline"
@@ -128,6 +145,8 @@ function ConnectionCard({
         >
           服务器将向 {effective.endpoint || '已保存端点'} 发送固定公开样本，最多等待 15
           秒，可能消耗额度或产生费用。不发送私人目标、正文或成绩。测试成功仅代表本次结果。
+          {target !== 'search' &&
+            `最多两次请求，每次输出上限 ${effective.api_style === 'responses' ? value.limits.output_tokens : 64} Token（含推理）。`}
         </Confirm>
         <Confirm
           label="清除凭据"
@@ -176,8 +195,17 @@ function ConnectionCard({
                 </label>
               </>
             )}
+            {target === 'teaching' && (
+              <label>
+                接口类型
+                <select name="api_style" defaultValue={config.api_style}>
+                  <option value="chat_completions">Chat Completions（聊天补全，默认）</option>
+                  <option value="responses">Responses（响应接口）</option>
+                </select>
+              </label>
+            )}
             <label>
-              新 Key（留空保留同端点旧值）
+              新 Key（留空保留同连接旧值）
               <input
                 ref={secretInput}
                 type="password"
@@ -187,7 +215,7 @@ function ConnectionCard({
               />
             </label>
             <p className="hint">
-              修改端点或鉴权方式会清除不匹配的旧凭据。Key
+              修改端点、接口类型或鉴权方式会清除不匹配的旧凭据，需要重新输入 Key 并测试连接。Key
               提交后立即清空；失败重试需重新输入。密钥不影响目标保存。
             </p>
             <Button type="submit">保存{title}配置</Button>

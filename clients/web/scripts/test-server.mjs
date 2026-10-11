@@ -192,7 +192,7 @@ function start() {
   })
   writeFileSync(
     '/tmp/edu-web-test-server-32929.json',
-    JSON.stringify({ supervisor: process.pid, child: child.pid }),
+    JSON.stringify({ supervisor: process.pid, child: child.pid, mentorKeyFile }),
   )
   child.on('exit', (code) => {
     if (restarting) {

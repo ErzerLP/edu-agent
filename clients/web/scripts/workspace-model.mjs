@@ -14,6 +14,28 @@ export function workspaceModel(payload) {
         action: candidate.has_children ? 'expand' : 'select',
       })),
     }
+  // 参考资料开学仍走真实运行、出处核验和 context 发布，仅替代外部模型回答。
+  if (input.sources) {
+    const source = input.sources[0]
+    const fragment = source.fragments[0]
+    const citations = [
+      {
+        source_id: source.id,
+        revision_id: source.revision_id,
+        fragment_id: fragment.id,
+        quote: fragment.text,
+      },
+    ]
+    if (input.topic)
+      return { points: [{ text: '偶数可以被 2 整除。', citations }], gaps: [], examples: [] }
+    return {
+      concept_key: 'even-number',
+      name: '辨认偶数',
+      prompt: '根据原资料判断：2 是偶数，还是奇数？',
+      criterion: '能够辨认偶数',
+      citations,
+    }
+  }
   const hits = input.input.retrieval.hits
   const references = hits.map((hit) => ({
     node_revision_id: hit.node_revision_id,

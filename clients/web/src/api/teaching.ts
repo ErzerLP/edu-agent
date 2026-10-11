@@ -350,6 +350,35 @@ export async function propose(
       slice_sha256: h.slice_sha256,
     }))
   }
+  if (
+    kind === 'activity' &&
+    focus.knowledge_revision_id &&
+    focus.focus_node_revision_id &&
+    !hits.some(
+      (h) =>
+        h.knowledge_revision_id === focus.knowledge_revision_id &&
+        h.node_revision_id === focus.focus_node_revision_id,
+    )
+  ) {
+    // 复习焦点不一定命中目标正文检索；只采用正式只读视图中原版本的冻结引用。
+    const context = await unwrap(
+      client.GET('/v1/learning/goals/{goalID}/change-context', {
+        params: {
+          path: { goalID: item.goal_revision.goal_id },
+          query: { session_id: view.session.session_id },
+          header: { 'X-Learning-Space-ID': spaceId, 'X-Learning-Change-Version': '1' },
+        },
+      }),
+      z.object({ sources: z.array(referenceSchema) }),
+    )
+    const original = context.sources.find(
+      (ref) =>
+        ref.knowledge_revision_id === focus.knowledge_revision_id &&
+        ref.node_revision_id === focus.focus_node_revision_id,
+    )
+    if (!original) throw new ApiError(409, 'knowledge_scope_required')
+    hits = [original, ...hits]
+  }
   if (!knowledgeRevision || !hits.length) throw new ApiError(409, 'knowledge_scope_required')
   const result = await unwrap(
     client.POST('/v1/tutoring/proposals', {

@@ -1,17 +1,22 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes, generateKeyPairSync } from 'node:crypto'
 import { createServer } from 'node:http'
 import { workspaceModel } from './workspace-model.mjs'
 import { notesyncFixtureToken, startNotesyncFixture } from './notesync-fixture.mjs'
+import { nocturneFixtureURL, nocturneFixtureSecrets, startNocturneFixture } from './nocturne-fixture.mjs'
 if (!process.env.TEST_DATABASE_URL) throw new Error('浏览器验收必须配置独立 TEST_DATABASE_URL')
 let child
 let restarting = false
 const settingsFile = join(mkdtempSync(join(tmpdir(), 'edu-web-settings-test-')), 'settings.json')
 const mentorKeyFile = join(mkdtempSync(join(tmpdir(), 'edu-web-key-test-')), 'mentor.key')
 const importStaging = mkdtempSync(join(tmpdir(), 'edu-web-import-test-'))
+const nocturneDirectory = process.env.WEB_NOCTURNE_FIXTURE === '1' ? mkdtempSync(join(tmpdir(), 'edu-web-nocturne-test-')) : undefined
+const serverLog = nocturneDirectory ? join(nocturneDirectory, 'server.log') : undefined
+if (serverLog) writeFileSync(serverLog, '', { mode: 0o600 })
+if (nocturneDirectory) mkdirSync(join(nocturneDirectory, 'backups'), { mode: 0o700 })
 const offlineKey = generateKeyPairSync('ed25519')
 const offlineSecret = Buffer.concat([
   offlineKey.privateKey.export({ format: 'der', type: 'pkcs8' }).subarray(-32),
@@ -20,6 +25,7 @@ const offlineSecret = Buffer.concat([
 const offlineChallengeKey = randomBytes(32).toString('base64url')
 writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
 if (process.env.WEB_NOTESYNC_FIXTURE === '1') await startNotesyncFixture()
+if (nocturneDirectory) await startNocturneFixture()
 if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
   let calls = 0
   let historyRequests = 0
@@ -151,7 +157,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
 }
 function start() {
   child = spawn('../../server/edu-agentd', ['serve'], {
-    stdio: 'inherit',
+    stdio: serverLog ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     env: {
       PATH: process.env.PATH,
       DATABASE_URL: process.env.TEST_DATABASE_URL,
@@ -175,6 +181,17 @@ function start() {
       MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1","http://127.0.0.1:32930/alternate"]',
       DEVICE_RATE_LIMIT_PER_MINUTE: '10000',
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',
+      ...(nocturneDirectory ? {
+        NOCTURNE_ENABLED: 'true', NOCTURNE_BASE_URL: nocturneFixtureURL,
+        NOCTURNE_API_TOKEN: nocturneFixtureSecrets[0], NOCTURNE_MAINTENANCE_TOKEN: nocturneFixtureSecrets[1],
+        NOCTURNE_NAMESPACE: 'edu-agent', NOCTURNE_DOMAIN: 'core',
+        NOCTURNE_BACKUP_ROOT: join(nocturneDirectory, 'backups'),
+        NOCTURNE_BACKUP_MASTER_WRAPPING_KEY: nocturneFixtureSecrets[2],
+        NOCTURNE_PG_DUMP_DSN: 'postgres://fixture:unused@127.0.0.1:1/nocturne?sslmode=disable',
+        NOCTURNE_IMAGE_LOCK_REFERENCE: 'browser-fixture/nocturne@sha256:8e427437d35e603cb603608a124ff14344031fcc352435098b4275fa16119d45',
+        NOCTURNE_HTTP_TIMEOUT: '250ms', NOCTURNE_WORKER_LEASE_DURATION: '3s',
+        NOCTURNE_WORKER_POLL_INTERVAL: '250ms', NOCTURNE_RECONCILIATION_INTERVAL: '1h',
+      } : {}),
       ...(process.env.WEB_NOTESYNC_FIXTURE === '1' ? {
         NOTESYNC_ENABLED: 'true', NOTESYNC_BASE_URL: 'http://127.0.0.1:32931',
         NOTESYNC_API_TOKEN: notesyncFixtureToken, NOTESYNC_VAULT: 'Knowledge',
@@ -190,9 +207,13 @@ function start() {
         : {}),
     },
   })
+  if (serverLog) {
+    child.stdout.on('data', chunk => { appendFileSync(serverLog, chunk); process.stdout.write(chunk) })
+    child.stderr.on('data', chunk => { appendFileSync(serverLog, chunk); process.stderr.write(chunk) })
+  }
   writeFileSync(
     '/tmp/edu-web-test-server-32929.json',
-    JSON.stringify({ supervisor: process.pid, child: child.pid, mentorKeyFile }),
+    JSON.stringify({ supervisor: process.pid, child: child.pid, mentorKeyFile, serverLog }),
   )
   child.on('exit', (code) => {
     if (restarting) {

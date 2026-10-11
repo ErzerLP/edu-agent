@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { limitsSchema, settingsReason } from './settings'
+import { limitsSchema, settingsReason, settingsSchema } from './settings'
 
 const defaults = {
   research_requests: 20,
@@ -11,6 +11,27 @@ const defaults = {
   storage_mib: 512,
 }
 describe('设置限额与状态', () => {
+  it('保留教学接口类型，兼容旧响应并拒绝未知接口', () => {
+    const connection = {
+      enabled: true,
+      provider: 'openai_compatible',
+      endpoint: 'https://model.example/v1',
+      model: 'test',
+      auth_mode: 'bearer',
+      has_key: true,
+      configured: true,
+      source: 'server',
+      status: 'unavailable',
+      reason: 'not_probed',
+      probe: null,
+    }
+    const schema = settingsSchema.shape.teaching
+    expect(schema.parse({ ...connection, api_style: 'responses' }).api_style).toBe('responses')
+    expect(schema.parse(connection).api_style).toBe('chat_completions')
+    expect(schema.safeParse({ ...connection, api_style: 'unknown' }).success).toBe(false)
+    expect(settingsReason('output_budget_exceeded')).toContain('输出 Token')
+    expect(settingsReason('response_not_completed')).toContain('未完成')
+  })
   it('校验默认值、类型、边界以及上下文关系', () => {
     expect(limitsSchema.safeParse(defaults).success).toBe(true)
     for (const field of Object.keys(defaults)) {

@@ -179,6 +179,31 @@ func TestAdapterPreservesModelFailureCategory(t *testing.T) {
 	}
 }
 
+func TestAdapterPreservesResponsesFailureCategories(t *testing.T) {
+	for _, reason := range []string{"max_output_tokens", "content_filter"} {
+		t.Run(reason, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				fmt.Fprintf(w, `{"status":"incomplete","incomplete_details":{"reason":%q}}`, reason)
+			}))
+			defer server.Close()
+			u, _ := url.Parse(server.URL)
+			client, err := llm.New(llm.Options{BaseURL: u, WireAPI: llm.Responses, Model: "test", APIKey: "test-key", ContextWindow: 8192, MinimumContext: 4096, Timeout: time.Second})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = New(client).Generate(t.Context(), learning.ProposalRequest{Type: learning.ProposalRoute})
+			want := "response_not_completed"
+			if reason == "max_output_tokens" {
+				want = "output_budget_exceeded"
+			}
+			failure, ok := err.(interface{ ModelCategory() string })
+			if !ok || failure.ModelCategory() != want {
+				t.Fatalf("failure category lost: %v", err)
+			}
+		})
+	}
+}
+
 func newAdapterTestClient(t *testing.T, rawURL string) *llm.Client {
 	t.Helper()
 	base, err := url.Parse(rawURL)

@@ -71,6 +71,7 @@ type ModelConfig struct {
 	BaseURL        *url.URL
 	Name           string
 	APIKey         string
+	APIStyle       string
 	ContextWindow  int
 	MinimumContext int
 	Timeout        time.Duration
@@ -314,6 +315,13 @@ func load(lookup envReader) (Config, error) {
 	baseRaw := optionalTrimmed(lookup, "MODEL_BASE_URL")
 	cfg.Model.Name = optionalTrimmed(lookup, "MODEL_NAME")
 	cfg.Model.APIKey = optionalTrimmed(lookup, "MODEL_API_KEY")
+	cfg.Model.APIStyle = optionalTrimmed(lookup, "MODEL_API_STYLE")
+	if cfg.Model.APIStyle == "" {
+		cfg.Model.APIStyle = "chat_completions"
+	}
+	if cfg.Model.APIStyle != "chat_completions" && cfg.Model.APIStyle != "responses" {
+		return Config{}, errors.New("MODEL_API_STYLE must be chat_completions or responses")
+	}
 	if cfg.Model.MinimumContext, err = intValue(lookup, "MODEL_MIN_CONTEXT_WINDOW", cfg.Model.MinimumContext); err != nil {
 		return Config{}, err
 	}

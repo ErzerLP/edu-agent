@@ -60,6 +60,8 @@ func category(value llm.ErrorCategory) string {
 		return "unauthorized"
 	case llm.ErrorIncompatible:
 		return "incompatible"
+	case llm.ErrorOutputBudgetExceeded, llm.ErrorResponseNotCompleted:
+		return string(value)
 	default:
 		return "invalid_request"
 	}

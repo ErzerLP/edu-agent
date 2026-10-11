@@ -3830,6 +3830,12 @@ export interface components {
              * @enum {string}
              */
             auth_mode: "bearer" | "none";
+            /**
+             * @description 教学模型接口类型；导师和搜索槽位只接受 chat_completions，搜索忽略此字段
+             * @default chat_completions
+             * @enum {string}
+             */
+            api_style: "chat_completions" | "responses";
         };
         SettingsProbe: {
             /** @enum {string} */
@@ -3853,6 +3859,11 @@ export interface components {
             model: string;
             /** @enum {string} */
             auth_mode: "bearer" | "none";
+            /**
+             * @description 教学模型使用所选接口；effective_mentor 始终为 chat_completions，搜索不使用此字段
+             * @enum {string}
+             */
+            api_style: "chat_completions" | "responses";
             has_key: boolean;
             configured: boolean;
             /** @enum {string} */
@@ -3886,7 +3897,7 @@ export interface components {
              */
             private_queries: boolean;
         };
-        /** @description 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。字段缺省保留当前值；切换 endpoint/provider/auth_mode 清除旧 Key。 */
+        /** @description 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。顶层字段缺省保留当前值；connection.api_style 缺省为 chat_completions；切换 endpoint/provider/auth_mode/api_style 清除旧 Key。 */
         LearningSettingsUpdate: {
             expected_revision: number;
             /** @enum {string} */
@@ -5937,8 +5948,8 @@ export interface components {
             revoked_at?: string;
         };
         ModelCapabilities: {
-            /** @constant */
-            profile: "openai-chat-completions-v1";
+            /** @enum {string} */
+            profile: "openai-chat-completions-v1" | "openai-responses-v1";
             compatible: boolean;
             context_window: number;
             minimum_context_window: number;

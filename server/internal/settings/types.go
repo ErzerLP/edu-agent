@@ -31,6 +31,7 @@ type Connection struct {
 	Endpoint string `json:"endpoint"`
 	Model    string `json:"model"`
 	AuthMode string `json:"auth_mode"`
+	APIStyle string `json:"api_style,omitempty"`
 }
 
 type Limits struct {

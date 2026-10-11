@@ -545,7 +545,7 @@ func buildModelClient(cfg config.Config) (*llm.Client, error) {
 		return nil, nil
 	}
 	client, err := llm.New(llm.Options{
-		BaseURL: cfg.Model.BaseURL, Model: cfg.Model.Name, APIKey: cfg.Model.APIKey,
+		BaseURL: cfg.Model.BaseURL, WireAPI: llm.WireAPI(cfg.Model.APIStyle), Model: cfg.Model.Name, APIKey: cfg.Model.APIKey,
 		ContextWindow: cfg.Model.ContextWindow, MinimumContext: cfg.Model.MinimumContext,
 		Timeout: cfg.Model.Timeout, ProbeCacheTTL: cfg.Model.ProbeCacheTTL,
 	})
@@ -566,7 +566,7 @@ func openLearningSettings(cfg config.Config) (*settings.Service, error) {
 		limits.IdleTimeoutSeconds = int(cfg.Model.Timeout.Seconds())
 	}
 	return settings.Open(settings.Options{Path: cfg.LearningSettingsFile, ModelEndpoints: cfg.ModelEndpointAllowlist,
-		Teaching:    settings.Connection{Enabled: cfg.Model.Enabled, Provider: "openai_compatible", Endpoint: endpoint, Model: cfg.Model.Name, AuthMode: "bearer"},
+		Teaching:    settings.Connection{Enabled: cfg.Model.Enabled, Provider: "openai_compatible", Endpoint: endpoint, Model: cfg.Model.Name, AuthMode: "bearer", APIStyle: cfg.Model.APIStyle},
 		TeachingKey: cfg.Model.APIKey, Limits: &limits})
 }
 

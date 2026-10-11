@@ -72,3 +72,63 @@ Go 检查在 `server` 运行。真实 PG 使用独立本机 PostgreSQL 17/pgvect
 以上是开发阶段的验收结果。用户随后明确接受现有结果，授权提交任务分支并以 squash
 落地到 `main`、推送远端；本次按该后续指令落地，不将 Web 的待验收项改写为通过。
 专用测试容器 `edu-agent-issue30-test` 已停止，未删除；可在继续验收时重新启动。
+
+## 浏览器补验（2026-10-11）
+
+从干净的 `main@6fe9a7a` 新建 `issue-30-knowledge-browser`。此前“尚未完成”
+小节保留开发阶段的历史状态；后续补验见
+[task-91-test-report.md](task-91-test-report.md#真实模型-web-与教学补验) 和
+[issue-71-acceptance.md](issue-71-acceptance.md)。本次在 #71 修复后的基线上
+补齐剩余浏览器缺口，不重新执行已确认通过的 PostgreSQL 与 CLI 验收。
+
+只修改 `clients/web/tests/browser/knowledge-structure.spec.ts` 和本记录。
+复用 `offlineFixture`、`serverCommand`、本地确定性教学模型和正式 HTTP 服务，
+知识夹具也经版本化提案及正式批准创建，没有 SQL 旁路或知识 API 模拟。
+
+| Issue 验收项 | 结论与证据 |
+| --- | --- |
+| 第 2 项：局部关系/图与列表一致，服务端范围校验 | **通过。** 原用例只有孤立节点，未覆盖真实关系边。本次补入两个同目标节点和一条前置关系，核对列表与 SVG 的节点集合、图节点键盘入口、边数量/类型、列表中的关系方向和正式 API 的边身份；一跳范围仍显示相同两个节点与关系，当前目标范围外的历史节点不进入图/列表。服务端授权隔离沿用前述真实 PG 证据，本次没有将目标过滤当成越权验证。三引擎均通过。 |
+| 第 7 项：安全接入未来教学，当前题与草稿不丢 | **通过。** 真实课堂填入未提交答案，经应用内链接修订并批准本目标的知识，再返回原课堂；点击“接入已审阅知识维护”，正式变更返回 `queued_for_boundary` / `boundary`。维护批准后与教学排队后，逐一比较题目正文、课堂基础版本和活动记录，并确认草稿保留；再次往返知识页仍恢复原草稿。浏览器场景复用旧协议课堂夹具，验证排队和草稿保护；新知识 context 在安全边界生效沿用前述 `TestPostgreSQLIssue30MaintenanceUsesAdaptiveBoundary` 证据。三引擎均通过。 |
+| 第 11 项：清除覆盖节点、索引、关系与缓存，旧图不能恢复正文 | **通过。** 清除前实际打开节点列表、关系图和含私密正文的详情；另一独立浏览器身份通过一次性授权发起全局清除，核对 `knowledge_content`、`knowledge_index`、`process_cache` 步骤成功。旧页在焦点触发身份重验后进入配对页，旧图/列表/详情及正文消失；不刷新直接重新配对，新代次的列表、节点、边与详情均为空，旧修订请求返回 404。浏览器历史返回与刷新后仍为空，旧正文没有恢复。三引擎均通过。 |
+| 第 12 项：真实 PG、浏览器图/列表与旧 CLI 合同测试 | **通过（合并已有与本次证据）。** 本次修改的单文件三引擎各 3 个场景全通过，保留审阅、响应丢失幂等核对、键盘、移动宽度与 Axe 无障碍断言。真实 PG 和旧 CLI 合同采用本记录此前已通过结果；本次未重跑，也未声称执行全量浏览器矩阵。 |
+
+### 命令与结果
+
+使用已准备的 `edu-agent-acc-postgres` 和既有 `webdatabase` 隔离工具；每个引擎
+单独创建随机 schema，完成后只清理本组 schema。未操作其他项目容器。
+在仓库根目录运行以下等价命令（原执行采用相同环境的逐组命令）：
+
+```bash
+cd clients/web
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+export WEB_RELEASE_MATRIX=1 WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0
+export WEB_CHROMIUM_PATH='/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome'
+issue30_database=/tmp/edu-web-baseline-6fe9a7a.5ZH8lk/webdatabase
+issue30_evidence=/tmp/edu-issue30-browser.bknEgW
+
+PLAYWRIGHT_JSON_OUTPUT_FILE="$issue30_evidence/chromium.json" "$issue30_database" npm run test:browser -- knowledge-structure.spec.ts --project=chromium --reporter=line,json --output="$issue30_evidence/artifacts/chromium-final" > "$issue30_evidence/chromium.log" 2>&1
+PLAYWRIGHT_JSON_OUTPUT_FILE="$issue30_evidence/firefox.json" "$issue30_database" npm run test:browser -- knowledge-structure.spec.ts --project=firefox --reporter=line,json --output="$issue30_evidence/artifacts/firefox" > "$issue30_evidence/firefox.log" 2>&1
+PLAYWRIGHT_JSON_OUTPUT_FILE="$issue30_evidence/webkit.json" "$issue30_database" npm run test:browser -- knowledge-structure.spec.ts --project=webkit --reporter=line,json --output="$issue30_evidence/artifacts/webkit" > "$issue30_evidence/webkit.log" 2>&1
+```
+
+| 引擎 | 最终结果 | 运行耗时 | 退出码 |
+| --- | --- | --- | --- |
+| Chromium | 3 passed，0 failed，0 skipped，0 retries | 17.2 秒 | 0 |
+| Firefox | 3 passed，0 failed，0 skipped，0 retries | 20.9 秒 | 0 |
+| WebKit | 3 passed，0 failed，0 skipped，0 retries | 17.9 秒 | 0 |
+
+三份 JSON 均核对到 3 个场景单次通过，无收集错误；通过后即停止对应引擎的测试。
+首次 Chromium 运行发现两处新增测试步骤错误：下拉框标签的精确匹配无法定位，
+以及配对请求尚未完成就读取会话。改用 combobox 定位并等待知识面板出现后，
+在新 schema 完整复测通过。初次日志/JSON 保留为 `chromium-initial.log` /
+`chromium-initial.json`，不把它们记为产品缺陷或最终通过证据。
+
+`node --check clients/web/tests/browser/knowledge-structure.spec.ts` 和
+`git diff --check` 通过。没有修改前端产品源码或 Go 代码，因此没有增加前端
+全量单测/类型检查或 Go 包测试；未运行全量浏览器矩阵、Go 全量、race 或 Compose。
+仅有既有 `NO_COLOR` / `FORCE_COLOR` 环境提示，未为此修改配置。
+
+本次未发现产品缺陷，未修改公共 API/OpenAPI、migration 或用户可见语义。
+第 2、7、11、12 项的剩余浏览器证据已补齐，本次范围内无未解决验收项。
+GitHub issue 状态未修改；临时日志、JSON 和浏览器产物留在上述 `/tmp` 目录，
+不纳入提交。

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore"
+	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -229,6 +231,35 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	return tx.Commit(ctx)
 }
 
+// 结算成功会吞掉执行错误；仅记录固定分类与运行标识，不记录原始错误或正文。
+func logRunFailure(ctx context.Context, item row, cause error) {
+	category := "model_failed"
+	switch code := modelclient.StableErrorCode(cause); code {
+	case modelclient.ErrorCodeInvalidReasoningEffort, modelclient.ErrorCodeReasoningEffortUnsupported,
+		modelclient.ErrorCodeResponseProtocol, modelclient.ErrorCodeResponseTruncated,
+		modelclient.ErrorCodeContentFiltered, modelclient.ErrorCodeStreamProtocol,
+		modelclient.ErrorCodeStreamResponseTooLarge:
+		category = string(code)
+	default:
+		var searchErr *searchFailure
+		switch {
+		case errors.Is(cause, context.DeadlineExceeded):
+			category = "timeout"
+		case errors.Is(cause, context.Canceled):
+			category = "cancelled"
+		case errors.Is(cause, ErrInactive), errors.Is(cause, ErrForbidden), errors.Is(cause, ErrConflict), errors.Is(cause, ErrLease):
+			category = "context_changed"
+		case errors.Is(cause, ErrLimit):
+			category = "history_context_limit"
+		case errors.Is(cause, errCitation):
+			category = "invalid_source_citation"
+		case errors.As(cause, &searchErr):
+			category = "research_search_failed"
+		}
+	}
+	slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category)
+}
+
 func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	item, err := s.claim(ctx)
 	if err != nil || item == nil {
@@ -282,6 +313,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 		return 1, nil
 	}
 	if err != nil {
+		logRunFailure(ctx, host.owned, err)
 		settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		return 1, s.finish(settle, *item, err)

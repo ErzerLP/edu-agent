@@ -97,7 +97,7 @@ try {
             ? ['run', 'test:offline', '--']
             : ['run', 'test:browser', '--', file]
           const log = command(browserDatabase, ['npm', ...browserCommand, `--project=${project}`, '--reporter=json'], web, {
-            WEB_RELEASE_MATRIX: '1', WEB_WORKSPACE_FIXTURE: fixture ? '1' : '0', WEB_MENTOR_FIXTURE: fixture ? '1' : '0', WEB_NOTESYNC_FIXTURE: file === 'notesync.spec.ts' ? '1' : '0', PLAYWRIGHT_JSON_OUTPUT_FILE: json,
+            WEB_RELEASE_MATRIX: '1', WEB_WORKSPACE_FIXTURE: fixture ? '1' : '0', WEB_MENTOR_FIXTURE: fixture ? '1' : '0', WEB_NOTESYNC_FIXTURE: file === 'notesync.spec.ts' ? '1' : '0', WEB_NOCTURNE_FIXTURE: file === 'memory.spec.ts' ? '1' : '0', PLAYWRIGHT_JSON_OUTPUT_FILE: json,
           }, 1200000)
           checkBrowserResults(JSON.parse(readFileSync(json, 'utf8')), project)
           return log + `\n浏览器报告 SHA256：${hash(readFileSync(json))}`

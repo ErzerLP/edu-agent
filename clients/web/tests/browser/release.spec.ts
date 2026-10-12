@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test'
 
 test('发行页面直达、刷新、真实资产与错误路由边界', async ({ page, request }) => {
-  for (const path of ['/app/', '/app/progress', '/app/memory', '/app/settings/data', '/app/settings/devices']) {
+  const space = '00000000-0000-4000-8000-000000000001'
+  const id = '00000000-0000-4000-8000-000000000009'
+  for (const path of ['/app/', `/app/spaces/${space}`, `/app/spaces/${space}/manage`, `/app/spaces/${space}?panel=sources`, `/app/spaces/${space}/learn/${id}?panel=studio`, `/app/spaces/${space}/goals/${id}`, `/app/spaces/${space}/studio`, '/app/progress', '/app/memory', '/app/settings/data', '/app/settings/devices']) {
     const response = await page.goto(path)
     expect(response?.status(), path).toBe(200)
     expect(response?.headers()['cache-control']).toBe('no-store')

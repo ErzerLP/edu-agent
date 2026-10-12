@@ -20,7 +20,7 @@ test('设置真实保存恢复、Key 不回显、显式探测与权限隔离', a
     await page.goto('/app/')
     await page.getByLabel('配对码', { exact: true }).fill(code)
     await page.getByRole('button', { name: '配对并进入' }).click()
-    await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
     await page.goto('/app/settings')
     await expect(page.getByRole('heading', { name: '模型与搜索', exact: true })).toBeVisible()
   }
@@ -32,7 +32,7 @@ test('设置真实保存恢复、Key 不回显、显式探测与权限隔离', a
   await card.getByLabel('端点', { exact: true }).fill('http://127.0.0.1:1/v1')
   await card.getByLabel('模型名称').fill('browser-test-model')
   const secret = 'browser-settings-key-sentinel-29473'
-  await card.getByLabel('新 Key（留空保留同端点旧值）').fill(secret)
+  await card.getByLabel('新 Key（留空保留同连接旧值）', { exact: true }).fill(secret)
   await card.getByLabel('启用教学模型').check()
   await card.getByRole('button', { name: '保存教学模型配置' }).click()
   await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()

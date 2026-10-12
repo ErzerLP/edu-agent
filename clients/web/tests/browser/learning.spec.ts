@@ -1,3 +1,4 @@
+import { setNotebookTheme, openNavigation } from './notebook-fixture'
 import { test, expect, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { execFileSync } from 'node:child_process'
@@ -17,7 +18,7 @@ async function pair(page: Page) {
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code)
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
 }
 async function api(
   page: Page,
@@ -78,7 +79,7 @@ test('真实配对、IME 保存、生命周期及深浅主题四个视口', asyn
   })
   await pair(page)
   for (const theme of ['light', 'dark']) {
-    if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
+    if (theme === 'dark') await setNotebookTheme(page, 'dark')
     for (const width of [390, 768, 1280, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
       expect(
@@ -94,16 +95,17 @@ test('真实配对、IME 保存、生命周期及深浅主题四个视口', asyn
       })
     }
   }
-  await page.getByRole('button', { name: '切换浅色主题' }).click()
-  await expect(page.getByRole('button', { name: '开始学习', exact: true })).toBeDisabled()
+  await setNotebookTheme(page, 'light')
   await page.getByText('新建学习区', { exact: true }).click()
   const spaceName = `浏览器真实学习 ${randomUUID().slice(0, 8)}`
   await page.getByLabel('学习区名称', { exact: true }).fill(spaceName)
   await page.getByLabel('学习区说明').fill('无模型、无资料的目标起步')
   await page.getByRole('button', { name: '创建学习区', exact: true }).click()
-  await expect(page.getByText('学习区已创建，可从列表进入。')).toBeVisible()
+  await expect(page.getByRole('heading', { name: spaceName, exact: true, level: 1 })).toBeVisible()
+  await page.getByRole('link', { name: '全部学习区', exact: true }).click()
   await page.getByLabel('搜索学习区', { exact: true }).fill(spaceName)
   await page.getByRole('link', { name: spaceName, exact: true }).click()
+  await expect(page.getByRole('button', { name: '开始学习', exact: true })).toBeDisabled()
   const input = page.getByLabel('今天想学会什么？', { exact: true })
   await input.fill('理解并发调度\n能够独立解释竞争条件')
   await input.dispatchEvent('compositionstart')
@@ -137,7 +139,7 @@ test('真实配对、IME 保存、生命周期及深浅主题四个视口', asyn
   await expect(progressTitle).toBeVisible()
   await expect(progressTitle).toHaveAttribute('aria-current', 'page')
   for (const theme of ['light', 'dark']) {
-    if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
+    if (theme === 'dark') await setNotebookTheme(page, 'dark')
     for (const width of [390, 768, 1280, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
       // 移开指针，确保标题在未悬停、未聚焦时也能与旁边的学习区及状态文字区分。
@@ -178,8 +180,8 @@ test('未就绪能力显示独立提示且不请求目标 API', async ({ page })
     if (request.url().includes('/v1/learning/goals')) requested.push(request.url())
   })
   await page.reload()
-  await expect(page.getByText('当前服务尚不支持目标管理。')).toBeVisible()
-  await page.getByRole('link', { name: '进入默认学习区 →' }).click()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
+  await page.getByRole('link', { name: '默认学习区', exact: true }).click()
   await expect(page.getByText('当前服务尚不支持目标管理。')).toBeVisible()
   await expect(page.getByText('正在读取目标…')).toHaveCount(0)
   expect(requested).toEqual([])
@@ -228,6 +230,7 @@ test('两标签页、双学习区与迟到响应不会覆盖草稿；失败保�
   })
   await page.getByRole('button', { name: '保存修改', exact: true }).click()
   await seen
+  await openNavigation(page)
   await page.getByText('切换学习区', { exact: true }).click()
   await page.locator(`.switcher-menu a[href="/app/spaces/${b.id}"]`).click()
   await page.getByLabel('今天想学会什么？', { exact: true }).fill('另一个区的新草稿')
@@ -243,7 +246,7 @@ test('真实列表分页、筛选、修订历史和学习区归档恢复', async
   await pair(page)
   const space = await newSpace(page, '分页学习区')
   for (let i = 0; i < 12; i++) await newGoal(page, space.id, `分页目标 ${i}`)
-  await page.goto(`/app/spaces/${space.id}`)
+  await page.goto(`/app/spaces/${space.id}/manage`)
   await expect(page.locator('.goal-row')).toHaveCount(10)
   await page.getByRole('button', { name: '下一页', exact: true }).click()
   await expect(page.locator('.goal-row')).toHaveCount(2)
@@ -322,6 +325,7 @@ test('版本冲突保留草稿，生产进程重启恢复目标与 Cookie，退�
     .toBe(200)
   await page.reload()
   await expect(page.getByLabel('学习目标', { exact: true })).toHaveValue('本标签页尚未保存的修订')
+  await openNavigation(page)
   await page.getByRole('button', { name: '退出', exact: true }).click()
   await expect(page.getByRole('button', { name: '取消', exact: true })).toBeFocused()
   await page.getByRole('button', { name: '确认退出', exact: true }).click()

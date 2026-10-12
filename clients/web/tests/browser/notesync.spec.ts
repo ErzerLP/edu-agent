@@ -15,7 +15,7 @@ async function login(page: Page, profile = 'import') {
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code)
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('link', { name: '任务中心', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
 }
 async function api(page: Page, method: string, path: string, data?: unknown, scope = space, source = collection) {
   const session = await (await page.request.get('/v1/web/session')).json()

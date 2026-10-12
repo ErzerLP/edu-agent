@@ -150,7 +150,15 @@ export function SessionPicker({ goal, archived }: { goal: Goal; archived: boolea
   )
 }
 
-export function TeachingPage({ spaceId, sessionId }: { spaceId: string; sessionId: string }) {
+export function TeachingPage({
+  spaceId,
+  sessionId,
+  embedded = false,
+}: {
+  spaceId: string
+  sessionId: string
+  embedded?: boolean
+}) {
   const { session, prefix } = useIdentity()
   const view = useQuery({
     queryKey: [...prefix, spaceId, sessionId, 'teaching'],
@@ -193,7 +201,8 @@ export function TeachingPage({ spaceId, sessionId }: { spaceId: string; sessionI
   )
     return <ErrorState error={new ApiError(404, 'wrong_session')} />
   return (
-    <TeachingWorkspace
+    <TeachingActivity
+      embedded={embedded}
       spaceId={spaceId}
       spaceName={space.data.name}
       archived={space.data.status === 'archived'}
@@ -216,13 +225,15 @@ type Pending = {
 }
 type AnswerDraft = { answer: string; help: Help }
 
-function TeachingWorkspace({
+export function TeachingActivity({
+  embedded = false,
   spaceId,
   spaceName,
   archived,
   view,
   refresh,
 }: {
+  embedded?: boolean
   spaceId: string
   spaceName: string
   archived: boolean
@@ -357,10 +368,23 @@ function TeachingWorkspace({
       active = false
       controller.abort()
     }
-  }, [activity?.activity_id, activity?.revision, capabilities.data, view.session.aggregate_version, contentRefresh])
+  }, [
+    activity?.activity_id,
+    activity?.revision,
+    capabilities.data,
+    view.session.aggregate_version,
+    contentRefresh,
+  ])
   useEffect(() => {
-    if (restoreFocusRequested.current && content?.activity_id === restoreFocusRequested.current && content.activity_id === activity?.activity_id) {
-      const target = answerInput.current && !answerInput.current.disabled ? answerInput.current : learningColumn.current
+    if (
+      restoreFocusRequested.current &&
+      content?.activity_id === restoreFocusRequested.current &&
+      content.activity_id === activity?.activity_id
+    ) {
+      const target =
+        answerInput.current && !answerInput.current.disabled
+          ? answerInput.current
+          : learningColumn.current
       target?.focus()
       restoreFocusRequested.current = ''
     }
@@ -556,8 +580,546 @@ function TeachingWorkspace({
     '--knowledge-width': `${knowledgeWidth}px`,
     '--mentor-width': `${mentorWidth}px`,
   } as CSSProperties
+  const mentorColumn = useRef<HTMLElement>(null)
+  const Heading = embedded ? 'h3' : 'h1'
+  const knowledgePanel = (
+    <aside className="knowledge-column panel" aria-label="知识与来源">
+      <h2>知识与来源</h2>
+      {goal.data && (
+        <KnowledgeStructure
+          key={`${spaceId}:${sessionId}`}
+          spaceId={spaceId}
+          goalId={goal.data.goal_id}
+          sessionId={sessionId}
+          compact
+        />
+      )}
+      <p className="hint">当前会话的真实范围，不表示概念掌握度。</p>
+      {knowledgeContext.error && (
+        <ErrorState error={knowledgeContext.error} retry={() => void knowledgeContext.refetch()} />
+      )}
+      {knowledgeContext.data?.knowledge_context && (
+        <section aria-label="当前知识概念">
+          {knowledgeContext.data.knowledge_context.concepts.map((concept) => (
+            <details key={concept.revision_id}>
+              <summary>{concept.name} · 有来源支持</summary>
+              <p className="hint">支持状态独立于学习表现，引用可追溯不表示结论普遍正确。</p>
+              {concept.support.map((support, i) => (
+                <blockquote key={i}>
+                  {support.quote}
+                  <small style={{ display: 'block', overflowWrap: 'anywhere' }}>
+                    来源修订：{support.revision_id} · 片段：{support.fragment_id}
+                  </small>
+                </blockquote>
+              ))}
+            </details>
+          ))}
+        </section>
+      )}
+      {item?.route_revision?.steps.map((step, i) => (
+        <p
+          key={step.route_step_id}
+          aria-current={
+            step.route_step_id === view.session.focus.route_step_id ? 'step' : undefined
+          }
+        >
+          {i + 1}. {step.teaching_intent}
+        </p>
+      ))}
+      {!item?.route_revision && <p>路线尚未生成。</p>}
+      {refs.map((ref, i) => (
+        <SourceViewer
+          key={ref.node_revision_id}
+          reference={ref}
+          content={content}
+          label={`原资料依据 ${i + 1}`}
+        />
+      ))}
+      {!refs.length && <p className="hint">当前活动还没有可查看的资料引用。</p>}
+      {!embedded && (
+        <label className="column-size">
+          知识栏宽度
+          <input
+            type="range"
+            min={256}
+            max={300}
+            value={knowledgeWidth}
+            onChange={(e) => setKnowledgeWidth(Number(e.target.value))}
+          />
+        </label>
+      )}
+    </aside>
+  )
+  const learningPanel = (
+    <div className="learning-column panel" aria-label="当前学习" ref={learningColumn} tabIndex={-1}>
+      {content ? (
+        <>
+          <div className="content-meta">
+            <Link
+              to="/content/$artifactId"
+              params={{ artifactId: content.artifact_id }}
+              search={{ space: spaceId, version: content.version }}
+            >
+              内容与版本历史
+            </Link>
+          </div>
+          <ContentBlocks
+            blocks={content.body.blocks}
+            references={content.body.references}
+            content={content}
+            onSelect={(block, start, end) => {
+              void selection.select(block, start, end)
+              setAux('mentor')
+            }}
+          />
+          {selection.selected && (
+            <div className="selection-chip">
+              <span>已选正文，可交给导师解释或改写。</span>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setTab('mentor')
+                  setAux('mentor')
+                  if (embedded) mentorColumn.current?.scrollIntoView({ block: 'start' })
+                }}
+              >
+                处理此选段
+              </Button>
+              <Button variant="ghost" onClick={selection.clear}>
+                移除正文选区
+              </Button>
+            </div>
+          )}
+        </>
+      ) : activity ? (
+        <SafeMarkdown text={activity.prompt} />
+      ) : (
+        <>
+          <h2>当前学习</h2>
+          <p>
+            {view.session.state === 'Completed'
+              ? '本次会话已完成。可返回学习区，选择其他教学会话继续。'
+              : (item?.route_revision?.steps.find(
+                  (s) => s.route_step_id === view.session.focus.route_step_id,
+                )?.teaching_intent ?? '从目标出发，开始本次教学。')}
+          </p>
+        </>
+      )}
+      {!capabilities.data?.available && activity && (
+        <p className="notice">
+          服务器尚未配置正文加密密钥，当前仅可阅读原活动；配置后可启用版本化作答。
+        </p>
+      )}
+      {!!(contentError || capabilities.error) && (
+        <ErrorState
+          error={contentError || capabilities.error}
+          retry={() => void refresh().catch(setError)}
+        />
+      )}
+      {allowed('present_activity') && (
+        <Button
+          disabled={!canWrite || !content}
+          onClick={() => void perform({ action: 'present_activity' })}
+        >
+          开始当前活动
+        </Button>
+      )}
+      {allowed('submit_attempt') && activity && activity.type !== 'explanation' && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            submit()
+          }}
+        >
+          <fieldset disabled={!canWrite || !answerable(content)}>
+            <legend>正式答案</legend>
+            {content?.body.interaction.kind === 'single_choice' ? (
+              <div role="radiogroup" aria-label="选择正式答案">
+                {content.body.interaction.choices?.map((choice) => (
+                  <label className="check-label" key={choice.value}>
+                    <input
+                      type="radio"
+                      name="formal-answer"
+                      value={choice.value}
+                      checked={answer === choice.value}
+                      onChange={() => write(choice.value)}
+                    />
+                    {choice.label}
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <label>
+                我的正式答案
+                <textarea
+                  ref={answerInput}
+                  rows={6}
+                  maxLength={262144}
+                  value={answer}
+                  onChange={(e) => write(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key === 'Enter' &&
+                      e.ctrlKey &&
+                      !e.nativeEvent.isComposing &&
+                      e.keyCode !== 229
+                    ) {
+                      e.preventDefault()
+                      submit()
+                    }
+                  }}
+                />
+              </label>
+            )}
+            <label>
+              作答帮助等级
+              <select
+                value={helpAllowed ? help : ''}
+                onChange={(e) => write(answer, e.target.value as Help)}
+                required
+                aria-describedby={!helpAllowed ? 'answer-help-restriction' : undefined}
+              >
+                {!helpAllowed && (
+                  <option value="" disabled>
+                    请选择实际获得的帮助
+                  </option>
+                )}
+                {activity.allowed_help.map((level) => (
+                  <option key={level} value={level}>
+                    {helpLabels[level]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!helpAllowed && (
+              <p id="answer-help-restriction" role="alert">
+                {activity.allowed_help.length === 0
+                  ? '当前活动没有可用的帮助等级，暂时无法提交正式答案。'
+                  : `当前活动不支持“${helpLabels[help]}”。请在获得相应帮助后选择实际帮助等级；未获得相应帮助时请勿提交。`}
+              </p>
+            )}
+            <p className="hint">
+              按实际获得的帮助选择；刷新后需重新确认。答案与聊天分开提交；Ctrl+Enter 提交答案。
+            </p>
+            <Button type="submit" disabled={!answer.trim() || !helpAllowed}>
+              提交正式答案
+            </Button>
+          </fieldset>
+          {!draftContent && content && !answerable(content) && (
+            <p role="alert">此内容的作答类型需要升级客户端，当前禁止提交。</p>
+          )}
+        </form>
+      )}
+      {item?.attempt && (
+        <section className="notice">
+          <h3>已保存的答案</h3>
+          <p className="answer-text">{item.attempt.answer}</p>
+          <p className="hint">
+            帮助状态：{helpLabels[item.attempt.help as Help] ?? item.attempt.help}
+          </p>
+          <Link
+            to="/spaces/$spaceId/feedback/$attemptId"
+            params={{ spaceId, attemptId: item.attempt.attempt_id }}
+          >
+            查看原答案、接收回执与评估详情
+          </Link>
+        </section>
+      )}
+      {item?.assessment && (
+        <section aria-label="教学反馈">
+          <h2>本次反馈</h2>
+          <p>
+            反馈状态：
+            {(
+              {
+                accepted: '已接纳',
+                provisional: '待复核',
+                overridden: '已人工更正',
+                voided: '已作废',
+              } as Record<string, string>
+            )[item.assessment_decision?.disposition ?? ''] ?? '待核对'}
+          </p>
+          {item.assessment.items.map((entry) => (
+            <p key={entry.rubric_item_id}>
+              {(
+                {
+                  pass: '达到要求',
+                  partial: '部分达到',
+                  fail: '尚未达到',
+                  unassessed: '未评估',
+                } as Record<string, string>
+              )[entry.conclusion] ?? entry.conclusion}
+              ：{entry.answer_quote}
+            </p>
+          ))}
+          {item.assessment_decision?.disposition === 'provisional' && (
+            <p className="hint">
+              此反馈尚未形成正式学习证据。请展开评估详情查看依据并进行正式复核。
+            </p>
+          )}
+        </section>
+      )}
+      <div className="actions">
+        {allowed('start_diagnostic') && (
+          <Button
+            disabled={!canWrite || !!inactive}
+            onClick={() => void perform({ action: 'start_diagnostic' })}
+          >
+            开始学习
+          </Button>
+        )}
+        {view.session.state === 'Diagnostic' && allowed('apply_route') && (
+          <Button
+            disabled={!canWrite || !!inactive}
+            onClick={() => void generate('route', 'apply_route')}
+          >
+            生成学习路线
+          </Button>
+        )}
+        {allowed('issue_activity') && (
+          <Button
+            disabled={!canWrite || !!inactive}
+            onClick={() => void generate('activity', 'issue_activity')}
+          >
+            生成下一活动
+          </Button>
+        )}
+        {allowed('present_review') && (
+          <Button
+            disabled={!canWrite || !!inactive}
+            onClick={() => void generate('activity', 'present_review')}
+          >
+            生成本任务复习活动
+          </Button>
+        )}
+        {allowed('record_assessment') && (
+          <Button
+            disabled={!canWrite || contentLoading}
+            onClick={() =>
+              activity?.type === 'objective'
+                ? void perform({ action: 'record_assessment' })
+                : void generate('assessment', 'record_assessment')
+            }
+          >
+            获取教学反馈
+          </Button>
+        )}
+        {allowed('acknowledge_feedback') && (
+          <Button
+            disabled={!canWrite}
+            onClick={() => void perform({ action: 'acknowledge_feedback' })}
+          >
+            查看完毕，继续学习
+          </Button>
+        )}
+        {allowed('end_activity') && (
+          <Button
+            variant="outline"
+            disabled={!canWrite}
+            onClick={() => void perform({ action: 'end_activity' })}
+          >
+            {activity?.type === 'explanation' ? '阅读完成，继续' : '结束当前活动'}
+          </Button>
+        )}
+        {allowed('complete_session') && (
+          <Button
+            variant="outline"
+            disabled={!canWrite}
+            onClick={() => void perform({ action: 'complete_session' })}
+          >
+            结束本次学习
+          </Button>
+        )}
+      </div>
+      {pending && (
+        <div className="notice" role="alert">
+          <p>正在核对原会话的提交结果，答案不会自动补发。</p>
+          <Button disabled={busy} onClick={() => void reconcile()}>
+            核对提交状态
+          </Button>
+        </div>
+      )}
+      {notice && <p role="status">{notice}</p>}
+      {!!error && <ErrorState error={error} retry={() => void refresh().catch(setError)} />}
+      <p className="hint">
+        活动草稿仅保留在本标签页内存。切页或切换主题可保留；刷新会丢失未保存答案。
+      </p>
+    </div>
+  )
+  const mentorPanel = (
+    <aside className="tutor-column panel" aria-label="AI 导师" ref={mentorColumn}>
+      <h2>AI 导师</h2>
+      <p className="hint">讨论当前活动。聊天不会作为正式答案。</p>
+      {content && goal.data && (
+        <ContentEditor
+          key={content.artifact_id}
+          content={content}
+          goal={goal.data}
+          selection={selection}
+          onUpdate={updateContent}
+          disabled={archived}
+        />
+      )}
+      <div
+        className="teaching-discussion"
+        ref={output}
+        onScroll={() => {
+          const el = output.current
+          if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+        }}
+      >
+        {item?.free_question && (
+          <div>
+            <h3>我的问题</h3>
+            <p className="answer-text">{item.free_question.text}</p>
+          </div>
+        )}
+        {item?.free_answer && (
+          <div>
+            <h3>导师回复</h3>
+            <SafeMarkdown text={item.free_answer.text} />
+          </div>
+        )}
+      </div>
+      {allowed('record_free_answer') && (
+        <Button
+          disabled={!canWrite}
+          onClick={() => void generate('free_answer', 'record_free_answer')}
+        >
+          请导师回答
+        </Button>
+      )}
+      {allowed('resume_focus') && (
+        <Button
+          disabled={!canWrite}
+          variant="outline"
+          onClick={() => void perform({ action: 'resume_focus' })}
+        >
+          返回原学习焦点
+        </Button>
+      )}
+      {allowed('ask_free_question') && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            ask()
+          }}
+        >
+          <label>
+            和导师讨论
+            <textarea
+              rows={4}
+              maxLength={4000}
+              disabled={!canWrite || !!inactive}
+              value={chat}
+              onChange={(e) => {
+                setChat(e.target.value)
+                drafts.set(chatKey, e.target.value)
+              }}
+              onKeyDown={(e) => {
+                if (
+                  e.key === 'Enter' &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing &&
+                  e.keyCode !== 229
+                ) {
+                  e.preventDefault()
+                  ask()
+                }
+              }}
+            />
+          </label>
+          <Button type="submit" disabled={!canWrite || !!inactive || !chat.trim()}>
+            发送讨论
+          </Button>
+          <p className="hint">Enter 发送，Shift+Enter 换行。</p>
+          {activity && (
+            <div className="actions">
+              {activity.allowed_help
+                .filter((level) => level !== 'none')
+                .map((level) => (
+                  <Button
+                    key={level}
+                    variant="outline"
+                    disabled={!canWrite || !!inactive}
+                    onClick={() => {
+                      const order: Help[] = ['none', 'hint', 'scaffold', 'answer_revealed']
+                      const actual = order[Math.max(order.indexOf(help), order.indexOf(level))]
+                      write(answer, actual)
+                      ask(
+                        (
+                          {
+                            hint: '请给当前题目一个提示，不揭示答案。',
+                            scaffold: '请分步引导我理解当前题目。',
+                            answer_revealed: '请解释当前题目的答案。',
+                          } as Record<string, string>
+                        )[level],
+                      )
+                    }}
+                  >
+                    {
+                      (
+                        {
+                          hint: '请求提示',
+                          scaffold: '请求分步引导',
+                          answer_revealed: '查看答案讲解',
+                        } as Record<string, string>
+                      )[level]
+                    }
+                  </Button>
+                ))}
+            </div>
+          )}
+        </form>
+      )}
+      {goal.data && (
+        <ReferenceLink spaceId={spaceId} goalId={goal.data.goal_id} sessionId={sessionId} status />
+      )}
+      {goal.data && (
+        <details>
+          <summary>目标内持续交流</summary>
+          <p className="hint">导师调用正式变更服务后，具体差异和生效状态显示在下方。</p>
+          <TutorHistory
+            key={sessionId}
+            spaceId={spaceId}
+            goalId={goal.data.goal_id}
+            teachingSessionId={sessionId}
+          />
+        </details>
+      )}
+      {goal.data && (
+        <ChangePanel
+          key={`${spaceId}:${sessionId}`}
+          goal={goal.data}
+          teachingSessionId={sessionId}
+          archived={archived}
+          onChanged={() => setContentRefresh((v) => v + 1)}
+          onRestore={(activityId) => {
+            restoreFocusRequested.current = activityId
+          }}
+        />
+      )}
+      {!embedded && (
+        <label className="column-size">
+          导师栏宽度
+          <input
+            type="range"
+            min={340}
+            max={400}
+            value={mentorWidth}
+            onChange={(e) => setMentorWidth(Number(e.target.value))}
+          />
+        </label>
+      )}
+    </aside>
+  )
   return (
-    <section className="teaching-workspace" data-tab={tab} data-aux={aux} style={rootStyle}>
+    <section
+      className={embedded ? 'teaching-activity' : 'teaching-workspace'}
+      data-tab={tab}
+      data-aux={aux}
+      style={rootStyle}
+    >
       <div className="teaching-toolbar">
         <header className="teaching-header">
           <div>
@@ -576,14 +1138,16 @@ function TeachingWorkspace({
               <span>目标修订：{view.session.focus.goal_revision_id}</span>
             )}
           </div>
-          <h1>{stateLabels[view.session.state] ?? '当前版本尚不支持的教学阶段'}</h1>
+          <Heading>{stateLabels[view.session.state] ?? '当前版本尚不支持的教学阶段'}</Heading>
           {item?.goal_revision && (
-            <a href={`/app/offline?${new URLSearchParams({
-              space: spaceId,
-              goal: item.goal_revision.goal_id,
-              session: sessionId,
-              version: String(view.session.aggregate_version),
-            })}`}>
+            <a
+              href={`/app/offline?${new URLSearchParams({
+                space: spaceId,
+                goal: item.goal_revision.goal_id,
+                session: sessionId,
+                version: String(view.session.aggregate_version),
+              })}`}
+            >
               下载离线学习包
             </a>
           )}
@@ -603,518 +1167,45 @@ function TeachingWorkspace({
               : '当前焦点：学习路线'}
           </p>
         </header>
-        <nav className="workspace-tabs" aria-label="工作区切换">
-          {[
-            ['learn', '学习'],
-            ['knowledge', '知识'],
-            ['mentor', '导师'],
-          ].map(([value, label]) => (
-            <Button
-              key={value}
-              variant={tab === value ? 'default' : 'outline'}
-              aria-pressed={tab === value}
-              onClick={() => {
-                setTab(value)
-                if (value !== 'learn') setAux(value)
-              }}
-            >
-              {label}
-            </Button>
-          ))}
-        </nav>
-      </div>
-      <div className="teaching-columns">
-        <aside className="knowledge-column panel" aria-label="知识与来源">
-          <h2>知识与来源</h2>
-          {goal.data && <KnowledgeStructure key={`${spaceId}:${sessionId}`} spaceId={spaceId} goalId={goal.data.goal_id} sessionId={sessionId} compact />}
-          <p className="hint">当前会话的真实范围，不表示概念掌握度。</p>
-          {knowledgeContext.error && (
-            <ErrorState
-              error={knowledgeContext.error}
-              retry={() => void knowledgeContext.refetch()}
-            />
-          )}
-          {knowledgeContext.data?.knowledge_context && (
-            <section aria-label="当前知识概念">
-              {knowledgeContext.data.knowledge_context.concepts.map((concept) => (
-                <details key={concept.revision_id}>
-                  <summary>{concept.name} · 有来源支持</summary>
-                  <p className="hint">支持状态独立于学习表现，引用可追溯不表示结论普遍正确。</p>
-                  {concept.support.map((support, i) => (
-                    <blockquote key={i}>
-                      {support.quote}
-                      <small style={{ display: 'block', overflowWrap: 'anywhere' }}>
-                        来源修订：{support.revision_id} · 片段：{support.fragment_id}
-                      </small>
-                    </blockquote>
-                  ))}
-                </details>
-              ))}
-            </section>
-          )}
-          {item?.route_revision?.steps.map((step, i) => (
-            <p
-              key={step.route_step_id}
-              aria-current={
-                step.route_step_id === view.session.focus.route_step_id ? 'step' : undefined
-              }
-            >
-              {i + 1}. {step.teaching_intent}
-            </p>
-          ))}
-          {!item?.route_revision && <p>路线尚未生成。</p>}
-          {refs.map((ref, i) => (
-            <SourceViewer
-              key={ref.node_revision_id}
-              reference={ref}
-              content={content}
-              label={`原资料依据 ${i + 1}`}
-            />
-          ))}
-          {!refs.length && <p className="hint">当前活动还没有可查看的资料引用。</p>}
-          <label className="column-size">
-            知识栏宽度
-            <input
-              type="range"
-              min={256}
-              max={300}
-              value={knowledgeWidth}
-              onChange={(e) => setKnowledgeWidth(Number(e.target.value))}
-            />
-          </label>
-        </aside>
-        <div className="learning-column panel" aria-label="当前学习" ref={learningColumn} tabIndex={-1}>
-          {content ? (
-            <>
-              <div className="content-meta">
-                <Link
-                  to="/content/$artifactId"
-                  params={{ artifactId: content.artifact_id }}
-                  search={{ space: spaceId, version: content.version }}
-                >
-                  内容与版本历史
-                </Link>
-              </div>
-              <ContentBlocks
-                blocks={content.body.blocks}
-                references={content.body.references}
-                content={content}
-                onSelect={(block, start, end) => {
-                  void selection.select(block, start, end)
-                  setAux('mentor')
+        {!embedded && (
+          <nav className="workspace-tabs" aria-label="工作区切换">
+            {[
+              ['learn', '学习'],
+              ['knowledge', '知识'],
+              ['mentor', '导师'],
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                variant={tab === value ? 'default' : 'outline'}
+                aria-pressed={tab === value}
+                onClick={() => {
+                  setTab(value)
+                  if (value !== 'learn') setAux(value)
                 }}
-              />
-              {selection.selected && (
-                <div className="selection-chip">
-                  <span>已选正文，可交给导师解释或改写。</span>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setTab('mentor')
-                      setAux('mentor')
-                    }}
-                  >
-                    处理此选段
-                  </Button>
-                  <Button variant="ghost" onClick={selection.clear}>
-                    移除正文选区
-                  </Button>
-                </div>
-              )}
-            </>
-          ) : activity ? (
-            <SafeMarkdown text={activity.prompt} />
-          ) : (
-            <>
-              <h2>当前学习</h2>
-              <p>
-                {view.session.state === 'Completed'
-                  ? '本次会话已完成。可返回学习区，选择其他教学会话继续。'
-                  : (item?.route_revision?.steps.find(
-                      (s) => s.route_step_id === view.session.focus.route_step_id,
-                    )?.teaching_intent ?? '从目标出发，开始本次教学。')}
-              </p>
-            </>
-          )}
-          {!capabilities.data?.available && activity && (
-            <p className="notice">
-              服务器尚未配置正文加密密钥，当前仅可阅读原活动；配置后可启用版本化作答。
-            </p>
-          )}
-          {!!(contentError || capabilities.error) && (
-            <ErrorState
-              error={contentError || capabilities.error}
-              retry={() => void refresh().catch(setError)}
-            />
-          )}
-          {allowed('present_activity') && (
-            <Button
-              disabled={!canWrite || !content}
-              onClick={() => void perform({ action: 'present_activity' })}
-            >
-              开始当前活动
-            </Button>
-          )}
-          {allowed('submit_attempt') && activity && activity.type !== 'explanation' && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                submit()
-              }}
-            >
-              <fieldset disabled={!canWrite || !answerable(content)}>
-                <legend>正式答案</legend>
-                {content?.body.interaction.kind === 'single_choice' ? (
-                  <div role="radiogroup" aria-label="选择正式答案">
-                    {content.body.interaction.choices?.map((choice) => (
-                      <label className="check-label" key={choice.value}>
-                        <input
-                          type="radio"
-                          name="formal-answer"
-                          value={choice.value}
-                          checked={answer === choice.value}
-                          onChange={() => write(choice.value)}
-                        />
-                        {choice.label}
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <label>
-                    我的正式答案
-                    <textarea
-                      ref={answerInput}
-                      rows={6}
-                      maxLength={262144}
-                      value={answer}
-                      onChange={(e) => write(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (
-                          e.key === 'Enter' &&
-                          e.ctrlKey &&
-                          !e.nativeEvent.isComposing &&
-                          e.keyCode !== 229
-                        ) {
-                          e.preventDefault()
-                          submit()
-                        }
-                      }}
-                    />
-                  </label>
-                )}
-                <label>
-                  作答帮助等级
-                  <select
-                    value={helpAllowed ? help : ''}
-                    onChange={(e) => write(answer, e.target.value as Help)}
-                    required
-                    aria-describedby={!helpAllowed ? 'answer-help-restriction' : undefined}
-                  >
-                    {!helpAllowed && (
-                      <option value="" disabled>
-                        请选择实际获得的帮助
-                      </option>
-                    )}
-                    {activity.allowed_help.map((level) => (
-                      <option key={level} value={level}>
-                        {helpLabels[level]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {!helpAllowed && (
-                  <p id="answer-help-restriction" role="alert">
-                    {activity.allowed_help.length === 0
-                      ? '当前活动没有可用的帮助等级，暂时无法提交正式答案。'
-                      : `当前活动不支持“${helpLabels[help]}”。请在获得相应帮助后选择实际帮助等级；未获得相应帮助时请勿提交。`}
-                  </p>
-                )}
-                <p className="hint">
-                  按实际获得的帮助选择；刷新后需重新确认。答案与聊天分开提交；Ctrl+Enter 提交答案。
-                </p>
-                <Button type="submit" disabled={!answer.trim() || !helpAllowed}>
-                  提交正式答案
-                </Button>
-              </fieldset>
-              {!draftContent && content && !answerable(content) && (
-                <p role="alert">此内容的作答类型需要升级客户端，当前禁止提交。</p>
-              )}
-            </form>
-          )}
-          {item?.attempt && (
-            <section className="notice">
-              <h3>已保存的答案</h3>
-              <p className="answer-text">{item.attempt.answer}</p>
-              <p className="hint">
-                帮助状态：{helpLabels[item.attempt.help as Help] ?? item.attempt.help}
-              </p>
-              <Link to="/spaces/$spaceId/feedback/$attemptId" params={{ spaceId, attemptId: item.attempt.attempt_id }}>查看原答案、接收回执与评估详情</Link>
-            </section>
-          )}
-          {item?.assessment && (
-            <section aria-label="教学反馈">
-              <h2>本次反馈</h2>
-              <p>
-                反馈状态：
-                {(
-                  {
-                    accepted: '已接纳',
-                    provisional: '待复核',
-                    overridden: '已人工更正',
-                    voided: '已作废',
-                  } as Record<string, string>
-                )[item.assessment_decision?.disposition ?? ''] ?? '待核对'}
-              </p>
-              {item.assessment.items.map((entry) => (
-                <p key={entry.rubric_item_id}>
-                  {(
-                    {
-                      pass: '达到要求',
-                      partial: '部分达到',
-                      fail: '尚未达到',
-                      unassessed: '未评估',
-                    } as Record<string, string>
-                  )[entry.conclusion] ?? entry.conclusion}
-                  ：{entry.answer_quote}
-                </p>
-              ))}
-              {item.assessment_decision?.disposition === 'provisional' && (
-                <p className="hint">
-                  此反馈尚未形成正式学习证据。请展开评估详情查看依据并进行正式复核。
-                </p>
-              )}
-            </section>
-          )}
-          <div className="actions">
-            {allowed('start_diagnostic') && (
-              <Button
-                disabled={!canWrite || !!inactive}
-                onClick={() => void perform({ action: 'start_diagnostic' })}
               >
-                开始学习
+                {label}
               </Button>
-            )}
-            {view.session.state === 'Diagnostic' && allowed('apply_route') && (
-              <Button
-                disabled={!canWrite || !!inactive}
-                onClick={() => void generate('route', 'apply_route')}
-              >
-                生成学习路线
-              </Button>
-            )}
-            {allowed('issue_activity') && (
-              <Button
-                disabled={!canWrite || !!inactive}
-                onClick={() => void generate('activity', 'issue_activity')}
-              >
-                生成下一活动
-              </Button>
-            )}
-            {allowed('present_review') && (
-              <Button disabled={!canWrite || !!inactive} onClick={() => void generate('activity', 'present_review')}>
-                生成本任务复习活动
-              </Button>
-            )}
-            {allowed('record_assessment') && (
-              <Button
-                disabled={!canWrite || contentLoading}
-                onClick={() =>
-                  activity?.type === 'objective'
-                    ? void perform({ action: 'record_assessment' })
-                    : void generate('assessment', 'record_assessment')
-                }
-              >
-                获取教学反馈
-              </Button>
-            )}
-            {allowed('acknowledge_feedback') && (
-              <Button
-                disabled={!canWrite}
-                onClick={() => void perform({ action: 'acknowledge_feedback' })}
-              >
-                查看完毕，继续学习
-              </Button>
-            )}
-            {allowed('end_activity') && (
-              <Button
-                variant="outline"
-                disabled={!canWrite}
-                onClick={() => void perform({ action: 'end_activity' })}
-              >
-                {activity?.type === 'explanation' ? '阅读完成，继续' : '结束当前活动'}
-              </Button>
-            )}
-            {allowed('complete_session') && (
-              <Button
-                variant="outline"
-                disabled={!canWrite}
-                onClick={() => void perform({ action: 'complete_session' })}
-              >
-                结束本次学习
-              </Button>
-            )}
-          </div>
-          {pending && (
-            <div className="notice" role="alert">
-              <p>正在核对原会话的提交结果，答案不会自动补发。</p>
-              <Button disabled={busy} onClick={() => void reconcile()}>
-                核对提交状态
-              </Button>
-            </div>
-          )}
-          {notice && <p role="status">{notice}</p>}
-          {!!error && <ErrorState error={error} retry={() => void refresh().catch(setError)} />}
-          <p className="hint">
-            活动草稿仅保留在本标签页内存。切页或切换主题可保留；刷新会丢失未保存答案。
-          </p>
-        </div>
-        <aside className="tutor-column panel" aria-label="AI 导师">
-          <h2>AI 导师</h2>
-          <p className="hint">讨论当前活动。聊天不会作为正式答案。</p>
-          {content && goal.data && (
-            <ContentEditor
-              key={content.artifact_id}
-              content={content}
-              goal={goal.data}
-              selection={selection}
-              onUpdate={updateContent}
-              disabled={archived}
-            />
-          )}
-          <div
-            className="teaching-discussion"
-            ref={output}
-            onScroll={() => {
-              const el = output.current
-              if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-            }}
-          >
-            {item?.free_question && (
-              <div>
-                <h3>我的问题</h3>
-                <p className="answer-text">{item.free_question.text}</p>
-              </div>
-            )}
-            {item?.free_answer && (
-              <div>
-                <h3>导师回复</h3>
-                <SafeMarkdown text={item.free_answer.text} />
-              </div>
-            )}
-          </div>
-          {allowed('record_free_answer') && (
-            <Button
-              disabled={!canWrite}
-              onClick={() => void generate('free_answer', 'record_free_answer')}
-            >
-              请导师回答
-            </Button>
-          )}
-          {allowed('resume_focus') && (
-            <Button
-              disabled={!canWrite}
-              variant="outline"
-              onClick={() => void perform({ action: 'resume_focus' })}
-            >
-              返回原学习焦点
-            </Button>
-          )}
-          {allowed('ask_free_question') && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault()
-                ask()
-              }}
-            >
-              <label>
-                和导师讨论
-                <textarea
-                  rows={4}
-                  maxLength={4000}
-                  disabled={!canWrite || !!inactive}
-                  value={chat}
-                  onChange={(e) => {
-                    setChat(e.target.value)
-                    drafts.set(chatKey, e.target.value)
-                  }}
-                  onKeyDown={(e) => {
-                    if (
-                      e.key === 'Enter' &&
-                      !e.shiftKey &&
-                      !e.nativeEvent.isComposing &&
-                      e.keyCode !== 229
-                    ) {
-                      e.preventDefault()
-                      ask()
-                    }
-                  }}
-                />
-              </label>
-              <Button type="submit" disabled={!canWrite || !!inactive || !chat.trim()}>
-                发送讨论
-              </Button>
-              <p className="hint">Enter 发送，Shift+Enter 换行。</p>
-              {activity && (
-                <div className="actions">
-                  {activity.allowed_help
-                    .filter((level) => level !== 'none')
-                    .map((level) => (
-                      <Button
-                        key={level}
-                        variant="outline"
-                        disabled={!canWrite || !!inactive}
-                        onClick={() => {
-                          const order: Help[] = ['none', 'hint', 'scaffold', 'answer_revealed']
-                          const actual = order[Math.max(order.indexOf(help), order.indexOf(level))]
-                          write(answer, actual)
-                          ask(
-                            (
-                              {
-                                hint: '请给当前题目一个提示，不揭示答案。',
-                                scaffold: '请分步引导我理解当前题目。',
-                                answer_revealed: '请解释当前题目的答案。',
-                              } as Record<string, string>
-                            )[level],
-                          )
-                        }}
-                      >
-                        {
-                          (
-                            {
-                              hint: '请求提示',
-                              scaffold: '请求分步引导',
-                              answer_revealed: '查看答案讲解',
-                            } as Record<string, string>
-                          )[level]
-                        }
-                      </Button>
-                    ))}
-                </div>
-              )}
-            </form>
-          )}
-          {goal.data && (
-            <ReferenceLink spaceId={spaceId} goalId={goal.data.goal_id} sessionId={sessionId} status />
-          )}
-          {goal.data && (
-            <details>
-              <summary>目标内持续交流</summary>
-              <p className="hint">导师调用正式变更服务后，具体差异和生效状态显示在下方。</p>
-              <TutorHistory key={sessionId} spaceId={spaceId} goalId={goal.data.goal_id} teachingSessionId={sessionId} />
+            ))}
+          </nav>
+        )}
+      </div>
+      <div className={embedded ? 'classroom-activity-body' : 'teaching-columns'}>
+        {embedded ? (
+          <>
+            {learningPanel}
+            <details className="classroom-frozen-sources">
+              <summary>课堂冻结资料与知识</summary>
+              {knowledgePanel}
             </details>
-          )}
-          {goal.data && <ChangePanel key={`${spaceId}:${sessionId}`} goal={goal.data} teachingSessionId={sessionId} archived={archived} onChanged={() => setContentRefresh((v) => v + 1)} onRestore={(activityId) => { restoreFocusRequested.current = activityId }} />}
-          <label className="column-size">
-            导师栏宽度
-            <input
-              type="range"
-              min={340}
-              max={400}
-              value={mentorWidth}
-              onChange={(e) => setMentorWidth(Number(e.target.value))}
-            />
-          </label>
-        </aside>
+            {mentorPanel}
+          </>
+        ) : (
+          <>
+            {knowledgePanel}
+            {learningPanel}
+            {mentorPanel}
+          </>
+        )}
       </div>
     </section>
   )

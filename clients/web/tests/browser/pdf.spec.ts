@@ -22,7 +22,7 @@ test('真实 PDF 上传、覆盖确认、安全页图及移动端键盘定位', 
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code)
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001/knowledge')
   const name = `PDF 集合 ${randomUUID().slice(0, 8)}`
   await page.getByLabel('集合名称', { exact: true }).fill(name)

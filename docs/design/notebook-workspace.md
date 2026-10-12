@@ -1,6 +1,6 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：Shape 待确认，调查基线 `feat-notebook-ui` / `1d819c8`。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[用户认可方向的静态原型](notebook-workspace-prototype.html)。D1–D4 均为**默认，待用户确认**。本次只新增这三份文档，保留工作树中原有未跟踪原型，不写产品代码、测试、OpenAPI、migration、Runtime 验证记录，不进行 Git 暂存／提交。
+状态：批次 1 已按用户授权实施并完成局部验证（2026-10-12），改动留在 `feat-notebook-ui` 工作树，待调用方审阅提交。Shape 调查基线为 `1d819c8`。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[用户认可方向的静态原型](notebook-workspace-prototype.html)。D1–D4 仍为**默认，待用户确认**，本次未实施批次 2／3，也未改 OpenAPI、migration 或 CLI 产品代码；没有 Git 暂存／提交／推送。
 
 ## 1. 方案与拆分结论
 
@@ -234,14 +234,30 @@
 
 **范围：** 父验收 1–4、13–15，及本批涉及的 22–28。新壳、卡片墙、基本来源 tree 列表、可嵌入课堂和导航。Studio 右栏可进入原课堂内容库；四个新产物入口标明尚未交付，不假生成。左栏来源选择尚未接入新语义时不提供看似生效的勾选控件，标明当前仅浏览／课堂冻结范围。
 
-**涉及文件：** 修改 `clients/web/src/main.tsx`、`pages.tsx`、`teaching-page.tsx`、`components/workspace-shell.tsx`、`styles.css`；新增 `notebook-home-page.tsx`、`notebook-workspace-page.tsx`、`components/notebook/{notebook-header,navigation-drawer,notebook-card,notebook-layout,classroom-panel,goal-selector,sources-panel,mobile-panel-tabs}.tsx` 与 `lib/use-notebook-sources.ts`；按需抽取 SpaceEditor／课堂主体。测试修改 `learning.spec.ts`、`workspace.spec.ts`、`release.spec.ts` 和所有受影响配对／菜单 helper，新增 `notebook-workspace.spec.ts`。
+**实际涉及文件：** 以下路径以 `clients/web/` 为根；文档修改为本文件。
+
+| 分组 | 文件 |
+| --- | --- |
+| 新增页面／读取 hook | `src/notebook-home-page.tsx`、`src/notebook-workspace-page.tsx`、`src/lib/use-notebook-sources.ts` |
+| 新增组件 | `src/components/notebook/{notebook-header,navigation-drawer,notebook-card,notebook-layout,classroom-panel,goal-selector,sources-panel,studio-panel,mobile-panel-tabs}.tsx` |
+| 修改页面／壳／样式 | `src/main.tsx`、`src/pages.tsx`、`src/teaching-page.tsx`、`src/components/workspace-shell.tsx`、`src/styles.css` |
+| 新增浏览器测试／helper | `tests/browser/notebook-workspace.spec.ts`、`tests/browser/notebook-fixture.ts` |
+| 修改旧浏览器测试 | `tests/browser/{learning,workspace,release,mentor,tutor-history,references,pdf,knowledge-structure,tasks,memory,notesync,settings,review}.spec.ts`、`tests/browser/offline-fixture.ts`；`offline.spec.ts` 本身未修改 |
 
 **执行步骤：**
 
-- [ ] 先用一个真实场景明确失败：配对 → 新建区 → 卡片进入 → 恢复会话 → 正式答案／反馈；保留旧深链接断言。
-- [ ] 接入卡片墙与空间管理入口，完成菜单／旧路由兼容，再抽取课堂主体嵌入；来源列表用现有 collections／tree，按集合懒加载，不读取全库正文来填卡片。
-- [ ] 处理归档、缺能力、空数据、跨区／迟到响应及基本窄屏标签；同步迁移破坏的旧用例。
-- [ ] 交接 `WorkspaceContext`、`SourceSelection`／`CitationTarget` 的前端边界与不支持状态，并更新设计中已落地的文件名。
+- [x] 先用一个真实场景明确失败：配对 → 新建区 → 卡片进入 → 恢复会话 → 正式答案／反馈；保留旧深链接断言。
+- [x] 接入卡片墙与空间管理入口，完成菜单／旧路由兼容，再抽取课堂主体嵌入；来源列表用现有 collections／tree，按集合懒加载，不读取全库正文来填卡片。
+- [x] 处理归档、缺能力、空数据、跨区／迟到响应及基本窄屏标签；同步迁移破坏的旧用例。
+- [x] 交接 `WorkspaceContext`、`SourceSelection`／`CitationTarget` 的前端边界与不支持状态，并更新设计中已落地的文件名。
+
+**本次执行计划（2026-10-12）：** 已获批次 1 实施授权，在现有 worktree 串行实施，不暂存／提交，不安装依赖。
+
+1. 新增 `tests/browser/notebook-fixture.ts` 提供真实 Cookie 配对、菜单操作和有 CSRF 的夹具 API；`notebook-workspace.spec.ts` 先断言首页“你的学习区”、新建后进入三栏、建立并恢复课堂及正式反馈，再运行 Chromium 确认因新界面缺失失败。夹具只准备真实来源，不拦截教学／评分成功响应。
+2. `NotebookHomePage()` 复用 `SpaceEditor({space?, onCreated?})` 和游标分页；卡片只显示真实 `Space` 字段。`/spaces/:id/manage` 保留 `SpacePage`；`NavigationDrawer({spaceId?, onClose, ...})` 在无当前区时要求明确选区，保留主题／退出与原所有业务入口。
+3. `NotebookWorkspacePage({spaceId, sessionId?, search})` 组合 `NotebookLayout` 的三个持久挂载面板。`NotebookPanel = 'sources' | 'classroom' | 'studio'`；只将 UUID 目标和枚举面板写入 query。`GoalSelector({spaceId, goalId?, onSelect})` 保留搜索、状态与分页；`ClassroomPanel` 复用 `GoalComposer`、`SessionPicker`、`TeachingPage({..., embedded: true})`，课堂主体保持原提交／核对／帮助／草稿控制器。
+4. `useNotebookSources(spaceId)` 只读区内 collections，展开某集合才读指定 revision tree；列表保留 collection/revision/document 身份与 PDF／未知覆盖提示。`SourcesPanel` 不提供选择框；`StudioPanel` 四项显示“尚未交付”，原内容库提供真实链接。移动标签隐藏面板但不卸载，抽屉使用原生 modal dialog 的焦点限制与 Escape。
+5. 先运行新场景，再迁移旧首页、菜单、管理页、教学列的定位。执行 `npm run check && npm run build`、草稿／教学／相关导航单测，重新构建发行服务与独立 schema 工具，只跑受影响 Chromium 文件；每组通过即停。记录真实文件映射、失败修复、通过次数及延期入口。
 
 **后端改动：** 默认无；仅已有 API 组合。新路由处在现有 SPA 前缀内，若实测静态分发不满足再修对应 HTTP 路由测试／分发，不能扩大 catch-all。无 OpenAPI／migration；G0 不纳入。
 
@@ -249,7 +265,60 @@
 
 **退出标准：** `npm run check`、受影响草稿／教学／导航单测、`npm run build`；Chromium 的新工作区主场景与受影响 learning／workspace／release 场景通过；390／1280px 无整页横溢出；同标签页切区恢复原草稿，双标签页互不覆盖；旧目标管理、课堂、进度、离线入口可达。记录真实文件映射与尚不支持入口，生产路径完整，工作树可审查。
 
-**重型证据：** 全部三引擎、全部旧页和发行矩阵延到 Candidate，原因是后续样式与路由还会变化；这不豁免本批最小真实后端课堂验证。
+**重型证据：** 三引擎全矩阵与候选发行检查延到 Candidate，原因是后续样式与路由还会变化；本批完成新工作区及受影响旧页面的 Chromium 局部回归，不替代最终发布证据。
+
+#### 批次 1 实施记录（2026-10-12）
+
+**改动摘要与状态边界。** 首页使用真实学习区卡片墙，保留搜索、状态、游标分页与新建，创建成功进入新学习区；卡片只显示真实元数据及“学习区更新”时间，不把集合数当来源数，也不伪造最近学习排序。`/spaces/:spaceId` 与 `/spaces/:spaceId/learn/:sessionId` 使用新工作区；原区管理移到 `/spaces/:spaceId/manage`，目标、课堂、知识、任务、进度、评估、导师、内容库、设置与离线旧深链接继续可刷新。发行静态分发实测满足新路由，后端无需修改。
+
+`NotebookWorkspacePage({spaceId, sessionId?, search})` 承担设计中的 `WorkspaceContext` 边界，没有新增全局状态 store：身份／代次来自 `useIdentity`，区／会话来自路由；query 只接受 UUID `goal` 和 `NotebookPanel = 'sources' | 'classroom' | 'studio'`。指定会话时以服务端冻结目标为准，冲突 query 明确报错；无目标／会话时要求明确选择，不默认采用首项。中栏复用 `GoalComposer`、`SessionPicker` 和 `TeachingPage({embedded: true})`，抽出的 `TeachingActivity` 同时用于原课堂呈现与嵌入呈现；正式答案、帮助等级、未知结果核对、内容版本、选段加工、教学变更及标签页内存草稿沿用原控制器。冻结资料与知识在中栏的折叠区，导师位于活动下方，避免再嵌套旧教学三列。
+
+来源按集合／版本／文档保留身份，展开集合才读取现有 tree；不调用全库 export 来填卡片。PDF 显示真实覆盖报告，无法推断的类型／覆盖显示未知。请求带身份／区前缀与取消信号；撤去来源读取权限后立即隐藏缓存目录，跨区迟到响应不会进入新区。`SourceSelection` 与新 `CitationTarget` 尚未实现：来源无勾选控件，课堂引用仍用原冻结范围及原资料查看器，不把左栏浏览解释为资料采用。归档区保留历史浏览，阻止新建目标／课堂及已有课堂写入。
+
+布局沿原型使用浅灰背景、白色圆角面板、稳定卡片配色、胶囊按钮及三栏比例；小于 1100px 用底部标签，隐藏面板保持挂载且移除其可聚焦内容。原生 modal dialog 提供菜单焦点限制、Esc 与关闭后的焦点恢复；菜单内保留主题、退出及全部原页面，无当前区时要求明确选区。已有 NoteSync 仍是默认区／默认集合映射，菜单明示其边界。
+
+**尚未交付的入口。** 右栏学习指南、测验、简报、笔记均显示“尚未交付”，仅原 Studio 内容库链接可用；没有假生成、假进度或定时器成功。四种来源添加 modal、用于问答／生成的来源选择与统一引用定位留给批次 2；新 Studio 产物留给批次 3。资料导入、研究、参考预览／确认、历史 PDF／原文和原课堂内容库继续从旧页面进入。
+
+**失败场景与旧用例迁移。** 实施前新浏览器场景因缺少新首页失败，记录在 `/tmp/notebook-batch1-red-corrected.json`。后续新增目录撤权断言发现缓存目录仍可见，修复权限展示分支；手机截图及顶栏几何断言发现旧全局 flex 样式使品牌越出 64px 顶栏，修正限定于新壳的排列样式。下列旧测试保留原业务断言，仅迁移入口／布局定位；通过后不再反复全跑。
+
+| 旧测试 | 迁移原因与保留范围 |
+| --- | --- |
+| `learning.spec.ts` | 目标建立移到区内，新建区自动进入，区管理移到 manage；主题、切区、退出从菜单操作。保留 IME、生命周期、分页、409、重启与双标签草稿隔离。 |
+| `workspace.spec.ts` | 原学习／导师子标签改为中栏正文，冻结来源需展开；原嵌套列宽键盘断言改为新来源栏收起／展开断言。保留 13 个正式答案、帮助、丢响应、评估、内容版本、教学变更等业务场景。 |
+| `release.spec.ts` | 增补工作区、manage、面板 query、课堂、目标和内容库直达／刷新；保留 no-store、真实资产和错误 API／资源边界。 |
+| `mentor.spec.ts`、`tutor-history.spec.ts`、`memory.spec.ts` | 配对后先明确进入学习区再建立目标，导航从菜单；记忆用例按区 ID 进入，避免前一隐私清除场景擦除区名后依赖旧名称。原预算、SSE、审批、回执、远端清除保持。 |
+| `knowledge-structure.spec.ts` | 更新配对标题、冻结来源展开和返回首页菜单入口，保留维护往返的原题草稿与清除后缓存／历史不恢复正文断言。 |
+| `references.spec.ts`、`pdf.spec.ts`、`review.spec.ts`、`notesync.spec.ts`、`tasks.spec.ts`、`offline-fixture.ts` | 更新配对后首页断言；原深链接、审批、覆盖缺口、任务／复习／离线恢复继续执行。 |
+| `settings.spec.ts` | 更新配对标题，并将过期的 Key 字段定位改为现有“新 Key（留空保留同连接旧值）”；不改设置产品语义，保留不回显、显式探测和权限隔离。 |
+
+**检查命令与结果。** 在本 worktree 执行，未安装依赖。`node_modules` 为只读符号链接，原 `npm run build` 因 Vite 尝试写入依赖内 `.vite-temp` 返回 EACCES；随后使用 native config loader 成功，未改构建配置。Go 缓存及 schema 工具也放在获准可写的 `/tmp`，没有写入用户家目录缓存。
+
+| 工作目录／命令 | 结果 |
+| --- | --- |
+| `clients/web`：`npm run check` | 通过；最后一次检查包含全部新增页面、组件、hook 与迁移测试。 |
+| `clients/web`：`npm run build -- --configLoader native` | 通过，包含内部类型检查；构建仍有 Zod PURE 注释与单 chunk 大于 500kB 提示。最终构建日志 `/tmp/notebook-batch1-build-final.log`。 |
+| `clients/web`：`npx vitest run --configLoader native src/lib/drafts.test.ts src/api/teaching.test.ts src/api/start.test.ts src/api/content.test.ts src/components/content-blocks.test.tsx` | 5 个文件、13 个单测通过。 |
+| `server`：`GOCACHE=/tmp/notebook-batch1-go-cache go build -tags web_release -o edu-agentd ./cmd/edu-agentd` | 通过，在前端最终构建后重新嵌入发行资产。 |
+| `server`：`GOCACHE=/tmp/notebook-batch1-go-cache go build -o /tmp/notebook-batch1-webdatabase ./testutil/webdatabase` | 通过；独立 schema 包装工具使用 `/tmp` 路径替代不可写的家目录缓存。 |
+| `server`：`GOCACHE=/tmp/notebook-batch1-go-cache go build -o /tmp/notebook-batch1-webreview ./testutil/webreview`；`clients/cli-go`：`GOCACHE=/tmp/notebook-batch1-go-cache go build -o /tmp/notebook-batch1-cli ./cmd/edu-agent` | 通过，仅为原复习测试宿主及生产 CLI 兼容性读回构建，未修改其代码。 |
+| `clients/web`：`/tmp/notebook-batch1-webdatabase npm run test:browser -- 'tests/browser/notebook-workspace.spec.ts$' --project=chromium --reporter=line,json` | 新增 7 个场景全部通过：真实开课／答案／反馈、390／1280 无横溢出、菜单／旧路由、跨区与双标签草稿、懒加载／撤权、归档恢复、迟到来源响应。 |
+| `clients/web`：对受影响旧文件逐个运行同一 schema 包装的 `npm run test:browser -- 'tests/browser/<文件>.spec.ts$' --project=chromium --reporter=line,json`；离线用 `npm run test:offline -- --project=chromium --reporter=line,json` | 旧 14 个 spec 的 44 个场景均有通过记录；只重跑修正或样式影响的场景，计数不重复累计。见下表。 |
+| 根目录：`git diff --check` | 通过；未暂存／提交／推送。 |
+
+浏览器环境：`TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable`、`WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome`、`WEB_RELEASE_MATRIX=1`，端口 32929。依 `scripts/check-web-release.mjs` 对 `learning`／`settings` 设置 `WEB_WORKSPACE_FIXTURE=0 WEB_MENTOR_FIXTURE=0`，其余设为 1；`notesync` 设 `WEB_NOTESYNC_FIXTURE=1`，`memory` 设 `WEB_NOCTURNE_FIXTURE=1`。复习另设 `WEB_REVIEW_FIXTURE=/tmp/notebook-batch1-webreview`、`EDU_AGENT_INTEGRATION_CLI=/tmp/notebook-batch1-cli`；离线脚本设置自己的签名／离线 fixture。每个文件使用独立 schema 和服务进程，未触碰其他 Docker 容器。
+
+| Chromium 文件 | 通过场景数 |
+| --- | ---: |
+| `notebook-workspace.spec.ts` | 7 |
+| `learning.spec.ts`／`workspace.spec.ts` | 5／13 |
+| `release.spec.ts`／`references.spec.ts`／`pdf.spec.ts` | 1／1／1 |
+| `mentor.spec.ts`／`tutor-history.spec.ts`／`settings.spec.ts` | 1／1／1 |
+| `knowledge-structure.spec.ts`／`tasks.spec.ts`／`notesync.spec.ts` | 3／2／1 |
+| `memory.spec.ts`／`review.spec.ts`／`offline.spec.ts` | 5／2／7 |
+
+局部证据目录 `/tmp/notebook-batch1-browser-evidence/` 保留逐次 JSON、日志、截图；`accepted-summary.json` 按用例合并原通过记录与必要的 focused 重测，合计 51 个不同场景，均通过现有 `checkBrowserResults(..., 'chromium')` 校验，无 skip、retry、预期失败。早期 `workspace` 文件名匹配也包含新 notebook 文件，计数时只取对应旧 suite；后续命令加路径末尾 `$` 避免这一情况。最终 390／1280 截图位于 `notebook-workspace-artifacts/`；早期失败报告仍作为排查证据，不视为整轮全绿。此记录为局部退出证据，不是候选发布矩阵。
+
+**用户决策与风险。** 批次 1 没有新增待用户决策的问题；D1–D4 继续留给后续批次，不因本次壳层实施视为确认。仅验证 Chromium 和本地确定性模型／远端夹具，没有验证真实外部模型／搜索。三引擎完整矩阵、Go 全量／race、Compose、完整可访问性与最终发布证据未执行，按计划后移；新旧样式共存仍需后续候选阶段复核，现有 chunk 体积提示未在本批扩展为拆包重构。
 
 ### 批次 2：四种来源、引用定位与按所选来源问答（7–10 人日）
 

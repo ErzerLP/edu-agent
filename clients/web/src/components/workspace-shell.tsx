@@ -1,55 +1,18 @@
 import { Link, Outlet, useParams, useSearch } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { BookOpen, Moon, Sun } from 'lucide-react'
+import { BookOpen, Menu, Monitor } from 'lucide-react'
 import { useIdentity } from '@/lib/session'
-import { learningClient, unwrap } from '@/api/client'
-import { pageOf, spaceSchema } from '@/api/runtime'
 import { Button } from './ui/button'
-import { ErrorState, Confirm } from './common'
-import { progressSearch } from '@/api/progress'
-
-export function SpaceSwitcher() {
-  const { session, prefix } = useIdentity()
-  const { spaceId } = useParams({ strict: false })
-  const spaces = useQuery({
-    queryKey: [...prefix, 'spaces', 'switcher'],
-    queryFn: ({ signal }) =>
-      unwrap(
-        learningClient(session).GET('/v1/learning-spaces', {
-          params: { query: { status: 'active', limit: 100 } },
-          signal,
-        }),
-        pageOf(spaceSchema),
-      ),
-    enabled: session.capabilities.spaces,
-  })
-  return (
-    <details className="space-switcher">
-      <summary>切换学习区</summary>
-      <div className="switcher-menu">
-        {spaces.error && <ErrorState error={spaces.error} retry={() => void spaces.refetch()} />}
-        {spaces.data?.items.map((space) => (
-          <Link
-            key={space.id}
-            to="/spaces/$spaceId"
-            params={{ spaceId: space.id }}
-            aria-current={spaceId === space.id ? 'page' : undefined}
-          >
-            {space.name}
-          </Link>
-        ))}
-        <Link to="/">查看与管理全部学习区</Link>
-      </div>
-    </details>
-  )
-}
+import { NavigationDrawer } from './notebook/navigation-drawer'
+import { z } from 'zod'
 
 export function WorkspaceShell() {
   const { spaceId } = useParams({ strict: false })
   const search = useSearch({ strict: false })
-  const { logout, drafts } = useIdentity()
-  const [error, setError] = useState<unknown>()
+  const { session } = useIdentity()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const selectedSpace = z.uuid().safeParse(spaceId ?? search.space)
+  const currentSpace = selectedSpace.success ? selectedSpace.data : undefined
   const [theme, setTheme] = useState(() => {
     try {
       return localStorage.getItem('knowledge-mesh-theme') ?? 'light'
@@ -70,55 +33,35 @@ export function WorkspaceShell() {
       <a className="skip-link" href="#main">
         跳到主内容
       </a>
-      <header className="site-header">
+      <header className="site-header notebook-site-header">
+        <Button
+          variant="ghost"
+          aria-label="打开侧边菜单"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen(true)}
+        >
+          <Menu aria-hidden="true" size={24} />
+        </Button>
         <Link to="/" className="brand">
           <BookOpen aria-hidden="true" size={24} />
           <span>
             知络<small>Knowledge Mesh</small>
           </span>
         </Link>
-        <nav aria-label="全局导航">
-          <Link to="/">学习目标</Link>
-          <a href="/app/offline">离线学习</a>
-          <Link to="/spaces/$spaceId/chat" params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}>导师历史</Link>
-          <Link to="/progress" search={progressSearch.parse({})}>进度与复习</Link>
-          <Link to="/spaces/$spaceId/feedback" params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}>评估与证据</Link>
-          <Link to="/spaces/$spaceId/knowledge" params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }} search={{ goal: undefined, session: undefined }}>知识与参考</Link>
-          <Link
-            to="/runs"
-            search={{ space: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}
-          >
-            任务中心
-          </Link>
-          <Link
-            to="/spaces/$spaceId/studio"
-            params={{ spaceId: spaceId ?? search.space ?? '00000000-0000-4000-8000-000000000001' }}
-          >
-            Studio 内容库
-          </Link>
-          <SpaceSwitcher />
-          <Link to="/settings">设置与能力</Link>
-          <Link to="/memory">长期记忆</Link>
-          <Button
-            variant="ghost"
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            aria-label={theme === 'dark' ? '切换浅色主题' : '切换深色主题'}
-          >
-            {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-          </Button>
-          <Confirm
-            label="退出"
-            title="退出浏览器学习会话？"
-            onConfirm={() => void logout().catch(setError)}
-          >
-            {drafts.dirty
-              ? '未保存草稿会丢失。退出不会撤销设备。'
-              : '已保存的目标会保留。退出不会撤销设备。'}
-          </Confirm>
-        </nav>
+        <Link className="notebook-device" to="/settings/devices" aria-label="当前配对设备">
+          <Monitor aria-hidden="true" size={18} />
+          <span>{session.device.display_name}</span>
+        </Link>
       </header>
+      {menuOpen && (
+        <NavigationDrawer
+          spaceId={currentSpace}
+          theme={theme}
+          onThemeChange={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
       <main id="main" className="main" tabIndex={-1}>
-        {!!error && <ErrorState error={error} />}
         <Outlet />
       </main>
       <footer>从目标出发 · 按你的节奏学习</footer>

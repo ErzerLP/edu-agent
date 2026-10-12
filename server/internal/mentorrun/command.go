@@ -64,6 +64,11 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 			return Receipt{}, err
 		}
 	}
+	if c.Kind == "respond" || c.Kind == "continue_budget" {
+		if _, err = s.sourceMaterialTx(ctx, tx, space, actor.TokenID, item.body); err != nil {
+			return Receipt{}, err
+		}
+	}
 	switch c.Kind {
 	case "clear":
 		if !item.BodyAvailable {

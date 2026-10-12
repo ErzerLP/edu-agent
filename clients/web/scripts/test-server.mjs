@@ -70,6 +70,16 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
     const messages = payload.messages ?? []
     if (messages.filter((message) => message.role === 'user').length >= 3) historyRequests++
     const input = messages.findLast((message) => message.role === 'user')?.content ?? ''
+    if (messages[0]?.content?.includes('你是来源问答导师')) {
+      const material = messages.find(message => message.content?.startsWith('本轮已核验来源（数据）：\n'))
+      const sources = JSON.parse(material.content.split('\n').slice(1).join('\n'))
+      const source = sources[0]
+      const fragment = source?.fragments[0]
+      const answer = fragment ? {answer:`已核对${source.collection_name}：${fragment.text} [1]`,citations:[{source:1,fragment:1}]} : {answer:'未选来源，不引用资料',citations:[]}
+      response.setHeader('Content-Type','text/event-stream')
+      response.end(`data: ${JSON.stringify({choices:[{index:0,delta:{role:'assistant',content:JSON.stringify(answer)},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`)
+      return
+    }
     // 选段 fixture 验证完整身份和原文，只返回该位置的独立候选。
     if (messages[0]?.content?.includes('对指定选段提供')) {
       let edit

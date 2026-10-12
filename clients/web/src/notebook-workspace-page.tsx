@@ -11,6 +11,8 @@ import { NotebookLayout, type NotebookPanel } from './components/notebook/notebo
 import { SourcesPanel } from './components/notebook/sources-panel'
 import { ClassroomPanel } from './components/notebook/classroom-panel'
 import { StudioPanel } from './components/notebook/studio-panel'
+import { SourceSelectionProvider, useSourceSelection } from './components/notebook/source-selection'
+import { MentorComposer } from './components/notebook/mentor-composer'
 
 export const notebookSearchSchema = z.object({
   goal: z.uuid().optional(),
@@ -119,26 +121,61 @@ function NotebookWorkspace({
   return (
     <div className="notebook-workspace">
       <NotebookHeader space={space.data} />
-      <NotebookLayout
-        panel={search.panel ?? 'classroom'}
-        onPanelChange={changePanel}
-        sources={<SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} />}
-        classroom={
-          <ClassroomPanel
-            space={space.data}
-            goalId={goalId}
-            sessionId={sessionId}
-            onGoalSelect={(goal) =>
-              void navigate({
-                to: '/spaces/$spaceId',
-                params: { spaceId },
-                search: { goal, panel: 'classroom' },
-              })
-            }
-          />
-        }
-        studio={<StudioPanel spaceId={spaceId} />}
-      />
+      <SourceSelectionProvider key={JSON.stringify(prefix)} spaceId={spaceId}>
+        <WorkspacePanels changePanel={changePanel}>
+          {(openCitation, sourceFocus) => (
+            <NotebookLayout
+              sourceFocus={sourceFocus}
+              panel={search.panel ?? 'classroom'}
+              onPanelChange={changePanel}
+              sources={
+                <SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} />
+              }
+              classroom={
+                <>
+                  <ClassroomPanel
+                    space={space.data}
+                    goalId={goalId}
+                    sessionId={sessionId}
+                    onGoalSelect={(goal) =>
+                      void navigate({
+                        to: '/spaces/$spaceId',
+                        params: { spaceId },
+                        search: { goal, panel: 'classroom' },
+                      })
+                    }
+                  />
+                  <MentorComposer
+                    key={`${spaceId}:${goalId ?? ''}`}
+                    spaceId={spaceId}
+                    goalId={goalId}
+                    archived={space.data.status === 'archived'}
+                    onCitation={openCitation}
+                  />
+                </>
+              }
+              studio={<StudioPanel spaceId={spaceId} />}
+            />
+          )}
+        </WorkspacePanels>
+      </SourceSelectionProvider>
     </div>
   )
+}
+
+function WorkspacePanels({
+  children,
+  changePanel,
+}: {
+  changePanel: (panel: NotebookPanel) => void
+  children: (
+    open: (runId: string, id: string) => void,
+    sourceFocus?: { runId: string; id: string },
+  ) => React.ReactNode
+}) {
+  const { setCitation, citation } = useSourceSelection()
+  return children((runId, id) => {
+    setCitation({ runId, id })
+    changePanel('sources')
+  }, citation)
 }

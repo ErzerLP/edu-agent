@@ -8,6 +8,14 @@ import (
 )
 
 func (h *executionHost) readReferences(ctx context.Context) (string, error) {
+	if h.body.SourceManifest != nil {
+		value, err := h.selectedMaterial(ctx)
+		if err != nil {
+			return "", err
+		}
+		raw, err := json.Marshal(value)
+		return string(raw), err
+	}
 	if !h.service.changes.ReferencesAvailable() {
 		return "当前服务器尚未配置参考采用能力。", nil
 	}

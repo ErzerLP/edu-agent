@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ApiError } from './client'
+import { mentorCitationSchema, sourceManifestSchema, type SourceSelection } from './source-selection'
 
 const version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const conversationSchema = z.object({
@@ -20,7 +21,7 @@ export const tutorMessage = z.object({
 })
 export const turnsSchema = z.object({
   conversation: conversationSchema,
-  items: z.array(z.object({ run_id: z.uuid(), ordinal: version, status: z.string(), body_available: z.boolean(), messages: z.array(tutorMessage), output: z.string() })).max(50),
+  items: z.array(z.object({ run_id: z.uuid(), ordinal: version, status: z.string(), body_available: z.boolean(), messages: z.array(tutorMessage), output: z.string(),source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional() })).max(50),
   next_cursor: version.optional(),
 })
 
@@ -32,7 +33,7 @@ export function checkConversation(c: TutorConversation, space: string, generatio
 export const conversationDraftKey = (prefix: readonly unknown[], id: string) => JSON.stringify([...prefix, 'tutor-conversation', id])
 export const conversationSelectionKey = (prefix: readonly unknown[], space: string, goal?: string, teaching?: string) => JSON.stringify([...prefix, 'tutor-selection', space, goal, teaching])
 
-export type TurnSubmission = { operation_id: string; expected_version: number; prompt: string; request_budget: number; token_budget: number; confirm_destination?: string }
+export type TurnSubmission = { operation_id: string; expected_version: number; prompt: string; request_budget: number; token_budget: number; confirm_destination?: string;source_selection?:SourceSelection }
 type Result<T, Code extends number = 200> = { responses: { [K in Code]: { content: { 'application/json': T } } } }
 type Body<T> = { requestBody: { content: { 'application/json': T } } }
 type Scope = { header: { 'X-Learning-Space-ID': string } }

@@ -32,7 +32,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
   await expect(page.getByRole('region', { name: '来源', exact: true })).toContainText('even.md')
   await expect(
     page.getByRole('region', { name: '来源', exact: true }).getByRole('checkbox'),
-  ).toHaveCount(0)
+  ).toHaveCount(3)
   await expect(
     page
       .getByRole('region', { name: 'Studio', exact: true })
@@ -283,10 +283,16 @@ test('切区后来源目录的迟到响应不进入新区，也不覆盖新区�
   let release!: () => void
   let started!: () => void
   let delivered!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
-  const seen = new Promise<void>(resolve => { started = resolve })
-  const finished = new Promise<void>(resolve => { delivered = resolve })
-  await page.route('**/v1/knowledge/sources?*', async route => {
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const seen = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const finished = new Promise<void>((resolve) => {
+    delivered = resolve
+  })
+  await page.route('**/v1/knowledge/sources?*', async (route) => {
     if (route.request().headers()['x-learning-space-id'] !== a.id) {
       await route.continue()
       return
@@ -302,7 +308,10 @@ test('切区后来源目录的迟到响应不进入新区，也不覆盖新区�
   await seen
   await openNavigation(page)
   await page.getByText('切换学习区', { exact: true }).click()
-  await page.getByRole('dialog', { name: '侧边菜单' }).getByRole('link', { name: b.name, exact: true }).click()
+  await page
+    .getByRole('dialog', { name: '侧边菜单' })
+    .getByRole('link', { name: b.name, exact: true })
+    .click()
   const draft = page.getByLabel('今天想学会什么？', { exact: true })
   await draft.fill('新区正在写的目标')
   release()
@@ -311,4 +320,108 @@ test('切区后来源目录的迟到响应不进入新区，也不覆盖新区�
   await expect(sources).toContainText('迟到乙来源')
   await expect(sources).not.toContainText('迟到甲来源')
   await expect(draft).toHaveValue('新区正在写的目标')
+})
+
+test('所选来源问答：无目标、改选、核验引用、零来源、双标签与原操作核对', async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(120000)
+  page.setDefaultTimeout(15000)
+  await pairNotebook(page, 'settings')
+  await page.goto('/app/settings')
+  const model = page.getByRole('region', { name: 'Web 导师模型', exact: true })
+  await model.getByRole('button', { name: '配置或替换凭据' }).click()
+  await model.getByLabel('端点', { exact: true }).fill('http://127.0.0.1:32930/v1')
+  await model.getByLabel('模型名称').fill('notebook-selected-fixture')
+  await model.getByLabel('鉴权方式').selectOption('none')
+  await model.getByLabel('启用Web 导师模型').check()
+  await model.getByRole('button', { name: '保存Web 导师模型配置' }).click()
+  await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
+  const session = await (await page.request.get('/v1/web/session')).json()
+  const logout = await page.request.post('/v1/web/logout', {
+    headers: { Origin: 'http://127.0.0.1:32929', 'X-CSRF-Token': session.csrf_token },
+  })
+  expect(logout.ok()).toBe(true)
+  await pairNotebook(page)
+  const space = await createSpace(page, '按选来源无目标问答')
+  const a = await seedSources(page, space.id, '所选甲资料')
+  const b = await seedSources(page, space.id, '所选乙资料')
+  await page.goto(`/app/spaces/${space.id}`)
+  const sources = page.getByRole('region', { name: '来源', exact: true })
+  const panel = page.getByRole('region', { name: '按所选来源提问', exact: true })
+  const prompt = panel.getByRole('textbox', { name: '向导师提问', exact: true })
+  await sources.getByRole('checkbox', { name: '全选已加载来源', exact: true }).uncheck()
+  await sources.getByRole('checkbox', { name: /选择来源：even.md · 所选甲资料/ }).check()
+  const second = await context.newPage()
+  await second.goto(`/app/spaces/${space.id}`)
+  await expect(second.getByRole('checkbox', { name: '全选已加载来源', exact: true })).toBeChecked()
+  const submissions: { source_selection: { mode: string; items: { collection_id: string }[] } }[] =
+    []
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && /\/conversations\/[^/]+\/turns$/.test(request.url()))
+      submissions.push(request.postDataJSON())
+  })
+  await panel.getByRole('checkbox', { name: '保存问答历史到服务器' }).check()
+  await prompt.fill('解释所选资料')
+  await panel.getByRole('button', { name: '发送提问', exact: true }).click()
+  await expect(panel.getByLabel('导师输出')).toContainText('所选甲资料')
+  await expect(panel.getByLabel('导师输出')).not.toContainText('所选乙资料')
+  expect(submissions[0].source_selection.items.map((i) => i.collection_id)).toEqual([
+    a.collectionId,
+  ])
+  await panel.getByRole('button', { name: '核验引用 1', exact: true }).click()
+  await expect(sources.getByRole('region', { name: '引用 1 核验片段', exact: true })).toContainText(
+    '偶数可以被 2 整除',
+  )
+  await expect(sources.getByRole('region', { name: '引用 1 核验片段', exact: true })).toContainText(
+    '所选甲资料',
+  )
+  await sources.getByRole('checkbox', { name: /选择来源：even.md · 所选甲资料/ }).uncheck()
+  await sources.getByRole('checkbox', { name: /选择来源：examples.md · 所选乙资料/ }).check()
+  await page.route(
+    '**/v1/learning/conversations/*/turns',
+    async (route) => {
+      const result = await route.fetch()
+      expect(result.ok()).toBe(true)
+      await route.abort('failed')
+    },
+    { times: 1 },
+  )
+  await prompt.fill('只解释新选择')
+  await panel.getByRole('button', { name: '发送提问', exact: true }).click()
+  await expect(panel.getByRole('button', { name: '核对提交结果', exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: '核对提交结果', exact: true }).click()
+  await expect(prompt).toHaveValue('')
+  await expect(panel.getByLabel('导师输出')).toContainText('所选乙资料')
+  await expect(panel.getByLabel('导师输出')).not.toContainText('所选甲资料')
+  expect(submissions).toHaveLength(2)
+  expect(submissions[1].source_selection.items.map((i) => i.collection_id)).toEqual([
+    b.collectionId,
+  ])
+  await page.setViewportSize({ width: 390, height: 900 })
+  const tabs = page.getByRole('tablist', { name: '学习区面板', exact: true })
+  await tabs.getByRole('tab', { name: '课堂', exact: true }).click()
+  await panel.getByRole('button', { name: '核验引用 1', exact: true }).click()
+  await expect(tabs.getByRole('tab', { name: '来源', exact: true })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+  await expect(sources.getByRole('region', { name: '引用 1 核验片段', exact: true })).toContainText(
+    '所选乙资料',
+  )
+  await sources.getByRole('checkbox', { name: /选择来源：examples.md · 所选乙资料/ }).uncheck()
+  await tabs.getByRole('tab', { name: '课堂', exact: true }).click()
+  await expect(panel.getByText('未选来源，不引用资料', { exact: true })).toBeVisible()
+  await panel.getByRole('button', { name: '举个例子', exact: true }).click()
+  await expect(prompt).toHaveValue('举个例子')
+  await panel.getByRole('button', { name: '发送提问', exact: true }).click()
+  await expect(panel.getByLabel('导师输出')).toContainText('未选来源，不引用资料')
+  await expect(panel.getByRole('button', { name: '核验引用 1', exact: true })).toHaveCount(0)
+  expect(submissions[2].source_selection).toEqual({ mode: 'none', items: [] })
+  expect((await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items).toHaveLength(
+    0,
+  )
+  await expect(second.getByRole('checkbox', { name: '全选已加载来源', exact: true })).toBeChecked()
+  await second.close()
 })

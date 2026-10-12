@@ -12,6 +12,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -35,6 +36,7 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/goals/{goalID}/runs", a.mentorCreate)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/runs", a.mentorCurrent)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}", a.mentorSnapshot)
+	router.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.mentorScope, a.responseReadPermit("content_redacted", privacy.OwnerIdentity, privacy.OwnerLearning, privacy.OwnerKnowledge)).Get("/v1/learning/runs/{runID}/citations/{citationID}", a.mentorCitation)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/events", a.mentorEvents)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/runs/{runID}/commands", a.mentorCommand)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/operations/{operationID}", a.mentorOperation)
@@ -59,6 +61,19 @@ func (a *API) mentorScope(next http.Handler) http.Handler {
 }
 
 func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if code := knowledge.ErrorCode(err); code != "" {
+		status := 503
+		switch code {
+		case knowledge.CodeInvalidRequest:
+			status = 400
+		case knowledge.CodeNotFound:
+			status = 404
+		case knowledge.CodeContentRedacted:
+			status = 409
+		}
+		writeError(w, r, status, code, "来源核验未完成："+code)
+		return
+	}
 	if contentFailure(w, r, err) {
 		return
 	}
@@ -86,9 +101,9 @@ func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
 
 func (a *API) mentorCreate(w http.ResponseWriter, r *http.Request) {
 	var command mentorrun.Create
-	raw, decodeErr := readJSONBody(w, r, 24<<10)
+	raw, decodeErr := readJSONBody(w, r, 64<<10)
 	var fields map[string]json.RawMessage
-	if decodeErr != nil || decodeJSONData(raw, &command) != nil || command.ConversationID != "" || json.Unmarshal(raw, &fields) != nil || (string(fields["save"]) != "true" && string(fields["save"]) != "false") {
+	if decodeErr != nil || decodeJSONData(raw, &command) != nil || command.ConversationID != "" || json.Unmarshal(raw, &fields) != nil || (string(fields["save"]) != "true" && string(fields["save"]) != "false") || fields["source_selection"] != nil && command.SourceSelection == nil {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}
@@ -100,6 +115,20 @@ func (a *API) mentorCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", "/v1/learning/runs/"+receipt.RunID)
 	writeJSON(w, 202, receipt)
+}
+
+func (a *API) mentorCitation(w http.ResponseWriter, r *http.Request) {
+	actor, _ := credentialFromContext(r.Context())
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
+	started := false
+	err := a.mentorRuns.ReadCitation(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "runID"), chi.URLParam(r, "citationID"), func(c mentorrun.SourceCitation) error {
+		started = true
+		writeJSON(w, 200, c)
+		return http.NewResponseController(w).Flush()
+	})
+	if err != nil && !started {
+		mentorFailure(w, r, err)
+	}
 }
 
 func (a *API) mentorList(w http.ResponseWriter, r *http.Request) {

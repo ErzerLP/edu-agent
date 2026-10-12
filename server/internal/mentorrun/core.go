@@ -58,6 +58,9 @@ var mentorTools = []modelclient.Tool{
 }
 
 func (h *executionHost) Prepare(ctx context.Context) (agentcore.ContextPlan, error) {
+	if h.body.SourceManifest != nil {
+		return h.prepareSelected(ctx)
+	}
 	goal, err := h.goal(ctx)
 	if err != nil {
 		return agentcore.ContextPlan{}, err
@@ -140,13 +143,18 @@ func (h *executionHost) AppendAssistant(ctx context.Context, message modelclient
 	if len(h.prefix)+len(message.Content) > MaxOutput {
 		return ErrLimit
 	}
-	h.body.Output = h.prefix + message.Content
+	if h.body.SourceManifest == nil {
+		h.body.Output = h.prefix + message.Content
+	}
 	h.body.Messages = append(h.body.Messages, redactLocalCalls(message))
 	h.body.Pending = append([]modelclient.ToolCall(nil), redactLocalCalls(message).ToolCalls...)
 	return h.checkpoint(ctx, "tools")
 }
 
 func (h *executionHost) Complete(ctx context.Context, message modelclient.Message) (struct{}, error) {
+	if h.body.SourceManifest != nil {
+		return struct{}{}, h.completeSelected(ctx, message)
+	}
 	if len(h.prefix)+len(message.Content) > MaxOutput {
 		return struct{}{}, ErrLimit
 	}
@@ -164,6 +172,9 @@ func (h *executionHost) Complete(ctx context.Context, message modelclient.Messag
 
 func (h *executionHost) Execute(ctx context.Context, calls []modelclient.ToolCall) (agentcore.ToolStep[struct{}], error) {
 	for _, call := range calls {
+		if h.body.SourceManifest != nil && !selectedTool(call.Function.Name) {
+			return agentcore.ToolStep[struct{}]{}, ErrInvalid
+		}
 		var result string
 		var interaction *Interaction
 		switch call.Function.Name {
@@ -313,6 +324,9 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 	if h.service.memoryPermits != nil {
 		var err error
 		owners := []privacy.OwnerKind{privacy.OwnerIdentity, privacy.OwnerLearning}
+		if h.body.SourceManifest != nil {
+			owners = append(owners, privacy.OwnerKnowledge)
+		}
 		if len(h.body.MemorySources) > 0 {
 			owners = append(owners, privacy.OwnerMemory)
 		}
@@ -364,7 +378,33 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 		h.transportErr = err
 		return nil, err
 	}
+	// Retain exact-source link read locks until the outbound response
+	// closes. Unlink/revocation cannot commit between validation and dispatch.
+	var sourceTx pgx.Tx
+	if h.body.SourceManifest != nil {
+		sourceTx, err = h.service.pool.Begin(request.Context())
+		if err == nil {
+			err = h.lockSourceDispatch(request.Context(), sourceTx)
+		}
+		if err != nil {
+			if sourceTx != nil {
+				_ = sourceTx.Rollback(context.Background())
+			}
+			if permit != nil {
+				permit.Release()
+			}
+			h.transportErr = err
+			return nil, err
+		}
+	}
 	response, err := t.next.RoundTrip(request)
+	if sourceTx != nil {
+		if err != nil {
+			_ = sourceTx.Rollback(context.Background())
+		} else {
+			response.Body = &sourceResponseBody{ReadCloser: response.Body, tx: sourceTx}
+		}
+	}
 	if permit != nil {
 		if err != nil {
 			permit.Release()
@@ -373,6 +413,17 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 		}
 	}
 	return response, err
+}
+
+type sourceResponseBody struct {
+	io.ReadCloser
+	tx pgx.Tx
+}
+
+func (b *sourceResponseBody) Close() error {
+	err := b.ReadCloser.Close()
+	_ = b.tx.Rollback(context.Background())
+	return err
 }
 
 type memoryResponseBody struct {
@@ -405,6 +456,9 @@ func (m callModel) Stream(ctx context.Context, request modelclient.Request, publ
 	h.body.Output = h.prefix
 	response, err := h.model.Stream(ctx, request, func(event modelclient.StreamEvent) error {
 		if event.Kind == modelclient.StreamEventTextDelta {
+			if h.body.SourceManifest != nil {
+				return publish(event)
+			}
 			if len(h.body.Output)+len(event.Text) > MaxOutput {
 				return ErrLimit
 			}

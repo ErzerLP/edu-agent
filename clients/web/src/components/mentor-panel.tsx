@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ApiError, learningClient, unwrap } from '@/api/client'
-import { conversationDraftKey, type TutorConversation, type TurnSubmission } from '@/api/conversations'
+import { conversationDraftKey, conversationsSchema, type TutorConversation, type TurnSubmission } from '@/api/conversations'
 import { settingsSchema } from '@/api/settings'
 import { isMentorTerminal, mentorCurrentSchema, mentorReceiptSchema, mentorSnapshotSchema, mentorStatus, observeMentor, type MentorSnapshot } from '@/api/mentor'
 import { useIdentity } from '@/lib/session'
@@ -11,11 +11,13 @@ import { Confirm, ErrorState } from './common'
 import { ReferenceLink } from '@/knowledge-page'
 import { CandidateReview } from '@/memory-page'
 import { CompanionPanel } from './companion-panel'
+import { MentorAnswer } from './mentor-answer'
+import type { SourceSelection } from '@/api/source-selection'
 
-export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversation, onChange }: { goal: { learning_space_id: string; goal_id: string; revision: number; management: { status: string } }; archivedSpace: boolean; teachingSessionId?: string; conversation?: TutorConversation; onChange?: () => void }) {
+export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversation, onChange, notebook }: { notebook?: {selection?:SourceSelection; draftKey:string; ensureConversation:(saved:boolean)=>Promise<TutorConversation>; onCitation:(runId:string,id:string)=>void}; goal: { learning_space_id: string; goal_id: string; revision: number; management: { status: string } }; archivedSpace: boolean; teachingSessionId?: string; conversation?: TutorConversation; onChange?: () => void }) {
   const { session, prefix, drafts } = useIdentity()
   const query = useQueryClient()
-  const key = conversation ? conversationDraftKey(prefix, conversation.id) : JSON.stringify([...prefix, goal.learning_space_id, goal.goal_id, teachingSessionId, 'mentor'])
+  const key = notebook?.draftKey ?? (conversation ? conversationDraftKey(prefix, conversation.id) : JSON.stringify([...prefix, goal.learning_space_id, goal.goal_id, teachingSessionId, 'mentor']))
   const [prompt, setPrompt] = useState(() => drafts.get<string>(key) ?? '')
   const [save, setSave] = useState(false)
   const [requests, setRequests] = useState(3)
@@ -36,12 +38,17 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
   const current = useQuery({
     queryKey: [...prefix, goal.learning_space_id, goal.goal_id, 'mentor-current', conversation?.id, conversation?.current_run_id],
     queryFn: async ({ signal }) => {
+      if(notebook&&!conversation) {
+        const page=await unwrap(client().GET('/v1/learning/conversations',{params:{header,query:{limit:1}},signal}),conversationsSchema)
+        return {run:null,save_available:page.save_available}
+      }
       if (conversation) return { run: conversation.current_run_id ? await unwrap(client().GET('/v1/learning/runs/{runID}', { params: { path: { runID: conversation.current_run_id }, header }, signal }), mentorSnapshotSchema) : null, save_available: conversation.saved }
       return unwrap(client().GET('/v1/learning/goals/{goalID}/runs', { params: { path: { goalID: goal.goal_id }, header }, signal }), mentorCurrentSchema)
     },
     gcTime: 0,
     refetchInterval: (query) => {
       const other = query.state.data?.run
+      if(other?.source_manifest) return 2500
       return other && other.teaching_session_id !== teachingSessionId && !isMentorTerminal(other.status) ? 2500 : false
     },
   })
@@ -87,16 +94,17 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
     if (mounted.current) setRun(result)
   }
   const start = async () => {
-    if (pending || !prompt.trim()) return
+    if (pending || !prompt.trim() || notebook && !notebook.selection && !unconfirmed) return
     setPending(true); setError(undefined)
-    const payload = { session_id: run?.session_id ?? sessionId.current, expected_version: goal.revision, prompt, save, request_budget: requestBudget, token_budget: tokenBudget, ...(teachingSessionId ? { teaching_session_id: teachingSessionId } : {}) }
+    const payload = { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), session_id: run?.session_id ?? sessionId.current, expected_version: goal.revision, prompt, save, request_budget: requestBudget, token_budget: tokenBudget, ...(teachingSessionId ? { teaching_session_id: teachingSessionId } : {}) }
     const operation_id = drafts.operation(key + ':create', payload)
     try {
-      const turn = conversation ? { expected_version: conversation.version, prompt, request_budget: requestBudget, token_budget: tokenBudget, ...(confirmedDestination ? { confirm_destination: confirmedDestination } : {}) } : undefined
+      const target = conversation ?? (notebook ? await notebook.ensureConversation(save) : undefined)
+      const turn = target ? { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), expected_version: target.version, prompt, request_budget: requestBudget, token_budget: tokenBudget, ...(confirmedDestination ? { confirm_destination: confirmedDestination } : {}) } : undefined
       const submission = turn ? (unconfirmed ?? { ...turn, operation_id: drafts.operation(key + ':turn', turn) }) : undefined
       if (submission) { drafts.set(key + ':unconfirmed', submission); setUnconfirmed(submission) }
-      const receipt = conversation && turn
-        ? await unwrap(client().POST('/v1/learning/conversations/{conversationID}/turns', { params: { path: { conversationID: conversation.id }, header }, body: submission! }), mentorReceiptSchema)
+      const receipt = target && turn
+        ? await unwrap(client().POST('/v1/learning/conversations/{conversationID}/turns', { params: { path: { conversationID: target.id }, header }, body: submission! }), mentorReceiptSchema)
         : await unwrap(client().POST('/v1/learning/goals/{goalID}/runs', { params: { path: { goalID: goal.goal_id }, header }, body: { ...payload, operation_id } }), mentorReceiptSchema)
       await refresh(receipt.run_id)
       drafts.delete(key)
@@ -137,10 +145,11 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       await refresh(run.run_id).catch(() => {})
     } finally { if (mounted.current) setPending(false) }
   }
-  return <section className="panel mentor-panel" aria-label="目标内导师">
-    <h2>目标内导师</h2>
-    {conversation && <CompanionPanel key={conversation.id} conversation={conversation} />}
-    <p className="hint">{teachingSessionId ? '导师可以追加解释、建议新安排；路线按教学调整模式接入，目标范围和完成标准会先展示差异供你确认。' : '围绕这个目标交流、澄清想法。进入具体课堂后可调整教学安排。'}</p>
+  return <section className={`panel mentor-panel${notebook ? " notebook-mentor" : ""}`} aria-label={notebook ? "按所选来源提问" : "目标内导师"}>
+    <h2>{notebook ? "按所选来源提问" : "目标内导师"}</h2>
+    {conversation && !notebook && <CompanionPanel key={conversation.id} conversation={conversation} />}
+    <p className="hint">{notebook ? '勾选只用于之后发起的追问与生成，课堂继续使用已冻结资料。' : teachingSessionId ? '导师可以追加解释、建议新安排；路线按教学调整模式接入，目标范围和完成标准会先展示差异供你确认。' : '围绕这个目标交流、澄清想法。进入具体课堂后可调整教学安排。'}</p>
+    {notebook && <p role="status">{!notebook.selection ? '正在核对来源选择，暂不能发送。' : notebook.selection.mode==='none' ? '未选来源，不引用资料' : `下次提问使用 ${notebook.selection.items.length} 个来源`}</p>}
     {current.error && <ErrorState error={current.error} retry={() => void current.refetch()} />}
     {otherActive && <p role="status">该目标的导师正在另一处交流，本课堂不会显示或接入那里的输出。{other?.teaching_session_id
       ? <Link to="/spaces/$spaceId/learn/$sessionId" params={{ spaceId: goal.learning_space_id, sessionId: other.teaching_session_id }}>打开对应课堂查看或停止</Link>
@@ -156,10 +165,10 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       <label className="check-label"><input type="checkbox" checked={confirmedDestination === conversation.destination} onChange={(e) => setConfirmedDestination(e.target.checked ? conversation.destination : '')} />同意将上述历史发送到此目的地</label>
       <Button variant="outline" onClick={() => setConfirmedDestination('')}>取消外发，仅查看</Button>
     </fieldset>}
-    {run && !current.error && <>
+    {run && !current.error && (!run.source_manifest?.entries.length || session.device.scopes.includes('knowledge:read')) && <>
       <p role="status">{mentorStatus[run.status]} · 最近活动：{new Date(run.updated_at).toLocaleTimeString('zh-CN')}</p>
       <div className="mentor-output" ref={output} onScroll={() => { const element = output.current; if (element) follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40 }} aria-label="导师输出">
-        {run.output || (run.body_available ? '等待导师输出…' : '正文已清除、到期，或临时交流不能在此进程恢复。')}
+        {run.output ? <MentorAnswer spaceId={goal.learning_space_id} runId={run.run_id} text={run.output} citations={run.citations} onCitation={notebook?.onCitation}/> : (run.body_available ? '等待导师输出…' : '正文已清除、来源不可用、到期，或临时交流不能在此进程恢复。')}
       </div>
       {run.result_unknown && <p role="alert">请求可能已到达模型服务，但结果无法确认；不会自动重发。</p>}
       {run.reason === 'history_context_limit' && <p role="alert">对话或工具上下文达到上限，本次未继续请求。已有历史保留，请新建对话。</p>}
@@ -193,12 +202,13 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       {run?.status === 'paused_budget' && <div className="actions"><Button disabled={pending || inactive || !modelReady || !!conversation?.confirmation_required} onClick={() => void command('continue_budget')}>分配上述预算并继续</Button><Button variant="outline" disabled={pending} onClick={() => void command('stop')}>不增加预算，停止</Button></div>}
     </details>
     {!active && <form onSubmit={(e) => { e.preventDefault(); void start() }} onKeyDown={(e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }}>
-      <fieldset disabled={pending || inactive || destinationBlocked || otherActive || !modelReady || !current.data || !session.capabilities.save_goal}>
-        <label>想和导师讨论什么？<textarea rows={4} maxLength={4000} disabled={!!unconfirmed} value={prompt} onChange={(e) => { setPrompt(e.target.value); drafts.set(key, e.target.value) }} /></label>
-        {!conversation && <><label className="check-label"><input type="checkbox" checked={save} disabled={!current.data?.save_available} onChange={(e) => setSave(e.target.checked)} />加密保存必要恢复正文（最多七日）</label>
-        <p className="hint">{save ? '用于离开页面、断线和服务重启后恢复本次运行，可随时清除。' : '临时交流正文仅在服务器当前进程内存中，服务重启后不可恢复；正式操作回执仍会保存。'} {!current.data?.save_available && '服务器尚未配置独立正文加密密钥。'}</p></>}
-        <p className="hint">{teachingSessionId ? '目标、本次交流、当前题目、已授权资料片段与正式学习证据' : '目标和本次交流'}将发送到配置的模型端点：{configuration.data?.effective_mentor.endpoint}。关闭页面仅停止观察；需要终止请点击“停止运行”。</p>
-        <Button type="submit" disabled={!prompt.trim() || !!unconfirmed}>{pending ? '正在受理…' : '发起导师交流'}</Button>
+      <fieldset disabled={pending || inactive || destinationBlocked || otherActive || !modelReady || !current.data || !session.capabilities.save_goal || !!notebook && !notebook.selection}>
+        {notebook&&<div className="notebook-quick-questions">{['换个讲法','补前置知识','举个例子','要提示'].map(question=><Button key={question} type="button" variant="outline" disabled={!!unconfirmed} onClick={()=>{setPrompt(question);drafts.set(key,question)}}>{question}</Button>)}</div>}
+        <label>{notebook ? '向导师提问' : '想和导师讨论什么？'}<textarea rows={4} maxLength={4000} disabled={!!unconfirmed} value={prompt} onChange={(e) => { setPrompt(e.target.value); drafts.set(key, e.target.value) }} /></label>
+        {!conversation && <><label className="check-label"><input type="checkbox" checked={save} disabled={!current.data?.save_available} onChange={(e) => setSave(e.target.checked)} />{notebook ? '保存问答历史到服务器' : '加密保存必要恢复正文（最多七日）'}</label>
+        <p className="hint">{save ? notebook ? '已提交问答保留至主动删除。正文在自托管服务器静态加密保存，服务器可以解密。' : '用于离开页面、断线和服务重启后恢复本次运行，可随时清除。' : '临时交流正文仅在服务器当前进程内存中，服务重启后不可恢复；正式操作回执仍会保存。'} {!current.data?.save_available && '服务器尚未配置独立正文加密密钥。'}</p></>}
+        <p className="hint">{notebook ? '本轮所选来源与同范围历史' : teachingSessionId ? '目标、本次交流、当前题目、已授权资料片段与正式学习证据' : '目标和本次交流'}将发送到配置的模型端点：{configuration.data?.effective_mentor.endpoint}。关闭页面仅停止观察；需要终止请点击“停止运行”。</p>
+        <Button type="submit" disabled={!prompt.trim() || !!unconfirmed}>{pending ? '正在受理…' : notebook ? '发送提问' : '发起导师交流'}</Button>
       </fieldset>
     </form>}
     {!!error && <ErrorState error={error} retry={() => { setError(undefined); void current.refetch() }} />}

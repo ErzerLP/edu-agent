@@ -98,36 +98,41 @@ func (s *Store) Source(ctx context.Context, revision, document string) (knowledg
 		return knowledge.SourceDetail{}, err
 	}
 	defer tx.Rollback(context.Background())
+	result, _, err := s.sourceTx(ctx, tx, revision, document)
+	return result, err
+}
+
+func (s *Store) sourceTx(ctx context.Context, tx pgx.Tx, revision, document string) (knowledge.SourceDetail, string, error) {
 	if err := checkRevision(ctx, tx, revision); err != nil {
-		return knowledge.SourceDetail{}, err
+		return knowledge.SourceDetail{}, "", err
 	}
 	item := knowledge.SourceItem{CollectionID: knowledge.CollectionID(ctx), RevisionID: revision, DocumentRevisionID: document}
 	doc := knowledge.DocumentRevision{ID: document}
 	var metadata, pdf []byte
 	var redacted bool
-	err = tx.QueryRow(ctx, `SELECT c.name,sd.document_id,sd.canonical_path,r.redacted_at IS NOT NULL,p.canonical_markdown,p.pdf_metadata,m.metadata
+	err := tx.QueryRow(ctx, `SELECT c.name,sd.document_id,sd.canonical_path,r.redacted_at IS NOT NULL,p.canonical_markdown,p.pdf_metadata,m.metadata
  FROM knowledge_snapshot_documents sd JOIN knowledge_revisions r ON r.id=sd.knowledge_revision_id
  JOIN knowledge_collections c ON c.id=r.collection_id
  JOIN knowledge_document_payloads p ON p.document_revision_id=sd.document_revision_id
  LEFT JOIN knowledge_source_metadata m ON m.document_revision_id=sd.document_revision_id
  WHERE sd.knowledge_revision_id=$1 AND sd.document_revision_id=$2`, revision, document).Scan(&item.CollectionName, &item.DocumentID, &item.Path, &redacted, &doc.CanonicalMarkdown, &pdf, &metadata)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return knowledge.SourceDetail{}, scopeMissing()
+		return knowledge.SourceDetail{}, "", scopeMissing()
 	}
 	if err != nil {
-		return knowledge.SourceDetail{}, err
+		return knowledge.SourceDetail{}, "", err
 	}
 	if redacted {
-		return knowledge.SourceDetail{}, &knowledge.Error{Code: knowledge.CodeContentRedacted}
+		return knowledge.SourceDetail{}, "", &knowledge.Error{Code: knowledge.CodeContentRedacted}
 	}
 	if len(metadata) > 0 {
 		if err := json.Unmarshal(metadata, &item.Metadata); err != nil {
-			return knowledge.SourceDetail{}, err
+			return knowledge.SourceDetail{}, "", err
 		}
 	}
 	if len(pdf) > 0 {
 		if err := json.Unmarshal(pdf, &doc.PDF); err != nil {
-			return knowledge.SourceDetail{}, err
+			return knowledge.SourceDetail{}, "", err
 		}
 		if item.Metadata == nil {
 			item.Metadata = knowledge.PDFSourceMetadata(doc.PDF)
@@ -135,7 +140,7 @@ func (s *Store) Source(ctx context.Context, revision, document string) (knowledg
 	}
 	doc.Nodes, err = loadNodes(ctx, tx, document)
 	if err != nil {
-		return knowledge.SourceDetail{}, err
+		return knowledge.SourceDetail{}, "", err
 	}
-	return knowledge.SourceDetail{SourceItem: item, Fragments: knowledge.SourceFragments(doc), PDF: doc.PDF}, nil
+	return knowledge.SourceDetail{SourceItem: item, Fragments: knowledge.SourceFragments(doc), PDF: doc.PDF}, knowledge.SourceTextHash(doc.CanonicalMarkdown), nil
 }

@@ -153,7 +153,18 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 				return err
 			}
 		}
-		return send(Snapshot{Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
+		sources, err := s.sourceMaterialTx(ctx, tx, space, actor.TokenID, item.body)
+		if sourceUnavailable(err) {
+			item.body = Body{}
+			item.BodyAvailable = false
+			item.Reason = "source_unavailable"
+		} else if err != nil {
+			return err
+		}
+		if err = verifyStoredCitations(item.body, sources); err != nil {
+			return err
+		}
+		return send(Snapshot{SourceManifest: item.body.SourceManifest, Citations: item.body.Citations, Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
 	})
 }
 

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import {
@@ -10,6 +10,7 @@ import {
 import { useIdentity } from '@/lib/session'
 import { sourceSchema as researchSourceSchema, sourceStatus } from '@/api/research'
 import { Button } from '../ui/button'
+import { mentorCitationSchema } from '@/api/source-selection'
 import { ErrorState } from '../common'
 import { PDFCoverage, PDFPageViewer } from '../pdf-source'
 
@@ -293,5 +294,76 @@ function CatalogSourceContent({ spaceId, source }: { spaceId: string; source: So
         </p>
       </details>
     </>
+  )
+}
+
+export function MentorCitationContent({
+  spaceId,
+  runId,
+  citationId,
+}: {
+  spaceId: string
+  runId: string
+  citationId: string
+}) {
+  const { session, prefix } = useIdentity()
+  const fragmentView = useRef<HTMLElement>(null)
+  const detail = useQuery({
+    queryKey: [...prefix, spaceId, runId, citationId, 'mentor-citation'],
+    gcTime: 0,
+    retry: false,
+    refetchInterval: 5000,
+    queryFn: async ({ signal }) => {
+      const value = await unwrap(
+        learningClient(session, spaceId).GET('/v1/learning/runs/{runID}/citations/{citationID}', {
+          params: {
+            path: { runID: runId, citationID: citationId },
+            header: { 'X-Learning-Space-ID': spaceId },
+          },
+          signal,
+        }),
+        mentorCitationSchema,
+      )
+      if (value.id !== citationId) throw new ApiError(502, 'invalid_response')
+      return value
+    },
+  })
+  useEffect(() => {
+    if (detail.data && !detail.error) {
+      fragmentView.current?.scrollIntoView({ block: 'nearest' })
+      fragmentView.current?.focus({ preventScroll: true })
+    }
+  }, [detail.data, detail.error])
+  if (detail.error) return <ErrorState error={detail.error} />
+  if (!detail.data) return <p role="status">正在核对本轮来源版本、片段与访问权限…</p>
+  const { source, fragment } = detail.data
+  return (
+    <section ref={fragmentView} tabIndex={-1} aria-label={`引用 ${citationId} 核验片段`}>
+      <h3>
+        [{citationId}] {source.path}
+      </h3>
+      <p>
+        {source.collection_name} · {source.collection_id.slice(0, 8)}
+      </p>
+      <SourceProvenance metadata={source.metadata} />
+      <p>
+        {fragment.title} {fragment.page ? `· 第 ${fragment.page} 页` : ''} · 字节{' '}
+        {fragment.range.start}–{fragment.range.end}
+      </p>
+      <pre className="reference-text">
+        <mark>{fragment.text}</mark>
+      </pre>
+      {fragment.truncated && <p>此片段达到展示预算，不表示资料已完整读取。</p>}
+      <details>
+        <summary>核验版本与指纹</summary>
+        <p>
+          集合版本：{source.revision_id}
+          <br />
+          文档版本：{source.document_revision_id}
+          <br />
+          片段 SHA256：{detail.data.slice_sha256}
+        </p>
+      </details>
+    </section>
   )
 }

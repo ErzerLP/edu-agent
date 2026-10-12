@@ -63,7 +63,7 @@ test('搜索发现只发送明确确认的关键词，选中后读取正文并�
   await viewer.getByRole('button', { name: '关闭来源', exact: true }).click()
   await page.reload()
   await expect(panel.getByRole('article')).toHaveCount(1)
-  await expect(panel.getByRole('checkbox')).toHaveCount(0)
+  await expect(panel.getByRole('checkbox')).toHaveCount(2)
 })
 
 test('搜索取消、失败和空候选如实显示，修改关键词使原外发确认失效', async ({ page }) => {
@@ -217,7 +217,8 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   )
   await viewer.getByRole('button', { name: '关闭来源', exact: true }).click()
   await expect(panel.getByRole('article')).toHaveCount(3)
-  await expect(panel.getByRole('checkbox')).toHaveCount(0)
+  await expect(panel.getByRole('checkbox')).toHaveCount(4)
+  await expect(panel.getByRole('checkbox', { checked: true })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(panel).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

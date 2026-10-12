@@ -1,6 +1,6 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：批次 1（PR #87）与 2a（PR #88）已合并；本次在 `feat-notebook-b2b` 实施批次 2b 搜索发现 G2。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。2c 与批次 3 尚未实施，CLI 产品代码未改；2b 改动只留工作树，没有 Git 暂存／提交／推送。
+状态：批次 1（PR #87）、2a（PR #88）与 2b（PR #89）已合并；本次在 `feat-notebook-b2c` 完成 2c 来源选择问答 G3，批次 2 已完成。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。批次 3 尚未实施，CLI／agentcore 产品代码未改；2c 改动只留工作树，没有 Git 暂存／提交／推送。
 
 ## 1. 方案与拆分结论
 
@@ -336,10 +336,10 @@
 
 **执行步骤：**
 
-- [ ] 先锁定 G1–G3 DTO、权限与错误语义，增加来源身份／范围 unit／HTTP 用例和真实 import→问答→citation 的失败场景；范围变更及空选择必须覆盖。
-- [ ] 串行交付来源 metadata／列表／详情与原导入适配，再交付受限搜索候选和“选中才抓取”，保留 PDF 部分确认、重名身份审阅及 unknown 原操作核对。
-- [ ] 导师请求接选择清单、上下文隔离、核验 citation；零来源不引用资料，来源撤权后停止展示，研究／课堂旧引用接统一查看器。
-- [ ] 验证同名双集合、跨区伪造、历史版本、选择变化、无目标问答（D4）、两标签、响应丢失与隐私清除；记录供 Studio 使用的范围／引用合同。
+- [x] 先锁定 G1–G3 DTO、权限与错误语义，增加来源身份／范围 unit／HTTP 用例和真实 import→问答→citation 的失败场景；范围变更及空选择必须覆盖。
+- [x] 串行交付来源 metadata／列表／详情与原导入适配，再交付受限搜索候选和“选中才抓取”，保留 PDF 部分确认、重名身份审阅及 unknown 原操作核对。
+- [x] 导师请求接选择清单、上下文隔离、核验 citation；零来源不引用资料，来源撤权后停止展示，研究／课堂旧引用接统一查看器。
+- [x] 验证同名双集合、跨区伪造、历史版本、选择变化、无目标问答（D4）、两标签、响应丢失与隐私清除；记录供 Studio 使用的范围／引用合同。
 
 **延期：** Studio 生成与笔记到批次 3；卡片聚合增强 G0 不做；大批次导入沿原任务页，不把所有任务控制搬进 modal。
 
@@ -454,6 +454,60 @@
 **留给 2c 的约定。** 发现候选不是所选正式来源，不提供可冻结版本或引用身份；只有原导入确认后的 G1 `{collection_id, revision_id, document_id, document_revision_id}` 可以作为 2c 的待核验输入。2c 仍须在发起请求时由 owner 冻结、核验来源与引用，不能引用 discovery summary、客户端勾选或临时抓取报告。左栏选择生效／来源问答和 Studio 均未在本批实现；课堂既有冻结范围不变。
 
 **决策与限制。** 无待用户决策的语义问题。未运行真实 Brave smoke（真实调用 0 次）、真实外部模型、三引擎矩阵、Go 全量／race 或 Compose；未把它们记为通过。搜索结果无跨刷新恢复与任务核对接口，外部实际费用未知；网页格式／留存限制和 PDF 解析缺口仍按原流程展示。
+
+#### 2c 实施记录（2026-10-12）
+
+**结果与范围。** 交付 G3 来源选择问答、可核验引用及无目标问答。左栏支持单选／全选已加载来源；首次进入勾选当前已加载条目，后续导入或分页不会静默增加选择。选择属于当前标签页／学习区，只影响随后提交的请求（D1），不修改 goal／session reference heads 或正在进行的课堂。中栏底部复用导师运行控制，提供“换个讲法／补前置知识／举个例子／要提示”；快捷按钮填写问题，由用户发送。首次发送才创建真实 conversation，可不绑定 goal（D4），不会创建占位目标。保存历史采用原有显式同意；临时交流仍遵守原进程内恢复限制。Studio 产物未实施。
+
+**G3 请求合同。** `POST /v1/learning/goals/{goalID}/runs`（普通 mentor 类型）与 `POST /v1/learning/conversations/{conversationID}/turns` 增加可选 `source_selection`：
+
+| 输入 | 行为 |
+| --- | --- |
+| 不提供字段 | 保持旧导师上下文／工具行为；不会把显式选择的旧轮次混入缺省对话。 |
+| `{"mode":"none","items":[]}` | 明确零来源，只有同范围聊天与一般性解释；提示“未选来源，不引用资料”，引用必须为空。 |
+| `{"mode":"items","items":[...]}` | 1–100 个 G1 身份，每项为 `{collection_id, revision_id, document_id, document_revision_id}`；同集合的同文档不能重复。 |
+| `null`、缺 items、未知字段、重复 JSON 键、无效身份或 mode／条目数矛盾 | 400；不能解释为缺省行为。 |
+
+沿用原 `learning:write`、设备／学习区／goal／conversation 归属、版本、Origin／CSRF、预算与目的地确认门禁；非空选择额外从数据库核验 `knowledge:read`。来源 owner 在受理事务内核验学习区关联、集合／历史 revision、文档及文档 revision，跨区或拼接身份统一返回 404 `not_found`；已清除内容为 409 `content_redacted`，权限失效为 403 `run_forbidden`。保留原操作 hash／回执核对，重试不跟随新勾选或集合 head；请求体上限 64 KiB，覆盖 100 条身份及原提示。
+
+**固化与上下文。** `source_manifest` schema 1 包含学习区、knowledge 隐私代次、按集合／文档身份排序的确切版本和规范全文 SHA-256，以及整个清单的 SHA-256。写入既有 JSON 加密 run body；保存轮次复用既有加密 history，未新增 SQL 表、索引或 migration。临时正文仍只在原进程内存。续跑、读取、工具、历史发送和引用核验均使用这个清单；集合 head 更新不会改变原运行。只有 manifest hash 完全相同的旧轮次可发送到模型，缺省旧历史也被隔离。模型只收到所选文档的有界片段、身份／元信息和同范围聊天；不读取整个集合，也不注入目标、课堂、记忆或 companion 上下文。工具仅开放 `read_references`、`ask_user`、`confirm_focus`，其中 `read_references` 只能重读本轮清单；即使模型自行提出其他工具也拒绝执行。上下文超预算以既有 `history_context_limit` 停止，不自动扩大来源或截掉选择。
+
+**引用与撤权。** 模型最终输出 `{"answer":"…[1]","citations":[{"source":1,"fragment":1}]}`，两个序号只能指向本次服务端给定数组。服务端重新读取历史版本，生成 `MentorCitation`：`id`、完整 `source` 身份／元信息、带 node 版本和字节／行范围的 `fragment`、`document_sha256`、`slice_sha256`。非法 JSON、空 citations 值、越界或重复引用使运行失败（`invalid_source_citation`），不会显示原始模型 JSON。保存和每次读取再次核验版本、片段身份／范围／原文和 hash。
+
+新增 `GET /v1/learning/runs/{runID}/citations/{citationID}`，需要 `learning:read` 与 `knowledge:read`，按原 run 的设备和学习区核验，拒绝客户端指定其他集合／片段；响应 `no-store`。保存的 conversation 可在短期 checkpoint 到期后从加密历史读取引用。Snapshot／TutorTurn 同时返回经过核验的 `source_manifest`／`citations`。来源撤权、解除关联或隐私清除后隐藏整个受影响轮次正文及工具记录；旧客户端缓存不能作为新的读取凭据。前端只将服务端 citations 中的编号变成按钮，点击再走 citation GET，左栏滚动／聚焦高亮片段，手机切换到来源标签。运行快照与引用查看器分别每 2.5 秒／5 秒重新核验，历史沿用 5 秒核验；收到权限错误即隐藏正文。
+
+外发期间仅保留 token／来源关联读锁，防止核验到发出之间撤权或解除关联已提交；不跨模型网络 I/O 持有隐私 owner 代次锁。共享 ReadPermit 纳入 knowledge owner，隐私屏障可取消在途请求；后续 checkpoint／history 写入仍通过现有代次与清除门禁，迟到输出不能复活正文。
+
+**文件映射（本次新增）。**
+
+- 服务端：`server/internal/knowledge/source_selection.go`、`knowledge/postgresstore/source_selection.go` 定义 DTO、固化与精确读取；`server/internal/mentorrun/source_selection.go` 实施选择上下文、工具范围、引用生成／读取。
+- 测试：`server/internal/mentorrun/{source_selection_test,source_selection_privacy_test}.go`、`server/internal/transport/httpapi/source_selection_test.go`、`server/api/openapi_source_selection_test.go`。
+- 前端：`clients/web/src/api/source-selection.ts` 及其单测、`components/notebook/{source-selection,mentor-composer}.tsx`、`components/mentor-answer.tsx`。
+
+**文件映射（本次修改）。**
+
+- `server/internal/knowledge/postgresstore/source_catalog.go` 复用精确文档读取；`mentorrun/{types,store,conversation,references,core,worker,query,command}.go` 串接受理、模型、重试、历史与读取校验；`transport/httpapi/{mentor_runs,tutor_history}.go` 增加输入和 citation 路由。
+- **OpenAPI：** `server/api/openapi.yaml`；生成 `clients/web/src/api/schema.d.ts`，更新 `api/{mentor,conversations}.ts` 响应解析。新路径已被 `mentorPath` 的 run 前缀归类，HTTP 单测确认不进入客户端 collection 选择；`deploy/web/nginx.conf` 明确记录既有 run 白名单覆盖 citation，既有 API／代理合同测试检验覆盖。
+- `clients/web/src/components/{mentor-panel,tutor-history}.tsx`、`components/notebook/{notebook-layout,sources-panel,source-viewer}.tsx`、`notebook-workspace-page.tsx`、`styles.css` 接入选择／输入／定位；`scripts/test-server.mjs` 添加真实 HTTP 确定性模型响应；`tests/browser/{notebook-workspace,notebook-sources}.spec.ts` 覆盖新行为并更新旧“无勾选”断言。
+- 本设计文档记录 G3 与批次 3 的衔接。
+
+**验证结果。** 所有数据库／浏览器检查串行，先 `umask 022`。使用提供的 PostgreSQL 32995 与 Chromium 路径；Go 缓存为 `/tmp/notebook-b2b-go-cache`。沙箱不能写用户 cache，独立 schema 包装器编译到 `/tmp/notebook-b2c-webdatabase`，未改其协议。
+
+| 检查 | 命令与结果 |
+| --- | --- |
+| OpenAPI／前端 | `cd clients/web && npm run generate` 通过；`npm run check` 与 `npm run build -- --configLoader native` 通过。保留既有生成器 discriminator 提示、Zod 注释及 bundle 大小警告。 |
+| Vitest | `npm test -- --configLoader native src/api/mentor.test.ts src/api/conversations.test.ts src/api/notebook-sources.test.ts src/api/source-selection.test.ts`：4 文件、9 测试通过，覆盖选择身份、显式 none 与只链接核验编号。 |
+| Go 局部包／静态检查 | `cd server && go test ./api ./internal/mentorrun ./internal/knowledge/... ./internal/transport/httpapi` 与相同包的 `go vet` 通过；此轮未设置 DB，不将数据库 skip 计为验收。另运行引用身份／范围／hash 篡改单测通过。 |
+| PostgreSQL | 下述组合命令 22 个场景通过；新增工具／同范围历史夹具重复了 tool call ID，被原防重放门禁拒绝，改为唯一 ID 后定向运行 `-run '^TestPostgreSQLSourceSelectionToolsAndSameScopeHistory$'` 通过（3.70s）。合计 23 个顶层场景通过，含 8 个新增选择场景；已通过项未重跑。 |
+| Chromium | 所选来源问答新增场景通过（32.3s），原 notebook-workspace／mentor／tutor-history 9 场景通过（1.2m），无 retry／skip。来源搜索 2 场景通过，三种添加方式在修正旧无勾选断言后定向通过（9.1s），合计 13 个 Chromium 场景通过。 |
+
+数据库候选命令为 `TEST_DATABASE_URL=... go test -p=1 ./internal/mentorrun ./internal/knowledge/postgresstore ./internal/transport/httpapi -run '^TestPostgreSQL(SourceSelection|TutorHistory|MentorRealCoreRecoveryAndIdempotency|MentorInteractionBudgetAndStaleApproval|MentorPrivacyBarrierClearsSavedAndInFlightTemporary|ReferencesStartWithoutSearchAndKeepHistory|SourceCatalogPermissionsPaginationAndReceipts|MentorCookieHTTPAndSSERecovery|ReferencesCookieImportCollectionAndScope)' -count=1 -v`。新增必需用例前缀为 `TestPostgreSQLSourceSelection`，覆盖同名集合、实际模型请求／工具不含未选正文与标题、同范围历史与改选隔离、空选择、跨区伪造、历史版本续跑／幂等重试、旧历史隔离、冻结课堂不变、清除在途竞态及轮换后的历史 citation。交由批次 4 将其纳入 candidate 必需用例检查。
+
+浏览器先构建发行二进制和 `-tags web_release ./testutil/webnotebook` 来源夹具，使用 `WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 /tmp/notebook-b2c-webdatabase npm run test:browser -- ... --project=chromium`；来源三场景另设 `WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/notebook-b2c-webnotebook`。新增确定性模型响应从实际请求中的已核验来源构造引用，浏览器操作走真实导入、conversation、run 与 citation HTTP，无前端假输出。日志及失败定位文件位于 `/tmp/notebook-b2c-*`。开发中修复了跨模型请求持有 owner 读锁会阻碍隐私屏障的问题；清除竞态测试验证修复。旧来源测试的“没有勾选”断言更新为实际选择行为。
+
+**批次 3 约定。** Studio 使用同一前端当前选择，只在发起新生成时提交 SourceSelection；运行受理时调用同一 owner 固化规则，保存 SourceManifest 和核验 citations，而不是保存集合 head 或目录缓存。重试和生成后的读取不得重采当前勾选，空选择始终显式。产物持久范围／引用读取需沿 G4–G6 另行提供正式承载，不能把临时 run 当作产物库；可复用片段核验和来源查看器，不能信任模型或前端拼接引用。笔记转来源仍走 G1 的确认导入与 `derived_from` 合同。
+
+**决策与限制。** 无需新增用户语义决策。单轮最多 100 个确切文档；片段沿 G1 每段最多 4096 UTF-8 字节，截断标记和上下文预算如实保留，模型不能引用未提供范围。未使用真实外部模型或付费搜索，未跑三引擎、Go 全量、race、Compose；不宣称这些检查通过。已展示正文的撤权感知受前端重新核验周期影响，服务器每次读取与外发均执行权限门禁。CLI／agentcore 协议、课堂冻结范围及原 SSRF／CSRF 校验不变。
 
 ### 批次 3：四类 Studio 产物形成可保存的真实流程（12–18 人日）
 

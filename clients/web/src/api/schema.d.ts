@@ -1071,6 +1071,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/runs/{runID}/citations/{citationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: string;
+                citationID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 重新核验本轮来源版本、权限、片段范围与 hash
+         * @description 只读取原 run 的服务端核验引用，不接受客户端片段。解除区关联或清除后不可读；保存的会话引用可在短期 checkpoint 到期后从加密历史读取。no-store。
+         */
+        get: operations["readMentorCitation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/runs/{runID}/events": {
         parameters: {
             query?: never;
@@ -3680,6 +3706,8 @@ export interface components {
                 ordinal: number;
                 status: string;
                 body_available: boolean;
+                source_manifest?: components["schemas"]["SourceManifest"];
+                citations?: components["schemas"]["MentorCitation"][];
                 output: string;
                 messages: {
                     /** @enum {string} */
@@ -3730,7 +3758,65 @@ export interface components {
             /** @description 既有全局长期信息范围，不授予其他学习区正文读取权限 */
             scope: string;
         };
+        SourceIdentity: {
+            /** Format: uuid */
+            collection_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            document_revision_id: string;
+        };
+        /** @description 缺省保持旧导师行为；null 无效。none 明确零来源，items 为 1–100 个确切 G1 版本（同集合文档不重复），需 knowledge:read。仅普通导师请求支持；不更改目标或课堂参考。受理时固化；后续勾选只影响新请求。同范围历史才可重放，旧缺省历史不混入。 */
+        SourceSelection: {
+            /** @enum {string} */
+            mode: "none";
+            items: components["schemas"]["SourceIdentity"][];
+        } | {
+            /** @enum {string} */
+            mode: "items";
+            items: components["schemas"]["SourceIdentity"][];
+        };
+        SourceManifest: {
+            /** @enum {integer} */
+            schema: 1;
+            /** Format: uuid */
+            space_id: string;
+            generation: number;
+            sha256: string;
+            entries: {
+                /** Format: uuid */
+                collection_id: string;
+                /** Format: uuid */
+                revision_id: string;
+                /** Format: uuid */
+                document_id: string;
+                /** Format: uuid */
+                document_revision_id: string;
+                sha256: string;
+            }[];
+        };
+        MentorCitation: {
+            id: string;
+            source: components["schemas"]["KnowledgeSourceItem"];
+            document_sha256: string;
+            slice_sha256: string;
+            fragment: {
+                /** Format: uuid */
+                node_id: string;
+                /** Format: uuid */
+                node_revision_id: string;
+                title: string;
+                range: components["schemas"]["SourceRange"];
+                text: string;
+                truncated: boolean;
+                page?: number;
+            };
+        };
         MentorSnapshot: {
+            source_manifest?: components["schemas"]["SourceManifest"];
+            citations?: components["schemas"]["MentorCitation"][];
             /** Format: uuid */
             conversation_id?: string;
             /** Format: uuid */
@@ -9200,6 +9286,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    source_selection?: components["schemas"]["SourceSelection"];
                     /** Format: uuid */
                     operation_id: string;
                     /** Format: uuid */
@@ -9422,6 +9509,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    source_selection?: components["schemas"]["SourceSelection"];
                     /** Format: uuid */
                     operation_id: string;
                     expected_version: number;
@@ -9500,6 +9588,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MentorSnapshot"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readMentorCitation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                runID: string;
+                citationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已核验历史原文片段 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorCitation"];
                 };
             };
             default: components["responses"]["WebFailure"];

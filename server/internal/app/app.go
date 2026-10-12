@@ -108,6 +108,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	mentorRuns.ConfigureStart(&learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore})
 	contentStore.ConfigureReferences(stores.knowledge)
+	contentStore.ConfigureStudioSources(stores.knowledge)
+	mentorRuns.ConfigureStudio(contentStore)
 	stores.learning.ConfigureContent(contentStore)
 	changes, err := learningchange.New(pool, stores.learning, stores.knowledge, contentStore, mentorKey)
 	if err != nil {

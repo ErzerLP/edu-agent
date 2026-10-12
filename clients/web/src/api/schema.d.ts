@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/v1/learning/studio/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate a guide or brief from an immutable source selection */
+        post: operations["generateStudioArtifact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Verify and locate a citation in a saved Studio version */
+        get: operations["getStudioCitation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/artifacts": {
         parameters: {
             query?: never;
@@ -3186,6 +3220,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        StudioGenerate: {
+            /** Format: uuid */
+            operation_id: string;
+            privacy_generation: number;
+            /** @enum {string} */
+            kind: "guide" | "brief";
+            /** Format: uuid */
+            goal_id: string | null;
+            /** @description Zero when goal_id is null */
+            goal_version: number;
+            /** Format: uuid */
+            artifact_id: string | null;
+            expected_version: number;
+            source_selection: components["schemas"]["SourceSelection"];
+            request_budget: number;
+            token_budget: number;
+        };
+        StudioState: {
+            request: components["schemas"]["StudioGenerate"];
+            result?: {
+                /** Format: uuid */
+                artifact_id: string;
+                version: number;
+            };
+        };
+        StudioClaim: {
+            text: string;
+            citations: string[];
+        };
+        StudioGuide: {
+            key_points: components["schemas"]["StudioClaim"][];
+            terms: components["schemas"]["StudioClaim"][];
+            learning_order: components["schemas"]["StudioClaim"][];
+            misconceptions: components["schemas"]["StudioClaim"][];
+        };
+        StudioBrief: {
+            overview: components["schemas"]["StudioClaim"][];
+            differences: components["schemas"]["StudioClaim"][];
+            gaps: components["schemas"]["StudioClaim"][];
+        };
         StudioSave: {
             /** Format: uuid */
             operation_id: string;
@@ -3209,6 +3283,10 @@ export interface components {
             citations: components["schemas"]["MentorCitation"][];
             model?: string;
             input_fingerprint?: string;
+            /** @enum {string} */
+            coverage?: "complete" | "partial";
+            guide?: components["schemas"]["StudioGuide"];
+            brief?: components["schemas"]["StudioBrief"];
         };
         StudioRevision: {
             /** Format: uuid */
@@ -3218,7 +3296,7 @@ export interface components {
             /** Format: uuid */
             goal_id: string | null;
             /** @enum {string} */
-            kind: "note";
+            kind: "note" | "guide" | "brief";
             version: number;
             privacy_generation: number;
             /** Format: uuid */
@@ -3233,7 +3311,7 @@ export interface components {
             /** Format: uuid */
             goal_id: string | null;
             /** @enum {string} */
-            kind: "note";
+            kind: "note" | "guide" | "brief";
             version: number;
             title: string;
             /** Format: date-time */
@@ -4008,6 +4086,7 @@ export interface components {
             };
         };
         MentorSnapshot: {
+            studio?: components["schemas"]["StudioState"];
             source_manifest?: components["schemas"]["SourceManifest"];
             citations?: components["schemas"]["MentorCitation"][];
             /** Format: uuid */
@@ -4015,7 +4094,7 @@ export interface components {
             /** Format: uuid */
             teaching_session_id?: string;
             /** @enum {string} */
-            kind?: "mentor" | "research" | "start_learning" | "content_edit";
+            kind?: "mentor" | "research" | "start_learning" | "content_edit" | "studio";
             content_edit?: components["schemas"]["ContentEditState"];
             start_learning?: components["schemas"]["StartLearningState"];
             research?: components["schemas"]["ResearchState"];
@@ -7847,6 +7926,63 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    generateStudioArtifact: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioGenerate"];
+            };
+        };
+        responses: {
+            /** @description Accepted encrypted run; no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getStudioCitation: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: string;
+                citationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified historical fragment; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorCitation"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     listStudioArtifacts: {
         parameters: {
             query?: {
@@ -9973,7 +10109,7 @@ export interface operations {
     listLearningRuns: {
         parameters: {
             query?: {
-                task_kind?: "mentor" | "research" | "start_learning" | "content_edit";
+                task_kind?: "mentor" | "research" | "start_learning" | "content_edit" | "studio";
                 status?: "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_budget" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled";
                 cursor?: string;
                 limit?: number;

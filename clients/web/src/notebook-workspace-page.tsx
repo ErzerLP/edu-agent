@@ -11,7 +11,7 @@ import { NotebookLayout, type NotebookPanel } from './components/notebook/notebo
 import { SourcesPanel } from './components/notebook/sources-panel'
 import { ClassroomPanel } from './components/notebook/classroom-panel'
 import { StudioPanel } from './components/notebook/studio-panel'
-import { SourceSelectionProvider, useSourceSelection } from './components/notebook/source-selection'
+import { SourceSelectionProvider, useSourceSelection, type CitationFocus } from './components/notebook/source-selection'
 import { MentorComposer } from './components/notebook/mentor-composer'
 
 export const notebookSearchSchema = z.object({
@@ -123,7 +123,7 @@ function NotebookWorkspace({
       <NotebookHeader space={space.data} />
       <SourceSelectionProvider key={JSON.stringify(prefix)} spaceId={spaceId}>
         <WorkspacePanels changePanel={changePanel}>
-          {(openCitation, sourceFocus) => (
+          {(openCitation, sourceFocus, openStudioCitation) => (
             <NotebookLayout
               sourceFocus={sourceFocus}
               panel={search.panel ?? 'classroom'}
@@ -154,7 +154,7 @@ function NotebookWorkspace({
                   />
                 </>
               }
-              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} spaceId={spaceId} archived={space.data.status === 'archived'} />}
+              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} spaceId={spaceId} goalId={goalId} onCitation={openStudioCitation} archived={space.data.status === 'archived'} />}
             />
           )}
         </WorkspacePanels>
@@ -170,12 +170,13 @@ function WorkspacePanels({
   changePanel: (panel: NotebookPanel) => void
   children: (
     open: (runId: string, id: string) => void,
-    sourceFocus?: { runId: string; id: string },
+    sourceFocus: CitationFocus | undefined,
+    openStudio: (artifactId: string, version: number, id: string) => void,
   ) => React.ReactNode
 }) {
   const { setCitation, citation } = useSourceSelection()
   return children((runId, id) => {
     setCitation({ runId, id })
     changePanel('sources')
-  }, citation)
+  }, citation, (artifactId, version, id) => { setCitation({ artifactId, version, id }); changePanel('sources') })
 }

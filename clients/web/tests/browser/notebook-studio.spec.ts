@@ -1,6 +1,74 @@
 import { test, expect } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
-import { pairNotebook, createSpace, webAPI } from './notebook-fixture'
+import { pairNotebook, createSpace, webAPI, seedSources } from './notebook-fixture'
+
+test('所选来源生成指南和简报、引用定位、刷新重开、取消并重新生成版本', async ({ page }) => {
+  await pairNotebook(page, 'settings')
+  await page.goto('/app/settings')
+  const model = page.getByRole('region', { name: 'Web 导师模型', exact: true })
+  await model.getByRole('button', { name: '配置或替换凭据' }).click()
+  await model.getByLabel('端点', { exact: true }).fill('http://127.0.0.1:32930/v1')
+  await model.getByLabel('模型名称').fill('browser-studio-fixture')
+  await model.getByLabel('鉴权方式').selectOption('none')
+  await model.getByLabel('启用Web 导师模型').check()
+  await model.getByRole('button', { name: '保存Web 导师模型配置' }).click()
+  await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
+  const session = await (await page.request.get('/v1/web/session')).json()
+  const logout = await page.request.post('/v1/web/logout', {
+    headers: { Origin: 'http://127.0.0.1:32929', 'X-CSRF-Token': session.csrf_token },
+  })
+  expect(logout.ok()).toBe(true)
+  await pairNotebook(page, 'references')
+  const space = await createSpace(page, 'Studio 生成验收')
+  await seedSources(page, space.id)
+  await page.goto(`/app/spaces/${space.id}?panel=studio`)
+  const studio = page.getByRole('region', { name: 'Studio', exact: true })
+  const sources = page.getByRole('region', { name: '来源', exact: true })
+  await expect(sources.getByRole('article')).toHaveCount(2)
+  await sources.getByRole('checkbox', { name: /examples.md/ }).uncheck()
+  const outgoing: any[] = []
+  page.on('request', (r) => {
+    if (r.url().endsWith('/studio/generations') && r.method() === 'POST')
+      outgoing.push(r.postDataJSON())
+  })
+  for (const kind of ['学习指南', '简报']) {
+    await studio.getByRole('button', { name: new RegExp(`^${kind}`) }).click()
+    await studio.getByRole('button', { name: `开始生成${kind}`, exact: true }).click()
+    await studio.getByRole('button', { name: '打开已保存产物' }).click()
+    await expect(
+      studio.getByRole('heading', {
+        name: kind === '学习指南' ? '核心要点' : '一页综述',
+        exact: true,
+      }),
+    ).toBeVisible()
+    await studio.getByRole('button', { name: '查看引用 1', exact: true }).first().click()
+    await expect(sources.getByRole('region', { name: '引用 1 核验片段' })).toContainText(
+      '偶数可以被 2 整除',
+    )
+    await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
+  }
+  expect(outgoing).toHaveLength(2)
+  expect(outgoing.every((c) => c.goal_id === null && c.source_selection.items.length === 1)).toBe(
+    true,
+  )
+  await page.reload()
+  await studio.getByRole('button', { name: /夹具学习指南.*已保存第 1 版/ }).click()
+  await expect(studio.getByRole('heading', { name: '术语', exact: true })).toBeVisible()
+  await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
+  await studio.getByRole('button', { name: /^学习指南/ }).click()
+  await studio.getByRole('button', { name: '开始生成学习指南', exact: true }).click()
+  await expect(studio.getByText('正在生成', { exact: true })).toBeVisible()
+  await studio.getByRole('button', { name: '取消生成', exact: true }).click()
+  await expect(studio.getByText('已停止', { exact: true })).toBeVisible({ timeout: 15000 })
+  await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
+  await studio.getByRole('button', { name: /夹具学习指南.*已保存第 1 版/ }).click()
+  await studio.getByRole('button', { name: '重新生成新版本' }).click()
+  await studio.getByRole('button', { name: '开始生成学习指南', exact: true }).click()
+  await studio.getByRole('button', { name: '打开已保存产物' }).click()
+  await expect(studio.getByText(/已保存第 2 版/)).toBeVisible()
+  await studio.getByLabel('产物版本').selectOption('1')
+  await expect(studio.getByText(/已保存第 1 版/)).toBeVisible()
+})
 
 test('Studio 拒绝缺失 CSRF 的写入，读取撤权后清除尚未保存的草稿', async ({ page }) => {
   await pairNotebook(page)
@@ -9,9 +77,26 @@ test('Studio 拒绝缺失 CSRF 的写入，读取撤权后清除尚未保存的�
   const studio = page.getByRole('region', { name: 'Studio', exact: true })
   await studio.getByRole('button', { name: '＋ 添加笔记' }).click()
   await studio.getByRole('textbox', { name: '笔记正文', exact: true }).fill('REVOKED_DRAFT')
-  const denied = await page.request.post('/v1/learning/studio/artifacts', { headers: { Origin: 'http://127.0.0.1:32929', 'X-Learning-Space-ID': space.id }, data: { operation_id: randomUUID(), expected_version: 0, privacy_generation: 1, kind: 'note', goal_id: null, title: '伪造保存', markdown: 'no csrf' } })
+  const denied = await page.request.post('/v1/learning/studio/artifacts', {
+    headers: { Origin: 'http://127.0.0.1:32929', 'X-Learning-Space-ID': space.id },
+    data: {
+      operation_id: randomUUID(),
+      expected_version: 0,
+      privacy_generation: 1,
+      kind: 'note',
+      goal_id: null,
+      title: '伪造保存',
+      markdown: 'no csrf',
+    },
+  })
   expect(denied.status()).toBe(403)
-  await page.route('**/v1/learning/studio/artifacts', route => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: { code: 'learning_content_forbidden' } }) }))
+  await page.route('**/v1/learning/studio/artifacts', (route) =>
+    route.fulfill({
+      status: 403,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'learning_content_forbidden' } }),
+    }),
+  )
   await expect(studio.getByText(/已隐藏正文并清除本区笔记草稿/)).toBeVisible({ timeout: 10000 })
   await expect(studio.getByRole('textbox')).toHaveCount(0)
   await page.unroute('**/v1/learning/studio/artifacts')
@@ -24,7 +109,7 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
   const space = await createSpace(page, 'Studio 无目标学习区')
   await page.goto(`/app/spaces/${space.id}?panel=studio`)
   const studio = page.getByRole('region', { name: 'Studio', exact: true })
-  await expect(studio.getByText('尚未交付', { exact: true })).toHaveCount(3)
+  await expect(studio.getByText('尚未交付', { exact: true })).toHaveCount(1)
   await studio.getByRole('button', { name: '＋ 添加笔记', exact: true }).click()
   await studio.getByLabel('笔记标题', { exact: true }).fill('矩阵秩笔记')
   await studio

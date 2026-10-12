@@ -327,7 +327,7 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
   })
   const goal = useQuery({
     queryKey: [...prefix, spaceId, run?.goal_id, 'latest'],
-    enabled: !!run,
+    enabled: !!run && !(run.kind === 'studio' && run.goal_id === '00000000-0000-0000-0000-000000000000'),
     queryFn: ({ signal }) =>
       unwrap(
         learningClient(session, spaceId).GET('/v1/learning/goals/{goalID}', {
@@ -403,9 +403,10 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
   const canContinue =
     write &&
     space.data?.status === 'active' &&
-    !!goal.data &&
-    ['active', 'draft'].includes(goal.data.management.status) &&
-    goal.data.revision === run?.goal_version &&
+    ((run?.kind === 'studio' && run.goal_id === '00000000-0000-0000-0000-000000000000') ||
+      (!!goal.data &&
+        ['active', 'draft'].includes(goal.data.management.status) &&
+        goal.data.revision === run?.goal_version)) &&
     !!run?.body_available
   return (
     <>
@@ -425,9 +426,9 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
             运行：{run.run_id} · 阶段：{run.stage}
           </p>
           <p>原因：{run.reason || '无'}</p>
-          <Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId: run.goal_id }}>
+          {run.kind === 'studio' ? <Link to="/spaces/$spaceId" params={{ spaceId }} search={{ panel: 'studio' }}>打开 Studio 产物与生成记录</Link> : <Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId: run.goal_id }}>
             查看来源目标
-          </Link>
+          </Link>}
           <p>
             请求已用 {run.requests_used} · 剩余 {run.requests_left} · 剩余 Token {run.tokens_left}
           </p>

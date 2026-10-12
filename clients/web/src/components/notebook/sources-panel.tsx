@@ -30,10 +30,12 @@ export function SourcesPanel({
     <>
       <p className="hint">勾选用于之后发起的导师追问与 Studio 生成。课堂使用其已冻结资料。</p>
       {citation && (
-        <div className="notebook-citation" key={`${citation.runId}:${citation.id}`}>
+        <div className="notebook-citation" key={`${citation.runId ?? citation.artifactId}:${citation.version}:${citation.id}`}>
           <MentorCitationContent
             spaceId={spaceId}
             runId={citation.runId}
+            artifactId={citation.artifactId}
+            version={citation.version}
             citationId={citation.id}
           />
           <Button variant="outline" onClick={() => setCitation(undefined)}>

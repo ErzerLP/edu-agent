@@ -20,6 +20,9 @@ type StudioBody struct {
 	Citations        []StudioCitation          `json:"citations"`
 	Model            string                    `json:"model,omitempty"`
 	InputFingerprint string                    `json:"input_fingerprint,omitempty"`
+	Coverage         string                    `json:"coverage,omitempty"`
+	Guide            *StudioGuide              `json:"guide,omitempty"`
+	Brief            *StudioBrief              `json:"brief,omitempty"`
 }
 type StudioCitation struct {
 	ID             string                   `json:"id"`

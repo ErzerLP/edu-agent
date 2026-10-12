@@ -18,7 +18,7 @@ export function NotebookLayout({
   sources: ReactNode
   classroom: ReactNode
   studio: ReactNode
-  sourceFocus?: { runId: string; id: string }
+  sourceFocus?: { id: string }
 }) {
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 1099px)').matches)
   const [collapsed, setCollapsed] = useState({ sources: false, studio: false })

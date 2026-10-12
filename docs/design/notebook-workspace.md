@@ -526,7 +526,7 @@
 **执行步骤：**
 
 - [x] 3a 从保存笔记的 HTTP→持久化→列表／重开场景做起，同时覆盖 409 保留草稿、隐私屏障和版本到来源 preview／confirm；给后续生成建立真实产物读取路径。
-- [ ] 3b 增受限生成任务和引用验证，产物 commit 与运行成功保持一致；补充取消／重启／partial／unknown／预算场景，学习指南与简报有各自结果结构，不只是不同标题。
+- [x] 3b 增受限生成任务和引用验证，产物 commit 与运行成功保持一致；补充取消／重启／partial／unknown／预算场景，学习指南与简报有各自结果结构，不只是不同标题。
 - [ ] 3c 生成有效题集后明确开始正式承载；逐题真实 Activity／Attempt／Assessment，actual help 与 allowed_help 一致；从进度／反馈读取相同记录，原课堂和未提交答案继续可恢复。
 - [ ] 扩展跨 owner 隐私 scrub／verify、加密轮换与 replay；旧正文库、旧 mentor／CLI 请求不受新 enum／必填字段影响。交接新状态／错误映射和门禁必需测试名。
 
@@ -594,6 +594,71 @@
 **3b／3c 接口衔接。** 复用本批 artifact 列表／指定版本读取、不可变 revision、操作身份与清除／轮换承载；新增生成发布正式事务端口时，必须由 learningcontent owner 验证并写入 SourceManifest／citations／模型和输入指纹，和运行成功原子发布。G3 来源清单冻结、精确历史读取与逐次权限／hash 核验继续适用；在这些校验交付前，不扩展本批 note DTO，不开放 `sources/{citationID}` 或生成端点。3b 再追加受限 run kind、预算／租约／取消／恢复；3c 再追加 quiz 映射并调用现有学习领域正式 Activity／Attempt／Assessment，不能降低旧正文约束或新建评分事实。
 
 **决策与限制。** 无新增待用户决策的语义问题。版本菜单展示最近 100 版，API 仍可读取／转换任意存在的指定版本；列表按稳定 UUID 分页。草稿及未确认候选不承诺跨刷新／重启恢复，已保存笔记可重开。撤权可见性由前端 5 秒重新读取及原会话刷新推进，服务器每次读取和写入实时核验。3b／3c、真实外部模型／搜索、三引擎矩阵、Go 全量／race、Compose 和候选发布门禁未执行；本批不宣称完整批次 3 或父 spec 已验收。
+
+#### 3b 实施记录（2026-10-12）
+
+**结果与范围。** 指南与简报通过右栏发起真实、加密持久的 Studio 运行，可取消、核对原操作、重开产物和重新生成新版本。复用 D1 当前来源选择与 D4 可空目标；零来源生成拒绝。测验仍显示“尚未交付”，没有正式作答／评分新路径。计划见 [3b 计划](notebook-studio-3b-plan.md)。
+
+**生成与读取合同。** 新增 `POST /v1/learning/studio/generations`，闭合 DTO：`operation_id,privacy_generation,kind,goal_id,goal_version,artifact_id,expected_version,source_selection,request_budget,token_budget` 全部明确提供。kind 仅 guide／brief；goal_id 可 null，此时 goal_version=0；新产物 artifact_id=null、expected_version=0，重新生成指定现有 ID 与当前版本，目标／类型不能改绑；目标与产物身份要求规范小写、非零 UUID，以保持加密 AAD 与数据库身份一致。所有路径要求明确学习区、no-store，并保留 scope、Cookie、Origin／CSRF、隐私和归属门禁。生成需要 learning:write 与实时 knowledge:read；无模型、无来源、无写权限分别显示原因。
+
+受理返回 202 `MentorReceipt`。`GET /v1/learning/operations/{operationID}` 核对受理结果；同操作同载荷返回原运行，不能跟随后来勾选。`GET /v1/learning/runs?task_kind=studio` 恢复当前设备区内生成记录，快照／取消／预算继续沿原 runs API。客户端对结果未知的受理保留原 DTO／操作身份；重新发送仍是原请求。取消前重读版本；只有明确 version_conflict 才有限次重读并重发同一停止意图，网络未知不自动换操作。
+
+产物沿 3a 列表、指定版本读取和 revisions 接口。新增 `GET /v1/learning/studio/artifacts/{artifactID}/sources/{citationID}?version=N`，版本必填；只允许读取该已保存版本实际持有的引用。列表、正文、历史入口、操作读取和引用读取均重新校验完整 manifest 及历史来源，撤权／解除关联／清除不能退回缓存或最新来源。note DTO 仍只允许手动笔记；不能用 PUT note 覆盖生成产物，生成产物也不能通过 note import-candidate 转来源。
+
+**两种正文。** `StudioBody` schema 1 保留 note 的 title／markdown 和既有加密字段；生成时 markdown 为空，新增 coverage 与互斥的 guide／brief。指南为 `guide{key_points,terms,learning_order,misconceptions}`；简报为 `brief{overview,differences,gaps}`，以一页式综述为提示目标。各组均为 `[{text,citations:[id]}]`，1–8 项，每条 1–10 个核验引用，单条最多 1500 字符。指南学习顺序明确标为“生成建议”。模型只能返回服务器提供的 source／fragment 数组序号；owner 去重建立 1 起始引用 ID，固定文档身份、node 版本、字节／行范围、正文与双 hash。每条内容必须有引用；引用证明出处／原片段一致性，不宣称机器已证明论断正确。
+
+模型给出的 coverage 仅允许 complete／partial；任何已知部分解析、空片段来源或截断片段都强制 partial，模型不能升级为完整。有效 partial 仍作为可读取的版本发布，运行同时为 partial；截断的模型输出、未完成响应和不合 schema 的 JSON 一律不发布。生成只发送选中来源的有界核验片段／元数据和输出 schema，不发送目标正文、课堂、记忆、聊天历史或未选文档；目标只作权限与归属绑定。输入指纹绑定生成命令和冻结 manifest，模型名称另存；这些内容全部随正文加密。
+
+**任务、事务与错误。** migration **000036_studio_generation.sql** 只扩展 mentor session kind 为 studio；复用 000035 的 artifact／revision／operation 与 mentor 加密 checkpoint，不改旧课堂 artifact 的 NOT NULL／唯一约束，不新增隐私 owner。学习内容 owner 在 `StudioPublishTx` 中再次校验目标版本和来源；追加 revision／关联 operation 与 run 的 succeeded／partial 结算同一事务，取消／失败不会留下孤立产物。
+
+Studio 复用现有预算 HTTP transport、租约、并发、取消和跨 owner ReadPermit。只走服务端 `settings.StudioClient` → `llm.Client`，显式复用教学连接时尊重其 api_style。Responses 使用 json_schema strict；Chat 使用 json_object，并保留相同的服务端 schema、闭合 JSON、重复键、正文限制和引用核验。`RequireCompletion` 仅由 Studio 显式启用，原 mentor／CLI 的 agentcore 协议和默认行为未改。
+
+| 状态／分类 | 语义 |
+| --- | --- |
+| queued／running | 原持久排队和租约运行；无模拟进度。 |
+| paused_budget／budget_exhausted | 预留预算不足，不发模型请求；可明确补充原运行预算。 |
+| succeeded／studio_committed | 完整、核验通过的产物版本与运行一起提交。 |
+| partial／source_coverage_partial | 有效结构与引用已保存，但资料覆盖不完整。 |
+| failed／output_budget_exceeded | Chat length 或 Responses max_output_tokens；不得发布截断 JSON。 |
+| failed／response_not_completed、schema_mismatch、invalid_source_citation | 未完成、结构错误、非法引用分别记录；不降级为成功。 |
+| cancelled／user_stopped 或 context_changed | 明确取消、权限／上下文变化；迟到内容不能发布。 |
+| failed／lease_expired + result_unknown | 重启发现已发出请求但无确认结果；不自动重复付费请求。cost_unknown 独立表达费用未核实。 |
+| failed／studio_version_conflict | 生成期间产物基版失效，旧历史不覆盖。 |
+
+日志只记录 run_id、kind、stage 和固定 error_category，不打印请求、来源、原始错误、响应、推理或凭据。已接收的失败响应与网络未知分开结算。运行 checkpoint 沿原七天期限，产物 revision 独立持久；过期运行状态可见，保存产物从列表重开。现有 learning owner 的 scrub／Remaining 与密钥轮换自动覆盖新生成正文，新增 DB 场景验证了在途清除与历史轮换。
+
+**文件映射。**
+
+- 新增：`server/internal/learningcontent/{studio_generation,studio_publish,studio_generation_test}.go`；`server/internal/mentorrun/{studio,studio_test,studio_recovery_test,studio_privacy_test}.go`；`server/internal/settings/{studio,studio_test}.go`；`server/internal/integrations/llm/studio_test.go`；`server/internal/transport/httpapi/studio_generation_test.go`；`server/api/openapi_studio_generation_test.go`。
+- 新增前端：`clients/web/src/components/notebook/{studio-generation,studio-document}.tsx`；新增本实施计划；**新增 migration 000036**。
+- 修改服务端：`learningcontent/{store,studio,studio_store}.go`、`mentorrun/{types,store,query,worker}.go`、`integrations/llm/client.go`、`transport/httpapi/studio.go`、`app/app.go`。
+- **OpenAPI：** `server/api/openapi.yaml`；已执行 `npm run generate` 更新 `clients/web/src/api/schema.d.ts`。新路径由 studioPath 归类，合同测试确认不走 collection 选择；`deploy/web/nginx.conf` 明确记录既有 studio 白名单覆盖生成和引用。
+- 修改前端：`api/{studio,studio.test,mentor,tasks}.ts`、`components/notebook/{studio-panel,source-selection,source-viewer,sources-panel,notebook-layout}.tsx`、`notebook-workspace-page.tsx`、`tasks-page.tsx`；`scripts/test-server.mjs` 添加真实 HTTP 确定性生成夹具；`tests/browser/{notebook-studio,notebook-workspace}.spec.ts` 扩展／迁移验收。
+
+**检查结果。** 所有 Go／DB／浏览器命令先 `umask 022`，GOCACHE 为 `/tmp/notebook-b3b-go-cache`。DB 为指定 32995 PostgreSQL，独立 schema、严格串行，无 Docker 操作。沙箱不可写用户 cache，因此包装器等价编译到 `/tmp/notebook-b3b-webdatabase`，来源宿主为 `/tmp/notebook-b3b-webnotebook`。发行二进制必须在前端构建及资产复制完成后再编译。
+
+| 检查 | 已执行结果 |
+| --- | --- |
+| OpenAPI／前端 | `npm run generate`、`npm run check`、`npm run build -- --configLoader native` 通过。仅既有 discriminator、Zod 注释和大 chunk 提示。最终构建含当前类型检查，日志 `/tmp/notebook-b3b-build-final.log`。 |
+| Vitest | `npm test -- --configLoader native src/api/studio.test.ts src/api/source-selection.test.ts src/api/mentor.test.ts`：3 文件、9 项通过，日志 `/tmp/notebook-b3b-vitest.log`。 |
+| Go／vet | `go test ./api ./internal/learningcontent/... ./internal/mentorrun ./internal/integrations/llm ./internal/transport/httpapi ./internal/settings` 通过；对应 `go vet` 通过。后续分类／覆盖校验改动定向复测 learningcontent、mentorrun 和 vet 通过。无 DB 环境时 skip 不计为 DB 证据。日志 `/tmp/notebook-b3b-go*.log`、`-vet*.log`。 |
+| PostgreSQL | `go test -p=1 ./internal/mentorrun -run '^TestPostgreSQLStudioGeneration…' -count=1 -v` 已验证发布／幂等、未选数据不外发、partial／截断／未完成／schema／非法引用、预算、queued 恢复／unknown 不重发、取消／事务回滚、版本／轮换／撤权、全局清除。各次运行只补新增或失效场景，日志 `/tmp/notebook-b3b-db-*.log`。 |
+| Chromium 新增流程 | 指定 Chromium 路径，`WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 /tmp/notebook-b3b-webdatabase npm run test:browser -- 'tests/browser/notebook-studio.spec.ts$' --project=chromium --grep '所选来源生成指南' --reporter=line`：1 项通过，20.1s，无 retry／skip；日志 `/tmp/notebook-b3b-browser-generation-current-assets.log`。 |
+| Chromium 既有回归 | 相同环境执行 Studio／workspace 两文件，`--grep-invert '所选来源生成指南'`：11 项通过，1.3m；笔记 3 项、工作区 8 项，无 retry／skip。日志 `/tmp/notebook-b3b-browser-regression.log`。 |
+| Chromium 来源回归 | 同一 schema 包装器、指定 Chromium，并设置 `WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/notebook-b3b-webnotebook`，执行 `notebook-sources.spec.ts`：3 项通过，14.7s，无 retry／skip。日志 `/tmp/notebook-b3b-browser-sources.log`。共 15 个不同 Chromium 场景通过。 |
+
+最后定向数据库命令：`TEST_DATABASE_URL=… go test -p=1 ./migrations ./internal/mentorrun ./internal/transport/httpapi -run '^(TestStudioMigrationUpgrade|TestPostgreSQLStudioGenerationVersionsRotationAndRevocation|TestPostgreSQLStudioVersionsSnapshotRotationAndErasure)$' -count=1 -v`：全部通过（1.49s／3.33s／3.60s）。覆盖迁移重放／旧约束、生成历史轮换与撤权后不再外发或发布、3a 笔记／清除回归；日志 `/tmp/notebook-b3b-db-final.log`。生成类共 6 个不同顶层 DB 场景；加升级与 3a 回归共 8 个。首次发布／选择隔离场景通过（3.15s）的记录在执行输出中，未为补日志重复运行。最后任务中心无目标 Studio 预算入口修正由构建内类型检查及已有无目标预算 DB 场景覆盖，未重复无关浏览器场景。最终加密身份核对发现大小写 UUID 可能造成 AAD 不一致，新增红测试后严格拒绝非规范身份；`TestStudioTargetRejectsNonCanonicalEncryptedIdentity` 与 `TestStudioStructuredClaims`、learningcontent vet 通过，合法身份路径复用既有 DB／浏览器证据。
+
+开发失败记录保留：缺新类型／路由／校验的红测试；浏览器先暴露未启用模型、settings 档案无来源权限的夹具遗漏，之后捕获取消版本过期。取消修复后一次并发构建嵌入了旧前端，改为依赖顺序构建后完整通过。失败轮次不计通过；没有放宽权限、版本或引用门禁。
+
+**真实模型 smoke（必须项已完成）。** 从指定 acceptance 环境文件加载凭据，只调用 2 次，无额外探测／自动重试。生产 `StudioModelRequest` → `llm.Client.Chat` → `DecodeStudioCandidate` → `VerifyStudioSources`，使用公开自编的两份奇偶数片段；Responses、deepseek-v4-flash、输出上限 8192、上下文 32768，smoke 请求超时上限 120 秒（两次实际均低于 16 秒）。临时 overlay 测试／日志均在 `/tmp/notebook-b3b-smoke*`，不含 Key、正文或隐藏推理。服务端配置注入另由 `TestStudioUsesSharedResponsesAndConfiguredBudget` 验证：共享教学 Responses、8192 原样传入，旧 mentor 保持 Chat。
+
+| 产物 | 延迟 | input | output（含推理） | reasoning | total | 校验 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| guide | 15467 ms | 2102 | 2750 | 1961 | 4852 | strict + 来源引用通过，coverage=partial，2 个引用 |
+| brief | 15224 ms | 1809 | 2632 | 1890 | 4441 | strict + 来源引用通过，coverage=partial，2 个引用 |
+
+**3c 约定与限制。** quiz 仍未开放；后续需独立 schema 和正式 Activity／Attempt／Assessment 映射，不能复用本批生成建议作为评分事实。没有新增待用户决定的语义问题。历史菜单沿 3a 展示最近 100 版；每次最多 100 个文档，有界片段和上下文预算如实限制。真实 smoke 验证生产模型协议／结构／引用，不代替真实外部模型的全套浏览器／重启验收。未跑三引擎、Go 全量、race、Compose 或部署，不宣称父 spec／整个批次 3 已完成。
 
 ### 批次 4：移动、可访问性、旧回归与候选发布（4–6 人日）
 

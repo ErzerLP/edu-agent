@@ -39,7 +39,7 @@ func (s *Store) studioBegin(ctx context.Context, actor identity.Credential, writ
 	}
 	return tx, g, nil
 }
-func (s *Store) studioRead(ctx context.Context, tx pgx.Tx, id string, version, g int64) (StudioRevision, error) {
+func (s *Store) studioRead(ctx context.Context, tx pgx.Tx, id string, version, g int64, token string) (StudioRevision, error) {
 	var r StudioRevision
 	var raw []byte
 	err := tx.QueryRow(ctx, `SELECT a.id,a.space_id,a.goal_id,a.kind,a.privacy_generation,r.version,r.actor_device_id,r.created_at,r.ciphertext FROM learning_studio_artifacts a JOIN learning_studio_revisions r ON r.artifact_id=a.id AND r.version=CASE WHEN $2::bigint=0 THEN a.latest_version ELSE $2::bigint END WHERE a.id=$1 AND a.space_id=$3 AND a.privacy_generation=$4`, id, version, learningspace.Scope(ctx), g).Scan(&r.ArtifactID, &r.SpaceID, &r.GoalID, &r.Kind, &r.Generation, &r.Version, &r.ActorDeviceID, &r.CreatedAt, &raw)
@@ -60,9 +60,17 @@ func (s *Store) studioRead(ctx context.Context, tx pgx.Tx, id string, version, g
 	if json.Unmarshal(plain, &r.Body) != nil || r.Body.Schema != 1 {
 		return StudioRevision{}, ErrUnsupported
 	}
-	// Generated kinds require source revalidation and publication in 3b/3c.
-	if r.Kind != "note" || r.Body.SourceManifest != nil || len(r.Body.Citations) > 0 {
-		return StudioRevision{}, ErrUnsupported
+	if r.Kind == "note" {
+		if r.Body.SourceManifest != nil || len(r.Body.Citations) > 0 || r.Body.Guide != nil || r.Body.Brief != nil {
+			return StudioRevision{}, ErrUnsupported
+		}
+	} else {
+		if r.Kind != "guide" && r.Kind != "brief" || (r.Body.Guide != nil) != (r.Kind == "guide") || (r.Body.Brief != nil) != (r.Kind == "brief") {
+			return StudioRevision{}, ErrUnsupported
+		}
+		if err = s.studioSourcesTx(ctx, tx, token, r.Body); err != nil {
+			return StudioRevision{}, err
+		}
 	}
 	return r, nil
 }
@@ -75,7 +83,7 @@ func (s *Store) StudioGet(ctx context.Context, actor identity.Credential, id str
 		return StudioRevision{}, err
 	}
 	defer tx.Rollback(context.Background())
-	r, err := s.studioRead(ctx, tx, id, version, g)
+	r, err := s.studioRead(ctx, tx, id, version, g, actor.TokenID)
 	if err != nil {
 		return r, err
 	}
@@ -107,7 +115,7 @@ func (s *Store) StudioSave(ctx context.Context, actor identity.Credential, id st
 		if storedHash != hash {
 			return StudioRevision{}, ErrConflict
 		}
-		r, e := s.studioRead(ctx, tx, storedID, version, g)
+		r, e := s.studioRead(ctx, tx, storedID, version, g, actor.TokenID)
 		if e != nil {
 			return r, e
 		}
@@ -143,9 +151,12 @@ func (s *Store) StudioSave(ctx context.Context, actor identity.Credential, id st
 		if version != c.ExpectedVersion {
 			return r, ErrConflict
 		}
-		previous, e := s.studioRead(ctx, tx, id, 0, g)
+		previous, e := s.studioRead(ctx, tx, id, 0, g, actor.TokenID)
 		if e != nil {
 			return r, e
+		}
+		if previous.Kind != "note" {
+			return r, ErrInvalid
 		}
 		if (previous.GoalID == nil) != (c.GoalID == nil) || previous.GoalID != nil && *previous.GoalID != uuid.MustParse(*c.GoalID).String() {
 			return r, ErrConflict
@@ -196,7 +207,7 @@ func (s *Store) StudioOperation(ctx context.Context, actor identity.Credential, 
 	if err != nil {
 		return StudioRevision{}, err
 	}
-	r, err := s.studioRead(ctx, tx, id, version, g)
+	r, err := s.studioRead(ctx, tx, id, version, g, actor.TokenID)
 	if err != nil {
 		return r, err
 	}
@@ -211,7 +222,7 @@ func (s *Store) StudioHistory(ctx context.Context, actor identity.Credential, id
 		return nil, err
 	}
 	defer tx.Rollback(context.Background())
-	if _, err = s.studioRead(ctx, tx, id, 0, g); err != nil {
+	if _, err = s.studioRead(ctx, tx, id, 0, g, actor.TokenID); err != nil {
 		return nil, err
 	}
 	rows, err := tx.Query(ctx, `SELECT version,'committed',created_at FROM learning_studio_revisions WHERE artifact_id=$1 ORDER BY version DESC LIMIT 100`, id)
@@ -275,7 +286,7 @@ func (s *Store) StudioList(ctx context.Context, actor identity.Credential, curso
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	for _, id := range ids {
-		r, e := s.studioRead(ctx, tx, id, 0, g)
+		r, e := s.studioRead(ctx, tx, id, 0, g, actor.TokenID)
 		if e != nil {
 			return page, e
 		}

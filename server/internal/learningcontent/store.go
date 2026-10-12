@@ -19,10 +19,11 @@ import (
 )
 
 type Store struct {
-	pool       *pgxpool.Pool
-	source     SourceReader
-	aead       cipher.AEAD
-	references ReferenceReader
+	studioSources StudioSourceReader
+	pool          *pgxpool.Pool
+	source        SourceReader
+	aead          cipher.AEAD
+	references    ReferenceReader
 }
 
 func (s *Store) ConfigureReferences(reader ReferenceReader) { s.references = reader }

@@ -8,6 +8,7 @@ export const taskKinds = {
   research: '研究',
   start_learning: '开学准备',
   content_edit: '内容生成与改写',
+  studio: 'Studio 生成',
   mentor: '目标内导师',
   import_job: '资料导入',
   notesync: 'NoteSync 同步审阅',

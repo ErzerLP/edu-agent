@@ -11,6 +11,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/go-chi/chi/v5"
 )
@@ -30,7 +31,7 @@ func (a *API) mountStudio(r chi.Router) {
 	if a.learningContent == nil {
 		return
 	}
-	read := r.With(a.requireScope("learning:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning))
+	read := r.With(a.requireScope("learning:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge))
 	write := r.With(a.requireScope("learning:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning))
 	read.Get("/v1/learning/studio/artifacts", a.studioList)
 	read.Get("/v1/learning/studio/artifacts/{artifactID}", a.studioGet)
@@ -38,7 +39,73 @@ func (a *API) mountStudio(r chi.Router) {
 	read.Get("/v1/learning/studio/operations/{operationID}", a.studioOperation)
 	write.Post("/v1/learning/studio/artifacts", a.studioSave)
 	write.Put("/v1/learning/studio/artifacts/{artifactID}", a.studioSave)
+	write.Post("/v1/learning/studio/generations", a.studioGenerate)
+	read.Get("/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}", a.studioCitation)
 	r.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.requireScope("knowledge:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge)).Post("/v1/learning/studio/artifacts/{artifactID}/import-candidate", a.studioImportCandidate)
+}
+
+func (a *API) studioGenerate(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictLearningQuery(w, r); !ok {
+		return
+	}
+	var input mentorrun.StudioGenerate
+	raw, err := readJSONBody(w, r, 64<<10)
+	if err != nil {
+		writeLearningDecodeFailure(w, r, err)
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		mentorFailure(w, r, mentorrun.ErrInvalid)
+		return
+	}
+	for _, name := range []string{"operation_id", "privacy_generation", "kind", "goal_id", "goal_version", "artifact_id", "expected_version", "source_selection", "request_budget", "token_budget"} {
+		value, ok := fields[name]
+		if !ok || name != "goal_id" && name != "artifact_id" && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			mentorFailure(w, r, mentorrun.ErrInvalid)
+			return
+		}
+	}
+	if decodeJSONData(raw, &input) != nil || input.Validate() != nil {
+		mentorFailure(w, r, mentorrun.ErrInvalid)
+		return
+	}
+	if a.mentorRuns == nil {
+		mentorFailure(w, r, mentorrun.ErrStorage)
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	receipt, err := a.mentorRuns.CreateStudio(r.Context(), actor, learningspace.Scope(r.Context()), input)
+	if err != nil {
+		mentorFailure(w, r, err)
+		return
+	}
+	w.Header().Set("Location", "/v1/learning/runs/"+receipt.RunID)
+	writeJSON(w, 202, receipt)
+}
+func (a *API) studioCitation(w http.ResponseWriter, r *http.Request) {
+	q, ok := strictLearningQuery(w, r, "version")
+	if !ok {
+		return
+	}
+	version, err := strconv.ParseInt(q.Get("version"), 10, 64)
+	if err != nil || version < 1 {
+		mentorFailure(w, r, mentorrun.ErrInvalid)
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.learningContent.StudioGet(r.Context(), actor, chi.URLParam(r, "artifactID"), version)
+	if err != nil {
+		mentorFailure(w, r, err)
+		return
+	}
+	for _, citation := range result.Body.Citations {
+		if citation.ID == chi.URLParam(r, "citationID") {
+			writeJSON(w, 200, citation)
+			return
+		}
+	}
+	mentorFailure(w, r, learningcontent.ErrNotFound)
 }
 func (a *API) studioList(w http.ResponseWriter, r *http.Request) {
 	q, ok := strictLearningQuery(w, r, "cursor", "limit")
@@ -57,7 +124,7 @@ func (a *API) studioList(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.learningContent.StudioList(r.Context(), actor, q.Get("cursor"), limit)
 	if err != nil {
-		a.contentError(w, r, err)
+		mentorFailure(w, r, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -79,7 +146,7 @@ func (a *API) studioGet(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.learningContent.StudioGet(r.Context(), actor, chi.URLParam(r, "artifactID"), version)
 	if err != nil {
-		a.contentError(w, r, err)
+		mentorFailure(w, r, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -113,7 +180,7 @@ func (a *API) studioSave(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.learningContent.StudioSave(r.Context(), actor, chi.URLParam(r, "artifactID"), input)
 	if err != nil {
-		a.contentError(w, r, err)
+		mentorFailure(w, r, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -125,7 +192,7 @@ func (a *API) studioHistory(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.learningContent.StudioHistory(r.Context(), actor, chi.URLParam(r, "artifactID"))
 	if err != nil {
-		a.contentError(w, r, err)
+		mentorFailure(w, r, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"items": result})
@@ -137,7 +204,7 @@ func (a *API) studioOperation(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.learningContent.StudioOperation(r.Context(), actor, chi.URLParam(r, "operationID"))
 	if err != nil {
-		a.contentError(w, r, err)
+		mentorFailure(w, r, err)
 		return
 	}
 	writeJSON(w, 200, result)
@@ -164,6 +231,9 @@ func (a *API) studioImportCandidate(w http.ResponseWriter, r *http.Request) {
 		note, e := a.learningContent.StudioGet(ctx, actor, id, version)
 		if e != nil {
 			return knowledge.SavedNote{}, e
+		}
+		if note.Kind != "note" {
+			return knowledge.SavedNote{}, learningcontent.ErrInvalid
 		}
 		return knowledge.SavedNote{Title: note.Body.Title, Markdown: note.Body.Markdown}, nil
 	}, chi.URLParam(r, "artifactID"), input.Version)

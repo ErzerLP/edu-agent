@@ -2,10 +2,11 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { selectedSources, sourceKey, type SourceIdentity } from '@/api/source-selection'
 import { useNotebookSources } from '@/lib/use-notebook-sources'
 
+export type CitationFocus = { runId?: string; artifactId?: string; version?: number; id: string }
 function useSelection(spaceId: string) {
   const catalog = useNotebookSources(spaceId)
   const [selected, setSelected] = useState<SourceIdentity[]>()
-  const [citation, setCitation] = useState<{ runId: string; id: string }>()
+  const [citation, setCitation] = useState<CitationFocus>()
   const items = catalog.sources.data?.pages.flatMap((p) => p.items) ?? []
   const ready =
     catalog.available &&

@@ -40,7 +40,7 @@ async function pair(page: Page, destination: string, profile = 'user') {
   await page.getByRole('button', { name: '配对并进入' }).click()
   await expect(
     page.getByRole('heading', {
-      name: destination.includes('/progress') ? '学习进度与复习' : '今天想学会什么？',
+      name: destination.includes('/progress') ? '学习进度与复习' : '你的学习区',
       exact: true,
     }),
   ).toBeVisible()

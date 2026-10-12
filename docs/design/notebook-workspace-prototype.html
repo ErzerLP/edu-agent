@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>edu-agent 界面原型</title>
+<style>
+:root{
+  --bg:#f0f4f9; --panel:#ffffff; --line:#dde3ea; --text:#1f1f1f; --muted:#5f6368; --soft:#e9eef6;
+  --primary:#0b57d0; --primary-soft:#d3e3fd; --ok:#146c2e; --ok-soft:#c4eed0; --warn:#8a5a00; --warn-soft:#ffe8b3;
+  --radius:16px; --shadow:0 1px 2px rgba(0,0,0,.06),0 1px 3px rgba(0,0,0,.08);
+  --font:"Google Sans","Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+}
+*{box-sizing:border-box} html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.6 var(--font)}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+input,textarea,select{font:inherit;color:inherit}
+.icon{width:20px;height:20px;flex:none;fill:currentColor}
+.hidden{display:none!important}
+
+/* 顶栏 */
+.topbar{height:64px;display:flex;align-items:center;gap:12px;padding:0 16px}
+.icon-btn{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:var(--muted)}
+.icon-btn:hover{background:var(--soft)}
+.brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:500}
+.brand .logo{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#4285f4,#9b72cb 60%,#d96570);display:grid;place-items:center;color:#fff;font-size:16px}
+.nb-title{font-size:20px;font-weight:500;border:1px solid transparent;border-radius:8px;padding:2px 8px;background:none;min-width:0;max-width:40vw}
+.nb-title:hover,.nb-title:focus{border-color:var(--line);outline:none;background:#fff}
+.spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;font-weight:500}
+.pill.primary{background:var(--text);color:#fff}
+.pill.tonal{background:var(--primary-soft);color:#041e49}
+.pill.outline{border:1px solid var(--line);background:#fff}
+.avatar{width:32px;height:32px;border-radius:50%;background:#7e57c2;color:#fff;display:grid;place-items:center;font-size:13px}
+
+/* 侧边菜单 */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.32);z-index:30}
+.drawer{position:fixed;top:0;bottom:0;left:0;width:300px;max-width:85vw;background:#fff;z-index:31;padding:16px 12px;box-shadow:0 8px 24px rgba(0,0,0,.2);display:flex;flex-direction:column;gap:2px}
+.drawer h3{margin:8px 12px 12px;font-size:16px;font-weight:500}
+.drawer a{display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:999px;color:var(--text);text-decoration:none}
+.drawer a:hover{background:var(--soft)}
+.drawer .sep{height:1px;background:var(--line);margin:8px 12px}
+.drawer small{color:var(--muted);margin-left:auto}
+
+/* 首页 */
+.home{max-width:1200px;margin:0 auto;padding:8px 24px 48px}
+.home h1{font-size:44px;font-weight:400;margin:24px 0 8px;letter-spacing:-.5px}
+.home .sub{color:var(--muted);margin-bottom:28px}
+.toolbar{display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.card{border-radius:var(--radius);padding:20px;min-height:200px;display:flex;flex-direction:column;gap:8px;text-align:left;transition:box-shadow .15s}
+.card:hover{box-shadow:0 4px 12px rgba(0,0,0,.12)}
+.card .emoji{font-size:36px}
+.card h2{font-size:20px;font-weight:500;margin:auto 0 0;line-height:1.35}
+.card .meta{color:var(--muted);font-size:13px}
+.card.new{border:1px dashed #a8b4c4;background:transparent;align-items:center;justify-content:center;color:var(--muted)}
+.card.new .plus{width:56px;height:56px;border-radius:50%;background:var(--primary-soft);display:grid;place-items:center;color:var(--primary);font-size:30px}
+.c1{background:#e6f4ea}.c2{background:#e8f0fe}.c3{background:#fef7e0}.c4{background:#fce8e6}
+
+/* 笔记本三栏 */
+.nb{display:grid;grid-template-columns:minmax(260px,22%) 1fr minmax(300px,26%);gap:16px;padding:0 16px 16px;height:calc(100vh - 64px)}
+.panel{background:var(--panel);border-radius:var(--radius);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.panel-head{height:56px;display:flex;align-items:center;padding:0 12px 0 20px;border-bottom:1px solid var(--line);font-weight:500;font-size:16px;gap:8px;flex:none}
+.panel-body{flex:1;overflow:auto;padding:16px}
+.collapse{margin-left:auto}
+
+/* 来源 */
+.add-src{width:100%;justify-content:center;border:1px solid var(--line);padding:10px;border-radius:999px;display:flex;gap:8px;align-items:center;font-weight:500}
+.add-src:hover{background:var(--soft)}
+.src-all{display:flex;align-items:center;justify-content:space-between;margin:16px 4px 8px;color:var(--muted);font-size:13px}
+.src{display:flex;align-items:center;gap:10px;padding:10px 8px;border-radius:12px}
+.src:hover{background:var(--soft)}
+.src.flash{background:var(--primary-soft)}
+.src .ty{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none}
+.ty.pdf{background:#fce8e6;color:#c5221f}.ty.web{background:#e8f0fe;color:#1967d2}.ty.txt{background:#e6f4ea;color:#137333}.ty.search{background:#f3e8fd;color:#8430ce}
+.src .name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.src .st{font-size:11px;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.st.ok{background:var(--ok-soft);color:var(--ok)}.st.part{background:var(--warn-soft);color:var(--warn)}.st.run{background:var(--soft);color:var(--muted)}
+input[type=checkbox]{width:18px;height:18px;accent-color:var(--primary);flex:none}
+.src-view{border-top:1px solid var(--line);padding:16px;max-height:45%;overflow:auto;flex:none}
+.src-view h4{margin:0 0 4px;font-weight:500}
+.src-view .loc{color:var(--muted);font-size:12px;margin-bottom:8px}
+mark{background:#fde293;border-radius:3px;padding:0 2px}
+
+/* 课堂（中栏） */
+.goalbar{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap;flex:none}
+.goal-select{border:1px solid var(--line);border-radius:999px;padding:6px 14px;background:#fff;max-width:100%}
+.ring{--p:42;width:40px;height:40px;border-radius:50%;background:conic-gradient(var(--primary) calc(var(--p)*1%),var(--soft) 0);display:grid;place-items:center;flex:none}
+.ring::after{content:attr(data-label);width:32px;height:32px;border-radius:50%;background:#fff;display:grid;place-items:center;font-size:11px;font-weight:500}
+.stage{display:flex;gap:6px;flex-wrap:wrap}
+.stage span{font-size:12px;padding:2px 10px;border-radius:999px;background:var(--soft);color:var(--muted)}
+.stage span.on{background:var(--primary-soft);color:#041e49;font-weight:500}
+.stream{flex:1;overflow:auto;padding:20px 24px;display:flex;flex-direction:column;gap:16px}
+.block{max-width:760px;width:100%;margin:0 auto}
+.lesson h3{font-size:18px;font-weight:500;margin:0 0 8px}
+.cite{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:var(--soft);color:var(--primary);font-size:11px;font-weight:700;vertical-align:2px;margin:0 2px}
+.cite:hover{background:var(--primary-soft)}
+.activity{border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+.activity .tag{font-size:12px;color:var(--primary);font-weight:500;margin-bottom:6px}
+.activity textarea{width:100%;min-height:110px;border:1px solid var(--line);border-radius:12px;padding:12px;resize:vertical;margin-top:10px}
+.activity textarea:focus{outline:2px solid var(--primary);border-color:transparent}
+.act-foot{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.act-foot select{border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:#fff}
+.hint{color:var(--muted);font-size:12px}
+.feedback{background:#f6fbf7;border:1px solid var(--ok-soft);border-radius:var(--radius);padding:16px}
+.feedback b{color:var(--ok)}
+.msg.user{align-self:flex-end;background:var(--primary-soft);border-radius:18px 18px 4px 18px;padding:10px 14px;max-width:78%}
+.msg.ai{max-width:760px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:999px;padding:6px 14px;background:#fff;font-size:13px}
+.chip:hover{background:var(--soft)}
+.composer{padding:12px 20px 16px;flex:none}
+.composer-box{max-width:760px;margin:0 auto;border:1px solid var(--line);border-radius:28px;display:flex;align-items:flex-end;gap:8px;padding:6px 6px 6px 18px;background:#fff}
+.composer-box textarea{flex:1;border:0;outline:0;resize:none;padding:10px 0;max-height:120px;background:none}
+.send{width:40px;height:40px;border-radius:50%;background:var(--primary);color:#fff;display:grid;place-items:center;flex:none}
+.composer .meta{max-width:760px;margin:6px auto 0;display:flex;justify-content:space-between;color:var(--muted);font-size:12px}
+
+/* Studio */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.tile{border-radius:14px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:6px;min-height:84px}
+.tile b{font-weight:500}
+.tile span{font-size:12px;color:var(--muted)}
+.tile.t1{background:#e8f0fe}.tile.t2{background:#e6f4ea}.tile.t3{background:#fef7e0}.tile.t4{background:#f3e8fd}
+.tile:hover{filter:brightness(.97)}
+.st-sec{margin:20px 4px 8px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+.out{display:flex;gap:10px;align-items:center;padding:10px;border-radius:12px;width:100%;text-align:left}
+.out:hover{background:var(--soft)}
+.out .ty{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:15px;flex:none}
+.out .t{flex:1;min-width:0}
+.out .t div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.out .t small{color:var(--muted)}
+.viewer{display:flex;flex-direction:column;gap:12px}
+.viewer h3{margin:0;font-size:18px;font-weight:500}
+.viewer .back{align-self:flex-start}
+.q{border:1px solid var(--line);border-radius:12px;padding:12px}
+.q label{display:flex;gap:8px;padding:4px 0}
+.note-edit{width:100%;min-height:160px;border:1px solid var(--line);border-radius:12px;padding:12px;resize:vertical}
+.add-note{position:sticky;bottom:0;margin-top:16px;width:100%;justify-content:center}
+
+/* 对话框 */
+.dialog{position:fixed;inset:0;display:grid;place-items:center;z-index:40;padding:16px}
+.dialog .box{background:#fff;border-radius:24px;width:min(720px,100%);max-height:90vh;overflow:auto;padding:24px;box-shadow:0 12px 32px rgba(0,0,0,.25)}
+.dialog h2{margin:0 0 4px;font-size:22px;font-weight:400}
+.tabs{display:flex;gap:8px;margin:16px 0;flex-wrap:wrap}
+.tabs button{padding:8px 16px;border-radius:999px;border:1px solid var(--line)}
+.tabs button.on{background:var(--primary-soft);border-color:transparent;color:#041e49;font-weight:500}
+.drop{border:2px dashed #a8b4c4;border-radius:16px;padding:36px;text-align:center;color:var(--muted)}
+.field{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:8px}
+.result{display:flex;gap:10px;align-items:flex-start;padding:12px;border:1px solid var(--line);border-radius:12px;margin-top:8px}
+.result .t{flex:1}
+.result small{color:var(--muted);display:block}
+.d-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+.note-bar{background:#fff8e1;border-radius:12px;padding:10px 12px;font-size:12px;color:#6d4c00;margin-top:12px}
+
+/* 原型说明条 */
+.proto{position:fixed;right:16px;bottom:16px;background:#202124;color:#e8eaed;border-radius:12px;padding:10px 14px;font-size:12px;max-width:320px;z-index:20;box-shadow:var(--shadow)}
+.proto b{color:#8ab4f8}
+
+/* 手机：底部标签切换三栏 */
+.mtabs{display:none}
+@media (max-width:900px){
+  .nb{grid-template-columns:1fr;height:auto;min-height:calc(100dvh - 64px - 64px);padding:0 8px 8px}
+  .nb .panel{height:calc(100dvh - 64px - 72px)}
+  .nb .panel:not(.active){display:none}
+  .mtabs{display:flex;position:fixed;left:0;right:0;bottom:0;height:64px;background:#fff;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:10}
+  .mtabs button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;color:var(--muted)}
+  .mtabs button.on{color:var(--primary);font-weight:500}
+  .nb-title{max-width:48vw;font-size:17px}
+  .topbar .hide-m{display:none}
+  .home h1{font-size:32px}
+  .proto{display:none}
+  .stream{padding:16px}
+}
+</style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<header class="topbar">
+  <button class="icon-btn" id="menuBtn" aria-label="打开菜单"><svg class="icon" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></button>
+  <div class="brand" id="brandHome" role="button" tabindex="0"><span class="logo">学</span><span class="hide-m">edu-agent</span></div>
+  <input class="nb-title hidden" id="nbTitle" value="线性代数入门" aria-label="学习区名称">
+  <div class="spacer"></div>
+  <button class="pill outline hide-m" id="progressBtn"><svg class="icon" viewBox="0 0 24 24"><path d="M5 9h3v10H5zm5.5-5h3v15h-3zM16 13h3v6h-3z"/></svg>学习进度</button>
+  <button class="icon-btn" aria-label="设置"><svg class="icon" viewBox="0 0 24 24"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.7 7.7 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.7 7.7 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.7 1.7 1L11 21h4l.4-2.9c.6-.3 1.2-.6 1.7-1l2.5 1 2-3.5zM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7z"/></svg></button>
+  <span class="avatar">我</span>
+</header>
+
+<!-- 侧边菜单 -->
+<div class="scrim hidden" id="scrim"></div>
+<nav class="drawer hidden" id="drawer" aria-label="侧边菜单">
+  <h3>edu-agent</h3>
+  <a href="#" data-go="home">🏠　所有学习区</a>
+  <div class="sep"></div>
+  <a href="#">📈　学习进度与复习<small>3 项到期</small></a>
+  <a href="#">💬　导师历史</a>
+  <a href="#">🧠　长期记忆</a>
+  <a href="#">🗂　任务中心<small>1 个运行中</small></a>
+  <a href="#">🧩　知识结构与维护</a>
+  <a href="#">🔄　NoteSync 来源同步</a>
+  <a href="#">📴　离线学习</a>
+  <div class="sep"></div>
+  <a href="#">⚙️　设置（模型、搜索、预算）</a>
+  <a href="#">🔒　数据与设备</a>
+</nav>
+
+<!-- 首页：学习区卡片 -->
+<main class="home" id="home">
+  <h1>欢迎回来</h1>
+  <div class="sub">每个学习区是一个独立的主题：放入资料，设定目标，开始学习。</div>
+  <div class="toolbar">
+    <button class="pill primary" id="newNb">＋ 新建学习区</button>
+    <div class="spacer"></div>
+    <button class="pill outline">最近</button>
+  </div>
+  <div class="grid">
+    <button class="card new" id="newNb2"><span class="plus">＋</span><span>新建学习区</span></button>
+    <button class="card c2" data-open="线性代数入门"><span class="emoji">📐</span><h2>线性代数入门</h2><div class="meta">4 个来源 · 2 个目标 · 今天</div></button>
+    <button class="card c1" data-open="二分查找与边界"><span class="emoji">💻</span><h2>二分查找与边界</h2><div class="meta">3 个来源 · 1 个目标 · 昨天</div></button>
+    <button class="card c3" data-open="《置身事内》精读"><span class="emoji">📚</span><h2>《置身事内》精读</h2><div class="meta">1 个来源 · 1 个目标 · 10月8日</div></button>
+    <button class="card c4" data-open="HTTP 语义"><span class="emoji">🌐</span><h2>HTTP 语义</h2><div class="meta">2 个来源 · 无目标 · 10月2日</div></button>
+  </div>
+</main>
+
+<!-- 学习区：三栏 -->
+<div class="nb hidden" id="nb">
+  <!-- 左：来源 -->
+  <section class="panel" id="pSources" aria-label="来源">
+    <div class="panel-head">来源<button class="icon-btn collapse" aria-label="收起"><svg class="icon" viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button></div>
+    <div class="panel-body">
+      <button class="add-src" id="addSrc">＋ 添加来源</button>
+      <div class="src-all"><span>选择全部来源</span><input type="checkbox" id="allSrc" checked aria-label="选择全部来源"></div>
+      <div id="srcList">
+        <div class="src" data-src="1"><span class="ty pdf">PDF</span><span class="name">线性代数讲义（第1–3章）.pdf</span><span class="st ok">已解析</span><input type="checkbox" checked aria-label="选择来源"></div>
+        <div class="src" data-src="2"><span class="ty web">网</span><span class="name">向量空间 - 维基百科</span><span class="st part">部分正文</span><input type="checkbox" checked aria-label="选择来源"></div>
+        <div class="src" data-src="3"><span class="ty txt">文</span><span class="name">我的课堂笔记 10-09</span><span class="st ok">已解析</span><input type="checkbox" checked aria-label="选择来源"></div>
+        <div class="src" data-src="4"><span class="ty search">搜</span><span class="name">MIT 18.06 Lecture 9 讲义</span><span class="st ok">已采纳</span><input type="checkbox" checked aria-label="选择来源"></div>
+      </div>
+    </div>
+    <div class="src-view hidden" id="srcView">
+      <h4 id="svTitle"></h4><div class="loc" id="svLoc"></div><div id="svBody"></div>
+    </div>
+  </section>
+
+  <!-- 中：课堂 -->
+  <section class="panel active" id="pClass" aria-label="课堂">
+    <div class="goalbar">
+      <div class="ring" style="--p:42" data-label="42%"></div>
+      <select class="goal-select" aria-label="当前目标">
+        <option>目标：理解线性无关与基，并能判断一组向量是否构成基</option>
+        <option>目标：掌握矩阵乘法的几何意义</option>
+        <option>＋ 新建目标…</option>
+      </select>
+      <div class="stage" aria-label="学习阶段"><span>诊断</span><span>讲解</span><span class="on">练习</span><span>评估</span><span>复习</span></div>
+    </div>
+    <div class="stream" id="stream" aria-live="polite">
+      <div class="block lesson">
+        <h3>线性无关：只有平凡组合能得到零向量</h3>
+        <div>一组向量 v₁,…,vₖ 线性无关，当且仅当 c₁v₁+…+cₖvₖ=0 只有全零解<button class="cite" data-src="1" data-q="定义 2.3">1</button>。直观上，没有任何一个向量能由其余向量"拼出来"<button class="cite" data-src="4" data-q="Lecture 9">2</button>。基就是能张成整个空间、同时线性无关的一组向量<button class="cite" data-src="2" data-q="基 (线性代数)">3</button>。</div>
+      </div>
+      <div class="block activity" id="activity">
+        <div class="tag">练习 2 / 4 · 开放题</div>
+        <div>判断 (1,2,0)、(0,1,1)、(1,3,1) 是否线性无关，并说明理由。如果线性相关，写出一个非平凡组合。</div>
+        <textarea id="answer" placeholder="在这里写你的答案…（草稿只保存在本页，提交后才进入正式记录）"></textarea>
+        <div class="act-foot">
+          <label class="hint" for="help">我获得的帮助</label>
+          <select id="help"><option value="">请选择</option><option>独立完成</option><option>看过提示</option><option>参考了示例</option></select>
+          <span class="spacer"></span>
+          <span class="hint">Ctrl+Enter 提交</span>
+          <button class="pill tonal" id="submit">提交答案</button>
+        </div>
+      </div>
+      <div class="block chips" id="quick">
+        <button class="chip" data-ask="换个讲法解释线性无关">换个讲法</button>
+        <button class="chip" data-ask="我需要先补一下前置知识：齐次线性方程组">补前置知识</button>
+        <button class="chip" data-ask="给我一个生活中的例子">举个例子</button>
+        <button class="chip" data-ask="给我一点提示，不要直接给答案">要提示</button>
+      </div>
+    </div>
+    <div class="composer">
+      <div class="composer-box">
+        <textarea id="ask" rows="1" placeholder="向导师提问，回答只基于已选来源…" aria-label="向导师提问"></textarea>
+        <button class="send" id="sendAsk" aria-label="发送"><svg class="icon" viewBox="0 0 24 24"><path d="M3 20.5v-17L22 12z"/></svg></button>
+      </div>
+      <div class="meta"><span id="srcCount">已选 4 个来源</span><span>导师不会替你提交答案，也不会改目标</span></div>
+    </div>
+  </section>
+
+  <!-- 右：Studio -->
+  <section class="panel" id="pStudio" aria-label="Studio">
+    <div class="panel-head">Studio<button class="icon-btn collapse" aria-label="收起"><svg class="icon" viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button></div>
+    <div class="panel-body" id="studioBody">
+      <div id="studioHome">
+        <div class="tiles">
+          <button class="tile t1" data-gen="guide"><b>📘 学习指南</b><span>要点、术语、常见误区</span></button>
+          <button class="tile t2" data-gen="quiz"><b>✅ 测验</b><span>按当前目标出题，计入练习</span></button>
+          <button class="tile t3" data-gen="brief"><b>📰 简报</b><span>一页读懂所选来源</span></button>
+          <button class="tile t4" data-gen="note"><b>📝 笔记</b><span>写下自己的理解</span></button>
+        </div>
+        <div class="st-sec"><span>已生成</span><span>按来源与目标版本保存</span></div>
+        <div id="outs">
+          <button class="out" data-view="guide0"><span class="ty" style="background:#e8f0fe">📘</span><span class="t"><div>学习指南：线性无关与基</div><small>4 个来源 · 2 小时前</small></span></button>
+          <button class="out" data-view="note0"><span class="ty" style="background:#f3e8fd">📝</span><span class="t"><div>我的笔记：秩与线性无关的关系</div><small>笔记 · 昨天</small></span></button>
+        </div>
+        <button class="pill outline add-note" data-gen="note">📝 添加笔记</button>
+      </div>
+      <div id="studioView" class="viewer hidden"></div>
+    </div>
+  </section>
+</div>
+
+<!-- 手机底部标签 -->
+<nav class="mtabs hidden" id="mtabs" aria-label="切换面板">
+  <button data-tab="pSources">📄<span>来源</span></button>
+  <button data-tab="pClass" class="on">🎓<span>课堂</span></button>
+  <button data-tab="pStudio">✨<span>Studio</span></button>
+</nav>
+
+<!-- 添加来源对话框 -->
+<div class="dialog hidden" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+  <div class="scrim" data-close></div>
+  <div class="box" style="position:relative;z-index:1">
+    <h2 id="dlgTitle">添加来源</h2>
+    <div class="hint">来源会在本学习区内保存版本，课堂和 Studio 的引用都能回到原文位置。</div>
+    <div class="tabs" role="tablist">
+      <button class="on" data-pane="up">📄 上传 PDF</button>
+      <button data-pane="text">📝 粘贴文本</button>
+      <button data-pane="url">🔗 网址</button>
+      <button data-pane="search">🔍 搜索发现</button>
+    </div>
+    <div data-p="up"><div class="drop">把 PDF 拖到这里，或 <u>选择文件</u><br><small>仅支持带文本层的 PDF；扫描页会在覆盖报告中标出</small></div></div>
+    <div data-p="text" class="hidden"><input class="field" placeholder="标题"><textarea class="field" rows="6" placeholder="粘贴正文…"></textarea></div>
+    <div data-p="url" class="hidden"><input class="field" placeholder="https://…"><div class="hint" style="margin-top:8px">只抓取公开网页正文；读不全时会标为"部分正文"，不会假装完整。</div></div>
+    <div data-p="search" class="hidden">
+      <input class="field" value="线性无关 基 判定方法 例题" aria-label="搜索关键词">
+      <div class="result"><input type="checkbox" checked><div class="t"><b>Linear independence - Wikipedia</b><small>en.wikipedia.org · 搜索摘要，采纳后读取正文</small></div></div>
+      <div class="result"><input type="checkbox"><div class="t"><b>MIT 18.06 Lecture 9: Independence, Basis, Dimension</b><small>ocw.mit.edu · 搜索摘要，采纳后读取正文</small></div></div>
+      <div class="result"><input type="checkbox"><div class="t"><b>线性无关的几种判定方法总结</b><small>zhuanlan.zhihu.com · 搜索摘要，采纳后读取正文</small></div></div>
+      <div class="note-bar">搜索需要在设置里配置 Brave 搜索；摘要不会被当作正文引用。</div>
+    </div>
+    <div class="d-foot"><button class="pill outline" data-close>取消</button><button class="pill primary" id="dlgOk">添加</button></div>
+  </div>
+</div>
+
+<div class="proto"><b>界面原型</b>：只演示布局和交互，数据是假的。点卡片进入学习区；手机上用底部标签切换三栏。</div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const sources={
+  1:{t:'线性代数讲义（第1–3章）.pdf',loc:'第 2 章 · 第 31 页 · 定义 2.3',b:'定义 2.3　若 c₁v₁+…+cₖvₖ=0 <mark>只有平凡解 c₁=…=cₖ=0</mark>，则称向量组 v₁,…,vₖ 线性无关；否则称其线性相关。'},
+  2:{t:'向量空间 - 维基百科',loc:'网页 · “基 (线性代数)” 一节 · 部分正文',b:'在线性代数中，<mark>基是向量空间中一组线性无关且能张成整个空间的向量</mark>。空间中每个向量都能唯一地表示为基向量的线性组合。'},
+  3:{t:'我的课堂笔记 10-09',loc:'文本 · 第 3 段',b:'老师说判断线性无关最快的办法：<mark>把向量排成矩阵，看秩是否等于向量个数</mark>。'},
+  4:{t:'MIT 18.06 Lecture 9 讲义',loc:'搜索发现 · 已读取正文 · 第 2 节',b:'Vectors are independent if <mark>no combination gives the zero vector except the zero combination</mark>.'}
+};
+function show(view){
+  const home=view==='home';
+  $('#home').classList.toggle('hidden',!home);
+  $('#nb').classList.toggle('hidden',home);
+  $('#nbTitle').classList.toggle('hidden',home);
+  $('#mtabs').classList.toggle('hidden',home);
+  closeDrawer();
+}
+$$('[data-open]').forEach(c=>c.onclick=()=>{$('#nbTitle').value=c.dataset.open;show('nb')});
+['#newNb','#newNb2'].forEach(s=>$(s).onclick=()=>{$('#nbTitle').value='未命名学习区';show('nb');openDlg()});
+$('#brandHome').onclick=()=>show('home');
+function closeDrawer(){$('#drawer').classList.add('hidden');$('#scrim').classList.add('hidden')}
+$('#menuBtn').onclick=()=>{$('#drawer').classList.remove('hidden');$('#scrim').classList.remove('hidden')};
+$('#scrim').onclick=closeDrawer;
+$$('[data-go=home]').forEach(a=>a.onclick=e=>{e.preventDefault();show('home')});
+$$('#drawer a:not([data-go])').forEach(a=>a.onclick=e=>{e.preventDefault();alert('原有页面保留，从这里进入（原型不展开）');});
+$('#progressBtn').onclick=()=>alert('打开原有“学习进度与复习”页（原型不展开）');
+
+// 来源
+function openSource(id,quote){
+  const s=sources[id];$('#srcView').classList.remove('hidden');
+  $('#svTitle').textContent=s.t;$('#svLoc').textContent=s.loc;$('#svBody').innerHTML=s.b;
+  $$('.src').forEach(e=>e.classList.toggle('flash',e.dataset.src==id));
+  if(matchMedia('(max-width:900px)').matches) tab('pSources');
+}
+$$('.src').forEach(e=>e.onclick=ev=>{if(ev.target.type!=='checkbox')openSource(e.dataset.src)});
+function countSrc(){const n=$$('#srcList input:checked').length;$('#srcCount').textContent=n?`已选 ${n} 个来源`:'未选来源：导师将无法引用资料';$('#allSrc').checked=n===$$('#srcList input').length}
+$('#srcList').onchange=countSrc;
+$('#allSrc').onchange=e=>{$$('#srcList input').forEach(i=>i.checked=e.target.checked);countSrc()};
+document.addEventListener('click',e=>{const c=e.target.closest('.cite');if(c)openSource(c.dataset.src)});
+
+// 添加来源
+function openDlg(){$('#dlg').classList.remove('hidden')}
+function closeDlg(){$('#dlg').classList.add('hidden')}
+$('#addSrc').onclick=openDlg;
+$$('[data-close]').forEach(b=>b.onclick=closeDlg);
+$$('.tabs button').forEach(b=>b.onclick=()=>{$$('.tabs button').forEach(x=>x.classList.toggle('on',x===b));$$('[data-p]').forEach(p=>p.classList.toggle('hidden',p.dataset.p!==b.dataset.pane))});
+$('#dlgOk').onclick=()=>{
+  const d=document.createElement('div');d.className='src';d.dataset.src='4';
+  d.innerHTML='<span class="ty search">搜</span><span class="name">Linear independence - Wikipedia</span><span class="st run">读取中…</span><input type="checkbox" checked aria-label="选择来源">';
+  $('#srcList').prepend(d);closeDlg();countSrc();
+  setTimeout(()=>{const st=d.querySelector('.st');st.className='st ok';st.textContent='已采纳'},1500);
+};
+
+// 课堂
+const stream=$('#stream');
+function add(html,cls){const d=document.createElement('div');d.className='block '+cls;d.innerHTML=html;stream.insertBefore(d,$('#quick'));d.scrollIntoView({behavior:'smooth',block:'end'})}
+function submit(){
+  const a=$('#answer').value.trim(), h=$('#help').value;
+  if(!a){$('#answer').focus();return}
+  if(!h){$('#help').focus();$('#help').style.outline='2px solid #b3261e';return}
+  $('#help').style.outline='';
+  $('#activity').querySelector('.act-foot').innerHTML='<span class="hint">已提交 · 正在评估…</span>';
+  $('#answer').readOnly=true;
+  setTimeout(()=>add('<b>评估结果：基本正确</b><div>你发现了 (1,3,1)=(1,2,0)+(0,1,1)，所以线性相关，非平凡组合为 1·v₁+1·v₂−1·v₃=0<button class="cite" data-src="1">1</button>。可以补充：用秩判断时，3 个向量的矩阵秩为 2<button class="cite" data-src="3">2</button>。</div><div class="chips" style="margin-top:10px"><button class="chip">下一题</button><button class="chip">查看评估依据</button></div>','feedback'),900);
+}
+$('#submit').onclick=submit;
+$('#answer').onkeydown=e=>{if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&!e.isComposing){e.preventDefault();submit()}};
+function ask(text){
+  if(!text.trim())return;
+  add(text.replace(/</g,'&lt;'),'msg user');
+  setTimeout(()=>add('换个角度：把每个向量想成一种"原料"。如果某个原料能用其他原料调出来，它就是多余的，这组向量就线性相关<button class="cite" data-src="4">1</button>。注意：这只是讲解，当前练习的答案仍由你自己提交。','msg ai'),700);
+}
+$('#sendAsk').onclick=()=>{ask($('#ask').value);$('#ask').value=''};
+$('#ask').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('#sendAsk').click()}};
+$$('[data-ask]').forEach(c=>c.onclick=()=>ask(c.dataset.ask));
+
+// Studio
+const views={
+  guide:()=>`<h3>📘 学习指南：线性无关与基</h3><div class="hint">基于已选 4 个来源 · 当前目标</div><div><b>核心概念</b><ul><li>线性无关：只有零组合得零向量<button class="cite" data-src="1">1</button></li><li>基：线性无关 + 张成空间<button class="cite" data-src="2">2</button></li><li>判定：矩阵秩 = 向量个数<button class="cite" data-src="3">3</button></li></ul><b>常见误区</b><ul><li>两两不共线 ≠ 整组线性无关</li></ul></div>`,
+  quiz:()=>`<h3>✅ 测验（3 题）</h3><div class="hint">提交后进入正式练习记录，计入进度</div><div class="q"><div>1. R³ 中 4 个向量一定线性相关吗？</div><label><input type="radio" name="q1">一定</label><label><input type="radio" name="q1">不一定</label></div><div class="q"><div>2. 下面哪组是 R² 的一组基？</div><label><input type="radio" name="q2">(1,0),(2,0)</label><label><input type="radio" name="q2">(1,1),(1,−1)</label></div><button class="pill tonal" style="align-self:flex-start">提交测验</button>`,
+  brief:()=>`<h3>📰 简报：所选来源一页读懂</h3><div class="hint">4 个来源 · 约 1 分钟阅读</div><div>讲义给出形式定义<button class="cite" data-src="1">1</button>，维基补充了"基"的唯一表示性质<button class="cite" data-src="2">2</button>，MIT 讲义用"零组合"直观解释<button class="cite" data-src="4">3</button>，你的笔记记录了秩判定法<button class="cite" data-src="3">4</button>。<br><br><b>来源之间的差异：</b>维基页面只读取到部分正文，涉及"维数"的部分未覆盖。</div>`,
+  note:()=>`<h3>📝 新笔记</h3><input class="field" placeholder="标题" value="线性无关的三种判定"><textarea class="note-edit" placeholder="写下你的理解…">1. 定义法：解齐次方程组
+2. 秩：秩 = 向量个数
+3. 行列式（方阵时）：≠ 0</textarea><div style="display:flex;gap:8px"><button class="pill primary">保存</button><button class="pill outline">转为来源</button></div>`,
+  guide0:()=>views.guide(), note0:()=>views.note()
+};
+function openView(k){const v=$('#studioView');v.innerHTML='<button class="pill outline back" id="back">← 返回 Studio</button>'+views[k]();v.classList.remove('hidden');$('#studioHome').classList.add('hidden');$('#back').onclick=()=>{v.classList.add('hidden');$('#studioHome').classList.remove('hidden')}}
+$$('[data-gen]').forEach(t=>t.onclick=()=>{
+  const k=t.dataset.gen; if(k==='note'){openView('note');return}
+  const names={guide:['📘','学习指南：线性无关与基','#e8f0fe'],quiz:['✅','测验：线性无关（3 题）','#e6f4ea'],brief:['📰','简报：所选来源一页读懂','#fef7e0']}[k];
+  const b=document.createElement('button');b.className='out';b.innerHTML=`<span class="ty" style="background:${names[2]}">${names[0]}</span><span class="t"><div>${names[1]}</div><small>正在生成…</small></span>`;
+  $('#outs').prepend(b);
+  setTimeout(()=>{b.querySelector('small').textContent='4 个来源 · 刚刚';b.onclick=()=>openView(k)},1200);
+});
+$$('[data-view]').forEach(b=>b.onclick=()=>openView(b.dataset.view));
+
+// 手机标签
+function tab(id){$$('.nb .panel').forEach(p=>p.classList.toggle('active',p.id===id));$$('.mtabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===id))}
+$$('.mtabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
+</script>
+</body>
+</html>

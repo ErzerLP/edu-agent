@@ -1,3 +1,4 @@
+import { setNotebookTheme, openNavigation, navigateFromMenu } from './notebook-fixture'
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
@@ -204,7 +205,7 @@ test('正式答案遵守活动帮助限制并保留草稿，明确选择后进�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await page.getByRole('button', { name: '开始当前活动' }).click()
   const answer = page.getByLabel('我的正式答案')
@@ -339,7 +340,7 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/goals/${fixture.goal.goal_id}`)
   await page
     .getByRole('region', { name: '教学会话', exact: true })
@@ -360,21 +361,22 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
   await expect(page.getByRole('heading', { name: '学习内容 · 第 1 版' })).toBeVisible()
   await page.getByRole('link', { name: '← 返回教学会话' }).click()
   await expect(input).toHaveValue('还没提交的草稿')
-  await page.getByRole('button', { name: '切换深色主题' }).click()
+  await setNotebookTheme(page, 'dark')
   await expect(input).toHaveValue('还没提交的草稿')
-  await page.getByRole('button', { name: '切换浅色主题' }).click()
+  await setNotebookTheme(page, 'light')
   // 等分资料的检索顺序取决于版本 ID，应按活动冻结的原文定位引用。
   const sourceIndex = before.work_item.activity.knowledge_references.findIndex(
     (reference: { slice: string }) => reference.slice.includes('偶数可以被 2 整除'),
   )
   expect(sourceIndex, '活动必须冻结包含偶数定义的原资料引用').toBeGreaterThanOrEqual(0)
   const source = page.getByRole('button', { name: `原资料依据 ${sourceIndex + 1}`, exact: true })
+  await page.getByText('课堂冻结资料与知识', { exact: true }).click()
   await source.click()
   await expect(page.getByRole('dialog', { name: '原资料依据' })).toContainText('偶数可以被 2 整除')
   await page.getByRole('button', { name: '关闭来源' }).click()
   await expect(source).toBeFocused()
   for (const theme of ['light', 'dark']) {
-    if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
+    if (theme === 'dark') await setNotebookTheme(page, 'dark')
     for (const width of [390, 768, 1280, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
       const viewport = `${theme} / ${width}px`
@@ -387,7 +389,6 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
         await code.evaluate((element) => element.scrollWidth > element.clientWidth),
         `${viewport}：长代码仍应在代码块内滚动`,
       ).toBe(true)
-      if (width < 768) await page.getByRole('button', { name: '导师', exact: true }).click()
       // 包裹式标签的文本还包含选项；按控件角色与精确可访问名称定位。
       const mode = page.getByRole('combobox', { name: '调整模式', exact: true })
       await expect(mode).toBeVisible()
@@ -402,7 +403,6 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
         await page.evaluate(() => document.documentElement.scrollWidth),
         `${viewport}：导师栏显示时整页不应横向溢出`,
       ).toBeLessThanOrEqual(width)
-      if (width < 768) await page.getByRole('button', { name: '学习', exact: true }).click()
       const audit = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
         .analyze()
@@ -414,10 +414,12 @@ test('旧会话真实阅读、版本、讨论、丢响应作答、反馈及续�
     }
   }
   await page.setViewportSize({ width: 1440, height: 1000 })
-  const widthSlider = page.getByLabel('知识栏宽度')
-  await widthSlider.focus()
-  await page.keyboard.press('ArrowRight')
-  await expect(widthSlider).toHaveValue('273')
+  const sourceToggle = page.getByRole('button', { name: '收起来源', exact: true })
+  await sourceToggle.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('button', { name: '展开来源', exact: true })).toHaveAttribute('aria-expanded', 'false')
+  await page.keyboard.press('Enter')
+  await expect(sourceToggle).toHaveAttribute('aria-expanded', 'true')
   const second = await context.newPage()
   await second.goto(page.url())
   await expect(second.getByLabel('我的正式答案')).toHaveValue('')
@@ -481,7 +483,7 @@ test('评估详情保留原版本、权限隔离与丢响应历史作废', async
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await page.getByRole('button', { name: '开始当前活动' }).click()
   await page.getByLabel('我的正式答案').fill('A')
@@ -547,7 +549,7 @@ test('评估详情保留原版本、权限隔离与丢响应历史作废', async
   await readPage.goto('/app/')
   await readPage.getByLabel('配对码', { exact: true }).fill(code())
   await readPage.getByRole('button', { name: '配对并进入' }).click()
-  await expect(readPage.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(readPage.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await readPage.goto(`/app/spaces/${space}/feedback/${attempt}`)
   await expect(readPage.getByText('当前设备只有查看能力', { exact: false })).toBeVisible()
   await expect(readPage.getByRole('button', { name: '检查处置内容' })).toHaveCount(0)
@@ -594,7 +596,7 @@ for (const condition of ['正文不可用', '正文协议不支持', '正文读�
     await page.goto('/app/')
     await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
     await page.getByRole('button', { name: '配对并进入' }).click()
-    await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
     if (condition === '正文读取失败') {
       await page.route(`**/v1/tutoring/sessions/${fixture.id}/content`, (route) =>
         route.fulfill({
@@ -631,7 +633,7 @@ test('开放评估明确不确定性，复核与覆盖保留原建议及追加�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await page.getByRole('button', { name: '开始当前活动' }).click()
   await page.getByLabel('我的正式答案').fill('2 可以被 2 整除，所以 2 是偶数。')
@@ -683,7 +685,7 @@ test('真实继承提案明确映射、批准重放及拒绝', async ({ page, re
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code('assessment'))
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await page.getByRole('button', { name: '开始当前活动' }).click()
   await page.getByLabel('我的正式答案').fill('A')
@@ -785,7 +787,7 @@ test('内容草稿、未知交互、来源安全与指定版本', async ({ page,
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await expect(page.getByRole('link', { name: '内容与版本历史' })).toBeVisible()
   const view = await fixture.get()
@@ -917,7 +919,7 @@ test('切区后旧答案迟到响应不修改新会话草稿', async ({ page, re
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${first.id}`)
   const answer = page.getByRole('textbox', { name: '我的正式答案' })
   await expect(answer).toBeEnabled()
@@ -944,9 +946,10 @@ test('切区后旧答案迟到响应不修改新会话草稿', async ({ page, re
   })
   await page.getByRole('button', { name: '提交正式答案' }).click()
   await committed
+  await openNavigation(page)
   await page.getByText('切换学习区', { exact: true }).click()
   await page.getByRole('link', { name: otherSpace.name, exact: true }).click()
-  await page.locator(`a[href="/app/spaces/${otherSpace.id}/goals/${second.goal.goal_id}"]`).click()
+  await page.getByRole('button', { name: second.goal.management.details.name, exact: true }).click()
   await page
     .getByRole('region', { name: '教学会话', exact: true })
     .getByRole('link')
@@ -971,7 +974,7 @@ test('教学变更显示具体差异、排队、立即切换与原题草稿焦�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await expect(page.getByText('内容第 1 版已保存', { exact: false })).toBeVisible()
   await page.getByRole('button', { name: '开始当前活动' }).click()
@@ -1071,7 +1074,7 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code('settings'))
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   const settingsIdentity = await (await page.request.get('/v1/web/session')).json()
   const settingsHeaders = {
     Origin: origin,
@@ -1105,7 +1108,7 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code())
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await page.goto(`/app/spaces/${space}/learn/${fixture.id}`)
   await page.getByRole('button', { name: '开始当前活动' }).click()
   const answer = page.getByLabel('我的正式答案')
@@ -1128,7 +1131,7 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await expect(page.getByRole('heading', { name: '学习内容 · 第 2 版' })).toBeVisible()
   await expect(page.getByLabel('本版变化')).toContainText('请用苹果说明这一段')
   const contentURL = page.url()
-  await page.getByRole('link', { name: '任务中心', exact: true }).click()
+  await navigateFromMenu(page, '任务中心')
   await page.getByRole('combobox', { name: '任务类型', exact: true }).selectOption('content_edit')
   await page.getByRole('combobox', { name: '运行状态', exact: true }).selectOption('succeeded')
   await page.getByRole('link', { name: '查看原运行', exact: true }).click()
@@ -1233,7 +1236,7 @@ test('选段模型加工、答案保留、Studio、来源、固定与补偿版�
   await entry.getByRole('link').first().click()
   await expect(page.getByRole('heading', { name: '学习内容 · 第 2 版' })).toBeVisible()
   for (const theme of ['light', 'dark']) {
-    if (theme === 'dark') await page.getByRole('button', { name: '切换深色主题' }).click()
+    if (theme === 'dark') await setNotebookTheme(page, 'dark')
     for (const width of [390, 768, 1280, 1440]) {
       await page.setViewportSize({ width, height: 1000 })
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(

@@ -12,7 +12,7 @@ async function pair(page: Page, profile = 'memory') {
   const paired = page.waitForResponse(response => response.url().endsWith('/v1/web/pairings') && response.request().method() === 'POST')
   await page.getByRole('button', { name: '配对并进入' }).click()
   expect((await paired).status()).toBe(201)
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   // 首页标题早于后台查询完成；WebKit 会把硬导航取消的 fetch 上报为 access control pageerror。
   // 首页没有活动订阅，等待有限请求稳定后再离开，保留后续全部 pageerror 断言。
   await page.waitForLoadState('networkidle')
@@ -239,6 +239,8 @@ test('导师申请必须在内嵌候选面板批准才可取得回执', async ({
   await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
   await context.clearCookies()
   await pair(page)
+  // 前一个隐私清除场景会擦除区名；按原区 ID 进入，不能依赖旧的默认名称。
+  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001')
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(`记忆导师 ${randomUUID()}`)
   await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
   await page.getByRole('link', { name: '查看目标', exact: true }).click()

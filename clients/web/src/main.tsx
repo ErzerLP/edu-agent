@@ -8,14 +8,17 @@ import {
   useParams,
   useLocation,
   Outlet,
+  Link,
 } from '@tanstack/react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionProvider } from './lib/session'
 import { WorkspaceShell } from './components/workspace-shell'
-import { HomePage, SpacePage, GoalPage, SettingsPage } from './pages'
+import { SpacePage, GoalPage, SettingsPage } from './pages'
+import { NotebookHomePage } from './notebook-home-page'
+import { NotebookWorkspacePage, notebookSearchSchema } from './notebook-workspace-page'
 import './styles.css'
 import { ResearchPage } from './research-page'
-import { TeachingPage, ContentPage } from './teaching-page'
+import { ContentPage } from './teaching-page'
 import { StudioPage } from './studio-page'
 import { TasksPage, RunPage } from './tasks-page'
 import { ImportPage } from './import-page'
@@ -50,19 +53,49 @@ const root = createRootRoute({
     </section>
   ),
 })
-const home = createRoute({ getParentRoute: () => root, path: '/', component: HomePage })
-const offline = createRoute({ getParentRoute: () => root, path: '/offline', component: OfflinePage })
+const home = createRoute({ getParentRoute: () => root, path: '/', component: NotebookHomePage })
+const offline = createRoute({
+  getParentRoute: () => root,
+  path: '/offline',
+  component: OfflinePage,
+})
 const progress = createRoute({
-  getParentRoute: () => root, path: '/progress',
+  getParentRoute: () => root,
+  path: '/progress',
   validateSearch: (search: Record<string, unknown>) => progressSearch.parse(search),
   component: () => <ProgressPage search={progress.useSearch()} />,
-  errorComponent: () => <section><h1>进度筛选无效</h1><p>学习区、目标或截止时间格式不正确，未扩大查询范围。</p><a href="/app/progress">重新选择筛选</a></section>,
+  errorComponent: () => (
+    <section>
+      <h1>进度筛选无效</h1>
+      <p>学习区、目标或截止时间格式不正确，未扩大查询范围。</p>
+      <a href="/app/progress">重新选择筛选</a>
+    </section>
+  ),
 })
 const space = createRoute({
   getParentRoute: () => root,
   path: '/spaces/$spaceId',
+  validateSearch: (search: Record<string, unknown>) => notebookSearchSchema.parse(search),
+  errorComponent: NotebookAddressError,
   component: () => {
     const { spaceId } = useParams({ from: '/spaces/$spaceId' })
+    return <NotebookWorkspacePage key={spaceId} spaceId={spaceId} search={space.useSearch()} />
+  },
+})
+function NotebookAddressError() {
+  return (
+    <section>
+      <h1>学习区地址无效</h1>
+      <p>目标或面板参数格式不正确，未扩大查询范围。</p>
+      <Link to="/">返回全部学习区</Link>
+    </section>
+  )
+}
+const spaceManage = createRoute({
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/manage',
+  component: () => {
+    const { spaceId } = spaceManage.useParams()
     return <SpacePage key={spaceId} spaceId={spaceId} />
   },
 })
@@ -101,9 +134,18 @@ const research = createRoute({
 const teaching = createRoute({
   getParentRoute: () => root,
   path: '/spaces/$spaceId/learn/$sessionId',
+  validateSearch: (search: Record<string, unknown>) => notebookSearchSchema.parse(search),
+  errorComponent: NotebookAddressError,
   component: () => {
     const { spaceId, sessionId } = useParams({ from: '/spaces/$spaceId/learn/$sessionId' })
-    return <TeachingPage key={`${spaceId}:${sessionId}`} spaceId={spaceId} sessionId={sessionId} />
+    return (
+      <NotebookWorkspacePage
+        key={`${spaceId}:${sessionId}`}
+        spaceId={spaceId}
+        sessionId={sessionId}
+        search={teaching.useSearch()}
+      />
+    )
   },
 })
 const content = createRoute({
@@ -204,50 +246,116 @@ const knowledge = createRoute({
   },
 })
 const feedbackList = createRoute({
-  getParentRoute: () => root, path: '/spaces/$spaceId/feedback',
-  component: () => { const { spaceId } = feedbackList.useParams(); return <FeedbackListPage key={spaceId} spaceId={spaceId} /> },
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/feedback',
+  component: () => {
+    const { spaceId } = feedbackList.useParams()
+    return <FeedbackListPage key={spaceId} spaceId={spaceId} />
+  },
 })
-const notesyncSearch = (search: Record<string, unknown>): { collection: string; operation?: string } => ({
+const notesyncSearch = (
+  search: Record<string, unknown>,
+): { collection: string; operation?: string } => ({
   collection: typeof search.collection === 'string' ? search.collection : notesyncCollection,
   operation: typeof search.operation === 'string' ? search.operation : undefined,
 })
 const notesync = createRoute({
-  getParentRoute: () => root, path: '/spaces/$spaceId/notesync', validateSearch: notesyncSearch,
-  component: () => { const { spaceId } = notesync.useParams(); const { collection } = notesync.useSearch(); return <NotesyncPage key={`${spaceId}:${collection}`} spaceId={spaceId} collectionId={collection} /> },
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/notesync',
+  validateSearch: notesyncSearch,
+  component: () => {
+    const { spaceId } = notesync.useParams()
+    const { collection } = notesync.useSearch()
+    return (
+      <NotesyncPage key={`${spaceId}:${collection}`} spaceId={spaceId} collectionId={collection} />
+    )
+  },
 })
 const notesyncReview = createRoute({
-  getParentRoute: () => root, path: '/spaces/$spaceId/notesync/$reviewId', validateSearch: notesyncSearch,
-  component: () => { const { spaceId, reviewId } = notesyncReview.useParams(); const { collection, operation } = notesyncReview.useSearch(); return <NotesyncReviewPage key={`${spaceId}:${collection}:${reviewId}`} spaceId={spaceId} collectionId={collection} reviewId={reviewId} operationId={operation} /> },
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/notesync/$reviewId',
+  validateSearch: notesyncSearch,
+  component: () => {
+    const { spaceId, reviewId } = notesyncReview.useParams()
+    const { collection, operation } = notesyncReview.useSearch()
+    return (
+      <NotesyncReviewPage
+        key={`${spaceId}:${collection}:${reviewId}`}
+        spaceId={spaceId}
+        collectionId={collection}
+        reviewId={reviewId}
+        operationId={operation}
+      />
+    )
+  },
 })
 const feedback = createRoute({
-  getParentRoute: () => root, path: '/spaces/$spaceId/feedback/$attemptId',
-  component: () => { const { spaceId, attemptId } = feedback.useParams(); return <FeedbackPage key={`${spaceId}:${attemptId}`} spaceId={spaceId} attemptId={attemptId} /> },
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/feedback/$attemptId',
+  component: () => {
+    const { spaceId, attemptId } = feedback.useParams()
+    return <FeedbackPage key={`${spaceId}:${attemptId}`} spaceId={spaceId} attemptId={attemptId} />
+  },
 })
 const chats = createRoute({
-  getParentRoute: () => root, path: '/spaces/$spaceId/chat',
-  component: () => { const { spaceId } = chats.useParams(); return <TutorHistory key={spaceId} spaceId={spaceId} /> },
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/chat',
+  component: () => {
+    const { spaceId } = chats.useParams()
+    return <TutorHistory key={spaceId} spaceId={spaceId} />
+  },
 })
 const chat = createRoute({
-  getParentRoute: () => root, path: '/spaces/$spaceId/chat/$conversationId',
-  component: () => { const { spaceId, conversationId } = chat.useParams(); return <TutorHistory key={`${spaceId}:${conversationId}`} spaceId={spaceId} conversationId={conversationId} /> },
+  getParentRoute: () => root,
+  path: '/spaces/$spaceId/chat/$conversationId',
+  component: () => {
+    const { spaceId, conversationId } = chat.useParams()
+    return (
+      <TutorHistory
+        key={`${spaceId}:${conversationId}`}
+        spaceId={spaceId}
+        conversationId={conversationId}
+      />
+    )
+  },
 })
 const memories = createRoute({
-  getParentRoute: () => root, path: '/memory', validateSearch: (search: Record<string, unknown>) => memorySearch.parse(search),
-  component: () => { const { candidate, record } = memories.useSearch(); return <MemoryPage candidateId={candidate} memoryId={record} /> },
-  errorComponent: () => <p>记忆地址无效。<a href="/app/memory">返回记忆列表</a></p>,
+  getParentRoute: () => root,
+  path: '/memory',
+  validateSearch: (search: Record<string, unknown>) => memorySearch.parse(search),
+  component: () => {
+    const { candidate, record } = memories.useSearch()
+    return <MemoryPage candidateId={candidate} memoryId={record} />
+  },
+  errorComponent: () => (
+    <p>
+      记忆地址无效。<a href="/app/memory">返回记忆列表</a>
+    </p>
+  ),
 })
 const data = createRoute({
-  getParentRoute: () => root, path: '/settings/data', validateSearch: (search: Record<string, unknown>) => dataSearch.parse(search),
+  getParentRoute: () => root,
+  path: '/settings/data',
+  validateSearch: (search: Record<string, unknown>) => dataSearch.parse(search),
   component: () => <DataPage search={data.useSearch()} />,
-  errorComponent: () => <p>回执地址无效。<a href="/app/settings/data">返回数据页</a></p>,
+  errorComponent: () => (
+    <p>
+      回执地址无效。<a href="/app/settings/data">返回数据页</a>
+    </p>
+  ),
 })
-const devices = createRoute({ getParentRoute: () => root, path: '/settings/devices', component: DevicesPage })
+const devices = createRoute({
+  getParentRoute: () => root,
+  path: '/settings/devices',
+  component: DevicesPage,
+})
 const router = createRouter({
   routeTree: root.addChildren([
     home,
     offline,
     progress,
     space,
+    spaceManage,
     goal,
     research,
     teaching,

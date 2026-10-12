@@ -1,3 +1,4 @@
+import { navigateFromMenu } from './notebook-fixture'
 import { test, expect } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -17,7 +18,7 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(code)
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await page.getByRole('link', { name: '设置与能力' }).click()
+  await navigateFromMenu(page, '设置与能力')
   const model = page.getByRole('region', { name: 'Web 导师模型', exact: true })
   await model.getByRole('button', { name: '配置或替换凭据' }).click()
   await model.getByLabel('端点', { exact: true }).fill('http://127.0.0.1:32930/v1')
@@ -26,7 +27,7 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await model.getByLabel('启用Web 导师模型').check()
   await model.getByRole('button', { name: '保存Web 导师模型配置' }).click()
   await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
-  await page.goto('/app/')
+  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001')
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(`浏览器导师目标 ${randomUUID().slice(0, 8)}`)
   await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
   await page.getByRole('link', { name: '查看目标', exact: true }).click()
@@ -44,7 +45,7 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await expect(panel.getByText('先从哪个方向理解？')).toBeVisible()
   await page.reload()
   await expect(panel.getByText('先从哪个方向理解？')).toBeVisible()
-  await page.getByRole('link', { name: '任务中心', exact: true }).click()
+  await navigateFromMenu(page, '任务中心')
   await page.getByRole('combobox', { name: '任务类型', exact: true }).selectOption('mentor')
   await page.getByRole('combobox', { name: '运行状态', exact: true }).selectOption('waiting_input')
   await page.getByRole('link', { name: '查看原运行', exact: true }).click()

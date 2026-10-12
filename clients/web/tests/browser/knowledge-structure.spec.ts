@@ -3,6 +3,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { randomUUID } from 'node:crypto'
 import type { ConceptContent, StructureEdit, StructureProposal } from '../../src/api/structure'
 import { offlineFixture, serverCommand } from './offline-fixture'
+import { navigateFromMenu } from './notebook-fixture'
 
 const space = '00000000-0000-4000-8000-000000000001'
 async function api(page: Page, path: string, body?: unknown, headers = {}) {
@@ -15,7 +16,7 @@ async function pair(page: Page, profile = 'references') {
   await page.goto('/app/')
   await page.getByLabel('配对码', { exact: true }).fill(serverCommand(['pairing-code', 'create', '--profile', profile]))
   await page.getByRole('button', { name: '配对并进入' }).click()
-  await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
 }
 async function applyFixture(page: Page, edits: StructureEdit[]) {
   const structure = await api(page, '/v1/knowledge/structure')
@@ -155,6 +156,7 @@ test('知识维护经教学变更排队，原题和未提交草稿在页面往�
   expect(before.base.activity_id).toBe(original.work_item.activity.activity_id)
 
   // 同一应用内往返，保留真实标签页内存草稿；不以重新填入答案代替恢复。
+  await page.getByText('课堂冻结资料与知识', { exact: true }).click()
   await page.getByRole('link', { name: '查看知识、冲突与维护' }).click()
   const panel = page.getByRole('region', { name: '动态知识结构', exact: true })
   await panel.getByLabel(`选择「${title}」${conceptID.slice(0, 8)}`, { exact: true }).check()
@@ -189,6 +191,7 @@ test('知识维护经教学变更排队，原题和未提交草稿在页面往�
   await expect.poll(() => blocks.allTextContents()).toEqual(originalBody)
   expect((await api(page, contextPath, undefined, headers)).base).toEqual(before.base)
   expect((await fixture.get()).work_item.activity).toEqual(original.work_item.activity)
+  await page.getByText('课堂冻结资料与知识', { exact: true }).click()
   await page.getByRole('link', { name: '查看知识、冲突与维护' }).click()
   await page.getByRole('link', { name: '返回原课堂', exact: true }).click()
   await expect(answer).toHaveValue(draft)
@@ -267,8 +270,8 @@ test('隐私清除使已打开的知识图、列表和详情失效，重新配�
     const old = await page.request.get(`/v1/knowledge/structure/concepts/${conceptID}?revision_id=${oldRevision}`, { headers: { 'X-Learning-Space-ID': space } })
     expect(old.status()).toBe(404)
     expect(await old.text()).not.toContain(description)
-    await page.getByRole('link', { name: '学习目标', exact: true }).click()
-    await expect(page.getByRole('heading', { name: '今天想学会什么？' })).toBeVisible()
+    await navigateFromMenu(page, '全部学习区')
+    await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
     await page.goBack()
     await expect(page).toHaveURL(new RegExp(`${knowledgeURL}$`))
     await assertEmpty()

@@ -22,12 +22,10 @@ import { TutorHistory } from './components/tutor-history'
 import { ChangePanel } from './components/change-panel'
 import { SessionPicker } from './teaching-page'
 import { Confirm, EmptyState, ErrorState, Pagination } from './components/common'
-import { HomeProgress, ProgressPanel } from './progress-page'
+import { ProgressPanel } from './progress-page'
 import { progressSearch } from './api/progress'
 
-const defaultSpace = '00000000-0000-4000-8000-000000000001'
-
-function usePage() {
+export function usePage() {
   const [cursors, setCursors] = useState([''])
   return {
     cursor: cursors.at(-1)!,
@@ -38,7 +36,7 @@ function usePage() {
   }
 }
 
-function SpaceEditor({ space }: { space?: Space }) {
+export function SpaceEditor({ space, onCreated }: { space?: Space; onCreated?: (space: Space) => void | Promise<void> }) {
   const { session, prefix, drafts } = useIdentity()
   const query = useQueryClient()
   const key = JSON.stringify([...prefix, space?.id ?? 'new-space', 'edit'])
@@ -97,6 +95,7 @@ function SpaceEditor({ space }: { space?: Space }) {
         setMessage(space ? '学习区已更新。' : '学习区已创建，可从列表进入。')
       }
       void query.invalidateQueries({ queryKey: prefix })
+      if (!space && mounted.current) await onCreated?.(result)
     } catch (e) {
       if (mounted.current) setError(e)
     } finally {
@@ -174,115 +173,6 @@ function SpaceEditor({ space }: { space?: Space }) {
   )
 }
 
-export function HomePage() {
-  const { session, prefix } = useIdentity()
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<'active' | 'archived' | 'all'>('active')
-  const pages = usePage()
-  const spaces = useQuery({
-    queryKey: [...prefix, 'spaces', search, status, pages.cursor],
-    queryFn: ({ signal }) =>
-      unwrap(
-        learningClient(session).GET('/v1/learning-spaces', {
-          params: {
-            query: {
-              search,
-              status: status === 'all' ? undefined : status,
-              cursor: pages.cursor,
-              limit: 10,
-            },
-          },
-          signal,
-        }),
-        pageOf(spaceSchema),
-      ),
-    enabled: session.capabilities.spaces,
-  })
-  return (
-    <>
-      <HomeProgress />
-      <section className="intro">
-        <span className="eyebrow">你的学习，从一个目标开始</span>
-        <h1>今天想学会什么？</h1>
-        <p>写下想做到的事。慢慢细化，也可以先留住这个念头。</p>
-      </section>
-      {session.capabilities.goals ? (
-        <>
-          <p className="hint">首页新目标保存到默认学习区；也可以进入其他学习区再创建。</p>
-          <GoalComposer spaceId={defaultSpace} />
-        </>
-      ) : (
-        <EmptyState>当前服务尚不支持目标管理。</EmptyState>
-      )}
-      <section className="section">
-        <div className="section-heading">
-          <div>
-            <h2>你的学习区</h2>
-            <p className="hint">按兴趣组织目标，在不同方向之间自由切换。</p>
-          </div>
-          <Link to="/spaces/$spaceId" params={{ spaceId: defaultSpace }}>
-            进入默认学习区 →
-          </Link>
-        </div>
-        <div className="filters">
-          <label>
-            搜索学习区
-            <input
-              type="search"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value)
-                pages.reset()
-              }}
-            />
-          </label>
-          <label>
-            学习区状态
-            <select
-              value={status}
-              onChange={(e) => {
-                setStatus(e.target.value as typeof status)
-                pages.reset()
-              }}
-            >
-              <option value="active">进行中</option>
-              <option value="archived">已归档</option>
-              <option value="all">全部</option>
-            </select>
-          </label>
-        </div>
-        {spaces.isPending && session.capabilities.spaces && <p role="status">正在加载学习区…</p>}
-        {spaces.error && <ErrorState error={spaces.error} retry={() => void spaces.refetch()} />}
-        {!session.capabilities.spaces && <EmptyState>当前服务尚不支持学习区。</EmptyState>}
-        {spaces.data?.items.length === 0 && (
-          <EmptyState>没有匹配的学习区，试试其他搜索条件或新建一个。</EmptyState>
-        )}
-        <div className="space-grid">
-          {spaces.data?.items.map((space) => (
-            <article className="panel space-card" key={space.id}>
-              <span className="badge">{space.status === 'archived' ? '已归档' : '学习区'}</span>
-              <h3>
-                <Link to="/spaces/$spaceId" params={{ spaceId: space.id }}>
-                  {space.name}
-                </Link>
-              </h3>
-              <p>{space.description || '为一个想探索的方向，留一片空间。'}</p>
-            </article>
-          ))}
-        </div>
-        {spaces.data && (
-          <Pagination
-            page={pages.page}
-            previous={pages.previous}
-            next={spaces.data.next_cursor ? () => pages.next(spaces.data!.next_cursor!) : undefined}
-          />
-        )}
-        {session.capabilities.spaces && <SpaceEditor />}
-      </section>
-    </>
-  )
-}
-
 export function SpacePage({ spaceId }: { spaceId: string }) {
   const { session, prefix } = useIdentity()
   const [search, setSearch] = useState('')
@@ -315,7 +205,7 @@ export function SpacePage({ spaceId }: { spaceId: string }) {
   if (!space.data) return <p role="status">正在读取学习区…</p>
   return (
     <>
-      <Link to="/">← 全部学习区</Link>
+      <Link to="/spaces/$spaceId" params={{ spaceId }}>← 进入课堂工作区</Link>
       <section className="intro">
         <span className="eyebrow">学习区</span>
         <h1>{space.data.name}</h1>
@@ -583,13 +473,14 @@ export function GoalPage({ spaceId, goalId }: { spaceId: string; goalId: string 
     return <ErrorState error={new ApiError(404, 'wrong_space')} />
   return (
     <>
-      <Link to="/spaces/$spaceId" params={{ spaceId }}>
+      <Link to="/spaces/$spaceId/manage" params={{ spaceId }}>
         ← 返回{space.data.name}
       </Link>
       <section className="intro">
         <span className="eyebrow">目标 · 修订 {goal.data.revision}</span>
         <h1>{goal.data.management.details.name}</h1>
       </section>
+      <p><Link to="/spaces/$spaceId" params={{ spaceId }} search={{ goal: goalId }}>进入课堂工作区 →</Link></p>
       <GoalComposer
         spaceId={spaceId}
         goal={goal.data}

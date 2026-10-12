@@ -92,6 +92,8 @@ make cli-build
 
 `make cli-release` writes binaries and `SHA256SUMS` under `clients/cli-go/dist/`. The release directory contains no configuration, credentials, or learning content.
 
+升级服务端时必须同时升级 CLI；服务端与 CLI 同仓库同版本发布，不提供服务端对旧 CLI 的兼容保证。旧 CLI 的 `progress` 会严格拒绝新增字段 `data_cleared` 并退出，升级要求与演练证据见[用户决定（2026-10-12）](../../docs/development/issue-37-upgrade-backup.md#用户决定2026-10-12)。
+
 ## 交互式中文 TUI
 
 在支持全屏控制的交互终端中直接运行 `edu-agent`，即可打开中文主控制台。方向键或 `j/k` 移动，Enter 选择，界面显示的字母可直接打开 AI 学习助手、结构化学习、知识导入、目标、进度、复习、配对和设置等常用流程。

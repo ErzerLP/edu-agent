@@ -6,6 +6,34 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/studio/generations:
+    post:
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      operationId: generateStudioArtifact
+      summary: Generate a guide or brief from an immutable source selection
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioGenerate" } } }
+      responses:
+        "202": { description: Accepted encrypted run; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}/sources/{citationID}:
+    get:
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      operationId: getStudioCitation
+      summary: Verify and locate a citation in a saved Studio version
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { name: artifactID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: citationID, in: path, required: true, schema: { type: string } }
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Verified historical fragment; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/MentorCitation" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/studio/artifacts:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -1214,7 +1242,7 @@ paths:
       x-required-scope: learning:read
       parameters:
         - $ref: "#/components/parameters/MentorSpaceID"
-        - { name: task_kind, in: query, schema: { type: string, enum: [mentor, research, start_learning, content_edit] } }
+        - { name: task_kind, in: query, schema: { type: string, enum: [mentor, research, start_learning, content_edit, studio] } }
         - { name: status, in: query, schema: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, succeeded, partial, failed, cancelling, cancelled] } }
         - { name: cursor, in: query, schema: { type: string, format: uuid } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
@@ -4669,6 +4697,56 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    StudioGenerate:
+      type: object
+      additionalProperties: false
+      required: [operation_id, privacy_generation, kind, goal_id, goal_version, artifact_id, expected_version, source_selection, request_budget, token_budget]
+      properties:
+        operation_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [guide, brief] }
+        goal_id: { type: [string, "null"], format: uuid }
+        goal_version: { type: integer, minimum: 0, description: Zero when goal_id is null }
+        artifact_id: { type: [string, "null"], format: uuid }
+        expected_version: { type: integer, minimum: 0 }
+        source_selection: { $ref: "#/components/schemas/SourceSelection" }
+        request_budget: { type: integer, minimum: 1 }
+        token_budget: { type: integer, minimum: 1 }
+    StudioState:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/StudioGenerate" }
+        result:
+          type: object
+          required: [artifact_id, version]
+          properties:
+            artifact_id: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+    StudioClaim:
+      type: object
+      additionalProperties: false
+      required: [text, citations]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 1500 }
+        citations: { type: array, minItems: 1, maxItems: 10, items: { type: string } }
+    StudioGuide:
+      type: object
+      additionalProperties: false
+      required: [key_points, terms, learning_order, misconceptions]
+      properties:
+        key_points: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+        terms: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+        learning_order: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+        misconceptions: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+    StudioBrief:
+      type: object
+      additionalProperties: false
+      required: [overview, differences, gaps]
+      properties:
+        overview: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+        differences: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+        gaps: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
     StudioSave:
       type: object
       additionalProperties: false
@@ -4692,6 +4770,9 @@ components:
         citations: { type: array, items: { $ref: "#/components/schemas/MentorCitation" } }
         model: { type: string }
         input_fingerprint: { type: string }
+        coverage: { type: string, enum: [complete, partial] }
+        guide: { $ref: "#/components/schemas/StudioGuide" }
+        brief: { $ref: "#/components/schemas/StudioBrief" }
     StudioRevision:
       type: object
       required: [artifact_id, learning_space_id, goal_id, kind, version, privacy_generation, actor_device_id, created_at, body]
@@ -4699,7 +4780,7 @@ components:
         artifact_id: { type: string, format: uuid }
         learning_space_id: { type: string, format: uuid }
         goal_id: { type: [string, "null"], format: uuid }
-        kind: { type: string, enum: [note] }
+        kind: { type: string, enum: [note, guide, brief] }
         version: { type: integer, minimum: 1 }
         privacy_generation: { type: integer, minimum: 1 }
         actor_device_id: { type: string, format: uuid }
@@ -4711,7 +4792,7 @@ components:
       properties:
         artifact_id: { type: string, format: uuid }
         goal_id: { type: [string, "null"], format: uuid }
-        kind: { type: string, enum: [note] }
+        kind: { type: string, enum: [note, guide, brief] }
         version: { type: integer, minimum: 1 }
         title: { type: string }
         updated_at: { type: string, format: date-time }
@@ -5757,11 +5838,12 @@ components:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
+        studio: { $ref: "#/components/schemas/StudioState" }
         source_manifest: { $ref: "#/components/schemas/SourceManifest" }
         citations: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MentorCitation" } }
         conversation_id: { type: string, format: uuid }
         teaching_session_id: { type: string, format: uuid }
-        kind: { type: string, enum: [mentor, research, start_learning, content_edit] }
+        kind: { type: string, enum: [mentor, research, start_learning, content_edit, studio] }
         content_edit: { $ref: "#/components/schemas/ContentEditState" }
         start_learning: { $ref: "#/components/schemas/StartLearningState" }
         research: { $ref: "#/components/schemas/ResearchState" }

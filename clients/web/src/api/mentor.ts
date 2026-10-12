@@ -5,13 +5,15 @@ import { researchStateSchema } from './research'
 import { startStateSchema } from './start'
 import { editStateSchema } from './content'
 import { mentorCitationSchema, sourceManifestSchema } from './source-selection'
+import { studioStateSchema } from './studio'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const mentorSnapshotSchema = z.object({
+  studio: studioStateSchema.optional(),
   source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional(),
   conversation_id: z.uuid().optional(),
   teaching_session_id: z.uuid().optional(),
-  kind: z.enum(['mentor', 'research', 'start_learning', 'content_edit']).optional(), research: researchStateSchema.optional(),
+  kind: z.enum(['mentor', 'research', 'start_learning', 'content_edit', 'studio']).optional(), research: researchStateSchema.optional(),
   content_edit: editStateSchema.optional(),
   start_learning: startStateSchema.optional(),
   run_id: z.uuid(), session_id: z.uuid(), space_id: z.uuid(), goal_id: z.uuid(),

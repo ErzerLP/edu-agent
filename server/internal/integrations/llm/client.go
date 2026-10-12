@@ -111,32 +111,34 @@ type Capabilities struct {
 }
 
 type Options struct {
-	BaseURL         *url.URL
-	WireAPI         WireAPI
-	Model           string
-	APIKey          string
-	ContextWindow   int
-	MinimumContext  int
-	Timeout         time.Duration
-	ProbeCacheTTL   time.Duration
-	HTTPClient      *http.Client
-	AllowNoKey      bool
-	MaxOutputTokens int
+	RequireCompletion bool
+	BaseURL           *url.URL
+	WireAPI           WireAPI
+	Model             string
+	APIKey            string
+	ContextWindow     int
+	MinimumContext    int
+	Timeout           time.Duration
+	ProbeCacheTTL     time.Duration
+	HTTPClient        *http.Client
+	AllowNoKey        bool
+	MaxOutputTokens   int
 }
 
 type Client struct {
-	endpoint        string
-	wireAPI         WireAPI
-	model           string
-	apiKey          string
-	contextWindow   int
-	minimumContext  int
-	httpClient      *http.Client
-	probeCacheTTL   time.Duration
-	probeMu         sync.Mutex
-	probeAt         time.Time
-	probeResult     Capabilities
-	maxOutputTokens int
+	requireCompletion bool
+	endpoint          string
+	wireAPI           WireAPI
+	model             string
+	apiKey            string
+	contextWindow     int
+	minimumContext    int
+	httpClient        *http.Client
+	probeCacheTTL     time.Duration
+	probeMu           sync.Mutex
+	probeAt           time.Time
+	probeResult       Capabilities
+	maxOutputTokens   int
 }
 
 func New(options Options) (*Client, error) {
@@ -179,7 +181,8 @@ func New(options Options) (*Client, error) {
 		options.ProbeCacheTTL = 15 * time.Minute
 	}
 	return &Client{
-		endpoint: base.String(), wireAPI: options.WireAPI, model: options.Model, apiKey: options.APIKey,
+		requireCompletion: options.RequireCompletion,
+		endpoint:          base.String(), wireAPI: options.WireAPI, model: options.Model, apiKey: options.APIKey,
 		contextWindow: options.ContextWindow, minimumContext: options.MinimumContext,
 		httpClient: &clone, probeCacheTTL: options.ProbeCacheTTL, maxOutputTokens: options.MaxOutputTokens,
 	}, nil
@@ -264,14 +267,33 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 	} else {
 		var envelope struct {
 			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
+				FinishReason string `json:"finish_reason"`
+				Message      struct {
+					Content   string            `json:"content"`
+					ToolCalls []json.RawMessage `json:"tool_calls"`
 				} `json:"message"`
 			} `json:"choices"`
+			Usage struct {
+				Input   int `json:"prompt_tokens"`
+				Output  int `json:"completion_tokens"`
+				Total   int `json:"total_tokens"`
+				Details struct {
+					Reasoning int `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details"`
+			} `json:"usage"`
 		}
 		if err := decoder.Decode(&envelope); err != nil || len(envelope.Choices) == 0 {
 			return ChatResult{}, &Error{Category: ErrorInvalidResponse, Cause: err}
 		}
+		if c.requireCompletion {
+			if envelope.Choices[0].FinishReason == "length" {
+				return ChatResult{}, &Error{Category: ErrorOutputBudgetExceeded}
+			}
+			if len(envelope.Choices) != 1 || envelope.Choices[0].FinishReason != "stop" || len(envelope.Choices[0].Message.ToolCalls) > 0 {
+				return ChatResult{}, &Error{Category: ErrorResponseNotCompleted}
+			}
+		}
+		usage = TokenUsage{InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, TotalTokens: envelope.Usage.Total, ReasoningTokens: envelope.Usage.Details.Reasoning}
 		content = []byte(envelope.Choices[0].Message.Content)
 	}
 	if !json.Valid(content) {

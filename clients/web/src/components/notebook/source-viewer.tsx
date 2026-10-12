@@ -300,24 +300,28 @@ function CatalogSourceContent({ spaceId, source }: { spaceId: string; source: So
 export function MentorCitationContent({
   spaceId,
   runId,
+  artifactId,
+  version,
   citationId,
 }: {
   spaceId: string
-  runId: string
+  runId?: string
+  artifactId?: string
+  version?: number
   citationId: string
 }) {
   const { session, prefix } = useIdentity()
   const fragmentView = useRef<HTMLElement>(null)
   const detail = useQuery({
-    queryKey: [...prefix, spaceId, runId, citationId, 'mentor-citation'],
+    queryKey: [...prefix, spaceId, runId, artifactId, version, citationId, 'mentor-citation'],
     gcTime: 0,
     retry: false,
     refetchInterval: 5000,
     queryFn: async ({ signal }) => {
       const value = await unwrap(
-        learningClient(session, spaceId).GET('/v1/learning/runs/{runID}/citations/{citationID}', {
+        artifactId ? learningClient(session, spaceId).GET('/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}', { params: { header: { 'X-Learning-Space-ID': spaceId }, path: { artifactID: artifactId, citationID: citationId }, query: { version: version! } }, signal }) : learningClient(session, spaceId).GET('/v1/learning/runs/{runID}/citations/{citationID}', {
           params: {
-            path: { runID: runId, citationID: citationId },
+            path: { runID: runId!, citationID: citationId },
             header: { 'X-Learning-Space-ID': spaceId },
           },
           signal,

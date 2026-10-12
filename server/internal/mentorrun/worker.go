@@ -10,6 +10,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore"
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -230,6 +231,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 		item.Status = "cancelled"
 		item.Reason = "context_changed"
 	}
+	if item.body.Studio != nil {
+		item.Reason = studioFailureCategory(cause)
+	}
 	if wasCancelling {
 		item.Status = "cancelled"
 		item.Reason = "user_stopped"
@@ -272,7 +276,39 @@ func logRunFailure(ctx context.Context, item row, cause error) {
 			category = "research_search_failed"
 		}
 	}
+	if item.Kind == "studio" {
+		category = studioFailureCategory(cause)
+	}
 	slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category)
+}
+
+func studioFailureCategory(cause error) string {
+	if errors.Is(cause, errCitation) {
+		return "invalid_source_citation"
+	}
+	var e *llm.Error
+	if errors.As(cause, &e) {
+		switch e.Category {
+		case llm.ErrorUnauthorized, llm.ErrorRateLimited, llm.ErrorUpstream, llm.ErrorTimeout, llm.ErrorUnavailable, llm.ErrorInvalidResponse, llm.ErrorSchemaMismatch, llm.ErrorIncompatible, llm.ErrorInvalidRequest, llm.ErrorOutputBudgetExceeded, llm.ErrorResponseNotCompleted:
+			return string(e.Category)
+		}
+	}
+	if errors.Is(cause, learningcontent.ErrConflict) {
+		return "studio_version_conflict"
+	}
+	if errors.Is(cause, learningcontent.ErrInvalid) {
+		return "invalid_source_citation"
+	}
+	if errors.Is(cause, ErrLimit) {
+		return "history_context_limit"
+	}
+	if errors.Is(cause, context.Canceled) {
+		return "cancelled"
+	}
+	if errors.Is(cause, ErrInactive) || errors.Is(cause, ErrForbidden) || errors.Is(cause, ErrLease) {
+		return "context_changed"
+	}
+	return "model_failed"
 }
 
 func (s *Service) RunOnce(ctx context.Context) (int, error) {
@@ -308,14 +344,16 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	}()
 	host := &executionHost{service: s, owned: *item, body: item.body, limits: limits, model: model}
 	host.model, _, _, err = s.settings.MentorClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: host, next: next} })
-	if host.body.ContentEdit != nil {
+	if host.body.Studio != nil {
+		err = host.generateStudio(execution)
+	} else if host.body.ContentEdit != nil {
 		err = host.editContent(execution)
 	} else if host.body.Research != nil {
 		err = host.runResearch(execution)
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil {
+	if err == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

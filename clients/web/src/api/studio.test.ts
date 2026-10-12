@@ -1,11 +1,34 @@
 import { afterAll, describe, expect, it, vi } from 'vitest'
 vi.hoisted(() => vi.stubGlobal('window', { location: { origin: 'http://localhost' } }))
 afterAll(() => vi.unstubAllGlobals())
-import { studioRevisionSchema, noteSourceItem, studioRequest, type NoteDraft } from './studio'
+import {
+  studioRevisionSchema,
+  studioGuideSchema,
+  studioBriefSchema,
+  noteSourceItem,
+  studioRequest,
+  type NoteDraft,
+} from './studio'
 import { DraftStore } from '@/lib/drafts'
 
 const id = '00000000-0000-4000-8000-000000000001'
 describe('Studio saved revision and tab drafts', () => {
+  it('指南与简报使用不同结构，任何论断都必须带引用', () => {
+    const claim = { text: '来自所选资料的论断', citations: ['1'] }
+    const guide = {
+      key_points: [claim],
+      terms: [claim],
+      learning_order: [claim],
+      misconceptions: [claim],
+    }
+    const brief = { overview: [claim], differences: [claim], gaps: [claim] }
+    expect(studioGuideSchema.parse(guide).terms[0].citations).toEqual(['1'])
+    expect(studioBriefSchema.parse(brief).gaps[0].text).toBe(claim.text)
+    expect(() => studioGuideSchema.parse(brief)).toThrow()
+    expect(() =>
+      studioBriefSchema.parse({ ...brief, overview: [{ text: '未核验', citations: [] }] }),
+    ).toThrow()
+  })
   it('拒绝缺版本的正文和未交付产物类型', () => {
     const raw = {
       artifact_id: id,

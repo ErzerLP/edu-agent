@@ -4,13 +4,45 @@ import type { Session } from './runtime'
 import type { components } from './schema'
 import type { DraftStore } from '@/lib/drafts'
 import type { ScanItem } from '@/lib/reference-import'
-import { sourceManifestSchema, mentorCitationSchema } from './source-selection'
+import {
+  sourceManifestSchema,
+  mentorCitationSchema,
+  sourceSelectionSchema,
+} from './source-selection'
 
 const version = z.number().int().positive()
+export const studioClaimSchema = z
+  .object({ text: z.string().min(1).max(1500), citations: z.array(z.string()).min(1).max(10) })
+  .strict()
+const claims = z.array(studioClaimSchema).min(1).max(8)
+export const studioGuideSchema = z
+  .object({ key_points: claims, terms: claims, learning_order: claims, misconceptions: claims })
+  .strict()
+export const studioBriefSchema = z
+  .object({ overview: claims, differences: claims, gaps: claims })
+  .strict()
+export const studioGenerateSchema = z.object({
+  operation_id: z.uuid(),
+  privacy_generation: version,
+  kind: z.enum(['guide', 'brief']),
+  goal_id: z.uuid().nullable(),
+  goal_version: z.number().int().nonnegative(),
+  artifact_id: z.uuid().nullable(),
+  expected_version: z.number().int().nonnegative(),
+  source_selection: sourceSelectionSchema,
+  request_budget: version,
+  token_budget: version,
+})
+export const studioStateSchema = z.object({
+  request: studioGenerateSchema,
+  result: z.object({ artifact_id: z.uuid(), version }).optional(),
+})
+export type StudioGenerate = components['schemas']['StudioGenerate']
+export type StudioClaim = z.infer<typeof studioClaimSchema>
 const itemSchema = z.object({
   artifact_id: z.uuid(),
   goal_id: z.uuid().nullable(),
-  kind: z.literal('note'),
+  kind: z.enum(['note', 'guide', 'brief']),
   version,
   title: z.string(),
   updated_at: z.string(),
@@ -19,25 +51,54 @@ export const studioPageSchema = z.object({
   items: z.array(itemSchema),
   next_cursor: z.string().optional(),
 })
-export const studioRevisionSchema = z.object({
-  artifact_id: z.uuid(),
-  learning_space_id: z.uuid(),
-  goal_id: z.uuid().nullable(),
-  kind: z.literal('note'),
-  version,
-  privacy_generation: version,
-  actor_device_id: z.uuid(),
-  created_at: z.string(),
-  body: z.object({
-    schema: z.literal(1),
-    title: z.string(),
-    markdown: z.string(),
-    source_manifest: sourceManifestSchema.optional(),
-    citations: z.array(mentorCitationSchema),
-    model: z.string().optional(),
-    input_fingerprint: z.string().optional(),
-  }),
-})
+export const studioRevisionSchema = z
+  .object({
+    artifact_id: z.uuid(),
+    learning_space_id: z.uuid(),
+    goal_id: z.uuid().nullable(),
+    kind: z.enum(['note', 'guide', 'brief']),
+    version,
+    privacy_generation: version,
+    actor_device_id: z.uuid(),
+    created_at: z.string(),
+    body: z.object({
+      schema: z.literal(1),
+      title: z.string(),
+      markdown: z.string(),
+      source_manifest: sourceManifestSchema.optional(),
+      citations: z.array(mentorCitationSchema),
+      model: z.string().optional(),
+      input_fingerprint: z.string().optional(),
+      coverage: z.enum(['complete', 'partial']).optional(),
+      guide: studioGuideSchema.optional(),
+      brief: studioBriefSchema.optional(),
+    }),
+  })
+  .superRefine((r, ctx) => {
+    if (r.kind === 'note') {
+      if (r.body.guide || r.body.brief || r.body.source_manifest || r.body.citations.length)
+        ctx.addIssue({ code: 'custom', message: 'Invalid note provenance' })
+    } else {
+      if (
+        !r.body.coverage ||
+        !r.body.source_manifest?.entries.length ||
+        !r.body.model ||
+        !r.body.input_fingerprint ||
+        (r.kind === 'guide') !== !!r.body.guide ||
+        (r.kind === 'brief') !== !!r.body.brief
+      )
+        ctx.addIssue({ code: 'custom', message: 'Missing generated document' })
+      const ids = new Set(r.body.citations.map((c) => c.id))
+      const groups = r.body.guide ?? r.body.brief
+      if (
+        groups &&
+        Object.values(groups)
+          .flat()
+          .some((claim: StudioClaim) => claim.citations.some((id) => !ids.has(id)))
+      )
+        ctx.addIssue({ code: 'custom', message: 'Unverified citation' })
+    }
+  })
 const historySchema = z.object({
   items: z.array(z.object({ version, status: z.literal('committed'), created_at: z.string() })),
 })
@@ -99,10 +160,10 @@ export function studioAPI(session: Session, spaceId: string) {
         studioPageSchema,
       )
     },
-    get: async (id: string, signal?: AbortSignal) => {
+    get: async (id: string, signal?: AbortSignal, version?: number) => {
       return unwrap(
         api.GET('/v1/learning/studio/artifacts/{artifactID}', {
-          params: { header, path: { artifactID: id } },
+          params: { header, path: { artifactID: id }, query: { version } },
           signal,
         }),
         studioRevisionSchema,
@@ -145,5 +206,10 @@ export function studioAPI(session: Session, spaceId: string) {
         candidateSchema,
       )
     },
+    generate: (body: StudioGenerate) =>
+      unwrap(
+        api.POST('/v1/learning/studio/generations', { params: { header }, body }),
+        z.object({ operation_id: z.uuid(), run_id: z.uuid(), session_id: z.uuid(), version }),
+      ),
   }
 }

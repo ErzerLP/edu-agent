@@ -29,7 +29,7 @@ func (s *Service) ReadList(ctx context.Context, actor identity.Credential, space
 		return ErrInvalid
 	}
 	switch q.Kind {
-	case "", "mentor", "research", "start_learning", "content_edit":
+	case "", "mentor", "research", "start_learning", "content_edit", "studio":
 	default:
 		return ErrInvalid
 	}
@@ -164,7 +164,7 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 		if err = verifyStoredCitations(item.body, sources); err != nil {
 			return err
 		}
-		return send(Snapshot{SourceManifest: item.body.SourceManifest, Citations: item.body.Citations, Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
+		return send(Snapshot{Studio: item.body.Studio, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations, Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
 	})
 }
 

@@ -19,6 +19,7 @@ import (
 	knowledgepg "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
@@ -30,6 +31,7 @@ import (
 )
 
 type Service struct {
+	studio              *learningcontent.Store
 	companion           *companion.Broker
 	memories            memoryReader
 	memoryPermits       *privacy.ReadPermitManager
@@ -303,6 +305,12 @@ func receipt(ctx context.Context, tx pgx.Tx, item row, operationID string, hash 
 
 func (s *Service) Create(ctx context.Context, actor identity.Credential, space, goal string, c Create) (Receipt, error) {
 	kind := "mentor"
+	if c.Studio != nil {
+		if c.Studio.Validate() != nil || c.ContentEdit != nil || c.Research != nil || c.StartLearning != nil || !c.Save || !s.CanSave() || !s.studio.Available() {
+			return Receipt{}, ErrInvalid
+		}
+		kind = "studio"
+	}
 	searchConfiguration := ""
 	if c.ContentEdit != nil {
 		if c.ContentEdit.Validate() != nil || c.ContentEdit.Selection.SpaceID != space || c.ContentEdit.Selection.GoalID != goal || c.Research != nil || c.StartLearning != nil || !c.Save {
@@ -332,10 +340,10 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		}
 		kind = "start_learning"
 	}
-	if c.SourceSelection != nil && (kind != "mentor" || c.SourceSelection.Validate() != nil) {
+	if c.SourceSelection != nil && (kind != "mentor" && kind != "studio" || c.SourceSelection.Validate() != nil) {
 		return Receipt{}, ErrInvalid
 	}
-	if !validID(space) || (!validID(goal) && !(validID(c.ConversationID) && goal == uuid.Nil.String())) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
+	if !validID(space) || (!validID(goal) && !((validID(c.ConversationID) || kind == "studio") && goal == uuid.Nil.String())) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
 		return Receipt{}, ErrInvalid
 	}
 	if c.ConversationID != "" && (kind != "mentor" || c.ConversationID != c.SessionID || !validID(c.ConversationID) || c.ConversationVersion < 1) || c.ConversationID == "" && (c.ConversationVersion != 0 || c.ConfirmDestination != "") {
@@ -369,6 +377,9 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if err = actorGate(ctx, tx, actor.Device.ID, actor.TokenID, true); err != nil {
 		return Receipt{}, err
 	}
+	if c.Studio != nil && c.Studio.Generation != generation {
+		return Receipt{}, ErrInactive
+	}
 	if r, found, e := operation(ctx, tx, actor.Device.ID, c.OperationID, hash); e != nil || found {
 		return r, e
 	}
@@ -397,6 +408,15 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 			return Receipt{}, err
 		}
 		if _, _, err = s.starter.Content.SelectionTx(ctx, tx, actor, c.ContentEdit.Selection); err != nil {
+			return Receipt{}, err
+		}
+	}
+	if c.Studio != nil {
+		ctx, err = learningspace.WithScope(ctx, space)
+		if err != nil {
+			return Receipt{}, err
+		}
+		if err = s.studio.StudioTargetTx(ctx, tx, actor, c.Studio.StudioTarget); err != nil {
 			return Receipt{}, err
 		}
 	}
@@ -473,6 +493,10 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	item.body.Messages = append(history, modelclient.Message{Role: "user", Content: c.Prompt})
 	item.TeachingSessionID = c.TeachingSessionID
 	item.Kind = kind
+	if c.Studio != nil {
+		item.body.Studio = &StudioState{Request: *c.Studio}
+		item.body.Messages = nil
+	}
 	if c.ContentEdit != nil {
 		item.body.ContentEdit = &ContentEditState{Request: *c.ContentEdit, Reason: c.Prompt}
 	}

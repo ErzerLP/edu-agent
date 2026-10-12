@@ -36,6 +36,7 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
+	Studio              *StudioGenerate            `json:"-"`
 	SourceSelection     *knowledge.SourceSelection `json:"source_selection,omitempty"`
 	operationHash       *[32]byte
 	ConversationID      string                       `json:"conversation_id,omitempty"`
@@ -109,6 +110,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	Studio         *StudioState              `json:"studio,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
 	Citations      []SourceCitation          `json:"citations,omitempty"`
 	MemorySources  []MemorySource            `json:"memory_sources,omitempty"`
@@ -127,6 +129,7 @@ type Body struct {
 }
 
 type Snapshot struct {
+	Studio         *StudioState              `json:"studio,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
 	Citations      []SourceCitation          `json:"citations,omitempty"`
 	MemorySources  []MemorySource            `json:"memory_sources,omitempty"`

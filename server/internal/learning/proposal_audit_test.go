@@ -27,7 +27,7 @@ func TestProposalGenerationEnforcesNodeAllowListWithoutRetry(t *testing.T) {
 	model := &proposalTestModel{results: []proposalModelResult{{raw: json.RawMessage(`{"route":[{"node_revision_id":"outside-node","teaching_intent":"teach","completion_condition":"pass"}]}`)}}}
 	service := newProposalTestService(t, store, repo, model)
 	_, err := service.Propose(context.Background(), "device", routeProposalRequest())
-	if ErrorCode(err) != CodeProposalRejected || model.calls != 1 || repo.failedCategory != "domain_invalid" || len(repo.failedAttempts) != 1 || repo.failedAttempts[0] != "domain_invalid" {
+	if ErrorCode(err) != CodeProposalRejected || model.calls != 1 || repo.failedCategory != "invalid_route_step" || len(repo.failedAttempts) != 1 || repo.failedAttempts[0] != "invalid_route_step" {
 		t.Fatalf("allow-list err=%v calls=%d category=%q attempts=%v", err, model.calls, repo.failedCategory, repo.failedAttempts)
 	}
 }

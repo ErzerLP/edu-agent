@@ -16,6 +16,24 @@ const MaxText = 16000
 
 var ErrPolicy = errors.New("research_policy_rejected")
 
+// ValidationError carries a fixed classification without source text or IDs.
+type ValidationError struct{ Reason string }
+
+func (*ValidationError) Error() string { return ErrPolicy.Error() }
+func (*ValidationError) Unwrap() error { return ErrPolicy }
+
+func ValidationReason(err error) string {
+	var invalid *ValidationError
+	if errors.As(err, &invalid) {
+		switch invalid.Reason {
+		case "synthesis_size_invalid", "synthesis_point_invalid", "synthesis_text_invalid", "prepared_field_invalid",
+			"citation_source_missing", "citation_revision_mismatch", "citation_fragment_missing", "citation_quote_mismatch", "citation_range_mismatch":
+			return invalid.Reason
+		}
+	}
+	return "research_policy_rejected"
+}
+
 type Policy struct {
 	Mode    string   `json:"mode"`
 	Domains []string `json:"domains"`
@@ -137,32 +155,47 @@ type State struct {
 // 引用仅接受已读取原文中的真实片段；不允许模型用 URL 或自造片段替代。
 func (s Synthesis) Validate(sources []Source) error {
 	if len(s.Points) > 12 || len(s.Gaps) > 12 || len(s.Examples) > 6 {
-		return ErrPolicy
+		return &ValidationError{Reason: "synthesis_size_invalid"}
 	}
 	for _, p := range s.Points {
 		if strings.TrimSpace(p.Text) == "" || len(p.Text) > 2000 || len(p.Citations) == 0 || len(p.Citations) > 8 {
-			return ErrPolicy
+			return &ValidationError{Reason: "synthesis_point_invalid"}
 		}
 		for _, c := range p.Citations {
 			found := false
+			reason := "citation_source_missing"
 			for _, source := range sources {
-				if source.ID != c.SourceID || source.RevisionID != c.RevisionID {
+				if source.ID != c.SourceID {
 					continue
 				}
+				reason = "citation_revision_mismatch"
+				if source.RevisionID != c.RevisionID {
+					continue
+				}
+				reason = "citation_fragment_missing"
 				for _, fragment := range source.Fragments {
-					if fragment.ID == c.FragmentID && c.Quote != "" && strings.Contains(fragment.Text, c.Quote) && fragment.Start >= 0 && fragment.End <= len(source.Text) && source.Text[fragment.Start:fragment.End] == fragment.Text {
-						found = true
+					if fragment.ID != c.FragmentID {
+						continue
 					}
+					reason = "citation_quote_mismatch"
+					if c.Quote == "" || !strings.Contains(fragment.Text, c.Quote) {
+						continue
+					}
+					reason = "citation_range_mismatch"
+					if fragment.Start < 0 || fragment.End < fragment.Start || fragment.End > len(source.Text) || source.Text[fragment.Start:fragment.End] != fragment.Text {
+						continue
+					}
+					found = true
 				}
 			}
 			if !found {
-				return ErrPolicy
+				return &ValidationError{Reason: reason}
 			}
 		}
 	}
 	for _, text := range append(append([]string{}, s.Gaps...), s.Examples...) {
 		if len(text) > 2000 {
-			return ErrPolicy
+			return &ValidationError{Reason: "synthesis_text_invalid"}
 		}
 	}
 	return nil

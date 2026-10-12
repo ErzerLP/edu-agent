@@ -129,3 +129,32 @@ func TestCitationsAndPolicy(t *testing.T) {
 		t.Fatal("伪 URL 被当作来源身份")
 	}
 }
+
+func TestFetchPrefersMainTextBeforeApplyingLimit(t *testing.T) {
+	for _, wrapper := range []string{"main", "article", `div id="mw-content-text"`} {
+		t.Run(wrapper, func(t *testing.T) {
+			end := strings.Fields(wrapper)[0]
+			body := `<html><body><div>` + strings.Repeat("navigation link ", 2000) + `</div><` + wrapper + `><nav>menu</nav><div class="toc">Contents only</div><p>Linear independence means only the trivial linear combination is zero.</p><footer>copyright</footer></` + end + `><aside>sidebar</aside></body></html>`
+			f, _ := fixtureFetcher(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = io.WriteString(w, body)
+			})
+			source, err := f.Fetch(t.Context(), Source{Locator: "http://example.com"}, Policy{Mode: "supplement"}, func() error { return nil })
+			if err != nil || !strings.Contains(source.Text, "trivial linear combination") || len(source.Text) > 200 || source.Coverage != "partial_html_text_only" {
+				t.Fatalf("main text displaced by navigation: bytes=%d coverage=%s error=%v", len(source.Text), source.Coverage, err)
+			}
+			for _, hidden := range []string{"navigation link", "menu", "Contents only", "copyright", "sidebar"} {
+				if strings.Contains(source.Text, hidden) {
+					t.Errorf("boilerplate retained: %q", hidden)
+				}
+			}
+		})
+	}
+}
+
+func TestHTMLContentSelectionStillHonorsLateStorageRestriction(t *testing.T) {
+	text, coverage := parseHTML([]byte(`<html><body><main><p>valid body</p></main><meta name="robots" content="noarchive"></body></html>`))
+	if text != "" || coverage != "storage_restricted" {
+		t.Fatalf("late restriction bypassed: %q %s", text, coverage)
+	}
+}

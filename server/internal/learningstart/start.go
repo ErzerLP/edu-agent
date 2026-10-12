@@ -42,7 +42,7 @@ func (p Prepared) Validate(sources []research.Source) error {
 		limit int
 	}{{p.ConceptKey, 200}, {p.Name, 200}, {p.Prompt, 2000}, {p.Criterion, 1000}} {
 		if !utf8.ValidString(field.value) || strings.TrimSpace(field.value) == "" || len(field.value) > field.limit || strings.ContainsRune(field.value, 0) {
-			return research.ErrPolicy
+			return &research.ValidationError{Reason: "prepared_field_invalid"}
 		}
 	}
 	return (research.Synthesis{Points: []research.Point{{Text: p.Name, Citations: p.Citations}}}).Validate(sources)

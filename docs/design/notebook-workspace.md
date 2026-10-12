@@ -1,6 +1,6 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：批次 1 已按用户授权实施并完成局部验证（2026-10-12），改动留在 `feat-notebook-ui` 工作树，待调用方审阅提交。Shape 调查基线为 `1d819c8`。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[用户认可方向的静态原型](notebook-workspace-prototype.html)。D1–D4 仍为**默认，待用户确认**，本次未实施批次 2／3，也未改 OpenAPI、migration 或 CLI 产品代码；没有 Git 暂存／提交／推送。
+状态：批次 1 已合并（PR #87）；本次在 `feat-notebook-b2a`（main@9e146e2）实施批次 2a。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。2b／2c 与批次 3 尚未实施，CLI 产品代码未改；改动只留工作树，没有 Git 暂存／提交／推送。
 
 ## 1. 方案与拆分结论
 
@@ -346,6 +346,59 @@
 **退出标准：** 前端类型／相关 import、PDF、mentor、conversation、citation 单测及构建；新来源与保留 references／pdf／mentor 局部 Chromium 场景通过。`cd server && go test ./api ./internal/knowledge/... ./internal/research ./internal/mentorrun ./internal/transport/httpapi` 中受影响测试通过（DB skip 另列）；独立 PostgreSQL 跑 metadata 升级、导入幂等／冲突、选择范围与清除竞态新集成用例；新增 API 生成一致性通过。实际模型请求中不含未选资料，冻结课堂引用未变。独立网络 stub 证明搜索摘要不能被导入／引用为已读正文。
 
 **重型证据：** 全量历史 DB／三浏览器门禁延到 Candidate；本批来源权限、SSRF 既有相关契约和新清除／范围验证不可延期。新 DB 场景名称与运行命令交接给批次 4 的候选门禁。
+
+#### 2a 实施记录（2026-10-12）
+
+**结果与范围。** 交付 G1 来源目录、PDF／文本／网址导入与来源查看。添加对话框直接复用 `ReferenceImport`，保留服务端预览／确认、PDF 部分接受、同名身份审阅和 unknown 原操作核对。普通导入不会创建目标／课堂或更改已冻结参考。2b 搜索发现、2c 按选择问答与批次 3 Studio 未交付，左栏没有看似生效的勾选控件。按“回执领域回归 → sidecar／DB → HTTP/OpenAPI → 前端 → Chromium”的计划完成；不创建第二套导入控制器。
+
+**公共合同。**
+
+| 项目 | 2a 合同 |
+| --- | --- |
+| 来源列表 | `GET /v1/knowledge/sources`，`knowledge:read`，`X-Learning-Space-ID` 沿用默认区兼容语义；可选 `X-Knowledge-Collection-ID` 进一步限定集合。只列当前区已关联集合的 head 文档，不能把可发现但未关联的共享集合当作获准正文。`limit` 默认 30、范围 1–100；不透明 `cursor` 绑定区及集合过滤，按集合 UUID／文档 UUID 排序，返回 `items` 与可选 `next_cursor`，没有伪造总数。分页反映读取时的 head，不是冻结选择快照。 |
+| 文档身份 DTO | `collection_id`、`collection_name`、`revision_id`（集合修订）、`document_id`（稳定身份）、`document_revision_id`、`path`、`metadata`。同名文档仍保留完整集合／版本身份。`metadata: null` 表示未知；不从路径、标题或 Markdown 前缀推断来源。 |
+| 元信息 | `kind: text/pdf/url`，可选 `locator/final_url/media_type`，`parser/coverage/fingerprint/status`，可选 `derived_from: {artifact_id, version}`。纯文本 `provided_text` 指用户提供的内容；指纹为规范正文 hash。PDF 指纹为原件 hash，URL 为实际抓取指纹。`parsed/partial` 不代表知识正确、版式完整或已正式采用到课堂。派生字段仅预留服务端写入，客户端不能自报。 |
+| 历史详情 | `GET /v1/knowledge/sources/{revisionID}/documents/{documentRevisionID}`；必须显式传集合头，再核验区关联与集合修订归属。读取指定文档 payload，不遍历整个集合正文。返回身份／元信息、PDF 逐页报告及节点片段（节点身份、标题、规范文本 UTF-8 字节／行位置、实际物理页）。单片段展示最多 4096 字节，UTF-8 边界不截断字符，`truncated` 区分展示预算与解析缺口。PDF 无文本页和元信息块不冒充原文片段。 |
+| 网页回执 | `reference-sources` 的非 PDF 成功结果新增 `import_markdown` 与 `source_receipt`。服务端绑定确切正文 hash、实际抓取元信息、区与 knowledge 隐私代次后签发；预览／确认原样提交两者。失败、禁止留存或无正文不发回执。重启后旧抓取回执需重新获取；未知提交先查原 operation，不能直接新建操作重发。PDF 继续原件解析与既有指纹／URL 回执校验。 |
+| 权限与错误 | 两个读端点都有 `knowledge:read`、knowledge response read permit、owner generation gate 和 `no-store`。缺详情集合头、非法 ID／游标／分页或伪造抓取回执为 400；无 scope 为 403；版本／文档不属于所选集合、未关联或解除关联为 404；不回落最新版。隐私屏障沿用 `content_redacted`，归档区可读，写入继续服务端拒绝。预览／确认／同载荷重放／不同载荷冲突沿用原合同。新路径同步 scoped／collection 路由分类与部署代理白名单。 |
+| 能力与旧引用 | `source-capabilities.source_catalog` 表明新目录能力；旧服务明确显示不可用。课堂引用继续从 content citation 接口核验原文 hash／片段范围，研究引用打开时通过原 run/source 接口核对确切 revision／fragment，三者共用查看器对话框与焦点恢复；不把旧引用改查最新目录。 |
+
+**Migration 与隐私。** 只追加 `000034_source_metadata.sql`：`knowledge_source_metadata(document_revision_id PK/FK, metadata JSONB)`，仅存元信息，不复制正文。复用现有 snapshot 的 `(revision, document)` 唯一索引分页；新增 owner write gate 和 immutable trigger，写入与导入提交同事务。无历史文本／网页回填；已保存的可信 PDF 报告可在读取时呈现已有字段。相同历史正文版本保持原元信息（包括未知）。`StoreKnowledgeContent` 删除 sidecar，`VerifyRedacted` 把其残留计入；旧版本的正文、原件仍由原 owner 清除。
+
+**新增文件映射。**
+
+- `server/migrations/000034_source_metadata.sql`（migration）、`source_metadata_test.go`（33→34 升级与旧正文保留）。
+- `server/internal/knowledge/source_catalog.go`、`source_catalog_test.go`（DTO、回执、片段）；`postgresstore/source_catalog.go`、`source_catalog_test.go`（列表／详情、集合与共享隔离、幂等、不可变）。
+- `server/internal/transport/httpapi/source_catalog.go`、`source_catalog_test.go`（读端点、scope／owner 屏障）；`server/api/openapi_source_catalog_test.go`（DTO 与公共合同）。
+- `clients/web/src/api/notebook-sources.ts`、`.test.ts`；`components/notebook/add-source-dialog.tsx`、`source-viewer.tsx`；`tests/browser/notebook-sources.spec.ts`。
+- `server/testutil/webnotebook/main.go`、`main_test.go`：仅测试二进制，要求 `web_candidate_<32 hex>` schema，用既有 `NewFetcherWithNetwork` 将一个固定公开测试域接入可控 HTTP 页面；生产二进制与 SSRF 校验不变。
+
+**修改文件映射。**
+
+- **OpenAPI**：`server/api/openapi.yaml`；`npm run generate` 生成 `clients/web/src/api/schema.d.ts`。
+- `server/internal/knowledge/{domain,service,import_preview,research}.go`：导入元信息、签名回执与请求 hash；`postgresstore/{store,content,privacy}.go`：原子持久化／读取、课堂引用元信息、隐私清除。
+- `server/internal/transport/httpapi/{reference_sources,knowledge_spaces}.go`：抓取回执、能力与路由分类；`references_test.go`：真实 HTTP 回执与来源合同。`server/migrations/migrations_test.go` 更新最新版本断言；`postgresstore/maintenance_integration_test.go` 验证 sidecar 清除。
+- `clients/web/src/api/references.ts`、`lib/{reference-import,use-notebook-sources}.ts`、`lib/reference-import.test.ts`：回执传递、目录分页与测试；`components/reference-import.tsx`：三个入口共用原审阅控制器；`components/notebook/sources-panel.tsx`、`notebook-workspace-page.tsx`：来源目录与归档行为；`components/content-blocks.tsx`、`research-page.tsx`：旧引用共用查看器。
+- `clients/web/tests/browser/notebook-workspace.spec.ts`：原 tree 定位改为新目录，保留同名、撤权与迟到响应断言；`clients/web/scripts/test-server.mjs` 支持选择独立测试宿主。`deploy/web/nginx.conf` 仅增加锚定的新来源读路径与能力路径。
+
+**检查记录。** 所有 Go／DB／浏览器命令先 `umask 022`；沙箱下 `GOCACHE=/tmp/notebook-b2a-go-cache`，辅助工具编译到 `/tmp/notebook-b2a-webdatabase` 和 `/tmp/notebook-b2a-webnotebook`，不写只读用户缓存目录，不操作 Docker 容器。
+
+| 检查 | 命令与结果 |
+| --- | --- |
+| 合同生成 | `cd clients/web && npm run generate` 通过；保留既有 `ActionExposureRequest` discriminator 警告。 |
+| 前端 | `npm run check` 通过；`npm run build -- --configLoader native` 通过（其内也运行 check），仅既有 Zod 注释与大 chunk 提示。`npm test -- --configLoader native src/lib/reference-import.test.ts src/api/notebook-sources.test.ts src/api/content.test.ts src/lib/drafts.test.ts`：4 文件、11 测试通过。 |
+| Go 受影响包 | `cd server && go test ./api ./internal/knowledge/... ./internal/transport/httpapi`：knowledge、llmselector、postgresstore 非 DB、httpapi 通过；首次 API 检查发现代理白名单缺新路径，修复后 `go test ./api -run '^TestWebReleaseProxyCoversClientAPI$'` 通过，其余 API 结果复用。新增 read scope／owner gate 与片段回归分别定向通过。未设置 DB 的包测试不充当 DB 验收。 |
+| Vet | `go vet ./api ./internal/knowledge/... ./internal/transport/httpapi ./testutil/webnotebook` 通过。 |
+| 真实 PostgreSQL | `TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable go test -p=1 ./migrations ./internal/knowledge/postgresstore ./internal/transport/httpapi -run '^(TestSourceMetadataMigrationUpgrade\|TestEmbeddedMigrationsAreOrderedAndUnique\|TestPostgreSQLSourceCatalogPermissionsPaginationAndReceipts\|TestPostgreSQLImportPreviewConfirmAndReplay\|TestPostgreSQLImportConfirmRollsBackWholeBatch\|TestPostgreSQLKnowledgeSpacesIsolationAndFrozenVersions\|TestPostgreSQLPDFVersionsCitationsAndScope\|TestPostgreSQLKnowledgeMaintenanceProposalLifecycle\|TestPostgreSQLReferencesCookieImportCollectionAndScope)$'`：三包通过。另 `-p=1 ./internal/transport/httpapi -run '^TestPostgreSQLResearchCookieSourcesAndDecisions$'` 通过，验证研究历史读取／采用原边界。 |
+| Chromium 来源 | `WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/notebook-b2a-webnotebook /tmp/notebook-b2a-webdatabase npm run test:browser -- notebook-sources.spec.ts --project=chromium`：最终构建下 1 场景通过（9.0s），覆盖三种添加、unknown 核对、PDF 部分确认、真实重定向 URL、片段／页图／手机／重开。 |
+| Chromium 回归 | 普通发行服务，`WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 /tmp/notebook-b2a-webdatabase npm run test:browser -- references.spec.ts pdf.spec.ts notebook-workspace.spec.ts --project=chromium`：9 场景通过，无 skip/retry。 |
+| Chromium 旧引用 | 同一普通发行服务与 fixture，`/tmp/notebook-b2a-webdatabase npm run test:browser -- workspace.spec.ts -g '旧会话真实阅读、版本、讨论、丢响应作答、反馈及续学' --project=chromium`：1 场景通过（25.2s），包含历史来源核验、共用查看器／焦点恢复及原课堂流程。首次加起始锚点的过滤表达式未匹配到用例，移除锚点后实际执行通过。 |
+
+浏览器命令共同使用上述 `TEST_DATABASE_URL` 与 `WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome`；发行服务由 `go build -tags web_release -o edu-agentd ./cmd/edu-agentd` 构建。日志／产物在 `/tmp/notebook-b2a-*`，不纳入提交。
+
+**2b／2c 接口约定。** 2b 候选不进入此目录；必须经过真实 `reference-sources` 读取、留存许可、正文回执和用户确认后才成为正式来源。2c 冻结 `{collection_id, revision_id, document_id, document_revision_id}`，发起请求时由 owner 重新核验权限／版本，不能以目录缓存、`next_cursor` 或客户端片段代替冻结与引用校验，也不把此列表用于修改课堂参考政策。`derived_from` 留给批次 3 的可信笔记版本转换。
+
+**决策与限制。** 无待用户决策的语义问题。未运行三引擎矩阵、Go 全量、race、Compose 或真实外部搜索／模型研究浏览器流程；未把这些记为通过。目录不是总量统计或选择生效功能。片段展示预算与 PDF 无 OCR／版式限制仍明确可见；未更改 CLI、原件导出或自动共享语义。
 
 ### 批次 3：四类 Studio 产物形成可保存的真实流程（12–18 人日）
 

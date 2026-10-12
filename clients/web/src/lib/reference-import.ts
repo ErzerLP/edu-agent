@@ -1,7 +1,7 @@
 import type { ImportPreview, ImportRequest, ImportResult } from '@/api/references'
 import type { PDFReport } from '@/api/pdf'
 
-export type ScanItem = { id: string; name: string; path: string; bytes: number; status: 'ready' | 'error' | 'unsupported'; reason: string; selected: boolean; markdown: string; coverage: string; asNew?: boolean; pdf?: { data: string; report: PDFReport; acceptPartial: boolean; locator?: string; sourceReceipt?: string } }
+export type ScanItem = { id: string; name: string; path: string; bytes: number; status: 'ready' | 'error' | 'unsupported'; reason: string; selected: boolean; markdown: string; coverage: string; asNew?: boolean; sourceReceipt?: string; pdf?: { data: string; report: PDFReport; acceptPartial: boolean; locator?: string; sourceReceipt?: string } }
 export type ImportDraft = { items: ScanItem[]; paste: string; pasteName: string; url: string; request?: ImportRequest; preview?: ImportPreview; result?: ImportResult; unknown: boolean; previousOperation?: string }
 export const emptyImport = (): ImportDraft => ({ items: [], paste: '', pasteName: '粘贴资料', url: '', unknown: false })
 export const maxFile = 4 << 20
@@ -69,7 +69,7 @@ export function importDocuments(items: ScanItem[]) {
     paths.add(path.toLocaleLowerCase()); used += i.pdf ? i.pdf.data.length : bytes(i.markdown)
     if (used > maxBatch || selected.length > 1000) throw new Error('所选内容超过单批预算')
     if (i.pdf && i.pdf.report.coverage !== 'complete_text' && !i.pdf.acceptPartial) throw new Error('请先明确确认 PDF 仅纳入可用部分')
-    return { path, markdown: i.pdf ? '' : i.markdown, ...(i.asNew ? { as_new: true } : {}), ...(i.pdf ? { pdf: { data: i.pdf.data, accept_partial: i.pdf.acceptPartial, ...(i.pdf.locator ? { locator: i.pdf.locator, source_receipt: i.pdf.sourceReceipt } : {}) } } : {}) }
+    return { path, markdown: i.pdf ? '' : i.markdown, ...(i.sourceReceipt && !i.pdf ? { source_receipt: i.sourceReceipt } : {}), ...(i.asNew ? { as_new: true } : {}), ...(i.pdf ? { pdf: { data: i.pdf.data, accept_partial: i.pdf.acceptPartial, ...(i.pdf.locator ? { locator: i.pdf.locator, source_receipt: i.pdf.sourceReceipt } : {}) } } : {}) }
   })
 }
 

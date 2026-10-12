@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorText } from '@/api/client'
 import { knowledgeAPI, type Collection, type ImportRequest, type ImportResult } from '@/api/references'
-import { editImport, emptyImport, importDocuments, pastedItem, scanFiles, textDocument, type ImportDraft } from '@/lib/reference-import'
+import { editImport, emptyImport, importDocuments, pastedItem, scanFiles, type ImportDraft } from '@/lib/reference-import'
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { ErrorState } from './common'
 import { PDFCoverage } from './pdf-source'
 
-export function ReferenceImport({ spaceId, collection, target, onImported }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void }) {
+export function ReferenceImport({ spaceId, collection, target, onImported, method }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' }) {
   const { session, prefix, drafts } = useIdentity()
   const key = JSON.stringify([...prefix, spaceId, target, collection.id, 'reference-import'])
   const [draft, setDraft] = useState<ImportDraft>(() => drafts.get<ImportDraft>(key) ?? emptyImport())
@@ -88,21 +88,29 @@ export function ReferenceImport({ spaceId, collection, target, onImported }: { s
     {!!error && <ErrorState error={error} />}{localError && <p role="alert">{localError}</p>}
     <fieldset disabled={busy || draft.unknown || !!draft.result}>
       <legend>来源选择</legend>
+      {(!method || method === 'pdf') && <>
       <label><input type="checkbox" checked={pdfConsent} onChange={e => setPDFConsent(e.target.checked)} />我有权上传并保存 PDF 原件及提取文本，用于参考和安全页查看</label>
       <label>选择 Markdown / UTF-8 / PDF 文件（可多选）<input type="file" multiple onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; void run(async () => { const items = await scanFiles(files, pdfConsent ? data => api.pdf(data).catch(error => { throw new Error(errorText(error)) }) : undefined); if (live.current) edit({ items: [...draft.items, ...items] }) }) }} /></label>
       <p className="hint">PDF 需先勾选保存授权，再选择文件：单份最多 4 MiB、100 页、16000 字节文本；扫描件不做 OCR。Office 暂不支持。不上传资料仍可学习。</p>
+      </>}
+      {(!method || method === 'text') && <>
       <label>粘贴资料名称<input value={draft.pasteName} maxLength={120} onChange={e => edit({ pasteName: e.target.value })} /></label>
       <label>粘贴原文<textarea rows={5} value={draft.paste} onChange={e => edit({ paste: e.target.value })} /></label>
       <Button variant="outline" onClick={() => edit({ items: [...draft.items, pastedItem(draft.pasteName, draft.paste)], paste: '' })}>加入粘贴文本</Button>
+      </>}
+      {(!method || method === 'url') && <>
       <label>公开网页链接<input type="url" value={draft.url} onChange={e => edit({ url: e.target.value })} /></label>
+      <p className="hint">点击下方授权按钮会把此公开地址发送到目标网站，并读取正文供你审阅保存。</p>
       <Button variant="outline" disabled={!draft.url} onClick={() => void run(async () => {
         const source = await api.source(draft.url)
         const usable = ['parsed', 'partial'].includes(source.status) && source.storage_allowed
         const item = pastedItem(source.title || '网页资料', source.text)
-        const markdown = `来源：${source.final_url || source.locator}\n解析器：${source.parser}；覆盖：${source.coverage}\n内容摘要：${source.fingerprint}\n\n${textDocument(source.title || '网页原文', source.text)}`
+        const markdown = source.import_markdown ?? ''
         const pdf = source.pdf && source.pdf_data ? { data: source.pdf_data, report: source.pdf, acceptPartial: false, locator: source.final_url, sourceReceipt: source.source_receipt } : undefined
-        if (live.current) edit({ items: [...draft.items, { ...item, name: source.locator, path: `web-${item.id}.md`, markdown, pdf, status: usable && !!source.text ? 'ready' : source.failure.startsWith('unsupported') ? 'unsupported' : 'error', reason: usable ? '公开网页解析成功' : source.failure || '禁止保存此来源', selected: usable && !!source.text && (!pdf || pdf.report.coverage === 'complete_text'), coverage: source.coverage }], url: '' })
+        if (usable && !pdf && (!markdown || !source.source_receipt)) throw new Error('服务器未提供绑定正文的来源回执，请升级服务后重新读取。')
+        if (live.current) edit({ items: [...draft.items, { ...item, name: source.locator, path: `web-${item.id}.md`, markdown: pdf ? source.text : markdown, pdf, sourceReceipt: pdf ? undefined : source.source_receipt, status: usable && !!source.text ? 'ready' : source.failure.startsWith('unsupported') ? 'unsupported' : 'error', reason: usable ? '公开网页解析成功' : source.failure || '禁止保存此来源', selected: usable && !!source.text && (!pdf || pdf.report.coverage === 'complete_text'), coverage: source.coverage }], url: '' })
       })}>授权服务器读取此网页并解析</Button>
+      </>}
     </fieldset>
     <p role="status">待导入 {ready} 项 · 错误 {draft.items.filter(i => i.status === 'error').length} · 不支持 {draft.items.filter(i => i.status === 'unsupported').length} · 被排除 {draft.items.filter(i => i.status === 'ready' && !i.selected).length}</p>
     <label>搜索清单、正文和差异<input type="search" value={search} onChange={e => setSearch(e.target.value)} /></label>

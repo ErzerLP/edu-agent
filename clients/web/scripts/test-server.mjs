@@ -156,7 +156,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
   await new Promise((resolve) => fixture.listen(32930, '127.0.0.1', resolve))
 }
 function start() {
-  child = spawn('../../server/edu-agentd', ['serve'], {
+  child = spawn(process.env.WEB_NOTEBOOK_FIXTURE_BINARY || '../../server/edu-agentd', ['serve'], {
     stdio: serverLog ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     env: {
       PATH: process.env.PATH,

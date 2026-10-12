@@ -164,6 +164,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当前学习区已关联集合的正式来源，按集合与文档身份分页；不包含未关联共享集合 */
+        get: operations["listKnowledgeSources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/knowledge/sources/{revisionID}/documents/{documentRevisionID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 读取明确集合与历史版本的来源及原文片段；失去关联或版本不存在返回 404，不回落最新版 */
+        get: operations["readKnowledgeSource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/knowledge/source-capabilities": {
         parameters: {
             query?: never;
@@ -4056,6 +4090,56 @@ export interface components {
             shared?: boolean;
             expected_version?: number;
         };
+        KnowledgeSourceMetadata: {
+            /** @enum {string} */
+            kind: "text" | "pdf" | "url";
+            locator?: string;
+            final_url?: string;
+            media_type?: string;
+            parser: string;
+            /** @description provided_text 表示用户提供的文本；complete_text 也不代表知识正确或版式完整 */
+            coverage: string;
+            fingerprint: string;
+            /** @enum {string} */
+            status: "parsed" | "partial";
+            derived_from?: {
+                /** Format: uuid */
+                artifact_id: string;
+                version: number;
+            };
+        };
+        KnowledgeSourceItem: {
+            /** Format: uuid */
+            collection_id: string;
+            collection_name: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            document_revision_id: string;
+            path: string;
+            metadata: components["schemas"]["KnowledgeSourceMetadata"] | null;
+        };
+        KnowledgeSourcePage: {
+            items: components["schemas"]["KnowledgeSourceItem"][];
+            next_cursor?: string;
+        };
+        KnowledgeSourceDetail: components["schemas"]["KnowledgeSourceItem"] & {
+            pdf?: components["schemas"]["PDFMetadata"];
+            fragments: {
+                /** Format: uuid */
+                node_id: string;
+                /** Format: uuid */
+                node_revision_id: string;
+                title: string;
+                range: components["schemas"]["SourceRange"];
+                text: string;
+                /** @description 片段超过 4096 UTF-8 字节时截断，不表示源解析缺失 */
+                truncated: boolean;
+                page?: number;
+            }[];
+        };
         ReferenceSourcePreview: {
             locator: string;
             final_url: string;
@@ -4075,10 +4159,14 @@ export interface components {
              * @description 网页 PDF 原件；仅在允许保存时返回，供用户正式预览确认
              */
             pdf_data?: string;
+            /** @description 服务端生成并与 source_receipt 绑定的非 PDF 网页导入正文；必须原样送入预览确认 */
+            import_markdown?: string;
             /** @description 服务器签发的网页指纹与定位回执，重启后需重新抓取；不授予导入权限 */
             source_receipt?: string;
         };
         SourceCapabilities: {
+            /** @description 支持来源列表与版本详情及非 PDF 抓取回执 */
+            source_catalog?: boolean;
             formats: string[];
             pdf: {
                 parser: string;
@@ -6250,6 +6338,8 @@ export interface components {
                 as_new?: boolean;
                 /** @description PDF 必须提供原文件，由服务器重新解析；markdown 此时必须为空。仅单批预览确认支持，不进入 Markdown 可恢复导入任务 */
                 pdf?: components["schemas"]["PDFImport"];
+                /** @description 非 PDF 网页抓取回执，绑定正文、学习区及隐私代次；不得与 pdf 同传。篡改返回 invalid_request；不授予写入权限。缺省按普通文本处理。 */
+                source_receipt?: string;
                 markdown: string;
             }[];
             identity_review_basis_hash?: string;
@@ -7706,6 +7796,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KnowledgeStructureProposal"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listKnowledgeSources: {
+        parameters: {
+            query?: {
+                limit?: number;
+                /** @description 不透明游标，绑定区与集合过滤；非法或跨范围返回 400。列表是读取时的集合 head，非冻结选择。 */
+                cursor?: string;
+            };
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                /** @description 显式集合，必须被当前区引用；省略固定默认集合，不随界面活动推断。空值、多值、错误身份被拒绝。 */
+                "X-Knowledge-Collection-ID"?: components["parameters"]["KnowledgeCollectionID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 正式来源及下一页；未知元信息为 null，不含推断总数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourcePage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readKnowledgeSource: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+                "X-Knowledge-Collection-ID": string;
+            };
+            path: {
+                revisionID: string;
+                documentRevisionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已核验归属的历史版本，片段使用规范正文 UTF-8 字节位置；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSourceDetail"];
                 };
             };
             default: components["responses"]["WebFailure"];

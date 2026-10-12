@@ -1,71 +1,39 @@
-import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { FileText, Folder } from 'lucide-react'
-import type { Collection } from '@/api/references'
-import { useNotebookCollectionSources, useNotebookSources } from '@/lib/use-notebook-sources'
+import { Folder } from 'lucide-react'
+import { sourceDescription } from '@/api/notebook-sources'
+import { useNotebookSources } from '@/lib/use-notebook-sources'
+import { useIdentity } from '@/lib/session'
 import { ErrorState } from '../common'
+import { Button } from '../ui/button'
+import { AddSourceDialog } from './add-source-dialog'
+import { CatalogSourceViewer } from './source-viewer'
 
-function CollectionSources({ spaceId, collection }: { spaceId: string; collection: Collection }) {
-  const [expanded, setExpanded] = useState(false)
-  const tree = useNotebookCollectionSources(spaceId, collection, expanded)
-  return (
-    <details
-      className="notebook-source-collection"
-      onToggle={(event) => setExpanded(event.currentTarget.open)}
-    >
-      <summary>
-        <Folder size={18} aria-hidden="true" />
-        {collection.name}
-      </summary>
-      <p className="hint">
-        {collection.shared ? '已关联共享集合' : '区内私有集合'} · {collection.source}
-      </p>
-      {!collection.head_revision_id && <p>尚无正式资料。</p>}
-      {expanded && collection.head_revision_id && tree.isPending && (
-        <p role="status">正在读取文档目录…</p>
-      )}
-      {tree.error && <ErrorState error={tree.error} retry={() => void tree.refetch()} />}
-      {!tree.error && tree.data && (
-        <>
-          <p className="hint">
-            已保存版本 {tree.data.revision_no} · {tree.data.documents.length} 份文档
-          </p>
-          {tree.data.documents.length === 0 && <p>此版本没有文档。</p>}
-          {tree.data.documents.map(({ path, document }) => (
-            <details
-              className="notebook-source"
-              key={`${collection.id}:${tree.data.revision_id}:${document.document_id}`}
-            >
-              <summary>
-                <FileText size={18} aria-hidden="true" />
-                {path}
-              </summary>
-              <p className="hint">
-                {document.pdf
-                  ? `PDF · ${document.pdf.report.coverage === 'complete_text' ? '文本已提取，版式未核验' : '部分正文，解析有缺口'}`
-                  : '来源类型与覆盖情况未知'}
-              </p>
-              <ul>
-                {document.nodes
-                  .filter((node) => node.heading_level > 0)
-                  .map((node) => (
-                    <li key={node.node_id}>{node.title}</li>
-                  ))}
-              </ul>
-            </details>
-          ))}
-        </>
-      )}
-    </details>
-  )
-}
-
-export function SourcesPanel({ spaceId }: { spaceId: string }) {
-  const { available, collections } = useNotebookSources(spaceId)
+export function SourcesPanel({
+  spaceId,
+  archived = false,
+}: {
+  spaceId: string
+  archived?: boolean
+}) {
+  const { session } = useIdentity()
+  const { available, capabilities, sources } = useNotebookSources(spaceId)
   if (!available) return <p role="status">当前配对没有来源读取权限，可从设置与能力查看配对要求。</p>
+  if (capabilities.error)
+    return <ErrorState error={capabilities.error} retry={() => void capabilities.refetch()} />
+  if (capabilities.isPending) return <p role="status">正在读取来源能力…</p>
+  if (!capabilities.data?.source_catalog)
+    return <p role="status">当前服务尚不支持来源目录，请升级服务后使用。</p>
+  const items = sources.data?.pages.flatMap((p) => p.items) ?? []
   return (
     <>
       <p className="hint">当前仅浏览已保存资料。课堂使用其已冻结资料；浏览不会改变课堂范围。</p>
+      {archived ? (
+        <p>此学习区已归档，只能查看已有来源。</p>
+      ) : session.capabilities.references ? (
+        <AddSourceDialog spaceId={spaceId} />
+      ) : (
+        <p>添加来源需要参考管理配对权限。</p>
+      )}
       <Link
         className="button button-outline notebook-source-manage"
         to="/spaces/$spaceId/knowledge"
@@ -74,25 +42,38 @@ export function SourcesPanel({ spaceId }: { spaceId: string }) {
       >
         浏览与管理资料 →
       </Link>
-      {collections.isPending && <p role="status">正在读取来源集合…</p>}
-      {collections.error && (
-        <ErrorState error={collections.error} retry={() => void collections.refetch()} />
-      )}
-      {!collections.error && collections.data?.items.length === 0 && (
+      {sources.isPending && <p role="status">正在读取正式来源…</p>}
+      {sources.error && <ErrorState error={sources.error} retry={() => void sources.refetch()} />}
+      {!sources.error && !sources.isPending && items.length === 0 && (
         <div className="notebook-empty">
           <Folder size={32} aria-hidden="true" />
           <h3>这里还没有已保存的资料</h3>
-          <p>可到知识与参考页管理资料，再为课堂正式设置参考。</p>
+          <p>添加来源后可在此查看真实解析状态和原文片段。</p>
         </div>
       )}
-      {!collections.error &&
-        collections.data?.items.map((collection) => (
-          <CollectionSources
-            key={`${spaceId}:${collection.id}`}
-            spaceId={spaceId}
-            collection={collection}
-          />
+      {!sources.error &&
+        items.map((item) => (
+          <article
+            className="notebook-source"
+            key={`${item.collection_id}:${item.revision_id}:${item.document_id}`}
+          >
+            <h3>{item.path}</h3>
+            <p className="hint">
+              {item.collection_name} · {item.collection_id.slice(0, 8)}
+            </p>
+            <p>{sourceDescription(item.metadata)}</p>
+            <CatalogSourceViewer spaceId={spaceId} source={item} />
+          </article>
         ))}
+      {!sources.error && sources.hasNextPage && (
+        <Button
+          variant="outline"
+          disabled={sources.isFetchingNextPage}
+          onClick={() => void sources.fetchNextPage()}
+        >
+          加载更多来源
+        </Button>
+      )}
     </>
   )
 }

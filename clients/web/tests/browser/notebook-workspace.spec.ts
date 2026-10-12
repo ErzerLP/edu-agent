@@ -28,7 +28,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
   await expect(page.getByRole('region', { name: '来源', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '课堂', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Studio', exact: true })).toBeVisible()
-  await page.getByText('偶数资料', { exact: true }).click()
+  await expect(page.getByRole('region', { name: '来源', exact: true })).toContainText('偶数资料')
   await expect(page.getByRole('region', { name: '来源', exact: true })).toContainText('even.md')
   await expect(
     page.getByRole('region', { name: '来源', exact: true }).getByRole('checkbox'),
@@ -218,7 +218,7 @@ test('菜单完整可达、键盘关闭返回焦点、旧深链接与无效 quer
   await expect(page.getByLabel('今天想学会什么？', { exact: true })).toHaveCount(0)
 })
 
-test('来源按集合懒加载，同名文档保持归属，读取权限失效立即隐藏目录', async ({ page }) => {
+test('来源分页目录保持同名文档归属，读取权限失效立即隐藏目录', async ({ page }) => {
   await pairNotebook(page)
   const space = await createSpace(page, 'Notebook 来源目录')
   await seedSources(page, space.id, '目录甲')
@@ -231,13 +231,12 @@ test('来源按集合懒加载，同名文档保持归属，读取权限失效�
   })
   await page.goto(`/app/spaces/${space.id}`)
   const sources = page.getByRole('region', { name: '来源', exact: true })
-  await expect(sources.getByText('目录甲', { exact: true })).toBeVisible()
+  await expect(sources).toContainText('目录甲')
   expect(trees).toEqual([])
-  await sources.getByText('目录甲', { exact: true }).click()
-  await expect(sources.getByText('even.md', { exact: true })).toHaveCount(1)
-  await sources.getByText('目录乙', { exact: true }).click()
+  await expect(sources.getByRole('article').filter({ hasText: '目录甲' })).toHaveCount(2)
+  await expect(sources.getByRole('article').filter({ hasText: '目录乙' })).toHaveCount(2)
   await expect(sources.getByText('even.md', { exact: true })).toHaveCount(2)
-  expect(new Set(trees).size).toBe(2)
+  expect(trees).toEqual([])
   expect(exports).toEqual([])
   await page.route('**/v1/web/session', async (route) => {
     const response = await route.fetch()
@@ -287,7 +286,7 @@ test('切区后来源目录的迟到响应不进入新区，也不覆盖新区�
   const gate = new Promise<void>(resolve => { release = resolve })
   const seen = new Promise<void>(resolve => { started = resolve })
   const finished = new Promise<void>(resolve => { delivered = resolve })
-  await page.route('**/v1/knowledge/collections*', async route => {
+  await page.route('**/v1/knowledge/sources?*', async route => {
     if (route.request().headers()['x-learning-space-id'] !== a.id) {
       await route.continue()
       return

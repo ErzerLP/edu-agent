@@ -137,6 +137,13 @@ func TestPostgreSQLReferencesCookieImportCollectionAndScope(t *testing.T) {
 	}
 	call("POST", "/v1/knowledge/collections", space, "", knowledge.CollectionCommand{ID: collection, Action: "edit", Name: "修改集合", Source: "浏览器文件", ExpectedVersion: c.Version}, true, 200)
 	sourceData := call("POST", "/v1/knowledge/reference-sources", space, "", map[string]any{"url": "http://example.org/text", "external_consent": true}, true, 200)
+	var fetched struct {
+		Markdown string `json:"import_markdown"`
+		Receipt  string `json:"source_receipt"`
+	}
+	if err := json.Unmarshal(sourceData, &fetched); err != nil || fetched.Markdown == "" || fetched.Receipt == "" {
+		t.Fatal("missing body-bound source receipt", string(sourceData), err)
+	}
 	var source research.Source
 	if err = json.Unmarshal(sourceData, &source); err != nil || source.Status != "parsed" || !strings.Contains(source.Text, "公共网页原文") {
 		t.Fatal("网页未真实解析", err, string(sourceData))
@@ -147,6 +154,7 @@ func TestPostgreSQLReferencesCookieImportCollectionAndScope(t *testing.T) {
 		t.Fatal("未实现格式被算作成功", string(unsupported))
 	}
 	request := knowledge.ImportCommand{OperationID: uuid.NewString(), ExpectedParentProvided: true, Source: "单批真实内容", Documents: []knowledge.ImportDocument{{Path: "markdown.md", Markdown: "# 第一章\n\n教学原文\n\n## 第二章\n\n另一章节"}, {Path: "utf8.md", Markdown: "# UTF-8\n\n```text\n纯文本输入\n```"}, {Path: "paste.md", Markdown: "# 粘贴\n\n实际粘贴原文"}, {Path: "web.md", Markdown: "# 网页\n\n" + source.Text}}}
+	request.Documents[3].Markdown, request.Documents[3].SourceReceipt = fetched.Markdown, fetched.Receipt
 	var preview knowledge.ImportPreview
 	if err = json.Unmarshal(call("POST", "/v1/knowledge/imports/previews", space, collection, request, true, 200), &preview); err != nil || preview.Status != "ready" || preview.Summary.Added != 4 {
 		t.Fatal("预览不正确", err, preview)
@@ -163,6 +171,24 @@ func TestPostgreSQLReferencesCookieImportCollectionAndScope(t *testing.T) {
 	call("POST", "/v1/knowledge/imports/confirm", space, collection, confirm, true, 200)
 	call("GET", "/v1/knowledge/imports/operations/"+request.OperationID, space, collection, nil, true, 200)
 	call("GET", "/v1/knowledge/revisions/"+result.Revision.ID+"/export", space, collection, nil, true, 200)
+	var sourcePage knowledge.SourcePage
+	if err := json.Unmarshal(call("GET", "/v1/knowledge/sources?limit=10", space, collection, nil, true, 200), &sourcePage); err != nil || len(sourcePage.Items) != 4 {
+		t.Fatal("source page", sourcePage, err)
+	}
+	for _, item := range sourcePage.Items {
+		path := "/v1/knowledge/sources/" + item.RevisionID + "/documents/" + item.DocumentRevisionID
+		var detail knowledge.SourceDetail
+		if err := json.Unmarshal(call("GET", path, space, collection, nil, true, 200), &detail); err != nil || len(detail.Fragments) == 0 {
+			t.Fatal("source detail", detail, err)
+		}
+		call("GET", path, space, uuid.NewString(), nil, true, 404)
+		call("GET", path, space, "", nil, true, 400)
+		if item.Path == "web.md" && (item.Metadata == nil || item.Metadata.Kind != "url" || item.Metadata.FinalURL == "") {
+			t.Fatal("web provenance missing", item)
+		}
+	}
+	call("GET", "/v1/knowledge/sources?cursor=invalid", space, collection, nil, true, 400)
+	call("GET", "/v1/knowledge/sources?limit=101", space, collection, nil, true, 400)
 	tree, e := ks.Tree(cctx, result.Revision.ID)
 	if e != nil {
 		t.Fatal(e)

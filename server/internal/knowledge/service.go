@@ -116,6 +116,8 @@ type preparedDocument struct {
 	asNew           bool
 	pdf             *PDFMetadata
 	pdfOriginal     []byte
+	sourceMetadata  *SourceMetadata
+	sourceReceipt   string
 }
 
 type pendingLineage struct {
@@ -230,6 +232,16 @@ func (s *Service) Import(ctx context.Context, command ImportCommand) (ImportResu
 			return ImportResult{}, err
 		}
 		attachPDF(&document, prepared[i].pdf, prepared[i].pdfOriginal)
+		document.SourceMetadata = prepared[i].sourceMetadata
+		if document.PDF != nil {
+			document.SourceMetadata = PDFSourceMetadata(document.PDF)
+		} else if document.SourceMetadata == nil {
+			document.SourceMetadata = &SourceMetadata{Kind: "text", Parser: ParserVersion, Coverage: "provided_text", Fingerprint: document.CanonicalHash, Status: "parsed"}
+		}
+		// An unchanged historical version retains its original (possibly unknown) provenance.
+		if old := prepared[i].old; old != nil && old.Revision.ID == document.ID {
+			document.SourceMetadata = old.Revision.SourceMetadata
+		}
 		built[i] = document
 		incomingDocumentIDs[document.DocumentID] = struct{}{}
 	}
@@ -415,6 +427,20 @@ func (s *Service) prepareDocuments(ctx context.Context, input []ImportDocument) 
 		paths[folded] = struct{}{}
 		var metadata *PDFMetadata
 		var original []byte
+		var sourceMetadata *SourceMetadata
+		if item.SourceReceipt != "" {
+			if item.PDF != nil {
+				return nil, &Error{Code: CodeInvalidRequest}
+			}
+			generation, err := s.importGeneration(ctx)
+			if err != nil {
+				return nil, err
+			}
+			sourceMetadata, err = verifySourceReceipt(ctx, generation, item.Markdown, item.SourceReceipt)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if item.PDF != nil {
 			if item.Markdown != "" {
 				return nil, &Error{Code: CodeInvalidRequest}
@@ -436,7 +462,7 @@ func (s *Service) prepareDocuments(ctx context.Context, input []ImportDocument) 
 				inspected.DraftNodes[i].ExplicitNodeID = ""
 			}
 		}
-		prepared = append(prepared, preparedDocument{path: documentPath, inspected: inspected, asNew: item.AsNew, pdf: metadata, pdfOriginal: original})
+		prepared = append(prepared, preparedDocument{path: documentPath, inspected: inspected, asNew: item.AsNew, pdf: metadata, pdfOriginal: original, sourceMetadata: sourceMetadata, sourceReceipt: item.SourceReceipt})
 	}
 	sort.Slice(prepared, func(i, j int) bool { return prepared[i].path < prepared[j].path })
 	totalNodes := 0
@@ -901,9 +927,10 @@ func indexNodeResolutions(input []NodeResolution) (map[string]NodeResolution, er
 
 func hashImportRequest(command ImportCommand, documents []preparedDocument) string {
 	type hashDocument struct {
-		Path        string `json:"path"`
-		Fingerprint string `json:"fingerprint"`
-		AsNew       bool   `json:"as_new,omitempty"`
+		Path          string `json:"path"`
+		Fingerprint   string `json:"fingerprint"`
+		AsNew         bool   `json:"as_new,omitempty"`
+		SourceReceipt string `json:"source_receipt,omitempty"`
 	}
 	type hashNotesyncResolution struct {
 		ReviewID           string `json:"review_id"`
@@ -942,7 +969,7 @@ func hashImportRequest(command ImportCommand, documents []preparedDocument) stri
 		}
 	}
 	for _, document := range documents {
-		value.Documents = append(value.Documents, hashDocument{Path: document.path, Fingerprint: reviewDocumentFingerprint(document.inspected), AsNew: document.asNew})
+		value.Documents = append(value.Documents, hashDocument{Path: document.path, Fingerprint: reviewDocumentFingerprint(document.inspected), AsNew: document.asNew, SourceReceipt: document.sourceReceipt})
 	}
 	sort.Slice(value.Document, func(i, j int) bool { return value.Document[i].Locator < value.Document[j].Locator })
 	sort.Slice(value.Node, func(i, j int) bool { return value.Node[i].Locator < value.Node[j].Locator })

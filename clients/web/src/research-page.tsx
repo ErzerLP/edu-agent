@@ -13,6 +13,7 @@ import { ErrorState, Confirm } from './components/common'
 import { publicTopic } from './api/start'
 import { referenceState } from './api/references'
 import { PDFCoverage, PDFPageViewer } from './components/pdf-source'
+import { SourceDialog, ResearchSourceContent } from './components/notebook/source-viewer'
 
 export function ResearchPage({ spaceId, goalId, startLearning = false }: { spaceId: string; goalId: string; startLearning?: boolean }) {
   const { session, prefix } = useIdentity()
@@ -24,7 +25,7 @@ export function ResearchPage({ spaceId, goalId, startLearning = false }: { space
   return <><Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId }}>← 返回目标</Link><h1>{startLearning ? '准备第一项学习活动' : '研究相关知识'}</h1><p>{goal.data.management.details.name}</p><ResearchPanel key={startLearning ? 'start' : 'research'} goal={goal.data} archived={space.data.status === 'archived'} startLearning={startLearning} /></>
 }
 
-function SourceViewer({ source, select, decide, disabled }: { source: ResearchSource; select?: string; decide: (kind: 'adopt' | 'reject', acceptPartial?: boolean) => void; disabled: boolean }) {
+function SourceViewer({ source, runId, select, decide, disabled }: { source: ResearchSource; runId: string; select?: string; decide: (kind: 'adopt' | 'reject', acceptPartial?: boolean) => void; disabled: boolean }) {
   const [acceptPartial, setAcceptPartial] = useState(false)
   const partialPDF = !!source.pdf && source.coverage !== 'complete_text'
   return <article className="panel" id={`source-${source.id}`}>
@@ -33,6 +34,7 @@ function SourceViewer({ source, select, decide, disabled }: { source: ResearchSo
     {source.final_url && <p className="hint">实际读取：{source.final_url}</p>}
     {source.fetched_at && <p>获取于 {new Date(source.fetched_at).toLocaleString('zh-CN')} · {source.coverage === 'complete_text' ? '完整文本' : '部分解析，可能有遗漏'}</p>}
     {source.failure && <p role="alert">缺口：{source.failure}。未以搜索摘要替代正文。</p>}
+    {source.text && <SourceDialog label="查看来源与片段"><ResearchSourceContent spaceId={source.space_id} runId={runId} sourceId={source.id} revisionId={source.revision_id} fragmentId={select} /></SourceDialog>}
     {source.pdf && <PDFCoverage report={source.pdf} />}
     {source.pdf && source.status === 'adopted' && source.document_revision_id && <PDFPageViewer spaceId={source.space_id} revisionId={source.knowledge_revision_id} documentId={source.document_revision_id} collectionId={source.collection_id} pages={source.pdf.pages.map(p => p.number)} />}
     {source.text ? <>
@@ -59,7 +61,6 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
   const [run, setRun] = useState<MentorSnapshot>()
   const [error, setError] = useState<unknown>()
   const [pending, setPending] = useState(false)
-  const [selected, setSelected] = useState<string>()
   const sessionID = useRef<string>(crypto.randomUUID())
   const mounted = useRef(true)
   const header = { 'X-Learning-Space-ID': goal.learning_space_id }
@@ -147,11 +148,11 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
     {state && <>
       <p>候选 {state.sources.length} · 已读取 {state.sources.filter((s) => s.fetched_at).length} · 部分解析 {state.sources.filter((s) => s.coverage && s.coverage !== 'complete_text').length} · 已采用 {state.sources.filter((s) => s.status === 'adopted').length}</p>
       <section><h2>AI 综合要点</h2><p className="hint">以下是 AI 综合，目前只核对每个来源的前三个片段，存在阅读遗漏。引用仅表示可追溯，不等于结论普遍正确。</p>
-        {state.synthesis?.points.map((point, i) => <article className="panel" key={i}><p>{point.text}</p>{point.citations.map((citation, j) => <p key={j}><a href={`#fragment-${citation.fragment_id}`} onClick={() => setSelected(citation.fragment_id)}>查看支持片段</a>：{citation.quote}</p>)}</article>)}
+        {state.synthesis?.points.map((point, i) => <article className="panel" key={i}><p>{point.text}</p>{point.citations.map((citation, j) => <p key={j}><SourceDialog label="查看支持片段"><ResearchSourceContent spaceId={goal.learning_space_id} runId={run!.run_id} sourceId={citation.source_id} revisionId={citation.revision_id} fragmentId={citation.fragment_id} /></SourceDialog>：{citation.quote}</p>)}</article>)}
         {state.synthesis?.gaps.map((gap, i) => <p key={i}>缺口或冲突：{gap}</p>)}
         {state.synthesis?.examples.map((example, i) => <p key={i}>自拟例子（非外部原文）：{example}</p>)}
       </section>
     </>}
-    {sources.length > 0 && <><h2>{state ? '实际来源' : '已获准保留的历史来源'}</h2>{sources.map((source) => <SourceViewer key={source.revision_id || source.id} source={source} select={selected} disabled={pending || !!active || inactive || !session.device.scopes.includes('knowledge:write')} decide={(kind, partial) => void decide(source, kind, partial)} />)}</>}
+    {sources.length > 0 && <><h2>{state ? '实际来源' : '已获准保留的历史来源'}</h2>{sources.map((source) => <SourceViewer key={source.revision_id || source.id} source={source} runId={run!.run_id} disabled={pending || !!active || inactive || !session.device.scopes.includes('knowledge:write')} decide={(kind, partial) => void decide(source, kind, partial)} />)}</>}
   </>
 }

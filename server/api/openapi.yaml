@@ -220,6 +220,34 @@ paths:
                 $ref: "#/components/schemas/KnowledgeStructureProposal"
         default:
           $ref: "#/components/responses/WebFailure"
+  /v1/knowledge/sources:
+    get:
+      operationId: listKnowledgeSources
+      summary: 当前学习区已关联集合的正式来源，按集合与文档身份分页；不包含未关联共享集合
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: knowledge:read
+      parameters:
+        - { $ref: "#/components/parameters/LearningSpaceID" }
+        - { $ref: "#/components/parameters/KnowledgeCollectionID" }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 1024 }, description: 不透明游标，绑定区与集合过滤；非法或跨范围返回 400。列表是读取时的集合 head，非冻结选择。 }
+      responses:
+        "200": { description: 正式来源及下一页；未知元信息为 null，不含推断总数, content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeSourcePage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/knowledge/sources/{revisionID}/documents/{documentRevisionID}:
+    get:
+      operationId: readKnowledgeSource
+      summary: 读取明确集合与历史版本的来源及原文片段；失去关联或版本不存在返回 404，不回落最新版
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: knowledge:read
+      parameters:
+        - { $ref: "#/components/parameters/LearningSpaceID" }
+        - { name: X-Knowledge-Collection-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: revisionID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: documentRevisionID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: 已核验归属的历史版本，片段使用规范正文 UTF-8 字节位置；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/KnowledgeSourceDetail" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/knowledge/source-capabilities:
     get:
       operationId: readSourceCapabilities
@@ -5801,6 +5829,68 @@ components:
         source: { type: string, maxLength: 500 }
         shared: { type: boolean }
         expected_version: { type: integer, minimum: 0 }
+    KnowledgeSourceMetadata:
+      type: object
+      additionalProperties: false
+      required: [kind, parser, coverage, fingerprint, status]
+      properties:
+        kind: { type: string, enum: [text, pdf, url] }
+        locator: { type: string }
+        final_url: { type: string }
+        media_type: { type: string }
+        parser: { type: string }
+        coverage: { type: string, description: provided_text 表示用户提供的文本；complete_text 也不代表知识正确或版式完整 }
+        fingerprint: { type: string }
+        status: { type: string, enum: [parsed, partial] }
+        derived_from:
+          type: object
+          additionalProperties: false
+          required: [artifact_id, version]
+          properties:
+            artifact_id: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+    KnowledgeSourceItem:
+      type: object
+      required: [collection_id, collection_name, revision_id, document_id, document_revision_id, path, metadata]
+      properties:
+        collection_id: { type: string, format: uuid }
+        collection_name: { type: string }
+        revision_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_revision_id: { type: string, format: uuid }
+        path: { type: string }
+        metadata:
+          oneOf:
+            - { $ref: "#/components/schemas/KnowledgeSourceMetadata" }
+            - { type: "null" }
+    KnowledgeSourcePage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/KnowledgeSourceItem" } }
+        next_cursor: { type: string }
+    KnowledgeSourceDetail:
+      allOf:
+        - { $ref: "#/components/schemas/KnowledgeSourceItem" }
+        - type: object
+          required: [fragments]
+          properties:
+            pdf: { $ref: "#/components/schemas/PDFMetadata" }
+            fragments:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [node_id, node_revision_id, title, range, text, truncated]
+                properties:
+                  node_id: { type: string, format: uuid }
+                  node_revision_id: { type: string, format: uuid }
+                  title: { type: string }
+                  range: { $ref: "#/components/schemas/SourceRange" }
+                  text: { type: string, maxLength: 4096 }
+                  truncated: { type: boolean, description: 片段超过 4096 UTF-8 字节时截断，不表示源解析缺失 }
+                  page: { type: integer, minimum: 1 }
     ReferenceSourcePreview:
       type: object
       additionalProperties: false
@@ -5819,11 +5909,13 @@ components:
         text: { type: string, maxLength: 16000 }
         pdf: { $ref: "#/components/schemas/PDFReport" }
         pdf_data: { type: string, format: byte, description: 网页 PDF 原件；仅在允许保存时返回，供用户正式预览确认 }
+        import_markdown: { type: string, description: 服务端生成并与 source_receipt 绑定的非 PDF 网页导入正文；必须原样送入预览确认 }
         source_receipt: { type: string, description: 服务器签发的网页指纹与定位回执，重启后需重新抓取；不授予导入权限 }
     SourceCapabilities:
       type: object
       required: [formats, pdf]
       properties:
+        source_catalog: { type: boolean, description: 支持来源列表与版本详情及非 PDF 抓取回执 }
         formats: { type: array, items: { type: string } }
         pdf:
           type: object
@@ -9411,6 +9503,7 @@ components:
                 type: boolean
                 description: 用户明确作为新资料，生成全新文档与节点身份；名称必须未被占用，仍须预览和正式确认
               pdf: { $ref: "#/components/schemas/PDFImport", description: PDF 必须提供原文件，由服务器重新解析；markdown 此时必须为空。仅单批预览确认支持，不进入 Markdown 可恢复导入任务 }
+              source_receipt: { type: string, maxLength: 32768, description: 非 PDF 网页抓取回执，绑定正文、学习区及隐私代次；不得与 pdf 同传。篡改返回 invalid_request；不授予写入权限。缺省按普通文本处理。 }
               markdown:
                 type: string
                 maxLength: 4194304

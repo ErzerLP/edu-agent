@@ -32,7 +32,10 @@ export function StudioPanel({
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<string>()
   const [document, setDocument] = useState<string>()
-  const [generation, setGeneration] = useState<{ kind: 'guide' | 'brief'; base?: StudioRevision }>()
+  const [generation, setGeneration] = useState<{
+    kind: 'guide' | 'brief' | 'quiz'
+    base?: StudioRevision
+  }>()
   const [runId, setRunId] = useState<string>()
   const canRead = session.device.scopes.includes('learning:read')
   const canWrite = session.device.scopes.includes('learning:write') && !archived
@@ -68,6 +71,9 @@ export function StudioPanel({
       drafts.deletePrefix(
         JSON.stringify([...prefix, spaceId, 'studio-generation']).slice(0, -1) + ',',
       )
+      drafts.deletePrefix(
+        JSON.stringify([...prefix, spaceId, 'studio-quiz-start']).slice(0, -1) + ',',
+      )
       setSelected(undefined)
       back()
     }
@@ -84,7 +90,7 @@ export function StudioPanel({
         onCitation={onCitation}
         onRegenerate={(base) => {
           setDocument(undefined)
-          setGeneration({ kind: base.kind as 'guide' | 'brief', base })
+          setGeneration({ kind: base.kind as 'guide' | 'brief' | 'quiz', base })
         }}
       />
     )
@@ -129,27 +135,19 @@ export function StudioPanel({
     <>
       <p className="hint">整理学习成果，留住自己的理解。</p>
       <div className="notebook-studio-tiles">
-        {tiles.map(({ name, kind, Icon, color }) =>
-          kind === 'quiz' ? (
-            <div className={`notebook-studio-tile notebook-color-${color}`} key={name}>
-              <Icon size={22} aria-hidden="true" />
-              <h3>{name}</h3>
-              <span>尚未交付</span>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className={`notebook-studio-tile notebook-color-${color}`}
-              key={name}
-              disabled={!canGenerate}
-              onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' })}
-            >
-              <Icon size={22} aria-hidden="true" />
-              <h3>{name}</h3>
-              <span>按所选来源生成</span>
-            </button>
-          ),
-        )}
+        {tiles.map(({ name, kind, Icon, color }) => (
+          <button
+            type="button"
+            className={`notebook-studio-tile notebook-color-${color}`}
+            key={name}
+            disabled={!canGenerate}
+            onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' | 'quiz' })}
+          >
+            <Icon size={22} aria-hidden="true" />
+            <h3>{name}</h3>
+            <span>{kind === 'quiz' && !goalId ? '请先选择或建立目标' : '按所选来源生成'}</span>
+          </button>
+        ))}
         <button
           type="button"
           className="notebook-studio-tile notebook-color-3"

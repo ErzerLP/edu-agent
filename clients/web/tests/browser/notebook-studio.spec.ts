@@ -1,8 +1,8 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { randomUUID } from 'node:crypto'
 import { pairNotebook, createSpace, webAPI, seedSources } from './notebook-fixture'
 
-test('所选来源生成指南和简报、引用定位、刷新重开、取消并重新生成版本', async ({ page }) => {
+async function configureStudioModel(page: Page) {
   await pairNotebook(page, 'settings')
   await page.goto('/app/settings')
   const model = page.getByRole('region', { name: 'Web 导师模型', exact: true })
@@ -18,6 +18,10 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
     headers: { Origin: 'http://127.0.0.1:32929', 'X-CSRF-Token': session.csrf_token },
   })
   expect(logout.ok()).toBe(true)
+}
+
+test('所选来源生成指南和简报、引用定位、刷新重开、取消并重新生成版本', async ({ page }) => {
+  await configureStudioModel(page)
   await pairNotebook(page, 'references')
   const space = await createSpace(page, 'Studio 生成验收')
   await seedSources(page, space.id)
@@ -70,6 +74,143 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
   await expect(studio.getByText(/已保存第 1 版/)).toBeVisible()
 })
 
+test('测验明确选择目标、正式逐题作答、帮助限制与丢响应核对，原课堂草稿保留', async ({ page }) => {
+  test.setTimeout(120000)
+  await configureStudioModel(page)
+  await pairNotebook(page, 'references')
+  const space = await createSpace(page, 'Studio 正式测验')
+  const source = await seedSources(page, space.id)
+  await page.goto(`/app/spaces/${space.id}`)
+  const studio = page.getByRole('region', { name: 'Studio', exact: true })
+  const classroom = page.getByRole('region', { name: '课堂', exact: true })
+  await studio.getByRole('button', { name: /^测验/ }).click()
+  await expect(studio.getByRole('alert')).toContainText('请先在课堂选择或建立目标')
+  await expect(studio.getByRole('button', { name: '开始生成测验', exact: true })).toBeDisabled()
+  expect((await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items).toHaveLength(
+    0,
+  )
+  await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
+  const goalText = '偶数测验与课堂共存'
+  await classroom.getByLabel('今天想学会什么？', { exact: true }).fill(goalText)
+  await classroom.getByRole('button', { name: '仅保存目标', exact: true }).click()
+  await expect(classroom.getByText('目标已保存，尚未启动教学。')).toBeVisible()
+  const goal = (await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items[0]
+  await webAPI(
+    page,
+    'PUT',
+    `/v1/learning/goals/${goal.goal_id}`,
+    {
+      operation_id: randomUUID(),
+      payload_schema_version: 1,
+      aggregate_type: 'goal',
+      aggregate_id: goal.goal_id,
+      expected_version: goal.revision,
+      previous_revision_id: goal.goal_revision_id,
+      text: goal.text,
+      source: '测验浏览器夹具',
+      details: { ...goal.management.details, scope_snapshot_id: source.scopeId },
+    },
+    space.id,
+  )
+  await page.reload()
+  await classroom.getByRole('button', { name: goalText, exact: true }).click()
+  await classroom.getByRole('button', { name: '新建教学会话', exact: true }).click()
+  await classroom.getByRole('button', { name: '开始学习', exact: true }).click()
+  await classroom.getByRole('button', { name: '生成学习路线', exact: true }).click()
+  await classroom.getByRole('button', { name: '生成下一活动', exact: true }).click()
+  await classroom.getByRole('button', { name: '开始当前活动', exact: true }).click()
+  const originalId = new URL(page.url()).pathname.split('/').at(-1)!
+  await classroom
+    .getByRole('textbox', { name: '我的正式答案', exact: true })
+    .fill('ORIGINAL_CLASSROOM_DRAFT')
+  const original = await webAPI(
+    page,
+    'GET',
+    `/v1/tutoring/sessions/${originalId}`,
+    undefined,
+    space.id,
+  )
+  await page
+    .getByRole('region', { name: '来源', exact: true })
+    .getByRole('checkbox', { name: /examples.md/ })
+    .uncheck()
+  const outgoing: any[] = []
+  page.on('request', (r) => {
+    if (r.url().endsWith('/studio/generations') && r.method() === 'POST')
+      outgoing.push(r.postDataJSON())
+  })
+  await studio.getByRole('button', { name: /^测验/ }).click()
+  await studio.getByRole('button', { name: '开始生成测验', exact: true }).click()
+  await studio.getByRole('button', { name: '打开已保存产物' }).click()
+  await expect(studio.getByRole('heading', { name: '夹具偶数测验', exact: true })).toBeVisible()
+  expect(outgoing[0]).toMatchObject({ kind: 'quiz', goal_id: goal.goal_id, goal_version: 2 })
+  expect(outgoing[0].source_selection.items).toHaveLength(1)
+  await page.route('**/quiz/start', async (route) => {
+    await route.fetch()
+    await route.abort('failed')
+  })
+  await studio.getByRole('button', { name: '开始正式作答', exact: true }).click()
+  await expect(studio.getByText('开始结果待核对，请先核对原操作。')).toBeVisible()
+  await studio.getByRole('button', { name: '核对原开始操作', exact: true }).click()
+  await page.unroute('**/quiz/start')
+  const quiz = studio.getByRole('region', { name: '第 1 题正式作答', exact: true })
+  await quiz.getByRole('button', { name: '开始当前活动', exact: true }).click()
+  const answer = quiz.getByRole('textbox', { name: '我的正式答案', exact: true })
+  await answer.fill('偶数可被 2 整除，例如 2。')
+  await expect(quiz.getByRole('button', { name: '提交正式答案', exact: true })).toBeDisabled()
+  await expect(quiz.getByLabel('作答帮助等级')).toHaveValue('')
+  await quiz.getByLabel('作答帮助等级').selectOption('hint')
+  let answerPosts = 0
+  await page.route('**/v1/learning/content/*/answers', async (route) => {
+    answerPosts++
+    expect(route.request().postDataJSON().help).toBe('hint')
+    await route.fetch()
+    await route.abort('failed')
+  })
+  await quiz.getByRole('button', { name: '提交正式答案', exact: true }).click()
+  await expect(quiz.getByText('已核对原操作：提交已保存。', { exact: true })).toBeVisible()
+  expect(answerPosts).toBe(1)
+  await page.unroute('**/v1/learning/content/*/answers')
+  await quiz.getByRole('button', { name: '获取教学反馈', exact: true }).click()
+  await expect(quiz.getByRole('region', { name: '教学反馈', exact: true })).toContainText('已接纳')
+  await quiz.getByRole('button', { name: '查看完毕，继续学习', exact: true }).click()
+  await expect(studio.getByText('已完成 1 / 2 题', { exact: true })).toBeVisible()
+  await studio.getByRole('button', { name: '开始第 2 题', exact: true }).click()
+  const second = studio.getByRole('region', { name: '第 2 题正式作答', exact: true })
+  await second.getByRole('button', { name: '开始当前活动', exact: true }).click()
+  await second
+    .getByRole('textbox', { name: '我的正式答案', exact: true })
+    .fill('偶数能被 2 整除，例如 4。')
+  await expect(second.getByLabel('作答帮助等级')).toHaveValue('none')
+  await second.getByRole('button', { name: '提交正式答案', exact: true }).click()
+  await second.getByRole('button', { name: '获取教学反馈', exact: true }).click()
+  await expect(second.getByRole('region', { name: '教学反馈', exact: true })).toContainText(
+    '已接纳',
+  )
+  await second.getByRole('button', { name: '查看完毕，继续学习', exact: true }).click()
+  await expect(studio.getByText('已完成 2 / 2 题', { exact: true })).toBeVisible()
+  await expect(classroom.getByRole('textbox', { name: '我的正式答案', exact: true })).toHaveValue(
+    'ORIGINAL_CLASSROOM_DRAFT',
+  )
+  const unchanged = await webAPI(
+    page,
+    'GET',
+    `/v1/tutoring/sessions/${originalId}`,
+    undefined,
+    space.id,
+  )
+  expect(unchanged.session.aggregate_version).toBe(original.session.aggregate_version)
+  expect(unchanged.work_item.activity.activity_id).toBe(original.work_item.activity.activity_id)
+  await studio.getByRole('link', { name: '查看学习进度', exact: true }).click()
+  await expect(page.getByText('夹具偶数测验 · 第 1 题', { exact: false }).first()).toBeVisible()
+  await page.goBack()
+  await expect(classroom.getByRole('textbox', { name: '我的正式答案', exact: true })).toHaveValue(
+    'ORIGINAL_CLASSROOM_DRAFT',
+  )
+  await studio.getByRole('button', { name: /夹具偶数测验.*已保存第 1 版/ }).click()
+  await expect(studio.getByText('已完成 2 / 2 题', { exact: true })).toBeVisible()
+})
+
 test('Studio 拒绝缺失 CSRF 的写入，读取撤权后清除尚未保存的草稿', async ({ page }) => {
   await pairNotebook(page)
   const space = await createSpace(page, 'Studio 权限隔离')
@@ -109,7 +250,7 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
   const space = await createSpace(page, 'Studio 无目标学习区')
   await page.goto(`/app/spaces/${space.id}?panel=studio`)
   const studio = page.getByRole('region', { name: 'Studio', exact: true })
-  await expect(studio.getByText('尚未交付', { exact: true })).toHaveCount(1)
+  await expect(studio.getByRole('button', { name: /^测验/ })).toContainText('请先选择或建立目标')
   await studio.getByRole('button', { name: '＋ 添加笔记', exact: true }).click()
   await studio.getByLabel('笔记标题', { exact: true }).fill('矩阵秩笔记')
   await studio

@@ -16,7 +16,7 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { useSourceSelection } from './source-selection'
 
-export const studioNames = { guide: '学习指南', brief: '简报', note: '笔记' }
+export const studioNames = { guide: '学习指南', brief: '简报', note: '笔记', quiz: '测验' }
 const reasons: Record<string, string> = {
   output_budget_exceeded: '模型输出预算耗尽，结果未通过完整校验，未发布产物。',
   response_not_completed: '模型未完成输出，未发布产物。',
@@ -203,7 +203,7 @@ export function StudioGenerator({
 }: {
   spaceId: string
   goalId?: string
-  kind: 'guide' | 'brief'
+  kind: 'guide' | 'brief' | 'quiz'
   base?: StudioRevision
   onBack: () => void
   onOpen: (id: string) => void
@@ -254,7 +254,13 @@ export function StudioGenerator({
     }
   }
   const submit = async () => {
-    if (!modelReady || !selection || selection.mode !== 'items' || (targetGoal && !goal.data))
+    if (
+      !modelReady ||
+      !selection ||
+      selection.mode !== 'items' ||
+      (targetGoal && !goal.data) ||
+      (kind === 'quiz' && !targetGoal)
+    )
       return
     setBusy(true)
     setError(undefined)
@@ -326,12 +332,21 @@ export function StudioGenerator({
         <>
           <p>
             使用当前勾选的 {selection?.items.length ?? 0} 个来源。
-            {targetGoal ? '关联当前目标。' : '不绑定目标。'}生成结果将加密保存。
+            {targetGoal
+              ? `关联目标：${goal.data?.management.details.name ?? '正在读取'}。`
+              : kind === 'quiz'
+                ? ''
+                : '不绑定目标。'}
+            生成结果将加密保存。
           </p>
           {!modelReady && <p>请先在设置中配置并启用 Web 导师模型。</p>}
+          {kind === 'quiz' && !targetGoal && (
+            <p role="alert">请先在课堂选择或建立目标，再生成测验。</p>
+          )}
           {modelReady && (
             <p className="hint">
-              所选片段将发送到 {configuration.data?.effective_mentor.endpoint}
+              所选片段{kind === 'quiz' ? '和选定目标' : ''}将发送到{' '}
+              {configuration.data?.effective_mentor.endpoint}
               ，消耗本次模型预算。单次输出上限为 {configuration.data?.limits.output_tokens} tokens。
             </p>
           )}
@@ -362,6 +377,7 @@ export function StudioGenerator({
             disabled={
               busy ||
               !modelReady ||
+              (kind === 'quiz' && !targetGoal) ||
               !selection?.items.length ||
               !!goal.error ||
               (!!targetGoal && !goal.data) ||

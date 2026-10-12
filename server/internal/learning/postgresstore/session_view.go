@@ -41,7 +41,7 @@ func (s *Store) readSessionView(ctx context.Context, id string, current bool) (l
 	}
 	var raw, stats []byte
 	if current {
-		err = tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.item->'session'->>'state'<>'Completed' AND EXISTS(SELECT 1 FROM learning_goal_revisions g WHERE g.id=(s.item->'session'->'focus'->>'goal_revision_id')::uuid AND g.space_id=$2) ORDER BY s.updated_event_seq DESC,s.session_id DESC LIMIT 1`, metadata.GenerationID, learningspace.Scope(ctx)).Scan(&raw, &stats)
+		err = tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.item->'session'->>'state'<>'Completed' AND NOT EXISTS(SELECT 1 FROM learning_studio_quiz_questions q WHERE q.session_id=s.session_id) AND EXISTS(SELECT 1 FROM learning_goal_revisions g WHERE g.id=(s.item->'session'->'focus'->>'goal_revision_id')::uuid AND g.space_id=$2) ORDER BY s.updated_event_seq DESC,s.session_id DESC LIMIT 1`, metadata.GenerationID, learningspace.Scope(ctx)).Scan(&raw, &stats)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT s.item,COALESCE(st.item,'null'::jsonb) FROM learning_projection_sessions s LEFT JOIN learning_projection_stats st ON st.generation_id=s.generation_id AND st.session_id=s.session_id WHERE s.generation_id=$1 AND s.session_id=$2`, metadata.GenerationID, id).Scan(&raw, &stats)
 	}

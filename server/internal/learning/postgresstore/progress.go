@@ -298,6 +298,9 @@ func (s *Store) Progress(ctx context.Context, q learning.ProgressQuery) (learnin
 		rows.Close()
 		var reviews []*learning.ReviewSchedule
 		for i := range result.Items {
+			if err = studioQuizSessionNames(ctx, tx, result.Items[i].Sessions); err != nil {
+				return result, err
+			}
 			for j := range result.Items[i].Reviews {
 				reviews = append(reviews, &result.Items[i].Reviews[j])
 			}

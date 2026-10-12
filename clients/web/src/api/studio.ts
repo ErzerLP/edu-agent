@@ -21,10 +21,60 @@ export const studioGuideSchema = z
 export const studioBriefSchema = z
   .object({ overview: claims, differences: claims, gaps: claims })
   .strict()
+export const studioQuizSchema = z
+  .object({
+    goal_version: version,
+    questions: z
+      .array(
+        z
+          .object({
+            prompt: z.string().trim().min(1).max(1500),
+            rubric: z
+              .array(
+                z
+                  .object({
+                    id: z.string().trim().min(1).max(100),
+                    criterion: z.string().trim().min(1).max(1000),
+                  })
+                  .strict(),
+              )
+              .min(1)
+              .max(10)
+              .refine((items) => new Set(items.map((i) => i.id)).size === items.length),
+            allowed_help: z
+              .array(z.enum(['none', 'hint', 'scaffold', 'answer_revealed']))
+              .min(1)
+              .max(4)
+              .refine((items) => new Set(items).size === items.length),
+            citations: z.array(z.string()).min(1).max(10),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
+  })
+  .strict()
+export const studioQuizStateSchema = z.object({
+  artifact_id: z.uuid(),
+  version,
+  goal_version: version,
+  questions: z.array(
+    z.object({
+      question: z.number().int().min(1).max(8),
+      session_id: z.uuid(),
+      activity_id: z.uuid(),
+      content_artifact_id: z.uuid(),
+      state: z.string(),
+      completed: z.boolean(),
+      attempt_id: z.uuid().optional(),
+    }),
+  ),
+})
+export type StudioQuizStart = components['schemas']['StudioQuizStart']
 export const studioGenerateSchema = z.object({
   operation_id: z.uuid(),
   privacy_generation: version,
-  kind: z.enum(['guide', 'brief']),
+  kind: z.enum(['guide', 'brief', 'quiz']),
   goal_id: z.uuid().nullable(),
   goal_version: z.number().int().nonnegative(),
   artifact_id: z.uuid().nullable(),
@@ -42,7 +92,7 @@ export type StudioClaim = z.infer<typeof studioClaimSchema>
 const itemSchema = z.object({
   artifact_id: z.uuid(),
   goal_id: z.uuid().nullable(),
-  kind: z.enum(['note', 'guide', 'brief']),
+  kind: z.enum(['note', 'guide', 'brief', 'quiz']),
   version,
   title: z.string(),
   updated_at: z.string(),
@@ -56,7 +106,7 @@ export const studioRevisionSchema = z
     artifact_id: z.uuid(),
     learning_space_id: z.uuid(),
     goal_id: z.uuid().nullable(),
-    kind: z.enum(['note', 'guide', 'brief']),
+    kind: z.enum(['note', 'guide', 'brief', 'quiz']),
     version,
     privacy_generation: version,
     actor_device_id: z.uuid(),
@@ -72,11 +122,18 @@ export const studioRevisionSchema = z
       coverage: z.enum(['complete', 'partial']).optional(),
       guide: studioGuideSchema.optional(),
       brief: studioBriefSchema.optional(),
+      quiz: studioQuizSchema.optional(),
     }),
   })
   .superRefine((r, ctx) => {
     if (r.kind === 'note') {
-      if (r.body.guide || r.body.brief || r.body.source_manifest || r.body.citations.length)
+      if (
+        r.body.guide ||
+        r.body.brief ||
+        r.body.quiz ||
+        r.body.source_manifest ||
+        r.body.citations.length
+      )
         ctx.addIssue({ code: 'custom', message: 'Invalid note provenance' })
     } else {
       if (
@@ -85,17 +142,15 @@ export const studioRevisionSchema = z
         !r.body.model ||
         !r.body.input_fingerprint ||
         (r.kind === 'guide') !== !!r.body.guide ||
-        (r.kind === 'brief') !== !!r.body.brief
+        (r.kind === 'brief') !== !!r.body.brief ||
+        (r.kind === 'quiz') !== !!r.body.quiz ||
+        (r.kind === 'quiz' && !r.goal_id)
       )
         ctx.addIssue({ code: 'custom', message: 'Missing generated document' })
       const ids = new Set(r.body.citations.map((c) => c.id))
       const groups = r.body.guide ?? r.body.brief
-      if (
-        groups &&
-        Object.values(groups)
-          .flat()
-          .some((claim: StudioClaim) => claim.citations.some((id) => !ids.has(id)))
-      )
+      const claims = r.body.quiz?.questions ?? (groups ? Object.values(groups).flat() : [])
+      if (claims.some((claim) => claim.citations.some((id: string) => !ids.has(id))))
         ctx.addIssue({ code: 'custom', message: 'Unverified citation' })
     }
   })
@@ -154,6 +209,29 @@ export function studioAPI(session: Session, spaceId: string) {
   const header = { 'X-Learning-Space-ID': spaceId }
   const api = learningClient(session, spaceId)
   return {
+    quiz: (id: string, version: number, signal?: AbortSignal) =>
+      unwrap(
+        api.GET('/v1/learning/studio/artifacts/{artifactID}/quiz', {
+          params: { header, path: { artifactID: id }, query: { version } },
+          signal,
+        }),
+        studioQuizStateSchema,
+      ),
+    startQuiz: (id: string, body: StudioQuizStart) =>
+      unwrap(
+        api.POST('/v1/learning/studio/artifacts/{artifactID}/quiz/start', {
+          params: { header, path: { artifactID: id } },
+          body,
+        }),
+        studioQuizStateSchema,
+      ),
+    quizOperation: (operationID: string) =>
+      unwrap(
+        api.GET('/v1/learning/studio/quiz-operations/{operationID}', {
+          params: { header, path: { operationID } },
+        }),
+        studioQuizStateSchema,
+      ),
     list: async (cursor?: string, signal?: AbortSignal) => {
       return unwrap(
         api.GET('/v1/learning/studio/artifacts', { params: { header, query: { cursor } }, signal }),

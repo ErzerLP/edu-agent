@@ -47,14 +47,15 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
-    if (payload.messages?.[0]?.content?.startsWith('仅根据给定的已核验来源片段生成学习产物')) {
+    if (payload.messages?.[0]?.content?.includes('仅根据给定的已核验来源片段生成学习产物')) {
       const material = JSON.parse(payload.messages[1].content)
       const guide = payload.messages[0].content.includes('"key_points"')
+      const quiz = payload.messages[0].content.includes('"questions"')
       if (!material.length || !material[0].fragments.length) { response.writeHead(400); response.end(); return }
-      studioCalls++
-      if (studioCalls === 3) await new Promise(resolve => setTimeout(resolve, 10000))
+      if (!quiz) studioCalls++
+      if (!quiz && studioCalls === 3) await new Promise(resolve => setTimeout(resolve, 10000))
       const claim = { text: material[0].fragments[0].text, citations: [{ source: 1, fragment: 1 }] }
-      const result = { title: guide ? '夹具学习指南' : '夹具简报', coverage: 'complete', ...(guide ? { key_points: [claim], terms: [claim], learning_order: [claim], misconceptions: [claim] } : { overview: [claim], differences: [claim], gaps: [claim] }) }
+      const result = quiz ? { title:'夹具偶数测验', coverage:'complete', questions:[1,2].map(n=>({prompt:`第 ${n} 题：解释偶数并给出一个例子。`,rubric:[{id:'definition',criterion:'说明偶数可被 2 整除并举例'}],allowed_help:n===1?['hint','scaffold','answer_revealed']:['none','hint'],citations:claim.citations})) } : { title: guide ? '夹具学习指南' : '夹具简报', coverage: 'complete', ...(guide ? { key_points: [claim], terms: [claim], learning_order: [claim], misconceptions: [claim] } : { overview: [claim], differences: [claim], gaps: [claim] }) }
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 } }))
       return

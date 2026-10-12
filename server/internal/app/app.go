@@ -195,6 +195,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	handler, err := composeTransportHandler(httpapi.Options{
 		CompanionEnabled: cfg.CompanionEnabled,
 		LearningContent:  contentStore,
+		StudioQuiz:       &learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore},
 		LearningChanges:  changes,
 		MentorRuns:       mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,

@@ -4,6 +4,60 @@
  */
 
 export interface paths {
+    "/v1/learning/studio/artifacts/{artifactID}/quiz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read question carriers and their actual formal session states */
+        get: operations["getStudioQuiz"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}/quiz/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Explicitly start the next question in a dedicated formal session
+         * @description Requires the quiz's explicit goal and frozen sources. Earlier questions must have completed their original route. Same version and question never creates a second carrier; operation identity is bound to the entire request. No change to the current classroom.
+         */
+        post: operations["startStudioQuizQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/quiz-operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reconcile this device's original quiz start operation */
+        get: operations["getStudioQuizOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/generations": {
         parameters: {
             query?: never;
@@ -13,7 +67,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Generate a guide or brief from an immutable source selection */
+        /** Generate a guide, brief or quiz from an immutable source selection */
         post: operations["generateStudioArtifact"];
         delete?: never;
         options?: never;
@@ -3225,8 +3279,11 @@ export interface components {
             operation_id: string;
             privacy_generation: number;
             /** @enum {string} */
-            kind: "guide" | "brief";
-            /** Format: uuid */
+            kind: "guide" | "brief" | "quiz";
+            /**
+             * Format: uuid
+             * @description Required non-null explicit goal for quiz; nullable for guide and brief
+             */
             goal_id: string | null;
             /** @description Zero when goal_id is null */
             goal_version: number;
@@ -3260,6 +3317,48 @@ export interface components {
             differences: components["schemas"]["StudioClaim"][];
             gaps: components["schemas"]["StudioClaim"][];
         };
+        StudioQuestion: {
+            prompt: string;
+            rubric: {
+                id: string;
+                criterion: string;
+            }[];
+            allowed_help: components["schemas"]["HelpLevel"][];
+            citations: string[];
+        };
+        StudioQuiz: {
+            /** @description Server-frozen chosen goal version, never supplied by the model */
+            goal_version: number;
+            questions: components["schemas"]["StudioQuestion"][];
+        };
+        StudioQuizStart: {
+            /** Format: uuid */
+            operation_id: string;
+            version: number;
+            privacy_generation: number;
+            goal_version: number;
+            question: number;
+        };
+        StudioQuizState: {
+            /** Format: uuid */
+            artifact_id: string;
+            version: number;
+            goal_version: number;
+            questions: {
+                question: number;
+                /** Format: uuid */
+                session_id: string;
+                /** Format: uuid */
+                activity_id: string;
+                /** Format: uuid */
+                content_artifact_id: string;
+                state: components["schemas"]["TutoringState"];
+                /** @description Read from the formal session's completed route flag */
+                completed: boolean;
+                /** Format: uuid */
+                attempt_id?: string;
+            }[];
+        };
         StudioSave: {
             /** Format: uuid */
             operation_id: string;
@@ -3287,6 +3386,7 @@ export interface components {
             coverage?: "complete" | "partial";
             guide?: components["schemas"]["StudioGuide"];
             brief?: components["schemas"]["StudioBrief"];
+            quiz?: components["schemas"]["StudioQuiz"];
         };
         StudioRevision: {
             /** Format: uuid */
@@ -3296,7 +3396,7 @@ export interface components {
             /** Format: uuid */
             goal_id: string | null;
             /** @enum {string} */
-            kind: "note" | "guide" | "brief";
+            kind: "note" | "guide" | "brief" | "quiz";
             version: number;
             privacy_generation: number;
             /** Format: uuid */
@@ -3311,7 +3411,7 @@ export interface components {
             /** Format: uuid */
             goal_id: string | null;
             /** @enum {string} */
-            kind: "note" | "guide" | "brief";
+            kind: "note" | "guide" | "brief" | "quiz";
             version: number;
             title: string;
             /** Format: date-time */
@@ -7926,6 +8026,90 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getStudioQuiz: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified quiz mapping; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioQuizState"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    startStudioQuizQuestion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioQuizStart"];
+            };
+        };
+        responses: {
+            /** @description Formal carrier and mapping committed atomically; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioQuizState"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getStudioQuizOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Original operation's quiz carriers; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioQuizState"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     generateStudioArtifact: {
         parameters: {
             query?: never;

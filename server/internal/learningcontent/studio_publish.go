@@ -33,7 +33,7 @@ func (c StudioTarget) Validate() error {
 		id, err := uuid.Parse(value)
 		return err == nil && id != uuid.Nil && id.String() == value
 	}
-	if c.Generation < 1 || studioFields(c.Kind) == nil || c.ExpectedVersion < 0 || (c.ArtifactID == nil) != (c.ExpectedVersion == 0) || c.ArtifactID != nil && !canonicalID(*c.ArtifactID) || c.GoalID != nil && !canonicalID(*c.GoalID) {
+	if c.Generation < 1 || studioFields(c.Kind) == nil || c.Kind == "quiz" && c.GoalID == nil || c.ExpectedVersion < 0 || (c.ArtifactID == nil) != (c.ExpectedVersion == 0) || c.ArtifactID != nil && !canonicalID(*c.ArtifactID) || c.GoalID != nil && !canonicalID(*c.GoalID) {
 		return ErrInvalid
 	}
 	return nil

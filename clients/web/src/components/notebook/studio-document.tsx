@@ -5,6 +5,7 @@ import { useIdentity } from '@/lib/session'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { studioNames } from './studio-generation'
+import { StudioQuiz } from './studio-quiz'
 
 export function StudioDocument({
   spaceId,
@@ -107,6 +108,14 @@ export function StudioDocument({
               ))}
             </section>
           ))}
+          {r.body.quiz && (
+            <StudioQuiz
+              key={`${r.artifact_id}:${r.version}`}
+              revision={r}
+              canWrite={canWrite}
+              onCitation={onCitation}
+            />
+          )}
           <Button disabled={!canWrite} onClick={() => onRegenerate(r)}>
             重新生成新版本
           </Button>

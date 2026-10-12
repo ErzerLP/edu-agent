@@ -1,6 +1,6 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：批次 1、2a／2b／2c（PR #87–#90）已合并；当前在 `feat-notebook-b3a` 实施 Studio 3a（G4 底座、笔记及 G6 快照转来源），3b／3c 尚未交付。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。本次 CLI／agentcore 产品代码未改，改动只留工作树，没有 Git 暂存／提交／推送。
+状态：批次 1、2、3a、3b（PR #87–#92）已合并；当前在 `feat-notebook-b3c` 交付 G5 测验与正式作答，批次 3 四种 Studio 产物均已接通。D1–D4 与 3c 的单题专用会话方案 A 已由用户确认。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。本次 CLI／agentcore 产品代码未改，改动只留工作树，没有 Git 暂存／提交／推送。批次 4 的完整候选验收尚未执行。
 
 ## 1. 方案与拆分结论
 
@@ -527,8 +527,8 @@
 
 - [x] 3a 从保存笔记的 HTTP→持久化→列表／重开场景做起，同时覆盖 409 保留草稿、隐私屏障和版本到来源 preview／confirm；给后续生成建立真实产物读取路径。
 - [x] 3b 增受限生成任务和引用验证，产物 commit 与运行成功保持一致；补充取消／重启／partial／unknown／预算场景，学习指南与简报有各自结果结构，不只是不同标题。
-- [ ] 3c 生成有效题集后明确开始正式承载；逐题真实 Activity／Attempt／Assessment，actual help 与 allowed_help 一致；从进度／反馈读取相同记录，原课堂和未提交答案继续可恢复。
-- [ ] 扩展跨 owner 隐私 scrub／verify、加密轮换与 replay；旧正文库、旧 mentor／CLI 请求不受新 enum／必填字段影响。交接新状态／错误映射和门禁必需测试名。
+- [x] 3c 生成有效题集后明确开始正式承载；逐题真实 Activity／Attempt／Assessment，actual help 与 allowed_help 一致；从进度／反馈读取相同记录，原课堂和未提交答案继续可恢复。
+- [x] 扩展跨 owner 隐私 scrub／verify、加密轮换与 replay；旧正文库、旧 mentor／CLI 请求不受新 enum／必填字段影响。交接新状态／错误映射和门禁必需测试名。
 
 **延期：** 音频／视频、思维导图、闪卡、自动笔记、实时双向来源同步始终非目标；全引擎和全量视觉收尾到批次 4。
 
@@ -659,6 +659,60 @@ Studio 复用现有预算 HTTP transport、租约、并发、取消和跨 owner 
 | brief | 15224 ms | 1809 | 2632 | 1890 | 4441 | strict + 来源引用通过，coverage=partial，2 个引用 |
 
 **3c 约定与限制。** quiz 仍未开放；后续需独立 schema 和正式 Activity／Attempt／Assessment 映射，不能复用本批生成建议作为评分事实。没有新增待用户决定的语义问题。历史菜单沿 3a 展示最近 100 版；每次最多 100 个文档，有界片段和上下文预算如实限制。真实 smoke 验证生产模型协议／结构／引用，不代替真实外部模型的全套浏览器／重启验收。未跑三引擎、Go 全量、race、Compose 或部署，不宣称父 spec／整个批次 3 已完成。
+
+#### 3c 实施记录（2026-10-12）
+
+**结果与边界。** G5 采用已批准方案 A：一个测验的每道题各有专用单题正式会话，同属用户明确选择的目标。解决原路线不允许重复知识节点、确认最后一步反馈即结束会话的约束；不新增评分、教学状态或进度事实。笔记、指南、简报、测验四类入口均已可用。实施计划见 [3c 计划](notebook-studio-3c-plan.md)。
+
+**生成合同。** `POST /v1/learning/studio/generations` 的 kind 增加 quiz，必须提供非空 goal_id 和精确 goal_version；无目标时前端提示先选择或建立目标，禁用生成，后端拒绝，不创建占位目标。受理后冻结 D1 来源；quiz 向模型发送选中来源的核验片段和所选目标正文，目标作为数据单独传入，不接受其中更改输出协议的指令。指南／简报的模型输入保持原状。来源、目标版本、生成命令绑定输入指纹；目标版本由服务端写入加密正文，不由模型提供。
+
+模型输出 title／coverage／questions，默认提示生成 3 道开放文字题，合同允许 1–8 题。每题必有 prompt（1–1500 字符）、rubric（1–10 项，唯一 id 与非空 criterion）、allowed_help（非空、去重、仅 none／hint／scaffold／answer_revealed）和 1–10 个真实引用。闭合 JSON、重复键、字段限制、来源序号、片段范围与双 hash 校验沿 3b；不合格不发布，已知来源覆盖缺口仍强制 partial。Responses／RequireCompletion、8192 输出预算和包含推理的用量结算沿 Studio 客户端；截断／未完成明确失败。保存的 `body.quiz={goal_version,questions}` 沿原 artifact/revisions 读取与重开，新版本独立于旧版本的正式记录。
+
+**开始、映射与读回合同。** 新增三条路径，均要求明确学习区，并保留原 scope、Origin／CSRF、隐私、归属和 response ReadPermit：
+
+| 路径 | 合同 |
+| --- | --- |
+| `GET /v1/learning/studio/artifacts/{artifactID}/quiz?version=N` | 必填版本；核验保存来源后，读取该版本真实会话状态、完成标志和 Attempt ID。不触发创建／模型。 |
+| `POST /v1/learning/studio/artifacts/{artifactID}/quiz/start` | 闭合 DTO：operation_id／version／privacy_generation／goal_version／question。用户明确开始指定题；首题验证冻结目标版本，后题要求前题真实完成路线。 |
+| `GET /v1/learning/studio/quiz-operations/{operationID}` | 仅当前设备、当前区的原操作；丢响应后核对实际映射和状态。 |
+
+追加 **migration 000037_studio_quiz.sql**，新增 `learning_studio_quiz_questions`（artifact/version/question → 唯一 session/activity/content artifact）与 `learning_studio_quiz_operations`（device/operation → 请求 hash 与题目映射）。只存关联和操作身份，不存成绩／完成度／进度。按操作 advisory lock 再锁产物；同操作同载荷重放，同题不同操作复用同一承载，改载荷冲突。每次只创建下一道题；题目、正式会话、正式活动、正文及映射同事务提交。
+
+`learningstart/studio_quiz.go` 使用 knowledge 的正式冻结参考端口、learning 的 CreateSession／Propose／ApplyAction，以及 learningcontent 的 EnsureTx。每题路线只含一个真实知识节点；活动固定使用已保存 prompt／rubric／allowed_help／核验引用，通过既有 proposal 验证，不跨模块裸写学习表。来源上下文仅绑定新专用会话，不改变原目标／课堂参考头。
+
+Web 的 `studio-quiz.tsx` 复用原 TeachingPage：present_activity → content answers → Attempt → assessment proposal／record_assessment → Assessment／Evidence → acknowledge_feedback。实际帮助等级必须显式符合 allowed_help；不允许 none 时初始选择为空，提交禁用，服务器同样拒绝非法帮助。开始未知保留原 DTO／operation；答案未知复用既有原操作核对，禁止换操作静默重复提交。测验完成度仅由各会话 `Completed && CompletedRoute` 汇总；确认后从真实 Feedback 找回原 Attempt。主动终止未完成路线不会计为完成。
+
+进度与会话列表只读添加“测验名 · 第 n 题”标签，来自原正式路线；Evidence、统计与重放仍是原 learning 投影。CurrentSession 排除专用测验会话；原课堂版本、活动、未提交草稿独立保留。明确的会话链接仍可读取这些正式会话。
+
+**错误、隐私与轮换。** 非法 DTO／缺目标／非法题号为 400；产物、目标版本、操作载荷或顺序冲突为 409，保留 learning 的 version_conflict／invalid_transition 分类。无权限／来源撤权按原 403，跨区或不存在为 404；隐私屏障／content_redacted 按原映射。真正的网络未知才保留待核对状态。生成错误分类、取消和未完成不发布沿 3b。正文和来源读取继续实时核验，不回退缓存。映射／操作表有原隐私门禁和不可变触发器，由 learning owner 调用 learningcontent.RedactTx／Remaining 清除并验证。映射不含新密文；题集正文与正式内容复用原密钥轮换，已验证轮换后两题仍可读，清除后旧操作不能复活。
+
+**文件映射。**
+
+- 新增服务端：`learningcontent/{studio_quiz,studio_quiz_store,studio_quiz_test}.go`、`learningstart/studio_quiz.go`、`learning/postgresstore/studio_quiz.go`、`mentorrun/studio_quiz_test.go`、`transport/httpapi/studio_quiz.go`（均在 `server/internal/`）；新增 **migration 000037**。
+- 新增前端：`clients/web/src/components/notebook/studio-quiz.tsx`；新增本批实施计划。
+- 修改服务端：learningcontent 的生成／发布／读取／清除、mentorrun Studio 请求与测试、learning 会话列表／当前会话／进度、httpapi 注入／路由／合同、app 注入与 migration 升级测试。
+- **OpenAPI：** `server/api/openapi.yaml` 与合同测试；`npm run generate` 更新 `clients/web/src/api/schema.d.ts`。新路径由 studioPath 分类，`deploy/web/nginx.conf` 的既有 Studio 白名单覆盖三条路径并补充说明。
+- 修改前端：`api/studio.ts` 与测试、Studio panel／generation／document、确定性模型 fixture、notebook-studio／notebook-workspace 浏览器场景。
+
+**检查结果。** 命令先 `umask 022`；Go 使用 `/tmp/notebook-b3c-go-cache`。指定 32995 PostgreSQL 以 `-p=1` 或独立 schema 包装器串行运行。沙箱不可写用户 cache，包装器／来源宿主／复习夹具等价构建到 `/tmp/notebook-b3c-{webdatabase,webnotebook,webreview}`；生产 CLI 仅为既有 review 验收编译到 `/tmp/notebook-b3c-cli`，产品代码未改。Chromium 使用指定 chromium-1247 路径；发行二进制在前端构建嵌入资产后编译。
+
+| 检查 | 结果 |
+| --- | --- |
+| OpenAPI／Web | `npm run generate`、`npm run check`、`npm run build -- --configLoader native` 通过；仅既有 discriminator、Zod 注释／chunk 提示。日志 `/tmp/notebook-b3c-{generate,check,build}-final.log`。 |
+| Vitest | `npm test -- --configLoader native src/api/studio.test.ts src/api/teaching.test.ts src/lib/drafts.test.ts`，3 文件 13 项通过，覆盖完整测验重开解析／引用、帮助与草稿。日志 `/tmp/notebook-b3c-vitest-final.log`。 |
+| Go／vet | `cd server && go test ./api ./internal/learningcontent/... ./internal/learningstart/... ./internal/learning/... ./internal/tutoring/... ./internal/mentorrun ./internal/transport/httpapi` 的指定包通过；相同包的 `go vet` 通过。修复 YAML 说明后定向重跑 api/httpapi，其余包保留同状态通过证据。日志 `/tmp/notebook-b3c-go-final.log`、`-go-contract-final.log`、`-vet-final.log`。无 DB 时的 skip 不算 DB 验收。 |
+| Migration | `TEST_DATABASE_URL=… go test -p=1 ./migrations -run '^TestStudioQuizMigrationUpgrade$' -count=1 -v`：36→37 与重复 Apply 通过（1.41s）；早期开发日志 `/tmp/notebook-b3c-db-first.log` 同时保留当时尚未修复的正式完成标志失败。 |
+| PostgreSQL | `TEST_DATABASE_URL=… go test -p=1 ./internal/mentorrun ./internal/learning/postgresstore ./internal/transport/httpapi -run '^(TestPostgreSQLStudioQuizFormalSessions\|TestPostgreSQLStudioGenerationVersionsRotationAndRevocation\|TestPostgreSQLStudioVersionsSnapshotRotationAndErasure\|TestPostgreSQLProgressScopePaginationAndReplay\|TestPostgreSQLReviewCarrierPreservesSourceAndReplay)$' -count=1 -v`：5 项通过，覆盖开始重放、冲突／顺序、两题正式评估／Evidence、丢响应一次 Attempt、help、原课堂、进度重放、轮换／撤权／清除不可复活。日志 `/tmp/notebook-b3c-db-final.log`。 |
+| Chromium Notebook | `WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 /tmp/notebook-b3c-webdatabase npm run test:browser -- 'tests/browser/notebook-(studio\|workspace).spec.ts$' --project=chromium --reporter=line`：13 项通过（2.2m），含四种产物、目标选择、生成来源、逐题帮助、开始与答案丢响应、反馈／进度、原课堂草稿、保存重开；无 retry／skip。日志 `/tmp/notebook-b3c-browser-notebooks.log`。 |
+| Chromium 原课堂 | 相同 fixture／schema 包装，执行 `tests/browser/workspace.spec.ts$`：13 项通过（2.2m），含帮助限制、动态进度、旧会话与丢响应、开放评估／证据、历史作废、切区迟到响应、教学变更与内容版本；无 retry／skip。日志 `/tmp/notebook-b3c-browser-workspace.log`。 |
+| Chromium 复习 | 相同包装，增加 `WEB_REVIEW_FIXTURE=/tmp/notebook-b3c-webreview EDU_AGENT_INTEGRATION_CLI=/tmp/notebook-b3c-cli`，执行 `tests/browser/review.spec.ts$`：2 项通过（49.7s），包含多区多目标、真实复习承载、生产 CLI 读回及全局清除；无 retry／skip。日志 `/tmp/notebook-b3c-browser-review.log`。 |
+| Chromium 来源 | 独立 schema，增加 `WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/notebook-b3c-webnotebook`，执行 `tests/browser/notebook-sources.spec.ts$`：3 项通过（12.7s）；无 retry／skip。日志 `/tmp/notebook-b3c-browser-sources.log`。共 31 个不同 Chromium 场景通过，通过后停止。 |
+
+开发失败记录保留：正式完成标志最初从 authority 而非投影读取，已改为真实 Session.CompletedRoute；浏览器原课堂快照早于 present 提交，已修正取样时机；完整测验解析曾把 goal_version 误当题组，已加红测试并修复；OpenAPI 带逗号说明已加引号，合同重新通过。失败轮次不计通过，没有放宽权限、版本、帮助或来源校验。
+
+**真实模型 smoke。** 指定 acceptance 环境只在 shell 读入，未输出或保存凭据。实际共 2 次调用，未自动重试，低于 8 次上限；最后一次使用生产 `StudioQuizModelRequest`（明确目标＋两份公开自编奇偶数来源）→ Responses `deepseek-v4-flash` → RequireCompletion → DecodeStudioCandidate／VerifyStudioSources。输出上限 8192，耗时 26309 ms；input 1656、output 4686（含 reasoning 4130）、total 6342。闭合 schema、每题 rubric／help 与真实来源引用全部通过，coverage=complete、2 个去重引用。临时 overlay 和只含计量的日志在 `/tmp/notebook-b3c-smoke*`；最终日志 `/tmp/notebook-b3c-smoke-final.log`。不把该 smoke 等同于真实模型浏览器全链验收。
+
+**交给批次 4。** 将 `TestStudioQuizMigrationUpgrade`、`TestPostgreSQLStudioQuizFormalSessions` 及前批 G1–G6 必需场景接入 candidate 检查并验证无 skip／retry；完成移动尺寸、键盘／焦点、可访问性、三引擎矩阵与全套旧入口迁移。真实模型评分全链、服务重启浏览器恢复、完整历史 DB 矩阵和部署候选仍由批次 4 收口。本批未跑 Go 全量／race／Compose，未改 CLI／agentcore，未操作 Docker，未提交或推送。没有新增待用户决定的评分／状态语义。
 
 ### 批次 4：移动、可访问性、旧回归与候选发布（4–6 人日）
 

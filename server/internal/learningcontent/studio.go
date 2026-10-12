@@ -23,6 +23,7 @@ type StudioBody struct {
 	Coverage         string                    `json:"coverage,omitempty"`
 	Guide            *StudioGuide              `json:"guide,omitempty"`
 	Brief            *StudioBrief              `json:"brief,omitempty"`
+	Quiz             *StudioQuiz               `json:"quiz,omitempty"`
 }
 type StudioCitation struct {
 	ID             string                   `json:"id"`

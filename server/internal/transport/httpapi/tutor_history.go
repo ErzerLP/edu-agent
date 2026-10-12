@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -123,7 +124,9 @@ func (a *API) tutorChange(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) tutorTurn(w http.ResponseWriter, r *http.Request) {
 	var request mentorrun.SubmitTurn
-	if decodeJSON(w, r, 24<<10, &request) != nil {
+	raw, err := readJSONBody(w, r, 64<<10)
+	var fields map[string]json.RawMessage
+	if err != nil || decodeJSONData(raw, &request) != nil || json.Unmarshal(raw, &fields) != nil || fields["source_selection"] != nil && request.SourceSelection == nil {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}

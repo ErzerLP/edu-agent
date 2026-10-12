@@ -15,6 +15,8 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	knowledgepg "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
@@ -330,6 +332,9 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		}
 		kind = "start_learning"
 	}
+	if c.SourceSelection != nil && (kind != "mentor" || c.SourceSelection.Validate() != nil) {
+		return Receipt{}, ErrInvalid
+	}
 	if !validID(space) || (!validID(goal) && !(validID(c.ConversationID) && goal == uuid.Nil.String())) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
 		return Receipt{}, ErrInvalid
 	}
@@ -369,6 +374,19 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	if _, err = goalGate(ctx, tx, space, goal, c.ExpectedVersion); err != nil {
 		return Receipt{}, err
+	}
+	var manifest *knowledge.SourceManifest
+	if c.SourceSelection != nil {
+		if len(c.SourceSelection.Items) > 0 {
+			if err = sourceActor(ctx, tx, actor.TokenID); err != nil {
+				return Receipt{}, err
+			}
+		}
+		scoped, _ := learningspace.WithScope(ctx, space)
+		manifest, err = knowledgepg.New(s.pool).FreezeSourceSelectionTx(scoped, tx, *c.SourceSelection)
+		if err != nil {
+			return Receipt{}, err
+		}
 	}
 	if c.ContentEdit != nil {
 		ctx, err = learningspace.WithScope(ctx, space)
@@ -431,7 +449,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	var history []modelclient.Message
 	if c.ConversationID != "" {
 		sessionID = c.ConversationID
-		history, err = s.prepareConversation(ctx, tx, actor, space, goal, generation, fingerprint, c)
+		history, err = s.prepareConversation(ctx, tx, actor, space, goal, generation, fingerprint, c, manifest)
 	} else {
 		err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) WHERE NOT history DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation, kind).Scan(&sessionID)
 	}
@@ -450,6 +468,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.ConversationID = c.ConversationID
+	item.body.SourceManifest = manifest
 	item.body.HistoryCount = len(history)
 	item.body.Messages = append(history, modelclient.Message{Role: "user", Content: c.Prompt})
 	item.TeachingSessionID = c.TeachingSessionID

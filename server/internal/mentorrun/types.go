@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
@@ -35,6 +36,7 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
+	SourceSelection     *knowledge.SourceSelection `json:"source_selection,omitempty"`
 	operationHash       *[32]byte
 	ConversationID      string                       `json:"conversation_id,omitempty"`
 	ConversationVersion int64                        `json:"conversation_version,omitempty"`
@@ -107,9 +109,11 @@ type Interaction struct {
 }
 
 type Body struct {
-	MemorySources []MemorySource `json:"memory_sources,omitempty"`
-	MemoryStatus  string         `json:"memory_status,omitempty"`
-	HistoryCount  int            `json:"history_count,omitempty"`
+	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
+	Citations      []SourceCitation          `json:"citations,omitempty"`
+	MemorySources  []MemorySource            `json:"memory_sources,omitempty"`
+	MemoryStatus   string                    `json:"memory_status,omitempty"`
+	HistoryCount   int                       `json:"history_count,omitempty"`
 	// PDF 原件仅进入加密运行正文，不属于快照、模型输入或工具输出。
 	SourceFiles   map[string][]byte      `json:"source_files,omitempty"`
 	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`
@@ -123,9 +127,11 @@ type Body struct {
 }
 
 type Snapshot struct {
-	MemorySources []MemorySource    `json:"memory_sources,omitempty"`
-	MemoryStatus  string            `json:"memory_status,omitempty"`
-	ContentEdit   *ContentEditState `json:"content_edit,omitempty"`
+	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
+	Citations      []SourceCitation          `json:"citations,omitempty"`
+	MemorySources  []MemorySource            `json:"memory_sources,omitempty"`
+	MemoryStatus   string                    `json:"memory_status,omitempty"`
+	ContentEdit    *ContentEditState         `json:"content_edit,omitempty"`
 	Meta
 	StartLearning *learningstart.State `json:"start_learning,omitempty"`
 	Research      *research.State      `json:"research,omitempty"`

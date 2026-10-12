@@ -131,6 +131,9 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	if err = s.decode(&item); err != nil {
 		return err
 	}
+	if _, err = s.sourceMaterialTx(ctx, tx, item.SpaceID, item.token, item.body); err != nil {
+		return err
+	}
 	if item.body.ContentEdit != nil {
 		if err = s.contentReadable(ctx, tx, item); err != nil {
 			return err
@@ -138,6 +141,15 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	}
 	if err = change(tx, &item); err != nil {
 		return err
+	}
+	if item.body.SourceManifest != nil {
+		sources, e := s.sourceMaterialTx(ctx, tx, item.SpaceID, item.token, item.body)
+		if e != nil {
+			return e
+		}
+		if e = verifyStoredCitations(item.body, sources); e != nil {
+			return e
+		}
 	}
 	if kind == "" {
 		_, err = tx.Exec(ctx, `UPDATE learning_mentor_runs SET lease_until=clock_timestamp()+($2::bigint*interval '1 microsecond') WHERE id=$1`, item.RunID, s.Lease.Microseconds())
@@ -186,6 +198,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	wasCancelling := item.Status == "cancelling"
 	item.Status = "failed"
 	item.Reason = "model_failed"
+	if errors.Is(cause, errCitation) {
+		item.Reason = "invalid_source_citation"
+	}
 	if errors.Is(cause, ErrLimit) {
 		item.Reason = "history_context_limit"
 	}

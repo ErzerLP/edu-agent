@@ -11,15 +11,20 @@ export function NotebookLayout({
   sources,
   classroom,
   studio,
+  sourceFocus,
 }: {
   panel: NotebookPanel
   onPanelChange: (panel: NotebookPanel) => void
   sources: ReactNode
   classroom: ReactNode
   studio: ReactNode
+  sourceFocus?: { runId: string; id: string }
 }) {
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 1099px)').matches)
   const [collapsed, setCollapsed] = useState({ sources: false, studio: false })
+  useEffect(() => {
+    if (sourceFocus) setCollapsed((value) => ({ ...value, sources: false }))
+  }, [sourceFocus])
   useEffect(() => {
     const media = matchMedia('(max-width: 1099px)')
     const resize = () => setNarrow(media.matches)

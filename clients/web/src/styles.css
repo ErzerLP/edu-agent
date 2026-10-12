@@ -1057,6 +1057,15 @@ body:has(.notebook-home) footer, body:has(.notebook-workspace) footer { display:
 .notebook-source-collection summary svg, .notebook-source summary svg { display: inline; vertical-align: middle; margin-right: 8px; flex: none; }
 .notebook-source { padding: 10px 8px; margin-top: 8px; border-radius: 12px; background: var(--soft); }
 .notebook-source ul { padding-left: 20px; list-style: disc; }
+.notebook-source .check-label { align-items: center; gap: 10px; }
+.notebook-source h3 { font-size: 14px; margin: 0; overflow-wrap: anywhere; }
+.notebook-mentor { margin-top: 24px; background: var(--soft); }
+.notebook-mentor textarea { background: var(--surface); resize: vertical; }
+.notebook-quick-questions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.notebook-quick-questions .button { border-radius: 20px; font-size: 12px; padding: 6px 10px; }
+.citation-link { display: inline-flex; padding: 0 5px; min-height: 24px; vertical-align: baseline; font-size: inherit; }
+.notebook-citation { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-block: 12px; overflow-wrap: anywhere; }
+.notebook-citation mark { background: var(--accent-soft, #fff3bf); color: var(--text); }
 .notebook-empty { color: var(--muted); text-align: center; padding: 40px 8px; }
 .notebook-empty svg { margin: auto; }
 .notebook-empty h3 { font-size: 16px; color: var(--text); }

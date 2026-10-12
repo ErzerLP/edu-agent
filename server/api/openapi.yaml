@@ -960,6 +960,7 @@ paths:
               additionalProperties: false
               required: [operation_id, session_id, expected_version, prompt, save, request_budget, token_budget]
               properties:
+                source_selection: { $ref: "#/components/schemas/SourceSelection" }
                 operation_id: { type: string, format: uuid }
                 session_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
@@ -1098,6 +1099,7 @@ paths:
               additionalProperties: false
               required: [operation_id, expected_version, prompt, request_budget, token_budget]
               properties:
+                source_selection: { $ref: "#/components/schemas/SourceSelection" }
                 operation_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
                 prompt: { type: string, minLength: 1, maxLength: 16000 }
@@ -1144,6 +1146,20 @@ paths:
       x-required-scope: learning:read
       responses:
         "200": { description: 同一事务中的快照，正文可能已到期或临时模式无法恢复, content: { application/json: { schema: { $ref: "#/components/schemas/MentorSnapshot" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/runs/{runID}/citations/{citationID}:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: runID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: citationID, in: path, required: true, schema: { type: string, pattern: '^[1-9][0-9]{0,2}$' } }
+    get:
+      operationId: readMentorCitation
+      summary: 重新核验本轮来源版本、权限、片段范围与 hash
+      description: 只读取原 run 的服务端核验引用，不接受客户端片段。解除区关联或清除后不可读；保存的会话引用可在短期 checkpoint 到期后从加密历史读取。no-store。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: [learning:read, knowledge:read]
+      responses:
+        "200": { description: 已核验历史原文片段, content: { application/json: { schema: { $ref: "#/components/schemas/MentorCitation" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/runs/{runID}/events:
     parameters:
@@ -5432,6 +5448,8 @@ components:
               ordinal: { type: integer, minimum: 1 }
               status: { type: string }
               body_available: { type: boolean }
+              source_manifest: { $ref: "#/components/schemas/SourceManifest" }
+              citations: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MentorCitation" } }
               output: { type: string }
               messages:
                 type: array
@@ -5484,10 +5502,75 @@ components:
         candidate_id: { type: string, format: uuid }
         revision: { type: integer, minimum: 1 }
         scope: { type: string, description: 既有全局长期信息范围，不授予其他学习区正文读取权限 }
+    SourceIdentity:
+      type: object
+      additionalProperties: false
+      required: [collection_id, revision_id, document_id, document_revision_id]
+      properties:
+        collection_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_revision_id: { type: string, format: uuid }
+    SourceSelection:
+      description: 缺省保持旧导师行为；null 无效。none 明确零来源，items 为 1–100 个确切 G1 版本（同集合文档不重复），需 knowledge:read。仅普通导师请求支持；不更改目标或课堂参考。受理时固化；后续勾选只影响新请求。同范围历史才可重放，旧缺省历史不混入。
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode, items]
+          properties:
+            mode: { type: string, enum: [none] }
+            items: { type: array, maxItems: 0, items: { $ref: "#/components/schemas/SourceIdentity" } }
+        - type: object
+          additionalProperties: false
+          required: [mode, items]
+          properties:
+            mode: { type: string, enum: [items] }
+            items: { type: array, minItems: 1, maxItems: 100, items: { $ref: "#/components/schemas/SourceIdentity" } }
+    SourceManifest:
+      type: object
+      required: [schema, space_id, generation, entries, sha256]
+      properties:
+        schema: { type: integer, enum: [1] }
+        space_id: { type: string, format: uuid }
+        generation: { type: integer, minimum: 1 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        entries:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [collection_id, revision_id, document_id, document_revision_id, sha256]
+            properties:
+              collection_id: { type: string, format: uuid }
+              revision_id: { type: string, format: uuid }
+              document_id: { type: string, format: uuid }
+              document_revision_id: { type: string, format: uuid }
+              sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MentorCitation:
+      type: object
+      required: [id, source, fragment, document_sha256, slice_sha256]
+      properties:
+        id: { type: string, pattern: '^[1-9][0-9]{0,2}$' }
+        source: { $ref: "#/components/schemas/KnowledgeSourceItem" }
+        document_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        slice_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        fragment:
+          type: object
+          required: [node_id, node_revision_id, title, range, text, truncated]
+          properties:
+            node_id: { type: string, format: uuid }
+            node_revision_id: { type: string, format: uuid }
+            title: { type: string }
+            range: { $ref: "#/components/schemas/SourceRange" }
+            text: { type: string, maxLength: 4096 }
+            truncated: { type: boolean }
+            page: { type: integer, minimum: 1 }
     MentorSnapshot:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_left, tokens_left, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
+        source_manifest: { $ref: "#/components/schemas/SourceManifest" }
+        citations: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MentorCitation" } }
         conversation_id: { type: string, format: uuid }
         teaching_session_id: { type: string, format: uuid }
         kind: { type: string, enum: [mentor, research, start_learning, content_edit] }

@@ -4,9 +4,11 @@ import type { Session } from './runtime'
 import { researchStateSchema } from './research'
 import { startStateSchema } from './start'
 import { editStateSchema } from './content'
+import { mentorCitationSchema, sourceManifestSchema } from './source-selection'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const mentorSnapshotSchema = z.object({
+  source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional(),
   conversation_id: z.uuid().optional(),
   teaching_session_id: z.uuid().optional(),
   kind: z.enum(['mentor', 'research', 'start_learning', 'content_edit']).optional(), research: researchStateSchema.optional(),
@@ -105,7 +107,7 @@ async function watch(session: Session, sub: Subscription) {
       if (signal.aborted) return
       if (error instanceof ApiError && [401, 403, 404, 503].includes(error.status)) {
         // 身份失效或隐私门禁关闭后立即隐藏旧正文，不能依赖下一次成功查询。
-        sub.snapshot = { ...sub.snapshot, output: '', interaction: undefined, research: undefined, start_learning: undefined, content_edit: undefined, memory_sources: undefined, memory_status: undefined, body_available: false }
+        sub.snapshot = { ...sub.snapshot, output: '', citations:undefined,source_manifest:undefined, interaction: undefined, research: undefined, start_learning: undefined, content_edit: undefined, memory_sources: undefined, memory_status: undefined, body_available: false }
         report(error)
         return
       }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -61,12 +62,13 @@ type NewConversation struct {
 }
 
 type SubmitTurn struct {
-	OperationID        string `json:"operation_id"`
-	ExpectedVersion    int64  `json:"expected_version"`
-	Prompt             string `json:"prompt"`
-	RequestBudget      int    `json:"request_budget"`
-	TokenBudget        int    `json:"token_budget"`
-	ConfirmDestination string `json:"confirm_destination,omitempty"`
+	SourceSelection    *knowledge.SourceSelection `json:"source_selection,omitempty"`
+	OperationID        string                     `json:"operation_id"`
+	ExpectedVersion    int64                      `json:"expected_version"`
+	Prompt             string                     `json:"prompt"`
+	RequestBudget      int                        `json:"request_budget"`
+	TokenBudget        int                        `json:"token_budget"`
+	ConfirmDestination string                     `json:"confirm_destination,omitempty"`
 }
 
 // Submit 使用调用者原始载荷查回执，不能因受理后目标版本变化把重试解释为新操作。
@@ -96,7 +98,7 @@ func (s *Service) Submit(ctx context.Context, actor identity.Credential, space, 
 	if err = s.ReadConversation(ctx, actor, space, id, 0, 1, func(page TurnPage) error { c = page.Conversation; return nil }); err != nil {
 		return Receipt{}, err
 	}
-	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved, RequestBudget: request.RequestBudget, TokenBudget: request.TokenBudget})
+	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved, RequestBudget: request.RequestBudget, TokenBudget: request.TokenBudget})
 }
 
 type ConversationQuery struct {
@@ -112,12 +114,14 @@ type ConversationPage struct {
 }
 
 type TutorTurn struct {
-	RunID         string                `json:"run_id"`
-	Ordinal       int64                 `json:"ordinal"`
-	Status        string                `json:"status"`
-	BodyAvailable bool                  `json:"body_available"`
-	Messages      []modelclient.Message `json:"messages"`
-	Output        string                `json:"output"`
+	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
+	Citations      []SourceCitation          `json:"citations,omitempty"`
+	RunID          string                    `json:"run_id"`
+	Ordinal        int64                     `json:"ordinal"`
+	Status         string                    `json:"status"`
+	BodyAvailable  bool                      `json:"body_available"`
+	Messages       []modelclient.Message     `json:"messages"`
+	Output         string                    `json:"output"`
 }
 
 type TurnPage struct {
@@ -443,6 +447,7 @@ func (s *Service) ReadConversation(ctx context.Context, actor identity.Credentia
 		return err
 	}
 	page := TurnPage{Conversation: c, Items: []TutorTurn{}}
+	bodies := map[string]Body{}
 	for rows.Next() {
 		var turn TutorTurn
 		var raw, state []byte
@@ -466,12 +471,34 @@ func (s *Service) ReadConversation(ctx context.Context, actor identity.Credentia
 			turn.Messages = body.Messages
 			turn.Output = body.Output
 			turn.BodyAvailable = true
+			bodies[turn.RunID] = body
 		}
 		page.Items = append(page.Items, turn)
 	}
 	rows.Close()
 	if err = rows.Err(); err != nil {
 		return err
+	}
+	for i := range page.Items {
+		turn := &page.Items[i]
+		body, ok := bodies[turn.RunID]
+		if !ok {
+			continue
+		}
+		sources, e := s.sourceMaterialTx(ctx, tx, space, actor.TokenID, body)
+		if sourceUnavailable(e) {
+			turn.Messages = []modelclient.Message{}
+			turn.Output = ""
+			turn.BodyAvailable = false
+			continue
+		}
+		if e != nil {
+			return e
+		}
+		if e = verifyStoredCitations(body, sources); e != nil {
+			return e
+		}
+		turn.SourceManifest, turn.Citations = body.SourceManifest, body.Citations
 	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
@@ -484,9 +511,20 @@ func (s *Service) ReadConversation(ctx context.Context, actor identity.Credentia
 				return e
 			}
 			if item.BodyAvailable && time.Now().Before(item.ExpiresAt) && s.decode(&item) == nil {
+				sources, e := s.sourceMaterialTx(ctx, tx, space, actor.TokenID, item.body)
+				if sourceUnavailable(e) {
+					continue
+				}
+				if e != nil {
+					return e
+				}
+				if e = verifyStoredCitations(item.body, sources); e != nil {
+					return e
+				}
 				page.Items[i].Messages = turnBody(item).Messages
 				page.Items[i].Output = item.body.Output
 				page.Items[i].BodyAvailable = true
+				page.Items[i].SourceManifest, page.Items[i].Citations = item.body.SourceManifest, item.body.Citations
 			}
 		}
 	}
@@ -594,7 +632,7 @@ func turnBody(item row) Body {
 	if start < 0 || start > len(item.body.Messages) {
 		return Body{}
 	}
-	return Body{Messages: item.body.Messages[start:], Output: item.body.Output}
+	return Body{Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
 }
 
 func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
@@ -646,7 +684,7 @@ func committedMessages(messages []modelclient.Message) []modelclient.Message {
 	return result
 }
 
-func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor identity.Credential, space, goal string, generation int64, fingerprint string, request Create) ([]modelclient.Message, error) {
+func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor identity.Credential, space, goal string, generation int64, fingerprint string, request Create, manifest *knowledge.SourceManifest) ([]modelclient.Message, error) {
 	c, err := conversationRow(ctx, tx, actor, space, request.ConversationID, generation, true)
 	if err != nil {
 		return nil, err
@@ -689,7 +727,9 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 				rows.Close()
 				return nil, e
 			}
-			history = append(history, committedMessages(body.Messages)...)
+			if sameSourceScope(manifest, body.SourceManifest) {
+				history = append(history, committedMessages(body.Messages)...)
+			}
 			if checkpointJSONSize(Body{Messages: history}) > MaxBody-20000 {
 				rows.Close()
 				return nil, ErrLimit
@@ -719,7 +759,9 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 		if !item.BodyAvailable || time.Now().After(item.ExpiresAt) || s.decode(&item) != nil {
 			return nil, ErrTemporary
 		}
-		history = committedMessages(item.body.Messages)
+		if sameSourceScope(manifest, item.body.SourceManifest) {
+			history = committedMessages(item.body.Messages)
+		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE learning_tutor_conversations SET version=version+1,provider=$2,endpoint=$3,title=$4,updated_at=clock_timestamp() WHERE id=$1`, c.ID, view.Provider, view.Endpoint, c.titleCipher); err != nil {
 		return nil, err

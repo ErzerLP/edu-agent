@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorText } from '@/api/client'
 import { knowledgeAPI, type Collection, type ImportRequest, type ImportResult } from '@/api/references'
-import { editImport, emptyImport, importDocuments, pastedItem, scanFiles, type ImportDraft } from '@/lib/reference-import'
+import { editImport, emptyImport, fetchedItem, importDocuments, pastedItem, scanFiles, type ImportDraft } from '@/lib/reference-import'
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { ErrorState } from './common'
 import { PDFCoverage } from './pdf-source'
+import { SourceDiscovery } from './notebook/source-discovery'
 
-export function ReferenceImport({ spaceId, collection, target, onImported, method }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' }) {
+export function ReferenceImport({ spaceId, collection, target, onImported, method }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' | 'search' }) {
   const { session, prefix, drafts } = useIdentity()
   const key = JSON.stringify([...prefix, spaceId, target, collection.id, 'reference-import'])
   const [draft, setDraft] = useState<ImportDraft>(() => drafts.get<ImportDraft>(key) ?? emptyImport())
   const [busy, setBusy] = useState(false)
+  const [reading, setReading] = useState(false)
   const [error, setError] = useState<unknown>()
   const [localError, setLocalError] = useState('')
   const [search, setSearch] = useState('')
@@ -103,14 +105,14 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
       <p className="hint">点击下方授权按钮会把此公开地址发送到目标网站，并读取正文供你审阅保存。</p>
       <Button variant="outline" disabled={!draft.url} onClick={() => void run(async () => {
         const source = await api.source(draft.url)
-        const usable = ['parsed', 'partial'].includes(source.status) && source.storage_allowed
-        const item = pastedItem(source.title || '网页资料', source.text)
-        const markdown = source.import_markdown ?? ''
-        const pdf = source.pdf && source.pdf_data ? { data: source.pdf_data, report: source.pdf, acceptPartial: false, locator: source.final_url, sourceReceipt: source.source_receipt } : undefined
-        if (usable && !pdf && (!markdown || !source.source_receipt)) throw new Error('服务器未提供绑定正文的来源回执，请升级服务后重新读取。')
-        if (live.current) edit({ items: [...draft.items, { ...item, name: source.locator, path: `web-${item.id}.md`, markdown: pdf ? source.text : markdown, pdf, sourceReceipt: pdf ? undefined : source.source_receipt, status: usable && !!source.text ? 'ready' : source.failure.startsWith('unsupported') ? 'unsupported' : 'error', reason: usable ? '公开网页解析成功' : source.failure || '禁止保存此来源', selected: usable && !!source.text && (!pdf || pdf.report.coverage === 'complete_text'), coverage: source.coverage }], url: '' })
+        if (live.current) edit({ items: [...draft.items, fetchedItem(source)], url: '' })
       })}>授权服务器读取此网页并解析</Button>
       </>}
+      {method === 'search' && <SourceDiscovery spaceId={spaceId} collectionId={collection.id} onReading={setReading} onFetched={items => {
+        const current = drafts.get<ImportDraft>(key) ?? draft
+        save(editImport(current, { items: [...current.items, ...items] }))
+        setDecisions({}); setError(undefined); setLocalError('')
+      }} />}
     </fieldset>
     <p role="status">待导入 {ready} 项 · 错误 {draft.items.filter(i => i.status === 'error').length} · 不支持 {draft.items.filter(i => i.status === 'unsupported').length} · 被排除 {draft.items.filter(i => i.status === 'ready' && !i.selected).length}</p>
     <label>搜索清单、正文和差异<input type="search" value={search} onChange={e => setSearch(e.target.value)} /></label>
@@ -122,7 +124,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
         {item.status === 'ready' && <><label>导入相对名称<input value={item.path} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, path: e.target.value } : i) })} /></label><label><input type="checkbox" checked={!!item.asNew} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, asNew: e.target.checked, path: e.target.checked ? i.path.replace(/\.md$/i, '') + `-副本-${i.id.slice(0, 8)}.md` : i.path } : i) })} />作为全新资料（不继承原身份，使用独立名称）</label><details><summary>查看本次原文</summary><pre className="reference-text">{item.markdown}</pre></details></>}
       </article>)}
     </div>
-    {!draft.result && !draft.unknown && <Button disabled={busy || !ready} onClick={() => void run(() => preview())}>生成服务端预览</Button>}
+    {!draft.result && !draft.unknown && <Button disabled={busy || reading || !ready} onClick={() => void run(() => preview())}>生成服务端预览</Button>}
     {review && !draft.result && <section aria-label="身份审阅">
       <h3>身份冲突：逐项决定</h3><p>更新保留原身份和历史。作为新资料需要未被占用的相对名称；可返回修改名称后重新预览。跳过会排除该文档。</p>
       <div className="reference-scroll" tabIndex={0}>
@@ -139,7 +141,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
       <h3>尚未正式导入</h3><p>新增 {draft.preview.summary.added} · 更新 {draft.preview.summary.updated} · 未变化 {draft.preview.summary.unchanged}</p>
       <p>{draft.preview.impact_known ? `关联证据 ${draft.preview.affected_evidence} 条，原引用不改写。` : '关联证据影响尚不可用。'}</p>
       <div className="reference-scroll" tabIndex={0}>{draft.preview.diff.filter(d => `${d.after_path} ${d.before_path} ${d.unified_diff}`.includes(search)).map(d => <details key={d.document_id}><summary>{d.after_path || d.before_path} · {d.kind}</summary><pre className="reference-text">{d.unified_diff || '无正文差异'}</pre>{d.truncated && <p>差异达到展示预算，请对照原文与当前资料详情。</p>}</details>)}</div>
-      <Button disabled={busy || draft.unknown} onClick={() => void run(confirm)}>确认正式导入这 {ready} 项资料</Button>
+      <Button disabled={busy || reading || draft.unknown} onClick={() => void run(confirm)}>确认正式导入这 {ready} 项资料</Button>
       <Button variant="outline" disabled={busy || draft.unknown} onClick={() => edit({})}>返回修改（作废旧批准）</Button>
     </section>}
     {draft.unknown && <p role="alert">提交结果未知。先核对原操作，当前草稿与操作编号已保留。</p>}

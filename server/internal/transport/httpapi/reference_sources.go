@@ -16,11 +16,13 @@ import (
 // 解析只返回候选，不保存正文；所有网络读取复用研究的逐跳地址与格式边界。
 func (a *API) mountReferenceSources(r chi.Router) {
 	a.mountSourceCatalog(r)
+	a.mountSourceDiscovery(r)
 	r.With(a.requireScope("knowledge:read")).Get("/v1/knowledge/source-capabilities", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		_, catalog := a.knowledge.(interface {
 			Sources(context.Context, knowledge.SourceQuery) (knowledge.SourcePage, error)
 		})
-		writeJSON(w, 200, map[string]any{"source_catalog": catalog, "formats": []string{"markdown", "utf8_text", "html", "pdf_text_layer"}, "pdf": map[string]any{
+		writeJSON(w, 200, map[string]any{"source_catalog": catalog, "source_discovery": a.discoveryCapability(r), "formats": []string{"markdown", "utf8_text", "html", "pdf_text_layer"}, "pdf": map[string]any{
 			"parser": pdfsource.Parser, "max_bytes": pdfsource.MaxBytes, "max_pages": pdfsource.MaxPages, "max_text_bytes": pdfsource.MaxText,
 			"memory_mib": pdfsource.MemoryMiB, "timeout_seconds": int(pdfsource.Timeout.Seconds()), "concurrency": 2,
 			"web_max_wire_bytes": research.MaxWire, "web_max_decoded_bytes": research.MaxDecoded,
@@ -54,17 +56,18 @@ func (a *API) mountReferenceSources(r chi.Router) {
 	}
 	r.With(a.requireScope("references:manage"), a.requireScope("knowledge:write"), a.responseReadPermit("content_redacted", privacy.OwnerKnowledge)).Post("/v1/knowledge/reference-sources", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
-			URL            string `json:"url"`
-			Consent        bool   `json:"external_consent"`
-			PDFData        []byte `json:"pdf_data"`
-			StorageConsent bool   `json:"storage_consent"`
+			URL            string           `json:"url"`
+			Consent        bool             `json:"external_consent"`
+			PDFData        []byte           `json:"pdf_data"`
+			StorageConsent bool             `json:"storage_consent"`
+			Policy         *research.Policy `json:"policy"`
 		}
 		if err := decodeJSON(w, r, 6<<20, &input); err != nil {
 			importInputFailure(w, r, err)
 			return
 		}
 		if input.PDFData != nil {
-			if input.URL != "" || !input.StorageConsent {
+			if input.URL != "" || !input.StorageConsent || input.Policy != nil {
 				writeError(w, r, 400, "invalid_request", "上传 PDF 需确认有权保存原件与提取文本")
 				return
 			}
@@ -84,11 +87,19 @@ func (a *API) mountReferenceSources(r chi.Router) {
 			writeError(w, r, 400, "invalid_request", "读取网页需要明确授权")
 			return
 		}
+		policy := research.Policy{Mode: "supplement", Domains: []string{}}
+		if input.Policy != nil {
+			policy = *input.Policy
+			if (research.DiscoveryRequest{Keywords: "URL", ExternalConsent: true, Policy: policy}).Validate() != nil {
+				writeError(w, r, 400, "research_policy_rejected", "网页域名策略无效")
+				return
+			}
+		}
 		if _, err := research.ValidateURL(input.URL); err != nil {
 			writeError(w, r, 400, "research_policy_rejected", "网页地址不符合公开网络边界")
 			return
 		}
-		source, err := fetcher.Fetch(r.Context(), research.Source{ID: uuid.NewString(), Locator: input.URL}, research.Policy{Mode: "supplement", Domains: []string{}}, func() error { return nil })
+		source, err := fetcher.Fetch(r.Context(), research.Source{ID: uuid.NewString(), Locator: input.URL}, policy, func() error { return nil })
 		if err != nil {
 			writeError(w, r, 502, "reference_source_failed", "网页解析未完成，未导入资料")
 			return

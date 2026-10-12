@@ -45,7 +45,7 @@ function AddSourceContent({ spaceId }: { spaceId: string }) {
   const { session, prefix, drafts } = useIdentity()
   const key = JSON.stringify([...prefix, spaceId, 'add-source'])
   const queryClient = useQueryClient()
-  const [method, setMethod] = useState<'pdf' | 'text' | 'url'>(
+  const [method, setMethod] = useState<'pdf' | 'text' | 'url' | 'search'>(
     () => drafts.get(`${key}:method`) ?? 'pdf',
   )
   const [collectionId, setCollectionId] = useState(
@@ -101,13 +101,14 @@ function AddSourceContent({ spaceId }: { spaceId: string }) {
     return <ErrorState error={collections.error} retry={() => void collections.refetch()} />
   return (
     <>
-      <p>选择 PDF、粘贴文本或网址，审阅解析结果后确认保存。导入不会修改课堂已冻结的资料。</p>
+      <p>选择 PDF、粘贴文本、网址或搜索发现，审阅解析结果后确认保存。导入不会修改课堂已冻结的资料。</p>
       <div className="actions" aria-label="添加方式">
         {(
           [
             ['pdf', 'PDF 上传'],
             ['text', '粘贴文本'],
             ['url', '网址'],
+            ['search', '搜索发现'],
           ] as const
         ).map(([id, label]) => (
           <Button

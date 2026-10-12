@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { bytesToBase64, editImport, emptyImport, importDocuments, pastedItem, scanFiles, textDocument } from './reference-import'
+import { bytesToBase64, editImport, emptyImport, fetchedItem, importDocuments, pastedItem, scanFiles, textDocument } from './reference-import'
 
 describe('浏览器真实来源与原操作草稿', () => {
+  it('搜索摘要和禁止保存的正文均不能进入正式导入，只有实际正文与回执可预览', () => {
+    const source = { locator: 'https://example.org/', final_url: 'https://example.org/', title: 'Public', kind: 'text/html', status: 'candidate', failure: '', fingerprint: '', parser: '', coverage: '', storage_allowed: false, text: 'SUMMARY' }
+    expect(() => importDocuments([fetchedItem(source)])).toThrow()
+    expect(fetchedItem(source).markdown).toBe('')
+    expect(() => fetchedItem({ ...source, status: 'parsed', storage_allowed: true })).toThrow('回执')
+    const item = fetchedItem({ ...source, status: 'parsed', storage_allowed: true, text: 'BODY', import_markdown: '# 原文\nBODY', source_receipt: 'signed' })
+    expect(importDocuments([item])[0]).toMatchObject({ markdown: '# 原文\nBODY', source_receipt: 'signed' })
+    expect(importDocuments([item])[0].markdown).not.toContain('SUMMARY')
+  })
   it('网址导入逐字传递服务端正文和绑定回执，不重排成客户端前缀', () => {
     const item = { ...pastedItem('网页', 'placeholder'), markdown: '# 网页原文\n\n    服务器正文\n', sourceReceipt: 'signed-receipt' }
     expect(importDocuments([item])[0]).toEqual({ path: '网页.md', markdown: '# 网页原文\n\n    服务器正文\n', source_receipt: 'signed-receipt' })

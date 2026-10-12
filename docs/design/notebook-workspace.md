@@ -1,6 +1,6 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：批次 1 已合并（PR #87）；本次在 `feat-notebook-b2a`（main@9e146e2）实施批次 2a。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。2b／2c 与批次 3 尚未实施，CLI 产品代码未改；改动只留工作树，没有 Git 暂存／提交／推送。
+状态：批次 1（PR #87）与 2a（PR #88）已合并；本次在 `feat-notebook-b2b` 实施批次 2b 搜索发现 G2。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。2c 与批次 3 尚未实施，CLI 产品代码未改；2b 改动只留工作树，没有 Git 暂存／提交／推送。
 
 ## 1. 方案与拆分结论
 
@@ -399,6 +399,61 @@
 **2b／2c 接口约定。** 2b 候选不进入此目录；必须经过真实 `reference-sources` 读取、留存许可、正文回执和用户确认后才成为正式来源。2c 冻结 `{collection_id, revision_id, document_id, document_revision_id}`，发起请求时由 owner 重新核验权限／版本，不能以目录缓存、`next_cursor` 或客户端片段代替冻结与引用校验，也不把此列表用于修改课堂参考政策。`derived_from` 留给批次 3 的可信笔记版本转换。
 
 **决策与限制。** 无待用户决策的语义问题。未运行三引擎矩阵、Go 全量、race、Compose 或真实外部搜索／模型研究浏览器流程；未把这些记为通过。目录不是总量统计或选择生效功能。片段展示预算与 PDF 无 OCR／版式限制仍明确可见；未更改 CLI、原件导出或自动共享语义。
+
+#### 2b 实施记录（2026-10-12）
+
+**结果与范围。** “＋ 添加来源”增加搜索发现：填写公开关键词与可选域名限制 → 勾选明确外发确认 → 点击搜索 → 查看标记为“摘要，未读取正文”的候选 → 勾选并授权读取正文 → 原 `ReferenceImport` 解析报告／预览／确认 → G1 来源目录。无目标的学习区可执行此流程。搜索不会创建目标、课堂、模型调用、持久任务或正式来源；没有新增 migration。旧目标研究运行及其持久化、读取和采纳路径保留。候选默认不勾选，改变关键词／域名会作废外发确认和旧候选；重试需用户重新明确发起。
+
+**公共合同。**
+
+| 项目 | 2b 合同 |
+| --- | --- |
+| 发现请求 | `POST /v1/knowledge/source-discovery`，闭合 DTO `{keywords, external_consent: true, policy: {mode, domains}}`；拒绝未知字段、重复键、未确认请求。关键词为非空单行，最多 300 UTF-8 字节；不接收 goal、笔记、资料正文或 collection 上下文。请求体最多 4096 字节。`X-Learning-Space-ID` 沿原默认区兼容规则，拒绝不适用的集合头；归档区禁止搜索。 |
+| 域策略 | `supplement` 要求空域列表；`restrict` 要求 1–5 个精确公开小写域名，不隐式包含子域。复用研究政策校验及 `site:` 查询构造，最终查询不超过 Brave 的 1024 字节限制。返回前按公开 URL 与域策略过滤、去片段并去重；不因过滤减少结果而补搜。 |
+| 候选响应 | `{items, request_budget: 1, requests_used: 1, cost_estimate: "unknown"}`；`items` 最多 4 项，可为空，每项仅 `{title, url, summary, status: "summary_only"}`。没有正文、fragments、revision、import_markdown 或 source_receipt，不能把摘要交给导入或引用作为已读正文。响应 `no-store`，服务端不保存搜索请求或结果。 |
+| 权限 | 发现要求全部 `learning:write`、`knowledge:read`、`knowledge:write`、`research:adopt`；沿用设备限流、精确 Origin、Cookie CSRF、学习区分类及 knowledge owner 响应屏障。`research` 配对可调用发现接口；正文抓取仍须 `references:manage`／`knowledge:write`，通用预览确认仍须原导入审批权限。未扩大任何配对档案权限。 |
+| 预算与网络 | 每次发现最多一次供应商请求，发送前预留，不能超过 `settings.Limits.ResearchRequests`；20 秒总超时，无自动重试，搜索并发受同一配置中的 `Concurrency` 限制，设备限流仍单独执行。无模型调用，因此不消耗模型 token 预算。生产使用 `settings.SearchClient` 与原 Brave adapter；`settings/search.go`、公网 HTTPS 搜索 transport、重定向拒绝及 SSRF 校验均未放宽。此预算只覆盖发现；后续正文读取是独立授权的原 reference-sources 请求。 |
+| 能力 | `source-capabilities.source_discovery` 返回 `{available, reason, max_candidates: 4, request_budget: 1}`；`reason` 为 `missing_scope`、`search_not_configured` 或空串。可用表示配置与权限满足，不表示已探测连通；读取能力不发外部请求。旧服务缺字段时前端明确提示升级。 |
+| 正文与 G1 | `reference-sources` 新增可选 `policy`，仅适用于 URL；不传时保持原 supplement 行为，传 restrict 时逐跳核验所确认的域限制。仍走原实际抓取、留存许可、正文回执、PDF 部分接受及预览／确认；来源元信息为真实 URL／PDF，搜索摘要不进入 G1。非 PDF 成功正文缺绑定回执时阻止预览；禁止保存／失败项没有可导入正文。 |
+| 内存与取消 | 候选、输入和已读取但未确认的导入草稿只存在当前标签页 `DraftStore`；按 origin／principal／generation／space／collection 隔离。关闭或卸载搜索组件取消当前请求，忽略迟到响应；再次打开可见本标签页已完成候选／导入草稿，外发确认需重新勾选。取消批量读取时，已完成项保留待审阅，未完成项不伪报成功。刷新不承诺恢复。 |
+
+**错误语义。** 输入／确认／策略错误为 400（`invalid_request` 或 `research_policy_rejected`）；缺 scope、CSRF 或 Origin 不匹配为 403；归档区沿用 409。设备限流、搜索并发占满、请求预算耗尽、供应商 429 均为 429，分别保留 `rate_limited`、`source_discovery_busy`、`source_discovery_budget_exceeded`、`source_discovery_rate_limited`。取消为 408 `source_discovery_cancelled`，超时为 504 `source_discovery_timeout`，配置／网络不可用为 503 `source_discovery_unavailable`，供应商鉴权、重定向、异常及坏响应为 502 的对应分类；不回传供应商错误正文或凭据。隐私屏障继续原 `content_redacted` 等错误。浏览器断开时不保证还能收到取消响应；界面保留取消事实并提示已发出请求可能产生费用。失败不自动重试，也不把未取得候选当作成功空列表。
+
+**新增文件映射。**
+
+- `server/internal/research/discovery.go`、`discovery_test.go`：公开请求／摘要 DTO、有界 transport、超时取消、政策过滤；独立 HTTP stub 使用真实 Brave adapter 验证外发内容、预算与失败。
+- `server/internal/transport/httpapi/source_discovery.go`、`source_discovery_test.go`：发现路由、能力、权限／owner gate／限流／并发、真实 settings adapter 注入和正文域限制。
+- `server/api/openapi_source_discovery_test.go`：实际请求／响应 DTO、闭合输入和外发确认的 OpenAPI 合同。
+- `clients/web/src/api/source-discovery.ts`、`source-discovery.test.ts`：生成类型约束、独立响应校验、确认与字节预算；`components/notebook/source-discovery.tsx`：候选选择、授权外发、取消及逐项正文读取。
+
+**修改文件映射。**
+
+- **OpenAPI**：`server/api/openapi.yaml`；`npm run generate` 生成 `clients/web/src/api/schema.d.ts`。
+- `server/internal/transport/httpapi/{api,reference_sources,knowledge_spaces}.go`：受信搜索依赖端口、能力挂载、可选正文域策略、学习区路径分类；`deploy/web/nginx.conf` 增加锚定的发现路径白名单。
+- `server/internal/knowledge/source_catalog_test.go`：候选摘要不能取得正文回执或有效研究引用。
+- `clients/web/src/api/references.ts`：正文读取传递 abort signal／可选域策略；`lib/reference-import.ts`、`reference-import.test.ts`：URL 与搜索共用实际正文转换，禁止摘要／禁止保存项进入导入。
+- `clients/web/src/components/notebook/add-source-dialog.tsx`、`components/reference-import.tsx`：第四入口接原导入控制器，保留预览、身份审阅、确认及 unknown 核对。
+- `server/testutil/webnotebook/{main,main_test}.go`：仅隔离 schema 的宿主注入搜索网络；真实 settings／Brave／抓取／数据库与 Web 路径不替换。生产二进制没有测试网络入口。
+- `clients/web/tests/browser/notebook-sources.spec.ts`：新增搜索正文导入、禁止保存、未确认不请求、取消、失败、空候选及 CSRF 场景，保留原三种来源完整场景。
+- 本设计文档记录本批合同、验证和 2c 约定。
+
+**检查记录。** 所有 Go／DB／浏览器命令先 `umask 022`；Go 使用 `GOCACHE=/tmp/notebook-b2b-go-cache`。用户缓存目录不在沙箱可写范围，故等价地将 `webdatabase` 与 `webnotebook` 编译到 `/tmp/notebook-b2b-webdatabase`、`/tmp/notebook-b2b-webnotebook`。浏览器使用 `TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable`、`WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome`；各组由 webdatabase 创建独立 schema 并串行执行，未操作 Docker 容器。
+
+| 检查 | 命令与结果 |
+| --- | --- |
+| OpenAPI | `cd clients/web && npm run generate` 通过；既有 `ActionExposureRequest` discriminator 警告保留。`TestSourceDiscoveryContract` 和完整 `./api` 测试通过，含代理白名单覆盖。 |
+| 前端 | `npm run check`、`npm run build -- --configLoader native` 通过；构建内再次执行 check。仅既有 Zod 注释／大 chunk 提示。`npm test -- --configLoader native src/api/source-discovery.test.ts src/lib/reference-import.test.ts src/api/notebook-sources.test.ts`：3 文件、9 测试通过。 |
+| Go 包 | `cd server && go test ./api ./internal/knowledge/... ./internal/research ./internal/settings ./internal/transport/httpapi ./internal/integrations/websearch ./testutil/webnotebook` 全部通过。未设置 DB 的 package 测试中数据库用例 skip，不将其记作数据库验收。新增授权、并发／设备限流与真实 settings/Brave HTTP 用例另有定向通过证据。 |
+| Vet | `go vet ./api ./internal/knowledge/... ./internal/research ./internal/settings ./internal/transport/httpapi ./internal/integrations/websearch ./testutil/webnotebook` 通过。 |
+| 真实 PostgreSQL | `TEST_DATABASE_URL=... go test -p=1 -v ./internal/transport/httpapi -run '^(TestPostgreSQLReferencesCookieImportCollectionAndScope\|TestPostgreSQLResearchCookieSourcesAndDecisions)$'`：2 项通过（9.367s），验证原 Cookie 导入、来源回执／目录、参考范围及旧研究读取／采纳。使用上述真实 DSN，非 skip；与浏览器数据库检查串行。 |
+| Chromium 来源 | `WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/notebook-b2b-webnotebook /tmp/notebook-b2b-webdatabase npm run test:browser -- notebook-sources.spec.ts --project=chromium`：3 场景通过（13.9s），无 skip／retry；真实来源目录在搜索及预览后为空，正式确认后仅保存获准正文，摘要 sentinel 不出现在来源查看器。 |
+| Chromium 回归 | 普通发行二进制 `go build -tags web_release -o edu-agentd ./cmd/edu-agentd`，`WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 /tmp/notebook-b2b-webdatabase npm run test:browser -- notebook-workspace.spec.ts references.spec.ts --project=chromium`：8 场景通过（48.0s），无 skip／retry。涵盖真实课堂、正式答案、移动布局、双标签／切区、撤权隐藏、归档、迟到响应和原导入 unknown 核对。 |
+
+先写失败场景：新 HTTP 路由返回 404、缺 DTO／前端转换器、OpenAPI 缺路径，以及 Chromium 找不到搜索按钮。实现后均通过。开发中修复了新增配置测试的受保护目录权限、OpenAPI 错误 schema 引用及新响应缺少显式 `no-store`，通过后未重复运行无输入变化的检查。日志／临时产物均位于 `/tmp/notebook-b2b-*`，不纳入工作树提交。
+
+**留给 2c 的约定。** 发现候选不是所选正式来源，不提供可冻结版本或引用身份；只有原导入确认后的 G1 `{collection_id, revision_id, document_id, document_revision_id}` 可以作为 2c 的待核验输入。2c 仍须在发起请求时由 owner 冻结、核验来源与引用，不能引用 discovery summary、客户端勾选或临时抓取报告。左栏选择生效／来源问答和 Studio 均未在本批实现；课堂既有冻结范围不变。
+
+**决策与限制。** 无待用户决策的语义问题。未运行真实 Brave smoke（真实调用 0 次）、真实外部模型、三引擎矩阵、Go 全量／race 或 Compose；未把它们记为通过。搜索结果无跨刷新恢复与任务核对接口，外部实际费用未知；网页格式／留存限制和 PDF 解析缺口仍按原流程展示。
 
 ### 批次 3：四类 Studio 产物形成可保存的真实流程（12–18 人日）
 

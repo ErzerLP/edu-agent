@@ -39,6 +39,17 @@ func TestSourceReceiptBindsBodyAndSpace(t *testing.T) {
 	}
 }
 
+func TestDiscoverySummaryCannotObtainBodyReceiptOrCitation(t *testing.T) {
+	source := research.Source{ID: uuid.NewString(), Locator: "https://example.org/", Title: "摘要候选", Status: "candidate", Text: "摘要不是已读正文", StorageAllowed: true}
+	if body, receipt := FetchedSourceReceipt(t.Context(), 1, source); body != "" || receipt != "" {
+		t.Fatal("summary received body receipt")
+	}
+	synthesis := research.Synthesis{Points: []research.Point{{Text: "伪造引用", Citations: []research.Citation{{SourceID: source.ID, Quote: source.Text}}}}}
+	if synthesis.Validate([]research.Source{source}) == nil {
+		t.Fatal("summary became read citation")
+	}
+}
+
 func TestSourceMetadataDoesNotTrustMarkdownPrefix(t *testing.T) {
 	store := &previewGenerationStore{memoryCatalogStore: newMemoryCatalogStore(), generation: 1}
 	s, _ := NewService(store, NewCanonicalizer(), ServiceOptions{})

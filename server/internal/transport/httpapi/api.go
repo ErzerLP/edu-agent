@@ -153,6 +153,7 @@ type PrivacyMigrationLeaseService interface {
 type Options struct {
 	CompanionEnabled        bool
 	ReferenceFetcher        *research.Fetcher
+	SourceSearch            research.SearchClient
 	LearningChanges         *learningchange.Service
 	LearningContent         *learningcontent.Store
 	MentorRuns              *mentorrun.Service
@@ -193,6 +194,9 @@ type Options struct {
 type API struct {
 	companion               *companion.Broker
 	referenceFetcher        *research.Fetcher
+	sourceSearch            research.SearchClient
+	discoveryMu             sync.Mutex
+	discoveryActive         int
 	learningContent         *learningcontent.Store
 	learningChanges         *learningchange.Service
 	mentorRuns              *mentorrun.Service
@@ -280,6 +284,7 @@ func New(options Options) (http.Handler, error) {
 	}
 	api := &API{
 		referenceFetcher: options.ReferenceFetcher,
+		sourceSearch:     options.SourceSearch,
 		learningContent:  options.LearningContent,
 		learningChanges:  options.LearningChanges,
 		mentorRuns:       options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},

@@ -215,6 +215,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/knowledge/source-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认公开关键词后发现最多四个候选摘要；不读取正文、不创建研究任务或正式来源
+         * @description 每次最多一次 Brave 请求，受 settings research_requests、concurrency 和设备限流约束；20 秒超时，无自动重试。关键词最多 300 UTF-8 字节，拼接域约束后最多 1024 字节。候选仅供用户勾选，再经 reference-sources 读取与预览确认。取消、超时、失败不能保证外部费用为零；请求结果不持久化，重试需用户重新明确发起。
+         */
+        post: operations["discoverKnowledgeSources"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/knowledge/revisions/{revisionID}/documents/{documentID}/pages/{page}": {
         parameters: {
             query?: never;
@@ -3756,6 +3776,52 @@ export interface components {
             /** @enum {string} */
             memory_status?: "not_authorized" | "unavailable" | "available" | "partial";
         };
+        SourceDiscoveryPolicy: {
+            /**
+             * @description supplement 要求空域列表；restrict 要求 1–5 个精确公开小写域名（不自动包含子域）
+             * @enum {string}
+             */
+            mode: "supplement" | "restrict";
+            domains: string[];
+        };
+        SourceDiscoveryRequest: {
+            /** @description 用户确认的公开关键词，最多 300 UTF-8 字节；不接受目标、资料或笔记上下文 */
+            keywords: string;
+            /** @constant */
+            external_consent: true;
+            policy: components["schemas"]["SourceDiscoveryPolicy"];
+        };
+        SourceDiscoveryCandidate: {
+            title: string;
+            /** Format: uri */
+            url: string;
+            /** @description 搜索供应商摘要，未读取正文，不可作为正文导入或引用 */
+            summary: string;
+            /** @constant */
+            status: "summary_only";
+        };
+        SourceDiscoveryResult: {
+            items: components["schemas"]["SourceDiscoveryCandidate"][];
+            /** @constant */
+            request_budget: 1;
+            /**
+             * @description 在发送前预留的一次搜索请求，不包含之后独立授权的正文读取
+             * @constant
+             */
+            requests_used: 1;
+            /** @constant */
+            cost_estimate: "unknown";
+        };
+        SourceDiscoveryCapability: {
+            /** @description 已配置搜索且具有发现权限；不表示外部连接已探测成功 */
+            available: boolean;
+            /** @enum {string} */
+            reason: "" | "missing_scope" | "search_not_configured";
+            /** @constant */
+            max_candidates: 4;
+            /** @constant */
+            request_budget: 1;
+        };
         ResearchRequest: {
             /** @description 用户明确确认的去标识公开主题，UTF-8 最多 300 字节；研究 prompt 必须与此一致 */
             topic: string;
@@ -4167,6 +4233,7 @@ export interface components {
         SourceCapabilities: {
             /** @description 支持来源列表与版本详情及非 PDF 抓取回执 */
             source_catalog?: boolean;
+            source_discovery?: components["schemas"]["SourceDiscoveryCapability"];
             formats: string[];
             pdf: {
                 parser: string;
@@ -7862,7 +7929,10 @@ export interface operations {
     readSourceCapabilities: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -7875,6 +7945,97 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceCapabilities"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    discoverKnowledgeSources: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Canonical stable UUID. Omission always binds the fixed default 00000000-0000-4000-8000-000000000001. Empty/duplicate/malformed headers are invalid; unknown IDs return 404. Non-default business modules return 501; archived business writes return 409. Never inferred from names or recent activity. */
+                "X-Learning-Space-ID"?: components["parameters"]["LearningSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceDiscoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description 候选摘要（可为空）；no-store，没有正文、引用身份或导入回执 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDiscoveryResult"];
+                };
+            };
+            /** @description invalid_request 或 research_policy_rejected；缺确认、非法关键词／域策略或未知字段，未外发 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description 缺配对 scope 或 Cookie CSRF／Origin 校验失败 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description source_discovery_cancelled；请求取消，可能已产生外部费用 */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description rate_limited、source_discovery_busy、source_discovery_budget_exceeded 或 source_discovery_rate_limited；不自动重试 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description source_discovery_unauthorized／upstream_error／invalid_response／redirect_rejected；不转发提供商错误正文 */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description source_discovery_unavailable 或隐私 owner 屏障；无成功候选 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description source_discovery_timeout；无成功候选，不自动重试 */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
             default: components["responses"]["WebFailure"];
@@ -7936,6 +8097,8 @@ export interface operations {
                      * @constant
                      */
                     storage_consent?: true;
+                    /** @description 搜索候选所确认的域策略；仅用于 URL，缺省为 supplement，逐跳校验 restrict */
+                    policy?: components["schemas"]["SourceDiscoveryPolicy"];
                 } & (unknown | unknown);
             };
         };

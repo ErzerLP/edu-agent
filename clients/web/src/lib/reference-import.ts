@@ -1,4 +1,4 @@
-import type { ImportPreview, ImportRequest, ImportResult } from '@/api/references'
+import type { ImportPreview, ImportRequest, ImportResult, ReferenceSource } from '@/api/references'
 import type { PDFReport } from '@/api/pdf'
 
 export type ScanItem = { id: string; name: string; path: string; bytes: number; status: 'ready' | 'error' | 'unsupported'; reason: string; selected: boolean; markdown: string; coverage: string; asNew?: boolean; sourceReceipt?: string; pdf?: { data: string; report: PDFReport; acceptPartial: boolean; locator?: string; sourceReceipt?: string } }
@@ -16,6 +16,21 @@ export function textDocument(name: string, text: string) {
 export function pastedItem(name: string, text: string): ScanItem {
   const id = crypto.randomUUID()
   return { id, name, path: `${name.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_') || '粘贴资料'}.md`, bytes: bytes(text), status: !text.trim() || bytes(text) > maxFile ? 'error' : 'ready', reason: !text.trim() ? '内容为空' : bytes(text) > maxFile ? '内容超过 4 MiB' : '保留粘贴原文', selected: !!text.trim() && bytes(text) <= maxFile, markdown: textDocument(name, text), coverage: '完整文本' }
+}
+
+// Only fetched, storable bodies can enter the existing import controller.
+// Search summaries never pass through this boundary as document content.
+export function fetchedItem(source: ReferenceSource): ScanItem {
+  const usable = ['parsed', 'partial'].includes(source.status) && source.storage_allowed && !!source.text.trim()
+  const item = pastedItem(source.title || '网页资料', '')
+  const pdf = usable && source.pdf && source.pdf_data ? { data: source.pdf_data, report: source.pdf, acceptPartial: false, locator: source.final_url, sourceReceipt: source.source_receipt } : undefined
+  if (usable && !pdf && (!source.import_markdown || !source.source_receipt)) throw new Error('服务器未提供绑定正文的来源回执，请升级服务后重新读取。')
+  return { ...item, name: source.locator, path: `web-${item.id}.md`, bytes: usable ? bytes(source.text) : 0,
+    markdown: usable ? pdf ? source.text : source.import_markdown! : '', pdf,
+    sourceReceipt: usable && !pdf ? source.source_receipt : undefined,
+    status: usable ? 'ready' : source.failure.startsWith('unsupported') ? 'unsupported' : 'error',
+    reason: usable ? '公开网页解析成功' : source.failure || '没有获准保存的正文',
+    selected: usable && (!pdf || pdf.report.coverage === 'complete_text'), coverage: source.coverage }
 }
 
 // 只读取浏览器授权返回的 File；不接受本地路径字符串或自行遍历目录。

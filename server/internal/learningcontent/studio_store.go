@@ -61,11 +61,11 @@ func (s *Store) studioRead(ctx context.Context, tx pgx.Tx, id string, version, g
 		return StudioRevision{}, ErrUnsupported
 	}
 	if r.Kind == "note" {
-		if r.Body.SourceManifest != nil || len(r.Body.Citations) > 0 || r.Body.Guide != nil || r.Body.Brief != nil {
+		if r.Body.SourceManifest != nil || len(r.Body.Citations) > 0 || r.Body.Guide != nil || r.Body.Brief != nil || r.Body.Quiz != nil {
 			return StudioRevision{}, ErrUnsupported
 		}
 	} else {
-		if r.Kind != "guide" && r.Kind != "brief" || (r.Body.Guide != nil) != (r.Kind == "guide") || (r.Body.Brief != nil) != (r.Kind == "brief") {
+		if studioFields(r.Kind) == nil || (r.Body.Guide != nil) != (r.Kind == "guide") || (r.Body.Brief != nil) != (r.Kind == "brief") || (r.Body.Quiz != nil) != (r.Kind == "quiz") {
 			return StudioRevision{}, ErrUnsupported
 		}
 		if err = s.studioSourcesTx(ctx, tx, token, r.Body); err != nil {

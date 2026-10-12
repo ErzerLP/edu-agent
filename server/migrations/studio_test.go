@@ -22,3 +22,17 @@ func TestStudioMigrationUpgrade(t *testing.T) {
 		t.Fatal("migration replay", err)
 	}
 }
+
+func TestStudioQuizMigrationUpgrade(t *testing.T) {
+	pool := migrationPoolThrough(t, 36)
+	if err := Run(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	var tables int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_class WHERE relnamespace=current_schema()::regnamespace AND relname IN ('learning_studio_quiz_questions','learning_studio_quiz_operations')`).Scan(&tables); err != nil || tables != 2 {
+		t.Fatal(tables, err)
+	}
+	if err := Run(t.Context(), pool); err != nil {
+		t.Fatal("migration replay", err)
+	}
+}

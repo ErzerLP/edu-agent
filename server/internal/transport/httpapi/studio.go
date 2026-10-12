@@ -41,6 +41,9 @@ func (a *API) mountStudio(r chi.Router) {
 	write.Put("/v1/learning/studio/artifacts/{artifactID}", a.studioSave)
 	write.Post("/v1/learning/studio/generations", a.studioGenerate)
 	read.Get("/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}", a.studioCitation)
+	read.Get("/v1/learning/studio/artifacts/{artifactID}/quiz", a.studioQuizGet)
+	read.Get("/v1/learning/studio/quiz-operations/{operationID}", a.studioQuizOperation)
+	write.Post("/v1/learning/studio/artifacts/{artifactID}/quiz/start", a.studioQuizStart)
 	r.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.requireScope("knowledge:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge)).Post("/v1/learning/studio/artifacts/{artifactID}/import-candidate", a.studioImportCandidate)
 }
 

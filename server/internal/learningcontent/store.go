@@ -412,7 +412,7 @@ func ValidateAttemptTx(ctx context.Context, tx pgx.Tx, attempt learning.Attempt,
 
 // 清除沿用 learning owner 的授权事务；不保留可复活正文的墓碑或进程缓存。
 func RedactTx(ctx context.Context, tx pgx.Tx) error {
-	for _, table := range []string{"learning_studio_operations", "learning_studio_revisions", "learning_studio_artifacts", "learning_content_preferences", "learning_content_operations", "learning_content_revisions", "learning_content_artifacts"} {
+	for _, table := range []string{"learning_studio_quiz_operations", "learning_studio_quiz_questions", "learning_studio_operations", "learning_studio_revisions", "learning_studio_artifacts", "learning_content_preferences", "learning_content_operations", "learning_content_revisions", "learning_content_artifacts"} {
 		if _, err := tx.Exec(ctx, `DELETE FROM `+table); err != nil {
 			return err
 		}
@@ -424,6 +424,6 @@ func Remaining(ctx context.Context, db interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }) (int64, error) {
 	var count int64
-	err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_studio_artifacts)+(SELECT count(*) FROM learning_studio_revisions)+(SELECT count(*) FROM learning_studio_operations)+(SELECT count(*) FROM learning_content_artifacts)+(SELECT count(*) FROM learning_content_revisions)+(SELECT count(*) FROM learning_content_operations)+(SELECT count(*) FROM learning_content_preferences)`).Scan(&count)
+	err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_studio_quiz_operations)+(SELECT count(*) FROM learning_studio_quiz_questions)+(SELECT count(*) FROM learning_studio_artifacts)+(SELECT count(*) FROM learning_studio_revisions)+(SELECT count(*) FROM learning_studio_operations)+(SELECT count(*) FROM learning_content_artifacts)+(SELECT count(*) FROM learning_content_revisions)+(SELECT count(*) FROM learning_content_operations)+(SELECT count(*) FROM learning_content_preferences)`).Scan(&count)
 	return count, err
 }

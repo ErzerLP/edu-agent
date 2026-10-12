@@ -37,7 +37,7 @@ type studioCandidateClaim struct {
 	Citations []studioReference `json:"citations"`
 }
 
-// StudioSchema describes two separate, closed output shapes. It is also sent
+// StudioSchema describes separate, closed output shapes for each kind. It is also sent
 // in the prompt for providers which only support json_object.
 func StudioSchema(kind string) json.RawMessage {
 	fields := studioFields(kind)
@@ -50,6 +50,9 @@ func StudioSchema(kind string) json.RawMessage {
 	for _, name := range fields {
 		properties[name] = map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": claim}
 	}
+	if kind == "quiz" {
+		properties["questions"] = studioQuizSchema(ref)
+	}
 	raw, _ := json.Marshal(map[string]any{"type": "object", "additionalProperties": false, "required": append([]string{"title", "coverage"}, fields...), "properties": properties})
 	return raw
 }
@@ -59,6 +62,8 @@ func studioFields(kind string) []string {
 		return []string{"key_points", "terms", "learning_order", "misconceptions"}
 	case "brief":
 		return []string{"overview", "differences", "gaps"}
+	case "quiz":
+		return []string{"questions"}
 	}
 	return nil
 }
@@ -80,7 +85,22 @@ func DecodeStudioCandidate(kind string, raw []byte, manifest *knowledge.SourceMa
 	groups := map[string][]StudioClaim{}
 	for _, field := range fields {
 		var claims []studioCandidateClaim
-		if agentcore.DecodeArguments(`{"claims":`+string(values[field])+`}`, &struct {
+		if kind == "quiz" {
+			var questions []studioCandidateQuestion
+			if agentcore.DecodeArguments(`{"questions":`+string(values[field])+`}`, &struct {
+				Questions *[]studioCandidateQuestion `json:"questions"`
+			}{&questions}) != nil || len(questions) < 1 || len(questions) > 8 {
+				return body, ErrInvalid
+			}
+			body.Quiz = &StudioQuiz{Questions: []StudioQuestion{}}
+			for _, q := range questions {
+				if !validStudioQuestion(q.Prompt, q.Rubric, q.AllowedHelp) {
+					return body, ErrInvalid
+				}
+				body.Quiz.Questions = append(body.Quiz.Questions, StudioQuestion{Prompt: q.Prompt, Rubric: q.Rubric, AllowedHelp: q.AllowedHelp})
+				claims = append(claims, studioCandidateClaim{Text: q.Prompt, Citations: q.Citations})
+			}
+		} else if agentcore.DecodeArguments(`{"claims":`+string(values[field])+`}`, &struct {
 			Claims *[]studioCandidateClaim `json:"claims"`
 		}{&claims}) != nil || len(claims) < 1 || len(claims) > 8 {
 			return body, ErrInvalid
@@ -114,8 +134,12 @@ func DecodeStudioCandidate(kind string, raw []byte, manifest *knowledge.SourceMa
 	}
 	if kind == "guide" {
 		body.Guide = &StudioGuide{groups["key_points"], groups["terms"], groups["learning_order"], groups["misconceptions"]}
-	} else {
+	} else if kind == "brief" {
 		body.Brief = &StudioBrief{groups["overview"], groups["differences"], groups["gaps"]}
+	} else {
+		for i, claim := range groups["questions"] {
+			body.Quiz.Questions[i].Citations = claim.Citations
+		}
 	}
 	// A model cannot upgrade known extraction gaps or bounded fragments to complete.
 	for _, source := range sources {

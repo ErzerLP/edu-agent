@@ -25,6 +25,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
@@ -156,6 +157,7 @@ type Options struct {
 	SourceSearch            research.SearchClient
 	LearningChanges         *learningchange.Service
 	LearningContent         *learningcontent.Store
+	StudioQuiz              *learningstart.Service
 	MentorRuns              *mentorrun.Service
 	MentorHeartbeat         time.Duration
 	MentorWriteTimeout      time.Duration
@@ -198,6 +200,7 @@ type API struct {
 	discoveryMu             sync.Mutex
 	discoveryActive         int
 	learningContent         *learningcontent.Store
+	studioQuiz              *learningstart.Service
 	learningChanges         *learningchange.Service
 	mentorRuns              *mentorrun.Service
 	mentorHeartbeat         time.Duration
@@ -286,6 +289,7 @@ func New(options Options) (http.Handler, error) {
 		referenceFetcher: options.ReferenceFetcher,
 		sourceSearch:     options.SourceSearch,
 		learningContent:  options.LearningContent,
+		studioQuiz:       options.StudioQuiz,
 		learningChanges:  options.LearningChanges,
 		mentorRuns:       options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
 		settings:       options.Settings,

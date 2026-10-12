@@ -108,3 +108,14 @@ func TestStudioGenerateRequiresSourcesAndExplicitVersions(t *testing.T) {
 		t.Fatal("explicit target and version rejected")
 	}
 }
+
+func TestStudioQuizUsesExplicitGoal(t *testing.T) {
+	sources := []knowledge.SourceDetail{{Fragments: []knowledge.SourceFragment{{Text: "SOURCE_ONLY"}}}}
+	r := StudioQuizModelRequest("CHOSEN_GOAL", sources, true)
+	if len(r.Messages) != 3 || !strings.Contains(r.Messages[2].Content, "CHOSEN_GOAL") || !strings.Contains(r.Messages[1].Content, "SOURCE_ONLY") {
+		t.Fatal("quiz omitted goal or sources")
+	}
+	if len(StudioModelRequest("guide", sources, true).Messages) != 2 {
+		t.Fatal("guide input changed")
+	}
+}

@@ -6,12 +6,53 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/studio/artifacts/{artifactID}/quiz:
+    get:
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      operationId: getStudioQuiz
+      summary: Read question carriers and their actual formal session states
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { name: artifactID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Verified quiz mapping; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioQuizState" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}/quiz/start:
+    post:
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      operationId: startStudioQuizQuestion
+      summary: Explicitly start the next question in a dedicated formal session
+      description: Requires the quiz's explicit goal and frozen sources. Earlier questions must have completed their original route. Same version and question never creates a second carrier; operation identity is bound to the entire request. No change to the current classroom.
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { name: artifactID, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioQuizStart" } } }
+      responses:
+        "200": { description: Formal carrier and mapping committed atomically; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioQuizState" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/quiz-operations/{operationID}:
+    get:
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      operationId: getStudioQuizOperation
+      summary: Reconcile this device's original quiz start operation
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: Original operation's quiz carriers; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioQuizState" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/studio/generations:
     post:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       operationId: generateStudioArtifact
-      summary: Generate a guide or brief from an immutable source selection
+      summary: Generate a guide, brief or quiz from an immutable source selection
       parameters:
         - { $ref: "#/components/parameters/MentorSpaceID" }
       requestBody:
@@ -4704,8 +4745,8 @@ components:
       properties:
         operation_id: { type: string, format: uuid }
         privacy_generation: { type: integer, minimum: 1 }
-        kind: { type: string, enum: [guide, brief] }
-        goal_id: { type: [string, "null"], format: uuid }
+        kind: { type: string, enum: [guide, brief, quiz] }
+        goal_id: { type: [string, "null"], format: uuid, description: Required non-null explicit goal for quiz; nullable for guide and brief }
         goal_version: { type: integer, minimum: 0, description: Zero when goal_id is null }
         artifact_id: { type: [string, "null"], format: uuid }
         expected_version: { type: integer, minimum: 0 }
@@ -4747,6 +4788,62 @@ components:
         overview: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
         differences: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
         gaps: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioClaim" } }
+    StudioQuestion:
+      type: object
+      additionalProperties: false
+      required: [prompt, rubric, allowed_help, citations]
+      properties:
+        prompt: { type: string, minLength: 1, maxLength: 1500 }
+        rubric:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, criterion]
+            properties:
+              id: { type: string, minLength: 1, maxLength: 100 }
+              criterion: { type: string, minLength: 1, maxLength: 1000 }
+        allowed_help: { type: array, minItems: 1, maxItems: 4, uniqueItems: true, items: { $ref: "#/components/schemas/HelpLevel" } }
+        citations: { type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: { type: string } }
+    StudioQuiz:
+      type: object
+      additionalProperties: false
+      required: [goal_version, questions]
+      properties:
+        goal_version: { type: integer, minimum: 1, description: "Server-frozen chosen goal version, never supplied by the model" }
+        questions: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioQuestion" } }
+    StudioQuizStart:
+      type: object
+      additionalProperties: false
+      required: [operation_id, version, privacy_generation, goal_version, question]
+      properties:
+        operation_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        privacy_generation: { type: integer, minimum: 1 }
+        goal_version: { type: integer, minimum: 1 }
+        question: { type: integer, minimum: 1, maximum: 8 }
+    StudioQuizState:
+      type: object
+      required: [artifact_id, version, goal_version, questions]
+      properties:
+        artifact_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        goal_version: { type: integer, minimum: 1 }
+        questions:
+          type: array
+          items:
+            type: object
+            required: [question, session_id, activity_id, content_artifact_id, state, completed]
+            properties:
+              question: { type: integer, minimum: 1, maximum: 8 }
+              session_id: { type: string, format: uuid }
+              activity_id: { type: string, format: uuid }
+              content_artifact_id: { type: string, format: uuid }
+              state: { $ref: "#/components/schemas/TutoringState" }
+              completed: { type: boolean, description: Read from the formal session's completed route flag }
+              attempt_id: { type: string, format: uuid }
     StudioSave:
       type: object
       additionalProperties: false
@@ -4773,6 +4870,7 @@ components:
         coverage: { type: string, enum: [complete, partial] }
         guide: { $ref: "#/components/schemas/StudioGuide" }
         brief: { $ref: "#/components/schemas/StudioBrief" }
+        quiz: { $ref: "#/components/schemas/StudioQuiz" }
     StudioRevision:
       type: object
       required: [artifact_id, learning_space_id, goal_id, kind, version, privacy_generation, actor_device_id, created_at, body]
@@ -4780,7 +4878,7 @@ components:
         artifact_id: { type: string, format: uuid }
         learning_space_id: { type: string, format: uuid }
         goal_id: { type: [string, "null"], format: uuid }
-        kind: { type: string, enum: [note, guide, brief] }
+        kind: { type: string, enum: [note, guide, brief, quiz] }
         version: { type: integer, minimum: 1 }
         privacy_generation: { type: integer, minimum: 1 }
         actor_device_id: { type: string, format: uuid }
@@ -4792,7 +4890,7 @@ components:
       properties:
         artifact_id: { type: string, format: uuid }
         goal_id: { type: [string, "null"], format: uuid }
-        kind: { type: string, enum: [note, guide, brief] }
+        kind: { type: string, enum: [note, guide, brief, quiz] }
         version: { type: integer, minimum: 1 }
         title: { type: string }
         updated_at: { type: string, format: date-time }

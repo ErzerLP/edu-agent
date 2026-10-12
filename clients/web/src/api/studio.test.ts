@@ -5,6 +5,7 @@ import {
   studioRevisionSchema,
   studioGuideSchema,
   studioBriefSchema,
+  studioQuizSchema,
   noteSourceItem,
   studioRequest,
   type NoteDraft,
@@ -13,6 +14,83 @@ import { DraftStore } from '@/lib/drafts'
 
 const id = '00000000-0000-4000-8000-000000000001'
 describe('Studio saved revision and tab drafts', () => {
+  it('重开测验验证题目引用，目标版本不是题目组', () => {
+    const source = { collection_id: id, revision_id: id, document_id: id, document_revision_id: id }
+    const hash = 'a'.repeat(64)
+    const raw = {
+      artifact_id: id,
+      learning_space_id: id,
+      goal_id: id,
+      kind: 'quiz',
+      version: 1,
+      privacy_generation: 1,
+      actor_device_id: id,
+      created_at: '2026-10-12T00:00:00Z',
+      body: {
+        schema: 1,
+        title: '测验',
+        markdown: '',
+        model: 'fixture',
+        input_fingerprint: hash,
+        coverage: 'complete',
+        source_manifest: {
+          schema: 1,
+          space_id: id,
+          generation: 1,
+          sha256: hash,
+          entries: [{ ...source, sha256: hash }],
+        },
+        citations: [
+          {
+            id: '1',
+            source: { ...source, collection_name: '资料', path: 'even.md', metadata: null },
+            fragment: {
+              node_id: id,
+              node_revision_id: id,
+              title: '偶数',
+              range: { start: 0, end: 6, start_line: 1, end_line: 1 },
+              text: '偶数',
+              truncated: false,
+            },
+            document_sha256: hash,
+            slice_sha256: hash,
+          },
+        ],
+        quiz: {
+          goal_version: 2,
+          questions: [
+            {
+              prompt: '解释偶数',
+              rubric: [{ id: 'd', criterion: '能被 2 整除' }],
+              allowed_help: ['hint'],
+              citations: ['1'],
+            },
+          ],
+        },
+      },
+    }
+    expect(studioRevisionSchema.parse(raw).body.quiz?.goal_version).toBe(2)
+    raw.body.quiz.questions[0].citations = ['2']
+    expect(studioRevisionSchema.safeParse(raw).success).toBe(false)
+  })
+  it('测验保留不含 none 的真实帮助规则，拒绝空标准与重复帮助', () => {
+    const question = {
+      prompt: '解释偶数',
+      rubric: [{ id: 'definition', criterion: '被 2 整除' }],
+      allowed_help: ['hint', 'scaffold'],
+      citations: ['1'],
+    }
+    expect(
+      studioQuizSchema.parse({ goal_version: 1, questions: [question] }).questions[0].allowed_help,
+    ).toEqual(['hint', 'scaffold'])
+    for (const invalid of [
+      { ...question, rubric: [] },
+      { ...question, allowed_help: ['hint', 'hint'] },
+      { ...question, citations: [] },
+    ]) {
+      expect(() => studioQuizSchema.parse({ goal_version: 1, questions: [invalid] })).toThrow()
+    }
+  })
   it('指南与简报使用不同结构，任何论断都必须带引用', () => {
     const claim = { text: '来自所选资料的论断', citations: ['1'] }
     const guide = {

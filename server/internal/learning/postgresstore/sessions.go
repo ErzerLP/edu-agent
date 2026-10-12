@@ -114,6 +114,10 @@ func (s *Store) ListSessions(ctx context.Context, q learning.SessionQuery) (lear
 		if err := rows.Err(); err != nil {
 			return page, err
 		}
+		rows.Close()
+		if err := studioQuizSessionNames(ctx, tx, page.Items); err != nil {
+			return page, err
+		}
 		if len(page.Items) > q.Limit {
 			page.Items = page.Items[:q.Limit]
 			c.After = page.Items[q.Limit-1].SessionID

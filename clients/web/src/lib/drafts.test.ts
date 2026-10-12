@@ -3,6 +3,16 @@ import { DraftStore } from './drafts'
 import { composerSchema, sessionSchema } from '@/api/runtime'
 
 describe('标签页草稿与重试契约', () => {
+  it('撤权清除指定范围的正文和操作，保留其他范围草稿', () => {
+    const store = new DraftStore()
+    store.set('studio:a:note', '受保护草稿')
+    store.set('classroom:a:answer', '另一个范围')
+    const before = store.operation('studio:a:note', { text: '保存' })
+    store.deletePrefix('studio:a:')
+    expect(store.get('studio:a:note')).toBeUndefined()
+    expect(store.operation('studio:a:note', { text: '保存' })).not.toBe(before)
+    expect(store.get('classroom:a:answer')).toBe('另一个范围')
+  })
   it('不同标签页和完整上下文键隔离，退出清除', () => {
     const a = new DraftStore(),
       b = new DraftStore()

@@ -154,7 +154,7 @@ function NotebookWorkspace({
                   />
                 </>
               }
-              studio={<StudioPanel spaceId={spaceId} />}
+              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} spaceId={spaceId} archived={space.data.status === 'archived'} />}
             />
           )}
         </WorkspacePanels>

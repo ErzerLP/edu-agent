@@ -50,6 +50,7 @@ export type SourceMetadata = z.infer<typeof sourceMetadataSchema>
 export type SourceDetail = z.infer<typeof sourceDetailSchema>
 export function sourceDescription(metadata: SourceMetadata | null) {
   if (!metadata) return '已保存 · 来源类型与解析覆盖未知'
+  if (metadata.derived_from) return `已保存 · 笔记第 ${metadata.derived_from.version} 版快照 · 个人理解，非外部权威`
   const kind = { text: '文本', pdf: 'PDF', url: '网址' }[metadata.kind]
   return `已保存 · ${kind} · ${metadata.status === 'partial' ? '部分解析，有覆盖缺口' : metadata.kind === 'text' ? '用户提供的文本' : '已提取文本，完整性未核验'}`
 }

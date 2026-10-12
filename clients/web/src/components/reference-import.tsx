@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorText } from '@/api/client'
 import { knowledgeAPI, type Collection, type ImportRequest, type ImportResult } from '@/api/references'
-import { editImport, emptyImport, fetchedItem, importDocuments, pastedItem, scanFiles, type ImportDraft } from '@/lib/reference-import'
+import { editImport, emptyImport, fetchedItem, importDocuments, pastedItem, scanFiles, type ImportDraft, type ScanItem } from '@/lib/reference-import'
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { ErrorState } from './common'
 import { PDFCoverage } from './pdf-source'
 import { SourceDiscovery } from './notebook/source-discovery'
 
-export function ReferenceImport({ spaceId, collection, target, onImported, method }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' | 'search' }) {
+export function ReferenceImport({ spaceId, collection, target, onImported, method, initialItems }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' | 'search' | 'note'; initialItems?: ScanItem[] }) {
   const { session, prefix, drafts } = useIdentity()
   const key = JSON.stringify([...prefix, spaceId, target, collection.id, 'reference-import'])
-  const [draft, setDraft] = useState<ImportDraft>(() => drafts.get<ImportDraft>(key) ?? emptyImport())
+  const [draft, setDraft] = useState<ImportDraft>(() => drafts.get<ImportDraft>(key) ?? { ...emptyImport(), items: initialItems ?? [] })
   const [busy, setBusy] = useState(false)
   const [reading, setReading] = useState(false)
   const [error, setError] = useState<unknown>()

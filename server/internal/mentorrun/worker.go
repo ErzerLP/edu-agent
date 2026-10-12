@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -261,19 +263,42 @@ func logRunFailure(ctx context.Context, item row, cause error) {
 		category = string(code)
 	default:
 		var searchErr *searchFailure
+		var networkErr net.Error
 		switch {
 		case errors.Is(cause, context.DeadlineExceeded):
 			category = "timeout"
 		case errors.Is(cause, context.Canceled):
 			category = "cancelled"
+		case errors.As(cause, &networkErr) && networkErr.Timeout():
+			category = "timeout"
+		case errors.As(cause, &networkErr):
+			category = "unavailable"
 		case errors.Is(cause, ErrInactive), errors.Is(cause, ErrForbidden), errors.Is(cause, ErrConflict), errors.Is(cause, ErrLease):
 			category = "context_changed"
 		case errors.Is(cause, ErrLimit):
 			category = "history_context_limit"
 		case errors.Is(cause, errCitation):
 			category = "invalid_source_citation"
+		case errors.Is(cause, research.ErrPolicy):
+			category = "research_policy_rejected"
+		case errors.Is(cause, learningcontent.ErrInvalid):
+			category = "invalid_content_candidate"
+		case errors.Is(cause, learningcontent.ErrConflict):
+			category = "selection_expired"
+		case errors.Is(cause, learningcontent.ErrUnavailable):
+			category = "content_unavailable"
 		case errors.As(cause, &searchErr):
 			category = "research_search_failed"
+		}
+	}
+	var modelErr *llm.Error
+	if errors.As(cause, &modelErr) {
+		switch code := modelErr.Category; code {
+		case llm.ErrorUnauthorized, llm.ErrorRateLimited, llm.ErrorUpstream,
+			llm.ErrorTimeout, llm.ErrorUnavailable, llm.ErrorInvalidResponse,
+			llm.ErrorSchemaMismatch, llm.ErrorIncompatible, llm.ErrorInvalidRequest,
+			llm.ErrorOutputBudgetExceeded, llm.ErrorResponseNotCompleted:
+			category = string(code)
 		}
 	}
 	if item.Kind == "studio" {

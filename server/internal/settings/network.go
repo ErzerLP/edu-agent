@@ -42,10 +42,12 @@ func publicHost(host string) bool {
 func rejectRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 func modelTransport() *http.Transport {
 	// 精确模型地址由服务器允许列表授权；不通过环境代理扩展目的地。
-	return &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 15 * time.Second, DisableKeepAlives: true}
+	// 模型可能在推理完成前不发送响应头；等待由客户端的配置超时控制。
+	return &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, DisableKeepAlives: true}
 }
 func searchTransport() *http.Transport {
 	t := modelTransport()
+	t.ResponseHeaderTimeout = 15 * time.Second
 	t.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil || !publicHost(host) {

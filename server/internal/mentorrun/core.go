@@ -405,6 +405,10 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			response.Body = &sourceResponseBody{ReadCloser: response.Body, tx: sourceTx}
 		}
 	}
+	// agentcore normalizes transport failures; keep their type for server diagnostics.
+	if err != nil {
+		h.transportErr = err
+	}
 	if permit != nil {
 		if err != nil {
 			permit.Release()

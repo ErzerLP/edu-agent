@@ -90,6 +90,12 @@ func (s *Store) ContentCitationTx(ctx context.Context, tx pgx.Tx, ref learning.K
 					return learningcontent.Citation{}, err
 				}
 			}
+			if metadata := doc.Revision.SourceMetadata; metadata != nil {
+				result.Parser, result.Coverage = metadata.Parser, metadata.Coverage
+				if metadata.FinalURL != "" {
+					result.Locator = metadata.FinalURL
+				}
+			}
 			if ref.Slice == "" || start == end {
 				result.Status = "missing_fragment"
 				return result, nil

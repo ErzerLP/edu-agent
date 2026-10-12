@@ -122,7 +122,7 @@ function NotebookWorkspace({
       <NotebookLayout
         panel={search.panel ?? 'classroom'}
         onPanelChange={changePanel}
-        sources={<SourcesPanel spaceId={spaceId} />}
+        sources={<SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} />}
         classroom={
           <ClassroomPanel
             space={space.data}

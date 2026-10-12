@@ -70,6 +70,9 @@ func (s *Store) RedactTx(ctx context.Context, request privacy.LocalRedactionRequ
 
 	switch request.Store {
 	case privacy.StoreKnowledgeContent:
+		if _, err := tx.Exec(ctx, `DELETE FROM knowledge_source_metadata WHERE privacy_owner_scrub_permitted('knowledge')`); err != nil {
+			return fmt.Errorf("redact source metadata: %w", err)
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM knowledge_structure_operations; DELETE FROM knowledge_structure_proposals; DELETE FROM knowledge_structure_heads; DELETE FROM knowledge_concept_heads`); err != nil {
 			return fmt.Errorf("清除知识结构提案、操作和投影版本: %w", err)
 		}
@@ -225,6 +228,7 @@ func (s *Store) VerifyRedacted(ctx context.Context, request privacy.LocalRedacti
 	case privacy.StoreKnowledgeContent:
 		query = `
 			SELECT
+				(SELECT count(*) FROM knowledge_source_metadata)+
 				(SELECT count(*) FROM knowledge_structure_operations)+
 				(SELECT count(*) FROM knowledge_structure_proposals)+
 				(SELECT count(*) FROM knowledge_structure_heads)+

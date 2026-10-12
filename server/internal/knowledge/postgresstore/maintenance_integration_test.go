@@ -307,12 +307,19 @@ func TestPostgreSQLKnowledgeMaintenanceProposalLifecycle(t *testing.T) {
 		RETURNS BOOLEAN LANGUAGE sql STABLE AS $$ SELECT TRUE $$`); err != nil {
 		t.Fatal(err)
 	}
+	var sourceMetadataCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_source_metadata`).Scan(&sourceMetadataCount); err != nil || sourceMetadataCount == 0 {
+		t.Fatal("missing source metadata privacy fixture", sourceMetadataCount, err)
+	}
 	if err := knowledgeStore.RedactTx(ctx, redaction); err != nil {
 		t.Fatal(err)
 	}
 	residual, err := knowledgeStore.VerifyRedacted(ctx, redaction)
 	if err != nil || residual != 0 {
 		t.Fatalf("knowledge maintenance privacy residual=%d err=%v", residual, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM knowledge_source_metadata`).Scan(&sourceMetadataCount); err != nil || sourceMetadataCount != 0 {
+		t.Fatal("source provenance survived erasure", sourceMetadataCount, err)
 	}
 	redacted, err := service.Get(ctx, failedApproval.ID)
 	if err != nil || redacted.Status != knowledge.ProposalRedacted || !redacted.Redacted || len(redacted.CandidateSnapshot) != 0 || len(redacted.Sources) != 0 || len(redacted.Diff) != 0 || redacted.BasisHash != "" {

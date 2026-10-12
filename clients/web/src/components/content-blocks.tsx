@@ -1,4 +1,5 @@
-import { memo, useMemo, useRef, useState } from 'react'
+import { SourceDialog } from './notebook/source-viewer'
+import { memo, useMemo } from 'react'
 import Markdown from 'react-markdown'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
@@ -97,62 +98,27 @@ export function SourceViewer({
   label?: string
   content?: Content
 }) {
-  const dialog = useRef<HTMLDialogElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const [open, setOpen] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   return (
-    <>
-      <Button
-        ref={trigger}
-        variant="outline"
-        onClick={() => {
-          setOpen(true)
-          dialog.current?.showModal()
-        }}
-      >
-        {label}
-      </Button>
-      <dialog
-        ref={dialog}
-        className={`source-dialog${expanded ? ' expanded' : ''}`}
-        aria-label="原资料依据"
-        onClose={() => {
-          setOpen(false)
-          trigger.current?.focus()
-        }}
-      >
-        {open && (
-          <>
-            <h2>原资料依据</h2>
-            <p className="hint">
-              活动冻结时的正规资料片段；字节范围 {reference.range.start}–{reference.range.end}。
-            </p>
-            {content ? (
-              <ResolvedCitation content={content} reference={reference} />
-            ) : (
-              <p>此旧活动尚未关联可校验的内容版本，请从正式内容页查看来源。</p>
-            )}
-            <details>
-              <summary>来源与版本标识</summary>
-              <p>
-                节点版本：{reference.node_revision_id}
-                <br />
-                资料版本：{reference.document_revision_id ?? reference.knowledge_revision_id}
-                <br />
-                校验摘要：{reference.slice_sha256}
-              </p>
-            </details>
-            <Button autoFocus onClick={() => dialog.current?.close()}>
-              关闭来源
-            </Button>
-            <Button variant="outline" onClick={() => setExpanded(!expanded)}>
-              {expanded ? '收起来源宽度' : '展开来源'}
-            </Button>
-          </>
-        )}
-      </dialog>
-    </>
+    <SourceDialog label={label} title="原资料依据">
+      <p className="hint">
+        活动冻结时的正规资料片段；字节范围 {reference.range.start}–{reference.range.end}。
+      </p>
+      {content ? (
+        <ResolvedCitation content={content} reference={reference} />
+      ) : (
+        <p>此旧活动尚未关联可校验的内容版本，请从正式内容页查看来源。</p>
+      )}
+      <details>
+        <summary>来源与版本标识</summary>
+        <p>
+          节点版本：{reference.node_revision_id}
+          <br />
+          资料版本：{reference.document_revision_id ?? reference.knowledge_revision_id}
+          <br />
+          校验摘要：{reference.slice_sha256}
+        </p>
+      </details>
+    </SourceDialog>
   )
 }
 
@@ -198,11 +164,32 @@ function ResolvedCitation({ content, reference }: { content: Content; reference:
       <p className="hint">
         出处：{value.locator} · 解析覆盖范围：{value.coverage || '未记录，不推断完整性'}
       </p>
-      {value.pdf && <>
-        <p>PDF 原文件物理页：{value.pdf.pages.map(p => p.number).join('、')} / 共 {value.pdf.page_count} 页。原件指纹：{value.pdf.fingerprint}</p>
-        {value.pdf.pages.map(p => p.gaps.length > 0 && <p key={p.number}>第 {p.number} 页缺口：{p.gaps.map(g => pdfGaps[g] ?? g).join('；')}</p>)}
-        {value.reference.document_revision_id && <PDFPageViewer spaceId={content.learning_space_id} revisionId={value.reference.knowledge_revision_id} documentId={value.reference.document_revision_id} collectionId={value.pdf.collection_id} pages={value.pdf.pages.map(p => p.number)} selectedText={value.reference.slice} />}
-      </>}
+      {value.pdf && (
+        <>
+          <p>
+            PDF 原文件物理页：{value.pdf.pages.map((p) => p.number).join('、')} / 共{' '}
+            {value.pdf.page_count} 页。原件指纹：{value.pdf.fingerprint}
+          </p>
+          {value.pdf.pages.map(
+            (p) =>
+              p.gaps.length > 0 && (
+                <p key={p.number}>
+                  第 {p.number} 页缺口：{p.gaps.map((g) => pdfGaps[g] ?? g).join('；')}
+                </p>
+              ),
+          )}
+          {value.reference.document_revision_id && (
+            <PDFPageViewer
+              spaceId={content.learning_space_id}
+              revisionId={value.reference.knowledge_revision_id}
+              documentId={value.reference.document_revision_id}
+              collectionId={value.pdf.collection_id}
+              pages={value.pdf.pages.map((p) => p.number)}
+              selectedText={value.reference.slice}
+            />
+          )}
+        </>
+      )}
       <details>
         <summary>片段前后文 · 历史版本</summary>
         <SafeMarkdown text={value.context} />

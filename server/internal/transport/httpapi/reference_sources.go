@@ -15,8 +15,12 @@ import (
 
 // 解析只返回候选，不保存正文；所有网络读取复用研究的逐跳地址与格式边界。
 func (a *API) mountReferenceSources(r chi.Router) {
+	a.mountSourceCatalog(r)
 	r.With(a.requireScope("knowledge:read")).Get("/v1/knowledge/source-capabilities", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]any{"formats": []string{"markdown", "utf8_text", "html", "pdf_text_layer"}, "pdf": map[string]any{
+		_, catalog := a.knowledge.(interface {
+			Sources(context.Context, knowledge.SourceQuery) (knowledge.SourcePage, error)
+		})
+		writeJSON(w, 200, map[string]any{"source_catalog": catalog, "formats": []string{"markdown", "utf8_text", "html", "pdf_text_layer"}, "pdf": map[string]any{
 			"parser": pdfsource.Parser, "max_bytes": pdfsource.MaxBytes, "max_pages": pdfsource.MaxPages, "max_text_bytes": pdfsource.MaxText,
 			"memory_mib": pdfsource.MemoryMiB, "timeout_seconds": int(pdfsource.Timeout.Seconds()), "concurrency": 2,
 			"web_max_wire_bytes": research.MaxWire, "web_max_decoded_bytes": research.MaxDecoded,
@@ -98,6 +102,17 @@ func (a *API) mountReferenceSources(r chi.Router) {
 		if source.PDF != nil {
 			result["pdf"], result["pdf_data"] = source.PDF, source.PDFOriginal
 			result["source_receipt"] = knowledge.PDFSourceReceipt(source.PDFOriginal, source.FinalURL)
+		} else if issuer, ok := a.knowledge.(interface {
+			PrepareFetchedSource(context.Context, research.Source) (string, string, error)
+		}); ok {
+			markdown, receipt, err := issuer.PrepareFetchedSource(r.Context(), source)
+			if err != nil {
+				a.writeKnowledgeFailure(w, r, "source_receipt", err)
+				return
+			}
+			if receipt != "" {
+				result["import_markdown"], result["source_receipt"] = markdown, receipt
+			}
 		}
 		writeJSON(w, 200, result)
 	})

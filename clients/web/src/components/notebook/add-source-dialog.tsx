@@ -1,0 +1,178 @@
+import { useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { collectionsSchema, knowledgeAPI, type Collection } from '@/api/references'
+import { learningClient, unwrap } from '@/api/client'
+import { useIdentity } from '@/lib/session'
+import { Button } from '../ui/button'
+import { ErrorState } from '../common'
+import { ReferenceImport } from '../reference-import'
+
+export function AddSourceDialog({ spaceId }: { spaceId: string }) {
+  const dialog = useRef<HTMLDialogElement>(null),
+    trigger = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Button
+        ref={trigger}
+        onClick={() => {
+          setOpen(true)
+          dialog.current?.showModal()
+        }}
+      >
+        ＋ 添加来源
+      </Button>
+      <dialog
+        ref={dialog}
+        className="source-dialog expanded"
+        aria-label="添加来源"
+        onClose={() => {
+          setOpen(false)
+          trigger.current?.focus()
+        }}
+      >
+        <h2>添加来源</h2>
+        <Button autoFocus variant="outline" onClick={() => dialog.current?.close()}>
+          关闭添加来源
+        </Button>
+        {open && <AddSourceContent spaceId={spaceId} />}
+      </dialog>
+    </>
+  )
+}
+
+function AddSourceContent({ spaceId }: { spaceId: string }) {
+  const { session, prefix, drafts } = useIdentity()
+  const key = JSON.stringify([...prefix, spaceId, 'add-source'])
+  const queryClient = useQueryClient()
+  const [method, setMethod] = useState<'pdf' | 'text' | 'url'>(
+    () => drafts.get(`${key}:method`) ?? 'pdf',
+  )
+  const [collectionId, setCollectionId] = useState(
+    () => drafts.get<string>(`${key}:collection`) ?? '',
+  )
+  const [name, setName] = useState(() => drafts.get<string>(`${key}:name`) ?? '学习资料')
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState<unknown>()
+  const live = useRef(true)
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
+  const collections = useQuery({
+    queryKey: [...prefix, spaceId, 'notebook-collections'],
+    gcTime: 0,
+    queryFn: ({ signal }) =>
+      unwrap(
+        learningClient(session, spaceId).GET('/v1/knowledge/collections', {
+          params: { header: { 'X-Learning-Space-ID': spaceId } },
+          signal,
+        }),
+        collectionsSchema,
+      ),
+  })
+  const select = (c: Collection) => {
+    drafts.set(`${key}:collection`, c.id)
+    setCollectionId(c.id)
+  }
+  const collection = collections.data?.items.find((c) => c.id === collectionId)
+  const refresh = () => queryClient.invalidateQueries({ queryKey: [...prefix, spaceId] })
+  const create = async () => {
+    setBusy(true)
+    setError(undefined)
+    try {
+      const payload = { name: name.trim(), source: 'Notebook 用户添加来源' }
+      const c = await knowledgeAPI(session, spaceId).collection({
+        ...payload,
+        id: drafts.operation(`${key}:create`, payload),
+        action: 'create',
+      })
+      if (live.current) select(c)
+      await refresh()
+    } catch (error) {
+      if (live.current) setError(error)
+    } finally {
+      if (live.current) setBusy(false)
+    }
+  }
+  if (collections.error)
+    return <ErrorState error={collections.error} retry={() => void collections.refetch()} />
+  return (
+    <>
+      <p>选择 PDF、粘贴文本或网址，审阅解析结果后确认保存。导入不会修改课堂已冻结的资料。</p>
+      <div className="actions" aria-label="添加方式">
+        {(
+          [
+            ['pdf', 'PDF 上传'],
+            ['text', '粘贴文本'],
+            ['url', '网址'],
+          ] as const
+        ).map(([id, label]) => (
+          <Button
+            key={id}
+            variant="outline"
+            aria-pressed={method === id}
+            onClick={() => {
+              drafts.set(`${key}:method`, id)
+              setMethod(id)
+            }}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      {collections.isPending && <p role="status">正在读取目标集合…</p>}
+      <label>
+        保存到已关联集合
+        <select
+          value={collectionId}
+          onChange={(e) => {
+            drafts.set(`${key}:collection`, e.target.value)
+            setCollectionId(e.target.value)
+          }}
+        >
+          <option value="">请选择或创建集合</option>
+          {collections.data?.items.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.shared ? '（共享集合）' : ''} · {c.id.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <details open={!collections.data?.items.length}>
+        <summary>创建区内私有集合</summary>
+        <label>
+          新集合名称
+          <input
+            value={name}
+            maxLength={120}
+            disabled={busy}
+            onChange={(e) => {
+              drafts.set(`${key}:name`, e.target.value)
+              setName(e.target.value)
+            }}
+          />
+        </label>
+        <Button disabled={busy || !name.trim()} onClick={() => void create()}>
+          创建并选用集合
+        </Button>
+        {!!error && <ErrorState error={error} />}
+      </details>
+      {collection && (
+        <ReferenceImport
+          key={collection.id}
+          spaceId={spaceId}
+          collection={collection}
+          target="notebook"
+          method={method}
+          onImported={() => {
+            void refresh()
+          }}
+        />
+      )}
+    </>
+  )
+}

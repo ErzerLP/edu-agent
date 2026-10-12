@@ -37,7 +37,7 @@ export const importResultSchema = z.object({ summary: summarySchema, revision: z
 export type ImportRequest = components['schemas']['KnowledgeImportRequest']
 export type ImportPreview = z.infer<typeof importPreviewSchema>
 export type ImportResult = z.infer<typeof importResultSchema>
-export const sourceSchema = z.object({ locator: z.string(), final_url: z.string(), title: z.string(), kind: z.string(), status: z.string(), failure: z.string(), fingerprint: z.string(), parser: z.string(), coverage: z.string(), storage_allowed: z.boolean(), text: z.string(), pdf: pdfReportSchema.optional(), pdf_data: z.string().optional(), source_receipt: z.string().optional() })
+export const sourceSchema = z.object({ locator: z.string(), final_url: z.string(), title: z.string(), kind: z.string(), status: z.string(), failure: z.string(), fingerprint: z.string(), parser: z.string(), coverage: z.string(), storage_allowed: z.boolean(), text: z.string(), pdf: pdfReportSchema.optional(), pdf_data: z.string().optional(), source_receipt: z.string().optional(), import_markdown: z.string().optional() })
 
 type Response<T> = { responses: { 200: { content: { 'application/json': T } } } }
 type Post<B, R> = Response<R> & { requestBody: { content: { 'application/json': B } } }

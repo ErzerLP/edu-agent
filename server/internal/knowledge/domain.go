@@ -97,15 +97,16 @@ type NodeRevision struct {
 }
 
 type DocumentRevision struct {
-	ID                string         `json:"document_revision_id"`
-	DocumentID        string         `json:"document_id"`
-	RootNodeID        string         `json:"root_node_id"`
-	CanonicalHash     string         `json:"canonical_hash"`
-	SemanticHash      string         `json:"semantic_hash"`
-	CanonicalMarkdown string         `json:"-"`
-	Nodes             []NodeRevision `json:"nodes"`
-	PDF               *PDFMetadata   `json:"pdf,omitempty"`
-	PDFOriginal       []byte         `json:"-"`
+	ID                string          `json:"document_revision_id"`
+	DocumentID        string          `json:"document_id"`
+	RootNodeID        string          `json:"root_node_id"`
+	CanonicalHash     string          `json:"canonical_hash"`
+	SemanticHash      string          `json:"semantic_hash"`
+	CanonicalMarkdown string          `json:"-"`
+	Nodes             []NodeRevision  `json:"nodes"`
+	PDF               *PDFMetadata    `json:"pdf,omitempty"`
+	PDFOriginal       []byte          `json:"-"`
+	SourceMetadata    *SourceMetadata `json:"-"`
 }
 
 type SnapshotDocument struct {
@@ -135,10 +136,11 @@ type KnowledgeRevision struct {
 }
 
 type ImportDocument struct {
-	Path     string     `json:"path"`
-	Markdown string     `json:"markdown"`
-	AsNew    bool       `json:"as_new,omitempty"`
-	PDF      *PDFImport `json:"pdf,omitempty"`
+	Path          string     `json:"path"`
+	Markdown      string     `json:"markdown"`
+	AsNew         bool       `json:"as_new,omitempty"`
+	PDF           *PDFImport `json:"pdf,omitempty"`
+	SourceReceipt string     `json:"source_receipt,omitempty"`
 }
 
 type DocumentResolution struct {

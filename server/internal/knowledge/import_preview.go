@@ -55,6 +55,9 @@ type importPlanningStore struct {
 }
 
 func (p *importPlanningStore) Head(context.Context) (*KnowledgeRevision, error) { return p.head, nil }
+func (p *importPlanningStore) ImportGeneration(ctx context.Context) (int64, error) {
+	return p.CatalogStore.(importGenerationReader).ImportGeneration(ctx)
+}
 func (p *importPlanningStore) LookupImportOperation(context.Context, string) (ImportOperationRecord, bool, error) {
 	return ImportOperationRecord{}, false, nil
 }

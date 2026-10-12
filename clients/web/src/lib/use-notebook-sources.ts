@@ -1,57 +1,41 @@
-import { useQuery } from '@tanstack/react-query'
-import { ApiError, learningClient, unwrap } from '@/api/client'
-import { collectionsSchema, treeSchema, type Collection } from '@/api/references'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { z } from 'zod'
+import { learningClient, unwrap } from '@/api/client'
+import { sourcePageSchema } from '@/api/notebook-sources'
 import { useIdentity } from './session'
 
 export function useNotebookSources(spaceId: string) {
   const { session, prefix } = useIdentity()
   const available = session.device.scopes.includes('knowledge:read')
-  const collections = useQuery({
-    queryKey: [...prefix, spaceId, 'notebook-collections'],
+  const capabilities = useQuery({
+    queryKey: [...prefix, spaceId, 'source-capabilities'],
     enabled: available,
     gcTime: 0,
+    retry: false,
     queryFn: ({ signal }) =>
       unwrap(
-        learningClient(session, spaceId).GET('/v1/knowledge/collections', {
-          params: { header: { 'X-Learning-Space-ID': spaceId }, query: { shared: false } },
-          signal,
-        }),
-        collectionsSchema,
+        learningClient(session, spaceId).GET('/v1/knowledge/source-capabilities', { signal }),
+        z.object({ source_catalog: z.boolean().optional() }),
       ),
   })
-  return { available, collections }
-}
-
-export function useNotebookCollectionSources(
-  spaceId: string,
-  collection: Collection,
-  expanded: boolean,
-) {
-  const { session, prefix } = useIdentity()
-  const revisionId = collection.head_revision_id
-  return useQuery({
-    queryKey: [...prefix, spaceId, collection.id, revisionId, 'notebook-source-tree'],
-    enabled: expanded && !!revisionId && session.device.scopes.includes('knowledge:read'),
+  const sources = useInfiniteQuery({
+    queryKey: [...prefix, spaceId, 'notebook-sources'],
+    enabled: available && capabilities.data?.source_catalog === true,
     gcTime: 0,
-    queryFn: async ({ signal }) => {
-      const tree = await unwrap(
-        learningClient(session, spaceId).GET('/v1/knowledge/revisions/{revisionID}/tree', {
+    retry: false,
+    initialPageParam: '',
+    getNextPageParam: (page: z.infer<typeof sourcePageSchema>) => page.next_cursor || undefined,
+    queryFn: ({ signal, pageParam }) =>
+      unwrap(
+        learningClient(session, spaceId).GET('/v1/knowledge/sources', {
           params: {
-            path: { revisionID: revisionId! },
-            header: { 'X-Learning-Space-ID': spaceId, 'X-Knowledge-Collection-ID': collection.id },
+            header: { 'X-Learning-Space-ID': spaceId },
+            query: { limit: 30, ...(pageParam ? { cursor: pageParam } : {}) },
           },
           signal,
         }),
-        treeSchema,
-      )
-      if (
-        tree.revision.revision_id !== revisionId ||
-        tree.revision.documents.some(
-          (document) => document.collection_id && document.collection_id !== collection.id,
-        )
-      )
-        throw new ApiError(502, 'invalid_response')
-      return tree.revision
-    },
+        sourcePageSchema,
+      ),
   })
+  return { available, capabilities, sources }
 }

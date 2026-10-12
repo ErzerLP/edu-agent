@@ -409,6 +409,15 @@ func insertRevision(ctx context.Context, tx pgx.Tx, revision knowledge.Knowledge
 			document.ID, document.DocumentID, canonicalHash, semanticHash, document.RootNodeID, knowledge.ParserVersion, revision.CreatedAt); err != nil {
 			return fmt.Errorf("insert document revision: %w", err)
 		}
+		if document.SourceMetadata != nil {
+			raw, err := json.Marshal(document.SourceMetadata)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO knowledge_source_metadata(document_revision_id,metadata) VALUES($1,$2) ON CONFLICT(document_revision_id) DO NOTHING`, document.ID, raw); err != nil {
+				return err
+			}
+		}
 		var pdfMetadata []byte
 		if document.PDF != nil {
 			pdfMetadata, err = json.Marshal(document.PDF)
@@ -511,10 +520,11 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 		return revision, nil
 	}
 	rows, err := db.Query(ctx, `
-		SELECT sd.canonical_path,dr.id,dr.document_id,dr.root_node_id,dr.canonical_hash,dr.semantic_hash,p.canonical_markdown,p.pdf_metadata
+		SELECT sd.canonical_path,dr.id,dr.document_id,dr.root_node_id,dr.canonical_hash,dr.semantic_hash,p.canonical_markdown,p.pdf_metadata,m.metadata
 		FROM knowledge_snapshot_documents sd
 		JOIN knowledge_document_revisions dr ON dr.id=sd.document_revision_id
 		JOIN knowledge_document_payloads p ON p.document_revision_id=dr.id
+		LEFT JOIN knowledge_source_metadata m ON m.document_revision_id=dr.id
 		WHERE sd.knowledge_revision_id=$1 ORDER BY sd.canonical_path`, id)
 	if err != nil {
 		return knowledge.KnowledgeRevision{}, fmt.Errorf("read snapshot documents: %w", err)
@@ -522,10 +532,16 @@ func loadRevision(ctx context.Context, db queryer, id string) (knowledge.Knowled
 	var snapshots []knowledge.SnapshotDocument
 	for rows.Next() {
 		var snapshot knowledge.SnapshotDocument
-		var canonicalHash, semanticHash, pdfMetadata []byte
-		if err := rows.Scan(&snapshot.Path, &snapshot.Revision.ID, &snapshot.Revision.DocumentID, &snapshot.Revision.RootNodeID, &canonicalHash, &semanticHash, &snapshot.Revision.CanonicalMarkdown, &pdfMetadata); err != nil {
+		var canonicalHash, semanticHash, pdfMetadata, sourceMetadata []byte
+		if err := rows.Scan(&snapshot.Path, &snapshot.Revision.ID, &snapshot.Revision.DocumentID, &snapshot.Revision.RootNodeID, &canonicalHash, &semanticHash, &snapshot.Revision.CanonicalMarkdown, &pdfMetadata, &sourceMetadata); err != nil {
 			rows.Close()
 			return knowledge.KnowledgeRevision{}, fmt.Errorf("scan snapshot document: %w", err)
+		}
+		if len(sourceMetadata) > 0 {
+			if err := json.Unmarshal(sourceMetadata, &snapshot.Revision.SourceMetadata); err != nil {
+				rows.Close()
+				return knowledge.KnowledgeRevision{}, err
+			}
 		}
 		if len(pdfMetadata) > 0 {
 			if err := json.Unmarshal(pdfMetadata, &snapshot.Revision.PDF); err != nil {

@@ -57,6 +57,14 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 		return PreparedCommit{}, err
 	}
 	attachPDF(&document, pdfMetadata, c.Metadata.PDFOriginal)
+	status := "parsed"
+	if c.Metadata.Status == "partial" {
+		status = "partial"
+	}
+	document.SourceMetadata = &SourceMetadata{Kind: "url", Locator: c.Locator, FinalURL: c.Metadata.FinalURL, MediaType: c.Metadata.Kind, Parser: c.Metadata.Parser, Coverage: c.Coverage, Fingerprint: c.Fingerprint, Status: status}
+	if pdfMetadata != nil {
+		document.SourceMetadata = PDFSourceMetadata(pdfMetadata)
+	}
 	documents := []SnapshotDocument{{Path: "source.md", Revision: document}}
 	raw, _ := json.Marshal(c)
 	hash := sha256.Sum256(raw)

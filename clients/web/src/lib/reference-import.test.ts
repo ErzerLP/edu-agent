@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { bytesToBase64, editImport, emptyImport, importDocuments, pastedItem, scanFiles, textDocument } from './reference-import'
 
 describe('浏览器真实来源与原操作草稿', () => {
+  it('网址导入逐字传递服务端正文和绑定回执，不重排成客户端前缀', () => {
+    const item = { ...pastedItem('网页', 'placeholder'), markdown: '# 网页原文\n\n    服务器正文\n', sourceReceipt: 'signed-receipt' }
+    expect(importDocuments([item])[0]).toEqual({ path: '网页.md', markdown: '# 网页原文\n\n    服务器正文\n', source_receipt: 'signed-receipt' })
+  })
   it('PDF 上传真实字节，部分成功必须单独确认，提交时不信任预览文本', async () => {
     const raw = new Uint8Array([37, 80, 68, 70, 0, 255])
     const items = await scanFiles([new File([raw], '资料.pdf')], async data => {

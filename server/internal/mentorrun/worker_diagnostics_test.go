@@ -139,7 +139,14 @@ func assertRunFailureLog(t *testing.T, cause error, category, sensitive string) 
 	if entry["level"] != "WARN" || entry["msg"] != "mentor_run_failed" || entry["error_category"] != category || entry["stage"] != "waiting_model" || entry["kind"] != "start_learning" || entry["run_id"] != "00000000-0000-4000-8000-000000000001" {
 		t.Fatalf("missing failure diagnostics: %v", entry)
 	}
-	if len(entry) != 7 {
+	wantFields := 7
+	if errors.Is(cause, errCitation) {
+		wantFields = 8
+		if entry["rejection_reason"] != "invalid_source_citation" {
+			t.Fatal("missing citation rejection reason")
+		}
+	}
+	if len(entry) != wantFields {
 		t.Fatal("failure log contains fields outside the diagnostic whitelist")
 	}
 }

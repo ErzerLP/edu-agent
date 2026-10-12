@@ -95,13 +95,22 @@ func researchFixture(t *testing.T, forged bool, opening ...string) (*runtimeFixt
 		}
 		raw, _ := json.Marshal(payload)
 		preparing := len(opening) > 0 && bytes.Contains(raw, []byte(`\"known\"`))
+		if len(opening) == 0 && bytes.Contains(raw, []byte("为第一项小活动只整理一个")) {
+			t.Error("普通研究请求被限制为开学首项活动")
+		}
 		if !preparing && (bytes.Contains(raw, []byte("真实绑定目标")) || bytes.Contains(raw, []byte(learningspace.DefaultID)) || bytes.Contains(raw, []byte(`"goal_id"`)) || len(payload.Tools) > 0) {
 			t.Error("私人目标或工具权限进入研究模型")
 		}
 		var input struct {
-			Sources []research.Source `json:"sources"`
+			Sources []research.Source            `json:"sources"`
+			Support []research.CitationCandidate `json:"citation_support"`
 		}
-		if err := json.Unmarshal([]byte(payload.Messages[len(payload.Messages)-1].Content), &input); err != nil || len(input.Sources) == 0 {
+		for _, message := range payload.Messages {
+			if json.Unmarshal([]byte(message.Content), &input) == nil && len(input.Sources) > 0 {
+				break
+			}
+		}
+		if len(input.Sources) == 0 {
 			t.Error("没有真实片段")
 			w.WriteHeader(500)
 			return
@@ -109,6 +118,9 @@ func researchFixture(t *testing.T, forged bool, opening ...string) (*runtimeFixt
 		source := input.Sources[0]
 		fragment := source.Fragments[0]
 		citation := research.Citation{SourceID: source.ID, RevisionID: source.RevisionID, FragmentID: fragment.ID, Quote: fragment.Text}
+		if len(input.Support) > 0 {
+			citation = input.Support[0].Citation
+		}
 		if forged {
 			citation.FragmentID = uuid.NewString()
 		}

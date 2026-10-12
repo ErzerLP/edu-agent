@@ -259,6 +259,9 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		source.Fingerprint = hex.EncodeToString(sum[:])
 		source.RevisionID = uuid.NewString()
 		source.Parser = "safe-text-v1"
+		if media == "text/html" {
+			source.Parser = "safe-main-text-v2"
+		}
 		source.Coverage = coverage
 		source.Text = text
 		source.StorageAllowed = true
@@ -277,10 +280,22 @@ func parseHTML(body []byte) (string, string) {
 	d.Strict = false
 	d.AutoClose = xml.HTMLAutoClose
 	d.Entity = xml.HTMLEntity
-	var out strings.Builder
+	// Keep bounded groups of text while scanning the whole document: storage
+	// restrictions outside the selected content must still be honored.
+	var groups [4]strings.Builder
+	var active [4]int
+	var ranks []int
 	depth := 0
 	hidden := 0
 	coverage := "partial_html_text_only"
+	selected := func() string {
+		for rank := len(groups) - 1; rank >= 0; rank-- {
+			if text := strings.TrimSpace(groups[rank].String()); text != "" {
+				return text
+			}
+		}
+		return ""
+	}
 	for {
 		token, err := d.Token()
 		if err != nil {
@@ -293,23 +308,36 @@ func parseHTML(body []byte) (string, string) {
 		case xml.StartElement:
 			depth++
 			if depth > 128 {
-				return out.String(), "partial_depth_limit"
+				return selected(), "partial_depth_limit"
 			}
 			name := strings.ToLower(t.Name.Local)
+			attrs := map[string]string{}
+			for _, attr := range t.Attr {
+				attrs[strings.ToLower(attr.Name.Local)] = strings.ToLower(attr.Value)
+			}
 			if name == "meta" {
-				attrs := map[string]string{}
-				for _, attr := range t.Attr {
-					attrs[strings.ToLower(attr.Name.Local)] = strings.ToLower(attr.Value)
-				}
 				if (attrs["name"] == "robots" || attrs["name"] == "edu-agent" || attrs["http-equiv"] == "cache-control") && restricted(attrs["content"]) {
 					return "", "storage_restricted"
 				}
 			}
 			if hidden > 0 {
 				hidden++
-			} else if name == "script" || name == "style" || name == "noscript" || name == "head" || name == "template" || name == "svg" {
+			} else if htmlBoilerplate(name, attrs) {
 				hidden = 1
 			}
+			rank := 0
+			if hidden == 0 {
+				switch {
+				case htmlContentArea(attrs):
+					rank = 3
+				case name == "article":
+					rank = 2
+				case name == "main" || attrs["role"] == "main":
+					rank = 1
+				}
+			}
+			ranks = append(ranks, rank)
+			active[rank]++
 		case xml.EndElement:
 			if depth > 0 {
 				depth--
@@ -317,19 +345,65 @@ func parseHTML(body []byte) (string, string) {
 			if hidden > 0 {
 				hidden--
 			} else {
-				out.WriteByte('\n')
+				for rank := range groups {
+					if rank == 0 || active[rank] > 0 {
+						groups[rank].WriteByte('\n')
+					}
+				}
+			}
+			if len(ranks) > 0 {
+				active[ranks[len(ranks)-1]]--
+				ranks = ranks[:len(ranks)-1]
 			}
 		case xml.CharData:
 			if hidden == 0 {
 				value := strings.Join(strings.Fields(string(t)), " ")
 				if value != "" {
-					out.WriteString(value)
-					out.WriteByte(' ')
+					for rank := range groups {
+						if rank == 0 || active[rank] > 0 {
+							groups[rank].WriteString(value)
+							groups[rank].WriteByte(' ')
+						}
+					}
 				}
 			}
 		}
 	}
-	return strings.TrimSpace(out.String()), coverage
+	return selected(), coverage
+}
+
+func htmlContentArea(attrs map[string]string) bool {
+	for _, value := range strings.Fields(attrs["id"] + " " + attrs["class"]) {
+		switch value {
+		case "mw-content-text", "mw-parser-output", "article-body", "article-content", "post-content", "entry-content":
+			return true
+		}
+	}
+	return false
+}
+
+func htmlBoilerplate(name string, attrs map[string]string) bool {
+	switch name {
+	case "script", "style", "noscript", "head", "template", "svg", "nav", "footer", "aside", "header":
+		return true
+	}
+	if _, ok := attrs["hidden"]; ok {
+		return true
+	}
+	if attrs["aria-hidden"] == "true" {
+		return true
+	}
+	switch attrs["role"] {
+	case "navigation", "contentinfo", "banner", "complementary":
+		return true
+	}
+	for _, value := range strings.Fields(attrs["id"] + " " + attrs["class"]) {
+		switch value {
+		case "toc", "mw-toc", "vector-toc", "table-of-contents", "sidebar", "navigation", "navbox", "footer", "mw-footer", "catlinks", "mw-editsection", "printfooter":
+			return true
+		}
+	}
+	return false
 }
 
 func restricted(value string) bool {

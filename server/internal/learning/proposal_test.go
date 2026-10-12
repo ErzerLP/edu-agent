@@ -226,16 +226,17 @@ func TestProposalRetriesTransientOnceAndFreezesArtifactWithoutAggregateMutation(
 	}
 }
 
-func TestProposalStrictRecursiveDecodeFailsPermanently(t *testing.T) {
+func TestProposalStrictRecursiveDecodeStillRejectsAfterRetry(t *testing.T) {
 	store := routeProposalStore()
 	repo := &proposalTestRepository{claim: ProposalClaim{State: "claimed", LeaseToken: "lease"}}
-	model := &proposalTestModel{results: []proposalModelResult{{raw: json.RawMessage(`{"route":[{"node_revision_id":"node-revision","teaching_intent":"explain","completion_condition":"pass","invented_state":"mastered"}]}`)}}}
+	invalid := json.RawMessage(`{"route":[{"node_revision_id":"node-revision","teaching_intent":"explain","completion_condition":"pass","invented_state":"mastered"}]}`)
+	model := &proposalTestModel{results: []proposalModelResult{{raw: invalid}, {raw: invalid}}}
 	service := newProposalTestService(t, store, repo, model)
 	_, err := service.Propose(context.Background(), "device", routeProposalRequest())
 	if ErrorCode(err) != CodeProposalRejected {
 		t.Fatalf("expected proposal_rejected, got %v", err)
 	}
-	if model.calls != 1 || store.commits != 0 || repo.completed != nil || repo.failedCategory != "schema_mismatch" || len(repo.failedAttempts) != 1 || repo.failedAttempts[0] != "schema_mismatch" {
+	if model.calls != 2 || store.commits != 0 || repo.completed != nil || repo.failedCategory != "schema_mismatch" || len(repo.failedAttempts) != 2 || repo.failedAttempts[0] != "schema_mismatch" || repo.failedAttempts[1] != "schema_mismatch" {
 		t.Fatalf("calls=%d commits=%d completed=%v failed=%q", model.calls, store.commits, repo.completed != nil, repo.failedCategory)
 	}
 }

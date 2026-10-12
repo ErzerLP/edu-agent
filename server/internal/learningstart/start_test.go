@@ -31,3 +31,10 @@ func TestPreparedRequiresActualSupport(t *testing.T) {
 		}
 	}
 }
+
+func TestPreparedOversizeFieldHasFixedRejectionReason(t *testing.T) {
+	plan := Prepared{ConceptKey: "concept", Name: "name", Prompt: strings.Repeat("字", 700), Criterion: "criterion"}
+	if reason := research.ValidationReason(plan.Validate(nil)); reason != "prepared_field_invalid" {
+		t.Fatalf("field failure hidden: %q", reason)
+	}
+}

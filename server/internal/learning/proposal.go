@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -95,6 +96,7 @@ func NewServiceWithPorts(authority AuthorityStore, queries QueryStore, proposals
 
 func (s *Service) Propose(ctx context.Context, deviceID string, request ProposalRequest) (ProposalArtifact, error) {
 	if err := validateProposalRequest(request); err != nil {
+		slog.WarnContext(ctx, "tutoring_proposal_failed", "error_category", proposalFailureCategory(err))
 		return ProposalArtifact{}, err
 	}
 	if request.AggregateType == "session" {
@@ -138,12 +140,15 @@ func (s *Service) Propose(ctx context.Context, deviceID string, request Proposal
 	}
 	categories := []string{}
 	var artifact ProposalArtifact
+	modelContext := ctx
 	for attempt := 0; attempt < 2; attempt++ {
-		raw, generateErr := s.model.Generate(ctx, request)
+		raw, generateErr := s.model.Generate(modelContext, request)
 		if generateErr != nil {
 			category := modelCategory(generateErr)
 			categories = append(categories, category)
-			if retryableModelCategory(category) && attempt == 0 {
+			slog.WarnContext(ctx, "tutoring_proposal_attempt_rejected", "proposal_type", request.Type, "attempt", attempt+1, "error_category", category)
+			if attempt == 0 && (retryableModelCategory(category) || retryableProposalCategory(request.Type, category)) {
+				modelContext = context.WithValue(ctx, proposalRetryKey{}, category)
 				continue
 			}
 			if failErr := s.persistProposalFailure(ctx, deviceID, claim.LeaseToken, categories, category); failErr != nil {
@@ -159,6 +164,11 @@ func (s *Service) Propose(ctx context.Context, deviceID string, request Proposal
 		if err != nil {
 			category := proposalFailureCategory(err)
 			categories = append(categories, category)
+			slog.WarnContext(ctx, "tutoring_proposal_attempt_rejected", "proposal_type", request.Type, "attempt", attempt+1, "error_category", category)
+			if attempt == 0 && retryableProposalCategory(request.Type, category) {
+				modelContext = context.WithValue(ctx, proposalRetryKey{}, category)
+				continue
+			}
 			if failErr := s.persistProposalFailure(ctx, deviceID, claim.LeaseToken, categories, category); failErr != nil {
 				return ProposalArtifact{}, failErr
 			}
@@ -177,6 +187,7 @@ func (s *Service) persistProposalFailure(ctx context.Context, deviceID, lease st
 	if err := s.proposals.FailProposal(ctx, deviceID, lease, categories, category, s.now().UTC()); err != nil {
 		return fmt.Errorf("persist proposal failure: %w", err)
 	}
+	slog.WarnContext(ctx, "tutoring_proposal_failed", "error_category", category, "attempt_categories", categories)
 	return nil
 }
 
@@ -518,10 +529,29 @@ func proposalFailureCategory(err error) string {
 		return "schema_mismatch"
 	}
 	switch domainErr.Code {
+	case CodeProposalRejected:
+		return fixedProposalReason(domainErr.Reason)
 	case CodeStaleProposal:
 		return "stale_context"
 	case CodeInvalidRequest:
 		return "invalid_request"
+	default:
+		return "domain_invalid"
+	}
+}
+
+// Only server-owned reasons may enter persisted diagnostics or retry prompts.
+func fixedProposalReason(reason string) string {
+	switch reason {
+	case "schema_mismatch", "duplicate_node_revision", "route_size", "invalid_route_step", "invalid_activity", "invalid_activity_type",
+		"invalid_rubric", "invalid_rubric_reference", "objective_rule_missing", "invalid_objective_rule",
+		"invalid_help", "duplicate_help", "knowledge_reference_required", "activity_target_reference_missing",
+		"rubric_reference_not_frozen", "duplicate_or_missing_reference", "reference_hash_mismatch",
+		"node_not_allowed", "invalid_text", "activity_target_missing", "immutable_reference_mismatch",
+		"activity_not_assessable", "confidence_out_of_range", "unknown_risk_flag", "invalid_frozen_rubric",
+		"invalid_frozen_reference", "unknown_or_duplicate_rubric_item", "unknown_conclusion",
+		"misconception_without_failure", "invalid_answer_quote", "knowledge_reference_mismatch", "invalid_knowledge_quote":
+		return reason
 	default:
 		return "domain_invalid"
 	}
@@ -843,7 +873,11 @@ func decodeOne(decoder *json.Decoder, target any) error {
 func modelCategory(err error) string {
 	var typed ModelFailure
 	if errors.As(err, &typed) {
-		return typed.ModelCategory()
+		switch category := typed.ModelCategory(); category {
+		case "timeout", "rate_limited", "unavailable", "upstream_error", "unauthorized", "incompatible", "invalid_request",
+			"invalid_response", "malformed_json", "schema_mismatch", "output_budget_exceeded", "response_not_completed":
+			return category
+		}
 	}
 	return "upstream_error"
 }

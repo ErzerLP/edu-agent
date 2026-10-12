@@ -268,22 +268,22 @@ func TestStrictFakeAssessmentModelFailureAndDecodeMatrix(t *testing.T) {
 		}, wantCode: CodeProposalRejected, wantCategory: "invalid_response", wantAttempts: []string{"invalid_response"}, wantCalls: 1},
 		{name: "malformed JSON", results: func(*testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: json.RawMessage(`{"assessment":`)}}
-		}, wantCode: CodeProposalRejected, wantCategory: "schema_mismatch", wantAttempts: []string{"schema_mismatch"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "schema_mismatch", wantAttempts: []string{"schema_mismatch", "schema_mismatch"}, wantCalls: 2},
 		{name: "recursive schema mismatch", results: func(*testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: json.RawMessage(`{"assessment":{"items":[],"rubric_complete":false,"confidence":0,"risk_flags":[],"invented":true}}`)}}
-		}, wantCode: CodeProposalRejected, wantCategory: "schema_mismatch", wantAttempts: []string{"schema_mismatch"}, wantCalls: 1},
-		{name: "unknown risk is a domain failure and is not retried", results: func(t *testing.T) []proposalModelResult {
+		}, wantCode: CodeProposalRejected, wantCategory: "schema_mismatch", wantAttempts: []string{"schema_mismatch", "schema_mismatch"}, wantCalls: 2},
+		{name: "unknown risk is still rejected after retry", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.RiskFlags = []RiskFlag{"invented_risk"} })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "unknown_risk_flag", wantAttempts: []string{"unknown_risk_flag", "unknown_risk_flag"}, wantCalls: 2},
 		{name: "unknown rubric item", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items[0].RubricItemID = "unknown-rubric" })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "unknown_or_duplicate_rubric_item", wantAttempts: []string{"unknown_or_duplicate_rubric_item", "unknown_or_duplicate_rubric_item"}, wantCalls: 2},
 		{name: "duplicate rubric item", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items = append(value.Items, value.Items[0]) })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "unknown_or_duplicate_rubric_item", wantAttempts: []string{"unknown_or_duplicate_rubric_item", "unknown_or_duplicate_rubric_item"}, wantCalls: 2},
 		{name: "unknown knowledge reference", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items[0].KnowledgeReferenceID = "unknown-node-revision" })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantReason: "node_not_allowed", wantRawKnowledgeRef: "unknown-node-revision", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "node_not_allowed", wantReason: "node_not_allowed", wantRawKnowledgeRef: "unknown-node-revision", wantAttempts: []string{"node_not_allowed"}, wantCalls: 1},
 		{name: "cross knowledge revision", configure: func(config *strictAssessmentConfig) {
 			config.requestNodeIDs = append(config.requestNodeIDs, "cross-node-revision")
 			config.resolver = &strictAssessmentResolver{crossRevisionNode: "cross-node-revision"}
@@ -291,23 +291,28 @@ func TestStrictFakeAssessmentModelFailureAndDecodeMatrix(t *testing.T) {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) {
 				value.Items[0].KnowledgeReferenceID = "cross-node-revision"
 			})}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantReason: "knowledge_reference_mismatch", wantResolvedKnowledge: "other-knowledge-revision", wantRawKnowledgeRef: "cross-node-revision", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "knowledge_reference_mismatch", wantReason: "knowledge_reference_mismatch", wantResolvedKnowledge: "other-knowledge-revision", wantRawKnowledgeRef: "cross-node-revision", wantAttempts: []string{"knowledge_reference_mismatch", "knowledge_reference_mismatch"}, wantCalls: 2},
 		{name: "answer quote range out of bounds", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items[0].AnswerRange.End = answerLength + 1 })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "invalid_answer_quote", wantAttempts: []string{"invalid_answer_quote", "invalid_answer_quote"}, wantCalls: 2},
 		{name: "answer quote hash mismatch", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items[0].AnswerQuoteSHA256 = strings.Repeat("0", 64) })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "invalid_answer_quote", wantAttempts: []string{"invalid_answer_quote", "invalid_answer_quote"}, wantCalls: 2},
 		{name: "knowledge quote range out of bounds", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items[0].KnowledgeRange.End = knowledgeLength + 1 })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "invalid_knowledge_quote", wantAttempts: []string{"invalid_knowledge_quote", "invalid_knowledge_quote"}, wantCalls: 2},
 		{name: "knowledge quote hash mismatch", results: func(t *testing.T) []proposalModelResult {
 			return []proposalModelResult{{raw: strictAssessmentRaw(t, func(value *AssessmentArtifact) { value.Items[0].KnowledgeQuoteSHA256 = strings.Repeat("0", 64) })}}
-		}, wantCode: CodeProposalRejected, wantCategory: "domain_invalid", wantAttempts: []string{"domain_invalid"}, wantCalls: 1},
+		}, wantCode: CodeProposalRejected, wantCategory: "invalid_knowledge_quote", wantAttempts: []string{"invalid_knowledge_quote", "invalid_knowledge_quote"}, wantCalls: 2},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			results := test.results(t)
+			// Repeat the same invalid output so the retry must pass the same
+			// complete validator and cannot publish an artifact or evidence.
+			if test.wantCalls == 2 && len(results) == 1 {
+				results = append(results, results[0])
+			}
 			fixture := newStrictAssessmentFixture(t, results, test.configure)
 			beforeFingerprint := strictProjectionFingerprint(t, fixture.store.projection)
 			beforeActivity, activityHashErr := HashJSON(fixture.store.activity)

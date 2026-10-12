@@ -40,6 +40,7 @@ func decodeResponse(decoder *json.Decoder) ([]byte, TokenUsage, error) {
 			Reason string `json:"reason"`
 		} `json:"incomplete_details"`
 		Output []struct {
+			Type    string `json:"type"`
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -57,15 +58,22 @@ func decodeResponse(decoder *json.Decoder) ([]byte, TokenUsage, error) {
 	if err := decoder.Decode(&envelope); err != nil {
 		return nil, TokenUsage{}, &Error{Category: ErrorInvalidResponse, Cause: err}
 	}
+	usage := TokenUsage{InputTokens: envelope.Usage.InputTokens, OutputTokens: envelope.Usage.OutputTokens,
+		ReasoningTokens: envelope.Usage.OutputTokensDetails.ReasoningTokens, TotalTokens: envelope.Usage.TotalTokens}
 	if envelope.Status != "completed" {
 		category := ErrorResponseNotCompleted
 		if envelope.Status == "incomplete" && envelope.IncompleteDetails.Reason == "max_output_tokens" {
 			category = ErrorOutputBudgetExceeded
 		}
-		return nil, TokenUsage{}, &Error{Category: category}
+		return nil, usage, &Error{Category: category}
 	}
 	var content []byte
 	for _, output := range envelope.Output {
+		// This client requests JSON only. A tool/action output cannot become a
+		// completed proposal just because it also contains valid output text.
+		if output.Type != "" && output.Type != "message" && output.Type != "reasoning" {
+			return nil, usage, &Error{Category: ErrorResponseNotCompleted}
+		}
 		for _, part := range output.Content {
 			if part.Type == "output_text" {
 				content = append(content, part.Text...)
@@ -73,12 +81,7 @@ func decodeResponse(decoder *json.Decoder) ([]byte, TokenUsage, error) {
 		}
 	}
 	if len(content) == 0 {
-		return nil, TokenUsage{}, &Error{Category: ErrorInvalidResponse}
+		return nil, usage, &Error{Category: ErrorInvalidResponse}
 	}
-	return content, TokenUsage{
-		InputTokens:     envelope.Usage.InputTokens,
-		OutputTokens:    envelope.Usage.OutputTokens,
-		ReasoningTokens: envelope.Usage.OutputTokensDetails.ReasoningTokens,
-		TotalTokens:     envelope.Usage.TotalTokens,
-	}, nil
+	return content, usage, nil
 }

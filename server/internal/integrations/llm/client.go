@@ -262,7 +262,7 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 	if c.wireAPI == Responses {
 		content, usage, err = decodeResponse(decoder)
 		if err != nil {
-			return ChatResult{}, err
+			return ChatResult{Usage: usage}, err
 		}
 	} else {
 		var envelope struct {
@@ -285,23 +285,23 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 		if err := decoder.Decode(&envelope); err != nil || len(envelope.Choices) == 0 {
 			return ChatResult{}, &Error{Category: ErrorInvalidResponse, Cause: err}
 		}
+		usage = TokenUsage{InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, TotalTokens: envelope.Usage.Total, ReasoningTokens: envelope.Usage.Details.Reasoning}
 		if c.requireCompletion {
 			if envelope.Choices[0].FinishReason == "length" {
-				return ChatResult{}, &Error{Category: ErrorOutputBudgetExceeded}
+				return ChatResult{Usage: usage}, &Error{Category: ErrorOutputBudgetExceeded}
 			}
 			if len(envelope.Choices) != 1 || envelope.Choices[0].FinishReason != "stop" || len(envelope.Choices[0].Message.ToolCalls) > 0 {
-				return ChatResult{}, &Error{Category: ErrorResponseNotCompleted}
+				return ChatResult{Usage: usage}, &Error{Category: ErrorResponseNotCompleted}
 			}
 		}
-		usage = TokenUsage{InputTokens: envelope.Usage.Input, OutputTokens: envelope.Usage.Output, TotalTokens: envelope.Usage.Total, ReasoningTokens: envelope.Usage.Details.Reasoning}
 		content = []byte(envelope.Choices[0].Message.Content)
 	}
 	if !json.Valid(content) {
-		return ChatResult{}, &Error{Category: ErrorInvalidResponse}
+		return ChatResult{Usage: usage}, &Error{Category: ErrorInvalidResponse}
 	}
 	if len(request.Schema) != 0 {
 		if err := validateJSONSchema(request.Schema, content); err != nil {
-			return ChatResult{}, &Error{Category: ErrorSchemaMismatch, Cause: err}
+			return ChatResult{Usage: usage}, &Error{Category: ErrorSchemaMismatch, Cause: err}
 		}
 	}
 	return ChatResult{JSON: append(json.RawMessage(nil), content...), Usage: usage}, nil

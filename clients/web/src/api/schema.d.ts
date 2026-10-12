@@ -4,6 +4,116 @@
  */
 
 export interface paths {
+    "/v1/learning/studio/artifacts": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** listStudioArtifacts */
+        get: operations["listStudioArtifacts"];
+        put?: never;
+        /** createStudioNote */
+        post: operations["createStudioNote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        /** getStudioArtifact */
+        get: operations["getStudioArtifact"];
+        /** saveStudioNote */
+        put: operations["saveStudioNote"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}/revisions": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        /** listStudioRevisions */
+        get: operations["listStudioRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/operations/{operationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        /** getStudioOperation */
+        get: operations["getStudioOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}/import-candidate": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** prepareStudioNoteSource */
+        post: operations["prepareStudioNoteSource"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/companion/browser": {
         parameters: {
             query?: never;
@@ -3076,6 +3186,89 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        StudioSave: {
+            /** Format: uuid */
+            operation_id: string;
+            /** @description Zero for create; current saved version for update */
+            expected_version: number;
+            privacy_generation: number;
+            /** @enum {string} */
+            kind: "note";
+            /** Format: uuid */
+            goal_id: string | null;
+            title: string;
+            /** @description At most 64000 UTF-8 bytes */
+            markdown: string;
+        };
+        StudioBody: {
+            /** @enum {integer} */
+            schema: 1;
+            title: string;
+            markdown: string;
+            source_manifest?: components["schemas"]["SourceManifest"];
+            citations: components["schemas"]["MentorCitation"][];
+            model?: string;
+            input_fingerprint?: string;
+        };
+        StudioRevision: {
+            /** Format: uuid */
+            artifact_id: string;
+            /** Format: uuid */
+            learning_space_id: string;
+            /** Format: uuid */
+            goal_id: string | null;
+            /** @enum {string} */
+            kind: "note";
+            version: number;
+            privacy_generation: number;
+            /** Format: uuid */
+            actor_device_id: string;
+            /** Format: date-time */
+            created_at: string;
+            body: components["schemas"]["StudioBody"];
+        };
+        StudioItem: {
+            /** Format: uuid */
+            artifact_id: string;
+            /** Format: uuid */
+            goal_id: string | null;
+            /** @enum {string} */
+            kind: "note";
+            version: number;
+            title: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        StudioPage: {
+            items: components["schemas"]["StudioItem"][];
+            next_cursor?: string;
+        };
+        StudioHistory: {
+            items: {
+                version: number;
+                /** @enum {string} */
+                status: "committed";
+                /** Format: date-time */
+                created_at: string;
+            }[];
+        };
+        StudioNoteSourceRequest: {
+            version: number;
+        };
+        StudioNoteSourceCandidate: {
+            derived_from: {
+                /** Format: uuid */
+                artifact_id: string;
+                version: number;
+            };
+            title: string;
+            sha256: string;
+            document: {
+                path: string;
+                markdown: string;
+                source_receipt: string;
+            };
+        };
         CompanionDevice: {
             id: string;
             host: string;
@@ -7654,6 +7847,250 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listStudioArtifacts: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioPage"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    createStudioNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioSave"];
+            };
+        };
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioRevision"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getStudioArtifact: {
+        parameters: {
+            query?: {
+                version?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioRevision"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    saveStudioNote: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioSave"];
+            };
+        };
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioRevision"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listStudioRevisions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioHistory"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getStudioOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioRevision"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    prepareStudioNoteSource: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioNoteSourceRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved Studio data; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioNoteSourceCandidate"];
+                };
+            };
+            /** @description Version or operation conflict; retain draft and reconcile original operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     localCompanionBrowser: {
         parameters: {
             query?: never;

@@ -59,7 +59,10 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		}
 	}
 	for path, want := range map[string]bool{
-		"/v1/companion/browser": true, "/v1/companion/attach": true, "/v1/companion/channel": true,
+		"/v1/learning/studio/artifacts": true, "/v1/learning/studio/artifacts/a": true,
+		"/v1/learning/studio/artifacts/a/revisions": true, "/v1/learning/studio/artifacts/a/import-candidate": true,
+		"/v1/learning/studio/operations/a": true,
+		"/v1/companion/browser":            true, "/v1/companion/attach": true, "/v1/companion/channel": true,
 		"/v1/companion": false, "/v1/companion/": false, "/v1/companion/internal": false,
 		"/v1/companion/browser/": false, "/v1/companion/browser/force": false,
 		"/v1/companion/attach/force": false, "/v1/companion/channel/force": false,

@@ -1,0 +1,177 @@
+package httpapi
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
+	"github.com/go-chi/chi/v5"
+)
+
+func studioPath(path string) bool { return strings.HasPrefix(path, "/v1/learning/studio/") }
+func (a *API) studioScope(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if len(r.Header.Values(learningspace.Header)) != 1 || !validLearningUUID(r.Header.Get(learningspace.Header)) {
+			a.contentError(w, r, learningcontent.ErrInvalid)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+func (a *API) mountStudio(r chi.Router) {
+	if a.learningContent == nil {
+		return
+	}
+	read := r.With(a.requireScope("learning:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning))
+	write := r.With(a.requireScope("learning:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning))
+	read.Get("/v1/learning/studio/artifacts", a.studioList)
+	read.Get("/v1/learning/studio/artifacts/{artifactID}", a.studioGet)
+	read.Get("/v1/learning/studio/artifacts/{artifactID}/revisions", a.studioHistory)
+	read.Get("/v1/learning/studio/operations/{operationID}", a.studioOperation)
+	write.Post("/v1/learning/studio/artifacts", a.studioSave)
+	write.Put("/v1/learning/studio/artifacts/{artifactID}", a.studioSave)
+	r.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.requireScope("knowledge:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge)).Post("/v1/learning/studio/artifacts/{artifactID}/import-candidate", a.studioImportCandidate)
+}
+func (a *API) studioList(w http.ResponseWriter, r *http.Request) {
+	q, ok := strictLearningQuery(w, r, "cursor", "limit")
+	if !ok {
+		return
+	}
+	limit := 30
+	var err error
+	if q.Has("limit") {
+		limit, err = strconv.Atoi(q.Get("limit"))
+		if err != nil {
+			a.contentError(w, r, learningcontent.ErrInvalid)
+			return
+		}
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.learningContent.StudioList(r.Context(), actor, q.Get("cursor"), limit)
+	if err != nil {
+		a.contentError(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (a *API) studioGet(w http.ResponseWriter, r *http.Request) {
+	q, ok := strictLearningQuery(w, r, "version")
+	if !ok {
+		return
+	}
+	var version int64
+	if q.Has("version") {
+		var err error
+		version, err = strconv.ParseInt(q.Get("version"), 10, 64)
+		if err != nil || version < 1 {
+			a.contentError(w, r, learningcontent.ErrInvalid)
+			return
+		}
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.learningContent.StudioGet(r.Context(), actor, chi.URLParam(r, "artifactID"), version)
+	if err != nil {
+		a.contentError(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (a *API) studioSave(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictLearningQuery(w, r); !ok {
+		return
+	}
+	var input learningcontent.StudioSave
+	raw, err := readJSONBody(w, r, a.maxLearningRequestBody)
+	if err != nil {
+		writeLearningDecodeFailure(w, r, err)
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		a.contentError(w, r, learningcontent.ErrInvalid)
+		return
+	}
+	for _, name := range []string{"operation_id", "expected_version", "privacy_generation", "kind", "goal_id", "title", "markdown"} {
+		value, ok := fields[name]
+		if !ok || name != "goal_id" && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			a.contentError(w, r, learningcontent.ErrInvalid)
+			return
+		}
+	}
+	if err = decodeJSONData(raw, &input); err != nil {
+		writeLearningDecodeFailure(w, r, err)
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.learningContent.StudioSave(r.Context(), actor, chi.URLParam(r, "artifactID"), input)
+	if err != nil {
+		a.contentError(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (a *API) studioHistory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictLearningQuery(w, r); !ok {
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.learningContent.StudioHistory(r.Context(), actor, chi.URLParam(r, "artifactID"))
+	if err != nil {
+		a.contentError(w, r, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"items": result})
+}
+func (a *API) studioOperation(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictLearningQuery(w, r); !ok {
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.learningContent.StudioOperation(r.Context(), actor, chi.URLParam(r, "operationID"))
+	if err != nil {
+		a.contentError(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
+}
+func (a *API) studioImportCandidate(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictLearningQuery(w, r); !ok {
+		return
+	}
+	var input struct {
+		Version int64 `json:"version"`
+	}
+	if !a.decodeLearning(w, r, &input) {
+		return
+	}
+	service, ok := a.knowledge.(interface {
+		PrepareNoteSource(context.Context, knowledge.NoteSourceReader, string, int64) (knowledge.NoteSourceCandidate, error)
+	})
+	if !ok {
+		writeError(w, r, 501, "studio_import_unavailable", "当前服务不支持笔记转来源")
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := service.PrepareNoteSource(r.Context(), func(ctx context.Context, id string, version int64) (knowledge.SavedNote, error) {
+		note, e := a.learningContent.StudioGet(ctx, actor, id, version)
+		if e != nil {
+			return knowledge.SavedNote{}, e
+		}
+		return knowledge.SavedNote{Title: note.Body.Title, Markdown: note.Body.Markdown}, nil
+	}, chi.URLParam(r, "artifactID"), input.Version)
+	if err != nil {
+		if !contentFailure(w, r, err) {
+			a.writeKnowledgeFailure(w, r, "studio_import_candidate", err)
+		}
+		return
+	}
+	writeJSON(w, 200, result)
+}

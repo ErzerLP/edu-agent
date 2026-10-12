@@ -6,6 +6,7 @@ import { useIdentity } from '@/lib/session'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { ReferenceImport } from '../reference-import'
+import { noteSourceItem, type NoteSourceCandidate } from '@/api/studio'
 
 export function AddSourceDialog({ spaceId }: { spaceId: string }) {
   const dialog = useRef<HTMLDialogElement>(null),
@@ -41,9 +42,9 @@ export function AddSourceDialog({ spaceId }: { spaceId: string }) {
   )
 }
 
-function AddSourceContent({ spaceId }: { spaceId: string }) {
+export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; noteCandidate?: NoteSourceCandidate }) {
   const { session, prefix, drafts } = useIdentity()
-  const key = JSON.stringify([...prefix, spaceId, 'add-source'])
+  const key = JSON.stringify([...prefix, spaceId, 'add-source', noteCandidate?.derived_from ?? null])
   const queryClient = useQueryClient()
   const [method, setMethod] = useState<'pdf' | 'text' | 'url' | 'search'>(
     () => drafts.get(`${key}:method`) ?? 'pdf',
@@ -101,8 +102,8 @@ function AddSourceContent({ spaceId }: { spaceId: string }) {
     return <ErrorState error={collections.error} retry={() => void collections.refetch()} />
   return (
     <>
-      <p>选择 PDF、粘贴文本、网址或搜索发现，审阅解析结果后确认保存。导入不会修改课堂已冻结的资料。</p>
-      <div className="actions" aria-label="添加方式">
+      <p>{noteCandidate ? `复制笔记「${noteCandidate.title}」第 ${noteCandidate.derived_from.version} 版。它是个人理解，不是外部权威；以后修改笔记不会同步到此来源。` : '选择 PDF、粘贴文本、网址或搜索发现，审阅解析结果后确认保存。'}导入不会修改课堂已冻结的资料。</p>
+      {!noteCandidate && <div className="actions" aria-label="添加方式">
         {(
           [
             ['pdf', 'PDF 上传'],
@@ -123,7 +124,7 @@ function AddSourceContent({ spaceId }: { spaceId: string }) {
             {label}
           </Button>
         ))}
-      </div>
+      </div>}
       {collections.isPending && <p role="status">正在读取目标集合…</p>}
       <label>
         保存到已关联集合
@@ -167,8 +168,9 @@ function AddSourceContent({ spaceId }: { spaceId: string }) {
           key={collection.id}
           spaceId={spaceId}
           collection={collection}
-          target="notebook"
-          method={method}
+          target={noteCandidate ? `studio-${noteCandidate.derived_from.artifact_id}-${noteCandidate.derived_from.version}` : 'notebook'}
+          method={noteCandidate ? 'note' : method}
+          initialItems={noteCandidate ? [noteSourceItem(noteCandidate)] : undefined}
           onImported={() => {
             void refresh()
           }}

@@ -12,6 +12,11 @@ export class DraftStore {
     this.values.delete(key)
     this.operations.delete(key)
   }
+  deletePrefix(prefix: string) {
+    for (const key of new Set([...this.values.keys(), ...this.operations.keys()])) {
+      if (key.startsWith(prefix)) this.delete(key)
+    }
+  }
   get dirty() {
     return this.values.size > 0
   }

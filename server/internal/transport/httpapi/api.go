@@ -342,6 +342,7 @@ func New(options Options) (http.Handler, error) {
 		protected.Use(api.resolveLearningSpace)
 		api.mountMentorRuns(protected)
 		api.mountLearningContent(protected)
+		api.mountStudio(protected)
 		api.mountLearningChanges(protected)
 		api.mountLearningSpaces(protected)
 		api.mountSettings(protected)

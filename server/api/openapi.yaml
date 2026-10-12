@@ -6,6 +6,103 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/studio/artifacts:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+    get:
+      operationId: listStudioArtifacts
+      summary: listStudioArtifacts
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, maxLength: 1024 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioPage" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: createStudioNote
+      summary: createStudioNote
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioSave" } } }
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    get:
+      operationId: getStudioArtifact
+      summary: getStudioArtifact
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: version, in: query, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
+    put:
+      operationId: saveStudioNote
+      summary: saveStudioNote
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioSave" } } }
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}/revisions:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    get:
+      operationId: listStudioRevisions
+      summary: listStudioRevisions
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioHistory" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/operations/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getStudioOperation
+      summary: getStudioOperation
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}/import-candidate:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { $ref: "#/components/parameters/ContentArtifactID" }
+    post:
+      operationId: prepareStudioNoteSource
+      summary: prepareStudioNoteSource
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      x-additional-required-scopes: [knowledge:read, knowledge:write]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioNoteSourceRequest" } } }
+      responses:
+        "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioNoteSourceCandidate" } } } }
+        "409": { description: Version or operation conflict; retain draft and reconcile original operation }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/companion/browser:
     post:
       operationId: localCompanionBrowser
@@ -4572,6 +4669,97 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    StudioSave:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, privacy_generation, kind, goal_id, title, markdown]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 0, description: Zero for create; current saved version for update }
+        privacy_generation: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [note] }
+        goal_id: { type: [string, "null"], format: uuid }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        markdown: { type: string, minLength: 1, maxLength: 64000, description: At most 64000 UTF-8 bytes }
+    StudioBody:
+      type: object
+      required: [schema, title, markdown, citations]
+      properties:
+        schema: { type: integer, enum: [1] }
+        title: { type: string }
+        markdown: { type: string }
+        source_manifest: { $ref: "#/components/schemas/SourceManifest" }
+        citations: { type: array, items: { $ref: "#/components/schemas/MentorCitation" } }
+        model: { type: string }
+        input_fingerprint: { type: string }
+    StudioRevision:
+      type: object
+      required: [artifact_id, learning_space_id, goal_id, kind, version, privacy_generation, actor_device_id, created_at, body]
+      properties:
+        artifact_id: { type: string, format: uuid }
+        learning_space_id: { type: string, format: uuid }
+        goal_id: { type: [string, "null"], format: uuid }
+        kind: { type: string, enum: [note] }
+        version: { type: integer, minimum: 1 }
+        privacy_generation: { type: integer, minimum: 1 }
+        actor_device_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        body: { $ref: "#/components/schemas/StudioBody" }
+    StudioItem:
+      type: object
+      required: [artifact_id, goal_id, kind, version, title, updated_at]
+      properties:
+        artifact_id: { type: string, format: uuid }
+        goal_id: { type: [string, "null"], format: uuid }
+        kind: { type: string, enum: [note] }
+        version: { type: integer, minimum: 1 }
+        title: { type: string }
+        updated_at: { type: string, format: date-time }
+    StudioPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/StudioItem" } }
+        next_cursor: { type: string }
+    StudioHistory:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [version, status, created_at]
+            properties:
+              version: { type: integer, minimum: 1 }
+              status: { type: string, enum: [committed] }
+              created_at: { type: string, format: date-time }
+    StudioNoteSourceRequest:
+      type: object
+      additionalProperties: false
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+    StudioNoteSourceCandidate:
+      type: object
+      required: [derived_from, title, document, sha256]
+      properties:
+        derived_from:
+          type: object
+          required: [artifact_id, version]
+          properties:
+            artifact_id: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+        title: { type: string }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        document:
+          type: object
+          required: [path, markdown, source_receipt]
+          properties:
+            path: { type: string }
+            markdown: { type: string }
+            source_receipt: { type: string }
     CompanionDevice:
       type: object
       additionalProperties: false

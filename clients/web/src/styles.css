@@ -1075,6 +1075,16 @@ body:has(.notebook-home) footer, body:has(.notebook-workspace) footer { display:
 .notebook-studio-tile span { font-size: 12px; color: var(--muted); }
 .notebook-studio-library { border-top: 1px solid var(--border); padding-top: 16px; }
 .notebook-studio-library h3 { font-size: 16px; }
+.notebook-studio-tiles button { text-align: left; border: 1px solid transparent; cursor: pointer; color: var(--text); }
+.notebook-studio-tiles button:disabled { opacity: .6; cursor: not-allowed; }
+.studio-notes-list { display: grid; gap: 10px; margin-bottom: 24px; }
+.studio-note-row { justify-content: flex-start; text-align: left; white-space: normal; height: auto; }
+.studio-note-row span { min-width: 0; overflow-wrap: anywhere; }
+.studio-note-row small { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.studio-note-editor { display: grid; gap: 12px; min-width: 0; }
+.studio-note-editor fieldset { min-width: 0; display: grid; gap: 12px; border: 0; padding: 0; margin: 0; }
+.studio-note-body { min-height: 260px; resize: vertical; line-height: 1.65; }
+.studio-note-import { border-top: 1px solid var(--border); padding-top: 16px; display: grid; gap: 10px; }
 .notebook-studio-library .button { margin-top: 16px; }
 .notebook-current-goal { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
 .notebook-current-goal h3 { flex: 1 1 100%; font-size: 18px; margin: 0; }

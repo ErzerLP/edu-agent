@@ -37,7 +37,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
     page
       .getByRole('region', { name: 'Studio', exact: true })
       .getByText('尚未交付', { exact: true }),
-  ).toHaveCount(4)
+  ).toHaveCount(3)
 
   const text = '理解偶数并使用原资料说明依据'
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(text)

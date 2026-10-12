@@ -1,6 +1,6 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：批次 1（PR #87）、2a（PR #88）与 2b（PR #89）已合并；本次在 `feat-notebook-b2c` 完成 2c 来源选择问答 G3，批次 2 已完成。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。批次 3 尚未实施，CLI／agentcore 产品代码未改；2c 改动只留工作树，没有 Git 暂存／提交／推送。
+状态：批次 1、2a／2b／2c（PR #87–#90）已合并；当前在 `feat-notebook-b3a` 实施 Studio 3a（G4 底座、笔记及 G6 快照转来源），3b／3c 尚未交付。D1–D4 已由用户确认采用默认值。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。本次 CLI／agentcore 产品代码未改，改动只留工作树，没有 Git 暂存／提交／推送。
 
 ## 1. 方案与拆分结论
 
@@ -525,7 +525,7 @@
 
 **执行步骤：**
 
-- [ ] 3a 从保存笔记的 HTTP→持久化→列表／重开场景做起，同时覆盖 409 保留草稿、隐私屏障和版本到来源 preview／confirm；给后续生成建立真实产物读取路径。
+- [x] 3a 从保存笔记的 HTTP→持久化→列表／重开场景做起，同时覆盖 409 保留草稿、隐私屏障和版本到来源 preview／confirm；给后续生成建立真实产物读取路径。
 - [ ] 3b 增受限生成任务和引用验证，产物 commit 与运行成功保持一致；补充取消／重启／partial／unknown／预算场景，学习指南与简报有各自结果结构，不只是不同标题。
 - [ ] 3c 生成有效题集后明确开始正式承载；逐题真实 Activity／Attempt／Assessment，actual help 与 allowed_help 一致；从进度／反馈读取相同记录，原课堂和未提交答案继续可恢复。
 - [ ] 扩展跨 owner 隐私 scrub／verify、加密轮换与 replay；旧正文库、旧 mentor／CLI 请求不受新 enum／必填字段影响。交接新状态／错误映射和门禁必需测试名。
@@ -535,6 +535,65 @@
 **退出标准：** 前端类型、Studio／草稿／答案／citation 局部单测与构建；Chromium 四产物端到端、重启重开、原课堂共存、丢响应一次作答与来源定位通过。后端 `go test` 覆盖 api、learningcontent、mentorrun、learningstart、learning、tutoring、knowledge 及 httpapi 的受影响路径；真实 PostgreSQL 覆盖新 migration 升级、版本并发、幂等、run 取消／发布竞争、来源撤权／全局清除不可复活、正式评估／进度一致性；OpenAPI 生成一致性、相关旧请求兼容通过。不用只依赖 fake UI 的测试证明正式记分。
 
 **重型证据：** 全量重建／完整历史 DB 矩阵及全浏览器延到稳定候选；新评分桥接所触及的重放／证据一致性、清除和迁移在本批必须提供真实证据。三种切片各有运行入口和局部退出记录，不能到批末才发现底座无法生成产物。
+
+#### 3a 实施记录（2026-10-12）
+
+**结果与范围。** Studio 笔记入口支持无目标新建、明确保存、区内列表、重开、编辑与版本冲突比较；学习指南／测验／简报继续显示“尚未交付”。草稿、未知保存请求及导入预览沿现有 DraftStore 留在标签页内存；切面板／切区后可恢复，刷新前沿原 beforeunload 提醒，不写浏览器持久存储。409 保留草稿，用户读取并比较服务端新版后才能以新基础版本保存；丢响应时先核对原 operation，不重新编号重复创建。读取撤权后隐藏列表／编辑器，清除当前区笔记草稿和操作身份；身份／隐私代次切换沿 SessionProvider 清除全部缓存与草稿。实现计划见 [3a 计划](notebook-studio-3a-plan.md)。
+
+**G4 公共合同。** 所有新路径显式要求 `X-Learning-Space-ID`，返回 `no-store`，保留原配对／Cookie／Origin／CSRF 门禁。手动 note 不需要模型、目标、来源读取权限，也不从当前勾选伪造引用。`goal_id` 可为 null；有值时必须属于本区，保存后不能借编辑笔记改绑目标。
+
+| 接口 | DTO 与语义 |
+| --- | --- |
+| `GET /v1/learning/studio/artifacts` | `learning:read`；`limit` 默认 30、1–100；opaque `cursor` 绑定学习区，按稳定 artifact UUID 分页。返回 `items[{artifact_id,goal_id,kind,version,title,updated_at}]` 和可选 `next_cursor`，不伪造总量。 |
+| `POST /v1/learning/studio/artifacts` | `learning:write`；闭合 `StudioSave`：`operation_id,expected_version,privacy_generation,kind,goal_id,title,markdown` 全部明确提供，仅 goal 可为 null；创建 expected_version=0，kind 仅 note。标题非空、单行、最多 200 Unicode 字符；正文非空、有效 UTF-8、无 NUL、最多 64000 UTF-8 字节。继承 HTTP 1 MiB 上限与重复 JSON 键拒绝。 |
+| `GET /v1/learning/studio/artifacts/{artifactID}` | `learning:read`；可选 `version`，未提供读最新已保存版本，显式值必须大于零。返回 `StudioRevision{artifact_id,learning_space_id,goal_id,kind,version,privacy_generation,actor_device_id,created_at,body}`；不借用课堂 artifact／session／activity。 |
+| `PUT /v1/learning/studio/artifacts/{artifactID}` | `learning:write`；同一 StudioSave，expected_version 必须为当前版本。原子追加 revision 并更新 latest_version，绝不原地改正文。创建／保存统一 200，成功响应就是已提交版本。 |
+| `GET /v1/learning/studio/artifacts/{artifactID}/revisions` | `learning:read`；返回最近 100 个版本的 `version,status=committed,created_at`，倒序。历史正文通过 GET 的 version 参数读取，不把摘要当正文。 |
+| `GET /v1/learning/studio/operations/{operationID}` | `learning:read`；限定当前设备／学习区，返回原成功写入的 StudioRevision，即使后续已另存新版也返回原版本。此批只有同步 note 写入，没有假 queued／running 状态。 |
+
+`body` schema 1 包含 title／markdown、空 citations；为 3b 预留 `source_manifest`（复用 G3 SourceManifest）、`citations`（同 G3 核验引用形状）、`model`、`input_fingerprint`。这些字段和标题正文一起 AES-GCM 加密，公开 note 写入 DTO 不允许提交它们。读取发现非 note、未知 body schema 或提前写入的生成来源字段时拒绝读取，不能未经来源验证开放未来类型。
+
+错误沿正文 owner 映射：400 `invalid_learning_content`（非法／缺失／null 字段、非法分页版本或未交付 kind）；403 `learning_content_forbidden` 或原 scope 拒绝；404 `learning_content_not_found`（不存在、跨区、无对应版本／本设备操作）；409 `learning_content_conflict`（期望版本或同操作不同载荷冲突）。缺加密密钥为 503 `learning_content_key_unavailable`，未知正文协议为 422 `learning_content_upgrade_required`。隐私屏障沿原 `content_redacted`／`privacy_clear_in_progress`，归档区写入沿 `learning_space_archived`；未新建冲突或权限旁路。
+
+**存储、版本和清除。** 只追加 **`server/migrations/000035_studio.sql`**，创建 `learning_studio_artifacts`、`learning_studio_revisions`、`learning_studio_operations`。artifact 只存身份、可空 goal、kind、隐私代次和版本指针；revision 存认证密文、设备与时间；operation 存设备／操作主键、原结果版本与请求 hash。数据库允许未来四种 kind，当前服务和 Web 合同只开放 note；run kind／quiz mapping 留给后续追加迁移。旧 `learning_content_artifacts` 的 session／activity NOT NULL 与唯一约束不变。
+
+同设备操作先取事务 advisory lock，hash 绑定学习区、目标 artifact 和完整请求；同操作同载荷读回原版本，不同载荷 409。不同操作编辑同 artifact 通过行锁与 expected_version CAS 只允许一个成功。每次写入重验实时 token／设备、learning 隐私 owner 代次及区归档状态；请求显式携带的旧 privacy_generation 在清除完成后仍不能创建新副本。三个新表均有 learning owner 写入 trigger；revision／operation 不可变。`learningcontent/store.go` 的 `RedactTx` 按 operation→revision→artifact 删除，`Remaining` 计入三表，由原 `learning/postgresstore/privacy.go` owner scrub／verify 调用。`rotation.go` 对新 revision 加独占锁并按 Studio AAD 重封装；AAD 绑定 artifact／版本／代次／区／goal／kind／设备，密钥轮换不改身份、内容或版本。
+
+**G6 快照导入合同。** `POST /v1/learning/studio/artifacts/{artifactID}/import-candidate` 请求闭合 `{version}`，要求 `learning:read + knowledge:read + knowledge:write`；版本必须已保存且属于当前区。HTTP 在 learning／knowledge response read permit 下通过 `StudioGet` 正式读取端口取得原笔记，再经 knowledge `PrepareNoteSource` 签发候选；没有跨 owner 裸写表。该端口先读取 knowledge 的来源代次，再读取笔记，避免清除之间把旧正文签入新代次；此阶段无需已选集合。
+
+候选 DTO 为 `{derived_from:{artifact_id,version},title,sha256,document:{path,markdown,source_receipt}}`，SHA-256 绑定原保存正文；路径默认 `note-{artifactID}-v{version}.md`。回执沿 G1 签名绑定确切正文 hash、区、knowledge 代次与服务端 provenance。前端使用原 `ReferenceImport` 控制器选择／创建集合、显示原文、预览差异、审阅身份并确认；确认仍要求 `knowledge:approve`，复用原 operation 查回执和 unknown 恢复。客户端不能自报 derived_from 或修改已签正文；路径变更与身份选择仍按原导入规则重新预览。
+
+确认后 G1 metadata 为 `kind=text,coverage=user_note_snapshot,derived_from={artifact_id,version}`；明确显示个人理解、不是外部权威。副本独立归 knowledge owner，后续编辑笔记不修改副本文档／集合 head／课堂冻结资料，不自动增加左栏选择。不同版本需重新获取候选、预览和确认。全局清除删除 Studio 正文及 knowledge 副本／provenance，旧候选回执因代次改变失效；进程重启后未确认候选按 G1 规则重新读取，未知提交先查原 import operation。
+
+**文件映射。**
+
+- 新增服务端：`learningcontent/{studio,studio_store}.go`；`knowledge/note_source.go`；`transport/httpapi/studio.go`；上述 Studio migration。
+- 新增测试：`api/openapi_studio_test.go`、`migrations/studio_test.go`、`knowledge/note_source_test.go`、`httpapi/{studio_test,studio_integration_test}.go`。真实存储／轮换／全局清除测试通过 HTTP 集成夹具执行，不用 mock 替代数据库。
+- 修改服务端：`learningcontent/{store,rotation}.go`；`httpapi/{api,learning_space}.go`；**OpenAPI `server/api/openapi.yaml`**、既有代理合同测试与 `deploy/web/nginx.conf`，新 Studio 前缀列入区路由分类及代理白名单，集合头仍只接受原 knowledge 路由。
+- 新增 Web：`src/api/studio.ts`、`studio.test.ts`、`components/notebook/studio-note-editor.tsx`、`tests/browser/notebook-studio.spec.ts`。
+- 修改 Web：生成 `api/schema.d.ts`，`api/notebook-sources.ts` 派生说明，Studio 面板、工作区、样式；原 AddSourceContent／ReferenceImport 增加服务端候选入口；DraftStore 增加范围清除及其回归，工作区旧“尚未交付”计数由四项更新为三项，保留原业务断言。
+
+**检查结果。** 所有 Go／数据库／浏览器命令先 `umask 022`；Go 缓存使用 `/tmp/notebook-b2b-go-cache`。真实数据库为用户提供的 `127.0.0.1:32995/edu_agent_test`；数据库与浏览器严格串行，隔离 schema，不操作 Docker。`/home/yunyue/.cache` 不可写，故 `webdatabase` 等价构建到 `/tmp/notebook-b3a-webdatabase`。
+
+| 检查 | 命令与结果 |
+| --- | --- |
+| OpenAPI | `cd clients/web && npm run generate` 通过；既有 ActionExposureRequest discriminator 提示保留。`TestStudioContract`、`TestWorkspaceProxyAllowlist` 通过。 |
+| 前端 | `npm run check`、`npm run build -- --configLoader native` 通过；最终构建自带类型检查。仅既有 Zod 注释与大 chunk 提示；日志 `/tmp/notebook-b3a-build-final.log`。 |
+| Vitest | `npm test -- --configLoader native src/api/studio.test.ts src/api/notebook-sources.test.ts src/lib/reference-import.test.ts src/lib/drafts.test.ts` 13 项通过；新增撤权范围清除后只定向重跑 `src/lib/drafts.test.ts`，4 项通过，合计 14 个不同用例。 |
+| Go 局部包 | `go test ./api ./internal/learningcontent/... ./internal/learning/... ./internal/knowledge/... ./internal/transport/httpapi` 与相同包 `go vet` 通过。后续闭合 DTO／G6 修正只重跑 `./internal/knowledge ./internal/transport/httpapi ./api`，测试与 vet 通过。未配置 DB 的跳过不算数据库证据；日志 `/tmp/notebook-b3a-go-tests.log`、`-go-updated.log`、`-vet.log`、`-vet-updated.log`。 |
+| 真实 PostgreSQL | `TEST_DATABASE_URL=… go test -p=1 ./migrations ./internal/transport/httpapi -run '^(TestStudioMigrationUpgrade\|TestPostgreSQLStudio)' -count=1 -v`：34→35 升级、迁移重放和旧约束通过；集成夹具修正及 G6 修正后定向 `-run '^TestPostgreSQLStudio'` 通过（3.46s）。覆盖创建重放／不同载荷冲突、真实并发 409、历史／操作读取、快照 preview/confirm／G1 派生关系、跨区隔离、密文与不可变、轮换读回、全局屏障／scrub／旧请求不可复活。最终日志 `/tmp/notebook-b3a-db-final.log`。 |
+| Chromium | `WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 /tmp/notebook-b3a-webdatabase npm run test:browser -- 'tests/browser/notebook-studio.spec.ts$' 'tests/browser/notebook-workspace.spec.ts$' --project=chromium --reporter=line`：11 项通过（1.3m），Studio 3＋工作区 8，无 skip／retry。日志 `/tmp/notebook-b3a-browser-studio-workspace-final.log`。来源 3 项使用 `WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/notebook-b3a-webnotebook` 完成，复用下述部分轮次的逐项成功记录。 |
+| 差异检查 | `git diff --check` 通过；没有暂存、提交或推送。 |
+
+浏览器环境使用指定 `TEST_DATABASE_URL` 与 `WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome`。先构建 `go build -tags web_release -o edu-agentd ./cmd/edu-agentd`、`go build -o /tmp/notebook-b3a-webdatabase ./testutil/webdatabase`、`go build -tags web_release -o /tmp/notebook-b3a-webnotebook ./testutil/webnotebook`。Studio 三场景分别验证 CSRF／读取撤权清草稿；保存→刷新重开→真实并发 409→比较保留草稿→指定 v1 预览确认→查看来源→再编辑不改变副本；双标签／切区草稿隔离及保存丢响应后原操作核对。
+
+初次最终组合误给三个文件都设置来源专用宿主；`notebook-sources` 的三场景已完成且无失败，但该宿主未装配 learningcontent／课堂，随后 Studio 遇到 404。已中断误配轮次，没有为测试扩展专用宿主；保留 `/tmp/notebook-b3a-browser-final.log` 中来源三项的成功证据，Studio／工作区改用普通发行二进制，得到上面的 11 项完整通过。合计 14 个不同 Chromium 场景有通过记录；误配命令整体退出 130，不称为整轮成功，已通过来源场景未重复执行。
+
+开发先形成缺路由、缺 DTO、缺 OpenAPI 和草稿范围清除的失败检查；浏览器捕获新空学习区候选错误依赖默认集合，已改用 knowledge SourceGeneration；原集合预览／确认权限未放宽。更新后的失败用例均做定向验证，原日志保留，不把失败轮次描述为全部通过。
+
+**3b／3c 接口衔接。** 复用本批 artifact 列表／指定版本读取、不可变 revision、操作身份与清除／轮换承载；新增生成发布正式事务端口时，必须由 learningcontent owner 验证并写入 SourceManifest／citations／模型和输入指纹，和运行成功原子发布。G3 来源清单冻结、精确历史读取与逐次权限／hash 核验继续适用；在这些校验交付前，不扩展本批 note DTO，不开放 `sources/{citationID}` 或生成端点。3b 再追加受限 run kind、预算／租约／取消／恢复；3c 再追加 quiz 映射并调用现有学习领域正式 Activity／Attempt／Assessment，不能降低旧正文约束或新建评分事实。
+
+**决策与限制。** 无新增待用户决策的语义问题。版本菜单展示最近 100 版，API 仍可读取／转换任意存在的指定版本；列表按稳定 UUID 分页。草稿及未确认候选不承诺跨刷新／重启恢复，已保存笔记可重开。撤权可见性由前端 5 秒重新读取及原会话刷新推进，服务器每次读取和写入实时核验。3b／3c、真实外部模型／搜索、三引擎矩阵、Go 全量／race、Compose 和候选发布门禁未执行；本批不宣称完整批次 3 或父 spec 已验收。
 
 ### 批次 4：移动、可访问性、旧回归与候选发布（4–6 人日）
 

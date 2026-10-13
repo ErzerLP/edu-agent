@@ -4,10 +4,76 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 )
+
+func TestPostgreSQLWebLearnerScopesPersistWithoutUpgradingOldDevice(t *testing.T) {
+	pool := identityIntegrationPool(t)
+	service := identityIntegrationService(t, pool)
+	ctx := context.Background()
+	oldCode, _, err := service.CreatePairingCode(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCookie, old, err := service.ExchangeWebPairing(ctx, oldCode, "旧学习设备")
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := service.CreatePairingCodeForProfile(ctx, identity.PairingProfileLearner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie, p, err := service.ExchangeWebPairing(ctx, code, "学习端全权")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Fields("learning:read learning:write learning:approve assessment:web knowledge:read knowledge:write knowledge:approve imports:web references:manage research:adopt memory:read memory:write memory:web privacy:read devices:read devices:manage")
+	slices.Sort(want)
+	check := func(scopes []string) {
+		t.Helper()
+		got := slices.Clone(scopes)
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Fatalf("learner scopes = %v, want %v", got, want)
+		}
+	}
+	check(p.Device.Scopes)
+	check(p.Credential.Scopes)
+	var stored []string
+	if err := pool.QueryRow(ctx, `SELECT scopes FROM device_tokens WHERE device_id=$1`, p.Device.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	check(stored)
+	restarted := identityIntegrationService(t, pool)
+	p, err = restarted.AuthenticateWeb(ctx, cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(p.Credential.Scopes)
+	unchanged, err := restarted.AuthenticateWeb(ctx, oldCookie)
+	if err != nil || !slices.Equal(unchanged.Device.Scopes, old.Device.Scopes) {
+		t.Fatalf("old device changed: %+v %v", unchanged, err)
+	}
+	if _, _, err := restarted.ExchangeWebPairing(ctx, code, "重复兑换"); !errors.Is(err, identity.ErrInvalidPairingCode) {
+		t.Fatalf("replayed learner code: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE device_tokens SET scopes=array_remove(scopes,'memory:web') WHERE device_id=$1`, p.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, err = restarted.AuthenticateWeb(ctx, cookie)
+	if err != nil || slices.Contains(p.Device.Scopes, "memory:write") || slices.Contains(p.Device.Scopes, "devices:manage") {
+		t.Fatalf("removed memory marker still authorizes writes: %+v %v", p.Device.Scopes, err)
+	}
+	if err := restarted.RevokeDevice(ctx, p.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.AuthenticateWeb(ctx, cookie); !errors.Is(err, identity.ErrUnauthenticated) {
+		t.Fatalf("revoked learner session: %v", err)
+	}
+}
 
 func TestPostgreSQLWebImportProfileAndRevocation(t *testing.T) {
 	pool := identityIntegrationPool(t)

@@ -197,7 +197,7 @@ Studio 新 Web 通过方向模式的生成参数／适配端口，由服务端 e
 
 ### H. “学习端全权”配对档案
 
-建议内部值 `learning_full`，展示名“学习端全权”；仅管理员明确签发新码，交换一次后获得以下**去重后的既有 scope 组合**：
+内部值采用 `learner`，展示名“学习端全权”（C1 实施，2026-10-13）；仅操作者明确签发新码，交换一次后获得以下**去重后的既有 scope 组合**：
 
 | 能力 | scopes |
 | --- | --- |
@@ -214,11 +214,11 @@ Studio 新 Web 通过方向模式的生成参数／适配端口，由服务端 e
 
 新档案不改变 user／agent／其他旧 profile，不升级存量 token。权限足够后仍保留导入审阅、外部请求授权、目标模式的具体写门禁、候选审阅和评估决定；模型建议不能代替用户批准，界面不为每个学习功能要求再换一张配对码。
 
-**可用签发入口：** 在现有本地管理后台配对下拉及 `adminCreatePairingCode` 白名单增加 learning_full；沿用管理后台 Cookie、Origin、CSRF、限流和本地 transport。学习端只兑换码和展示有效能力，无自授入口。涉及 `server/internal/identity/{domain,service,web}.go` 和 `server/internal/transport/httpapi/admin{.go,ui/...}`；不修改 `clients/cli-go` 或 `server/cmd`。当前管理面私有 HTTP 合同不在公共 OpenAPI，现有兑换 DTO 只交换码，scopes 已为字符串数组，纯 profile 组合不需要 SQL migration 或公共 OpenAPI 改动。
+**可用签发入口：** 现有本地管理后台配对选项及 `adminCreatePairingCode` 白名单增加 `learner`；沿用管理后台 Cookie、Origin、CSRF、限流和本地 transport。`edu-agentd pairing-code create --profile learner` 通过现有解析器委托 identity 支持。学习端只兑换码和展示有效能力，无自授入口。涉及 `server/internal/identity/{domain,service}.go` 和 `server/internal/transport/httpapi/admin{.go,ui/...}`；复用 WebScopes，不修改 `clients/cli-go` 或 `server/cmd`。当前管理面私有 HTTP 合同不在公共 OpenAPI，现有兑换 DTO 只交换码，scopes 已为字符串数组，纯 profile 组合不需要 SQL migration 或公共 OpenAPI 改动。
 
 ### I. 后端缺口清单（本轮 H1–H8）
 
-“是”表示后续 Build 必须补合同或迁移；本次均只设计。新增 migration 在 Build 按最新序号分配，绝不修改 000034–000037 等已交付迁移。
+“是”表示后续 Build 必须补合同或迁移；表中保留 Shape 时的缺口基线，H8 已完成 C1 实施，见下方记录。新增 migration 在 Build 按最新序号分配，绝不修改 000034–000037 等已交付迁移。
 
 | 编号／现状 | 最小方案 | OpenAPI | migration | 风险 |
 | --- | --- | --- | --- | --- |
@@ -229,7 +229,7 @@ Studio 新 Web 通过方向模式的生成参数／适配端口，由服务端 e
 | **H5 动态来源**：已有 G3 manifest/hash/历史隔离 | 将相同约束贯穿 study、卡片帮助、生成、评估及反馈读回；评估只读原题快照。 | 扩展随 H2–H4；无需新“切换课堂资料”API | 无独立 migration，复用 H2/H3 版本记录 | 高：改选后旧反馈泄漏、并发撤权／清除、错误读取 latest。 |
 | **H6 Studio 方向适配**：quiz 要求手选 goal/version | 新方向模式服务端解析目标；系统题组开始时读保存修订；UI 复用内嵌卡，保留旧调用校验。 | 是：新增可选模式／方向版本、互斥校验 | 无独立业务表；生成正文版本及 H1 绑定足够 | 中高：破坏旧题顺序、旧测验版本冲突语义或把方向更新重绑成绩。 |
 | **H7 权威记录呈现／隐私恢复**：进度／复习已有，新对象未纳入 | 系统方向标签与历史映射，learning/knowledge/mentorrun 清除／Remaining／轮换／重放接入；保留旧 ReviewSource。 | 否：已有进度事实足够；卡片扩展归 H3/H4 | 无独立 migration，相关约束随 H1–H4 | 高：后台“隐藏目标”变丢失记录、新任务或历史密文在清除后复活。 |
-| **H8 学习端全权**：profiles 分散，管理签发仅 user/agent | 新 profile 的明确 scope 并集、管理 UI 签发、WebScopes 与负权限验证。 | 公共 OpenAPI 否；管理面私有 DTO／UI 是 | 否：既有 scope 数组可存 | 中高：错误扩大旧设备权限、误授 settings／privacy／管理面，或只改 enum 无入口。 |
+| **H8 学习端全权**：原 profiles 分散，管理签发仅 user/agent；C1 已实施 | `learner` 明确 scope 并集、管理 UI 签发、WebScopes 与负权限验证；见 C1 实施记录。 | 公共 OpenAPI 否；管理面私有 DTO／UI 是 | 否：既有 scope 数组可存 | 中高：错误扩大旧设备权限、误授 settings／privacy／管理面，或只改 enum 无入口。 |
 
 H1–H4 是主要新增能力，H5/H7 是必须随生产路径完成的边界，不能统一延期到最后。G0 卡片真实汇总／最近排序仍为额外增强，不包含在本轮工时。零来源可评估练习、多题一次提交、跨设备聊天合并、智能跨来源历史摘要不在默认计划。
 
@@ -265,6 +265,93 @@ H1–H4 是主要新增能力，H5/H7 是必须随生产路径完成的边界，
 - **延期：** 新方向、聊天出题到 C2/C3；模型／搜索配置写权限按 Q5 独立。
 - **退出标准：** 真实管理签发→浏览器兑换→导入／Studio／记忆候选可用，所有相关 scope 与 WebPrincipal 一致；旧 profiles 不变；管理后台、settings、无 grant 清除负权限成立。受影响 Go／Web 检查和真实 HTTP/DB／Chromium 通过，文档记录结果。
 - **重型证据：** 三引擎全套、全仓兼容到 C5；精确权限正负矩阵及 grant 隔离本批必跑，不能只测 identity 枚举。
+
+##### C1 实施记录（2026-10-13）
+
+新增 `learner`（学习端全权），显式固定以下 16 个既有 scopes。它是 `import`、`references`、
+`research`、`assessment`、`memory` 的学习业务并集，已覆盖普通 `user/agent` 的 Web 学习能力。
+不按旧档案动态计算，避免将来旧档案新增权限时自动扩大本档案。
+
+| scope | 具体用途 |
+| --- | --- |
+| `learning:read` | 学习区、目标、对话、练习、Studio、进度／复习读取 |
+| `learning:write` | 学习区／目标写入、对话、练习提交、Studio 保存／生成 |
+| `learning:approve` | 评估复核、处置与证据继承审批 |
+| `assessment:web` | Web 保留评估审批的显式标记 |
+| `knowledge:read` | 来源／集合／参考正文、导入与 NoteSync 状态读取 |
+| `knowledge:write` | 导入、集合管理、研究采纳、知识维护与 NoteSync 冲突处理 |
+| `knowledge:approve` | 导入确认、参考与知识变更审批 |
+| `imports:web` | Web 保留导入写入／审批的显式标记 |
+| `references:manage` | 参考范围审阅、采纳及现有集合共享操作 |
+| `research:adopt` | 研究采纳、公开搜索发现与后续导入 |
+| `memory:read` | 长期记忆候选／记录／回执读取与导出 |
+| `memory:write` | 候选提交、批准／拒绝、更正、删除与交付重放 |
+| `memory:web` | Web 保留记忆写入和设备撤销的显式标记 |
+| `privacy:read` | 隐私清除状态与回执读取 |
+| `devices:read` | 设备列表读取 |
+| `devices:manage` | 本设备及其他既有设备撤销 |
+
+**负权限与兼容：** 不授予 `settings:write`、`settings:probe`、`model:probe`、`privacy:device`、
+`privacy:erase`、admin 或通配权限；不签发清除 grant。导入审阅、外发授权、候选审批、评估决定、
+Cookie／Origin／CSRF 与领域版本校验继续有效。八个旧档案原始 token/Web scopes 均精确回归；
+旧设备不升级。当前 WebScopes 已能保留全部 16 项，未改写其白名单或各业务路由门禁。
+
+**交付文件：** identity 的 `domain.go`、`service.go`、`learner_test.go` 与
+`postgresstore/web_test.go`；httpapi 的 `admin.go`、`admin_test.go`、`learner_test.go` 与
+`adminui/index.html`；Web 的 `src/lib/session.tsx`、`tests/browser/learner.spec.ts`、README；本设计文档。
+管理页增加显式选项及范围说明，保留原默认选项；配对页说明一次配对能力。
+Web 会话与能力页面继续按实际 scope／服务状态呈现，真实兑换已验证 references、import_jobs、save_goal 可用。
+CLI 代码、公共 API/OpenAPI、生成类型、migration 均未修改，故无需 `npm run generate`。
+
+| 权限矩阵／实际行为 | 结果 |
+| --- | --- |
+| learner 原始签发／token、WebPrincipal 和数据库 token scopes | 精确 16 项，无重复或额外权限 |
+| 八个旧档案原始／Web scope 快照、已配对 user 设备 | 保持不变 |
+| 管理后台真实身份签发 → Web HTTP 兑换 | 201 → 201；签发缺 Origin／CSRF 均 403 |
+| 学习区／目标、对话、练习、来源、导入／确认／任务、参考、搜索发现、Studio、评估／证据、记忆、回执、设备 | 21 组实际路由检查通过；有权写请求用畸形 JSON 确认到达输入校验（400），逐项撤回该路由所需 scope 后均 403；读取为 200，缺失回执为 404。此项证明权限门禁，不冒充所有业务完整成功闭环 |
+| 文本导入、Studio 笔记保存／刷新重开、记忆候选提交与待审阅展示 | Chromium 真实服务闭环成功，同一设备仅兑换一次；笔记沿用手工编辑／保存，不调用模型 |
+| settings 写入／探测、旧 model 探测、admin、旧 privacy:device 入口 | 403；settings 只读仍 200 |
+| 未提供 grant 的隐私清除 | HTTP 门禁检查与 Chromium 真实服务均 403；真实会话设备及 generation 不变 |
+| 设备撤销与实时撤权 | 撤回 devices:manage 后 403，恢复并撤销本设备 204，旧会话 401；撤回 memory:web 后记忆写入／设备管理立即消失 |
+| 持久与重放 | 重建 identity service 后 scope 保持；配对码二次兑换拒绝 |
+
+**检查命令与结果（通过后停止）：**
+
+```bash
+# server/；先修正本机 umask。默认 Go 缓存只读，改用 /tmp。
+umask 022
+export GOCACHE=/tmp/edu-c1-go-cache
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+go test -p=1 ./internal/identity/... ./internal/transport/httpapi -count=1 -timeout=10m
+go vet ./internal/identity/... ./internal/transport/httpapi
+
+# clients/web/
+npm run check
+npm run test -- --configLoader native src/api/settings.test.ts src/api/memory.test.ts src/api/studio.test.ts src/api/source-discovery.test.ts src/lib/reference-import.test.ts
+./node_modules/.bin/vite build --configLoader native
+
+# server/；/home/yunyue/.cache/codex-tasks 不可写，隔离工具落到 /tmp。
+go build -tags web_release -o edu-agentd ./cmd/edu-agentd
+go build -o /tmp/edu-c1-webdatabase ./testutil/webdatabase
+
+# clients/web/；沿用上述 TEST_DATABASE_URL，wrapper 为本场景创建并清理独立 schema。
+WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0 WEB_NOCTURNE_FIXTURE=0 \
+WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome \
+PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/c1-chromium.json \
+/tmp/edu-c1-webdatabase npm run test:browser -- learner.spec.ts --project=chromium --reporter=line,json --output=/tmp/c1-browser-artifacts
+```
+
+Go 三个受影响包测试通过（identity 0.002s、identity/postgresstore 25.575s、httpapi 45.168s），
+vet 通过；Web 类型检查通过，5 个 vitest 文件／20 个测试通过；Vite 与两个 Go 构建通过；
+Chromium 1 passed（8.4s，0 failed／skipped／retries）。定向 C1 PostgreSQL 测试另有实际执行日志，
+未以数据库 skip 作为证据。日志保留在 `/tmp/c1-{targeted-go,http-matrix,go-test,go-vet,web-build,chromium}.log`
+与 `/tmp/c1-chromium.json`。初次测试先观察到 learner 未识别及管理签发 400；后续修正测试夹具的
+隐私端口类型和必需 memory exporter 后再通过，无生产权限门禁放宽。
+
+**限制／风险：** 权限齐全不代表模型、搜索或 Nocturne 已配置；候选提交成功不代表远端记忆已交付。
+组合权限重叠时，仅撤回 imports:web 不会撤销 references:manage 仍授予的资料审批；需撤回具体业务
+scope 或撤销设备。Vite 有现有 chunk 大小提示，Playwright 有 NO_COLOR/FORCE_COLOR 环境提示，均不影响结果。
+未跑三引擎、Go 全量、race 或 Compose，未操作其他项目容器；未暂存／提交。无待用户决策事项。
 
 #### C2：按学习方向持续对话（5–7 人日）
 

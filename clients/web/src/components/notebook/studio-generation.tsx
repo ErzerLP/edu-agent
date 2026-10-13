@@ -173,7 +173,7 @@ export function StudioRun({
         剩余请求 {state.requests_left} · 剩余 token 预算 {state.tokens_left}
       </p>
       {state.body_available && state.source_manifest && (
-        <p>本次冻结 {state.source_manifest.entries.length} 个来源；后续勾选不会改变本次生成。</p>
+        <p>本次使用 {state.source_manifest.entries.length} 个来源；后续勾选不会改变本次生成。</p>
       )}
       {state.body_available && state.studio?.result && (
         <Button onClick={() => onOpen(state.studio!.result!.artifact_id)}>打开已保存产物</Button>
@@ -364,7 +364,7 @@ export function StudioGenerator({
           </label>
           {pending && (
             <p role="alert">
-              请求结果待核对，已冻结 {pending.source_selection.items.length}{' '}
+              请求结果待核对，已选定 {pending.source_selection.items.length}{' '}
               个来源。请先核对原操作；重新发送也会使用同一操作和原来源选择。
             </p>
           )}

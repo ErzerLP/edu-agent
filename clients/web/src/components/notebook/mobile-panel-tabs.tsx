@@ -1,10 +1,10 @@
 import { useRef } from 'react'
-import { BookOpen, Library, Sparkles } from 'lucide-react'
+import { FileText, MessageSquare, Sparkles } from 'lucide-react'
 import type { NotebookPanel } from './notebook-layout'
 
 const panels = [
-  { id: 'sources', label: '来源', Icon: Library },
-  { id: 'classroom', label: '课堂', Icon: BookOpen },
+  { id: 'sources', label: '来源', Icon: FileText },
+  { id: 'classroom', label: '课堂', Icon: MessageSquare },
   { id: 'studio', label: 'Studio', Icon: Sparkles },
 ] as const
 

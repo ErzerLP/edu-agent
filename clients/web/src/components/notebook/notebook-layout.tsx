@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { PanelLeftClose, PanelRightClose } from 'lucide-react'
+import { FileText, PanelLeftClose, PanelRightClose, Sparkles } from 'lucide-react'
 import { Button } from '../ui/button'
 import { MobilePanelTabs } from './mobile-panel-tabs'
+import { useSourceSelection } from './source-selection'
 
 export type NotebookPanel = 'sources' | 'classroom' | 'studio'
 
@@ -22,13 +23,14 @@ export function NotebookLayout({
   sourceFocus?: { id: string }
   legacyClassroom?: boolean
 }) {
-  const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 1099px)').matches)
+  const { items } = useSourceSelection()
+  const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 900px)').matches)
   const [collapsed, setCollapsed] = useState({ sources: false, studio: false })
   useEffect(() => {
     if (sourceFocus) setCollapsed((value) => ({ ...value, sources: false }))
   }, [sourceFocus])
   useEffect(() => {
-    const media = matchMedia('(max-width: 1099px)')
+    const media = matchMedia('(max-width: 900px)')
     const resize = () => setNarrow(media.matches)
     media.addEventListener('change', resize)
     resize()
@@ -56,7 +58,13 @@ export function NotebookLayout({
             hidden={narrow && panel !== id}
           >
             <header className="notebook-panel-header">
+              {id === 'sources' ? (
+                <FileText size={18} aria-hidden="true" />
+              ) : id === 'studio' ? (
+                <Sparkles size={18} aria-hidden="true" />
+              ) : null}
               <h2>{title}</h2>
+              {id === 'sources' && <span className="notebook-count">{items.length}</span>}
               {id !== 'classroom' && (
                 <Button
                   variant="ghost"

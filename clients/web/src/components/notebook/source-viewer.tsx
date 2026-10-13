@@ -78,25 +78,28 @@ export function SourceProvenance({
   return (
     <section aria-label="来源解析状态">
       <p>{statusLabel ?? sourceDescription(metadata)}</p>
-      {metadata && (
-        <>
-          {metadata.locator && <p>请求地址：{metadata.locator}</p>}
-          {metadata.final_url && <p>实际读取：{metadata.final_url}</p>}
-          <p>
-            解析器：{metadata.parser || '未知'} · 覆盖：{metadata.coverage || '未知'}
-          </p>
-          <p className="hint">指纹：{metadata.fingerprint || '未知'}</p>
-          {metadata.derived_from && (
+      <details className="source-provenance-details">
+        <summary>来源信息</summary>
+        {metadata && (
+          <>
+            {metadata.locator && <p>请求地址：{metadata.locator}</p>}
+            {metadata.final_url && <p>实际读取：{metadata.final_url}</p>}
             <p>
-              派生自已保存产物 {metadata.derived_from.artifact_id} 的版本{' '}
-              {metadata.derived_from.version}
+              解析器：{metadata.parser || '未知'} · 覆盖：{metadata.coverage || '未知'}
             </p>
-          )}
-        </>
-      )}
-      <p className="hint">
-        解析状态描述实际保存的历史文本，不表示结论已验证，也不代表外部页面当前内容。
-      </p>
+            <p className="hint">指纹：{metadata.fingerprint || '未知'}</p>
+            {metadata.derived_from && (
+              <p>
+                派生自已保存产物 {metadata.derived_from.artifact_id} 的版本{' '}
+                {metadata.derived_from.version}
+              </p>
+            )}
+          </>
+        )}
+        <p className="hint">
+          解析状态描述实际保存的历史文本，不表示结论已验证，也不代表外部页面当前内容。
+        </p>
+      </details>
     </section>
   )
 }

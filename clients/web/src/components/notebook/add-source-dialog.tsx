@@ -104,7 +104,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
     return <ErrorState error={collections.error} retry={() => void collections.refetch()} />
   return (
     <>
-      <p>{noteCandidate ? `复制笔记「${noteCandidate.title}」第 ${noteCandidate.derived_from.version} 版。它是个人理解，不是外部权威；以后修改笔记不会同步到此来源。` : '选择 PDF、粘贴文本、网址或搜索发现，审阅解析结果后确认保存。'}导入不会修改课堂已冻结的资料。</p>
+      <p>{noteCandidate ? `复制笔记「${noteCandidate.title}」第 ${noteCandidate.derived_from.version} 版。它是个人理解，不是外部权威；以后修改笔记不会同步到此来源。` : '选择 PDF、文本、网址或搜索，预览后保存。'}已有课堂使用的资料保持不变。</p>
       {!noteCandidate && <div className="actions" aria-label="添加方式">
         {(
           [

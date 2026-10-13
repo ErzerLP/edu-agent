@@ -1,5 +1,5 @@
 import { useQueries } from '@tanstack/react-query'
-import { Sparkles, ArrowUpRight } from 'lucide-react'
+import { Sparkles, ArrowRight, History, MessageSquare } from 'lucide-react'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import { sourceDetailSchema } from '@/api/notebook-sources'
 import { sourceKey } from '@/api/source-selection'
@@ -85,7 +85,8 @@ export function ChatOverview({
             ) : summary.data ? (
               <p>
                 <strong>{summary.data.path}</strong>：
-                {summary.data.fragments[0]?.text.slice(0, 160) ?? '没有可定位的正文片段。'}
+                {summary.data.fragments[0]?.text.replace(/\s+/g, ' ').trim().slice(0, 160) ??
+                  '没有可定位的正文片段。'}
                 {summary.data.fragments[0] && (
                   <button
                     className="chat-citation"
@@ -114,13 +115,13 @@ export function ChatOverview({
           </p>
         )}
       </div>
-      <p className="chat-suggestion-label">可以从这些问题开始</p>
+      <p className="chat-suggestion-label">从一个问题开始</p>
       <div className="chat-suggestions">
         {questions.map((question) => (
           <button key={question} disabled={disabled} onClick={() => onAsk(question)}>
-            <Sparkles size={15} />
+            <MessageSquare size={15} />
             <span>{question}</span>
-            <ArrowUpRight size={14} />
+            <ArrowRight size={14} />
           </button>
         ))}
       </div>
@@ -129,9 +130,11 @@ export function ChatOverview({
           disabled={disabled}
           onClick={() => onAsk('请围绕学习方向和所选资料，从核心概念开始讲解。')}
         >
+          <Sparkles size={15} aria-hidden="true" />
           开始学习
         </Button>
         <Button variant="outline" disabled={!onContinue} onClick={onContinue}>
+          <History size={15} aria-hidden="true" />
           继续上次
         </Button>
       </div>

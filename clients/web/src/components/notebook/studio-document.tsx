@@ -84,7 +84,7 @@ export function StudioDocument({
             </select>
           </label>
           <p className="hint">
-            基于生成时冻结的 {r.body.source_manifest?.entries.length}{' '}
+            基于生成时选定的 {r.body.source_manifest?.entries.length}{' '}
             个来源；当前勾选不会改变已保存版本。引用核验确认出处与片段，不代表结论已被人工审核。
           </p>
           {(sections as [string, StudioClaim[]][]).map(([title, claims]) => (

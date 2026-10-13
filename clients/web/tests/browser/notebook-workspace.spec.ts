@@ -23,7 +23,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
   const spaceId = new URL(page.url()).pathname.split('/')[3]
   const sources = await seedSources(page, spaceId)
 
-  await page.getByRole('link', { name: '全部学习区', exact: true }).click()
+  await page.getByRole('link', { name: '所有学习区', exact: true }).click()
   await page.getByLabel('搜索学习区', { exact: true }).fill(name)
   await page.getByRole('link', { name, exact: true }).click()
   await expect(page.getByRole('region', { name: '来源', exact: true })).toBeVisible()
@@ -111,7 +111,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
   expect(saved.work_item.assessment_decision.disposition).toBe('accepted')
   await page.reload()
   await expect(page.getByRole('region', { name: '教学反馈', exact: true })).toContainText('已接纳')
-  await page.getByRole('link', { name: '全部学习区', exact: true }).click()
+  await page.getByRole('link', { name: '所有学习区', exact: true }).click()
   await page.getByLabel('搜索学习区', { exact: true }).fill(name)
   await page.getByRole('link', { name, exact: true }).click()
   await openNavigation(page)
@@ -359,11 +359,11 @@ test('所选来源问答：无目标、改选、核验引用、零来源、双�
   const sources = page.getByRole('region', { name: '来源', exact: true })
   const panel = page.getByRole('region', { name: '对话', exact: true })
   const prompt = panel.getByRole('textbox', { name: '向导师提问', exact: true })
-  await sources.getByRole('checkbox', { name: '全选已加载来源', exact: true }).uncheck()
+  await sources.getByRole('checkbox', { name: '选择全部来源', exact: true }).uncheck()
   await sources.getByRole('checkbox', { name: /选择来源：even.md · 所选甲资料/ }).check()
   const second = await context.newPage()
   await second.goto(`/app/spaces/${space.id}`)
-  await expect(second.getByRole('checkbox', { name: '全选已加载来源', exact: true })).toBeChecked()
+  await expect(second.getByRole('checkbox', { name: '选择全部来源', exact: true })).toBeChecked()
   const submissions: { source_selection: { mode: string; items: { collection_id: string }[] } }[] =
     []
   page.on('request', (request) => {
@@ -429,6 +429,6 @@ test('所选来源问答：无目标、改选、核验引用、零来源、双�
   const managed = (await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items
   expect(managed).toHaveLength(1)
   expect(managed[0].source).toBe('learning_direction')
-  await expect(second.getByRole('checkbox', { name: '全选已加载来源', exact: true })).toBeChecked()
+  await expect(second.getByRole('checkbox', { name: '选择全部来源', exact: true })).toBeChecked()
   await second.close()
 })

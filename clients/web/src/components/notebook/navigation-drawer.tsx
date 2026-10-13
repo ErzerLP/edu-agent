@@ -131,11 +131,13 @@ export function NavigationDrawer({
   theme,
   onThemeChange,
   onClose,
+  onOptionsMount,
 }: {
   spaceId?: string
   theme: string
   onThemeChange: () => void
   onClose: () => void
+  onOptionsMount: (element: HTMLDivElement | null) => void
 }) {
   const { logout, drafts } = useIdentity()
   const dialog = useRef<HTMLDialogElement>(null)
@@ -181,7 +183,7 @@ export function NavigationDrawer({
       }}
     >
       <div className="notebook-drawer-heading">
-        <h2>学习菜单</h2>
+        <h2>edu-agent</h2>
         <Button variant="ghost" aria-label="关闭侧边菜单" onClick={onClose}>
           <X size={20} aria-hidden="true" />
         </Button>
@@ -255,9 +257,7 @@ export function NavigationDrawer({
             <Link to="/settings/data">数据与隐私</Link>
             <Link to="/settings/devices">设备管理</Link>
           </nav>
-          <p className="hint notebook-notesync-hint">
-            NoteSync 沿用默认区／默认集合映射；其他区可查看当前支持状态。
-          </p>
+          <div className="notebook-menu-options" ref={onOptionsMount} />
           <div className="notebook-drawer-actions">
             <Button
               variant="ghost"

@@ -1,5 +1,11 @@
-import { Link } from '@tanstack/react-router'
-import { BookOpen, ClipboardList, Presentation, StickyNote } from 'lucide-react'
+import {
+  ArrowRight,
+  BookOpen,
+  ClipboardList,
+  History,
+  Presentation,
+  StickyNote,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { ApiError } from '@/api/client'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
@@ -12,9 +18,9 @@ import { StudioDocument } from './studio-document'
 import { StudioGenerator, StudioRun, StudioRuns, studioNames } from './studio-generation'
 
 const tiles = [
-  { name: '学习指南', kind: 'guide', Icon: BookOpen, color: 1 },
-  { name: '测验', kind: 'quiz', Icon: ClipboardList, color: 0 },
-  { name: '简报', kind: 'brief', Icon: Presentation, color: 2 },
+  { name: '学习指南', kind: 'guide', Icon: BookOpen, color: 1, description: '梳理要点与思路' },
+  { name: '测验', kind: 'quiz', Icon: ClipboardList, color: 0, description: '检验你的理解' },
+  { name: '简报', kind: 'brief', Icon: Presentation, color: 2, description: '把资料读薄一点' },
 ]
 
 export function StudioPanel({
@@ -132,19 +138,19 @@ export function StudioPanel({
       />
     )
   return (
-    <>
+    <div className="notebook-studio-home">
       <div className="notebook-studio-tiles">
-        {tiles.map(({ name, kind, Icon, color }) => (
+        {tiles.map(({ name, kind, Icon, color, description }) => (
           <button
             type="button"
             className={`notebook-studio-tile notebook-color-${color}`}
             key={name}
-            disabled={!canGenerate || kind === 'quiz' && !goalId}
+            disabled={!canGenerate || (kind === 'quiz' && !goalId)}
             onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' | 'quiz' })}
           >
             <Icon size={22} aria-hidden="true" />
             <h3>{name}</h3>
-            <span>{kind === 'quiz' && !goalId ? '方向测验将在后续支持' : '按所选来源生成'}</span>
+            <span>{kind === 'quiz' && !goalId ? '即将支持' : description}</span>
           </button>
         ))}
         <button
@@ -155,15 +161,24 @@ export function StudioPanel({
         >
           <StickyNote size={22} aria-hidden="true" />
           <h3>笔记</h3>
-          <span>写下自己的理解</span>
+          <span>留下自己的想法</span>
         </button>
       </div>
       {!canGenerate && (
-        <p className="hint">指南／简报需要模型运行能力、来源读取与学习写入权限；归档区只读。</p>
+        <p className="hint">{archived ? '已归档，只读。' : '生成暂不可用，请查看设置。'}</p>
       )}
-      {session.capabilities.runs && <StudioRuns spaceId={spaceId} onOpen={setRunId} />}
+      <div className="studio-section-head">
+        <h3>已生成</h3>
+        {session.capabilities.runs && (
+          <details className="studio-history">
+            <summary aria-label="生成记录">
+              <History size={13} aria-hidden="true" />
+            </summary>
+            <StudioRuns spaceId={spaceId} onOpen={setRunId} />
+          </details>
+        )}
+      </div>
       <div className="studio-notes-list">
-        <h3>已保存产物</h3>
         {notes.isPending && <p role="status">正在读取笔记列表…</p>}
         {notes.error ? (
           <ErrorState error={notes.error} retry={() => void notes.refetch()} />
@@ -171,34 +186,43 @@ export function StudioPanel({
           <>
             {notes.data?.pages
               .flatMap((page) => page.items)
-              .map((item) => (
-                <Button
-                  key={item.artifact_id}
-                  className="studio-note-row"
-                  variant="outline"
-                  onClick={() =>
-                    item.kind === 'note'
-                      ? setSelected(item.artifact_id)
-                      : openDocument(item.artifact_id)
-                  }
-                >
-                  <StickyNote size={18} aria-hidden="true" />
-                  <span>
-                    {item.title}
-                    <small>
-                      {studioNames[item.kind]} · 已保存第 {item.version} 版
-                      {drafts.get(
-                        JSON.stringify([...prefix, spaceId, 'studio-draft', item.artifact_id]),
-                      )
-                        ? ' · 本地草稿'
-                        : ''}
-                    </small>
-                  </span>
-                </Button>
-              ))}
-            {notes.data?.pages[0]?.items.length === 0 && (
-              <p className="hint">还没有已保存的笔记。</p>
-            )}
+              .map((item) => {
+                const Icon = {
+                  note: StickyNote,
+                  guide: BookOpen,
+                  brief: Presentation,
+                  quiz: ClipboardList,
+                }[item.kind]
+                return (
+                  <Button
+                    key={item.artifact_id}
+                    className="studio-note-row"
+                    variant="outline"
+                    onClick={() =>
+                      item.kind === 'note'
+                        ? setSelected(item.artifact_id)
+                        : openDocument(item.artifact_id)
+                    }
+                  >
+                    <span className={`studio-output-icon ${item.kind}`}>
+                      <Icon size={16} aria-hidden="true" />
+                    </span>
+                    <span className="studio-output-info">
+                      <span className="studio-output-title">{item.title}</span>
+                      <small>
+                        {studioNames[item.kind]} · 第 {item.version} 版
+                        {drafts.get(
+                          JSON.stringify([...prefix, spaceId, 'studio-draft', item.artifact_id]),
+                        )
+                          ? ' · 本地草稿'
+                          : ''}
+                      </small>
+                    </span>
+                    <ArrowRight size={13} aria-hidden="true" />
+                  </Button>
+                )
+              })}
+            {notes.data?.pages[0]?.items.length === 0 && <p className="hint">还没有内容。</p>}
             {notes.hasNextPage && (
               <Button
                 variant="outline"
@@ -210,17 +234,15 @@ export function StudioPanel({
             )}
           </>
         )}
-        <Button variant="outline" disabled={!canWrite} onClick={() => setSelected('new')}>
-          ＋ 添加笔记
-        </Button>
       </div>
-      <div className="notebook-studio-library">
-        <h3>课堂内容库</h3>
-        <p className="hint">查看已保存的阅读与练习，继续使用收藏、筛选和版本历史。</p>
-        <Link className="button button-outline" to="/spaces/$spaceId/studio" params={{ spaceId }}>
-          进入原 Studio 内容库 →
-        </Link>
-      </div>
-    </>
+      <Button
+        className="notebook-add-note"
+        variant="outline"
+        disabled={!canWrite}
+        onClick={() => setSelected('new')}
+      >
+        ＋ 添加笔记
+      </Button>
+    </div>
   )
 }

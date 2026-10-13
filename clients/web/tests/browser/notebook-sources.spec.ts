@@ -53,8 +53,8 @@ test('搜索发现只发送明确确认的关键词，选中后读取正文并�
   await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   await expect(panel.getByRole('article')).toHaveCount(1)
-  await panel.getByRole('button', { name: '查看来源：搜索正文.md' }).click()
-  const viewer = page.getByRole('dialog', { name: '来源查看器', exact: true })
+  await panel.getByRole('button', { name: '打开来源：搜索正文.md' }).click()
+  const viewer = page.getByRole('region', { name: '来源查看器', exact: true })
   await viewer.getByText(/原文片段 1/).click()
   await expect(viewer.getByRole('region', { name: '来源原文片段' })).toContainText(
     'Notebook 网页片段',
@@ -150,8 +150,8 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
     .getByRole('article')
     .filter({ has: page.getByRole('heading', { name: '粘贴来源.md', exact: true }) })
   await expect(textRow).toContainText('用户提供的文本')
-  await textRow.getByRole('button', { name: '查看来源：粘贴来源.md' }).click()
-  const viewer = page.getByRole('dialog', { name: '来源查看器', exact: true })
+  await textRow.getByRole('button', { name: '打开来源：粘贴来源.md' }).click()
+  const viewer = page.getByRole('region', { name: '来源查看器', exact: true })
   await viewer.getByText(/原文片段 1/).click()
   await expect(viewer.getByRole('region', { name: '来源原文片段' })).toContainText(
     'Notebook 文本片段',

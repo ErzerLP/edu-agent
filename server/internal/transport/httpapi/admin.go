@@ -209,7 +209,7 @@ func (a *API) adminCreatePairingCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profile := identity.PairingProfile(strings.TrimSpace(request.Profile))
-	if profile != identity.PairingProfileUser && profile != identity.PairingProfileAgent {
+	if profile != identity.PairingProfileUser && profile != identity.PairingProfileAgent && profile != identity.PairingProfileLearner {
 		writeError(w, r, http.StatusBadRequest, "invalid_request", "Pairing profile is invalid")
 		return
 	}

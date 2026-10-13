@@ -95,6 +95,43 @@ LISTEN_ADDR=127.0.0.1:8080 PUBLIC_BASE_URL=http://127.0.0.1:8080 \
 
 通过同一 `DATABASE_URL` 运行 `./server/edu-agentd pairing-code create`，或使用既有本机管理页获取一次性配对码。在 `http://127.0.0.1:8080/app/` 输入配对码，设置浏览器名称后即可使用。保存目标不以模型、搜索或资料为前置。
 
+### 学习端全权（`learner`）
+
+日常 Web 学习推荐由操作者运行 `edu-agentd pairing-code create --profile learner`，
+或在管理后台的配对页明确选择“学习端全权”签发。一次兑换即可使用来源导入、参考管理、
+研究／搜索与采纳、学习区／目标／对话／练习、Studio、评估复核、长期记忆候选与审阅、
+设备列表与撤销。已有浏览器先退出，再用新码配对；旧设备不会自动升级。
+
+以下 16 项是既有 `import`、`references`、`research`、`assessment`、`memory` 档案的
+学习侧权限并集，原始设备凭据和 Web 会话均保留。普通 `user/agent` 的 Web 学习权限已包含其中。
+
+| scope | 用途 |
+| --- | --- |
+| `learning:read` | 学习区、目标、对话、练习、Studio、进度与复习读取 |
+| `learning:write` | 学习区与目标修改、对话、练习提交和 Studio 保存／生成 |
+| `learning:approve` | 评估复核、处置与证据继承审批 |
+| `assessment:web` | Web 保留评估审批的显式授权标记 |
+| `knowledge:read` | 读取来源、集合、参考正文、导入状态与 NoteSync 状态 |
+| `knowledge:write` | 导入、集合管理、来源采纳、知识维护与 NoteSync 冲突处理 |
+| `knowledge:approve` | 导入审阅确认、参考／知识变更审批 |
+| `imports:web` | Web 保留导入写入和审批的显式授权标记 |
+| `references:manage` | 参考范围审阅、采纳与现有集合共享操作 |
+| `research:adopt` | 研究采纳、公开搜索发现及其来源导入链路 |
+| `memory:read` | 读取长期记忆候选、记录、回执与导出 |
+| `memory:write` | 创建／审阅／更正记忆候选、删除与交付重放 |
+| `memory:web` | Web 保留记忆写入与设备撤销的显式授权标记 |
+| `privacy:read` | 读取隐私清除状态与回执 |
+| `devices:read` | 查看设备列表 |
+| `devices:manage` | 撤销本设备或其他既有设备，不授予签发配对码权限 |
+
+不包含 `settings:write`、`settings:probe`、`model:probe`、`privacy:device`、`privacy:erase`
+或通配权限；管理后台身份和设备绑定的一次性隐私清除 grant 仍独立。配置写入／探测沿用
+`settings` 档案。旧 `user`、`agent`、`settings`、`research`、`references`、`import`、
+`assessment`、`memory` 档案的 scope 均不改变，仍可按较窄权限签发。
+
+权限齐全仍需执行导入审阅、外发授权、评估决定和记忆候选批准；模型不能替用户批准。
+模型、搜索与 Nocturne 的服务可用性仍取决于实际配置；记忆沿用全局单用户范围。
+
 `make web-build` 安装锁定依赖、检查类型、生成 Vite dist，并复制到 `server/internal/webassets/dist`。`cd clients/web && npm run dev` 监听前端源码并在每次构建后复制资源；重启 `go run ./cmd/edu-agentd` 后 Go 会嵌入最新资源。开发流量始终经过 Go 的同域 Cookie/CSRF 路径。没有跨域 Vite 开发服务器或代理身份。
 
 若只检查 Go 代码且不启用 Web，可直接运行 Go 命令；启用 Web 但没有真实资产时服务启动失败。发行必须用 `make server-build` 或 `go build -tags web_release`，缺少入口或 assets 会在编译时失败。Dockerfile 也先构建真实前端再嵌入 Go。
@@ -132,7 +169,7 @@ TEST_DATABASE_URL=专用测试库 WEB_RELEASE_MATRIX=1 WEB_WORKSPACE_FIXTURE=1 W
 
 ## 长期记忆、数据与设备
 
-`/app/memory` 提供候选、已保存、纠正和交付状态。操作者通过本机
+`learner` 已包含下述记忆能力。需要单独授权时，`/app/memory` 提供候选、已保存、纠正和交付状态，操作者通过本机
 `edu-agentd pairing-code create --profile memory` 明确授予新设备
 `memory:web`、`memory:read/write`、`privacy:read`、`devices:read/manage`，
 以及普通学习所需的 `learning:read/write`、`knowledge:read`。旧身份不会自动升级；
@@ -188,7 +225,7 @@ Web 导师仅能通过 `request_memory` 申请具体长期偏好并暂停，用�
 来源不足不能直接复核接纳；低确定性、冲突与歧义按既有政策要求人工核对，覆盖仍需逐项
 提供原答案和允许来源中的准确引文，由服务端校验 UTF-8 范围、摘要及完整标准。
 
-普通浏览器身份只读评估。需要处置时，操作者在本机显式生成
+普通 `user/agent` 浏览器身份只读评估，`learner` 已包含评估处置权限。需要单独授权时，操作者在本机显式生成
 `edu-agentd pairing-code create --profile assessment` 配对码，再用它配对新浏览器设备。
 该档案只增加评估所需 `learning:approve` 和 `assessment:web`，不包含资料写入、知识审批、
 设备管理或设置权限；旧 user/agent 身份不会增权。撤销审批 scope 或标记立即收回浏览器能力。
@@ -325,7 +362,7 @@ AI 建议或已纳入都不等于掌握。新概念修订不继承旧评估；�
 运行和导入分别保留原 owner 的分页和状态，没有合并成功率。详情链接绑定原运行/任务，
 刷新会先查询原状态；关闭详情仅停止观察，取消和继续均调用原业务命令。
 
-导入使用已有 `import-jobs`。操作者可用 `edu-agentd pairing-code create --profile import`
+导入使用已有 `import-jobs`，`learner` 已包含所需权限。需要单独授权时，操作者可用 `edu-agentd pairing-code create --profile import`
 生成具有资料写入及审批权限的配对码；该档案使用显式 `imports:web` 标记，收回标记后
 浏览器不能继续写入或审批。它沿用现有 `knowledge:approve` 权限，包含资料集合变更，
 不包含设备管理、教学审批或设置权限。已有浏览器身份不会自动增权。选择文件或目录后核对
@@ -577,7 +614,7 @@ MENTOR_KEY_FILE=/受保护目录/旧密钥 \
 
 从目标详情进入“研究相关知识”，填写去掉私人信息的公开主题并明确同意外发。服务端不会自动把目标正文、成绩或身份拼入查询。可选择补充、优先网站或限制网站；限制范围同时作用于查询、候选和每次网页跳转。运行显示候选、已读取、部分解析和已采纳的真实数量，预算包含搜索、网页 GET/跳转和模型请求。
 
-普通学习身份可以研究并查看来源。需要采纳时，操作者先运行 `edu-agentd pairing-code create --profile research`，再用新码配对；旧设备不会自动升级。`research` 档案具有目标内研究采纳所需的 `knowledge:write` 和 `research:adopt`，不包含设置、审批或管理权限。用户可以逐条采纳，也可在开始时明确选择“研究并纳入本目标参考”。自动采纳仅限被真实片段引用的新来源，不能覆盖身份、共享或同步发布。
+普通学习身份可以研究并查看来源，`learner` 已包含来源采纳权限。需要单独授权采纳时，操作者先运行 `edu-agentd pairing-code create --profile research`，再用新码配对；旧设备不会自动升级。`research` 档案具有目标内研究采纳所需的 `knowledge:write` 和 `research:adopt`，不包含设置、审批或管理权限。用户可以逐条采纳，也可在开始时明确选择“研究并纳入本目标参考”。自动采纳仅限被真实片段引用的新来源，不能覆盖身份、共享或同步发布。
 
 SourceViewer 显示真实文本片段、上下文、获取时间、版本、指纹和覆盖。HTML 为静态文本提取，PDF 尚不支持；页面不执行脚本、不携带登录凭据、不绕付费墙。模型当前只核对每个来源前三个片段，综合结论和自拟例子分别显示，不写入正式知识或掌握度。
 

@@ -86,7 +86,7 @@ function Pairing({ onPaired, restore }: { onPaired: (s: Session) => void; restor
           浏览器名称
           <input autoComplete="off" {...form.register('display_name')} />
         </label>
-        <p className="hint">从本机管理页获取一次性配对码。此入口仅用于学习，不提供管理权限。</p>
+        <p className="hint">从本机管理页获取“学习端全权”配对码，一次配对即可导入来源、研究、学习、使用 Studio、复核评估和审阅记忆候选。设置写入／探测与隐私清除仍需独立授权，此入口不提供管理权限。</p>
         {!!error && <ErrorState error={error} />}
         <Button type="submit" disabled={form.formState.isSubmitting}>
           配对并进入

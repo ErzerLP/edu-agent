@@ -17,6 +17,7 @@ var (
 type PairingProfile string
 
 const (
+	PairingProfileLearner    PairingProfile = "learner"
 	PairingProfileUser       PairingProfile = "user"
 	PairingProfileAgent      PairingProfile = "agent"
 	PairingProfileSettings   PairingProfile = "settings"

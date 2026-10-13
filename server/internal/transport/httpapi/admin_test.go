@@ -336,6 +336,20 @@ func TestAdminUIOverviewPairingRevocationAndLogout(t *testing.T) {
 		t.Fatalf("pairing status/profile/body = %d/%q/%s", pairingResponse.Code, admin.pairingProfile, pairingResponse.Body.String())
 	}
 
+	learnerResponse := httptest.NewRecorder()
+	handler.ServeHTTP(learnerResponse, authenticatedAdminRequest(http.MethodPost, "/admin/api/pairing-codes", `{"profile":"learner"}`, session))
+	if learnerResponse.Code != http.StatusCreated || admin.pairingProfile != identity.PairingProfile("learner") {
+		t.Fatalf("learner pairing = %d/%q/%s", learnerResponse.Code, admin.pairingProfile, learnerResponse.Body.String())
+	}
+	beforeInvalid := admin.pairingCalls
+	for _, profile := range []string{"admin", "learner,settings", "*"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, authenticatedAdminRequest(http.MethodPost, "/admin/api/pairing-codes", `{"profile":"`+profile+`"}`, session))
+		if response.Code != http.StatusBadRequest || admin.pairingCalls != beforeInvalid {
+			t.Fatalf("invalid pairing profile %q = %d/%d", profile, response.Code, admin.pairingCalls)
+		}
+	}
+
 	revokeResponse := httptest.NewRecorder()
 	handler.ServeHTTP(revokeResponse, authenticatedAdminRequest(http.MethodPost, "/admin/api/devices/"+deviceID+"/revoke", `{}`, session))
 	if revokeResponse.Code != http.StatusNoContent || admin.revoked != deviceID {

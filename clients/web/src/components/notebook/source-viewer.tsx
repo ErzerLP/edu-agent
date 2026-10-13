@@ -4,6 +4,7 @@ import { ApiError, learningClient, unwrap } from '@/api/client'
 import {
   sourceDescription,
   sourceDetailSchema,
+  sourceTitle,
   type SourceItem,
   type SourceMetadata,
 } from '@/api/notebook-sources'
@@ -250,7 +251,7 @@ export function CatalogSourceContent({ spaceId, source, highlight = false }: { s
   const value = detail.data
   return (
     <>
-      <h3>{value.path}</h3>
+      <h3>{sourceTitle(value)}</h3>
       <p>{value.collection_name}</p>
       <SourceProvenance metadata={value.metadata} />
       {value.pdf && (
@@ -347,7 +348,7 @@ export function MentorCitationContent({
   return (
     <section ref={fragmentView} tabIndex={-1} aria-label={`引用 ${citationId} 核验片段`}>
       <h3>
-        [{citationId}] {source.path}
+        [{citationId}] {sourceTitle(source)}
       </h3>
       <p>
         {source.collection_name} · {source.collection_id.slice(0, 8)}

@@ -53,8 +53,9 @@ test('搜索发现只发送明确确认的关键词，选中后读取正文并�
   await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   await expect(panel.getByRole('article')).toHaveCount(1)
-  await panel.getByRole('button', { name: '打开来源：搜索正文.md' }).click()
+  await panel.getByRole('button', { name: '打开来源：Notebook 网页' }).click()
   const viewer = page.getByRole('region', { name: '来源查看器', exact: true })
+  await expect(viewer.getByRole('heading', { name: 'Notebook 网页', exact: true })).toBeVisible()
   await viewer.getByText(/原文片段 1/).click()
   await expect(viewer.getByRole('region', { name: '来源原文片段' })).toContainText(
     'Notebook 网页片段',
@@ -63,6 +64,7 @@ test('搜索发现只发送明确确认的关键词，选中后读取正文并�
   await viewer.getByRole('button', { name: '关闭来源', exact: true }).click()
   await page.reload()
   await expect(panel.getByRole('article')).toHaveCount(1)
+  await expect(panel.getByRole('button', { name: '打开来源：Notebook 网页' })).toBeVisible()
   await expect(panel.getByRole('checkbox')).toHaveCount(2)
 })
 
@@ -207,9 +209,10 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   const urlRow = panel
     .getByRole('article')
-    .filter({ has: page.getByRole('heading', { name: '网页来源.md' }) })
+    .filter({ has: page.getByRole('heading', { name: 'Notebook 网页' }) })
   await expect(urlRow).toContainText('网址')
   await urlRow.getByRole('button').click()
+  await expect(viewer.getByRole('heading', { name: 'Notebook 网页', exact: true })).toBeVisible()
   await expect(viewer).toContainText('实际读取：http://notebook.example/page')
   await viewer.getByText(/原文片段 1/).click()
   await expect(viewer.getByRole('region', { name: '来源原文片段' })).toContainText(

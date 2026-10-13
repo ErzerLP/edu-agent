@@ -23,7 +23,8 @@ func TestSourceCatalogContract(t *testing.T) {
 		}
 	}
 	item := knowledge.SourceItem{CollectionID: uuid.NewString(), CollectionName: "集合", RevisionID: uuid.NewString(), DocumentID: uuid.NewString(), DocumentRevisionID: uuid.NewString(), Path: "a.md"}
-	for name, value := range map[string]any{"KnowledgeSourcePage": knowledge.SourcePage{Items: []knowledge.SourceItem{item}}, "KnowledgeSourceDetail": knowledge.SourceDetail{SourceItem: item, Fragments: []knowledge.SourceFragment{}}} {
+	metadata := knowledge.SourceMetadata{Kind: "url", Title: "真实网页标题", Parser: "html-v1", Coverage: "partial_html_text_only", Fingerprint: "a", Status: "partial"}
+	for name, value := range map[string]any{"KnowledgeSourceMetadata": metadata, "KnowledgeSourcePage": knowledge.SourcePage{Items: []knowledge.SourceItem{item}}, "KnowledgeSourceDetail": knowledge.SourceDetail{SourceItem: item, Fragments: []knowledge.SourceFragment{}}} {
 		schema := doc.Components.Schemas[name]
 		if schema == nil {
 			t.Fatal("missing DTO", name)

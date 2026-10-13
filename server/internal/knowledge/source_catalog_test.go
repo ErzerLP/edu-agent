@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"encoding/json"
 	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/google/uuid"
@@ -10,7 +11,7 @@ import (
 
 func TestSourceReceiptBindsBodyAndSpace(t *testing.T) {
 	ctx := t.Context()
-	source := research.Source{Locator: "https://example.org/start", FinalURL: "https://example.org/final", Kind: "text/html", Status: "parsed", Parser: "html-v1", Coverage: "complete", Fingerprint: strings.Repeat("a", 64), Text: "真实正文", StorageAllowed: true}
+	source := research.Source{Locator: "https://example.org/start", FinalURL: "https://example.org/final", Title: "真实网页标题", Kind: "text/html", Status: "parsed", Parser: "html-v1", Coverage: "complete", Fingerprint: strings.Repeat("a", 64), Text: "真实正文", StorageAllowed: true}
 	markdown, receipt := FetchedSourceReceipt(ctx, 3, source)
 	if receipt == "" {
 		t.Fatal("usable fetch has no receipt")
@@ -18,6 +19,11 @@ func TestSourceReceiptBindsBodyAndSpace(t *testing.T) {
 	metadata, err := verifySourceReceipt(ctx, 3, markdown, receipt)
 	if err != nil || metadata.FinalURL != source.FinalURL || metadata.Kind != "url" {
 		t.Fatal(metadata, err)
+	}
+	raw, _ := json.Marshal(metadata)
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil || payload["title"] != "真实网页标题" {
+		t.Fatal("网页标题未绑定到来源回执", payload, err)
 	}
 	other, _ := space.WithScope(ctx, uuid.NewString())
 	for _, c := range []struct {

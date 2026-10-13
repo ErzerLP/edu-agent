@@ -6372,6 +6372,7 @@ components:
       required: [kind, parser, coverage, fingerprint, status]
       properties:
         kind: { type: string, enum: [text, pdf, url] }
+        title: { type: string, description: 服务端从抓取的网页提取的标题；旧来源可能缺失 }
         locator: { type: string }
         final_url: { type: string }
         media_type: { type: string }

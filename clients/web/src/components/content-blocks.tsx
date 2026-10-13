@@ -53,7 +53,7 @@ export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string 
   )
 })
 
-export function safeMath(text: string): string | null {
+export function safeMath(text: string, displayMode = true): string | null {
   if (
     text.length > 4096 ||
     /\\(?:def|gdef|edef|xdef|newcommand|renewcommand|includegraphics|href|url|html|require|input)/i.test(
@@ -63,7 +63,7 @@ export function safeMath(text: string): string | null {
     return null
   try {
     return katex.renderToString(text, {
-      displayMode: true,
+      displayMode,
       throwOnError: true,
       trust: false,
       strict: 'error',
@@ -76,8 +76,14 @@ export function safeMath(text: string): string | null {
     return null
   }
 }
-function MathBlock({ text }: { text: string }) {
-  const rendered = useMemo(() => safeMath(text), [text])
+export function MathBlock({ text, displayMode = true }: { text: string; displayMode?: boolean }) {
+  const rendered = useMemo(() => safeMath(text, displayMode), [text, displayMode])
+  if (!displayMode)
+    return rendered ? (
+      <span aria-label="数学公式" dangerouslySetInnerHTML={{ __html: rendered }} />
+    ) : (
+      <span>公式文本（不支持或超过安全限制）：{text}</span>
+    )
   return rendered ? (
     <div
       className="math-block"

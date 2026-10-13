@@ -4,6 +4,7 @@ import { pdfMetadataSchema } from './pdf'
 const id = z.uuid()
 export const sourceMetadataSchema = z.object({
   kind: z.enum(['text', 'pdf', 'url']),
+  title: z.string().optional(),
   locator: z.string().optional(),
   final_url: z.string().optional(),
   media_type: z.string().optional(),
@@ -48,9 +49,25 @@ export const sourceDetailSchema = sourceItemSchema.extend({
 export type SourceItem = z.infer<typeof sourceItemSchema>
 export type SourceMetadata = z.infer<typeof sourceMetadataSchema>
 export type SourceDetail = z.infer<typeof sourceDetailSchema>
+export function sourceTitle(source: Pick<SourceItem, 'path' | 'metadata'>) {
+  const metadata = source.metadata
+  if (metadata?.kind !== 'url') return source.path
+  if (metadata.title?.trim()) return metadata.title.trim()
+  for (const raw of [metadata.final_url, metadata.locator]) {
+    if (!raw) continue
+    try {
+      const url = new URL(raw)
+      if (url.protocol === 'https:' || url.protocol === 'http:') return url.host + url.pathname
+    } catch {
+      // Older metadata may not contain a usable URL; try the original locator.
+    }
+  }
+  return source.path
+}
 export function sourceDescription(metadata: SourceMetadata | null) {
   if (!metadata) return '已保存 · 来源类型与解析覆盖未知'
-  if (metadata.derived_from) return `已保存 · 笔记第 ${metadata.derived_from.version} 版快照 · 个人理解，非外部权威`
+  if (metadata.derived_from)
+    return `已保存 · 笔记第 ${metadata.derived_from.version} 版快照 · 个人理解，非外部权威`
   const kind = { text: '文本', pdf: 'PDF', url: '网址' }[metadata.kind]
   return `已保存 · ${kind} · ${metadata.status === 'partial' ? '部分解析，有覆盖缺口' : metadata.kind === 'text' ? '用户提供的文本' : '已提取文本，完整性未核验'}`
 }

@@ -114,6 +114,8 @@ func failure(err error) string {
 
 // 每次 GET（包括跳转）先经过预算与租约回调；不携带 Cookie、认证或代理配置。
 func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, before func() error) (Source, error) {
+	// A discovery candidate's title is not the fetched page's title.
+	source.Title = ""
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	transport := f.transport()
@@ -234,8 +236,9 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 			return source, nil
 		}
 		text, coverage := string(body), "complete_text"
+		title := ""
 		if media == "text/html" {
-			text, coverage = parseHTML(body)
+			text, coverage, title = parseHTML(body)
 		}
 		if coverage == "storage_restricted" {
 			source.Status = "failed"
@@ -264,6 +267,7 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		}
 		source.Coverage = coverage
 		source.Text = text
+		source.Title = title
 		source.StorageAllowed = true
 		source.Status = "parsed"
 		if coverage != "complete_text" {
@@ -275,7 +279,7 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 	return source, nil
 }
 
-func parseHTML(body []byte) (string, string) {
+func parseHTML(body []byte) (string, string, string) {
 	d := xml.NewDecoder(bytes.NewReader(body))
 	d.Strict = false
 	d.AutoClose = xml.HTMLAutoClose
@@ -287,6 +291,7 @@ func parseHTML(body []byte) (string, string) {
 	var ranks []int
 	depth := 0
 	hidden := 0
+	title, titleDepth, headDepth := "", 0, 0
 	coverage := "partial_html_text_only"
 	selected := func() string {
 		for rank := len(groups) - 1; rank >= 0; rank-- {
@@ -308,16 +313,22 @@ func parseHTML(body []byte) (string, string) {
 		case xml.StartElement:
 			depth++
 			if depth > 128 {
-				return selected(), "partial_depth_limit"
+				return selected(), "partial_depth_limit", strings.Join(strings.Fields(title), " ")
 			}
 			name := strings.ToLower(t.Name.Local)
+			if name == "head" {
+				headDepth = depth
+			}
+			if name == "title" && headDepth > 0 && depth == headDepth+1 && titleDepth == 0 && title == "" {
+				titleDepth = depth
+			}
 			attrs := map[string]string{}
 			for _, attr := range t.Attr {
 				attrs[strings.ToLower(attr.Name.Local)] = strings.ToLower(attr.Value)
 			}
 			if name == "meta" {
 				if (attrs["name"] == "robots" || attrs["name"] == "edu-agent" || attrs["http-equiv"] == "cache-control") && restricted(attrs["content"]) {
-					return "", "storage_restricted"
+					return "", "storage_restricted", ""
 				}
 			}
 			if hidden > 0 {
@@ -339,6 +350,12 @@ func parseHTML(body []byte) (string, string) {
 			ranks = append(ranks, rank)
 			active[rank]++
 		case xml.EndElement:
+			if headDepth == depth {
+				headDepth = 0
+			}
+			if titleDepth == depth {
+				titleDepth = 0
+			}
 			if depth > 0 {
 				depth--
 			}
@@ -356,6 +373,15 @@ func parseHTML(body []byte) (string, string) {
 				ranks = ranks[:len(ranks)-1]
 			}
 		case xml.CharData:
+			if titleDepth > 0 && len(title) < 1024 {
+				title += string(t)
+				if len(title) > 1024 {
+					title = title[:1024]
+					for !utf8.ValidString(title) {
+						title = title[:len(title)-1]
+					}
+				}
+			}
 			if hidden == 0 {
 				value := strings.Join(strings.Fields(string(t)), " ")
 				if value != "" {
@@ -369,7 +395,7 @@ func parseHTML(body []byte) (string, string) {
 			}
 		}
 	}
-	return selected(), coverage
+	return selected(), coverage, strings.Join(strings.Fields(title), " ")
 }
 
 func htmlContentArea(attrs map[string]string) bool {

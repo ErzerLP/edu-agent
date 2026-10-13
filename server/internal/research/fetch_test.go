@@ -130,6 +130,26 @@ func TestCitationsAndPolicy(t *testing.T) {
 	}
 }
 
+func TestFetchTitleComesFromHTMLInsteadOfCandidate(t *testing.T) {
+	for _, tc := range []struct{ name, body, title string }{
+		{"网页标题", "<html><head><title>  线性无关 &amp;\n代数 </title></head><body><main>概率原文</main></body></html>", "线性无关 & 代数"},
+		{"没有标题", `<html><body><main>概率原文</main></body></html>`, ""},
+		{"图示标题不是网页标题", `<html><head></head><body><svg><title>图示说明</title></svg><main>概率原文</main></body></html>`, ""},
+		{"有界标题", `<html><head><title>` + strings.Repeat("界", 1000) + `</title></head><body><main>概率原文</main></body></html>`, strings.Repeat("界", 341)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := fixtureFetcher(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				_, _ = io.WriteString(w, tc.body)
+			})
+			source, err := f.Fetch(t.Context(), Source{Locator: "http://example.com", Title: "不可信候选标题"}, Policy{Mode: "supplement"}, func() error { return nil })
+			if err != nil || source.Title != tc.title || source.Text != "概率原文" {
+				t.Fatalf("抓取标题或正文不符：title=%q text=%q err=%v", source.Title, source.Text, err)
+			}
+		})
+	}
+}
+
 func TestFetchPrefersMainTextBeforeApplyingLimit(t *testing.T) {
 	for _, wrapper := range []string{"main", "article", `div id="mw-content-text"`} {
 		t.Run(wrapper, func(t *testing.T) {
@@ -153,7 +173,7 @@ func TestFetchPrefersMainTextBeforeApplyingLimit(t *testing.T) {
 }
 
 func TestHTMLContentSelectionStillHonorsLateStorageRestriction(t *testing.T) {
-	text, coverage := parseHTML([]byte(`<html><body><main><p>valid body</p></main><meta name="robots" content="noarchive"></body></html>`))
+	text, coverage, _ := parseHTML([]byte(`<html><body><main><p>valid body</p></main><meta name="robots" content="noarchive"></body></html>`))
 	if text != "" || coverage != "storage_restricted" {
 		t.Fatalf("late restriction bypassed: %q %s", text, coverage)
 	}

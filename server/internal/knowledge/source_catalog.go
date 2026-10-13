@@ -18,6 +18,7 @@ import (
 // Missing metadata means unknown; Markdown prefixes are never provenance.
 type SourceMetadata struct {
 	Kind        string            `json:"kind"`
+	Title       string            `json:"title,omitempty"`
 	Locator     string            `json:"locator,omitempty"`
 	FinalURL    string            `json:"final_url,omitempty"`
 	MediaType   string            `json:"media_type,omitempty"`
@@ -125,7 +126,7 @@ func FetchedSourceReceipt(ctx context.Context, generation int64, source research
 	if !source.StorageAllowed || source.Text == "" || (source.Status != "parsed" && source.Status != "partial") || source.PDF != nil {
 		return "", ""
 	}
-	m := SourceMetadata{Kind: "url", Locator: source.Locator, FinalURL: source.FinalURL, MediaType: source.Kind, Parser: source.Parser, Coverage: source.Coverage, Fingerprint: source.Fingerprint, Status: source.Status}
+	m := SourceMetadata{Kind: "url", Title: source.Title, Locator: source.Locator, FinalURL: source.FinalURL, MediaType: source.Kind, Parser: source.Parser, Coverage: source.Coverage, Fingerprint: source.Fingerprint, Status: source.Status}
 	// The body is generated here so client formatting cannot escape receipt binding.
 	provenance, _ := json.Marshal(m)
 	markdown := "# 网页原文\n\n    " + string(provenance) + "\n\n    " + strings.ReplaceAll(source.Text, "\n", "\n    ") + "\n"

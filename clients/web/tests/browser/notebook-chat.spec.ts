@@ -23,7 +23,11 @@ test('来源行打开原文，菜单预算仍用于对话提交', async ({ page 
     status: 'active',
     direction: '理解偶数',
   })
-  await seedSources(page, space.id)
+  await seedSources(
+    page,
+    space.id,
+    String.raw`公式资料 \(2k\) $ x^2 $ \[2+2=4\] $$\sum_{i=1}^2 i=3$$`,
+  )
   await page.goto(`/app/spaces/${space.id}`)
   const sources = page.getByRole('region', { name: '来源', exact: true })
   await sources.getByRole('button', { name: '打开来源：even.md', exact: true }).click()
@@ -34,6 +38,8 @@ test('来源行打开原文，菜单预算仍用于对话提交', async ({ page 
   await expect(
     sources.getByRole('button', { name: '打开来源：even.md', exact: true }),
   ).toBeFocused()
+  await sources.getByRole('checkbox', { name: '选择全部来源' }).uncheck()
+  await sources.getByRole('checkbox', { name: /^选择来源：even.md/ }).check()
   await openNavigation(page)
   const menu = page.getByRole('dialog', { name: '侧边菜单', exact: true })
   await menu.getByText('对话设置', { exact: true }).click()
@@ -47,6 +53,11 @@ test('来源行打开原文，菜单预算仍用于对话提交', async ({ page 
   await page.getByRole('button', { name: '发送提问' }).click()
   expect((await submitted).postDataJSON()).toMatchObject({ request_budget: 1, token_budget: 10000 })
   await expect(page.getByRole('button', { name: '核验引用 1' })).toBeVisible()
+  const answer = page.locator('.chat-answer')
+  await expect(answer.locator('math')).toHaveCount(4)
+  await expect(answer.locator('math[display="block"]')).toHaveCount(2)
+  await answer.getByRole('button', { name: '核验引用 1' }).click()
+  await expect(reader).toContainText('偶数可以被 2 整除')
 })
 
 test('C2 方向、空对话、引用、实时改选、方向修订、保存重开与 Studio 笔记', async ({ page }) => {

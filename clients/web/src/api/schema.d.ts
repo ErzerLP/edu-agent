@@ -4622,6 +4622,8 @@ export interface components {
         KnowledgeSourceMetadata: {
             /** @enum {string} */
             kind: "text" | "pdf" | "url";
+            /** @description 服务端从抓取的网页提取的标题；旧来源可能缺失 */
+            title?: string;
             locator?: string;
             final_url?: string;
             media_type?: string;

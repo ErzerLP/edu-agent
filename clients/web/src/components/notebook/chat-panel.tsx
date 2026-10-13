@@ -435,6 +435,7 @@ export function ChatPanel({
                         <>
                           <div className="chat-answer">
                             <MentorAnswer
+                              renderMath
                               spaceId={space.id}
                               runId={turn.run_id}
                               text={turn.output}

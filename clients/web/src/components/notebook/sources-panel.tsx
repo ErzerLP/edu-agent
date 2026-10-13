@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Folder, X } from 'lucide-react'
-import { sourceDescription, type SourceItem } from '@/api/notebook-sources'
+import { sourceDescription, sourceTitle, type SourceItem } from '@/api/notebook-sources'
 import { useSourceSelection } from './source-selection'
 import { sourceKey } from '@/api/source-selection'
 import { useIdentity } from '@/lib/session'
@@ -77,6 +77,7 @@ export function SourcesPanel({
         )}
         {!sources.error &&
           items.map((item, index) => {
+            const title = sourceTitle(item)
             const kind = item.metadata?.kind ?? 'text'
             const partial = item.metadata?.status === 'partial'
             const status = item.metadata?.derived_from
@@ -98,8 +99,8 @@ export function SourcesPanel({
                 <button
                   type="button"
                   className="notebook-source-open"
-                  aria-label={`打开来源：${item.path}`}
-                  title={`${item.path} · ${item.collection_name}\n${sourceDescription(item.metadata)}`}
+                  aria-label={`打开来源：${title}`}
+                  title={`${title} · ${item.collection_name}\n${sourceDescription(item.metadata)}`}
                   onClick={(event) => {
                     trigger.current = event.currentTarget
                     setCitation(undefined)
@@ -114,7 +115,7 @@ export function SourcesPanel({
                       <span className="notebook-source-index" aria-hidden="true">
                         {index + 1}.
                       </span>
-                      <span>{item.path}</span>
+                      <span>{title}</span>
                     </h3>
                     <span
                       className={`notebook-source-status${partial ? ' partial' : ''}${item.metadata?.derived_from ? ' note' : ''}`}
@@ -128,7 +129,7 @@ export function SourcesPanel({
                 </button>
                 <input
                   type="checkbox"
-                  aria-label={`选择来源：${item.path} · ${item.collection_name} · ${item.collection_id.slice(0, 8)}`}
+                  aria-label={`选择来源：${title} · ${item.collection_name} · ${item.collection_id.slice(0, 8)}`}
                   disabled={!selection}
                   checked={selection?.items.some((s) => sourceKey(s) === sourceKey(item)) ?? false}
                   onChange={(e) => toggle(item, e.target.checked)}

@@ -199,7 +199,7 @@ export function ResearchSourceContent({
   )
 }
 
-function CatalogSourceContent({ spaceId, source }: { spaceId: string; source: SourceItem }) {
+export function CatalogSourceContent({ spaceId, source, highlight = false }: { spaceId: string; source: Pick<SourceItem, 'collection_id' | 'revision_id' | 'document_id' | 'document_revision_id'>; highlight?: boolean }) {
   const { session, prefix } = useIdentity()
   const detail = useQuery({
     queryKey: [
@@ -265,7 +265,7 @@ function CatalogSourceContent({ spaceId, source }: { spaceId: string; source: So
       <section aria-label="来源原文片段">
         {value.fragments.length === 0 && <p>没有可定位的正文片段。</p>}
         {value.fragments.map((fragment, index) => (
-          <details key={fragment.node_revision_id}>
+          <details key={fragment.node_revision_id} open={highlight && index === 0 ? true : undefined}>
             <summary>
               原文片段 {index + 1} · {fragment.title || '正文'}
               {fragment.page ? ` · 第 ${fragment.page} 页` : ''}（字节 {fragment.range.start}–
@@ -274,7 +274,7 @@ function CatalogSourceContent({ spaceId, source }: { spaceId: string; source: So
             <p>
               规范文本第 {fragment.range.start_line}–{fragment.range.end_line} 行
             </p>
-            <pre className="reference-text">{fragment.text}</pre>
+            <pre className={`reference-text${highlight && index === 0 ? ' citation-highlight' : ''}`}>{fragment.text}</pre>
             {fragment.truncated && (
               <p>此片段达到展示预算；可从资料管理页导出该历史版本核对完整正文。这不是解析缺口。</p>
             )}

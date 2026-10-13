@@ -149,6 +149,13 @@ type teachingScopeWriter interface {
 }
 
 func (s *Store) validateGoalWrite(ctx context.Context, tx pgx.Tx, g *learning.GoalRevision) error {
+	var managed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_direction_goals WHERE goal_id=$1)`, g.GoalID).Scan(&managed); err != nil {
+		return err
+	}
+	if (managed || g.Source == "learning_direction") && s.directionGoal != g.GoalID {
+		return &learning.Error{Code: learning.CodeInvalidTransition, Reason: "system_managed_goal"}
+	}
 	if g.LearningSpaceID() != learningspace.Scope(ctx) {
 		return &learning.Error{Code: learning.CodeNotFound}
 	}
@@ -162,6 +169,13 @@ func (s *Store) validateGoalWrite(ctx context.Context, tx pgx.Tx, g *learning.Go
 		}
 	}
 	return lockGoalSpace(ctx, tx)
+}
+
+// ForDirectionGoal is the internal owner port; HTTP goal commands cannot set it.
+func (s *Store) ForDirectionGoal(tx pgx.Tx, id string) *Store {
+	bound := s.WithinTx(tx)
+	bound.directionGoal = id
+	return bound
 }
 
 // 在目标锁内读取最新状态，使暂停与新教学创建具有确定的事务顺序。

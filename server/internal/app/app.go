@@ -22,6 +22,7 @@ import (
 	learningpostgres "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	spacepostgres "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
@@ -99,6 +100,10 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("读取导师正文密钥失败: %w", err)
 	}
 	mentorRuns, err := mentorrun.New(pool, settingsService, mentorKey)
+	if err != nil {
+		return err
+	}
+	directions, err := learningdirection.New(pool, mentorKey)
 	if err != nil {
 		return err
 	}
@@ -199,7 +204,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		LearningChanges:  changes,
 		MentorRuns:       mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
 		Settings:       settingsService,
-		LearningSpaces: spacepostgres.New(pool),
+		LearningSpaces: spacepostgres.New(pool, directions),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, OfflineEnabled: cfg.WebOfflineEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},
 		Identity:       identityService, Model: modelProber, Knowledge: knowledgeService, Notesync: notesyncBridge.review,
 		Learning: learningService, Offline: offlineService,

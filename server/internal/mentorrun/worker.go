@@ -373,7 +373,9 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	}()
 	host := &executionHost{service: s, owned: *item, body: item.body, limits: limits, model: model}
 	host.model, _, _, err = s.settings.MentorClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: host, next: next} })
-	if host.body.Studio != nil {
+	if host.body.Study != nil {
+		err = host.generateStudy(execution)
+	} else if host.body.Studio != nil {
 		err = host.generateStudio(execution)
 	} else if host.body.ContentEdit != nil {
 		err = host.editContent(execution)
@@ -382,7 +384,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
+	if err == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

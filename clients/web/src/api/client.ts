@@ -77,6 +77,12 @@ export function learningClient(session: Session, spaceId?: string) {
         loseIdentity(session)
         throw new ApiError(401, 'identity_changed')
       }
+      // Opt in to the additive Web projection; legacy strict readers keep their DTO.
+      const url = new URL(request.url)
+      if (request.method === 'GET' && /^\/v1\/learning-spaces(?:\/[0-9a-f-]{36})?$/.test(url.pathname)) {
+        url.searchParams.set('include_direction', 'true')
+        return new Request(url, request)
+      }
       return request
     },
     onResponse({ response }) {

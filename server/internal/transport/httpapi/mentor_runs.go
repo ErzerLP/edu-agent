@@ -61,6 +61,11 @@ func (a *API) mentorScope(next http.Handler) http.Handler {
 }
 
 func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
+	var spaceError *learningspace.Error
+	if errors.As(err, &spaceError) {
+		spaceFailure(w, r, err)
+		return
+	}
 	if code := knowledge.ErrorCode(err); code != "" {
 		status := 503
 		switch code {

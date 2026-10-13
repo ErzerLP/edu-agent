@@ -83,17 +83,15 @@ test('测验明确选择目标、正式逐题作答、帮助限制与丢响应�
   await page.goto(`/app/spaces/${space.id}`)
   const studio = page.getByRole('region', { name: 'Studio', exact: true })
   const classroom = page.getByRole('region', { name: '课堂', exact: true })
-  await studio.getByRole('button', { name: /^测验/ }).click()
-  await expect(studio.getByRole('alert')).toContainText('请先在课堂选择或建立目标')
-  await expect(studio.getByRole('button', { name: '开始生成测验', exact: true })).toBeDisabled()
+  await expect(studio.getByRole('button', { name: /^测验/ })).toBeDisabled()
   expect((await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items).toHaveLength(
     0,
   )
-  await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
+  await page.goto(`/app/spaces/${space.id}/manage`)
   const goalText = '偶数测验与课堂共存'
-  await classroom.getByLabel('今天想学会什么？', { exact: true }).fill(goalText)
-  await classroom.getByRole('button', { name: '仅保存目标', exact: true }).click()
-  await expect(classroom.getByText('目标已保存，尚未启动教学。')).toBeVisible()
+  await page.getByLabel('今天想学会什么？', { exact: true }).fill(goalText)
+  await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
+  await expect(page.getByText('目标已保存，尚未启动教学。')).toBeVisible()
   const goal = (await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items[0]
   await webAPI(
     page,
@@ -113,8 +111,8 @@ test('测验明确选择目标、正式逐题作答、帮助限制与丢响应�
     space.id,
   )
   await page.reload()
-  await classroom.getByRole('button', { name: goalText, exact: true }).click()
-  await classroom.getByRole('button', { name: '新建教学会话', exact: true }).click()
+  await page.getByRole('link', { name: goalText, exact: true }).click()
+  await page.getByRole('button', { name: '新建教学会话', exact: true }).click()
   await classroom.getByRole('button', { name: '开始学习', exact: true }).click()
   await classroom.getByRole('button', { name: '生成学习路线', exact: true }).click()
   await classroom.getByRole('button', { name: '生成下一活动', exact: true }).click()
@@ -250,7 +248,7 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
   const space = await createSpace(page, 'Studio 无目标学习区')
   await page.goto(`/app/spaces/${space.id}?panel=studio`)
   const studio = page.getByRole('region', { name: 'Studio', exact: true })
-  await expect(studio.getByRole('button', { name: /^测验/ })).toContainText('请先选择或建立目标')
+  await expect(studio.getByRole('button', { name: /^测验/ })).toBeDisabled()
   await studio.getByRole('button', { name: '＋ 添加笔记', exact: true }).click()
   await studio.getByLabel('笔记标题', { exact: true }).fill('矩阵秩笔记')
   await studio
@@ -313,7 +311,7 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
     [],
   )
   await dialog.getByRole('button', { name: '确认正式导入这 1 项资料' }).click()
-  await expect(dialog.getByText('资料已导入，尚未自动用于目标')).toBeVisible()
+  await expect(dialog.getByText('资料已保存')).toBeVisible()
   await dialog.getByRole('button', { name: '关闭笔记导入' }).click()
   const sources = page.getByRole('region', { name: '来源', exact: true })
   await expect(sources).toContainText('笔记第 1 版快照')

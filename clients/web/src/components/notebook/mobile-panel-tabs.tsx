@@ -11,9 +11,11 @@ const panels = [
 export function MobilePanelTabs({
   panel,
   onChange,
+  legacyClassroom = false,
 }: {
   panel: NotebookPanel
   onChange: (panel: NotebookPanel) => void
+  legacyClassroom?: boolean
 }) {
   const tabs = useRef<(HTMLButtonElement | null)[]>([])
   return (
@@ -50,7 +52,7 @@ export function MobilePanelTabs({
           }}
         >
           <Icon size={20} aria-hidden="true" />
-          <span>{label}</span>
+          <span>{id === 'classroom' && !legacyClassroom ? '对话' : label}</span>
         </button>
       ))}
     </nav>

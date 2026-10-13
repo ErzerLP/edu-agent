@@ -7,14 +7,18 @@ import { useIdentity } from '@/lib/session'
 import { ErrorState } from '../common'
 import { Button } from '../ui/button'
 import { AddSourceDialog } from './add-source-dialog'
-import { CatalogSourceViewer, MentorCitationContent } from './source-viewer'
+import { CatalogSourceContent, CatalogSourceViewer, MentorCitationContent } from './source-viewer'
 
 export function SourcesPanel({
   spaceId,
   archived = false,
+  addSources = false,
+  onAddSourcesClose,
 }: {
   spaceId: string
   archived?: boolean
+  addSources?: boolean
+  onAddSourcesClose?: () => void
 }) {
   const { session } = useIdentity()
   const { available, capabilities, sources, selection, toggle, selectAll, citation, setCitation } =
@@ -28,16 +32,15 @@ export function SourcesPanel({
   const items = sources.data?.pages.flatMap((p) => p.items) ?? []
   return (
     <>
-      <p className="hint">勾选用于之后发起的导师追问与 Studio 生成。课堂使用其已冻结资料。</p>
       {citation && (
         <div className="notebook-citation" key={`${citation.runId ?? citation.artifactId}:${citation.version}:${citation.id}`}>
-          <MentorCitationContent
+          {citation.source ? <CatalogSourceContent spaceId={spaceId} source={citation.source} highlight /> : <MentorCitationContent
             spaceId={spaceId}
             runId={citation.runId}
             artifactId={citation.artifactId}
             version={citation.version}
             citationId={citation.id}
-          />
+          />}
           <Button variant="outline" onClick={() => setCitation(undefined)}>
             关闭引用片段
           </Button>
@@ -54,11 +57,10 @@ export function SourcesPanel({
           全选已加载来源（已选 {selection.items.length} / {items.length}）
         </label>
       )}
-      {selection?.mode === 'none' && <p role="status">未选来源，不引用资料</p>}
       {archived ? (
         <p>此学习区已归档，只能查看已有来源。</p>
       ) : session.capabilities.references ? (
-        <AddSourceDialog spaceId={spaceId} />
+        <AddSourceDialog spaceId={spaceId} initiallyOpen={addSources} onClose={addSources ? onAddSourcesClose : undefined} />
       ) : (
         <p>添加来源需要参考管理配对权限。</p>
       )}

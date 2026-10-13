@@ -47,6 +47,14 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
+    if (payload.messages?.[0]?.content?.includes('当前为纯讲解模式')) {
+      const material = JSON.parse(payload.messages[1].content)
+      const source = material.sources[0], fragment = source?.fragments[0]
+      const result = fragment ? { answer: `围绕${material.direction}，已核对${source.collection_name}：${fragment.text} [1]`, citations: [{ source: 1, fragment: 1 }] } : { answer: `围绕${material.direction}，我们可以先理解核心概念。`, citations: [] }
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 } }))
+      return
+    }
     if (payload.messages?.[0]?.content?.includes('仅根据给定的已核验来源片段生成学习产物')) {
       const material = JSON.parse(payload.messages[1].content)
       const guide = payload.messages[0].content.includes('"key_points"')

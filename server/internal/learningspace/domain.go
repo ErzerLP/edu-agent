@@ -15,20 +15,23 @@ const DefaultID = "00000000-0000-4000-8000-000000000001"
 const Header = "X-Learning-Space-ID"
 
 type Space struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Status      string    `json:"status"`
-	Version     int64     `json:"version"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Direction        string    `json:"direction,omitempty"`
+	DirectionVersion int64     `json:"direction_version,omitempty"`
+	ID               string    `json:"id"`
+	Name             string    `json:"name"`
+	Description      string    `json:"description"`
+	Status           string    `json:"status"`
+	Version          int64     `json:"version"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 type Command struct {
-	OperationID     string `json:"operation_id"`
-	ExpectedVersion int64  `json:"expected_version"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	Status          string `json:"status"`
+	Direction       *string `json:"direction,omitempty"`
+	OperationID     string  `json:"operation_id"`
+	ExpectedVersion int64   `json:"expected_version"`
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	Status          string  `json:"status"`
 }
 type Query struct {
 	Search, Status, Cursor string
@@ -47,6 +50,9 @@ func ValidID(id string) bool {
 	return err == nil && u != uuid.Nil && u.String() == id
 }
 func (c Command) Validate(create bool) error {
+	if c.Direction != nil && (!utf8.ValidString(*c.Direction) || strings.TrimSpace(*c.Direction) == "" || utf8.RuneCountInString(strings.TrimSpace(*c.Direction)) > 2000) {
+		return Invalid()
+	}
 	if !ValidID(c.OperationID) || (create && c.ExpectedVersion != 0) || (!create && c.ExpectedVersion < 1) ||
 		strings.TrimSpace(c.Name) == "" || utf8.RuneCountInString(c.Name) > 120 || !utf8.ValidString(c.Name) ||
 		utf8.RuneCountInString(c.Description) > 2000 || !utf8.ValidString(c.Description) ||

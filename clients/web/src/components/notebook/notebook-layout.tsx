@@ -12,6 +12,7 @@ export function NotebookLayout({
   classroom,
   studio,
   sourceFocus,
+  legacyClassroom = false,
 }: {
   panel: NotebookPanel
   onPanelChange: (panel: NotebookPanel) => void
@@ -19,6 +20,7 @@ export function NotebookLayout({
   classroom: ReactNode
   studio: ReactNode
   sourceFocus?: { id: string }
+  legacyClassroom?: boolean
 }) {
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 1099px)').matches)
   const [collapsed, setCollapsed] = useState({ sources: false, studio: false })
@@ -34,7 +36,7 @@ export function NotebookLayout({
   }, [])
   const columns = [
     { id: 'sources', title: '来源', content: sources },
-    { id: 'classroom', title: '课堂', content: classroom },
+    { id: 'classroom', title: legacyClassroom ? '课堂' : '对话', content: classroom },
     { id: 'studio', title: 'Studio', content: studio },
   ] as const
   return (
@@ -84,7 +86,7 @@ export function NotebookLayout({
           </section>
         ))}
       </div>
-      <MobilePanelTabs panel={panel} onChange={onPanelChange} />
+      <MobilePanelTabs panel={panel} onChange={onPanelChange} legacyClassroom={legacyClassroom} />
     </>
   )
 }

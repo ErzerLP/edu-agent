@@ -133,19 +133,18 @@ export function StudioPanel({
     )
   return (
     <>
-      <p className="hint">整理学习成果，留住自己的理解。</p>
       <div className="notebook-studio-tiles">
         {tiles.map(({ name, kind, Icon, color }) => (
           <button
             type="button"
             className={`notebook-studio-tile notebook-color-${color}`}
             key={name}
-            disabled={!canGenerate}
+            disabled={!canGenerate || kind === 'quiz' && !goalId}
             onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' | 'quiz' })}
           >
             <Icon size={22} aria-hidden="true" />
             <h3>{name}</h3>
-            <span>{kind === 'quiz' && !goalId ? '请先选择或建立目标' : '按所选来源生成'}</span>
+            <span>{kind === 'quiz' && !goalId ? '方向测验将在后续支持' : '按所选来源生成'}</span>
           </button>
         ))}
         <button

@@ -1,5 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import type { Space } from '@/api/runtime'
+import { SpaceDialog } from './space-dialog'
 
 export function NotebookHeader({ space }: { space: Space }) {
   return (
@@ -9,13 +10,7 @@ export function NotebookHeader({ space }: { space: Space }) {
         <h1>{space.name}</h1>
       </div>
       {space.status === 'archived' && <span className="badge">已归档 · 只读</span>}
-      <Link
-        className="button button-outline"
-        to="/spaces/$spaceId/manage"
-        params={{ spaceId: space.id }}
-      >
-        管理学习区与目标
-      </Link>
+      <SpaceDialog space={space} />
     </header>
   )
 }

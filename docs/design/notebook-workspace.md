@@ -1,10 +1,10 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：Shape 已确认（2026-10-13）：用户认可对话式原型 v2，Q1–Q5 采用建议默认值。批次 1、2、3（含 3c 单题会话方案 A）已合并 main；来源与 Studio 继续复用，中栏改为对话式学习。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)。本轮有效设计与计划为下方“方向变更”一节；后续旧设计及实施记录仅作历史追溯。本次仅改三份文档，不暂存／提交。
+状态：Shape 已确认（2026-10-13）：用户认可对话式原型 v2，Q1–Q5 采用建议默认值。批次 1、2、3（含 3c 单题会话方案 A）与 C1 已合并 main；C2 已在 `feat-chat-c2` 工作树实现并完成本次验收，未暂存／提交。来源与 Studio 继续复用，中栏改为对话式学习。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)。本轮有效设计与计划为下方“方向变更”一节；后续旧设计及实施记录仅作历史追溯。
 
 ## 方向变更（2026-10-12）
 
-本节是当前 Shape 的实现设计。用户已确定“在 AI 对话中学习”，这里的协议、持久化选择和 Q1–Q5 默认值仍待确认；不得把它们当作已发布能力。调查工作树为 `docs-shape-chat` / `493aaa5`，无既有未提交修改；批次 1、2、3（含 3c）已合并 main。v2 原型预期位于 `/home/yunyue/.config/edu-agent-demo/prototype/v2/index.html`，调查时不存在，按用户决定设计。旧批次的测试结果不构成本轮验收。
+本节是已确认 Shape 的实现设计；Q1–Q5 已确认采用默认值，原型为 [notebook-chat-prototype.html](notebook-chat-prototype.html)。初次调查基于 `docs-shape-chat` / `493aaa5`；各批实际交付与检查以对应实施记录为准，C3–C5 仍属后续计划。旧批次的测试结果不构成本轮验收。
 
 ### A. 方案选择与新信息架构
 
@@ -360,6 +360,191 @@ scope 或撤销设备。Vite 有现有 chunk 大小提示，Playwright 有 NO_CO
 - **延期：** 自动出练习到 C3，Study 模式本批不显示不可作答的“练习卡”；Studio 取消目标门槛到 C4，旧已保存产物仍可读。
 - **退出标准：** 创建／修改方向、并发 ensure 只有一个系统 goal、方向更新形成修订；A→B 与方向变化的模型输入隔离；保存重开、模型目的地、unknown 与撤权／清除有效。类型／受影响 Go 测试、方向 migration 升级和真实 PostgreSQL、主对话 Chromium 场景通过；确认没有主界面手工目标门槛。
 - **重型证据：** 全历史矩阵与三引擎到 C5；方向 owner 清除／轮换、旧 create/update／conversation 兼容本批必跑。
+
+##### C2 实施记录（2026-10-13）
+
+**本次续做。** 保留并逐项审阅上一轮的 40 个修改文件、15 个新文件，对照
+[执行清单](notebook-chat-c2-plan.md) 与已确认原型核对。仅对设置弹窗做局部修复：归档时禁用方向
+编辑／首次确认，避免编辑后保存却省略方向；归档／恢复的二次确认放在同一原生 dialog 内，
+修复外层 dialog 阻挡原 portal 确认按钮点击的问题。新增浏览器用例先复现两个问题，再验证
+恢复后修改方向及刷新读回。另补充 `TestPostgreSQLDirectionFailureRollsBackSpaceAndReceipt`，直接验证方向存储不可用时
+创建／编辑整笔回滚、失败不留回执、恢复后同操作重试，以及相同方向只改名不产生修订。
+下列检查全部为本次重新执行的结果，替换初稿中的未核实记录。
+
+**交付合同。** 新 Web 按 `notebook-chat-prototype.html` 使用“来源—对话—Studio”。
+新建弹窗填写名称和学习方向，可选择立即添加来源；设置弹窗修改名称／方向和归档／恢复。
+旧区只以区名预填，用户确认前不能发送 study 轮次；不读取 description 或旧目标推断方向。
+方向裁剪首尾空白，允许 1–2000 Unicode 字符。名称和方向同事务保存，沿用空间
+`operation_id / expected_version`；改名和相同方向不会增加方向修订。旧请求回执不会在重放时
+带入后来补充的方向，回执仅保存方向版本身份，不另存方向明文。
+
+旧 CLI 的 JSON 解码拒绝未知字段，因此 GET 学习区／列表增加显式
+`include_direction=true` 投影；Web 客户端声明此参数，省略时仍返回旧字段。
+create/update 的 `direction` 可选，省略保持方向且返回旧格式；提供时返回
+`direction / direction_version`。没有改 CLI 或 agentcore，也没有新增 HTTP 路径；
+原 route classification、精确 Origin、CSRF、权限和 `deploy/web/nginx.conf` 白名单继续适用，
+API 路由及代理合同检查通过。
+
+**系统目标与迁移。** 仅追加 `000038_study_direction.sql`：
+`learning_space_directions` 保存空间／隐私代次的方向 head；
+`learning_direction_revisions` 保存不可变加密修订；
+`learning_direction_goals` 唯一绑定空间和系统 goal，并记录已接入的方向版本及 goal revision。
+`learning_tutor_conversations.mode` 默认 `mentor`，study 约束为保存且无固定 goal/session。
+从 37 升级不会填充方向，不修改旧名称、私人描述、目标或课堂；迁移可重放。
+
+`learningdirection.EnsureTx` 在学习请求受理事务中锁定空间，与方向编辑串行，经原
+`learning.CreateGoal` 命令／事件／回执写入目标；同区并发 ensure 只有一个 goal。
+新方向在下一次受理时生成同 goal 的新修订并保留 `previous_revision_id`。仅浏览、打开新对话、
+导入或勾选不会 ensure、调用模型或创建教学活动。通用目标编辑／生命周期不能修改系统目标。
+方向修订采用导师正文密钥的 AES-GCM，AAD 绑定 revision、space、generation、version；
+目标事实及其事件沿用 learning owner 既有存储和清除合同。方向、绑定、操作回执和 study
+历史均接入 learning 隐私清除／验证；密钥维护事务同时轮换方向和原导师历史密文。
+
+**study 轮次。** `NewConversation.mode=study` 默认保存；HTTP 不接受 study 的
+`saved=false`、固定 `goal_id / teaching_session_id` 或未知模式。省略 mode 的旧请求仍须
+明确 saved，旧临时会话不升级。study SubmitTurn 必须提供 `direction_version` 和显式
+`source_selection`（可以是 none），旧 mentor 不接受 direction_version。原请求先查操作回执，
+因此方向变化后核对已受理操作不会重复运行或重新解释载荷。
+
+每轮加密 `Body.Study` 保存方向 ID／版本／原文与确切系统 goal／revision；conversation
+仍是空间级身份。模型只接收当前方向、确切来源、方向 ID 和 manifest 同时匹配的历史；
+不会恢复通用 goal/session snapshot、description、长期记忆或其他工具结果。A→B 及方向
+变化均有实际模型 HTTP 输入隔离测试。运行按受理快照完成，不追随之后修改的方向。
+讲解使用教学连接复用的结构化客户端（支持 Responses），提供可复制引用候选，结构／引用
+失败至多两次尝试且每次过原预算门禁；错误引用不展示、不保存为成功回答。
+有来源时回答至少一个核验引用，编号须对应已验证片段；零选择只做一般讲解，不能伪造引用。
+
+本批不调用出题、作答、评估或掌握度工具。“出一道题”是快捷追问，只能讲解例题或说明后续
+支持可提交练习；没有练习卡，也不会创建 tutoring session 或 Attempt。结构化回答完成核验后
+进入消息流，不显示未经核验的模型增量。
+
+**界面与移除项。** 中栏包含对话标题／切换／新建，空态方向、所选来源原文简述与引用、
+三条建议问题、“开始学习”“继续上次”；用户消息右对齐，AI 左对齐，底部输入、四条快捷追问、
+“基于 N 个来源”。引用打开左栏核验片段并高亮，窄屏切到来源标签；返回对话保留草稿。
+概要不触发模型，其简述来自实际片段，不伪造全库摘要。未发送文字、待核对操作和表单草稿只
+使用标签页 DraftStore；已发送对话默认保存，URL 的 conversation 参数支持刷新重开。
+“保存为笔记”调用 3a Studio note 合同，同操作重试返回同笔记，列表读回真实产物。
+
+新主路径移除 ClassroomPanel、GoalSelector、GoalComposer、SessionPicker、“今天想学会什么”、
+目标搜索／分页与开课步骤；左栏和中栏的冻结范围／零来源解释横幅移除。
+Notebook 导入成功提示改为“资料已保存”；旧参考管理页保留原兼容语义。
+设置入口为弹窗，菜单中的旧目标／课堂管理和原深链接继续可达，数据未删除。
+Studio 方向测验暂时禁用，显示后续支持，不再引导主界面手工建目标；已有带目标课堂的
+Studio 测验路径保持原 3c 行为，完整接入方向仍属 C4。
+
+**文件映射（新增）。**
+
+| 文件 | 职责 |
+| --- | --- |
+| `server/migrations/000038_study_direction.sql` | **migration**：方向／系统目标绑定、study 模式约束 |
+| `server/internal/learningdirection/store.go` | 方向读写、并发 ensure、目标修订、密钥轮换 |
+| `server/internal/mentorrun/study.go` | 纯讲解结构化请求、方向历史匹配、引用编号校验 |
+| `clients/web/src/components/notebook/{space-dialog,chat-overview,chat-panel}.tsx` | 新建／设置／旧区确认弹窗及对话主界面；归档方向只读与可操作的生命周期二次确认 |
+| `server/internal/learningspace/postgresstore/direction_test.go` | 原子方向保存与失败回滚、同操作恢复、冲突、重放、并发 ensure、同方向不修订和轮换 |
+| `server/internal/mentorrun/{study,study_privacy,study_live}_test.go` | 模式、隔离、保存、撤权、清除、轮换、有界重试及真实 smoke |
+| `server/internal/transport/httpapi/study_direction_test.go` | 旧严格响应解码兼容与 Web 显式投影 |
+| `server/api/openapi_study_test.go`、`server/migrations/study_direction_test.go` | 新合同及从 37 升级 |
+| `clients/web/tests/browser/notebook-chat.spec.ts` | C2 全链路、手机、旧区确认、立即添加来源仅打开一次、即时撤权和归档恢复后的方向编辑 |
+| `docs/design/notebook-chat-c2-plan.md` | 执行计划与完成项 |
+
+**文件映射（修改）。**
+
+| 文件 | 职责 |
+| --- | --- |
+| `server/api/openapi.yaml`、`clients/web/src/api/schema.d.ts` | **OpenAPI** 与 `npm run generate` 生成合同 |
+| `server/internal/learningspace/domain.go`、`postgresstore/store.go` | 可选方向 DTO、名称／方向同事务与原回执 |
+| `server/internal/learning/postgresstore/{store,goals,privacy}.go` | 系统目标 owner 写端口／保护、清除与验证 |
+| `server/internal/mentorrun/{conversation,store,types,worker}.go` | mode、方向受理快照、持久历史、结构化执行分支 |
+| `server/internal/transport/httpapi/{learning_space,tutor_history,mentor_runs}.go` | 可选方向投影、study 校验、错误合同 |
+| `server/internal/app/{app,mentor_rotation}.go` | owner 组合与维护轮换 |
+| `server/migrations/migrations_test.go` | 最新 migration 断言更新为 38，保留 31/32 历史检查 |
+| `clients/web/src/api/{client,runtime,conversations}.ts` | Web 方向投影声明、响应及提交校验 |
+| `clients/web/src/{notebook-home-page,notebook-workspace-page}.tsx` | 弹窗入口、对话路由、保留旧课堂深链接 |
+| `clients/web/src/components/notebook/{notebook-header,notebook-layout,mobile-panel-tabs,source-selection,source-viewer,sources-panel,add-source-dialog,studio-panel}.tsx` | 对话布局／标签、概要来源定位、立即添加来源、移除主界面旧提示 |
+| `clients/web/src/components/{reference-import,tutor-history}.tsx`、`clients/web/src/styles.css` | 导入状态、study 历史继续入口、原型样式 |
+| `clients/web/scripts/test-server.mjs`、`clients/web/tests/browser/notebook-fixture.ts` | 确定性讲解模型与显式模型配置夹具 |
+| `clients/web/tests/browser/{notebook-workspace,notebook-studio,notebook-sources,learner}.spec.ts` | 迁移入口／文案断言，保留原领域与权限断言 |
+| `docs/design/notebook-workspace.md` | 本实施记录 |
+
+**测试迁移。** 旧工作区目标／课堂验收改从菜单管理页进入旧目标，再走原课堂深链接，仍验证
+真实 Attempt、评估、反馈、刷新及双标签草稿。原目标草稿隔离测试改验证聊天草稿；范围问答改为
+study、默认保存，保留 A/B 来源、零选择、双标签和丢响应核对，系统目标断言改为唯一 binding。
+Studio 旧测验通过保留的管理／课堂入口建立前置条件，继续验证两题作答、实际帮助、unknown
+核对、进度与原课堂草稿不变。导入只调整成功提示断言，不降低解析、审阅或来源身份核验。
+立即添加来源的刷新用例等待原生 dialog 关闭并断言 URL 已移除 `add_sources` 后再刷新，
+消除关闭事件尚未完成就导航的测试竞态；仍断言刷新后不会重开。
+
+**检查记录（本次续做重新执行）。** Go 先 `umask 022`，使用 `GOCACHE=/tmp/c2-go-cache`；
+真实数据库为指定 32995 PostgreSQL，各测试独立 schema、`-p=1`。沙箱不可写用户缓存目录，
+因此等价构建 `/tmp/c2-resume-webdatabase` 与 `/tmp/c2-resume-webnotebook`；未操作 Docker
+容器。Chromium 使用指定 `chromium-1247`，仅端口 32929（确定性模型使用既有夹具端口 32930）。
+结果如下；非数据库 package 的 skip 不作为 PG 证据，已经通过的检查不重复扩跑。
+
+| 检查 | 命令／结果与证据 |
+| --- | --- |
+| 前端合同／类型／构建 | `npm run generate`、`npm run check`、`npm run build -- --configLoader native` 通过。设置弹窗修复后再次通过类型／构建，最终日志 `/tmp/c2-resume-web-build-final.log`；已有 discriminator、Zod 注释及 chunk 大小提示，无构建错误，生成类型无漂移。 |
+| Vitest | `npm run test -- --configLoader native src/api/{conversations,source-selection,notebook-sources,studio}.test.ts src/lib/drafts.test.ts`：5 文件、17 项通过，`/tmp/c2-resume-vitest.log`。 |
+| Go 局部包 | `go test -p=1 ./internal/learningspace/... ./internal/learningdirection ./internal/learning/... ./internal/mentorrun ./internal/transport/httpapi ./internal/app ./api ./migrations -count=1` 通过；包含严格旧响应读取、OpenAPI、路由分类和 nginx 代理合同。日志 `/tmp/c2-resume-go-unit.log`。 |
+| Go vet | 上述受影响包 `go vet` 通过，`/tmp/c2-resume-go-vet.log`。补充原子回滚测试后该包再次 vet 通过，`/tmp/c2-resume-atomicity-vet.log`。 |
+| 真实 PG 方向／历史／引用／升级 | 下方定向命令：24 个顶层测试通过，0 skipped，`/tmp/c2-resume-pg.log`。包括从 37 升级、六个并发 ensure 共用唯一 goal、方向修订与旧请求重放、A→B／方向变化的实际模型请求隔离、保存重开。 |
+| 真实 PG 清除／轮换／回执 | 同一组内的 `TestPostgreSQLStudyDirectionErasureCannotRevive`、`TestPostgreSQLStudySourceAndDirectionIsolationReopen`（含同事务轮换）、`TestPostgreSQLDirectionLegacyReceiptDoesNotAcquireNewIntent` 通过。另含原来源撤权／清除、保存历史及共用 owner 轮换回归；不重复执行。 |
+| 真实 PG 引用重试 | 同一组内的 `TestPostgreSQLStudyCitationRetriesStayBounded`：修复、持续错误、预算用尽三个子场景通过，未放宽引用校验。 |
+| 真实 PG 原子失败补验 | `go test -p=1 ./internal/learningspace/postgresstore -run '^TestPostgreSQLDirectionFailureRollsBackSpaceAndReceipt$' -count=1 -v`：1 项通过，0 skipped；`/tmp/c2-resume-atomicity.log`。 |
+| Chromium 主回归 | 独立 schema 包装运行 `notebook-chat.spec.ts notebook-workspace.spec.ts notebook-studio.spec.ts learner.spec.ts --project=chromium`：17 项通过，0 failed／skipped／retry，142 秒；`/tmp/c2-resume-browser.{log,json}`。 |
+| Chromium 来源回归 | `notebook-sources.spec.ts --project=chromium` 使用独立 schema 与 `webnotebook` 受控网络夹具：3 项通过，0 failed／skipped／retry，13 秒；`/tmp/c2-resume-sources.{log,json}`。 |
+| Chromium 设置修复后 | 同一包装和确定性模型运行 `notebook-chat.spec.ts --project=chromium`：4 项全部通过，0 failed／skipped／自动 retry，19 秒；`/tmp/c2-resume-chat-verified.{log,json}`。归档输入和恢复点击问题的先失败证据为 `/tmp/c2-resume-archived-red.log`、`/tmp/c2-resume-archived.log`；来源关闭／刷新同步失败记录为 `/tmp/c2-resume-chat-final.log`，均保留且不计为通过。结合未受影响的主回归与来源回归，共 21 个不同浏览器场景通过。 |
+| 真实模型 smoke | `C2_LIVE_SMOKE=1 go test -p=1 ./internal/mentorrun -run '^TestPostgreSQLStudyLiveResponsesSmoke$' -count=1 -v` 通过，`/tmp/c2-resume-live.log`。外部 model.env 仅加载到进程环境；教学连接复用、Responses、deepseek-v4-flash、输出预算 8192，本次实际 1 次调用，核验引用 1 个、保存轮次 1 个。usage：输入 839、输出 360（含 reasoning 297）、总计 1199。未输出密钥，未追加真实调用。 |
+| 差异检查 | `git diff --check` 通过；55 个任务文件（40 修改、15 新增），无 CLI／agentcore／旧 migration 改动，无暂存项。 |
+
+真实 PG 定向命令（在 `server`，另带上述 `GOCACHE`）：
+
+```bash
+TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable' \
+go test -p=1 ./internal/learningspace/postgresstore ./internal/mentorrun ./migrations \
+  -run 'TestPostgreSQLDirection|TestPostgreSQLStudy(Mode|Source|Direction|Citation)|TestPostgreSQLSourceSelection|TestPostgreSQLTutorHistory|TestStudyDirectionMigrationUpgrade' \
+  -count=1 -v
+```
+
+浏览器工具构建与验收命令：
+
+```bash
+# 在 server；生产二进制提供配对码命令和真实业务服务。
+go build -o /tmp/c2-resume-webdatabase ./testutil/webdatabase
+go build -tags web_release -o /tmp/c2-resume-webnotebook ./testutil/webnotebook
+go build -tags web_release -o edu-agentd ./cmd/edu-agentd
+
+# 在 clients/web；每组自动创建并清理自己的 schema。
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+export WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0
+export WEB_CHROMIUM_PATH='/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome'
+PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/c2-resume-browser.json /tmp/c2-resume-webdatabase \
+  npm run test:browser -- notebook-chat.spec.ts notebook-workspace.spec.ts notebook-studio.spec.ts learner.spec.ts \
+  --project=chromium --reporter=line,json --output=/tmp/c2-resume-browser-artifacts
+WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/c2-resume-webnotebook PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/c2-resume-sources.json \
+  /tmp/c2-resume-webdatabase npm run test:browser -- notebook-sources.spec.ts \
+  --project=chromium --reporter=line,json --output=/tmp/c2-resume-sources-artifacts
+# 设置修复后重新构建前端／edu-agentd，重验 C2。
+PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/c2-resume-chat-verified.json /tmp/c2-resume-webdatabase \
+  npm run test:browser -- notebook-chat.spec.ts --project=chromium \
+  --reporter=line,json --output=/tmp/c2-resume-chat-verified-artifacts
+```
+
+**截图。** 本次 Chromium 生成并已目视检查：新对话空态 `/tmp/c2-empty-conversation.png`，
+带引用回答 `/tmp/c2-cited-answer.png`，手机对话 `/tmp/c2-mobile-conversation.png`。
+空态概要支持中栏独立滚动；移动端引用切到来源后返回，未发送草稿仍保留，整页无横向溢出。
+
+**C3 接口约定。** C3 继续使用空间级 `mode=study` conversation 和显式
+`direction_version + source_selection`；从本轮 `Body.Study` 与 manifest 取已受理版本，
+不能重新读取 latest 或把另一轮对话的来源带入。`learningdirection.EnsureTx` 是在外层隐私／
+actor 门禁事务中使用的 owner 端口；系统目标经 learning 命令创建，绑定保护不能绕过。
+本批公开轮次仍为 output/citations，不预建假的 exercise_ref；C3 再原子发布真实活动／内容／
+练习映射后增加有类型卡片。聊天文字与笔记不构成 Attempt，不能复用聊天发送作为作答提交。
+Studio 测验接入方向仍为 C4，不扩大本批范围。
+
+**限制与风险。** 方向和保存对话依赖服务端正文密钥；旧 learning 事实保留原存储策略，不能将
+本批方向／历史密文描述为全学习数据库加密。旧目标、课堂、来源、Studio 历史未迁移重写。
+本批不交付可作答练习卡，不把聊天次数或阅读当掌握度。未运行三引擎、Go 全量、race 或
+Compose，未安装依赖、暂存、提交或推送。无需用户决策。
 
 #### C3：对话内一题走完学习闭环（8–12 人日）
 

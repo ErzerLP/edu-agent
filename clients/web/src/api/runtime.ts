@@ -20,6 +20,8 @@ export const sessionSchema = z.object({
 })
 export type Session = z.infer<typeof sessionSchema>
 export const spaceSchema = z.object({
+  direction: z.string().optional(),
+  direction_version: version.optional(),
   id,
   name: z.string(),
   description: z.string(),

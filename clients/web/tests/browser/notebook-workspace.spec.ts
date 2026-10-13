@@ -15,8 +15,9 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
 }) => {
   await pairNotebook(page)
   const name = `偶数笔记本 ${randomUUID().slice(0, 8)}`
-  await page.getByText('新建学习区', { exact: true }).click()
+  await page.getByRole('button', { name: '新建学习区', exact: true }).click()
   await page.getByLabel('学习区名称', { exact: true }).fill(name)
+  await page.getByLabel('学习方向', { exact: true }).fill('理解偶数与整除')
   await page.getByRole('button', { name: '创建学习区', exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true, level: 1 })).toBeVisible()
   const spaceId = new URL(page.url()).pathname.split('/')[3]
@@ -26,7 +27,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
   await page.getByLabel('搜索学习区', { exact: true }).fill(name)
   await page.getByRole('link', { name, exact: true }).click()
   await expect(page.getByRole('region', { name: '来源', exact: true })).toBeVisible()
-  await expect(page.getByRole('region', { name: '课堂', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '对话', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Studio', exact: true })).toBeVisible()
   await expect(page.getByRole('region', { name: '来源', exact: true })).toContainText('偶数资料')
   await expect(page.getByRole('region', { name: '来源', exact: true })).toContainText('even.md')
@@ -39,6 +40,8 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
       .getByText('尚未交付', { exact: true }),
   ).toHaveCount(0)
 
+  await openNavigation(page)
+  await page.getByRole('link', { name: '管理学习区与目标', exact: true }).click()
   const text = '理解偶数并使用原资料说明依据'
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(text)
   await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
@@ -64,7 +67,7 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
     spaceId,
   )
   await page.reload()
-  await page.getByRole('button', { name: text, exact: true }).click()
+  await page.getByRole('link', { name: text, exact: true }).click()
   await page.getByRole('button', { name: '新建教学会话', exact: true }).click()
   await expect(page).toHaveURL(/\/learn\/[0-9a-f-]+$/)
   const classroomURL = page.url()
@@ -93,7 +96,9 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
     .getByRole('dialog', { name: '侧边菜单' })
     .getByRole('link', { name, exact: true })
     .click()
-  await page.getByRole('button', { name: text, exact: true }).click()
+  await openNavigation(page)
+  await page.getByRole('link', { name: '管理学习区与目标', exact: true }).click()
+  await page.getByRole('link', { name: text, exact: true }).click()
   await page.getByRole('region', { name: '教学会话', exact: true }).getByRole('link').click()
   await expect(answer).toHaveValue('A')
   await expect(second.getByRole('textbox', { name: '我的正式答案', exact: true })).toHaveValue('B')
@@ -109,13 +114,15 @@ test('配对、新建学习区、卡片进入、建立并恢复真实课堂、�
   await page.getByRole('link', { name: '全部学习区', exact: true }).click()
   await page.getByLabel('搜索学习区', { exact: true }).fill(name)
   await page.getByRole('link', { name, exact: true }).click()
-  await page.getByRole('button', { name: text, exact: true }).click()
+  await openNavigation(page)
+  await page.getByRole('link', { name: '管理学习区与目标', exact: true }).click()
+  await page.getByRole('link', { name: text, exact: true }).click()
   await page.getByRole('region', { name: '教学会话', exact: true }).getByRole('link').click()
   await expect(page).toHaveURL(classroomURL)
   await expect(page.getByRole('region', { name: '教学反馈', exact: true })).toContainText('已接纳')
 })
 
-test('390 与 1280 宽度无整页溢出，底部标签切换保留目标草稿', async ({ page }, testInfo) => {
+test('390 与 1280 宽度无整页溢出，底部标签切换保留对话草稿', async ({ page }, testInfo) => {
   await pairNotebook(page)
   await page.getByRole('link', { name: '默认学习区', exact: true }).click()
   for (const width of [1280, 390]) {
@@ -125,24 +132,24 @@ test('390 与 1280 宽度无整页溢出，底部标签切换保留目标草稿'
     expect(brand!.y + brand!.height, '品牌必须在顶栏内，不能压住学习区标题').toBeLessThanOrEqual(
       header!.y + header!.height,
     )
-    await page.getByLabel('今天想学会什么？', { exact: true }).fill(`目标草稿 ${width}`)
+    await page.getByLabel('向导师提问', { exact: true }).fill(`对话草稿 ${width}`)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath(`notebook-${width}.png`), fullPage: true })
     if (width === 390) {
       const tabs = page.getByRole('tablist', { name: '学习区面板', exact: true })
       await tabs.getByRole('tab', { name: '来源', exact: true }).click()
-      await expect(page.getByRole('region', { name: '课堂', exact: true })).not.toBeVisible()
+      await expect(page.getByRole('region', { name: '对话', exact: true })).not.toBeVisible()
       await tabs.getByRole('tab', { name: 'Studio', exact: true }).click()
       await page.reload()
       await expect(tabs.getByRole('tab', { name: 'Studio', exact: true })).toHaveAttribute(
         'aria-selected',
         'true',
       )
-      await tabs.getByRole('tab', { name: '课堂', exact: true }).click()
-      await page.getByLabel('今天想学会什么？', { exact: true }).fill('切标签保留草稿')
+      await tabs.getByRole('tab', { name: '对话', exact: true }).click()
+      await page.getByLabel('向导师提问', { exact: true }).fill('切标签保留草稿')
       await tabs.getByRole('tab', { name: '来源', exact: true }).click()
-      await tabs.getByRole('tab', { name: '课堂', exact: true }).click()
-      await expect(page.getByLabel('今天想学会什么？', { exact: true })).toHaveValue(
+      await tabs.getByRole('tab', { name: '对话', exact: true }).click()
+      await expect(page.getByLabel('向导师提问', { exact: true })).toHaveValue(
         '切标签保留草稿',
       )
     }
@@ -158,15 +165,15 @@ test('同标签页切区恢复草稿，双标签页互不覆盖，来源不跨�
   await page.goto(`/app/spaces/${a.id}`)
   const second = await context.newPage()
   await second.goto(`/app/spaces/${a.id}`)
-  await page.getByLabel('今天想学会什么？', { exact: true }).fill('甲标签页草稿')
-  await second.getByLabel('今天想学会什么？', { exact: true }).fill('乙标签页草稿')
+  await page.getByLabel('向导师提问', { exact: true }).fill('甲标签页草稿')
+  await second.getByLabel('向导师提问', { exact: true }).fill('乙标签页草稿')
   await openNavigation(page)
   await page.getByText('切换学习区', { exact: true }).click()
   await page
     .getByRole('dialog', { name: '侧边菜单' })
     .getByRole('link', { name: b.name, exact: true })
     .click()
-  await page.getByLabel('今天想学会什么？', { exact: true }).fill('另一区的草稿')
+  await page.getByLabel('向导师提问', { exact: true }).fill('另一区的草稿')
   await expect(page.getByRole('region', { name: '来源', exact: true })).not.toContainText(
     '只属于甲的资料',
   )
@@ -176,8 +183,8 @@ test('同标签页切区恢复草稿，双标签页互不覆盖，来源不跨�
     .getByRole('dialog', { name: '侧边菜单' })
     .getByRole('link', { name: a.name, exact: true })
     .click()
-  await expect(page.getByLabel('今天想学会什么？', { exact: true })).toHaveValue('甲标签页草稿')
-  await expect(second.getByLabel('今天想学会什么？', { exact: true })).toHaveValue('乙标签页草稿')
+  await expect(page.getByLabel('向导师提问', { exact: true })).toHaveValue('甲标签页草稿')
+  await expect(second.getByLabel('向导师提问', { exact: true })).toHaveValue('乙标签页草稿')
   await second.close()
 })
 
@@ -215,7 +222,7 @@ test('菜单完整可达、键盘关闭返回焦点、旧深链接与无效 quer
   await expect(page.getByText('编辑学习区', { exact: true })).toBeVisible()
   await page.goto(`/app/spaces/${defaultSpace}?goal=invalid&panel=unknown`)
   await expect(page.getByRole('heading', { name: '学习区地址无效', exact: true })).toBeVisible()
-  await expect(page.getByLabel('今天想学会什么？', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('向导师提问', { exact: true })).toHaveCount(0)
 })
 
 test('来源分页目录保持同名文档归属，读取权限失效立即隐藏目录', async ({ page }) => {
@@ -261,20 +268,20 @@ test('归档学习区禁止新建目标与课堂，恢复后目标区可继续�
     status: 'archived',
   })
   await page.goto(`/app/spaces/${space.id}`)
-  await expect(page.getByRole('region', { name: '课堂', exact: true })).toContainText(
-    '仅可查看历史',
-  )
+  await expect(page.getByText('已归档 · 只读', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('向导师提问')).toBeDisabled()
   await expect(page.getByRole('button', { name: '仅保存目标', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '新建教学会话', exact: true })).toHaveCount(0)
+  await openNavigation(page)
   await page.getByRole('link', { name: '管理学习区与目标', exact: true }).click()
   await page.getByText('编辑学习区', { exact: true }).click()
   await page.getByRole('button', { name: '恢复学习区', exact: true }).click()
   await page.getByRole('button', { name: '确认恢复学习区', exact: true }).click()
   await page.getByRole('link', { name: '← 进入课堂工作区', exact: true }).click()
-  await expect(page.getByLabel('今天想学会什么？', { exact: true })).toBeEnabled()
+  await expect(page.getByLabel('向导师提问', { exact: true })).toBeEnabled()
 })
 
-test('切区后来源目录的迟到响应不进入新区，也不覆盖新区目标草稿', async ({ page }) => {
+test('切区后来源目录的迟到响应不进入新区，也不覆盖新区对话草稿', async ({ page }) => {
   await pairNotebook(page)
   const a = await createSpace(page, 'Notebook 迟到甲')
   const b = await createSpace(page, 'Notebook 迟到乙')
@@ -312,7 +319,7 @@ test('切区后来源目录的迟到响应不进入新区，也不覆盖新区�
     .getByRole('dialog', { name: '侧边菜单' })
     .getByRole('link', { name: b.name, exact: true })
     .click()
-  const draft = page.getByLabel('今天想学会什么？', { exact: true })
+  const draft = page.getByLabel('向导师提问', { exact: true })
   await draft.fill('新区正在写的目标')
   release()
   await finished
@@ -345,11 +352,12 @@ test('所选来源问答：无目标、改选、核验引用、零来源、双�
   expect(logout.ok()).toBe(true)
   await pairNotebook(page)
   const space = await createSpace(page, '按选来源无目标问答')
+  await webAPI(page, 'PUT', `/v1/learning-spaces/${space.id}`, { operation_id: randomUUID(), expected_version: space.version, name: space.name, description: '', status: 'active', direction: '理解所选偶数资料' })
   const a = await seedSources(page, space.id, '所选甲资料')
   const b = await seedSources(page, space.id, '所选乙资料')
   await page.goto(`/app/spaces/${space.id}`)
   const sources = page.getByRole('region', { name: '来源', exact: true })
-  const panel = page.getByRole('region', { name: '按所选来源提问', exact: true })
+  const panel = page.getByRole('region', { name: '对话', exact: true })
   const prompt = panel.getByRole('textbox', { name: '向导师提问', exact: true })
   await sources.getByRole('checkbox', { name: '全选已加载来源', exact: true }).uncheck()
   await sources.getByRole('checkbox', { name: /选择来源：even.md · 所选甲资料/ }).check()
@@ -362,15 +370,14 @@ test('所选来源问答：无目标、改选、核验引用、零来源、双�
     if (request.method() === 'POST' && /\/conversations\/[^/]+\/turns$/.test(request.url()))
       submissions.push(request.postDataJSON())
   })
-  await panel.getByRole('checkbox', { name: '保存问答历史到服务器' }).check()
   await prompt.fill('解释所选资料')
   await panel.getByRole('button', { name: '发送提问', exact: true }).click()
-  await expect(panel.getByLabel('导师输出')).toContainText('所选甲资料')
-  await expect(panel.getByLabel('导师输出')).not.toContainText('所选乙资料')
+  await expect(panel.locator('.chat-answer').last()).toContainText('所选甲资料')
+  await expect(panel.locator('.chat-answer').last()).not.toContainText('所选乙资料')
   expect(submissions[0].source_selection.items.map((i) => i.collection_id)).toEqual([
     a.collectionId,
   ])
-  await panel.getByRole('button', { name: '核验引用 1', exact: true }).click()
+  await panel.getByRole('button', { name: '核验引用 1', exact: true }).last().click()
   await expect(sources.getByRole('region', { name: '引用 1 核验片段', exact: true })).toContainText(
     '偶数可以被 2 整除',
   )
@@ -393,16 +400,16 @@ test('所选来源问答：无目标、改选、核验引用、零来源、双�
   await expect(panel.getByRole('button', { name: '核对提交结果', exact: true })).toBeVisible()
   await panel.getByRole('button', { name: '核对提交结果', exact: true }).click()
   await expect(prompt).toHaveValue('')
-  await expect(panel.getByLabel('导师输出')).toContainText('所选乙资料')
-  await expect(panel.getByLabel('导师输出')).not.toContainText('所选甲资料')
+  await expect(panel.locator('.chat-answer').last()).toContainText('所选乙资料')
+  await expect(panel.locator('.chat-answer').last()).not.toContainText('所选甲资料')
   expect(submissions).toHaveLength(2)
   expect(submissions[1].source_selection.items.map((i) => i.collection_id)).toEqual([
     b.collectionId,
   ])
   await page.setViewportSize({ width: 390, height: 900 })
   const tabs = page.getByRole('tablist', { name: '学习区面板', exact: true })
-  await tabs.getByRole('tab', { name: '课堂', exact: true }).click()
-  await panel.getByRole('button', { name: '核验引用 1', exact: true }).click()
+  await tabs.getByRole('tab', { name: '对话', exact: true }).click()
+  await panel.getByRole('button', { name: '核验引用 1', exact: true }).last().click()
   await expect(tabs.getByRole('tab', { name: '来源', exact: true })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -411,17 +418,17 @@ test('所选来源问答：无目标、改选、核验引用、零来源、双�
     '所选乙资料',
   )
   await sources.getByRole('checkbox', { name: /选择来源：examples.md · 所选乙资料/ }).uncheck()
-  await tabs.getByRole('tab', { name: '课堂', exact: true }).click()
-  await expect(panel.getByText('未选来源，不引用资料', { exact: true })).toBeVisible()
+  await tabs.getByRole('tab', { name: '对话', exact: true }).click()
+  await expect(panel.getByText('基于 0 个来源', { exact: true })).toBeVisible()
   await panel.getByRole('button', { name: '举个例子', exact: true }).click()
   await expect(prompt).toHaveValue('举个例子')
   await panel.getByRole('button', { name: '发送提问', exact: true }).click()
-  await expect(panel.getByLabel('导师输出')).toContainText('未选来源，不引用资料')
-  await expect(panel.getByRole('button', { name: '核验引用 1', exact: true })).toHaveCount(0)
+  await expect(panel.locator('.chat-answer').last()).toContainText('我们可以先理解核心概念')
+  await expect(panel.locator('.chat-answer').last().getByRole('button', { name: '核验引用 1', exact: true })).toHaveCount(0)
   expect(submissions[2].source_selection).toEqual({ mode: 'none', items: [] })
-  expect((await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items).toHaveLength(
-    0,
-  )
+  const managed = (await webAPI(page, 'GET', '/v1/learning/goals', undefined, space.id)).items
+  expect(managed).toHaveLength(1)
+  expect(managed[0].source).toBe('learning_direction')
   await expect(second.getByRole('checkbox', { name: '全选已加载来源', exact: true })).toBeChecked()
   await second.close()
 })

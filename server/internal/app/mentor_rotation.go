@@ -7,6 +7,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/keyrotation"
@@ -69,6 +70,9 @@ func RotateMentorKey(ctx context.Context, cfg config.Config, newPath string) err
 		return err
 	}
 	if err = learningchange.RotateKeyTx(ctx, tx, rewrap); err != nil {
+		return err
+	}
+	if err = learningdirection.RotateKeyTx(ctx, tx, rewrap); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

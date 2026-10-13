@@ -8,10 +8,11 @@ import { ErrorState } from '../common'
 import { ReferenceImport } from '../reference-import'
 import { noteSourceItem, type NoteSourceCandidate } from '@/api/studio'
 
-export function AddSourceDialog({ spaceId }: { spaceId: string }) {
+export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { spaceId: string; initiallyOpen?: boolean; onClose?: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null),
     trigger = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
+  useEffect(() => { if (initiallyOpen) { setOpen(true); dialog.current?.showModal() } }, [initiallyOpen])
   return (
     <>
       <Button
@@ -30,6 +31,7 @@ export function AddSourceDialog({ spaceId }: { spaceId: string }) {
         onClose={() => {
           setOpen(false)
           trigger.current?.focus()
+          onClose?.()
         }}
       >
         <h2>添加来源</h2>

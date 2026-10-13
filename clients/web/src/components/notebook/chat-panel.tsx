@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Copy, Plus, Send, Sparkles, StickyNote } from 'lucide-react'
+import { ArrowUp, Copy, FileText, Plus, Sparkles, StickyNote } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import {
   checkConversation,
@@ -25,6 +26,7 @@ import { ErrorState } from '../common'
 import { useSourceSelection } from './source-selection'
 import { ChatOverview } from './chat-overview'
 import { SpaceDialog } from './space-dialog'
+import { useNotebookChrome } from './notebook-chrome'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -41,6 +43,7 @@ export function ChatPanel({
   onSource: () => void
 }) {
   const { session, prefix, drafts } = useIdentity()
+  const { menu } = useNotebookChrome()
   const query = useQueryClient()
   const { selection } = useSourceSelection()
   const key = JSON.stringify([...prefix, space.id, 'study-draft', conversationId ?? 'new'])
@@ -384,7 +387,7 @@ export function ChatPanel({
             更多对话
           </Button>
         )}
-        {conversation && <span className="chat-saved">已保存</span>}
+        <span className="chat-saved">{conversation ? '已保存' : '学习助手'}</span>
       </header>
       <div
         className="chat-stream"
@@ -539,8 +542,8 @@ export function ChatPanel({
           <div className="chat-input">
             <textarea
               aria-label="向导师提问"
-              placeholder="开始输入…"
-              rows={2}
+              placeholder="对这些资料，你有什么好奇的？"
+              rows={1}
               maxLength={16000}
               value={prompt}
               disabled={!canWrite || !!pendingTurn}
@@ -561,13 +564,18 @@ export function ChatPanel({
               }}
             />
             <Button aria-label="发送提问" type="submit" disabled={!ready || !prompt.trim()}>
-              <Send size={18} />
+              <ArrowUp size={15} />
             </Button>
           </div>
           <div className="chat-input-footer">
+            <FileText size={12} aria-hidden="true" />
             <span>基于 {selection?.items.length ?? '…'} 个来源</span>
+          </div>
+        </form>
+        {menu &&
+          createPortal(
             <details>
-              <summary>模型与预算</summary>
+              <summary>对话设置</summary>
               <p>{configuration.data?.effective_mentor.endpoint}</p>
               <label>
                 请求次数上限
@@ -589,9 +597,9 @@ export function ChatPanel({
                   onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))}
                 />
               </label>
-            </details>
-          </div>
-        </form>
+            </details>,
+            menu,
+          )}
         {active && (
           <Button variant="ghost" disabled={busy || !run} onClick={() => void command('stop')}>
             停止运行

@@ -8,13 +8,22 @@ import { usePage } from './pages'
 import { SpaceDialog } from './components/notebook/space-dialog'
 import { EmptyState, ErrorState, Pagination } from './components/common'
 import { NotebookCard } from './components/notebook/notebook-card'
+import { Sparkles } from 'lucide-react'
+import type { Space } from './api/runtime'
 
 export function NotebookHomePage() {
   const { session, prefix } = useIdentity()
   const navigate = useNavigate()
   const [search, setSearch] = useState('')
+  const [cardContainer, setCardContainer] = useState<HTMLDivElement | null>(null)
   const [status, setStatus] = useState<'active' | 'archived' | 'all'>('active')
   const pages = usePage()
+  const onCreated = (space: Space, addSources: boolean) =>
+    void navigate({
+      to: '/spaces/$spaceId',
+      params: { spaceId: space.id },
+      search: addSources ? { panel: 'sources', add_sources: true } : {},
+    })
   const spaces = useQuery({
     queryKey: [...prefix, 'spaces', search, status, pages.cursor],
     queryFn: ({ signal }) =>
@@ -38,14 +47,22 @@ export function NotebookHomePage() {
   return (
     <section className="notebook-home">
       <div className="notebook-home-intro">
+        <div className="notebook-home-kicker">
+          <Sparkles size={16} aria-hidden="true" />
+          你的个人学习空间
+        </div>
         <h1>你的学习区</h1>
-        <p>把好奇心收进学习区，从资料出发，逐步学会想做的事。</p>
+        <p>把资料放在一起，和 AI 聊一聊，让每一次好奇都变成新的理解。</p>
       </div>
       <div className="filters notebook-home-filters">
+        {session.capabilities.spaces && (
+          <SpaceDialog onCreated={onCreated} cardContainer={cardContainer} />
+        )}
         <label>
-          搜索学习区
+          <span className="sr-only">搜索学习区</span>
           <input
             type="search"
+            placeholder="搜索学习区"
             value={search}
             onChange={(event) => {
               setSearch(event.target.value)
@@ -54,7 +71,7 @@ export function NotebookHomePage() {
           />
         </label>
         <label>
-          学习区状态
+          <span className="sr-only">学习区状态</span>
           <select
             value={status}
             onChange={(event) => {
@@ -76,13 +93,7 @@ export function NotebookHomePage() {
       )}
       <div className="notebook-card-wall">
         {session.capabilities.spaces && (
-          <div className="notebook-new-card">
-            <SpaceDialog
-              onCreated={(space, addSources) =>
-                void navigate({ to: '/spaces/$spaceId', params: { spaceId: space.id }, search: addSources ? { panel: 'sources', add_sources: true } : {} })
-              }
-            />
-          </div>
+          <div className="notebook-new-card" ref={setCardContainer} />
         )}
         {spaces.data?.items.map((space) => (
           <NotebookCard key={space.id} space={space} />

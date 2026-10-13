@@ -5,15 +5,19 @@ import { ApiError, learningClient, unwrap } from '@/api/client'
 import { spaceSchema, type Space } from '@/api/runtime'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
+import { Plus, Settings } from 'lucide-react'
+import { createPortal } from 'react-dom'
 
 export function SpaceDialog({
   space,
   confirmDirection = false,
   onCreated,
+  cardContainer,
 }: {
   space?: Space
   confirmDirection?: boolean
   onCreated?: (space: Space, addSources: boolean) => void
+  cardContainer?: HTMLDivElement | null
 }) {
   const { session, prefix, drafts } = useIdentity()
   const query = useQueryClient()
@@ -37,7 +41,8 @@ export function SpaceDialog({
       live.current = false
     }
   }, [])
-  const open = () => {
+  const open = (event: React.MouseEvent<HTMLButtonElement>) => {
+    trigger.current = event.currentTarget
     setBase(space)
     setConfirmLifecycle(false)
     if (!drafts.get(key)) {
@@ -85,9 +90,27 @@ export function SpaceDialog({
   const title = confirmDirection ? '确认学习方向' : space ? '学习区设置' : '新建学习区'
   return (
     <>
-      <Button ref={trigger} aria-label={title} variant="outline" disabled={confirmDirection && space?.status === 'archived'} onClick={open}>
+      <Button
+        ref={trigger}
+        aria-label={title}
+        variant="outline"
+        disabled={confirmDirection && space?.status === 'archived'}
+        onClick={open}
+      >
+        {space && !confirmDirection ? (
+          <Settings size={16} aria-hidden="true" />
+        ) : !space ? (
+          <Plus size={16} aria-hidden="true" />
+        ) : null}
         {title}
       </Button>
+      {cardContainer &&
+        createPortal(
+          <Button variant="outline" aria-label="创建新的学习区" onClick={open}>
+            {title}
+          </Button>,
+          cardContainer,
+        )}
       <dialog
         ref={dialog}
         className="notebook-space-dialog"
@@ -152,8 +175,9 @@ export function SpaceDialog({
               </Button>
               <Button type="submit">{space ? '保存设置' : '创建学习区'}</Button>
             </div>
-            {base && !confirmDirection && (
-              confirmLifecycle ? (
+            {base &&
+              !confirmDirection &&
+              (confirmLifecycle ? (
                 <div role="group" aria-label="确认变更学习区状态">
                   <p>归档后保留已有历史。</p>
                   <div className="actions">
@@ -162,7 +186,9 @@ export function SpaceDialog({
                     </Button>
                     <Button
                       variant="destructive"
-                      onClick={() => void save(base.status === 'archived' ? 'active' : 'archived', true)}
+                      onClick={() =>
+                        void save(base.status === 'archived' ? 'active' : 'archived', true)
+                      }
                     >
                       确认{base.status === 'archived' ? '恢复学习区' : '归档学习区'}
                     </Button>
@@ -172,8 +198,7 @@ export function SpaceDialog({
                 <Button variant="outline" onClick={() => setConfirmLifecycle(true)}>
                   {base.status === 'archived' ? '恢复学习区' : '归档学习区'}
                 </Button>
-              )
-            )}
+              ))}
           </fieldset>
         </form>
         {!!error && <ErrorState error={error} />}

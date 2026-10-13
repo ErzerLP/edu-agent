@@ -56,7 +56,7 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
     true,
   )
   await page.reload()
-  await studio.getByRole('button', { name: /夹具学习指南.*已保存第 1 版/ }).click()
+  await studio.getByRole('button', { name: /夹具学习指南.*第 1 版/ }).click()
   await expect(studio.getByRole('heading', { name: '术语', exact: true })).toBeVisible()
   await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
   await studio.getByRole('button', { name: /^学习指南/ }).click()
@@ -65,7 +65,7 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
   await studio.getByRole('button', { name: '取消生成', exact: true }).click()
   await expect(studio.getByText('已停止', { exact: true })).toBeVisible({ timeout: 15000 })
   await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
-  await studio.getByRole('button', { name: /夹具学习指南.*已保存第 1 版/ }).click()
+  await studio.getByRole('button', { name: /夹具学习指南.*第 1 版/ }).click()
   await studio.getByRole('button', { name: '重新生成新版本' }).click()
   await studio.getByRole('button', { name: '开始生成学习指南', exact: true }).click()
   await studio.getByRole('button', { name: '打开已保存产物' }).click()
@@ -147,11 +147,11 @@ test('测验明确选择目标、正式逐题作答、帮助限制与丢响应�
     await route.fetch()
     await route.abort('failed')
   })
-  await studio.getByRole('button', { name: '开始正式作答', exact: true }).click()
+  await studio.getByRole('button', { name: '开始作答', exact: true }).click()
   await expect(studio.getByText('开始结果待核对，请先核对原操作。')).toBeVisible()
   await studio.getByRole('button', { name: '核对原开始操作', exact: true }).click()
   await page.unroute('**/quiz/start')
-  const quiz = studio.getByRole('region', { name: '第 1 题正式作答', exact: true })
+  const quiz = studio.getByRole('region', { name: '第 1 题作答', exact: true })
   await quiz.getByRole('button', { name: '开始当前活动', exact: true }).click()
   const answer = quiz.getByRole('textbox', { name: '我的正式答案', exact: true })
   await answer.fill('偶数可被 2 整除，例如 2。')
@@ -174,7 +174,7 @@ test('测验明确选择目标、正式逐题作答、帮助限制与丢响应�
   await quiz.getByRole('button', { name: '查看完毕，继续学习', exact: true }).click()
   await expect(studio.getByText('已完成 1 / 2 题', { exact: true })).toBeVisible()
   await studio.getByRole('button', { name: '开始第 2 题', exact: true }).click()
-  const second = studio.getByRole('region', { name: '第 2 题正式作答', exact: true })
+  const second = studio.getByRole('region', { name: '第 2 题作答', exact: true })
   await second.getByRole('button', { name: '开始当前活动', exact: true }).click()
   await second
     .getByRole('textbox', { name: '我的正式答案', exact: true })
@@ -205,7 +205,7 @@ test('测验明确选择目标、正式逐题作答、帮助限制与丢响应�
   await expect(classroom.getByRole('textbox', { name: '我的正式答案', exact: true })).toHaveValue(
     'ORIGINAL_CLASSROOM_DRAFT',
   )
-  await studio.getByRole('button', { name: /夹具偶数测验.*已保存第 1 版/ }).click()
+  await studio.getByRole('button', { name: /夹具偶数测验.*第 1 版/ }).click()
   await expect(studio.getByText('已完成 2 / 2 题', { exact: true })).toBeVisible()
 })
 
@@ -257,7 +257,7 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
   await studio.getByRole('button', { name: '保存笔记', exact: true }).click()
   await expect(studio.getByText(/已保存第 1 版/).first()).toBeVisible()
   await page.reload()
-  await studio.getByRole('button', { name: /矩阵秩笔记.*已保存第 1 版/ }).click()
+  await studio.getByRole('button', { name: /矩阵秩笔记.*第 1 版/ }).click()
   await expect(studio.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveValue(
     /NOTE_SAVED_V1/,
   )
@@ -317,8 +317,8 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
   await expect(sources).toContainText('笔记第 1 版快照')
   const source = (await webAPI(page, 'GET', '/v1/knowledge/sources', undefined, space.id)).items[0]
   expect(source.metadata.derived_from).toEqual({ artifact_id: id, version: 1 })
-  await sources.getByRole('button', { name: `查看来源：${source.path}`, exact: true }).click()
-  const viewer = page.getByRole('dialog', { name: '来源查看器', exact: true })
+  await sources.getByRole('button', { name: `打开来源：${source.path}`, exact: true }).click()
+  const viewer = page.getByRole('region', { name: '来源查看器', exact: true })
   await viewer.getByText(/原文片段 1/).click()
   await expect(viewer).toContainText('NOTE_SAVED_V1')
   await expect(viewer).not.toContainText('LOCAL_DRAFT')
@@ -328,7 +328,7 @@ test('笔记保存重开、冲突保留草稿，已保存版本转来源后不�
     .fill('NOTE_V4：此修改不会同步到来源。')
   await studio.getByRole('button', { name: '保存笔记', exact: true }).click()
   await expect(studio.getByText(/已保存第 4 版/).first()).toBeVisible()
-  await sources.getByRole('button', { name: `查看来源：${source.path}`, exact: true }).click()
+  await sources.getByRole('button', { name: `打开来源：${source.path}`, exact: true }).click()
   await viewer.getByText(/原文片段 1/).click()
   await expect(viewer).toContainText('NOTE_SAVED_V1')
   await expect(viewer).not.toContainText('NOTE_V4')
@@ -348,11 +348,11 @@ test('笔记草稿在标签页和学习区之间隔离，保存丢响应后核�
   await second.getByRole('button', { name: '＋ 添加笔记' }).click()
   await expect(second.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveValue('')
   await second.close()
-  await page.getByRole('link', { name: '全部学习区', exact: true }).click()
+  await page.getByRole('link', { name: '所有学习区', exact: true }).click()
   await page.getByRole('link', { name: 'Studio 另一区', exact: true }).click()
   await page.getByRole('button', { name: '＋ 添加笔记' }).click()
   await expect(page.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveValue('')
-  await page.getByRole('link', { name: '全部学习区', exact: true }).click()
+  await page.getByRole('link', { name: '所有学习区', exact: true }).click()
   await page.getByRole('link', { name: 'Studio 草稿隔离', exact: true }).click()
   await page.getByRole('button', { name: '＋ 添加笔记' }).click()
   await expect(page.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveValue(

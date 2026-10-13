@@ -162,7 +162,7 @@ export function SourceDiscovery({
       if (pending.current === controller) {
         setSelected([])
         if (!controller.signal.aborted)
-          setMessage('本次正文读取已结束，请核对下方解析报告；正式确认前不会保存为来源。')
+          setMessage('正文读取完成，请核对解析结果；确认后才会保存为来源。')
       }
     } finally {
       if (pending.current === controller) {
@@ -194,7 +194,7 @@ export function SourceDiscovery({
       {capability && !capability.available && (
         <p role="alert">
           {capability.reason === 'missing_scope'
-            ? '搜索需要研究权限；导入还需要 references 配对档案，请重新配对具有相应权限的设备。'
+            ? '搜索和导入需要相应权限，请重新配对。'
             : '请先在设置中配置并启用 Brave 搜索。'}{' '}
           <a href="/app/settings">打开设置</a>
         </p>

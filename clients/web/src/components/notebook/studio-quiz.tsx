@@ -106,9 +106,9 @@ export function StudioQuiz({
   }, [denied, drafts, key])
   if (state.error) return <ErrorState error={state.error} retry={() => void state.refetch()} />
   return (
-    <section aria-label="正式测验">
+    <section aria-label="测验作答">
       <p>
-        共 {questions.length} 题。明确开始后，答案进入所选目标的正式练习记录，按既有规则计入进度。
+        共 {questions.length} 题。开始作答后，答案会记入练习记录和学习进度。
       </p>
       <p role="status">
         已完成 {records.filter((q) => q.completed).length} / {questions.length} 题
@@ -155,7 +155,7 @@ export function StudioQuiz({
                 disabled={!canWrite || !ready || busy || !!pending || !state.data}
                 onClick={() => void start(n)}
               >
-                {n === 1 ? '开始正式作答' : `开始第 ${n} 题`}
+                {n === 1 ? '开始作答' : `开始第 ${n} 题`}
               </Button>
             )}
           </section>
@@ -178,7 +178,7 @@ export function StudioQuiz({
       )}
       {!!error && <ErrorState error={error} />}
       {selected && !selected.completed && selected.state !== 'Completed' && (
-        <section aria-label={`第 ${selected.question} 题正式作答`}>
+        <section aria-label={`第 ${selected.question} 题作答`}>
           <TeachingPage
             key={selected.session_id}
             spaceId={spaceId}

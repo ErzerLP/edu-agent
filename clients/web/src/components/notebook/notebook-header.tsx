@@ -1,16 +1,19 @@
-import { Link } from '@tanstack/react-router'
+import { createPortal } from 'react-dom'
 import type { Space } from '@/api/runtime'
 import { SpaceDialog } from './space-dialog'
+import { useNotebookChrome } from './notebook-chrome'
 
 export function NotebookHeader({ space }: { space: Space }) {
+  const { header } = useNotebookChrome()
   return (
-    <header className="notebook-workspace-header">
-      <div>
-        <Link to="/">全部学习区</Link>
+    header &&
+    createPortal(
+      <div className="notebook-workspace-header">
         <h1>{space.name}</h1>
-      </div>
-      {space.status === 'archived' && <span className="badge">已归档 · 只读</span>}
-      <SpaceDialog space={space} />
-    </header>
+        {space.status === 'archived' && <span className="badge">已归档 · 只读</span>}
+        <SpaceDialog space={space} />
+      </div>,
+      header,
+    )
   )
 }

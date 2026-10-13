@@ -40,7 +40,7 @@ test('学习端全权一次配对完成文本导入、Studio 笔记与记忆候�
   await studio.getByRole('button', { name: '保存笔记', exact: true }).click()
   await expect(studio.getByText(/已保存第 1 版/).first()).toBeVisible()
   await page.reload()
-  await studio.getByRole('button', { name: /偶数学习笔记.*已保存第 1 版/ }).click()
+  await studio.getByRole('button', { name: /偶数学习笔记.*第 1 版/ }).click()
   await expect(studio.getByRole('textbox', { name: '笔记正文', exact: true })).toHaveValue(note)
 
   await page.goto('/app/memory')

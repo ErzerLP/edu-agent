@@ -18,10 +18,13 @@ import (
 // Public card projection deliberately excludes task request IDs, token IDs and
 // the internal policy. Learning remains the answer/assessment authority.
 type StudyExerciseView struct {
+	PracticeView
+	ConversationID string `json:"conversation_id"`
+	RunID          string `json:"run_id"`
+}
+type PracticeView struct {
 	CanContinue    bool                   `json:"can_continue"`
 	ID             string                 `json:"id"`
-	ConversationID string                 `json:"conversation_id"`
-	RunID          string                 `json:"run_id"`
 	SpaceID        string                 `json:"space_id"`
 	Generation     int64                  `json:"privacy_generation"`
 	SessionID      string                 `json:"session_id"`
@@ -102,59 +105,77 @@ func (s *Service) withStudyExercise(ctx context.Context, actor identity.Credenti
 
 func (s *Service) ReadStudyExercise(ctx context.Context, actor identity.Credential, id string, send func(StudyExerciseView) error) error {
 	return s.withStudyExercise(ctx, actor, id, false, func(tx pgx.Tx, e learningcontent.Exercise, conversation, run string, deferred bool) error {
-		content, err := s.starter.Content.ReadTx(ctx, tx, actor, e.ContentArtifactID, e.ContentVersion)
+		v, err := s.exerciseViewTx(ctx, tx, actor, e, deferred)
 		if err != nil {
 			return err
 		}
-		store := s.starter.Learning.WithinTx(tx)
-		a, err := store.LoadSessionAuthority(ctx, e.SessionID)
-		if err != nil {
-			return err
-		}
-		activity, err := store.LoadActivity(ctx, e.ActivityID)
-		if err != nil {
-			return err
-		}
-		v := StudyExerciseView{ID: e.ID, ConversationID: conversation, RunID: run, SpaceID: e.SpaceID, Generation: e.Generation, SessionID: e.SessionID, ActivityID: e.ActivityID, ArtifactID: content.ArtifactID, ContentVersion: content.Version, SessionVersion: a.Session.AggregateVer, Prompt: activity.Prompt, AllowedHelp: activity.AllowedHelp, HelpVersion: e.Help.Version, HelpFloor: e.Help.Level, Deferred: deferred}
-		attempt, err := s.studyExerciseAttemptTx(ctx, tx, e)
-		if err != nil {
-			return err
-		}
-		if attempt != "" {
-			v.AttemptID = attempt
-			feedback, err := store.Feedback(ctx, v.AttemptID, false)
-			if err != nil {
-				return err
-			}
-			v.Feedback = &feedback
-			if len(feedback.Decisions) > 0 {
-				actions, _, err := learning.WorkItemActions(a.Session.State, learning.WorkItemActionContext{AssessmentDisposition: feedback.Decisions[len(feedback.Decisions)-1].Disposition})
-				if err != nil {
-					return err
-				}
-				v.CanContinue = slices.Contains(actions, tutoring.ActionAcknowledgeFeedback)
-			}
-			status, err := s.AssessmentStatus(ctx, actor, v.AttemptID)
-			if err != nil {
-				return err
-			}
-			_, _, configuration, _ := s.settings.MentorClient()
-			v.Assessment = &StudyAssessmentView{Status: "queued", Configuration: configuration, Destination: s.settings.View().EffectiveMentor.Endpoint}
-			if status.Task.FailureReason != "" {
-				v.Assessment.Status = "failed"
-				v.Assessment.Reason = status.Task.FailureReason
-			}
-			if status.Run != nil {
-				m := status.Run
-				v.Assessment.Status = m.Status
-				v.Assessment.Version = m.Version
-				v.Assessment.Reason = m.Reason
-				v.Assessment.ResultUnknown = m.ResultUnknown
-				v.Assessment.CanResume = m.BodyAvailable && time.Now().Before(m.ExpiresAt) && !m.ResultUnknown && (m.Status == "paused_budget" || m.Status == "failed" && m.Reason == "context_changed")
-			}
-		}
-		return send(v)
+		return send(StudyExerciseView{PracticeView: v, ConversationID: conversation, RunID: run})
 	})
+}
+
+func (s *Service) exerciseViewTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, e learningcontent.Exercise, deferred bool) (PracticeView, error) {
+	content, err := s.starter.Content.ReadTx(ctx, tx, actor, e.ContentArtifactID, e.ContentVersion)
+	if err != nil {
+		return PracticeView{}, err
+	}
+	store := s.starter.Learning.WithinTx(tx)
+	a, err := store.LoadSessionAuthority(ctx, e.SessionID)
+	if err != nil {
+		return PracticeView{}, err
+	}
+	activity, err := store.LoadActivity(ctx, e.ActivityID)
+	if err != nil {
+		return PracticeView{}, err
+	}
+	v := PracticeView{ID: e.ID, SpaceID: e.SpaceID, Generation: e.Generation, SessionID: e.SessionID, ActivityID: e.ActivityID, ArtifactID: content.ArtifactID, ContentVersion: content.Version, SessionVersion: a.Session.AggregateVer, Prompt: activity.Prompt, AllowedHelp: activity.AllowedHelp, HelpVersion: e.Help.Version, HelpFloor: e.Help.Level, Deferred: deferred}
+	attempt, err := s.studyExerciseAttemptTx(ctx, tx, e)
+	if err != nil {
+		return PracticeView{}, err
+	}
+	if attempt != "" {
+		v.AttemptID = attempt
+		feedback, err := store.Feedback(ctx, v.AttemptID, false)
+		if err != nil {
+			return PracticeView{}, err
+		}
+		v.Feedback = &feedback
+		if len(feedback.Decisions) > 0 {
+			actions, _, err := learning.WorkItemActions(a.Session.State, learning.WorkItemActionContext{AssessmentDisposition: feedback.Decisions[len(feedback.Decisions)-1].Disposition})
+			if err != nil {
+				return PracticeView{}, err
+			}
+			v.CanContinue = slices.Contains(actions, tutoring.ActionAcknowledgeFeedback)
+		}
+		// Card reads are learning facts. The caller has already checked the
+		// association, source access and privacy generation; task continuation
+		// remains bound to the submitting device in ResumeAssessment.
+		task, err := store.AssessmentTaskTx(ctx, tx, v.AttemptID)
+		if err != nil {
+			return PracticeView{}, err
+		}
+		if task.ExerciseID != e.ID || task.SessionID != e.SessionID {
+			return PracticeView{}, ErrConflict
+		}
+		_, _, configuration, _ := s.settings.MentorClient()
+		v.Assessment = &StudyAssessmentView{Status: "queued", Configuration: configuration, Destination: s.settings.View().EffectiveMentor.Endpoint}
+		if task.FailureReason != "" {
+			v.Assessment.Status = "failed"
+			v.Assessment.Reason = task.FailureReason
+		}
+		if task.RunID != "" {
+			item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 AND space_id=$2 AND device_id=$3 AND privacy_generation=$4`, task.RunID, e.SpaceID, task.DeviceID, e.Generation))
+			if err != nil {
+				return PracticeView{}, err
+			}
+			m := item.Meta
+			v.Assessment.Status = m.Status
+			v.Assessment.Version = m.Version
+			v.Assessment.Reason = m.Reason
+			v.Assessment.ResultUnknown = m.ResultUnknown
+			v.Assessment.CanResume = task.DeviceID == actor.Device.ID && m.BodyAvailable && time.Now().Before(m.ExpiresAt) && !m.ResultUnknown && (m.Status == "paused_budget" || m.Status == "failed" && m.Reason == "context_changed")
+		}
+	}
+	return v, nil
 }
 
 func (s *Service) ChangeStudyExercise(ctx context.Context, actor identity.Credential, id string, c StudyExerciseCommand) (Receipt, error) {

@@ -1,8 +1,15 @@
 package learningcontent
 
 type StudioQuiz struct {
-	GoalVersion int64            `json:"goal_version"`
-	Questions   []StudioQuestion `json:"questions"`
+	GoalVersion int64                `json:"goal_version"`
+	Questions   []StudioQuestion     `json:"questions"`
+	Direction   *StudioQuizDirection `json:"direction,omitempty"`
+	Assessment  *AssessmentPolicy    `json:"assessment_policy,omitempty"`
+}
+type StudioQuizDirection struct {
+	ID             string `json:"id"`
+	Version        int64  `json:"version"`
+	GoalRevisionID string `json:"goal_revision_id"`
 }
 type StudioRubricItem struct {
 	ID        string `json:"id"`

@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { learningClient, unwrap } from './client'
+import { ApiError, learningClient, unwrap } from './client'
+import { practiceExerciseSchema, exerciseHelpSchema } from './exercises'
 import type { Session } from './runtime'
 import type { components } from './schema'
 import type { DraftStore } from '@/lib/drafts'
@@ -11,6 +12,16 @@ import {
 } from './source-selection'
 
 const version = z.number().int().positive()
+const studioReceiptSchema = z.object({
+  operation_id: z.uuid(),
+  run_id: z.uuid(),
+  session_id: z.uuid(),
+  version,
+})
+const directionSchema = z.object({ id: z.uuid(), version, goal_revision_id: z.uuid() }).strict()
+const assessmentPolicySchema = z
+  .object({ configuration: z.string().min(1), requests: version, tokens: version })
+  .strict()
 export const studioClaimSchema = z
   .object({ text: z.string().min(1).max(1500), citations: z.array(z.string()).min(1).max(10) })
   .strict()
@@ -24,6 +35,8 @@ export const studioBriefSchema = z
 export const studioQuizSchema = z
   .object({
     goal_version: version,
+    direction: directionSchema.optional(),
+    assessment_policy: assessmentPolicySchema.optional(),
     questions: z
       .array(
         z
@@ -67,6 +80,7 @@ export const studioQuizStateSchema = z.object({
       state: z.string(),
       completed: z.boolean(),
       attempt_id: z.uuid().optional(),
+      exercise_id: z.uuid().optional(),
     }),
   ),
 })
@@ -82,7 +96,43 @@ export const studioGenerateSchema = z.object({
   source_selection: sourceSelectionSchema,
   request_budget: version,
   token_budget: version,
+  mode: z.literal('direction').optional(),
+  direction_version: version.optional(),
 })
+export const studioExerciseSchema = practiceExerciseSchema.safeExtend({
+  studio_artifact_id: z.uuid(),
+  studio_version: version,
+  question: z.number().int().min(1).max(8),
+})
+export type StudioExercise = z.infer<typeof studioExerciseSchema>
+export function checkStudioExercise(
+  v: StudioExercise,
+  expected: {
+    id: string
+    space: string
+    generation: number
+    artifact: string
+    version: number
+    question: number
+    session: string
+    activity: string
+    content: string
+  },
+) {
+  if (
+    v.id !== expected.id ||
+    v.space_id !== expected.space ||
+    v.privacy_generation !== expected.generation ||
+    v.studio_artifact_id !== expected.artifact ||
+    v.studio_version !== expected.version ||
+    v.question !== expected.question ||
+    v.session_id !== expected.session ||
+    v.activity_id !== expected.activity ||
+    v.artifact_id !== expected.content
+  )
+    throw new ApiError(502, 'invalid_response')
+  return v
+}
 export const studioStateSchema = z.object({
   request: studioGenerateSchema,
   result: z.object({ artifact_id: z.uuid(), version }).optional(),
@@ -209,6 +259,34 @@ export function studioAPI(session: Session, spaceId: string) {
   const header = { 'X-Learning-Space-ID': spaceId }
   const api = learningClient(session, spaceId)
   return {
+    exercise: (id: string, signal?: AbortSignal) =>
+      unwrap(
+        api.GET('/v1/learning/studio/exercises/{exerciseID}', {
+          params: { header, path: { exerciseID: id } },
+          signal,
+        }),
+        studioExerciseSchema,
+      ),
+    help: (id: string, operation: string, reconcile: boolean) =>
+      unwrap(
+        reconcile
+          ? api.GET('/v1/learning/studio/exercises/{exerciseID}/help/{operationID}', {
+              params: { header, path: { exerciseID: id, operationID: operation } },
+            })
+          : api.POST('/v1/learning/studio/exercises/{exerciseID}/help', {
+              params: { header, path: { exerciseID: id } },
+              body: { operation_id: operation },
+            }),
+        exerciseHelpSchema,
+      ),
+    resumeAssessment: (id: string, body: components['schemas']['StudioAssessmentResume']) =>
+      unwrap(
+        api.POST('/v1/learning/studio/exercises/{exerciseID}/assessment/resume', {
+          params: { header, path: { exerciseID: id } },
+          body,
+        }),
+        studioReceiptSchema,
+      ),
     quiz: (id: string, version: number, signal?: AbortSignal) =>
       unwrap(
         api.GET('/v1/learning/studio/artifacts/{artifactID}/quiz', {
@@ -287,7 +365,7 @@ export function studioAPI(session: Session, spaceId: string) {
     generate: (body: StudioGenerate) =>
       unwrap(
         api.POST('/v1/learning/studio/generations', { params: { header }, body }),
-        z.object({ operation_id: z.uuid(), run_id: z.uuid(), session_id: z.uuid(), version }),
+        studioReceiptSchema,
       ),
   }
 }

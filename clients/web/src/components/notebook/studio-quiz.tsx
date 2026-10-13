@@ -8,6 +8,7 @@ import { useIdentity } from '@/lib/session'
 import { TeachingPage } from '@/teaching-page'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
+import { StudioPracticeCard } from './studio-practice-card'
 
 export function StudioQuiz({
   revision,
@@ -107,9 +108,7 @@ export function StudioQuiz({
   if (state.error) return <ErrorState error={state.error} retry={() => void state.refetch()} />
   return (
     <section aria-label="测验作答">
-      <p>
-        共 {questions.length} 题。开始作答后，答案会记入练习记录和学习进度。
-      </p>
+      <p>共 {questions.length} 题。开始作答后，答案会记入练习记录和学习进度。</p>
       <p role="status">
         已完成 {records.filter((q) => q.completed).length} / {questions.length} 题
       </p>
@@ -177,14 +176,27 @@ export function StudioQuiz({
         </>
       )}
       {!!error && <ErrorState error={error} />}
-      {selected && !selected.completed && selected.state !== 'Completed' && (
+      {selected && (
         <section aria-label={`第 ${selected.question} 题作答`}>
-          <TeachingPage
-            key={selected.session_id}
-            spaceId={spaceId}
-            sessionId={selected.session_id}
-            embedded
-          />
+          {selected.exercise_id ? (
+            <StudioPracticeCard
+              key={selected.exercise_id}
+              revision={revision}
+              record={{ ...selected, exercise_id: selected.exercise_id }}
+              disabled={!canWrite}
+              onCitation={onCitation}
+            />
+          ) : (
+            !selected.completed &&
+            selected.state !== 'Completed' && (
+              <TeachingPage
+                key={selected.session_id}
+                spaceId={spaceId}
+                sessionId={selected.session_id}
+                embedded
+              />
+            )
+          )}
         </section>
       )}
       <Link

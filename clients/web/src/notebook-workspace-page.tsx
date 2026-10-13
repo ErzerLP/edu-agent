@@ -161,7 +161,7 @@ function NotebookWorkspace({
                   onConversation={(conversation) => void navigate({ to: '/spaces/$spaceId', params: { spaceId }, search: { conversation, panel: 'classroom' }, replace: false })}
                   onCitation={openCitation} onSource={() => changePanel('sources')} />
               }
-              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} spaceId={spaceId} goalId={goalId} onCitation={openStudioCitation} archived={space.data.status === 'archived'} />}
+              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} space={space.data} onCitation={openStudioCitation} archived={space.data.status === 'archived'} />}
             />
           )}
         </WorkspacePanels>

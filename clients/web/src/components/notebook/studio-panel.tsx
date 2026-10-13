@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { ApiError } from '@/api/client'
+import type { Space } from '@/api/runtime'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { studioAPI, type StudioRevision } from '@/api/studio'
 import { useIdentity } from '@/lib/session'
@@ -24,16 +25,15 @@ const tiles = [
 ]
 
 export function StudioPanel({
-  spaceId,
-  goalId,
+  space,
   onCitation,
   archived = false,
 }: {
-  spaceId: string
-  goalId?: string
+  space: Space
   onCitation: (artifact: string, version: number, id: string) => void
   archived?: boolean
 }) {
+  const spaceId = space.id
   const { session, prefix, drafts } = useIdentity()
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<string>()
@@ -80,6 +80,9 @@ export function StudioPanel({
       drafts.deletePrefix(
         JSON.stringify([...prefix, spaceId, 'studio-quiz-start']).slice(0, -1) + ',',
       )
+      drafts.deletePrefix(
+        JSON.stringify([...prefix, spaceId, 'studio-exercise']).slice(0, -1) + ',',
+      )
       setSelected(undefined)
       back()
     }
@@ -104,8 +107,7 @@ export function StudioPanel({
     return canGenerate ? (
       <StudioGenerator
         key={generation.base?.artifact_id ?? generation.kind}
-        spaceId={spaceId}
-        goalId={goalId}
+        space={space}
         {...generation}
         onBack={back}
         onOpen={openDocument}
@@ -145,12 +147,12 @@ export function StudioPanel({
             type="button"
             className={`notebook-studio-tile notebook-color-${color}`}
             key={name}
-            disabled={!canGenerate || (kind === 'quiz' && !goalId)}
+            disabled={!canGenerate}
             onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' | 'quiz' })}
           >
             <Icon size={22} aria-hidden="true" />
             <h3>{name}</h3>
-            <span>{kind === 'quiz' && !goalId ? '即将支持' : description}</span>
+            <span>{description}</span>
           </button>
         ))}
         <button

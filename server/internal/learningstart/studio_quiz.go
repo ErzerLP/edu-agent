@@ -2,6 +2,7 @@ package learningstart
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
@@ -9,6 +10,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -121,9 +123,12 @@ func (s *Service) publishStudioQuestionTx(ctx context.Context, tx pgx.Tx, actor 
 	if err != nil {
 		return result, err
 	}
-	goal, err := svc.GetGoal(ctx, *r.GoalID)
-	if err != nil {
-		return result, err
+	var goal learning.GoalRevision
+	if r.Body.Quiz.Direction == nil {
+		goal, err = svc.GetGoal(ctx, *r.GoalID)
+		if err != nil {
+			return result, err
+		}
 	}
 	if len(previous) > 0 {
 		last, e := store.Session(ctx, previous[len(previous)-1].SessionID)
@@ -138,10 +143,38 @@ func (s *Service) publishStudioQuestionTx(ctx context.Context, tx pgx.Tx, actor 
 			return result, err
 		}
 	}
+	if r.Body.Quiz.Direction != nil {
+		goal, err = store.LoadGoalRevision(ctx, r.Body.Quiz.Direction.GoalRevisionID)
+	}
+	if err != nil {
+		return result, err
+	}
+	if goal.GoalID != *r.GoalID {
+		return result, learningcontent.ErrConflict
+	}
 	if goal.Revision != c.GoalVersion {
 		return result, &learning.Error{Code: learning.CodeVersionConflict}
 	}
-	published, err := s.PublishQuestionTx(ctx, tx, actor, SingleQuestion{OperationID: c.OperationID, GoalRevisionID: goal.ID, Generation: r.Generation, Label: fmt.Sprintf("%s · 第 %d 题", r.Body.Title, c.Question), Model: r.Body.Model, Manifest: *r.Body.SourceManifest, Question: r.Body.Quiz.Questions[c.Question-1], Citations: r.Body.Citations})
+	question := SingleQuestion{OperationID: c.OperationID, GoalRevisionID: goal.ID, Generation: r.Generation, Label: fmt.Sprintf("%s · 第 %d 题", r.Body.Title, c.Question), Model: r.Body.Model, Manifest: *r.Body.SourceManifest, Question: r.Body.Quiz.Questions[c.Question-1], Citations: r.Body.Citations}
+	if r.Body.Quiz.Direction != nil {
+		if r.Body.Quiz.Assessment == nil {
+			return result, learningcontent.ErrInvalid
+		}
+		e, err := s.PublishExerciseTx(ctx, tx, actor, ExerciseRequest{Question: question, Assessment: *r.Body.Quiz.Assessment})
+		if err != nil {
+			return result, err
+		}
+		a, err := store.LoadSessionAuthority(ctx, e.SessionID)
+		if err != nil {
+			return result, err
+		}
+		if _, err = svc.ApplyAction(ctx, actor.Device.ID, e.SessionID, learning.ActionCommand{Operation: learning.OperationEnvelope{OperationID: uuid.NewString(), PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: e.SessionID, ExpectedVersion: a.Session.AggregateVer, Payload: json.RawMessage(`{}`)}, Action: tutoring.ActionPresentActivity}); err != nil {
+			return result, err
+		}
+		result.SessionID, result.ActivityID, result.ContentArtifactID, result.ExerciseID = e.SessionID, e.ActivityID, e.ContentArtifactID, e.ID
+		return result, nil
+	}
+	published, err := s.PublishQuestionTx(ctx, tx, actor, question)
 	if err != nil {
 		return result, err
 	}

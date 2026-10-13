@@ -1,12 +1,33 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 )
+
+func TestStudioDirectionHTTPRejectsNullAndMixedMode(t *testing.T) {
+	const id = "00000000-0000-4000-8000-000000000001"
+	base := map[string]any{"operation_id": id, "privacy_generation": 1, "kind": "guide", "goal_id": nil, "goal_version": 0, "artifact_id": nil, "expected_version": 0, "source_selection": map[string]any{"mode": "items", "items": []any{map[string]string{"collection_id": id, "revision_id": id, "document_id": id, "document_revision_id": id}}}, "request_budget": 1, "token_budget": 50000}
+	for _, change := range []map[string]any{{"mode": nil}, {"mode": ""}, {"direction_version": nil}, {"direction_version": 0}, {"kind": "quiz", "mode": "direction", "direction_version": nil}, {"kind": "quiz", "mode": "direction", "direction_version": 1, "goal_id": id, "goal_version": 1}} {
+		input := map[string]any{}
+		for k, v := range base {
+			input[k] = v
+		}
+		for k, v := range change {
+			input[k] = v
+		}
+		raw, _ := json.Marshal(input)
+		w := httptest.NewRecorder()
+		(&API{}).studioGenerate(w, httptest.NewRequest("POST", "/", strings.NewReader(string(raw))))
+		if w.Code != 400 {
+			t.Fatalf("ambiguous mode admitted: %v status=%d", change, w.Code)
+		}
+	}
+}
 
 func TestStudioGenerationHTTPClosedInputAndRoutes(t *testing.T) {
 	a := &API{}
@@ -18,7 +39,7 @@ func TestStudioGenerationHTTPClosedInputAndRoutes(t *testing.T) {
 			t.Fatalf("ambiguous Studio request accepted: %d", w.Code)
 		}
 	}
-	for _, path := range []string{"/v1/learning/studio/generations", "/v1/learning/studio/artifacts/00000000-0000-4000-8000-000000000001/sources/1", "/v1/learning/studio/artifacts/00000000-0000-4000-8000-000000000001/quiz", "/v1/learning/studio/artifacts/00000000-0000-4000-8000-000000000001/quiz/start", "/v1/learning/studio/quiz-operations/00000000-0000-4000-8000-000000000001"} {
+	for _, path := range []string{"/v1/learning/studio/exercises/00000000-0000-4000-8000-000000000001", "/v1/learning/studio/exercises/00000000-0000-4000-8000-000000000001/help", "/v1/learning/studio/exercises/00000000-0000-4000-8000-000000000001/assessment/resume", "/v1/learning/studio/generations", "/v1/learning/studio/artifacts/00000000-0000-4000-8000-000000000001/sources/1", "/v1/learning/studio/artifacts/00000000-0000-4000-8000-000000000001/quiz", "/v1/learning/studio/artifacts/00000000-0000-4000-8000-000000000001/quiz/start", "/v1/learning/studio/quiz-operations/00000000-0000-4000-8000-000000000001"} {
 		if !studioPath(path) || collectionSelectionPath(path) {
 			t.Fatal("Studio must use the explicit learning space, never a client collection")
 		}

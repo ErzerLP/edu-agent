@@ -4,6 +4,107 @@
  */
 
 export interface paths {
+    "/v1/learning/studio/exercises/{exerciseID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the original Studio practice, help floor and learning feedback
+         * @description Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+         */
+        get: operations["readStudioExercise"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/exercises/{exerciseID}/help": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disclose a hint against the saved quiz sources
+         * @description Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+         */
+        post: operations["publishStudioHelp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/exercises/{exerciseID}/help/{operationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Recover the original Studio hint disclosure
+         * @description Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+         */
+        get: operations["readStudioHelpOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/exercises/{exerciseID}/assessment/resume": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm configuration and budget to resume the original answer assessment
+         * @description Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+         */
+        post: operations["resumeStudioAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/artifacts/{artifactID}/quiz": {
         parameters: {
             query?: never;
@@ -32,7 +133,7 @@ export interface paths {
         put?: never;
         /**
          * Explicitly start the next question in a dedicated formal session
-         * @description Requires the quiz's explicit goal and frozen sources. Earlier questions must have completed their original route. Same version and question never creates a second carrier; operation identity is bound to the entire request. No change to the current classroom.
+         * @description Requires the quiz's saved revision and frozen sources. Direction mode uses its exact original goal revision even after a direction change; legacy mode preserves the first-question latest-version conflict and manual assessment. Earlier questions must have completed their original route. Same version and question never creates a second carrier; operation identity is bound to the entire request. No change to the current classroom.
          */
         post: operations["startStudioQuizQuestion"];
         delete?: never;
@@ -3420,7 +3521,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently. */
         StudioGenerate: {
+            /** @enum {string} */
+            mode?: "direction";
+            direction_version?: number;
             /** Format: uuid */
             operation_id: string;
             privacy_generation: number;
@@ -3428,7 +3533,7 @@ export interface components {
             kind: "guide" | "brief" | "quiz";
             /**
              * Format: uuid
-             * @description Required non-null explicit goal for quiz; nullable for guide and brief
+             * @description Null for direction mode; explicit non-null goal for legacy quiz; nullable for guide and brief
              */
             goal_id: string | null;
             /** @description Zero when goal_id is null */
@@ -3439,7 +3544,22 @@ export interface components {
             source_selection: components["schemas"]["SourceSelection"];
             request_budget: number;
             token_budget: number;
-        };
+        } & ({
+            /** @enum {string} */
+            kind?: "quiz";
+            goal_id?: null;
+            /** @enum {integer} */
+            goal_version?: 0;
+        } | ({
+            /** @enum {string} */
+            kind?: "guide" | "brief";
+        } | {
+            /** @enum {string} */
+            kind?: "quiz";
+            /** Format: uuid */
+            goal_id?: string;
+            goal_version?: number;
+        }));
         StudioState: {
             request: components["schemas"]["StudioGenerate"];
             result?: {
@@ -3475,6 +3595,8 @@ export interface components {
         StudioQuiz: {
             /** @description Server-frozen chosen goal version, never supplied by the model */
             goal_version: number;
+            direction?: components["schemas"]["StudioQuizDirection"];
+            assessment_policy?: components["schemas"]["StudioAssessmentPolicy"];
             questions: components["schemas"]["StudioQuestion"][];
         };
         StudioQuizStart: {
@@ -3503,6 +3625,11 @@ export interface components {
                 completed: boolean;
                 /** Format: uuid */
                 attempt_id?: string;
+                /**
+                 * Format: uuid
+                 * @description Present only for explicitly mapped direction practice
+                 */
+                exercise_id?: string;
             }[];
         };
         StudioSave: {
@@ -4231,6 +4358,70 @@ export interface components {
             /** @enum {string} */
             level: "hint" | "scaffold" | "answer_revealed";
             text: string;
+        };
+        StudioQuizDirection: {
+            /** Format: uuid */
+            id: string;
+            version: number;
+            /** Format: uuid */
+            goal_revision_id: string;
+        };
+        StudioAssessmentPolicy: {
+            configuration: string;
+            requests: number;
+            tokens: number;
+        };
+        StudioHelpRequest: {
+            /** Format: uuid */
+            operation_id: string;
+        };
+        StudioAssessmentResume: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_version: number;
+            configuration: string;
+            request_budget: number;
+            token_budget: number;
+        };
+        StudioExercise: {
+            /** Format: uuid */
+            studio_artifact_id: string;
+            studio_version: number;
+            question: number;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            space_id: string;
+            privacy_generation: number;
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            activity_id: string;
+            /** Format: uuid */
+            artifact_id: string;
+            content_version: number;
+            session_version: number;
+            prompt: string;
+            allowed_help: ("none" | "hint" | "scaffold" | "answer_revealed")[];
+            help_version: number;
+            /** @enum {string} */
+            help_floor?: "hint" | "scaffold" | "answer_revealed";
+            deferred: boolean;
+            /** @description 允许通过原 session acknowledge_feedback 动作继续；待复核时为 false。继续后仍读回原反馈。 */
+            can_continue: boolean;
+            /** Format: uuid */
+            attempt_id?: string;
+            feedback?: components["schemas"]["LearningFeedback"];
+            assessment?: {
+                /** @enum {string} */
+                status: "queued" | "running" | "paused_budget" | "succeeded" | "failed" | "cancelled";
+                version: number;
+                reason?: string;
+                result_unknown: boolean;
+                can_resume: boolean;
+                configuration: string;
+                destination: string;
+            };
         };
         StudyExercise: {
             /** Format: uuid */
@@ -8257,6 +8448,119 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    readStudioExercise: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified original record; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioExercise"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    publishStudioHelp: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioHelpRequest"];
+            };
+        };
+        responses: {
+            /** @description Verified original record; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyExerciseHelp"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readStudioHelpOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Verified original record; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyExerciseHelp"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    resumeStudioAssessment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioAssessmentResume"];
+            };
+        };
+        responses: {
+            /** @description Verified original record; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     getStudioQuiz: {
         parameters: {
             query: {

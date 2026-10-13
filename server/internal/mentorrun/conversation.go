@@ -29,6 +29,7 @@ var (
 )
 
 type Conversation struct {
+	Mode                 string    `json:"mode,omitempty"`
 	ID                   string    `json:"id"`
 	SpaceID              string    `json:"space_id"`
 	GoalID               string    `json:"goal_id,omitempty"`
@@ -54,6 +55,7 @@ type Conversation struct {
 }
 
 type NewConversation struct {
+	Mode              string `json:"mode,omitempty"`
 	ID                string `json:"id"`
 	GoalID            string `json:"goal_id,omitempty"`
 	TeachingSessionID string `json:"teaching_session_id,omitempty"`
@@ -62,6 +64,7 @@ type NewConversation struct {
 }
 
 type SubmitTurn struct {
+	DirectionVersion   int64                      `json:"direction_version,omitempty"`
 	SourceSelection    *knowledge.SourceSelection `json:"source_selection,omitempty"`
 	OperationID        string                     `json:"operation_id"`
 	ExpectedVersion    int64                      `json:"expected_version"`
@@ -98,10 +101,14 @@ func (s *Service) Submit(ctx context.Context, actor identity.Credential, space, 
 	if err = s.ReadConversation(ctx, actor, space, id, 0, 1, func(page TurnPage) error { c = page.Conversation; return nil }); err != nil {
 		return Receipt{}, err
 	}
-	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved, RequestBudget: request.RequestBudget, TokenBudget: request.TokenBudget})
+	if c.Mode == "study" && (request.DirectionVersion < 1 || request.SourceSelection == nil) || c.Mode != "study" && request.DirectionVersion != 0 {
+		return Receipt{}, ErrInvalid
+	}
+	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{studyVersion: request.DirectionVersion, SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved, RequestBudget: request.RequestBudget, TokenBudget: request.TokenBudget})
 }
 
 type ConversationQuery struct {
+	Mode                                      string
 	GoalID, TeachingSessionID, Search, Cursor string
 	AllContexts                               bool
 	Limit                                     int
@@ -193,11 +200,11 @@ func destination(provider, endpoint string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-const conversationColumns = `c.id::text,c.space_id::text,COALESCE(c.goal_id::text,''),COALESCE(c.teaching_session_id::text,''),c.privacy_generation,c.version,c.saved,c.provider,c.endpoint,c.title,c.updated_at,COALESCE(s.current_run_id::text,''),c.deleted,c.request_hash`
+const conversationColumns = `c.id::text,c.space_id::text,COALESCE(c.goal_id::text,''),COALESCE(c.teaching_session_id::text,''),c.privacy_generation,c.version,c.saved,c.provider,c.endpoint,c.title,c.updated_at,COALESCE(s.current_run_id::text,''),c.deleted,c.request_hash,c.mode`
 
 func scanConversation(r pgx.Row) (Conversation, error) {
 	var c Conversation
-	err := r.Scan(&c.ID, &c.SpaceID, &c.GoalID, &c.TeachingSessionID, &c.Generation, &c.Version, &c.Saved, &c.Provider, &c.Endpoint, &c.titleCipher, &c.UpdatedAt, &c.CurrentRunID, &c.deleted, &c.requestHash)
+	err := r.Scan(&c.ID, &c.SpaceID, &c.GoalID, &c.TeachingSessionID, &c.Generation, &c.Version, &c.Saved, &c.Provider, &c.Endpoint, &c.titleCipher, &c.UpdatedAt, &c.CurrentRunID, &c.deleted, &c.requestHash, &c.Mode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -260,6 +267,15 @@ func runtimeGoal(goal string) string {
 }
 
 func (s *Service) NewConversation(ctx context.Context, actor identity.Credential, space string, request NewConversation) (string, error) {
+	if request.Mode != "" && request.Mode != "mentor" && request.Mode != "study" {
+		return "", ErrInvalid
+	}
+	if request.Mode == "study" {
+		if request.GoalID != "" || request.TeachingSessionID != "" {
+			return "", ErrInvalid
+		}
+		request.Saved = true
+	}
 	if !validID(space) || !validID(request.ID) || request.GoalID != "" && !validID(request.GoalID) || request.TeachingSessionID != "" && (!validID(request.TeachingSessionID) || request.GoalID == "") || request.Title != "" && !validText(request.Title, 240) || !request.Saved && request.Title != "" {
 		return "", ErrInvalid
 	}
@@ -332,13 +348,20 @@ func (s *Service) NewConversation(ctx context.Context, actor identity.Credential
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind,history) VALUES($1,$2,$3,$4,$5,'mentor',TRUE)`, request.ID, actor.Device.ID, space, runtimeGoal(request.GoalID), generation); err != nil {
 		return "", err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO learning_tutor_conversations(id,device_id,space_id,goal_id,teaching_session_id,privacy_generation,saved,provider,endpoint,title,request_hash) VALUES($1,$2,$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,$9,$10,$11)`, request.ID, actor.Device.ID, space, request.GoalID, request.TeachingSessionID, generation, request.Saved, view.Provider, view.Endpoint, ciphertext, hash[:]); err != nil {
+	mode := request.Mode
+	if mode == "" {
+		mode = "mentor"
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO learning_tutor_conversations(id,device_id,space_id,goal_id,teaching_session_id,privacy_generation,saved,provider,endpoint,title,request_hash,mode) VALUES($1,$2,$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,$9,$10,$11,$12)`, request.ID, actor.Device.ID, space, request.GoalID, request.TeachingSessionID, generation, request.Saved, view.Provider, view.Endpoint, ciphertext, hash[:], mode); err != nil {
 		return "", err
 	}
 	return request.ID, tx.Commit(ctx)
 }
 
 func (s *Service) ReadConversations(ctx context.Context, actor identity.Credential, space string, q ConversationQuery, send func(ConversationPage) error) error {
+	if q.Mode != "" && q.Mode != "mentor" && q.Mode != "study" {
+		return ErrInvalid
+	}
 	if !validID(space) || q.Limit < 1 || q.Limit > 50 || len(q.Search) > 240 || q.GoalID != "" && !validID(q.GoalID) || q.TeachingSessionID != "" && !validID(q.TeachingSessionID) {
 		return ErrInvalid
 	}
@@ -386,6 +409,9 @@ func (s *Service) ReadConversations(ctx context.Context, actor identity.Credenti
 	}
 	page := ConversationPage{Items: []Conversation{}, SaveAvailable: s.CanSave()}
 	for _, c := range items {
+		if q.Mode != "" && c.Mode != q.Mode {
+			continue
+		}
 		if q.Cursor != "" && (c.UpdatedAt.After(cursor.Time) || c.UpdatedAt.Equal(cursor.Time) && c.ID >= cursor.ID) {
 			continue
 		}
@@ -632,7 +658,7 @@ func turnBody(item row) Body {
 	if start < 0 || start > len(item.body.Messages) {
 		return Body{}
 	}
-	return Body{Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
+	return Body{Study: item.body.Study, Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
 }
 
 func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
@@ -695,6 +721,9 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 	if c.Version != request.ConversationVersion {
 		return nil, ErrConflict
 	}
+	if (c.Mode == "study") != (request.studyVersion > 0) {
+		return nil, ErrInvalid
+	}
 	if runtimeGoal(c.GoalID) != goal || c.TeachingSessionID != request.TeachingSessionID || c.Saved != request.Save {
 		return nil, ErrInvalid
 	}
@@ -727,7 +756,7 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 				rows.Close()
 				return nil, e
 			}
-			if sameSourceScope(manifest, body.SourceManifest) {
+			if sameSourceScope(manifest, body.SourceManifest) && sameDirectionScope(request.study, body.Study) {
 				history = append(history, committedMessages(body.Messages)...)
 			}
 			if checkpointJSONSize(Body{Messages: history}) > MaxBody-20000 {
@@ -759,7 +788,7 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 		if !item.BodyAvailable || time.Now().After(item.ExpiresAt) || s.decode(&item) != nil {
 			return nil, ErrTemporary
 		}
-		if sameSourceScope(manifest, item.body.SourceManifest) {
+		if sameSourceScope(manifest, item.body.SourceManifest) && sameDirectionScope(request.study, item.body.Study) {
 			history = committedMessages(item.body.Messages)
 		}
 	}

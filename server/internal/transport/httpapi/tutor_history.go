@@ -40,7 +40,7 @@ func (a *API) tutorList(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(5 * time.Second))
 	started := false
-	err := a.mentorRuns.ReadConversations(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.ConversationQuery{GoalID: q.Get("goal_id"), TeachingSessionID: q.Get("teaching_session_id"), Search: q.Get("search"), Cursor: q.Get("cursor"), AllContexts: q.Get("all_contexts") == "true", Limit: limit}, func(page mentorrun.ConversationPage) error {
+	err := a.mentorRuns.ReadConversations(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.ConversationQuery{Mode: q.Get("mode"), GoalID: q.Get("goal_id"), TeachingSessionID: q.Get("teaching_session_id"), Search: q.Get("search"), Cursor: q.Get("cursor"), AllContexts: q.Get("all_contexts") == "true", Limit: limit}, func(page mentorrun.ConversationPage) error {
 		started = true
 		writeJSON(w, 200, page)
 		return http.NewResponseController(w).Flush()
@@ -51,20 +51,27 @@ func (a *API) tutorList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) tutorCreate(w http.ResponseWriter, r *http.Request) {
-	// 保存策略必须由调用者明确提供，不能因字段缺失而推测用户选择。
+	// Legacy callers still choose storage explicitly; study has its own saved default.
 	var request struct {
+		Mode              string `json:"mode,omitempty"`
 		ID                string `json:"id"`
 		GoalID            string `json:"goal_id,omitempty"`
 		TeachingSessionID string `json:"teaching_session_id,omitempty"`
 		Saved             *bool  `json:"saved"`
 		Title             string `json:"title,omitempty"`
 	}
-	if decodeJSON(w, r, 4096, &request) != nil || request.Saved == nil {
+	raw, decodeErr := readJSONBody(w, r, 4096)
+	var fields map[string]json.RawMessage
+	if decodeErr != nil || decodeJSONData(raw, &request) != nil || json.Unmarshal(raw, &fields) != nil || string(fields["saved"]) == "null" || string(fields["mode"]) == "null" || request.Saved == nil && request.Mode != "study" || request.Mode == "study" && request.Saved != nil && !*request.Saved {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}
 	actor, _ := credentialFromContext(r.Context())
-	id, err := a.mentorRuns.NewConversation(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.NewConversation{ID: request.ID, GoalID: request.GoalID, TeachingSessionID: request.TeachingSessionID, Saved: *request.Saved, Title: request.Title})
+	saved := request.Mode == "study"
+	if request.Saved != nil {
+		saved = *request.Saved
+	}
+	id, err := a.mentorRuns.NewConversation(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.NewConversation{Mode: request.Mode, ID: request.ID, GoalID: request.GoalID, TeachingSessionID: request.TeachingSessionID, Saved: saved, Title: request.Title})
 	if err != nil {
 		mentorFailure(w, r, err)
 		return
@@ -126,7 +133,7 @@ func (a *API) tutorTurn(w http.ResponseWriter, r *http.Request) {
 	var request mentorrun.SubmitTurn
 	raw, err := readJSONBody(w, r, 64<<10)
 	var fields map[string]json.RawMessage
-	if err != nil || decodeJSONData(raw, &request) != nil || json.Unmarshal(raw, &fields) != nil || fields["source_selection"] != nil && request.SourceSelection == nil {
+	if err != nil || decodeJSONData(raw, &request) != nil || json.Unmarshal(raw, &fields) != nil || fields["source_selection"] != nil && request.SourceSelection == nil || string(fields["direction_version"]) == "null" {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
@@ -31,6 +32,7 @@ import (
 )
 
 type Service struct {
+	directions          *learningdirection.Store
 	studio              *learningcontent.Store
 	companion           *companion.Broker
 	memories            memoryReader
@@ -63,7 +65,11 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 	if err != nil {
 		return nil, err
 	}
-	return &Service{pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
+	directions, err := learningdirection.New(pool, key)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{directions: directions, pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
 }
 func (s *Service) CanSave() bool { return s.aead != nil }
 
@@ -383,6 +389,16 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if r, found, e := operation(ctx, tx, actor.Device.ID, c.OperationID, hash); e != nil || found {
 		return r, e
 	}
+	if c.studyVersion > 0 {
+		if c.ConversationID == "" || c.SourceSelection == nil || goal != uuid.Nil.String() || !c.Save {
+			return Receipt{}, ErrInvalid
+		}
+		d, e := s.directions.EnsureTx(ctx, tx, actor.Device.ID, space, generation, c.studyVersion)
+		if e != nil {
+			return Receipt{}, e
+		}
+		c.study = &d
+	}
 	if _, err = goalGate(ctx, tx, space, goal, c.ExpectedVersion); err != nil {
 		return Receipt{}, err
 	}
@@ -489,6 +505,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.ConversationID = c.ConversationID
 	item.body.SourceManifest = manifest
+	item.body.Study = c.study
 	item.body.HistoryCount = len(history)
 	item.body.Messages = append(history, modelclient.Message{Role: "user", Content: c.Prompt})
 	item.TeachingSessionID = c.TeachingSessionID

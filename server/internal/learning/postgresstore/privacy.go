@@ -197,6 +197,9 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"导师运行正文", `UPDATE learning_mentor_runs SET checkpoint=NULL,lease_id=NULL,lease_until=NULL,call_started=FALSE,state=state||'{"body_available":false,"status":"cancelled","reason":"privacy_cleared","stage":"cancelled"}'::jsonb`},
 		{"导师操作摘要", `UPDATE learning_mentor_operations SET request_hash=decode(repeat('00',32),'hex')`},
 		{"learning space operations", `UPDATE learning_space_operations SET request_hash=decode(repeat('00',32),'hex'),result='{"redacted":true}'::jsonb`},
+		{"direction goals", `DELETE FROM learning_direction_goals`},
+		{"direction revisions", `DELETE FROM learning_direction_revisions`},
+		{"space directions", `DELETE FROM learning_space_directions`},
 		{"learning spaces", `UPDATE learning_spaces SET name='[redacted]',description='',status=CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END,version=version+1,updated_at=clock_timestamp() WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END`},
 		{"learning inbox", `UPDATE learning_inbox SET result='{"redacted":true}'::jsonb`},
 		{"learning goals", `UPDATE learning_goal_revisions SET goal_text='[redacted]',source='privacy_erasure',management=NULL`},
@@ -407,6 +410,9 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			UNION ALL SELECT count(*) FROM learning_mentor_runs WHERE checkpoint IS NOT NULL OR lease_id IS NOT NULL OR (state->>'body_available')::boolean OR state->>'reason'<>'privacy_cleared'
 			UNION ALL SELECT count(*) FROM learning_mentor_operations WHERE request_hash<>decode(repeat('00',32),'hex')
 			UNION ALL SELECT count(*) FROM learning_space_operations WHERE request_hash<>decode(repeat('00',32),'hex') OR result<>'{"redacted":true}'::jsonb
+			UNION ALL SELECT count(*) FROM learning_direction_goals
+			UNION ALL SELECT count(*) FROM learning_direction_revisions
+			UNION ALL SELECT count(*) FROM learning_space_directions
 			UNION ALL SELECT count(*) FROM learning_spaces WHERE name<>'[redacted]' OR description<>'' OR status<>CASE WHEN id='00000000-0000-4000-8000-000000000001' THEN 'active' ELSE 'archived' END
 			UNION ALL SELECT count(*) FROM learning_goal_revisions WHERE goal_text<>'[redacted]' OR source<>'privacy_erasure' OR management IS NOT NULL
 			UNION ALL SELECT count(*) FROM learning_plans WHERE payload IS NOT NULL

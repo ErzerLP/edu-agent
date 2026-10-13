@@ -50,7 +50,7 @@ test('搜索发现只发送明确确认的关键词，选中后读取正文并�
     [],
   )
   await dialog.getByRole('button', { name: '确认正式导入这 1 项资料' }).click()
-  await expect(dialog.getByRole('heading', { name: '资料已导入，尚未自动用于目标' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   await expect(panel.getByRole('article')).toHaveCount(1)
   await panel.getByRole('button', { name: '查看来源：搜索正文.md' }).click()
@@ -143,7 +143,7 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await dialog.getByRole('button', { name: '确认正式导入这 1 项资料' }).click()
   await expect(dialog.getByText(/提交结果未知/)).toBeVisible()
   await dialog.getByRole('button', { name: '核对原操作结果' }).click()
-  await expect(dialog.getByRole('heading', { name: '资料已导入，尚未自动用于目标' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await page.unroute('**/v1/knowledge/imports/confirm')
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   const textRow = panel
@@ -178,7 +178,7 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await dialog.getByRole('checkbox', { name: /我已核对逐页缺口/ }).check()
   await dialog.getByRole('button', { name: '生成服务端预览' }).click()
   await dialog.getByRole('button', { name: '确认正式导入这 1 项资料' }).click()
-  await expect(dialog.getByRole('heading', { name: '资料已导入，尚未自动用于目标' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   const pdfRow = panel
     .getByRole('article')
@@ -203,7 +203,7 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await dialog.getByLabel('导入相对名称').fill('网页来源.md')
   await dialog.getByRole('button', { name: '生成服务端预览' }).click()
   await dialog.getByRole('button', { name: '确认正式导入这 1 项资料' }).click()
-  await expect(dialog.getByRole('heading', { name: '资料已导入，尚未自动用于目标' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   const urlRow = panel
     .getByRole('article')

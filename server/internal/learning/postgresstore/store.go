@@ -48,11 +48,12 @@ type knowledgeOwner interface {
 
 // Store is the PostgreSQL transaction authority for learning commands and projections.
 type Store struct {
-	content   *learningcontent.Store
-	pool      planningDB
-	registry  *learning.EventRegistry
-	tutoring  tutoringOwner
-	knowledge knowledgeOwner
+	directionGoal string
+	content       *learningcontent.Store
+	pool          planningDB
+	registry      *learning.EventRegistry
+	tutoring      tutoringOwner
+	knowledge     knowledgeOwner
 }
 
 // ConfigureContent 在启动前接入同事务正文发布；旧活动仍按原读取路径适配。

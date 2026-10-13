@@ -25,6 +25,22 @@ export async function pairNotebook(page: Page, profile = 'user') {
   ).toBeVisible()
 }
 
+export async function configureNotebookModel(page: Page) {
+  await pairNotebook(page, 'settings')
+  await page.goto('/app/settings')
+  const model = page.getByRole('region', { name: 'Web 导师模型', exact: true })
+  await model.getByRole('button', { name: '配置或替换凭据' }).click()
+  await model.getByLabel('端点', { exact: true }).fill('http://127.0.0.1:32930/v1')
+  await model.getByLabel('模型名称').fill('notebook-study-fixture')
+  await model.getByLabel('鉴权方式').selectOption('none')
+  await model.getByLabel('启用Web 导师模型').check()
+  await model.getByRole('button', { name: '保存Web 导师模型配置' }).click()
+  await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
+  const session = await (await page.request.get('/v1/web/session')).json()
+  const logout = await page.request.post('/v1/web/logout', { headers: { Origin: 'http://127.0.0.1:32929', 'X-CSRF-Token': session.csrf_token } })
+  expect(logout.ok()).toBe(true)
+}
+
 export async function openNavigation(page: Page) {
   await page.getByRole('button', { name: '打开侧边菜单', exact: true }).click()
   await expect(page.getByRole('dialog', { name: '侧边菜单', exact: true })).toBeVisible()

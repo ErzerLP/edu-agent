@@ -13,8 +13,11 @@ import { ClassroomPanel } from './components/notebook/classroom-panel'
 import { StudioPanel } from './components/notebook/studio-panel'
 import { SourceSelectionProvider, useSourceSelection, type CitationFocus } from './components/notebook/source-selection'
 import { MentorComposer } from './components/notebook/mentor-composer'
+import { ChatPanel } from './components/notebook/chat-panel'
 
 export const notebookSearchSchema = z.object({
+  conversation: z.uuid().optional(),
+  add_sources: z.boolean().optional(),
   goal: z.uuid().optional(),
   panel: z.enum(['classroom', 'sources', 'studio']).optional(),
 })
@@ -91,7 +94,7 @@ function NotebookWorkspace({
       />
     )
   if (!space.data || (sessionId && !teaching.data))
-    return <p role="status">正在读取学习区与课堂…</p>
+    return <p role="status">正在读取学习区…</p>
   if (
     space.data.id !== spaceId ||
     (sessionId &&
@@ -102,19 +105,20 @@ function NotebookWorkspace({
   if (sessionId && search.goal && sessionGoal?.goal_id !== search.goal)
     return <p role="alert">地址中的目标与课堂不一致。请移除目标参数或返回此课堂的原目标。</p>
   const goalId = sessionId ? sessionGoal?.goal_id : search.goal
-  const changePanel = (panel: NotebookPanel) => {
+  const changePanel = (panel: NotebookPanel, finishAdding = false) => {
+    const nextSearch = { ...search, panel, ...(finishAdding ? { add_sources: undefined } : {}) }
     if (sessionId)
       void navigate({
         to: '/spaces/$spaceId/learn/$sessionId',
         params: { spaceId, sessionId },
-        search: { ...search, panel },
+        search: nextSearch,
         replace: true,
       })
     else
       void navigate({
         to: '/spaces/$spaceId',
         params: { spaceId },
-        search: { ...search, panel },
+        search: nextSearch,
         replace: true,
       })
   }
@@ -125,14 +129,15 @@ function NotebookWorkspace({
         <WorkspacePanels changePanel={changePanel}>
           {(openCitation, sourceFocus, openStudioCitation) => (
             <NotebookLayout
+              legacyClassroom={!!sessionId}
               sourceFocus={sourceFocus}
               panel={search.panel ?? 'classroom'}
               onPanelChange={changePanel}
               sources={
-                <SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} />
+                <SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} addSources={search.add_sources} onAddSourcesClose={() => changePanel('sources', true)} />
               }
               classroom={
-                <>
+                sessionId ? <>
                   <ClassroomPanel
                     space={space.data}
                     goalId={goalId}
@@ -152,7 +157,9 @@ function NotebookWorkspace({
                     archived={space.data.status === 'archived'}
                     onCitation={openCitation}
                   />
-                </>
+                </> : <ChatPanel key={`${JSON.stringify(prefix)}:${spaceId}:${search.conversation ?? 'new'}`} space={space.data} conversationId={search.conversation}
+                  onConversation={(conversation) => void navigate({ to: '/spaces/$spaceId', params: { spaceId }, search: { conversation, panel: 'classroom' }, replace: false })}
+                  onCitation={openCitation} onSource={() => changePanel('sources')} />
               }
               studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} spaceId={spaceId} goalId={goalId} onCitation={openStudioCitation} archived={space.data.status === 'archived'} />}
             />

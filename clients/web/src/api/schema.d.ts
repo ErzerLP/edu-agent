@@ -1172,7 +1172,7 @@ export interface paths {
         put?: never;
         /**
          * 明确保存策略后新建会话，不发起模型请求
-         * @description 客户端生成 id 作为新建幂等身份。同 ID 原载荷重试返回原会话，保存策略和上下文不可后改。不会导入旧运行或 CLI 历史。
+         * @description 客户端生成 id 作为新建幂等身份。mode 缺省 mentor，仍须显式 saved；study 默认保存且不接受 saved=false 或固定 goal/session。同 ID 原载荷重试返回原会话，不导入旧运行或 CLI 历史。
          */
         post: operations["createTutorConversation"];
         delete?: never;
@@ -1221,7 +1221,7 @@ export interface paths {
         put?: never;
         /**
          * 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
-         * @description provider 或 endpoint 变化时，confirm_destination 必须匹配详情显示的目的地摘要。未确认返回 409 且不外发。大历史达到上下文上限时明确失败，不丢弃工具组或静默概括。恢复 GET 不调用此接口。
+         * @description study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。纯讲解，不创建练习。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
          */
         post: operations["submitTutorTurn"];
         delete?: never;
@@ -4041,6 +4041,11 @@ export interface components {
             confirmed: true;
         };
         TutorConversation: {
+            /**
+             * @description 旧数据为 mentor
+             * @enum {string}
+             */
+            mode?: "mentor" | "study";
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -4854,6 +4859,9 @@ export interface components {
             entries: components["schemas"]["KnowledgeScopeEntry"][];
         };
         LearningSpace: {
+            /** @description GET 须 include_direction=true；写入须提供 direction。未确认时省略，旧请求不增加响应字段。 */
+            direction?: string;
+            direction_version?: number;
             id: components["schemas"]["LearningUUID"];
             name: string;
             description: string;
@@ -4866,6 +4874,8 @@ export interface components {
             updated_at: string;
         };
         LearningSpaceCommand: {
+            /** @description 可选。省略保持原方向；提供时与名称同事务保存，裁剪首尾空白。expected_version 校验学习区版本。 */
+            direction?: string;
             operation_id: components["schemas"]["LearningUUID"];
             /** @description Zero for create; exact current version for edit/archive/restore. */
             expected_version: number;
@@ -10082,6 +10092,7 @@ export interface operations {
     listTutorConversations: {
         parameters: {
             query?: {
+                mode?: "mentor" | "study";
                 goal_id?: string;
                 teaching_session_id?: string;
                 all_contexts?: boolean;
@@ -10127,16 +10138,29 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /**
+                     * @default mentor
+                     * @enum {string}
+                     */
+                    mode?: "mentor" | "study";
                     /** Format: uuid */
                     id: string;
                     /** Format: uuid */
                     goal_id?: string;
                     /** Format: uuid */
                     teaching_session_id?: string;
-                    saved: boolean;
+                    saved?: boolean;
                     /** @description 临时模式不得提供标题 */
                     title?: string;
-                };
+                } & ({
+                    /** @enum {unknown} */
+                    mode?: "mentor";
+                } | {
+                    /** @constant */
+                    mode: "study";
+                    /** @constant */
+                    saved?: true;
+                });
             };
         };
         responses: {
@@ -10266,6 +10290,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description study 使用的当前方向版本；过期返回 409 */
+                    direction_version?: number;
                     source_selection?: components["schemas"]["SourceSelection"];
                     /** Format: uuid */
                     operation_id: string;
@@ -11404,6 +11430,8 @@ export interface operations {
     listLearningSpaces: {
         parameters: {
             query?: {
+                /** @description 显式请求方向字段；省略时保持旧严格客户端响应格式。 */
+                include_direction?: boolean;
                 /** @description Literal case-insensitive substring of name or description. */
                 search?: string;
                 /** @description Omit to include both active and archived. */
@@ -11521,7 +11549,10 @@ export interface operations {
     };
     getLearningSpace: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 显式请求方向字段；省略时保持旧严格客户端响应格式。 */
+                include_direction?: boolean;
+            };
             header?: never;
             path: {
                 spaceID: components["schemas"]["LearningUUID"];

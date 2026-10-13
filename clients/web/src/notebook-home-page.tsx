@@ -4,7 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useIdentity } from './lib/session'
 import { learningClient, unwrap } from './api/client'
 import { pageOf, spaceSchema } from './api/runtime'
-import { SpaceEditor, usePage } from './pages'
+import { usePage } from './pages'
+import { SpaceDialog } from './components/notebook/space-dialog'
 import { EmptyState, ErrorState, Pagination } from './components/common'
 import { NotebookCard } from './components/notebook/notebook-card'
 
@@ -76,9 +77,9 @@ export function NotebookHomePage() {
       <div className="notebook-card-wall">
         {session.capabilities.spaces && (
           <div className="notebook-new-card">
-            <SpaceEditor
-              onCreated={(space) =>
-                navigate({ to: '/spaces/$spaceId', params: { spaceId: space.id } })
+            <SpaceDialog
+              onCreated={(space, addSources) =>
+                void navigate({ to: '/spaces/$spaceId', params: { spaceId: space.id }, search: addSources ? { panel: 'sources', add_sources: true } : {} })
               }
             />
           </div>

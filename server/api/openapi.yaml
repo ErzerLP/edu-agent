@@ -1151,6 +1151,7 @@ paths:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       parameters:
+        - { name: mode, in: query, schema: { type: string, enum: [mentor, study] } }
         - { name: goal_id, in: query, schema: { type: string, format: uuid } }
         - { name: teaching_session_id, in: query, schema: { type: string, format: uuid } }
         - { name: all_contexts, in: query, schema: { type: boolean, default: false } }
@@ -1173,7 +1174,7 @@ paths:
     post:
       operationId: createTutorConversation
       summary: 明确保存策略后新建会话，不发起模型请求
-      description: 客户端生成 id 作为新建幂等身份。同 ID 原载荷重试返回原会话，保存策略和上下文不可后改。不会导入旧运行或 CLI 历史。
+      description: 客户端生成 id 作为新建幂等身份。mode 缺省 mentor，仍须显式 saved；study 默认保存且不接受 saved=false 或固定 goal/session。同 ID 原载荷重试返回原会话，不导入旧运行或 CLI 历史。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
@@ -1183,8 +1184,21 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [id, saved]
+              required: [id]
+              oneOf:
+                - required: [saved]
+                  properties:
+                    mode: { enum: [mentor] }
+                - required: [mode]
+                  properties:
+                    mode: { const: study }
+                    saved: { const: true }
+                  not:
+                    anyOf:
+                      - required: [goal_id]
+                      - required: [teaching_session_id]
               properties:
+                mode: { type: string, enum: [mentor, study], default: mentor }
                 id: { type: string, format: uuid }
                 goal_id: { type: string, format: uuid }
                 teaching_session_id: { type: string, format: uuid }
@@ -1253,7 +1267,7 @@ paths:
     post:
       operationId: submitTutorTurn
       summary: 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
-      description: provider 或 endpoint 变化时，confirm_destination 必须匹配详情显示的目的地摘要。未确认返回 409 且不外发。大历史达到上下文上限时明确失败，不丢弃工具组或静默概括。恢复 GET 不调用此接口。
+      description: study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。纯讲解，不创建练习。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
@@ -1265,6 +1279,7 @@ paths:
               additionalProperties: false
               required: [operation_id, expected_version, prompt, request_budget, token_budget]
               properties:
+                direction_version: { type: integer, minimum: 1, description: study 使用的当前方向版本；过期返回 409 }
                 source_selection: { $ref: "#/components/schemas/SourceSelection" }
                 operation_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
@@ -1926,6 +1941,7 @@ paths:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       parameters:
+        - { name: include_direction, in: query, schema: { type: boolean, default: false }, description: 显式请求方向字段；省略时保持旧严格客户端响应格式。 }
         - { name: search, in: query, schema: { type: string, maxLength: 120 }, description: Literal case-insensitive substring of name or description. }
         - { name: status, in: query, schema: { type: string, enum: [active, archived] }, description: Omit to include both active and archived. }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
@@ -1977,6 +1993,8 @@ paths:
         schema: { $ref: "#/components/schemas/LearningUUID" }
     get:
       operationId: getLearningSpace
+      parameters:
+        - { name: include_direction, in: query, schema: { type: boolean, default: false }, description: 显式请求方向字段；省略时保持旧严格客户端响应格式。 }
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       responses:
@@ -5780,6 +5798,7 @@ components:
       type: object
       required: [id, space_id, privacy_generation, version, saved, title, provider, endpoint, updated_at, goal_version, writable, storage_state, destination, destination_provider, destination_endpoint, confirmation_required]
       properties:
+        mode: { type: string, enum: [mentor, study], description: 旧数据为 mentor }
         id: { type: string, format: uuid }
         space_id: { type: string, format: uuid }
         goal_id: { type: string, format: uuid }
@@ -6604,6 +6623,8 @@ components:
       additionalProperties: false
       required: [id, name, description, status, version, created_at, updated_at]
       properties:
+        direction: { type: string, minLength: 1, maxLength: 2000, description: GET 须 include_direction=true；写入须提供 direction。未确认时省略，旧请求不增加响应字段。 }
+        direction_version: { type: integer, minimum: 1 }
         id: { $ref: "#/components/schemas/LearningUUID" }
         name: { type: string, minLength: 1, maxLength: 120 }
         description: { type: string, maxLength: 2000 }
@@ -6616,6 +6637,7 @@ components:
       additionalProperties: false
       required: [operation_id, expected_version, name, description, status]
       properties:
+        direction: { type: string, minLength: 1, maxLength: 2000, description: 可选。省略保持原方向；提供时与名称同事务保存，裁剪首尾空白。expected_version 校验学习区版本。 }
         operation_id: { $ref: "#/components/schemas/LearningUUID" }
         expected_version: { type: integer, minimum: 0, description: Zero for create; exact current version for edit/archive/restore. }
         name: { type: string, minLength: 1, maxLength: 120 }

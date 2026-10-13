@@ -146,6 +146,6 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
     </section>}
     {draft.unknown && <p role="alert">提交结果未知。先核对原操作，当前草稿与操作编号已保留。</p>}
     {draft.request && <Button variant="outline" disabled={busy} onClick={() => void run(reconcile)}>核对原操作结果</Button>}
-    {draft.result && <div role="status"><h3>资料已导入，尚未自动用于目标</h3><p>新增 {draft.result.summary.added} · 更新 {draft.result.summary.updated} · 未变化 {draft.result.summary.unchanged}。失败与排除项未计为成功。</p><Button variant="outline" onClick={() => edit({ items: [], result: undefined })}>开始另一批（保留原操作关联）</Button></div>}
+    {draft.result && <div role="status"><h3>{method ? '资料已保存' : '资料已导入，尚未自动用于目标'}</h3><p>新增 {draft.result.summary.added} · 更新 {draft.result.summary.updated} · 未变化 {draft.result.summary.unchanged}。失败与排除项未计为成功。</p><Button variant="outline" onClick={() => edit({ items: [], result: undefined })}>开始另一批（保留原操作关联）</Button></div>}
   </section>
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/google/uuid"
@@ -36,6 +37,8 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
+	studyVersion        int64
+	study               *learningdirection.Revision
 	Studio              *StudioGenerate            `json:"-"`
 	SourceSelection     *knowledge.SourceSelection `json:"source_selection,omitempty"`
 	operationHash       *[32]byte
@@ -110,12 +113,13 @@ type Interaction struct {
 }
 
 type Body struct {
-	Studio         *StudioState              `json:"studio,omitempty"`
-	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
-	Citations      []SourceCitation          `json:"citations,omitempty"`
-	MemorySources  []MemorySource            `json:"memory_sources,omitempty"`
-	MemoryStatus   string                    `json:"memory_status,omitempty"`
-	HistoryCount   int                       `json:"history_count,omitempty"`
+	Study          *learningdirection.Revision `json:"study,omitempty"`
+	Studio         *StudioState                `json:"studio,omitempty"`
+	SourceManifest *knowledge.SourceManifest   `json:"source_manifest,omitempty"`
+	Citations      []SourceCitation            `json:"citations,omitempty"`
+	MemorySources  []MemorySource              `json:"memory_sources,omitempty"`
+	MemoryStatus   string                      `json:"memory_status,omitempty"`
+	HistoryCount   int                         `json:"history_count,omitempty"`
 	// PDF 原件仅进入加密运行正文，不属于快照、模型输入或工具输出。
 	SourceFiles   map[string][]byte      `json:"source_files,omitempty"`
 	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`

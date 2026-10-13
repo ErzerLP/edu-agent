@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	"io"
 	"net/http"
 	"strconv"
@@ -64,21 +65,29 @@ func spaceFailure(w http.ResponseWriter, r *http.Request, err error) {
 	if p := privacy.ErrorCode(err); p != "" {
 		code = p
 	}
+	if errors.Is(err, learningdirection.ErrUnavailable) {
+		code = "direction_storage_unavailable"
+	}
 	switch code {
 	case "invalid_learning_space":
 		status = 400
 	case "learning_space_not_found":
 		status = 404
-	case "learning_space_archived", "version_conflict", "idempotency_conflict":
+	case "learning_space_archived", "learning_direction_required", "version_conflict", "idempotency_conflict":
 		status = 409
 	case "learning_spaces_unsupported", "learning_space_module_unavailable":
 		status = 501
-	case "privacy_clear_in_progress", "content_redacted":
+	case "privacy_clear_in_progress", "content_redacted", "direction_storage_unavailable":
 		status = 503
 	}
 	writeError(w, r, status, code, "Learning space request could not be completed: "+code)
 }
 func (a *API) listLearningSpaces(w http.ResponseWriter, r *http.Request) {
+	include, err := spaceDirectionProjection(r)
+	if err != nil {
+		spaceFailure(w, r, err)
+		return
+	}
 	q := r.URL.Query()
 	limit := 50
 	if q.Has("limit") {
@@ -94,13 +103,38 @@ func (a *API) listLearningSpaces(w http.ResponseWriter, r *http.Request) {
 		spaceFailure(w, r, err)
 		return
 	}
+	if !include {
+		for i := range page.Items {
+			page.Items[i].Direction = ""
+			page.Items[i].DirectionVersion = 0
+		}
+	}
 	writeJSON(w, 200, page)
 }
+func spaceDirectionProjection(r *http.Request) (bool, error) {
+	values, ok := r.URL.Query()["include_direction"]
+	if !ok {
+		return false, nil
+	}
+	if len(values) != 1 || values[0] != "true" && values[0] != "false" {
+		return false, space.Invalid()
+	}
+	return values[0] == "true", nil
+}
 func (a *API) getLearningSpace(w http.ResponseWriter, r *http.Request) {
+	include, err := spaceDirectionProjection(r)
+	if err != nil {
+		spaceFailure(w, r, err)
+		return
+	}
 	item, err := a.learningSpaces.Get(r.Context(), chi.URLParam(r, "spaceID"))
 	if err != nil {
 		spaceFailure(w, r, err)
 		return
+	}
+	if !include {
+		item.Direction = ""
+		item.DirectionVersion = 0
 	}
 	writeJSON(w, 200, item)
 }
@@ -123,6 +157,10 @@ func (a *API) mutateLearningSpace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if value, ok := fields["direction"]; ok && string(value) == "null" {
+		spaceFailure(w, r, space.Invalid())
+		return
+	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&c) != nil {
@@ -134,6 +172,10 @@ func (a *API) mutateLearningSpace(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		spaceFailure(w, r, err)
 		return
+	}
+	if c.Direction == nil {
+		item.Direction = ""
+		item.DirectionVersion = 0
 	}
 	writeJSON(w, 200, item)
 }

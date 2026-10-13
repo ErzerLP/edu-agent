@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/google/uuid"
@@ -17,9 +18,30 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool       *pgxpool.Pool
+	directions *learningdirection.Store
+}
 
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func New(pool *pgxpool.Pool, directions ...*learningdirection.Store) *Store {
+	s := &Store{pool: pool}
+	if len(directions) > 0 {
+		s.directions = directions[0]
+	}
+	return s
+}
+
+func (s *Store) direction(ctx context.Context, tx pgx.Tx, item space.Space) (space.Space, error) {
+	if s.directions == nil {
+		return item, nil
+	}
+	d, err := s.directions.ReadTx(ctx, tx, item.ID, item.DirectionVersion)
+	if err != nil {
+		return item, err
+	}
+	item.Direction, item.DirectionVersion = d.Text, d.Version
+	return item, nil
+}
 
 const columns = "id::text,name,description,status,version,created_at,updated_at"
 
@@ -51,7 +73,11 @@ func (s *Store) Get(ctx context.Context, id string) (space.Space, error) {
 		return space.Space{}, err
 	}
 	defer tx.Rollback(context.Background())
-	return scan(tx.QueryRow(ctx, "SELECT "+columns+" FROM learning_spaces WHERE id=$1", id))
+	item, err := scan(tx.QueryRow(ctx, "SELECT "+columns+" FROM learning_spaces WHERE id=$1", id))
+	if err != nil {
+		return item, err
+	}
+	return s.direction(ctx, tx, item)
 }
 
 type cursor struct{ ID, Search, Status string }
@@ -91,6 +117,13 @@ func (s *Store) List(ctx context.Context, q space.Query) (space.Page, error) {
 	if err = rows.Err(); err != nil {
 		return space.Page{}, err
 	}
+	rows.Close()
+	for i := range page.Items {
+		page.Items[i], err = s.direction(ctx, tx, page.Items[i])
+		if err != nil {
+			return space.Page{}, err
+		}
+	}
 	if len(page.Items) > q.Limit {
 		page.Items = page.Items[:q.Limit]
 		raw, _ := json.Marshal(cursor{page.Items[q.Limit-1].ID, q.Search, q.Status})
@@ -105,6 +138,9 @@ func (s *Store) Mutate(ctx context.Context, actor, id string, c space.Command) (
 	}
 	if err := c.Validate(create); err != nil {
 		return space.Space{}, err
+	}
+	if c.Direction != nil && s.directions == nil {
+		return space.Space{}, learningdirection.ErrUnavailable
 	}
 	raw, _ := json.Marshal(struct {
 		ID      string
@@ -139,6 +175,12 @@ func (s *Store) Mutate(ctx context.Context, actor, id string, c space.Command) (
 		if err = json.Unmarshal(result, &item); err != nil {
 			return item, err
 		}
+		if item.DirectionVersion > 0 {
+			item, err = s.direction(ctx, tx, item)
+			if err != nil {
+				return item, err
+			}
+		}
 		return item, tx.Commit(ctx)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -161,8 +203,29 @@ func (s *Store) Mutate(ctx context.Context, actor, id string, c space.Command) (
 	if err != nil {
 		return item, err
 	}
+	if c.Direction != nil {
+		if item.Status != "active" {
+			return item, &space.Error{Code: "learning_space_archived"}
+		}
+		d, e := s.directions.SaveTx(ctx, tx, id, generation, *c.Direction)
+		if e != nil {
+			return item, e
+		}
+		item.DirectionVersion = d.Version
+	} else if s.directions != nil {
+		d, e := s.directions.ReadTx(ctx, tx, id, 0)
+		if e != nil {
+			return item, e
+		}
+		item.DirectionVersion = d.Version
+	}
+	// The receipt stores revision identity, never a plaintext copy of direction.
 	result, _ = json.Marshal(item)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_space_operations(device_id,operation_id,request_hash,result) VALUES($1,$2,$3,$4)`, actor, c.OperationID, hash[:], result); err != nil {
+		return item, err
+	}
+	item, err = s.direction(ctx, tx, item)
+	if err != nil {
 		return item, err
 	}
 	return item, tx.Commit(ctx)

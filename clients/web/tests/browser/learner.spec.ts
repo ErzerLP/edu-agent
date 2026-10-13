@@ -27,7 +27,7 @@ test('学习端全权一次配对完成文本导入、Studio 笔记与记忆候�
   await expect(dialog.getByRole('heading', { name: '尚未正式导入' })).toBeVisible()
   expect((await webAPI(page, 'GET', '/v1/knowledge/sources', undefined, space.id)).items).toHaveLength(0)
   await dialog.getByRole('button', { name: '确认正式导入这 1 项资料' }).click()
-  await expect(dialog.getByRole('heading', { name: '资料已导入，尚未自动用于目标' })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '资料已保存' })).toBeVisible()
   await dialog.getByRole('button', { name: '关闭添加来源' }).click()
   expect((await webAPI(page, 'GET', '/v1/knowledge/sources', undefined, space.id)).items).toHaveLength(1)
 

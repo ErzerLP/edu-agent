@@ -150,6 +150,6 @@ function ConversationView({ spaceId, id, expanded, onChange, onBinding }: { spac
     </div>
     <div className="actions">{after > 0 && <Button variant="outline" onClick={() => setAfter(0)}>最早轮次</Button>}{detail.data?.next_cursor && <Button variant="outline" onClick={() => setAfter(detail.data!.next_cursor!)}>后续轮次</Button>}</div>
     {c.storage_state === 'temporary_unavailable' && <p role="alert">临时正文无法恢复。请新建对话，正式学习事实仍然保留。</p>}
-    <MentorPanel goal={{ learning_space_id: c.space_id, goal_id: c.goal_id ?? '00000000-0000-0000-0000-000000000000', revision: c.goal_version, management: { status: c.writable ? 'active' : 'paused' } }} archivedSpace={!c.writable} teachingSessionId={c.teaching_session_id} conversation={c} onChange={onChange} />
+    {c.mode === 'study' ? <Link to="/spaces/$spaceId" params={{ spaceId }} search={{ conversation: c.id, panel: 'classroom' }}>继续学习对话</Link> : <MentorPanel goal={{ learning_space_id: c.space_id, goal_id: c.goal_id ?? '00000000-0000-0000-0000-000000000000', revision: c.goal_version, management: { status: c.writable ? 'active' : 'paused' } }} archivedSpace={!c.writable} teachingSessionId={c.teaching_session_id} conversation={c} onChange={onChange} />}
   </section>
 }

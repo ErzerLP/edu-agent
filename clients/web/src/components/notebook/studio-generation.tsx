@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
 import { ApiError, learningClient, unwrap } from '@/api/client'
-import { goalSchema } from '@/api/runtime'
+import { goalSchema, type Space } from '@/api/runtime'
+import { SpaceDialog } from './space-dialog'
 import { settingsSchema } from '@/api/settings'
 import {
   isMentorTerminal,
@@ -194,20 +195,19 @@ export function StudioRun({
 }
 
 export function StudioGenerator({
-  spaceId,
-  goalId,
+  space,
   kind,
   base,
   onBack,
   onOpen,
 }: {
-  spaceId: string
-  goalId?: string
+  space: Space
   kind: 'guide' | 'brief' | 'quiz'
   base?: StudioRevision
   onBack: () => void
   onOpen: (id: string) => void
 }) {
+  const spaceId = space.id
   const { session, prefix, drafts } = useIdentity()
   const { selection } = useSourceSelection()
   const key = JSON.stringify([...prefix, spaceId, 'studio-generation', base?.artifact_id ?? kind])
@@ -223,7 +223,8 @@ export function StudioGenerator({
       alive.current = false
     }
   }, [])
-  const targetGoal = base ? (base.goal_id ?? undefined) : goalId
+  const directionMode = kind === 'quiz' && (!base || !!base.body.quiz?.direction)
+  const targetGoal = !directionMode ? (base?.goal_id ?? undefined) : undefined
   const configuration = useQuery({
     queryKey: [...prefix, 'settings'],
     queryFn: ({ signal }) =>
@@ -259,23 +260,39 @@ export function StudioGenerator({
       !selection ||
       selection.mode !== 'items' ||
       (targetGoal && !goal.data) ||
-      (kind === 'quiz' && !targetGoal)
+      (directionMode && !space.direction_version)
     )
       return
     setBusy(true)
     setError(undefined)
-    const body: StudioGenerate = pending ?? {
+    const common = {
       operation_id: crypto.randomUUID(),
       privacy_generation: session.generation,
-      kind,
-      goal_id: targetGoal ?? null,
-      goal_version: goal.data?.revision ?? 0,
       artifact_id: base?.artifact_id ?? null,
       expected_version: base?.version ?? 0,
       source_selection: selection,
       request_budget: 1,
       token_budget: tokens,
     }
+    const body: StudioGenerate =
+      pending ??
+      (directionMode
+        ? {
+            ...common,
+            kind: 'quiz',
+            goal_id: null,
+            goal_version: 0,
+            mode: 'direction',
+            direction_version: space.direction_version!,
+          }
+        : kind === 'quiz'
+          ? { ...common, kind, goal_id: targetGoal!, goal_version: goal.data!.revision }
+          : {
+              ...common,
+              kind,
+              goal_id: targetGoal ?? null,
+              goal_version: goal.data?.revision ?? 0,
+            })
     drafts.set(key, body)
     setPending(body)
     try {
@@ -331,23 +348,18 @@ export function StudioGenerator({
       ) : (
         <>
           <p>
-            使用当前勾选的 {selection?.items.length ?? 0} 个来源。
-            {targetGoal
-              ? `关联目标：${goal.data?.management.details.name ?? '正在读取'}。`
-              : kind === 'quiz'
-                ? ''
-                : '不绑定目标。'}
-            生成结果将加密保存。
+            使用已选的 {selection?.items.length ?? 0} 个来源。
+            {directionMode && space.direction ? `学习方向：${space.direction}` : ''}
           </p>
           {!modelReady && <p>请先在设置中配置并启用 Web 导师模型。</p>}
-          {kind === 'quiz' && !targetGoal && (
-            <p role="alert">请先在课堂选择或建立目标，再生成测验。</p>
+          {directionMode && !space.direction_version && (
+            <SpaceDialog space={space} confirmDirection />
           )}
           {modelReady && (
             <p className="hint">
-              所选片段{kind === 'quiz' ? '和选定目标' : ''}将发送到{' '}
-              {configuration.data?.effective_mentor.endpoint}
-              ，消耗本次模型预算。单次输出上限为 {configuration.data?.limits.output_tokens} tokens。
+              所选片段{directionMode ? '和学习方向' : ''}将发送到{' '}
+              {configuration.data?.effective_mentor.endpoint}。
+              {directionMode ? '每题作答将按同一预算自动评估。' : ''}
             </p>
           )}
           {(!selection || selection.mode === 'none') && <p>请先勾选至少一个可读取的来源。</p>}
@@ -377,7 +389,7 @@ export function StudioGenerator({
             disabled={
               busy ||
               !modelReady ||
-              (kind === 'quiz' && !targetGoal) ||
+              (directionMode && !space.direction_version) ||
               !selection?.items.length ||
               !!goal.error ||
               (!!targetGoal && !goal.data) ||

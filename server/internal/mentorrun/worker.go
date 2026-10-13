@@ -403,10 +403,10 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	host.model, _, _, err = s.settings.MentorClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: host, next: next} })
 	if host.body.Assessment != nil {
 		err = host.assess(execution)
-	} else if host.body.Study != nil {
-		err = host.generateStudy(execution)
 	} else if host.body.Studio != nil {
 		err = host.generateStudio(execution)
+	} else if host.body.Study != nil {
+		err = host.generateStudy(execution)
 	} else if host.body.ContentEdit != nil {
 		err = host.editContent(execution)
 	} else if host.body.Research != nil {

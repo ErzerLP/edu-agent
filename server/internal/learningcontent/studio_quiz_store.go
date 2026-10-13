@@ -31,6 +31,7 @@ type StudioQuizMapping struct {
 	SessionID         string `json:"session_id"`
 	ActivityID        string `json:"activity_id"`
 	ContentArtifactID string `json:"content_artifact_id"`
+	ExerciseID        string `json:"exercise_id,omitempty"`
 }
 
 func (s *Store) StudioQuizOperationTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, operation string) (string, int64, error) {
@@ -66,7 +67,7 @@ func (s *Store) StudioQuizReadTx(ctx context.Context, tx pgx.Tx, actor identity.
 	if r.Kind != "quiz" || r.GoalID == nil || r.Body.Quiz == nil || r.Body.Quiz.GoalVersion < 1 {
 		return r, nil, ErrInvalid
 	}
-	rows, err := tx.Query(ctx, `SELECT question,session_id,activity_id,content_artifact_id FROM learning_studio_quiz_questions WHERE artifact_id=$1 AND version=$2 ORDER BY question`, id, version)
+	rows, err := tx.Query(ctx, `SELECT q.question,q.session_id,q.activity_id,q.content_artifact_id,COALESCE(e.id::text,'') FROM learning_studio_quiz_questions q LEFT JOIN learning_exercises e ON e.content_artifact_id=q.content_artifact_id WHERE q.artifact_id=$1 AND q.version=$2 ORDER BY q.question`, id, version)
 	if err != nil {
 		return r, nil, err
 	}
@@ -74,7 +75,7 @@ func (s *Store) StudioQuizReadTx(ctx context.Context, tx pgx.Tx, actor identity.
 	items := []StudioQuizMapping{}
 	for rows.Next() {
 		var m StudioQuizMapping
-		if err = rows.Scan(&m.Question, &m.SessionID, &m.ActivityID, &m.ContentArtifactID); err != nil {
+		if err = rows.Scan(&m.Question, &m.SessionID, &m.ActivityID, &m.ContentArtifactID, &m.ExerciseID); err != nil {
 			return r, nil, err
 		}
 		items = append(items, m)

@@ -44,6 +44,7 @@ func (a *API) mountStudio(r chi.Router) {
 	read.Get("/v1/learning/studio/artifacts/{artifactID}/quiz", a.studioQuizGet)
 	read.Get("/v1/learning/studio/quiz-operations/{operationID}", a.studioQuizOperation)
 	write.Post("/v1/learning/studio/artifacts/{artifactID}/quiz/start", a.studioQuizStart)
+	a.mountStudioExercises(r)
 	r.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.requireScope("knowledge:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge)).Post("/v1/learning/studio/artifacts/{artifactID}/import-candidate", a.studioImportCandidate)
 }
 
@@ -68,6 +69,17 @@ func (a *API) studioGenerate(w http.ResponseWriter, r *http.Request) {
 			mentorFailure(w, r, mentorrun.ErrInvalid)
 			return
 		}
+	}
+	if value, ok := fields["mode"]; ok {
+		var mode string
+		if json.Unmarshal(value, &mode) != nil || mode != "direction" {
+			mentorFailure(w, r, mentorrun.ErrInvalid)
+			return
+		}
+	}
+	if value, ok := fields["direction_version"]; ok && (bytes.Equal(bytes.TrimSpace(value), []byte("null")) || fields["mode"] == nil) {
+		mentorFailure(w, r, mentorrun.ErrInvalid)
+		return
 	}
 	if decodeJSONData(raw, &input) != nil || input.Validate() != nil {
 		mentorFailure(w, r, mentorrun.ErrInvalid)

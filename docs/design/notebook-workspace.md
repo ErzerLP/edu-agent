@@ -1,10 +1,10 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：Shape 已确认（2026-10-13）：用户认可对话式原型 v2，Q1–Q5 采用建议默认值。批次 1、2、3（含 3c 单题会话方案 A）与 C1 已合并 main；C2 已在 `feat-chat-c2` 工作树实现并完成本次验收，未暂存／提交。来源与 Studio 继续复用，中栏改为对话式学习。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)。本轮有效设计与计划为下方“方向变更”一节；后续旧设计及实施记录仅作历史追溯。
+状态：Shape 已确认（2026-10-13）：用户认可对话式原型 v2，Q1–Q5 采用建议默认值。批次 1、2、3（含 3c 单题会话方案 A）与 C1–C3 已合并 main；C4 在 `feat-chat-c4` 实施并完成本次范围的验收，改动未暂存／提交／推送。来源与 Studio 继续复用，中栏改为对话式学习。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)。本轮有效设计与计划为下方“方向变更”一节；后续旧设计及实施记录仅作历史追溯。
 
 ## 方向变更（2026-10-12）
 
-本节是已确认 Shape 的实现设计；Q1–Q5 已确认采用默认值，原型为 [notebook-chat-prototype.html](notebook-chat-prototype.html)。初次调查基于 `docs-shape-chat` / `493aaa5`；各批实际交付与检查以对应实施记录为准，C3 已完成（C3a+C3b），C4–C5 仍属后续计划。旧批次的测试结果不构成本轮验收。
+本节是已确认 Shape 的实现设计；Q1–Q5 已确认采用默认值，原型为 [notebook-chat-prototype.html](notebook-chat-prototype.html)。初次调查基于 `docs-shape-chat` / `493aaa5`；各批实际交付与检查以对应实施记录为准，C3 已完成（C3a+C3b），C4 已实施并完成本次验收，C5 仍属后续计划。旧批次的测试结果不构成本轮验收。
 
 ### A. 方案选择与新信息架构
 
@@ -813,6 +813,56 @@ go test -p=1 ./internal/mentorrun -run '^TestPostgreSQLStudyExerciseLiveResponse
 - **延期：** 新产物类型、自动笔记、笔记双向同步与 G0 卡片统计。
 - **退出标准：** 方向生成题组→逐题作答→反馈，方向修改后旧题组仍按原版本开始／继续；旧手选目标测验请求语义不变。指南／简报引用、笔记版本转来源、取消／重开、unknown、草稿和跨区权限通过受影响检查及真实 Chromium／DB 流程。
 - **重型证据：** 适用三引擎和全部产物历史矩阵到 C5；原 3c 数据读回、首题版本兼容、幂等与失权本批必跑。
+
+##### C4 实施记录（2026-10-13）
+
+**范围与状态。** 沿已确认的 C4 Shape 在 `feat-chat-c4` 原工作树实施，基线 `main@ae7ffc4`。完成方向生成测验、共享卡片、自动评估及必要恢复／权限边界；CLI 和 `packages/agentcore` 协议未改。改动留在工作树，未暂存、提交或推送。
+
+**合同。**
+
+- 新测验请求显式传 `mode: direction`、正整数 `direction_version`、`goal_id: null` 与 `goal_version: 0`；只允许 `kind: quiz`，与手选目标互斥。原必填字段、非空来源、版本、操作身份、重复字段及身份注入校验保留；显式 null／空模式／缺方向版本拒绝。
+- 受理事务在原 operation 回执核对之后调用 `learningdirection.EnsureTx`，保存确切方向／系统修订与来源 manifest。生成 worker 使用受理快照；产物仍为加密 schema 1，`quiz.direction` 保存方向 ID、版本和确切 `goal_revision_id`，`quiz.assessment_policy` 保存当时授权的配置指纹与预算。不保存凭据。每题评估独立使用该预算，界面明确告知。
+- 方向模式首题与后题均加载保存的确切修订，不读 latest；仍核验题序、前题真实完成、生成版本、原来源和隐私代次。`PublishExerciseTx` 组合原 `PublishQuestionTx`；Studio 映射、练习映射与正常 `present_activity` 同事务提交。作答沿原 content answers，共用原 Attempt、评估任务、Feedback、Evidence、进度和复习；无第二套评分／进度表。
+- 新端点为 `/v1/learning/studio/exercises/{exerciseID}` 的读取、`/help`、`/help/{operationID}` 与 `/assessment/resume`。由 Studio 自己的关联核验区、产物版本、题序和真实承载，不借用 study conversation ID；读取需 learning／knowledge 读取权限，写入需 learning 写入和 knowledge 读取权限，显式区头、CSRF 和隐私门禁不变。
+- 提示使用旧题组保存的来源，左栏改选不改变该题；披露和帮助下限沿 C3 账本，原提示回执可核对，直接 content answers 不能降级。卡片投影共用真实 Feedback；已继续仍读原回执，provisional 不自动确认，unknown 不重发，过期保留答案。可读取 Studio 的其他设备可读原作答；评估续接仍限提交设备，且需原运行版本、当前配置和预算确认。未放宽 `ResumeAssessment` 的所有者校验。
+
+**兼容与迁移。** 缺省 mode 继续旧手选目标语义，旧操作 hash 不因省略的新字段变化。旧 schema 1 的 quiz 无 `direction`／`assessment_policy` 时照常读取；旧 3c 映射不自动补练习映射或创建评估任务，保留原人工教学入口、首题当前修订冲突和后题沿前题修订继续的规则。新模式使用共享卡片，旧未映射题继续原人工评估界面。**无新增或修改 migration**：复用 37 的 Studio 单题关联与 39 的练习／帮助／评估任务；现有加密版本、轮换与 owner 清除覆盖新增快照和关联。
+
+**文件映射。**
+
+| 文件 | 职责 |
+| --- | --- |
+| `server/internal/mentorrun/studio.go`、`store.go`、`worker.go` | 方向请求互斥、受理快照、方向生成与 worker 分流 |
+| `server/internal/learningcontent/studio_publish.go`、`studio_quiz.go`、`studio_quiz_store.go` | 未解析方向目标的专用校验、加密快照、现有映射关联练习 ID |
+| `server/internal/learningstart/studio_quiz.go`、`question.go` | 精确修订、题序与旧语义，显式自动评估发布及正常展示动作 |
+| `server/internal/mentorrun/studio_exercise.go`、`study_exercise_ports.go` | Studio 所属关系、共用反馈投影、帮助回执、跨设备读事实及原设备续接 |
+| `server/internal/transport/httpapi/studio.go`、`studio_exercise.go`、`studio_generation_test.go` | 封闭请求、Studio 卡片端点、隐私响应、明确区头及路由分类检查 |
+| **`server/api/openapi.yaml`（OpenAPI）**、`clients/web/src/api/schema.d.ts`（`npm run generate`） | 新可选生成合同、方向快照、Studio 卡片与帮助／续接端点 |
+| `server/api/openapi_studio_generation_test.go`、`openapi_exercise_test.go` | 新／旧请求互斥、真实 DTO 与共享投影合同；study 线上的 JSON 合同不变 |
+| `deploy/web/nginx.conf` | 同步端点说明；已有 `learning/studio` 白名单覆盖新路径，无需扩大允许范围 |
+| `clients/web/src/api/studio.ts`、`exercises.ts`、`studio.test.ts` | 新 DTO、原产物／版本／会话／内容身份核对、兼容读取与纯合同检查 |
+| `clients/web/src/components/notebook/studio-panel.tsx`、`studio-generation.tsx`、`studio-quiz.tsx`、`clients/web/src/notebook-workspace-page.tsx` | 测验入口可用、读取区方向、无目标选择、逐题与原版本切换 |
+| `clients/web/src/components/notebook/practice-controller.tsx`、`studio-practice-card.tsx`、`inline-exercise-card.tsx` | 共用 PracticeCard／FeedbackCard 控制器，分别提供真实 Studio／study 端口，原答案／继续回执与隔离草稿 |
+| `server/internal/mentorrun/studio_direction_test.go`、`studio_exercise_test.go`、`studio_direction_live_test.go` | 方向冻结、自动反馈、旧首题冲突、幂等、帮助下限、恢复、撤权／清除及显式真实模型 smoke |
+| `clients/web/tests/browser/notebook-studio.spec.ts`、本文 | C4 Chromium 闭环、四种产物回归、截图与交付记录 |
+
+**检查与证据。** 临时证据在 `/tmp/edu-chat-c4/evidence/`；Go 缓存位于 `/tmp/edu-chat-c4-go-cache`。沙箱不能写指定的 `~/.cache` 输出目录，因此等价构建独立 schema 包装到 `/tmp/edu-chat-c4/webdatabase`，来源网络夹具到 `/tmp/edu-chat-c4/webnotebook`；不改依赖链接，不操作其他项目容器。
+
+| 检查 | 本次结果 |
+| --- | --- |
+| TDD 失败复现 | 原实现拒绝方向测验；旧前端 schema 拒绝方向快照；HTTP 接受可歧义的 null 可选模式；OpenAPI 缺 Studio 端点。各项先复现再实现，相关检查已闭合 |
+| 前端 | `npm run generate`、`npm run check`、`npm run build -- --configLoader native` 通过；Studio／exercise／共享卡／feedback／content／teaching／conversation／mentor／source-selection 相关 vitest **9 文件、28 项通过**。构建仅有既有 Zod 注释与大 chunk 提示；构建后只格式化源码并复验类型／相关单测 |
+| Go | 受影响 `learningstart`、`learningcontent`、`mentorrun`、`transport/httpapi`、`api` 包的非数据库 `go test` 和 `go vet` 通过；最后 HTTP 读取对齐 C3 的响应截止时间后，定向合同／路由检查与 vet 再通过。`go build -tags web_release -o edu-agentd ./cmd/edu-agentd` 通过 |
+| 真实 PostgreSQL | 先 `umask 022`，指定 32995 测试库，`-p=1`。`postgres.jsonl`：**35 项真实 PG 主场景通过**，另 13 项定向非 DB 检查通过；两项显式 live opt-in 跳过，不计模型验收。后续 `postgres-final.jsonl`：**8 项 PG 复验通过**，包括新增跨设备读回修复。覆盖受理后改方向、旧首题／后题原修订、自动反馈／同一进度证据、旧手选目标与旧 3c 人工评估、幂等、帮助下限、预算／配置续接、unknown、过期、跨区、撤权与清除 |
+| Chromium | **24 项通过，0 skipped，0 flaky／重试**：C4 核心 1、Studio 回归 4、notebook-chat 5、notebook-exercise 2、notebook-sources 3、notebook-workspace 8、learner 1。各文件使用独立 schema；Chromium 使用指定路径；sources 使用专用 `webnotebook` 网络夹具，其他使用真实服务及确定性模型 |
+| 真实模型 | `live-smoke.log`：responses／deepseek-v4-flash／8192，一次生成 **3 题**，首题作答自动评估 **accepted**；生成 1 次、评估 1 次，合计 **2 次真实调用**，生成 4147 tokens、评估 4765 tokens。通过后停止调用；凭据只从用户指定 env 文件读入 |
+| 差异 | `git diff --check` 通过；工作树保留全部改动，未触及 `.git` 写操作 |
+
+首轮 C4 浏览器在闭环完成后的断言用了 `session.context`，已改为从真实 feedback activity 核对确切修订；最终 `studio-c4-final.json` 通过，初始日志保留。来源回归首轮误用普通服务，未启用搜索／网页网络夹具；切换已有专用隔离夹具后 `notebook-sources-final.json` 三项通过，无产品校验放宽。跨设备读取在提交后因原 task 的 device 限制丢失卡片，新增真实 PG 测试先复现，再将已授权卡片的事实投影与评估续接权限分开；原内部任务端口与续接校验保留。
+
+**截图。** `/tmp/edu-chat-c4/evidence/screenshots/` 下的 `current-studio-practice-{1440,390}.png`、`current-studio-feedback-{1440,390}.png`、`current-studio-old-direction-complete-{1440,390}.png`，分别为共享作答卡、反馈与原引用、方向更新后旧题组完成。
+
+**留给 C5。** 三引擎、全部产物历史／旧客户端组合、完整手机／键盘／可访问性和 candidate 证据汇总；本次截图及已有 390 宽度回归不替代该矩阵。未运行 Go 全量、race、Compose 或三引擎。没有新增用户决策或 C4 范围内未解决阻断项。unknown／过期不自动重发，旧 3c 保留人工评估，均为兼容／恢复合同。
 
 #### C5：手机与完整候选验收（3–5 人日）
 

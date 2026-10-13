@@ -10,11 +10,9 @@ export type ExerciseHelp = z.infer<typeof helpLevel>
 // Presentation only; the original quote, range and hash stay intact for lookup.
 export const citationExcerpt = (text: string) =>
   text.replace(/<!--\s*edu-agent-node:v1\b[\s\S]*?-->\s*/g, '').trim()
-export const exerciseSchema = z
+export const practiceExerciseSchema = z
   .object({
     id,
-    conversation_id: id,
-    run_id: id,
     space_id: id,
     privacy_generation: version,
     session_id: id,
@@ -52,6 +50,8 @@ export const exerciseSchema = z
     )
       ctx.addIssue({ code: 'custom', message: '练习反馈身份不一致' })
   })
+export const exerciseSchema = practiceExerciseSchema.safeExtend({ conversation_id: id, run_id: id })
+export type PracticeExercise = z.infer<typeof practiceExerciseSchema>
 export type Exercise = z.infer<typeof exerciseSchema>
 export const exerciseHelpSchema = z.object({ operation_id: id, level: helpLevel, text: z.string() })
 export const exerciseCitationSchema = mentorCitationSchema.extend({ id })

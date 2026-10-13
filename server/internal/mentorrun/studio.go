@@ -19,11 +19,13 @@ import (
 
 type StudioGenerate struct {
 	learningcontent.StudioTarget
-	OperationID     string                    `json:"operation_id"`
-	GoalVersion     int64                     `json:"goal_version"`
-	SourceSelection knowledge.SourceSelection `json:"source_selection"`
-	RequestBudget   int                       `json:"request_budget"`
-	TokenBudget     int                       `json:"token_budget"`
+	OperationID      string                    `json:"operation_id"`
+	Mode             string                    `json:"mode,omitempty"`
+	DirectionVersion int64                     `json:"direction_version,omitempty"`
+	GoalVersion      int64                     `json:"goal_version"`
+	SourceSelection  knowledge.SourceSelection `json:"source_selection"`
+	RequestBudget    int                       `json:"request_budget"`
+	TokenBudget      int                       `json:"token_budget"`
 }
 type StudioResult struct {
 	ArtifactID string `json:"artifact_id"`
@@ -35,7 +37,14 @@ type StudioState struct {
 }
 
 func (c StudioGenerate) Validate() error {
-	if c.StudioTarget.Validate() != nil || !validID(c.OperationID) || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || c.GoalID == nil && c.GoalVersion != 0 || c.GoalID != nil && c.GoalVersion < 1 || c.RequestBudget < 1 || c.TokenBudget < 1 {
+	if c.Mode == "direction" {
+		if c.StudioTarget.ValidateDirection() != nil || c.DirectionVersion < 1 || c.GoalVersion != 0 {
+			return ErrInvalid
+		}
+	} else if c.Mode != "" || c.DirectionVersion != 0 || c.StudioTarget.Validate() != nil {
+		return ErrInvalid
+	}
+	if !validID(c.OperationID) || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || c.GoalID == nil && c.GoalVersion != 0 || c.GoalID != nil && c.GoalVersion < 1 || c.RequestBudget < 1 || c.TokenBudget < 1 {
 		return ErrInvalid
 	}
 	return nil
@@ -88,9 +97,18 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 	}
 	request := StudioModelRequest(h.body.Studio.Request.Kind, sources, native)
 	if h.body.Studio.Request.Kind == "quiz" {
-		goal, e := h.goal(ctx)
-		if e != nil {
-			return e
+		goal := ""
+		if h.body.Studio.Request.Mode == "direction" {
+			if h.body.Study == nil {
+				return ErrInvalid
+			}
+			goal = h.body.Study.Text
+		} else {
+			var e error
+			goal, e = h.goal(ctx)
+			if e != nil {
+				return e
+			}
 		}
 		request = StudioQuizModelRequest(goal, sources, native)
 	}
@@ -141,6 +159,12 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 	body.Model = model
 	if body.Quiz != nil {
 		body.Quiz.GoalVersion = h.body.Studio.Request.GoalVersion
+		if h.body.Studio.Request.Mode == "direction" {
+			d := h.body.Study
+			body.Quiz.GoalVersion = d.GoalVersion
+			body.Quiz.Direction = &learningcontent.StudioQuizDirection{ID: d.ID, Version: d.Version, GoalRevisionID: d.GoalRevisionID}
+			body.Quiz.Assessment = &h.body.StudyExercise.Policy
+		}
 	}
 	body.InputFingerprint = knowledge.SourceTextHash(string(mustStudioInput(h.body.Studio.Request, h.body.SourceManifest)))
 	scoped, err := learningspace.WithScope(ctx, h.owned.SpaceID)
@@ -148,7 +172,11 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 		return err
 	}
 	return h.service.mutateTx(scoped, &h.owned, "completed", func(tx pgx.Tx, item *row) error {
-		result, err := h.service.studio.StudioPublishTx(scoped, tx, identity.Credential{Device: identity.Device{ID: item.device}, TokenID: item.token}, item.RunID, h.body.Studio.Request.StudioTarget, body)
+		target := h.body.Studio.Request.StudioTarget
+		if h.body.Studio.Request.Mode == "direction" {
+			target.GoalID = &h.body.Study.GoalID
+		}
+		result, err := h.service.studio.StudioPublishTx(scoped, tx, identity.Credential{Device: identity.Device{ID: item.device}, TokenID: item.token}, item.RunID, target, body)
 		if err != nil {
 			return err
 		}

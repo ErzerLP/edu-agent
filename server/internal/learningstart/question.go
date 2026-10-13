@@ -30,8 +30,8 @@ type ExerciseRequest struct {
 	Assessment learningcontent.AssessmentPolicy
 }
 
-// PublishExerciseTx adds C3 mapping explicitly. Studio calls PublishQuestionTx
-// directly and retains manual assessment and its original order/conflict checks.
+// PublishExerciseTx explicitly adds automatic assessment and help tracking.
+// Direction quizzes and study use it; legacy Studio retains PublishQuestionTx.
 func (s *Service) PublishExerciseTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, r ExerciseRequest) (learningcontent.Exercise, error) {
 	hash, err := learning.HashJSON(r)
 	if err != nil {

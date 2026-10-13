@@ -6,6 +6,65 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/studio/exercises/{exerciseID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readStudioExercise
+      summary: Read the original Studio practice, help floor and learning feedback
+      description: Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: Verified original record; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioExercise" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/exercises/{exerciseID}/help:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: publishStudioHelp
+      summary: Disclose a hint against the saved quiz sources
+      description: Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioHelpRequest" } } }
+      responses:
+        "200": { description: Verified original record; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudyExerciseHelp" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/exercises/{exerciseID}/help/{operationID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readStudioHelpOperation
+      summary: Recover the original Studio hint disclosure
+      description: Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: Verified original record; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudyExerciseHelp" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/exercises/{exerciseID}/assessment/resume:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: resumeStudioAssessment
+      summary: Confirm configuration and budget to resume the original answer assessment
+      description: Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioAssessmentResume" } } }
+      responses:
+        "200": { description: Verified original record; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/studio/artifacts/{artifactID}/quiz:
     get:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
@@ -25,7 +84,7 @@ paths:
       x-required-scope: learning:write
       operationId: startStudioQuizQuestion
       summary: Explicitly start the next question in a dedicated formal session
-      description: Requires the quiz's explicit goal and frozen sources. Earlier questions must have completed their original route. Same version and question never creates a second carrier; operation identity is bound to the entire request. No change to the current classroom.
+      description: Requires the quiz's saved revision and frozen sources. Direction mode uses its exact original goal revision even after a direction change; legacy mode preserves the first-question latest-version conflict and manual assessment. Earlier questions must have completed their original route. Same version and question never creates a second carrier; operation identity is bound to the entire request. No change to the current classroom.
       parameters:
         - { $ref: "#/components/parameters/MentorSpaceID" }
         - { name: artifactID, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4866,11 +4925,30 @@ components:
       type: object
       additionalProperties: false
       required: [operation_id, privacy_generation, kind, goal_id, goal_version, artifact_id, expected_version, source_selection, request_budget, token_budget]
+      description: Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently.
+      oneOf:
+        - required: [mode, direction_version]
+          properties:
+            kind: { type: string, enum: [quiz] }
+            goal_id: { type: "null" }
+            goal_version: { type: integer, enum: [0] }
+        - not:
+            anyOf:
+              - required: [mode]
+              - required: [direction_version]
+          anyOf:
+            - properties: { kind: { type: string, enum: [guide, brief] } }
+            - properties:
+                kind: { type: string, enum: [quiz] }
+                goal_id: { type: string, format: uuid }
+                goal_version: { type: integer, minimum: 1 }
       properties:
+        mode: { type: string, enum: [direction] }
+        direction_version: { type: integer, minimum: 1 }
         operation_id: { type: string, format: uuid }
         privacy_generation: { type: integer, minimum: 1 }
         kind: { type: string, enum: [guide, brief, quiz] }
-        goal_id: { type: [string, "null"], format: uuid, description: Required non-null explicit goal for quiz; nullable for guide and brief }
+        goal_id: { type: [string, "null"], format: uuid, description: Null for direction mode; explicit non-null goal for legacy quiz; nullable for guide and brief }
         goal_version: { type: integer, minimum: 0, description: Zero when goal_id is null }
         artifact_id: { type: [string, "null"], format: uuid }
         expected_version: { type: integer, minimum: 0 }
@@ -4937,6 +5015,8 @@ components:
       required: [goal_version, questions]
       properties:
         goal_version: { type: integer, minimum: 1, description: "Server-frozen chosen goal version, never supplied by the model" }
+        direction: { $ref: "#/components/schemas/StudioQuizDirection" }
+        assessment_policy: { $ref: "#/components/schemas/StudioAssessmentPolicy" }
         questions: { type: array, minItems: 1, maxItems: 8, items: { $ref: "#/components/schemas/StudioQuestion" } }
     StudioQuizStart:
       type: object
@@ -4968,6 +5048,7 @@ components:
               state: { $ref: "#/components/schemas/TutoringState" }
               completed: { type: boolean, description: Read from the formal session's completed route flag }
               attempt_id: { type: string, format: uuid }
+              exercise_id: { type: string, format: uuid, description: Present only for explicitly mapped direction practice }
     StudioSave:
       type: object
       additionalProperties: false
@@ -5939,6 +6020,74 @@ components:
         operation_id: { type: string, format: uuid }
         level: { type: string, enum: [hint, scaffold, answer_revealed] }
         text: { type: string, minLength: 1, maxLength: 16000 }
+    StudioQuizDirection:
+      type: object
+      additionalProperties: false
+      required: [id, version, goal_revision_id]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        goal_revision_id: { type: string, format: uuid }
+    StudioAssessmentPolicy:
+      type: object
+      additionalProperties: false
+      required: [configuration, requests, tokens]
+      properties:
+        configuration: { type: string, minLength: 1 }
+        requests: { type: integer, minimum: 1, maximum: 1000 }
+        tokens: { type: integer, minimum: 1, maximum: 10000000 }
+    StudioHelpRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id]
+      properties:
+        operation_id: { type: string, format: uuid }
+    StudioAssessmentResume:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, configuration, request_budget, token_budget]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        configuration: { type: string, minLength: 1 }
+        request_budget: { type: integer, minimum: 1, maximum: 1000 }
+        token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+    StudioExercise:
+      type: object
+      additionalProperties: false
+      required: [id, studio_artifact_id, studio_version, question, space_id, privacy_generation, session_id, activity_id, artifact_id, content_version, session_version, prompt, allowed_help, help_version, deferred, can_continue]
+      properties:
+        studio_artifact_id: { type: string, format: uuid }
+        studio_version: { type: integer, minimum: 1 }
+        question: { type: integer, minimum: 1, maximum: 8 }
+        id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        session_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        artifact_id: { type: string, format: uuid }
+        content_version: { type: integer, minimum: 1 }
+        session_version: { type: integer, minimum: 1 }
+        prompt: { type: string }
+        allowed_help: { type: array, minItems: 1, maxItems: 4, items: { type: string, enum: [none, hint, scaffold, answer_revealed] } }
+        help_version: { type: integer, minimum: 0 }
+        help_floor: { type: string, enum: [hint, scaffold, answer_revealed] }
+        deferred: { type: boolean }
+        can_continue: { type: boolean, description: 允许通过原 session acknowledge_feedback 动作继续；待复核时为 false。继续后仍读回原反馈。 }
+        attempt_id: { type: string, format: uuid }
+        feedback: { $ref: "#/components/schemas/LearningFeedback" }
+        assessment:
+          type: object
+          additionalProperties: false
+          required: [status, version, result_unknown, can_resume, configuration, destination]
+          properties:
+            status: { type: string, enum: [queued, running, paused_budget, succeeded, failed, cancelled] }
+            version: { type: integer, minimum: 0 }
+            reason: { type: string }
+            result_unknown: { type: boolean }
+            can_resume: { type: boolean }
+            configuration: { type: string }
+            destination: { type: string }
     StudyExercise:
       type: object
       additionalProperties: false

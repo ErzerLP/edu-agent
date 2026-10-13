@@ -29,11 +29,26 @@ type StudioTarget struct {
 }
 
 func (c StudioTarget) Validate() error {
+	if c.Kind == "quiz" && c.GoalID == nil {
+		return ErrInvalid
+	}
+	return c.validate()
+}
+
+// Direction requests are unresolved until the application freezes the managed
+// goal. Publication still requires the ordinary, fully resolved target.
+func (c StudioTarget) ValidateDirection() error {
+	if c.Kind != "quiz" || c.GoalID != nil {
+		return ErrInvalid
+	}
+	return c.validate()
+}
+func (c StudioTarget) validate() error {
 	canonicalID := func(value string) bool {
 		id, err := uuid.Parse(value)
 		return err == nil && id != uuid.Nil && id.String() == value
 	}
-	if c.Generation < 1 || studioFields(c.Kind) == nil || c.Kind == "quiz" && c.GoalID == nil || c.ExpectedVersion < 0 || (c.ArtifactID == nil) != (c.ExpectedVersion == 0) || c.ArtifactID != nil && !canonicalID(*c.ArtifactID) || c.GoalID != nil && !canonicalID(*c.GoalID) {
+	if c.Generation < 1 || studioFields(c.Kind) == nil || c.ExpectedVersion < 0 || (c.ArtifactID == nil) != (c.ExpectedVersion == 0) || c.ArtifactID != nil && !canonicalID(*c.ArtifactID) || c.GoalID != nil && !canonicalID(*c.GoalID) {
 		return ErrInvalid
 	}
 	return nil

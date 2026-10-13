@@ -8,12 +8,86 @@ import {
   studioQuizSchema,
   noteSourceItem,
   studioRequest,
+  studioExerciseSchema,
+  checkStudioExercise,
   type NoteDraft,
 } from './studio'
 import { DraftStore } from '@/lib/drafts'
 
 const id = '00000000-0000-4000-8000-000000000001'
 describe('Studio saved revision and tab drafts', () => {
+  it('Studio 卡片只按本区、原产物版本和真实内容映射显示，不能借用 study 身份', () => {
+    const value = studioExerciseSchema.parse({
+      id,
+      space_id: id,
+      privacy_generation: 1,
+      session_id: id,
+      activity_id: id,
+      artifact_id: id,
+      content_version: 1,
+      session_version: 4,
+      prompt: '解释偶数',
+      allowed_help: ['hint'],
+      help_version: 0,
+      deferred: false,
+      can_continue: false,
+      studio_artifact_id: id,
+      studio_version: 2,
+      question: 1,
+    })
+    const expected = {
+      id,
+      space: id,
+      generation: 1,
+      artifact: id,
+      version: 2,
+      question: 1,
+      session: id,
+      activity: id,
+      content: id,
+    }
+    expect(checkStudioExercise(value, expected)).toBe(value)
+    for (const changed of [
+      { generation: 2 },
+      { space: crypto.randomUUID() },
+      { artifact: crypto.randomUUID() },
+      { version: 1 },
+      { question: 2 },
+      { session: crypto.randomUUID() },
+      { activity: crypto.randomUUID() },
+      { content: crypto.randomUUID() },
+    ])
+      expect(() => checkStudioExercise(value, { ...expected, ...changed })).toThrow()
+    expect(
+      studioExerciseSchema.safeParse({
+        ...value,
+        studio_artifact_id: undefined,
+        conversation_id: id,
+      }).success,
+    ).toBe(false)
+  })
+  it('方向测验读回保留确切方向修订，旧 3c 无快照仍可读取', () => {
+    const question = {
+      prompt: '解释偶数',
+      rubric: [{ id: 'd', criterion: '被 2 整除' }],
+      allowed_help: ['hint'],
+      citations: ['1'],
+    }
+    const frozen = {
+      goal_version: 1,
+      questions: [question],
+      direction: { id, version: 1, goal_revision_id: id },
+      assessment_policy: { configuration: 'fixture', requests: 2, tokens: 50000 },
+    }
+    expect(studioQuizSchema.safeParse(frozen).success).toBe(true)
+    expect(studioQuizSchema.safeParse({ goal_version: 3, questions: [question] }).success).toBe(
+      true,
+    )
+    expect(
+      studioQuizSchema.safeParse({ ...frozen, direction: { ...frozen.direction, version: 0 } })
+        .success,
+    ).toBe(false)
+  })
   it('重开测验验证题目引用，目标版本不是题目组', () => {
     const source = { collection_id: id, revision_id: id, document_id: id, document_revision_id: id }
     const hash = 'a'.repeat(64)

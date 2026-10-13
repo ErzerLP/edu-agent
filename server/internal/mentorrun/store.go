@@ -399,6 +399,16 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		}
 		c.study = &d
 	}
+	if c.Studio != nil && c.Studio.Mode == "direction" {
+		if !s.CanStart() {
+			return Receipt{}, ErrStorage
+		}
+		d, e := s.directions.EnsureTx(ctx, tx, actor.Device.ID, space, generation, c.Studio.DirectionVersion)
+		if e != nil {
+			return Receipt{}, e
+		}
+		c.study = &d
+	}
 	if _, err = goalGate(ctx, tx, space, goal, c.ExpectedVersion); err != nil {
 		return Receipt{}, err
 	}
@@ -432,7 +442,11 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		if err != nil {
 			return Receipt{}, err
 		}
-		if err = s.studio.StudioTargetTx(ctx, tx, actor, c.Studio.StudioTarget); err != nil {
+		target := c.Studio.StudioTarget
+		if c.Studio.Mode == "direction" {
+			target.GoalID = &c.study.GoalID
+		}
+		if err = s.studio.StudioTargetTx(ctx, tx, actor, target); err != nil {
 			return Receipt{}, err
 		}
 	}

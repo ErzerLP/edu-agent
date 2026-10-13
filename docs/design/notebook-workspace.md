@@ -1,6 +1,316 @@
 # Notebook 工作区：信息架构与分批实施设计
 
-状态：批次 1、2、3a、3b（PR #87–#92）已合并；当前在 `feat-notebook-b3c` 交付 G5 测验与正式作答，批次 3 四种 Studio 产物均已接通。D1–D4 与 3c 的单题专用会话方案 A 已由用户确认。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)；视觉依据为[静态原型](notebook-workspace-prototype.html)。本次 CLI／agentcore 产品代码未改，改动只留工作树，没有 Git 暂存／提交／推送。批次 4 的完整候选验收尚未执行。
+状态：Shape 已确认（2026-10-13）：用户认可对话式原型 v2，Q1–Q5 采用建议默认值。批次 1、2、3（含 3c 单题会话方案 A）已合并 main；来源与 Studio 继续复用，中栏改为对话式学习。正式行为见 [brief](../comet/specs/notebook-workspace/brief.md) 与 [spec](../comet/specs/notebook-workspace/spec.md)。本轮有效设计与计划为下方“方向变更”一节；后续旧设计及实施记录仅作历史追溯。本次仅改三份文档，不暂存／提交。
+
+## 方向变更（2026-10-12）
+
+本节是当前 Shape 的实现设计。用户已确定“在 AI 对话中学习”，这里的协议、持久化选择和 Q1–Q5 默认值仍待确认；不得把它们当作已发布能力。调查工作树为 `docs-shape-chat` / `493aaa5`，无既有未提交修改；批次 1、2、3（含 3c）已合并 main。v2 原型预期位于 `/home/yunyue/.config/edu-agent-demo/prototype/v2/index.html`，调查时不存在，按用户决定设计。旧批次的测试结果不构成本轮验收。
+
+### A. 方案选择与新信息架构
+
+推荐“现有 mentorrun 对话 + 系统维护目标 + 3c 单题会话桥接”。对话负责交流和卡片顺序，learning／tutoring 继续拥有活动、答案、评估与证据；learningstart 编排 owner 端口，不让模型直接写教学事实。
+
+| 方案 | 取舍 |
+| --- | --- |
+| **推荐：从 3c 抽出单题发布桥接，接入有类型的对话卡片** | 复用真实评估／复习，不受旧课堂路线不能重复节点的约束；需补卡片身份、系统目标和自动评估编排。 |
+| 将旧 TeachingWorkspace 整体嵌入聊天气泡 | UI 仍要求开课、生成路线、活动、获取反馈，无法兑现连续对话及改选后出题；不采用。 |
+| 每轮伪装一个隐藏 Studio 测验，或另建聊天评分表 | 前者污染产物列表、绑死题组顺序与目标门槛，后者复制权威记录；均不采用。复用桥接逻辑不等于强迫聊天题创建 Studio 产物。 |
+
+```text
+首页：学习区卡片墙 → 创建（名称、学习方向）
+学习区：来源 | 对话 | Studio
+  来源：列表／勾选、添加／搜索、审阅、引用定位
+  对话：消息流 + 练习卡 + 反馈卡 + 单一聊天输入
+        新建／切换对话；练习卡内答案、实际帮助等级、提交
+  Studio：指南／简报／测验／笔记及已保存版本
+顶栏：返回、区名、学习区设置（名称、方向、生命周期）、菜单
+手机：来源／对话／Studio，默认对话
+菜单：进度与复习、评估与证据、历史及原辅助功能
+```
+
+移除新主流程中的 GoalSelector、GoalComposer、SessionPicker、“今天想学会什么”和目标搜索分页；不新增“先开课”的门槛。不展示“勾选只用于之后发起的追问与生成，课堂继续使用已冻结资料”“未选来源，不引用资料”等解释。来源个数、实际生成状态、缺少权限／模型、必要授权和失败恢复可以简短呈现。导入审阅、真实帮助选择、评估复核不能随文案精简一起删除。
+
+新学习方向是用户明确输入的数据，不是知识来源或自动外部搜索词。宽泛方向没有天然总题数，不展示“方向完成 80%”；进度继续展示实际记录、已完成活动和到期复习。
+
+### B. 现有生产能力核对
+
+下列路径相对仓库根目录。调查以代码为准；旧第 5 节 G1–G6 是实施前缺口，现已交付，不再作为本轮待建底座。
+
+| 链路／证据 | 已具备 | 本轮不能直接复用之处 |
+| --- | --- | --- |
+| `server/internal/mentorrun/conversation.go` 的 NewConversation／Submit／ReadConversation | goal 可空，多轮、保存／临时、分页、目的地变更确认；SubmitTurn 有 source_selection、operation_id、expected_version；原载荷先查回执。 | 会话可绑定一个 teaching_session_id；TutorTurn 只有消息、Output、manifest、citations，没有多张练习／反馈的有类型引用。保存的卡片不能只挂短期 run checkpoint。 |
+| `mentorrun/source_selection.go`、`store.go`、`core.go` | 受理时 FreezeSourceSelectionTx；加密 manifest、文档／片段 hash 核验；sameSourceScope 只回放相同范围历史，撤权阻止读回／外发；selectedTool 仅 read_references／ask_user／confirm_focus。 | prepareSelected 明确排除 goal、课堂、memory／companion；completeSelected 只接 answer/citations。改 prompt 或让前端从文本解析题目均不足以支持教学。 |
+| `learningstart/start.go` 与 `mentorrun/start.go` | 研究开学／批准参考开学：Prepared 校验、knowledge context、CreateSession、route/activity proposals、ApplyAction、EnsureTx。模型准备与事务发布分离。 | 依赖明确目标与研究／参考上下文；是现有开学入口，不是“每轮用当前勾选出题”的直接 API。新流程复用发布原则，不自动启动搜索／采纳研究。 |
+| `learningstart/studio_quiz.go`、`learningcontent/studio_quiz_store.go` | 3c 单题专用会话；PublishReferencesTx（session 限定）、BindStartContextTx、真实引用映射、route/activity proposal 校验、内容发布；题目映射与幂等回执同事务。 | 绑定 Studio artifact/version/question；首题用 GetGoal 当前修订核验，后题要求前题 CompletedRoute。必须抽出通用单题内核，保留 Studio 包装和既有请求语义。 |
+| `tutoring/state.go`、`learning/{command,proposal,assessment}.go` | 活动／提交／评估／反馈状态机；Activity 保存 goal、rubric、资料和版本；Attempt、AssessmentDecision、AcceptedEvidence 与操作重放完整。 | 不能把聊天字符串直接转 Attempt 或 accepted。现有 SubmitAttempt 只校验 help 枚举及 allowed_help，没有对话提示的持久最低帮助等级。 |
+| `transport/httpapi/learning_content.go`、`clients/web/src/teaching-page.tsx` | content answers 绑定内容版本并调用 ApplyAction；UI 已有答案草稿、原操作核对、帮助、评估读取。 | 答案提交后目前另点“获取教学反馈”，开放题先 Propose assessment 再 record_assessment；新体验需要可恢复的自动编排。反馈确认不能自动确认 provisional。 |
+| `learning/{progress,review_session}.go` 与对应 postgresstore | 进度按真实投影与 goal 修订关联，ReviewTaskID 绑定 goal/node；ReviewSource 以原 task/evidence/attempt 建复习承载，不复制证据。 | 系统目标需归到学习区／方向展示，不能混入主界面目标选择器；不改 reducer 或把每题 CompletedRoute 当方向掌握。 |
+| `learningspace/domain.go`、`learning/goals.go`、`learning/command.go` | 学习区仅 name/description/status/version；GoalRevision 支持 source、previous_revision_id、管理状态和乐观版本。 | 无独立学习方向、无“系统管理目标”归属／幂等绑定。不能把已有 description 或私人 goal 文本直接改名后作为新方向外发。 |
+| `identity/{domain,service,web}.go`；`transport/httpapi/admin.go` | 各业务 profile、scope 存储与 WebScopes 投影；管理后台独立会话。 | 无学习端全权组合；管理面签发处理器只接受 user/agent，新增 enum 本身不会形成可用签发入口。 |
+
+### C. 学习方向 → 后台目标的维护
+
+**推荐一个学习区一个系统管理 goal，方向修订对应 goal revision，活动再携带具体教学意图。** 不按聊天轮数创建目标，不让模型自由生成并切换一批 goals。方向无需被用户改写为精确完成标准；每题的 route step teaching_intent、completion_condition 和 rubric 承担可评估的小目标。
+
+方向不复用 description：两者已有语义不同，而且 CLI 不应被迫改变。建议由 learning owner 新增按 `space_id + privacy_generation` 隔离的方向 head／revision 及 managed-goal binding，方向正文加密；空间 ID 与生命周期仍归 learningspace。新 Web 创建／设置经应用服务组合两个 owner 端口，单事务保存名称和方向，失败不留下半个新学习区。新字段与端口名须在 C2 锁定；旧学习区 create/update 缺省仍兼容，不把方向变成 CLI 必填项。
+
+建议方向长度为 1–2000 Unicode 字符，创建时必填、设置可改；仅裁剪首尾空白，不用模型“润色”后替换原意。方向 revision 有操作回执、expected version、正文 hash，改区名不产生新方向修订。新表和操作 hash 的清除／轮换随 learning owner，不在 query、日志或索引重复保存正文。
+
+| 触发 | 后台动作 | 对旧记录的处理 |
+| --- | --- | --- |
+| 创建区／保存方向 | 保存方向 revision；不调用模型、不创建 tutoring session。 | 不复制已有目标或成绩。 |
+| 第一次发起学习对话／生成测验 | 应用服务在区与方向版本锁下 ensure managed goal，经 learning.CreateGoal 及必要的状态命令建立可用目标；source 标记为系统方向派生，binding 唯一约束防并发重复。 | 不是空字符串／默认占位目标；内容来自该区已确认方向。 |
+| 继续交流／仅改选来源 | 使用当前方向绑定的 goal revision；按轮次保存方向和来源快照。 | 不为每轮增加目标修订，不改原目标 reference head。 |
+| 保存新的方向 | 新方向 revision；下一次学习写入惰性 ensure 同 goal 的新修订并记录 previous_revision_id。并发按版本冲突处理。 | 在途请求按受理版本完成；已发布题及评估仍绑定旧 goal revision。 |
+| 旧区第一次启用 | 按 Q1 展示以区名预填的方向输入并一次确认；不把私人描述／旧目标自动送模型。 | 旧手动目标、旧课堂、旧测验保持独立身份与 URL，不合并、归档或删除。 |
+| 归档／恢复／隐私清除 | 由空间写门禁禁止新增学习动作；恢复核验有效身份与 generation；清除按 owner 移除方向／binding／新卡片数据。 | 不以方向更新触发历史删除；清除后旧操作不得重建已清数据。 |
+
+创建 goal 与修订必须经 owner 的命令／事件／操作回执，不直接写 learning 表。binding 标记系统管理归属；通用目标编辑／生命周期入口不能绕过方向版本直接改这些新目标，旧手工目标继续原行为。来源不能塞进 goal description；每题的资料绑定放 session context，保持真实知识引用。自动目标不从 LLM 自述生成掌握度、deadline、能力自评或“已完成”状态。方向可以宽泛而每题具有具体可验证标准。
+
+新学习 conversation 建议保持 space 级、`goal_id`／`teaching_session_id` 不作为固定教学绑定；新增显式 study 模式，每轮由服务端解析系统 goal revision。这样修改方向无需重建聊天历史，单题会话也不会覆盖当前聊天。旧 conversation 缺省仍是原导师语义，不自动升级。保存历史时附方向版本与 managed goal revision；新轮回放同时匹配来源与方向版本，避免旧方向的提示压过新决定。
+
+进度沿既有 goal 修订与 node 规则聚合，标明历史归属，不自动跨修订 carryover。UI 将系统目标的技术标签映射为学习方向／练习名称；原进度 API、CLI 查询字段不变。复习继续用原 task/evidence/attempt 建立承载，首版通过已有复习页完成，不新增一套聊天复习调度。
+
+### D. 对话出题 → 内嵌作答 → 评估 → 反馈
+
+#### D.1 owner、协议与持久身份
+
+以下均为**拟新增**，不是现有端点承诺。C2/C3 实施时先锁定 DTO 和错误合同，再修改 OpenAPI 和生成类型。
+
+| 部分 | 最小设计 |
+| --- | --- |
+| study conversation／turn | NewConversation 增可选模式，SubmitTurn 的 study 模式必须显式 source_selection（含空选择）与方向版本；响应扩展有类型 items：text／exercise_ref。旧 output/citations 保留，普通 mentor 不接受新模式工具。 |
+| 模型输出 | 受限结构：讲解及核验 citations，加可选一题 candidate（prompt、rubric、allowed_help、citation 引用、教学意图）。复用 Studio 闭合 schema、字符／数量边界与引用校验，首版开放文字题。模型不能提供权威 goal/session/activity/assessment ID 或完成状态。 |
+| 对话卡片关联 | learningcontent 扩展 owner 端口，持久 `space / conversation / turn(run) / exercise_id / session / activity / content artifact + version / direction revision / source manifest` 关系。每轮最多一题有唯一约束；正文复用加密内容版本，引用不可指向短期内存。 |
+| 单题发布内核 | 在 learningstart 从 publishStudioQuestionTx 抽出接受“已核验题目、确切 goal revision、来源 manifest、来源 origin”的事务端口。Studio 保留题组顺序及原入口，聊天调用同内核、不创建隐藏 Studio 产物。 |
+| 作答与评估入口 | 卡片读取给出服务端核验后的活动／内容版本。拟加窄 `/v1/learning/exercises/{id}/answers` 与 operation 查询，内部复用 content-answer 校验／ApplyAction，并原子登记自动评估任务；不让客户端自己编排一串不持久的 POST。 |
+| 反馈投影 | 对话卡片关联只保存 Attempt／assessment 身份和顺序，不存第二份成绩。轮次／卡片读取从 learning.Feedback／Session 查询投影显示 pending、待复核、完成等状态，刷新重开可恢复。 |
+| 学习提示 | 为卡片新增有版本的帮助记录及受限提示动作；服务端记录已提供帮助下限，提交端核验 allowed_help 与该下限。外部帮助由用户如实申报，不宣称能自动侦测用户所有外部行为。 |
+
+新方向／卡片／映射／评估任务都属于 learning 隐私 owner；来源正文和集合关系仍由 knowledge 管理；保存历史沿 mentorrun 现有加密与清除路径。挂靠哪个包不能改变清除 owner。对话删除按原合同删除聊天正文／关联呈现，不倒删已形成的学习事实；练习仍可由进度／评估页找回。全局清除则覆盖所有 owner 及恢复任务。
+
+#### D.2 生产路径与状态
+
+```mermaid
+sequenceDiagram
+  participant U as 对话界面
+  participant M as mentorrun
+  participant B as learningstart 桥接
+  participant L as learning / tutoring
+  U->>M: 发送（方向版本、当前来源、operation）
+  M->>M: 保存输入范围，生成并核验讲解／题目
+  M->>B: 发布单题（已核验候选、具体版本）
+  B->>L: CreateSession → route/activity proposal → ApplyAction
+  B-->>M: 已提交的活动／内容／卡片身份
+  M-->>U: 讲解 + 可作答卡片
+  U->>B: 卡片提交（答案、实际帮助、operation）
+  B->>L: SubmitAttempt + 登记评估任务
+  B-->>U: 提交回执／评估中
+  B->>L: Propose assessment → record_assessment
+  L-->>U: 反馈卡、证据状态、进度读回
+```
+
+1. **受理轮次**：核验 actor、区、方向版本、来源选择、模型目的地与预算；持久化本轮 manifest 和 direction/goal revision。模型只输出候选，不拥有正式写权限。
+2. **发题事务**：重新核验隐私 generation、活动 owner 和可读资料；CreateSession → session 限定 PublishReferencesTx → BindStartContextTx → Propose route／activity → ApplyAction apply_route／issue_activity → EnsureTx。发布卡片映射、运行结果与历史引用一致提交；模型调用在事务外。只有有完整会话／内容的题才能出现提交按钮。沿既有 present_activity 动作进入可答状态，展示回执可重放，不能跳状态机。
+3. **单题与版本**：复用每题独立会话，因此新来源、新知识节点甚至重复节点可用于下一题，不修改旧路线。通用桥接接收确切 goal revision，不再在中间偷读 latest。对新系统目标模式，方向已更新也允许旧题按受理修订发布／作答；旧 Studio／CLI 请求的版本冲突规则保留。Studio 适配见 F。
+4. **提交事务**：客户端提交卡片 ID、内容／活动版本、答案、实际 help、generation 与原 operation。服务端解析权威会话、校验来源仍可用、帮助下限和 expected version，然后复用 SubmitAttempt；同事务登记唯一 `attempt_id` 的评估任务。丢响应先查询原 operation，不能靠新 UUID 再提交。
+5. **自动评估**：当前内容 API 没有“提交即评估”，须新增可恢复的应用编排。复用 mentorrun 的持久任务／租约／预算机制，增加受限评估任务模式及学习领域端口；输入只能是该 Activity、Attempt、rubric、原 references。任务绑定提交者、generation、模型目的地／配置指纹和有界预算，执行前重验权限与来源；配置改变沿用目的地确认，撤权或取消不删除已提交答案。开放题 Propose assessment → record_assessment，客观题按原确定性路径。request_id／operation_id 在任务创建时确定，重启重复执行只读回原结果；模型失败保留 Attempt，重试不新建答案。
+6. **反馈与继续**：反馈卡读真实 AssessmentDecision、依据和 Evidence。用户“继续”仅调用 acknowledge_feedback；provisional 仍受 guardFeedbackExit 约束，需要复核时给出短操作入口，不能自动调用 confirm/override。待处理卡不阻止普通聊天。Studio 逐题开始仍须前题真实完成；对话可暂存题目，不伪造 CompletedRoute。
+7. **进度／复习**：题目生成、展示或“稍后再做”没有 Attempt/Evidence；仅 accepted Evidence 按原 reducer／review policy 生效。每张卡可跳对应反馈记录，进度／复习读同一记录并覆盖重放验证。
+
+| 用户所见 | 权威状态／恢复依据 | 允许操作 |
+| --- | --- | --- |
+| 生成中 | run 已受理，尚无题目映射 | 取消／核对；不能作答 |
+| 练习 | 已发布 session/activity/content，present 成功 | 输入、帮助、提交、稍后再做 |
+| 稍后再做 | 卡片焦点暂存；原 session 不造完成状态 | 继续聊天／之后恢复同题，不记分 |
+| 提交待核对 | 原 operation 结果未知 | 查询或重发相同载荷，保留原草稿 |
+| 评估中／评估失败 | 已有 Attempt；任务 pending／failed | 核对、按预算重试同一答案，不再提交答案 |
+| 反馈待处理 | provisional／不可确认或待复核原因来自领域 | 进入原复核入口；不自动产生 accepted |
+| 反馈／已完成 | 已记录评估；ack 后按原状态机结束单题会话 | 查看依据、继续；完成题目不等于掌握方向 |
+
+首版每个对话同时一张待答卡；稍后再做只转移卡片焦点，未答记录可恢复，恢复前处理当前待答焦点，不让多题答案共用草稿键。卡片在同一 turn 后有稳定位置，评估迟到更新该卡，不追加一份重复“成绩消息”。已保存历史不能因 run TTL 到期丢失卡片身份。
+
+**帮助下限的新增边界。** 当前前端帮助选择与 allowed_help 校验不足以保证聊天提示不可降级。所有本系统提供的、绑定该题的提示经卡片帮助动作记录等级，正文交付与帮助记录一致；提交与提示并发需锁定活动状态，先交付帮助则提高最低等级，提交先成功则提示不得伪装为提交前帮助。普通聊天不自动携带当前题正文／rubric；用户要针对本题提示时走该动作。若用户自行在聊天或外部寻求帮助，仍应在卡片申报实际等级，不能把模型对帮助程度的猜测当安全证明。
+
+帮助下限、绑定内容版本及评估任务登记必须落在这些新活动共用的领域提交路径／owner 端口：直接调用原 content answers 或 tutoring actions 也不能绕过校验或漏建任务。旧未映射活动继续原流程；不能只在新 exercise HTTP handler 中加检查。候选回执重放先识别已经成功的提交，不能因之后的状态变化重新创建 Attempt。
+
+### E. 来源选择、历史与评估资料一致性
+
+保持 G3 的显式来源 manifest，不把左栏写成长期 goal reference policy。每轮提交捕获本标签页当时的选择；加载失败阻止依赖资料的请求，明确空选择使用独立枚举，旧请求缺省继续旧合同。来源翻页不自动扩大选择，“全选已加载”不得冒充全区。
+
+| 场景 | 新轮次／出题／Studio | 已发题与反馈 |
+| --- | --- | --- |
+| A 改为 B | 新受理请求只读 B；在途 A 请求按 A 完成。 | A 题仍按 A 的 activity/rubric/references 评估，不能读 B 或资料 latest。 |
+| A 文档更新版本 | 只使用本次选择中确切 revision；不在 worker 内追 latest。 | A 旧版本引用与 hash 不变，旧版本可读才可继续。 |
+| 不选来源 | 按 Q2 一般交流；资料题／指南／简报／测验入口要求添加／选择资料。 | 原题不依赖当前勾选，可按自身已保存版本提交评估。 |
+| 来源撤权／解绑／清除 | 受理、外发与返回正文均重新核验 owner／链接和 generation。 | 不以题目保存过为由绕过撤权；读回／评估停止，显示不可用，不拿新来源补位。 |
+| 修改方向但来源不变 | 新轮匹配新方向版本，系统 goal 修订由服务端解析。 | 原活动与反馈仍按旧方向／目标修订保存。 |
+
+study 模式扩展 prepareSelected 的**窄上下文**：当前方向作为用户意图、当前轮核验来源、同方向同 manifest 的安全历史，加无正文的学习状态（活动身份、待答／已答、帮助状态）。不得恢复整个旧 goal/session snapshot、通用跨区工具或记忆全文读取。新专用模式允许发布练习的编排端口，但不能放开原 selectedTool 白名单给任意写工具。
+
+继续使用 sameSourceScope 的保守相等策略；新增卡片引用、反馈、摘要也必须携带来源和方向 provenance。改选后可保留屏幕上的旧消息，发送上下文时排除不匹配轮次及其来源衍生内容；首版不做跨范围“自动总结”，也不把旧练习反馈作为新 prompt 隐藏拼接。允许用户明确重新输入自己的问题，不承诺识别所有手动复制的文本出处。
+
+**对旧题获取提示**与评估不同：提示是新的对话动作，也受当前勾选约束。首版仅在当前选择与该题范围兼容（保守按 manifest 相等）时允许携带题目正文获取提示；否则提供“选择这道题的资料后再获取提示”的简短入口，不能暗中恢复 A 并外发。旧题评估的专用模型请求始终使用 A，且不注入新 B 对话或新方向，这是用户已决定的评估一致性例外。
+
+长期记忆候选可通过既有 memory 工具／面板形成并审阅，但新 study 模式首版不自动读取长期记忆全文，也不从课程正文生成长期偏好。显式“记住这个偏好”只传用户指定文本走候选流程；记忆仍为全局语义，不授予跨区资料读取权。scope 齐全不等于模型可以直接批准记忆。
+
+### F. Studio 与已交付代码的复用／替换
+
+| 区域 | 继续复用 | 需要替换／删除的部分 |
+| --- | --- | --- |
+| 批次 1 卡片墙／三栏／菜单 | notebook-home-page、notebook-header/layout/mobile tabs、生命周期、DraftStore、安全导航。 | 中栏 ClassroomPanel 的目标／会话选择、GoalSelector 与建立目标入口从新路径移除；菜单“管理学习区与目标”改“学习区设置”。仅无引用后删除 Notebook 专属文件，不删除旧领域组件。 |
+| 批次 2 G1/G2 | 来源目录与 provenance、四入口、搜索先选后读、PDF 缺口、导入预览／确认与 operation。 | D1 横幅、“尚未自动用于目标”类说明换成实际保存／可选状态；必要导入确认按钮不删除。 |
+| 批次 2 G3 | SourceSelectionProvider、manifest、引用解析、历史范围过滤、撤权／清除检查、SSE／预算／回执。 | MentorComposer 不再作为课堂尾部的第二个输入；扩展为主 ChatPanel，移除来源问答与课堂讨论双模式 UI。旧无模式 API 不改变。 |
+| 批次 3a/3b G4/G6 | 笔记版本、转来源、指南／简报 schema、引用、生成恢复、加密与清除。 | 移除目标前置提示；生成读取当前选择，原持久产物和引用不迁移重写。 |
+| 批次 3c G5 | quiz schema、题组与活动映射、单题发布、答案／评估／进度／复习事实、逐题顺序与原操作核对。 | 新 Web 不传用户选择的 goal；应用层按方向解析目标。StudioQuiz 不再嵌套完整 TeachingPage 控制台，复用 InlineExerciseCard／FeedbackCard。删除新主流程中的“正式作答”等文案。 |
+| 旧课堂与目标、CLI | 旧 URL、操作事件、学习／评估 API、原内容库和 CLI 缺省合同。 | 不作 Git revert，不删除历史目标／会话／migration；新入口不再引导用户管理目标。 |
+| 配对 | 旧 profiles、WebScopes 白名单、设备／会话、管理后台认证与 privacy grant。 | 新增显式学习端全权签发入口，旧“UI 一体化不能组合 profile”限制被替代；不把旧 user scope 静默扩大。 |
+
+Studio 新 Web 通过方向模式的生成参数／适配端口，由服务端 ensure goal，仍保存确定的 goal_id/goal_version 与 source manifest。方向更新后，已经生成的系统目标题组允许按其已保存 goal revision 开始／继续；需修正 3c 首题依赖最新 GetGoal 的假设，按受理模式选择精确修订，而不是全局放松旧版本检查。旧手选目标的测验、API 与 CLI 保持原核验规则。题组属于创建时方向，不能把旧题挂到新的目标修订。
+
+学习指南／简报不需要伪造目标；笔记仍不调用模型。自动题不进入 Studio 保存列表，只有用户主动发起的测验才是 Studio quiz。新内嵌卡片可以复用在 Studio 详情，题组的前题完成规则保留，避免将 UI 改造变成更换测验语义。
+
+### G. 组件与路由变化
+
+| 位置 | 拟调整及责任 |
+| --- | --- |
+| `clients/web/src/notebook-home-page.tsx` 与现有 SpaceEditor | 新建表单增加方向；旧区 Q1 补方向使用同验证，不复用 GoalComposer。 |
+| `notebook-workspace-page.tsx` | 管理区、面板、对话定位与来源选择；不拥有目标选择／评分。StudyConversationController 负责轮次、取消、恢复；卡片控制器负责题目操作。 |
+| `components/notebook/chat-panel.tsx`、`conversation-timeline.tsx`（拟新增） | 有类型消息、卡片、统一输入与历史分页；复用 MentorPanel 的协议控制部分，避免直接嵌整个旧课堂。 |
+| `inline-exercise-card.tsx`、`feedback-card.tsx`（拟新增） | 从 teaching-page／StudioQuiz 提取必要答案、实际帮助、反馈和 operation 控制；草稿键含 conversation/exercise/activity/content version。 |
+| `space-settings.tsx`（拟新增） | 名称、学习方向、生命周期；不展示系统目标管理。 |
+| `source-selection.tsx`、来源查看器、`api/conversations.ts`／`api/studio.ts` | 当前选择进入每个新请求；引用导航扩展 exercise/feedback 类型，由 owner 解析，不猜 ID。 |
+| `main.tsx`、`styles.css`、NotebookLayout | 主面板名改 chat／对话，保留 query 兼容；移动焦点、单滚动消息区、固定输入与卡片独立表单。 |
+
+| 路由（含 /app） | 新行为／兼容 |
+| --- | --- |
+| `/app/` | 卡片墙与名称／方向创建表单。 |
+| `/app/spaces/:spaceId?panel=chat&conversation=:id` | 默认聊天工作区；conversation 校验区、principal 与 generation。首版沿当前设备的保存会话列表恢复，不承诺跨设备合并历史；多标签选择与草稿独立。 |
+| `?panel=classroom`、旧 `?goal=...` | classroom 作为 chat 的兼容别名；goal 若存在仍核验归属，提供旧目标历史入口，不能变成系统方向绑定或静默忽略跨区错误。新链接不再生成 goal query。 |
+| `/app/spaces/:spaceId/manage` | 学习区设置，方向与名称可改；移除主界面目标搜索与管理列表。旧目标详情／研究页保持直达。 |
+| `/app/spaces/:spaceId/chat[/:conversationId]` | 保存的 study 会话可定位到同一工作区消息；旧 mentor／临时历史继续原读取语义，不能自动改成 study。 |
+| `/app/spaces/:spaceId/learn/:sessionId` | 若为新卡片承载，可解析到对应卡片；旧课堂保持原 TeachingPage 的兼容视图及动作，不强制转成新对话，不重开会话。 |
+| `/app/spaces/:spaceId/goals/:goalId[...]` | 保留原目标详情／历史／研究恢复；从历史相关入口到达，不在新对话显示选择器。 |
+| `/app/spaces/:spaceId/studio`、`/app/content/:id`、进度／反馈等 | 旧内容库与版本链接保留；新四产物仍在工作区 Studio，不冒用旧 content ID。 |
+
+浏览器前后退、刷新、原参数与错误边界列入验收。URL 不放正文、答案、方向或来源选择全集；来源切换只改面板与焦点，不重建运行。服务端 SPA 资产／API 边界沿现有实现，不为新 UI 扩大 catch-all。
+
+### H. “学习端全权”配对档案
+
+建议内部值 `learning_full`，展示名“学习端全权”；仅管理员明确签发新码，交换一次后获得以下**去重后的既有 scope 组合**：
+
+| 能力 | scopes |
+| --- | --- |
+| 学习区、方向、对话、Studio、活动、进度／复习 | `learning:read`、`learning:write` |
+| 导入、集合／参考审阅、笔记转来源 | `knowledge:read`、`knowledge:write`、`knowledge:approve`、`imports:web`、`references:manage` |
+| 研究采纳／搜索链路 | `research:adopt`，并沿用上行知识权限和原外发授权 |
+| 评估复核 | `learning:approve`、`assessment:web` |
+| 长期记忆候选、审阅、更正 | `memory:read`、`memory:write`、`memory:web` |
+| 学习侧数据状态、设备列表／撤销 | `privacy:read`、`devices:read`、`devices:manage` |
+
+这是 import、references、research、assessment、memory 档案的学习业务并集，不是给 profile 字符串一个“绕过鉴权”的特殊含义。现有 WebScopes 已有这些显式标记的保留分支；新增档案要同时测试原 token 和实际 WebPrincipal 的有效 scopes，不能只测 pairingProfileScopes。
+
+**明确不授予：** `privacy:erase`、`privacy:device`、管理后台身份、任意通配 scope；按 Q5 也不授予 `settings:write`／`settings:probe`／`model:probe`。全局清除仍要求设备绑定的一次性 grant，学习端全权不能签发该 grant。devices:manage 只保留现有撤销设备能力，不获得签发配对码或管理后台登录能力；记忆为全局单用户语义，不假装按区隔离。
+
+新档案不改变 user／agent／其他旧 profile，不升级存量 token。权限足够后仍保留导入审阅、外部请求授权、目标模式的具体写门禁、候选审阅和评估决定；模型建议不能代替用户批准，界面不为每个学习功能要求再换一张配对码。
+
+**可用签发入口：** 在现有本地管理后台配对下拉及 `adminCreatePairingCode` 白名单增加 learning_full；沿用管理后台 Cookie、Origin、CSRF、限流和本地 transport。学习端只兑换码和展示有效能力，无自授入口。涉及 `server/internal/identity/{domain,service,web}.go` 和 `server/internal/transport/httpapi/admin{.go,ui/...}`；不修改 `clients/cli-go` 或 `server/cmd`。当前管理面私有 HTTP 合同不在公共 OpenAPI，现有兑换 DTO 只交换码，scopes 已为字符串数组，纯 profile 组合不需要 SQL migration 或公共 OpenAPI 改动。
+
+### I. 后端缺口清单（本轮 H1–H8）
+
+“是”表示后续 Build 必须补合同或迁移；本次均只设计。新增 migration 在 Build 按最新序号分配，绝不修改 000034–000037 等已交付迁移。
+
+| 编号／现状 | 最小方案 | OpenAPI | migration | 风险 |
+| --- | --- | --- | --- | --- |
+| **H1 方向／系统目标**：区无方向，goal 无系统绑定 | 独立版本方向与 managed-goal binding；创建／设置组合 owner；学习写入幂等 ensure goal/revision。 | 是：可选方向／能力与版本合同，旧请求保持兼容 | 是：方向、binding、操作身份及 owner 门禁 | 高：重复目标、方向并发、历史成绩被重绑、清除漏项。 |
+| **H2 学习对话**：selected 路径仅问答，turn 无卡片 | 显式 study 模式、方向受限上下文、结构化题目候选、turn items；保存历史携带方向／来源及卡片引用。 | 是：conversation/turn/snapshot DTO | 是：会话模式／查询需要的持久标记；加密 body 版本也需兼容，不只改 schema | 高：误开通用工具、旧正文外发、历史 TTL／模式兼容。 |
+| **H3 内嵌题发布**：3c 只接受 Studio 题组 | 抽取通用单题事务桥接，新增对话题映射与读回／operation；题目继承确切版本。 | 是：exercise 卡片读取与操作合同 | 是：映射、唯一约束、回执；复用现有活动／内容正文 | 高：孤儿卡片、重复会话、跨 owner 原子性、首题 latest 假设。 |
+| **H4 提交到反馈**：手动获取评估，无对话帮助下限 | 答案提交与评估任务原子登记；受限 worker 调用原 proposal/assessment；帮助记录与反馈查询投影。 | 是：窄答案／帮助／任务状态／恢复合同 | 是：评估任务、帮助事件／版本；若复用 run kind 须扩约束 | 高：重复 Attempt／评估、重启失联、帮助降级、provisional 误通过。 |
+| **H5 动态来源**：已有 G3 manifest/hash/历史隔离 | 将相同约束贯穿 study、卡片帮助、生成、评估及反馈读回；评估只读原题快照。 | 扩展随 H2–H4；无需新“切换课堂资料”API | 无独立 migration，复用 H2/H3 版本记录 | 高：改选后旧反馈泄漏、并发撤权／清除、错误读取 latest。 |
+| **H6 Studio 方向适配**：quiz 要求手选 goal/version | 新方向模式服务端解析目标；系统题组开始时读保存修订；UI 复用内嵌卡，保留旧调用校验。 | 是：新增可选模式／方向版本、互斥校验 | 无独立业务表；生成正文版本及 H1 绑定足够 | 中高：破坏旧题顺序、旧测验版本冲突语义或把方向更新重绑成绩。 |
+| **H7 权威记录呈现／隐私恢复**：进度／复习已有，新对象未纳入 | 系统方向标签与历史映射，learning/knowledge/mentorrun 清除／Remaining／轮换／重放接入；保留旧 ReviewSource。 | 否：已有进度事实足够；卡片扩展归 H3/H4 | 无独立 migration，相关约束随 H1–H4 | 高：后台“隐藏目标”变丢失记录、新任务或历史密文在清除后复活。 |
+| **H8 学习端全权**：profiles 分散，管理签发仅 user/agent | 新 profile 的明确 scope 并集、管理 UI 签发、WebScopes 与负权限验证。 | 公共 OpenAPI 否；管理面私有 DTO／UI 是 | 否：既有 scope 数组可存 | 中高：错误扩大旧设备权限、误授 settings／privacy／管理面，或只改 enum 无入口。 |
+
+H1–H4 是主要新增能力，H5/H7 是必须随生产路径完成的边界，不能统一延期到最后。G0 卡片真实汇总／最近排序仍为额外增强，不包含在本轮工时。零来源可评估练习、多题一次提交、跨设备聊天合并、智能跨来源历史摘要不在默认计划。
+
+### J. 旧测试迁移策略与本轮证据
+
+旧断言先分“被替代入口”与“仍有效领域事实”。改变定位／按钮用词后仍验证同一个 operation、Attempt、来源版本和权限结果，不能删掉安全断言换成“卡片可见”。
+
+| 用例／层次 | 保留与迁移 |
+| --- | --- |
+| `notebook-workspace.spec.ts` | 将创建目标、目标分页／草稿、中栏课堂及 D1 横幅断言改为方向创建／设置、连续聊天、内嵌卡与方向／来源切换；保留双标签隔离、归档、迟到响应、菜单焦点、分页目录、引用核验、unknown。 |
+| `notebook-sources.spec.ts` | 保留真实导入／搜索／部分解析与原操作核对；仅更新“正式导入／尚未自动用于目标”定位文案；补改选后出题与后台 A/B 输入检查。 |
+| `notebook-studio.spec.ts` | 删除“没有目标测验禁用”和“必须先选目标”的期待；改为有方向可生成，系统目标惰性创建、旧方向题组继续、逐题提交与反馈；保存、转换、409、撤权、CSRF、草稿用例保留。 |
+| `workspace.spec.ts`、`learning.spec.ts`、`review.spec.ts` | 旧课堂／目标深链接作为兼容场景保留原教学变更、帮助、评估、复习与 CLI 读回；首页 helper 改方向创建，不能把所有旧业务测试重写成新消息可见测试。 |
+| `mentor.spec.ts`／`tutor-history.spec.ts` | 旧临时／保存、目的地、预算、SSE、回执不变；新增 study 保存重开、方向／manifest 历史过滤，旧无模式请求继续原行为。 |
+| identity／admin HTTP | 精确比较学习端全权 token/WebPrincipal scopes；单次配对走真实导入→对话→Studio→记忆候选。独立断言 settings（默认）、admin、无 grant 清除被拒绝；旧 profiles 权限不变。 |
+| learningstart／learning／learningcontent 的 PostgreSQL | 复用 `TestPostgreSQLStudioQuizFormalSessions`、`TestPostgreSQLProgressScopePaginationAndReplay`、`TestPostgreSQLReviewCarrierPreservesSourceAndReplay` 等真实路径；新增聊天题 A、改选 B 后评估仍 A、方向改版、重复提交、帮助并发、任务重启与清除不可复活。 |
+| 合同／migration／候选 | 新字段缺省兼容、旧加密 body、从 main 升级及重复 Apply、轮换与 privacy Remaining；新增 DB 必需用例接入 release 门禁，skip/retry 不当通过。 |
+
+每批先做受影响包、DTO／前端类型、最小真实 HTTP／PostgreSQL 与 Chromium 流程。C3 的核心评估／幂等／隐私不能用 mock 冒充；模型 fixture 用于稳定断言，真实模型 smoke 另记录结构、引用和实际反馈链，不替代浏览器／DB。只有新增变更或失败影响既有结果才重跑对应检查。
+
+稳定候选再做 390／768／1024／1280／1440px、浅深色、IME／软键盘、键盘焦点、axe／对比度及适用三引擎，运行项目现有 `make web-release-check`／`make web-release-candidate`。按 evidence key／输入 hash／环境判定可复用证据，旧 main 的 Chromium 数量不是新实现已通过数量。CLI 只验证兼容，不改代码、交互或帮助。
+
+### K. 新分批计划与工作量
+
+本目录继续作为 Supervisor Shape。C1–C4 为可独立演示的 child，C5 汇总候选；每个 child 10–30 项正式验收，超过工作流阈值重新拆分。计划覆盖父 spec 30 项；文档责任沿工作流：brief 记结果／决定，spec 记可观察行为，本节记技术方案，verification 由 Runtime 生成。本次不另写实现代码或新计划文件。
+
+依赖建议 **C1 → C2 → C3 → C4 → C5**。C1 技术上可先行，C4 依赖 C2 系统方向和 C3 卡片／桥接；OpenAPI、migration、composition、共享 UI 默认串行。一次只推进一个明确批次，不先交付横向表／SDK 再长期等待 UI。以下估算为一名熟悉仓库的工程师人日，含相关测试、迁移、审阅修复，不含确认等待、部署或外部环境采购。
+
+#### C1：一次配对完成学习侧操作（2–3 人日）
+
+- **结果：** 管理员可签发“学习端全权”，用户一次兑换后使用现有来源、研究、Studio、评估与记忆候选入口。
+- **范围：** H8；identity、admin handler/UI、WebScopes／能力展示与局部浏览器。父 spec 26–29；不动 CLI、不扩大旧档案。
+- **延期：** 新方向、聊天出题到 C2/C3；模型／搜索配置写权限按 Q5 独立。
+- **退出标准：** 真实管理签发→浏览器兑换→导入／Studio／记忆候选可用，所有相关 scope 与 WebPrincipal 一致；旧 profiles 不变；管理后台、settings、无 grant 清除负权限成立。受影响 Go／Web 检查和真实 HTTP/DB／Chromium 通过，文档记录结果。
+- **重型证据：** 三引擎全套、全仓兼容到 C5；精确权限正负矩阵及 grant 隔离本批必跑，不能只测 identity 枚举。
+
+#### C2：按学习方向持续对话（5–7 人日）
+
+- **结果：** 新区填写方向，旧区可补方向，在主消息流学习，修改方向／勾选后下一轮使用新输入；保存对话可重开。
+- **范围：** H1/H2、H5/H7 的对话部分；方向与系统目标、study 纯讲解模式、历史保存、ChatPanel、路由／设置、移除旧主入口。父 spec 1–14、27–30。最小新迁移与旧字段兼容同批完成。
+- **延期：** 自动出练习到 C3，Study 模式本批不显示不可作答的“练习卡”；Studio 取消目标门槛到 C4，旧已保存产物仍可读。
+- **退出标准：** 创建／修改方向、并发 ensure 只有一个系统 goal、方向更新形成修订；A→B 与方向变化的模型输入隔离；保存重开、模型目的地、unknown 与撤权／清除有效。类型／受影响 Go 测试、方向 migration 升级和真实 PostgreSQL、主对话 Chromium 场景通过；确认没有主界面手工目标门槛。
+- **重型证据：** 全历史矩阵与三引擎到 C5；方向 owner 清除／轮换、旧 create/update／conversation 兼容本批必跑。
+
+#### C3：对话内一题走完学习闭环（8–12 人日）
+
+- **结果：** 导师讲解并插入卡片，用户答题／选择实际帮助／提交后自动收到反馈，进度与复习读到同一事实。
+- **范围：** H3/H4、H5/H7 的全部练习边界；learningstart 通用单题桥接、learningcontent 关联、持久评估任务、帮助下限、卡片 UI、操作恢复与反馈。父 spec 11–19、25、27–30；不重写评分算法。
+- **延期：** 零来源可评估题、多题单次提交、聊天中自动编排整套复习；既有复习页继续可用。
+- **退出标准：** 真实来源→有效题→Attempt→AssessmentDecision→Evidence／进度／到期复习；改选 B／改方向后旧 A 题评估仍 A；响应丢失一次 Attempt，重复任务不重复评估，提示并发不可降低 help。服务重启、provisional、来源撤权／全局清除均有真实 DB 证据；Chromium 卡片完整闭环及一次受预算约束的真实模型链路证据，旧 3c 桥接兼容绿色。更新缺口结论与 child 验收。
+- **重型证据：** 全仓 DB 历史／三引擎到 C5；本批的正式评估、重放、帮助、跨 owner 原子性与清除不能延期。若该闭环无法在一个候选控制验证范围，先回 Shape 拆子 change，不用半个卡片假作完成。
+
+#### C4：Studio 全部接入方向与内嵌作答（2–4 人日）
+
+- **结果：** Studio 无需选目标即可生成测验，使用共享练习／反馈卡；四种产物和笔记转来源继续完整可用。
+- **范围：** H6 及必要 H7；生成方向适配、精确目标修订、StudioQuiz UI 和文案、相关 DTO／引用／历史读取。父 spec 20–25，回归 11–13、16–19、27–29。
+- **延期：** 新产物类型、自动笔记、笔记双向同步与 G0 卡片统计。
+- **退出标准：** 方向生成题组→逐题作答→反馈，方向修改后旧题组仍按原版本开始／继续；旧手选目标测验请求语义不变。指南／简报引用、笔记版本转来源、取消／重开、unknown、草稿和跨区权限通过受影响检查及真实 Chromium／DB 流程。
+- **重型证据：** 适用三引擎和全部产物历史矩阵到 C5；原 3c 数据读回、首题版本兼容、幂等与失权本批必跑。
+
+#### C5：手机与完整候选验收（3–5 人日）
+
+- **结果：** 手机、键盘和桌面均可完成对话学习，旧入口与 CLI 兼容，父 spec 有逐项证据。
+- **范围：** 父 spec 1–30 收口，尤其 6、28–30；移动布局／可访问性必要修复，旧测试迁移，release 必需用例与 evidence key。不新增业务或评分状态。
+- **延期：** 无已承诺行为延期；真实环境缺失作为未验收项登记，不写通过。
+- **退出标准：** 相关局部检查绿色后，稳定输入下完成 web-release-check／candidate、适用三引擎、真实资产／深链接、所需 DB 迁移／重放／隐私、CLI 读回兼容。无跳过／重试伪通过，完整 spec 对应证据，Runtime 后续按流程 Verify。
+- **重型证据：** 本批集中收口。复用条件满足的局部证据，不重复无变化全扫；输入变化按 evidence key 判定失效，补验真实缺口。
+
+合计 **20–31 人日**（约 4–6 个单人工作周），不是撤销前三批再重建。主要不确定性是 C3 的持久自动评估、帮助竞态与跨 owner 提交；建议另留 3–5 人日风险余量，不能把余量记作新增功能授权。若 Q2 改成零来源可评估、Q3 改成多设备共享历史，需重新评估知识依据／数据所有权，不套用此估算。
+
+### L. 待确认与本次核验边界
+
+待确认问题集中于 [brief 的 Q1–Q5](../comet/specs/notebook-workspace/brief.md#用户已确认2026-10-13采用建议默认值)：旧区补方向、零来源练习、默认保存对话、自动出题节奏、配置写权限范围。本节按建议默认值具体化，未重复请求用户确认已经决定的“对话为主、无手工目标、练习记分、来源实时选择、管理／清除独立、不动 CLI”。
+
+本次只调查代码并更新三份文档；文档核验检查职责、引用、验收编号／替代关系、缺口与批次覆盖以及修改范围。不运行产品测试、数据库迁移、模型或浏览器，不生成新的“测试通过”结论，不创建 verification，不暂存／提交。
+
+---
+
+## 历史设计与交付记录（v1）
+
+以下第 1–8 节保留旧 Shape、批次 1–3 实施记录和当时证据，便于追溯，**不是本轮 Build 的有效要求或剩余计划**。其中“中栏目标／课堂”、D1 范围横幅／冻结课堂语义、D4 手工目标门槛及“配对能力不可组合”已由上节替代；旧 28 项编号与 28–41 人日估算不再用于本轮。旧第 8 节批次 4 的未完成候选义务合并到 C5；当时尚未实现／当前分支等措辞只表示当时状态。
 
 ## 1. 方案与拆分结论
 

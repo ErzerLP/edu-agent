@@ -114,6 +114,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	StudyExercise  *StudyExerciseState         `json:"study_exercise,omitempty"`
 	Assessment     *learning.AssessmentTask    `json:"assessment,omitempty"`
 	Study          *learningdirection.Revision `json:"study,omitempty"`
 	Studio         *StudioState                `json:"studio,omitempty"`

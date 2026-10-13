@@ -153,7 +153,7 @@ type singleQuestionModel struct {
 func (m singleQuestionModel) Generate(_ context.Context, r learning.ProposalRequest) (json.RawMessage, error) {
 	switch r.Type {
 	case learning.ProposalRoute:
-		return json.Marshal(map[string]any{"route": []learning.RouteProposalStep{{NodeRevisionID: m.refs[0].NodeRevisionID, TeachingIntent: m.label, CompletionCondition: "完成本题正式作答并确认反馈"}}})
+		return json.Marshal(map[string]any{"route": []learning.RouteProposalStep{{NodeRevisionID: m.refs[0].NodeRevisionID, TeachingIntent: m.label, CompletionCondition: "完成本题作答并查看反馈"}}})
 	case learning.ProposalActivity:
 		rubric := learning.Rubric{Revision: "studio-quiz-v1", Items: []learning.RubricItem{}}
 		for _, item := range m.question.Rubric {

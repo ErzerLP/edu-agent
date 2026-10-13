@@ -12,6 +12,7 @@ import { useIdentity } from '@/lib/session'
 import { sourceSchema as researchSourceSchema, sourceStatus } from '@/api/research'
 import { Button } from '../ui/button'
 import { mentorCitationSchema } from '@/api/source-selection'
+import { citationExcerpt, exerciseCitationSchema } from '@/api/exercises'
 import { ErrorState } from '../common'
 import { PDFCoverage, PDFPageViewer } from '../pdf-source'
 
@@ -307,30 +308,32 @@ export function MentorCitationContent({
   artifactId,
   version,
   citationId,
+  exerciseId,
 }: {
   spaceId: string
   runId?: string
   artifactId?: string
   version?: number
   citationId: string
+  exerciseId?: string
 }) {
   const { session, prefix } = useIdentity()
   const fragmentView = useRef<HTMLElement>(null)
   const detail = useQuery({
-    queryKey: [...prefix, spaceId, runId, artifactId, version, citationId, 'mentor-citation'],
+    queryKey: [...prefix, spaceId, runId, artifactId, version, exerciseId, citationId, 'mentor-citation'],
     gcTime: 0,
     retry: false,
     refetchInterval: 5000,
     queryFn: async ({ signal }) => {
       const value = await unwrap(
-        artifactId ? learningClient(session, spaceId).GET('/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}', { params: { header: { 'X-Learning-Space-ID': spaceId }, path: { artifactID: artifactId, citationID: citationId }, query: { version: version! } }, signal }) : learningClient(session, spaceId).GET('/v1/learning/runs/{runID}/citations/{citationID}', {
+        exerciseId ? learningClient(session,spaceId).GET('/v1/learning/exercises/{exerciseID}/citations/{referenceID}',{params:{header:{'X-Learning-Space-ID':spaceId},path:{exerciseID:exerciseId,referenceID:citationId}},signal}) : artifactId ? learningClient(session, spaceId).GET('/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}', { params: { header: { 'X-Learning-Space-ID': spaceId }, path: { artifactID: artifactId, citationID: citationId }, query: { version: version! } }, signal }) : learningClient(session, spaceId).GET('/v1/learning/runs/{runID}/citations/{citationID}', {
           params: {
             path: { runID: runId!, citationID: citationId },
             header: { 'X-Learning-Space-ID': spaceId },
           },
           signal,
         }),
-        mentorCitationSchema,
+        exerciseId ? exerciseCitationSchema : mentorCitationSchema,
       )
       if (value.id !== citationId) throw new ApiError(502, 'invalid_response')
       return value
@@ -348,7 +351,7 @@ export function MentorCitationContent({
   return (
     <section ref={fragmentView} tabIndex={-1} aria-label={`引用 ${citationId} 核验片段`}>
       <h3>
-        [{citationId}] {sourceTitle(source)}
+        {exerciseId ? '' : `[${citationId}] `}{sourceTitle(source)}
       </h3>
       <p>
         {source.collection_name} · {source.collection_id.slice(0, 8)}
@@ -359,7 +362,7 @@ export function MentorCitationContent({
         {fragment.range.start}–{fragment.range.end}
       </p>
       <pre className="reference-text">
-        <mark>{fragment.text}</mark>
+        <mark>{exerciseId ? citationExcerpt(fragment.text) : fragment.text}</mark>
       </pre>
       {fragment.truncated && <p>此片段达到展示预算，不表示资料已完整读取。</p>}
       <details>

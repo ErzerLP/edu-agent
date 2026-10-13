@@ -22,7 +22,7 @@ export const tutorMessage = z.object({
 })
 export const turnsSchema = z.object({
   conversation: conversationSchema,
-  items: z.array(z.object({ run_id: z.uuid(), ordinal: version, status: z.string(), body_available: z.boolean(), messages: z.array(tutorMessage), output: z.string(),source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional() })).max(50),
+  items: z.array(z.object({ run_id: z.uuid(), exercise_id: z.uuid().optional(), ordinal: version, status: z.string(), body_available: z.boolean(), messages: z.array(tutorMessage), output: z.string(),source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional() })).max(50),
   next_cursor: version.optional(),
 })
 

@@ -47,10 +47,16 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
-    if (payload.messages?.[0]?.content?.includes('当前为纯讲解模式')) {
+    if (payload.messages?.[0]?.content?.includes('你是学习导师，围绕用户已确认的学习方向')) {
       const material = JSON.parse(payload.messages[1].content)
       const source = material.sources[0], fragment = source?.fragments[0]
       const result = fragment ? { answer: `围绕${material.direction}，已核对${source.collection_name}：${fragment.text} [1]`, citations: [{ source: 1, fragment: 1 }] } : { answer: `围绕${material.direction}，我们可以先理解核心概念。`, citations: [] }
+      result.exercise = null
+      const question = payload.messages.findLast(message => message.role === 'user')?.content ?? ''
+      if (fragment && question.includes('出一道题') && !payload.messages[0].content.includes('当前不能发布新练习')) {
+        result.answer = '试着用自己的话解释资料中的概念。[1]'
+        result.exercise = { prompt: '怎样判断一个数是不是偶数？请举一个例子。', rubric: [{id:'even',criterion:'说明能被 2 整除，并给出偶数例子'}],allowed_help:['none','hint','scaffold','answer_revealed'],citations:[{source:1,fragment:1}] }
+      }
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 } }))
       return

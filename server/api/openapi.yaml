@@ -1267,7 +1267,7 @@ paths:
     post:
       operationId: submitTutorTurn
       summary: 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
-      description: study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。纯讲解，不创建练习。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
+      description: study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。有来源时可原子发布至多一道文字练习，每对话同时一张待答卡；零来源请求出题只返回添加或选择来源入口。请求和 token 预算分别用于本轮生成与提交后的自动评估；每个阶段均有相同上限和独立计量。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
@@ -1289,6 +1289,112 @@ paths:
                 confirm_destination: { type: string, pattern: '^[a-f0-9]{64}$' }
       responses:
         "202": { description: 原运行回执，需继续查询或订阅, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/exercises/{exerciseID}:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readStudyExercise
+      summary: 读取对话题目、帮助下限及原学习反馈
+      description: 校验原设备、学习区、generation、对话与原题来源。读取不会调用模型；不随当前来源选择或方向更新替换题目。提交继续用 content answers，丢响应查原 session operation；feedback 来自 learning。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 卡片权威读模型, content: { application/json: { schema: { $ref: "#/components/schemas/StudyExercise" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/exercises/{exerciseID}/commands:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: changeStudyExercise
+      summary: 收起或恢复同一道未答题
+      description: 原 operation 幂等；通过 learning operations 核对丢失的响应。defer 不产生作答、证据或完成；resume 遇同对话另一待答题返回 409。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudyExerciseCommand" } } }
+      responses:
+        "200": { description: 原操作回执, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/exercises/{exerciseID}/help:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: publishStudyHelp
+      summary: 记录并交付提示
+      description: 先提交 hint 帮助下限，再披露策略提示。新提示要求当前选择与原题 manifest 相同；提交先成功时拒绝新提示。已成功 operation 可在改选后核对；原来源仍须可读。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, source_selection]
+              properties:
+                operation_id: { type: string, format: uuid }
+                source_selection: { $ref: "#/components/schemas/SourceSelection" }
+      responses:
+        "200": { description: 已登记提示, content: { application/json: { schema: { $ref: "#/components/schemas/StudyExerciseHelp" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/exercises/{exerciseID}/help/{operationID}:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: operationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readStudyHelpOperation
+      summary: 核对原提示操作
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 原已交付提示, content: { application/json: { schema: { $ref: "#/components/schemas/StudyExerciseHelp" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/exercises/{exerciseID}/assessment/resume:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: resumeStudyAssessment
+      summary: 确认当前配置与预算后续接同一次评估
+      description: 仅 paused_budget 或可重新核验的 context_changed 可以续接。保持原作答、proposal request 与评估 operation；unknown 不自动重发。configuration 必须等于当前读模型，且 expected_version 匹配任务运行。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, expected_version, configuration, request_budget, token_budget]
+              properties:
+                operation_id: { type: string, format: uuid }
+                expected_version: { type: integer, minimum: 1 }
+                configuration: { type: string, minLength: 1 }
+                request_budget: { type: integer, minimum: 1, maximum: 1000 }
+                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+      responses:
+        "200": { description: 原评估续接回执, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/exercises/{exerciseID}/citations/{referenceID}:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: exerciseID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: referenceID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: readStudyExerciseCitation
+      summary: 定位原题反馈的来源依据
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 原题引用和确切来源片段, content: { application/json: { schema: { $ref: "#/components/schemas/StudyExerciseCitation" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/runs:
     get:
@@ -5818,6 +5924,75 @@ components:
         destination_provider: { type: string }
         destination_endpoint: { type: string }
         confirmation_required: { type: boolean }
+    StudyExerciseCommand:
+      type: object
+      additionalProperties: false
+      required: [operation_id, kind]
+      properties:
+        operation_id: { type: string, format: uuid }
+        kind: { type: string, enum: [defer, resume] }
+    StudyExerciseHelp:
+      type: object
+      additionalProperties: false
+      required: [operation_id, level, text]
+      properties:
+        operation_id: { type: string, format: uuid }
+        level: { type: string, enum: [hint, scaffold, answer_revealed] }
+        text: { type: string, minLength: 1, maxLength: 16000 }
+    StudyExercise:
+      type: object
+      additionalProperties: false
+      required: [id, conversation_id, run_id, space_id, privacy_generation, session_id, activity_id, artifact_id, content_version, session_version, prompt, allowed_help, help_version, deferred, can_continue]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        session_id: { type: string, format: uuid }
+        activity_id: { type: string, format: uuid }
+        artifact_id: { type: string, format: uuid }
+        content_version: { type: integer, minimum: 1 }
+        session_version: { type: integer, minimum: 1 }
+        prompt: { type: string }
+        allowed_help: { type: array, minItems: 1, maxItems: 4, items: { type: string, enum: [none, hint, scaffold, answer_revealed] } }
+        help_version: { type: integer, minimum: 0 }
+        help_floor: { type: string, enum: [hint, scaffold, answer_revealed] }
+        deferred: { type: boolean }
+        can_continue: { type: boolean, description: 允许通过原 session acknowledge_feedback 动作继续；待复核时为 false。继续后仍读回原反馈。 }
+        attempt_id: { type: string, format: uuid }
+        feedback: { $ref: "#/components/schemas/LearningFeedback" }
+        assessment:
+          type: object
+          additionalProperties: false
+          required: [status, version, result_unknown, can_resume, configuration, destination]
+          properties:
+            status: { type: string, enum: [queued, running, paused_budget, succeeded, failed, cancelled] }
+            version: { type: integer, minimum: 0 }
+            reason: { type: string }
+            result_unknown: { type: boolean }
+            can_resume: { type: boolean }
+            configuration: { type: string }
+            destination: { type: string }
+    StudyExerciseCitation:
+      type: object
+      required: [id, source, fragment, document_sha256, slice_sha256]
+      properties:
+        id: { type: string, format: uuid }
+        source: { $ref: "#/components/schemas/KnowledgeSourceItem" }
+        document_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        slice_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        fragment:
+          type: object
+          required: [node_id, node_revision_id, title, range, text, truncated]
+          properties:
+            node_id: { type: string, format: uuid }
+            node_revision_id: { type: string, format: uuid }
+            title: { type: string }
+            range: { $ref: "#/components/schemas/SourceRange" }
+            text: { type: string, maxLength: 4096 }
+            truncated: { type: boolean }
+            page: { type: integer, minimum: 1 }
     TutorTurnPage:
       type: object
       required: [conversation, items]
@@ -5830,6 +6005,7 @@ components:
             type: object
             required: [run_id, ordinal, status, body_available, messages, output]
             properties:
+              exercise_id: { type: string, format: uuid }
               run_id: { type: string, format: uuid }
               ordinal: { type: integer, minimum: 1 }
               status: { type: string }

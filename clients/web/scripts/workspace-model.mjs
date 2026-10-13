@@ -36,14 +36,16 @@ export function workspaceModel(payload) {
       citations,
     }
   }
-  const hits = input.input.retrieval.hits
+  const hits = input.proposal_type === 'assessment'
+    ? input.input.work_item.activity.knowledge_references
+    : input.input.retrieval.hits
   const references = hits.map((hit) => ({
     node_revision_id: hit.node_revision_id,
     range: { start: hit.range.start, end: hit.range.end },
     slice_sha256: hit.slice_sha256,
   }))
   const item = input.input.work_item
-  const restrictedHelp = item.goal_revision.text.includes('帮助等级验收')
+  const restrictedHelp = item.goal_revision?.text.includes('帮助等级验收')
   switch (input.proposal_type) {
     case 'route':
       return {
@@ -120,7 +122,7 @@ export function workspaceModel(payload) {
             },
           ],
           rubric_complete: true,
-          confidence: item.goal_revision.text.includes('开放复核验收') ? 700 : 1000,
+          confidence: item.goal_revision?.text.includes('开放复核验收') || answer.includes('待复核夹具') ? 700 : 1000,
           risk_flags: [],
         },
       }

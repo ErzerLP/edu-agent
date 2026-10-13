@@ -54,29 +54,44 @@ func (s *Service) claim(ctx context.Context) (*row, error) {
 		if item.Saved {
 			item.Reason = "checkpoint_unavailable"
 		}
-	} else if item.callStarted || item.Status == "cancelling" {
-		wasCancelling := item.Status == "cancelling"
-		item.Status = "failed"
-		if item.body.Output != "" {
-			item.Status = "partial"
-		}
-		item.ResultUnknown = item.callStarted
-		item.CostUnknown = item.CostUnknown || item.callStarted
-		item.Reason = "lease_expired"
-		if wasCancelling {
-			item.Status = "cancelled"
-			item.Reason = "user_stopped"
-		}
 	} else {
-		item.Status = "running"
-		id := uuid.NewString()
-		var until time.Time
-		if err = tx.QueryRow(ctx, `SELECT clock_timestamp()+($1::bigint*interval '1 microsecond')`, s.Lease.Microseconds()).Scan(&until); err != nil {
-			return nil, err
+		if item.Kind == "assessment" && item.Status != "cancelling" {
+			waiting, e := s.recoverAssessmentTx(ctx, tx, &item)
+			if e != nil {
+				return nil, e
+			}
+			if waiting {
+				if err = s.save(ctx, tx, &item, "proposal_wait"); err != nil {
+					return nil, err
+				}
+				return nil, tx.Commit(ctx)
+			}
 		}
-		item.lease = &id
-		item.leaseUntil = &until
+		if !terminal(item.Status) && (item.callStarted || item.Status == "cancelling") {
+			wasCancelling := item.Status == "cancelling"
+			item.Status = "failed"
+			if item.body.Output != "" {
+				item.Status = "partial"
+			}
+			item.ResultUnknown = item.callStarted
+			item.CostUnknown = item.CostUnknown || item.callStarted
+			item.Reason = "lease_expired"
+			if wasCancelling {
+				item.Status = "cancelled"
+				item.Reason = "user_stopped"
+			}
+		} else if !terminal(item.Status) {
+			item.Status = "running"
+			id := uuid.NewString()
+			var until time.Time
+			if err = tx.QueryRow(ctx, `SELECT clock_timestamp()+($1::bigint*interval '1 microsecond')`, s.Lease.Microseconds()).Scan(&until); err != nil {
+				return nil, err
+			}
+			item.lease = &id
+			item.leaseUntil = &until
+		}
 	}
+
 	if terminal(item.Status) {
 		item.lease = nil
 		item.leaseUntil = nil
@@ -121,8 +136,10 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 			return err
 		}
 	}
-	if _, err = goalGate(ctx, tx, owned.SpaceID, owned.GoalID, owned.GoalVersion); err != nil {
-		return err
+	if owned.Kind != "assessment" {
+		if _, err = goalGate(ctx, tx, owned.SpaceID, owned.GoalID, owned.GoalVersion); err != nil {
+			return err
+		}
 	}
 	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 FOR UPDATE`, owned.RunID))
 	if err != nil {
@@ -133,6 +150,11 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	}
 	if err = s.decode(&item); err != nil {
 		return err
+	}
+	if item.Kind == "assessment" {
+		if err = s.assessmentContextTx(ctx, tx, item); err != nil {
+			return err
+		}
 	}
 	if _, err = s.sourceMaterialTx(ctx, tx, item.SpaceID, item.token, item.body); err != nil {
 		return err
@@ -231,6 +253,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	}
 	if errors.Is(cause, ErrInactive) || errors.Is(cause, ErrForbidden) || errors.Is(cause, ErrConflict) || errors.Is(cause, ErrLease) {
 		item.Status = "cancelled"
+		if item.Kind == "assessment" {
+			item.Status = "failed"
+		}
 		item.Reason = "context_changed"
 	}
 	if item.body.Studio != nil {
@@ -341,6 +366,9 @@ func studioFailureCategory(cause error) string {
 }
 
 func (s *Service) RunOnce(ctx context.Context) (int, error) {
+	if err := s.enqueueAssessment(ctx); err != nil {
+		return 0, err
+	}
 	item, err := s.claim(ctx)
 	if err != nil || item == nil {
 		return 0, err
@@ -373,7 +401,9 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	}()
 	host := &executionHost{service: s, owned: *item, body: item.body, limits: limits, model: model}
 	host.model, _, _, err = s.settings.MentorClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: host, next: next} })
-	if host.body.Study != nil {
+	if host.body.Assessment != nil {
+		err = host.assess(execution)
+	} else if host.body.Study != nil {
 		err = host.generateStudy(execution)
 	} else if host.body.Studio != nil {
 		err = host.generateStudio(execution)
@@ -384,7 +414,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
+	if err == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

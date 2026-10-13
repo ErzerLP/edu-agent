@@ -9,6 +9,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningchange"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
@@ -113,6 +114,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	Assessment     *learning.AssessmentTask    `json:"assessment,omitempty"`
 	Study          *learningdirection.Revision `json:"study,omitempty"`
 	Studio         *StudioState                `json:"studio,omitempty"`
 	SourceManifest *knowledge.SourceManifest   `json:"source_manifest,omitempty"`

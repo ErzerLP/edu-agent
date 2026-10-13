@@ -11,7 +11,11 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 )
 
-type Adapter struct{ client *llm.Client }
+type ChatClient interface {
+	Chat(context.Context, llm.ChatRequest) (llm.ChatResult, error)
+}
+
+type Adapter struct{ client ChatClient }
 
 func New(client *llm.Client) *Adapter {
 	if client == nil {
@@ -19,6 +23,10 @@ func New(client *llm.Client) *Adapter {
 	}
 	return &Adapter{client: client}
 }
+
+// NewWithClient permits an internal worker to meter the exact same scoring
+// request. Prompt, schema, quote support and domain validation stay shared.
+func NewWithClient(client ChatClient) *Adapter { return &Adapter{client: client} }
 
 type modelError struct {
 	category string

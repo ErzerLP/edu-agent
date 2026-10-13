@@ -293,7 +293,7 @@ func (r callbackRuntime) callTool(ctx context.Context, request *sdkmcp.CallToolR
 				}
 				ctx = scoped
 			}
-			value, err = r.learning.ApplyAction(ctx, invocation.Credential.Device.ID, input.SessionID, command)
+			value, err = r.learning.ApplyAction(learning.WithAssessmentActor(ctx, invocation.Credential), invocation.Credential.Device.ID, input.SessionID, command)
 		}
 	default:
 		return r.toolFailure(ctx, descriptor, problem.DescriptorNotFound()), nil

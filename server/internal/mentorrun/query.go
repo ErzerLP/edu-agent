@@ -52,6 +52,7 @@ func (s *Service) ReadList(ctx context.Context, actor identity.Credential, space
 	}
 	rows, err := tx.Query(ctx, `SELECT state FROM learning_mentor_runs
 		WHERE device_id=$1 AND space_id=$2 AND privacy_generation=$3
+		AND COALESCE(state->>'kind','mentor')<>'assessment'
 		AND ($4='' OR COALESCE(state->>'kind','mentor')=$4) AND ($5='' OR state->>'status'=$5)
 		AND ($6='' OR id>NULLIF($6,'')::uuid) ORDER BY id LIMIT $7`,
 		actor.Device.ID, space, generation, q.Kind, q.Status, q.Cursor, q.Limit+1)
@@ -126,6 +127,9 @@ func (s *Service) read(ctx context.Context, actor identity.Credential, space, id
 	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 AND device_id=$2 AND space_id=$3 AND privacy_generation=$4 FOR SHARE`, id, actor.Device.ID, space, generation))
 	if err != nil {
 		return err
+	}
+	if item.Kind == "assessment" {
+		return ErrNotFound
 	}
 	if err = fn(tx, item); err != nil {
 		return err

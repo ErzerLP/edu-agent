@@ -2,16 +2,13 @@ package learningstart
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/learningknowledge"
-	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -114,34 +111,10 @@ func (s *Service) StartStudioQuiz(ctx context.Context, actor identity.Credential
 	return result, err
 }
 
-type studioQuizModel struct {
-	label    string
-	question learningcontent.StudioQuestion
-	refs     []learning.KnowledgeReference
-}
-
-func (m studioQuizModel) Generate(_ context.Context, r learning.ProposalRequest) (json.RawMessage, error) {
-	switch r.Type {
-	case learning.ProposalRoute:
-		return json.Marshal(map[string]any{"route": []learning.RouteProposalStep{{NodeRevisionID: m.refs[0].NodeRevisionID, TeachingIntent: m.label, CompletionCondition: "完成本题正式作答并确认反馈"}}})
-	case learning.ProposalActivity:
-		rubric := learning.Rubric{Revision: "studio-quiz-v1", Items: []learning.RubricItem{}}
-		for _, item := range m.question.Rubric {
-			rubric.Items = append(rubric.Items, learning.RubricItem{ID: item.ID, Criterion: item.Criterion})
-		}
-		help := []learning.HelpLevel{}
-		for _, h := range m.question.AllowedHelp {
-			help = append(help, learning.HelpLevel(h))
-		}
-		return json.Marshal(map[string]any{"activity": learning.ActivityProposal{Prompt: m.question.Prompt, Type: learning.ActivityOpen, Difficulty: 1, AllowedHelp: help, Rubric: rubric, References: m.refs}})
-	}
-	return nil, learningcontent.ErrInvalid
-}
-
 // Creates one dedicated session using only owner ports and the normal proposal
 // validation/command pipeline. It never writes learning or tutoring tables.
 func (s *Service) publishStudioQuestionTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, r learningcontent.StudioRevision, c learningcontent.StudioQuizStart, previous []learningcontent.StudioQuizMapping) (learningcontent.StudioQuizMapping, error) {
-	result := learningcontent.StudioQuizMapping{Question: c.Question, SessionID: uuid.NewString()}
+	result := learningcontent.StudioQuizMapping{Question: c.Question}
 	store := s.Learning.WithinTx(tx)
 	resolver := learningknowledge.New(treeTx{s.Knowledge, tx})
 	svc, err := learning.NewService(store, store, resolver, learning.ServiceOptions{})
@@ -168,76 +141,12 @@ func (s *Service) publishStudioQuestionTx(ctx context.Context, tx pgx.Tx, actor 
 	if goal.Revision != c.GoalVersion {
 		return result, &learning.Error{Code: learning.CodeVersionConflict}
 	}
-	op := func(v int64) learning.OperationEnvelope {
-		return learning.OperationEnvelope{OperationID: uuid.NewString(), PayloadSchemaVersion: 1, AggregateType: "session", AggregateID: result.SessionID, ExpectedVersion: v, Payload: json.RawMessage(`{}`)}
-	}
-	if _, err = svc.CreateSession(ctx, actor.Device.ID, learning.SessionCommand{Operation: op(0), GoalRevisionID: goal.ID}); err != nil {
-		return result, err
-	}
-	selection := knowledge.ReferenceSelection{SessionID: result.SessionID, Entries: []knowledge.ReferenceEntry{}}
-	for _, entry := range r.Body.SourceManifest.Entries {
-		selection.Entries = append(selection.Entries, knowledge.ReferenceEntry{ScopeEntry: knowledge.ScopeEntry{CollectionID: entry.CollectionID, RevisionID: entry.RevisionID, DocumentID: entry.DocumentID}, Role: "restrict"})
-	}
-	refs, err := s.Knowledge.PublishReferencesTx(ctx, tx, *r.GoalID, goal.ID, actor.Device.ID, c.OperationID, "", "", knowledge.ReferenceState{}, selection)
+	published, err := s.PublishQuestionTx(ctx, tx, actor, SingleQuestion{OperationID: c.OperationID, GoalRevisionID: goal.ID, Generation: r.Generation, Label: fmt.Sprintf("%s · 第 %d 题", r.Body.Title, c.Question), Model: r.Body.Model, Manifest: *r.Body.SourceManifest, Question: r.Body.Quiz.Questions[c.Question-1], Citations: r.Body.Citations})
 	if err != nil {
 		return result, err
 	}
-	if err = store.BindStartContextTx(ctx, tx, result.SessionID, goal.ID, refs.ContextID, refs.ScopeSnapshotID); err != nil {
-		return result, err
-	}
-	question := r.Body.Quiz.Questions[c.Question-1]
-	references := []learning.KnowledgeReference{}
-	seen := map[string]bool{}
-	for _, id := range question.Citations {
-		for _, citation := range r.Body.Citations {
-			if citation.ID == id && !seen[citation.Fragment.NodeRevisionID] {
-				ref, e := resolver.Resolve(ctx, refs.ScopeSnapshotID, citation.Fragment.NodeRevisionID)
-				if e != nil {
-					return result, e
-				}
-				references = append(references, ref)
-				seen[ref.NodeRevisionID] = true
-			}
-		}
-	}
-	if len(references) == 0 {
-		return result, learningcontent.ErrStudioCitation
-	}
-	model := studioQuizModel{fmt.Sprintf("%s · 第 %d 题", r.Body.Title, c.Question), question, references}
-	svc, err = learning.NewService(store, store, resolver, learning.ServiceOptions{Model: model, ModelID: r.Body.Model, PromptRevision: "studio-quiz-v1"})
-	if err != nil {
-		return result, err
-	}
-	nodes := []string{}
-	for _, ref := range references {
-		nodes = append(nodes, ref.NodeRevisionID)
-	}
-	input, _ := json.Marshal(map[string]any{"studio_artifact_id": r.ArtifactID, "version": r.Version, "question": c.Question})
-	for _, step := range []struct {
-		kind   learning.ProposalType
-		action tutoring.Action
-	}{{learning.ProposalRoute, tutoring.ActionApplyRoute}, {learning.ProposalActivity, tutoring.ActionIssueActivity}} {
-		a, e := store.LoadSessionAuthority(ctx, result.SessionID)
-		if e != nil {
-			return result, e
-		}
-		proposal, e := svc.Propose(ctx, actor.Device.ID, learning.ProposalRequest{RequestID: uuid.NewString(), Type: step.kind, AggregateType: "session", AggregateID: result.SessionID, AggregateVersion: a.Session.AggregateVer, KnowledgeRevisionID: refs.ScopeSnapshotID, NodeRevisionIDs: nodes, Input: input})
-		if e != nil {
-			return result, e
-		}
-		if _, e = svc.ApplyAction(ctx, actor.Device.ID, result.SessionID, learning.ActionCommand{Operation: op(a.Session.AggregateVer), Action: step.action, ProposalID: proposal.ID}); e != nil {
-			return result, e
-		}
-	}
-	a, err := store.LoadSessionAuthority(ctx, result.SessionID)
-	if err != nil {
-		return result, err
-	}
-	result.ActivityID = *a.Session.Context.ActivityID
-	content, err := s.Content.EnsureTx(ctx, tx, actor, result.SessionID, result.ActivityID, r.Generation)
-	if err != nil {
-		return result, err
-	}
-	result.ContentArtifactID = content.ArtifactID
+	result.SessionID = published.SessionID
+	result.ActivityID = published.ActivityID
+	result.ContentArtifactID = published.ArtifactID
 	return result, nil
 }

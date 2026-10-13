@@ -17,6 +17,9 @@ import (
 )
 
 func mentorPath(path string) bool {
+	if strings.HasPrefix(path, "/v1/learning/exercises/") {
+		return true
+	}
 	if path == "/v1/learning/conversations" || strings.HasPrefix(path, "/v1/learning/conversations/") {
 		return true
 	}
@@ -32,6 +35,7 @@ func (a *API) mountMentorRuns(router chi.Router) {
 		return
 	}
 	a.mountConversations(router)
+	a.mountStudyExercises(router)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs", a.mentorList)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/goals/{goalID}/runs", a.mentorCreate)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/runs", a.mentorCurrent)
@@ -61,6 +65,10 @@ func (a *API) mentorScope(next http.Handler) http.Handler {
 }
 
 func mentorFailure(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, mentorrun.ErrExerciseSources) {
+		writeError(w, r, 409, mentorrun.ErrExerciseSources.Error(), "先选择这道题的资料，再获取提示。")
+		return
+	}
 	var spaceError *learningspace.Error
 	if errors.As(err, &spaceError) {
 		spaceFailure(w, r, err)

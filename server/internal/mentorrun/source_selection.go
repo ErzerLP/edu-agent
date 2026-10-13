@@ -12,6 +12,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	knowledgepg "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/jackc/pgx/v5"
 )
@@ -161,6 +162,10 @@ func selectedTool(name string) bool {
 }
 
 func (h *executionHost) completeSelected(ctx context.Context, message modelclient.Message) error {
+	return h.completeSelectedExercise(ctx, message, nil)
+}
+
+func (h *executionHost) completeSelectedExercise(ctx context.Context, message modelclient.Message, candidate *learningcontent.StudioBody) error {
 	var answer struct {
 		Answer    string `json:"answer"`
 		Citations []struct {
@@ -191,8 +196,13 @@ func (h *executionHost) completeSelected(ctx context.Context, message modelclien
 	body.Citations = citations
 	// Keep the structured answer in model history; display only the verified answer.
 	body.Messages = append(body.Messages, message)
-	return h.service.mutate(ctx, &h.owned, "completed", func(item *row) error {
+	return h.service.mutateTx(ctx, &h.owned, "completed", func(tx pgx.Tx, item *row) error {
 		item.body = body
+		if candidate != nil {
+			if err := h.service.publishStudyExerciseTx(ctx, tx, item, *candidate); err != nil {
+				return err
+			}
+		}
 		item.Status = "succeeded"
 		item.Stage = "completed"
 		item.callStarted = false

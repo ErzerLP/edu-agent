@@ -506,6 +506,9 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	item.ConversationID = c.ConversationID
 	item.body.SourceManifest = manifest
 	item.body.Study = c.study
+	if c.study != nil {
+		item.body.StudyExercise = &StudyExerciseState{Policy: learningcontent.AssessmentPolicy{Configuration: fingerprint, Requests: c.RequestBudget, Tokens: c.TokenBudget}}
+	}
 	item.body.HistoryCount = len(history)
 	item.body.Messages = append(history, modelclient.Message{Role: "user", Content: c.Prompt})
 	item.TeachingSessionID = c.TeachingSessionID

@@ -121,6 +121,7 @@ type ConversationPage struct {
 }
 
 type TutorTurn struct {
+	ExerciseID     string                    `json:"exercise_id,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
 	Citations      []SourceCitation          `json:"citations,omitempty"`
 	RunID          string                    `json:"run_id"`
@@ -525,6 +526,9 @@ func (s *Service) ReadConversation(ctx context.Context, actor identity.Credentia
 			return e
 		}
 		turn.SourceManifest, turn.Citations = body.SourceManifest, body.Citations
+		if body.StudyExercise != nil {
+			turn.ExerciseID = body.StudyExercise.ID
+		}
 	}
 	if len(page.Items) > limit {
 		page.Items = page.Items[:limit]
@@ -658,7 +662,7 @@ func turnBody(item row) Body {
 	if start < 0 || start > len(item.body.Messages) {
 		return Body{}
 	}
-	return Body{Study: item.body.Study, Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
+	return Body{Study: item.body.Study, StudyExercise: item.body.StudyExercise, Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
 }
 
 func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {

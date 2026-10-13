@@ -27,6 +27,7 @@ import { useSourceSelection } from './source-selection'
 import { ChatOverview } from './chat-overview'
 import { SpaceDialog } from './space-dialog'
 import { useNotebookChrome } from './notebook-chrome'
+import { InlineExerciseCard } from './inline-exercise-card'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -52,6 +53,7 @@ export function ChatPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>()
   const [notice, setNotice] = useState('')
+  const [needSources, setNeedSources] = useState(false)
   const [destination, setDestination] = useState('')
   const [requests, setRequests] = useState(2)
   const [tokens, setTokens] = useState(30000)
@@ -145,6 +147,7 @@ export function ChatPanel({
   contentAllowed.current = !denied && sourceReadable
   useEffect(() => {
     if (denied || !sourceReadable) {
+      drafts.deletePrefix(JSON.stringify([...prefix, space.id, 'study-exercise']).slice(0, -1))
       drafts.delete(key)
       drafts.delete(key + ':pending')
       setPrompt('')
@@ -186,6 +189,11 @@ export function ChatPanel({
   }
   const send = async (text = prompt, retry = false) => {
     if (busy || (!retry && (!ready || !text.trim()))) return
+    if (!retry && text.includes('出一道题') && selection?.items.length === 0) {
+      setNeedSources(true)
+      return
+    }
+    setNeedSources(false)
     setBusy(true)
     setError(undefined)
     setNotice('')
@@ -476,6 +484,12 @@ export function ChatPanel({
                         </p>
                       )}
                     </div>
+                    {turn.exercise_id && <InlineExerciseCard
+                      spaceId={space.id} conversationId={conversationId!}
+                      exerciseId={turn.exercise_id} selection={selection} disabled={!canWrite}
+                      onSource={onSource}
+                    />}
+                    {turn.output === '先添加或选择来源，再试一道题。' && <Button variant="outline" onClick={onSource}>添加或选择来源</Button>}
                   </>
                 ) : (
                   <p role="status">此轮正文不可用。</p>
@@ -491,6 +505,7 @@ export function ChatPanel({
         )}
       </div>
       <div className="chat-composer">
+        {needSources && <p role="status">先选一份资料。<Button variant="ghost" onClick={onSource}>添加或选择来源</Button></p>}
         {!!notice && <p role="status">{notice}</p>}
         {!!error && <ErrorState error={error} retry={refresh} />}
         {configuration.error && <ErrorState error={configuration.error} />}
@@ -526,6 +541,7 @@ export function ChatPanel({
               key={text}
               disabled={!ready}
               onClick={() => {
+                if (text === '出一道题') { void send(text); return }
                 setPrompt(text)
                 drafts.set(key, text)
               }}

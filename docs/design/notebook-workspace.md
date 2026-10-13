@@ -4,7 +4,7 @@
 
 ## 方向变更（2026-10-12）
 
-本节是已确认 Shape 的实现设计；Q1–Q5 已确认采用默认值，原型为 [notebook-chat-prototype.html](notebook-chat-prototype.html)。初次调查基于 `docs-shape-chat` / `493aaa5`；各批实际交付与检查以对应实施记录为准，C3–C5 仍属后续计划。旧批次的测试结果不构成本轮验收。
+本节是已确认 Shape 的实现设计；Q1–Q5 已确认采用默认值，原型为 [notebook-chat-prototype.html](notebook-chat-prototype.html)。初次调查基于 `docs-shape-chat` / `493aaa5`；各批实际交付与检查以对应实施记录为准，C3 已完成（C3a+C3b），C4–C5 仍属后续计划。旧批次的测试结果不构成本轮验收。
 
 ### A. 方案选择与新信息架构
 
@@ -233,7 +233,12 @@ Studio 新 Web 通过方向模式的生成参数／适配端口，由服务端 e
 
 H1–H4 是主要新增能力，H5/H7 是必须随生产路径完成的边界，不能统一延期到最后。G0 卡片真实汇总／最近排序仍为额外增强，不包含在本轮工时。零来源可评估练习、多题一次提交、跨设备聊天合并、智能跨来源历史摘要不在默认计划。
 
-**C3 分阶段结论（2026-10-13）：** 用户已接受 C3a/C3b 拆分。C3a 实现 H3/H4 的单题内核及 H5/H7 的练习内核边界，验收结果见下；对话候选发布、卡片、公开端点与整段交互仍待 C3b，H3/H4 和 C3 整体退出标准尚未关闭。
+**C3 结论（2026-10-13）：C3 已完成（C3a+C3b）。** 上表保留原缺口调查，当前结论如下；本轮证据见 C3b 实施记录。
+
+- **H3 已关闭：** study 单轮结构化候选与单题 session/activity/content、turn 映射同事务发布；每轮至多一题，每对话一张未收起的待答卡，失败不产生孤儿题卡。
+- **H4 已关闭：** 卡片沿原答案端口提交，帮助先登记下限，自动评估沿原任务／proposal／operation，反馈读原记录并可定位依据；provisional 显示待复核，继续只调用 acknowledge_feedback。收起、重复提交、丢响应、重启及显式预算／配置续接有组合证据。
+- **H5 的 C3 边界已关闭：** 新轮使用当前明确选择；旧题评估仍使用出题时方向修订与 manifest。旧题的新提示要求选择范围相同；普通聊天不携带旧题 rubric。撤权后题目、反馈和引用不可读，不以新资料补位。
+- **H7 的 C3 边界已关闭：** 反馈、进度和到期复习共用原作答／证据；继续后与运行正文过期后仍恢复题卡和反馈身份。对话映射纳入原隐私清除事务，清除后旧回执不能复活正文。C4 继续负责 Studio 方向模式及其共享卡片适配，不重新实现学习事实。
 
 ### J. 旧测试迁移策略与本轮证据
 
@@ -556,9 +561,9 @@ Compose，未安装依赖、暂存、提交或推送。无需用户决策。
 - **退出标准：** 真实来源→有效题→Attempt→AssessmentDecision→Evidence／进度／到期复习；改选 B／改方向后旧 A 题评估仍 A；响应丢失一次 Attempt，重复任务不重复评估，提示并发不可降低 help。服务重启、provisional、来源撤权／全局清除均有真实 DB 证据；Chromium 卡片完整闭环及一次受预算约束的真实模型链路证据，旧 3c 桥接兼容绿色。更新缺口结论与 child 验收。
 - **重型证据：** 全仓 DB 历史／三引擎到 C5；本批的正式评估、重放、帮助、跨 owner 原子性与清除不能延期。若该闭环无法在一个候选控制验证范围，先回 Shape 拆子 change，不用半个卡片假作完成。
 
-##### C3 实施记录（2026-10-13：已拆分：C3a 已交付 / C3b 待实施）
+##### C3 实施记录（2026-10-13：C3 已完成（C3a+C3b））
 
-**状态。** 已拆分：C3a 已交付 / C3b 待实施。用户已接受下述拆分并授权 C3a；实现、验收及内部端口见新增实施记录，C3 原退出标准保持有效。下表与基线检查保留第一次仅调查、未交付时的依据，不能将原调查状态或本次内核证据当作 C3 对话闭环已交付。
+**状态。C3 已完成（C3a+C3b）。** C3a 内核及 C3b 对话组合均已交付，C3 原退出标准由下文 C3b 的真实数据库、Chromium 与真实模型证据闭合。下表及后续拆分／基线说明保留先前仅调查时的历史依据，不替代本轮验收。
 
 **调查依据与合同边界。**
 
@@ -674,7 +679,132 @@ git diff --check
 | `mentorrun.AssessmentStatus`、`ResumeAssessment` | 内部持久任务状态与显式预算／配置续接；task 内保存原 request／operation 身份。C3b 应投影成公开 DTO，不直接序列化内部 device/token 字段。unknown 保持可见，不能自动重新评分；这些端口本批不挂 HTTP |
 | `learning.Feedback`、`Progress`、`Reviews` | 反馈、Evidence、进度、复习直接读取原正式事实；不把生成题目、展示提示、稍后再做或确认读过当成通过，不自动确认 provisional |
 
-**限制与风险。** C3b 仍需完整实现候选／历史的原子发布及公开请求合同；内核证据不能替代前端与对话组合验收。内部任务沿现有 7 天 run 正文寿命；unknown 及过期任务不自动再发模型请求，已提交 Attempt 保留。续接需明确预算与当前配置确认。未执行前端、Chromium、三引擎、Go 全量、race 或 Compose；未调用真实模型、安装／升级依赖。无需新增用户决策。
+**C3a 交付时的限制与风险。** 当时 C3b 尚需实现候选／历史的原子发布及公开请求合同；这些工作现由下文记录接续。内部任务沿现有 7 天 run 正文寿命；unknown 及过期任务不自动再发模型请求，已提交 Attempt 保留。续接需明确预算与当前配置确认。C3a 当时未执行前端、Chromium、三引擎、Go 全量、race 或 Compose；未调用真实模型、安装／升级依赖。
+
+##### C3b 实施记录（2026-10-13：已交付）
+
+**范围与状态。** 完成 study 出题 → 卡片作答 → 自动评估 → 对话反馈的完整组合，C3 已完成（C3a+C3b）。工作树为 `feat-chat-c3b`；未暂存、提交或推送，未改 CLI 或 `packages/agentcore`。实施计划见 [notebook-chat-c3b-plan.md](notebook-chat-c3b-plan.md)。
+
+**合同与界面。**
+
+- study 输出复用来源引用候选和 `generateCited` 的两次上限；单题继续经 `DecodeStudioCandidate` 与 `PublishExerciseTx` 全量校验，评分继续使用 `learning/proposal_retry.go`、`tutormodel/quote_support.go`。Responses schema 将 `exercise` 声明为必填但可为 null，保持原验证强度，不修补引用或猜测 hash。
+- 单轮只允许一个候选对象。发布在原 worker 租约、身份、来源及隐私门禁下，同事务创建单题、执行原 present_activity、写入 turn 的唯一 exercise 映射与加密历史。会话级练习锁串行化发布和收起／恢复；查询原作答判断是否仍待答。生成 rubric 不进入后续普通聊天历史。
+- `稍后再做` 只改变题卡焦点，允许继续聊天或发新题；恢复旧题时若已有另一张待答卡则冲突。它不生成答案、证据或完成记录。显式零来源出题请求只提供添加／选择入口，不调用生成模型，也不创建练习。
+- 帮助经 `PublishHelp` 提交后才返回正文，下限与实际申报共同约束原答案端口。首版“给我一个提示”提供简短固定解题策略，等级为 hint，不额外调用模型；其他允许的帮助等级仍由用户按实际情况申报。改选后的新提示要求当前选择与原题一致；已成功的提示 operation 可核对，仍重验原来源访问权。
+- 作答沿 `/v1/learning/content/{artifactID}/answers`，重复或丢响应核对原 session operation；评估任务由 C3a 共用提交事务登记。反馈投影来自原 learning Feedback，进度／复习来自同一证据。`继续学习` 只调用原 acknowledge_feedback，继续后按原作答回执保留反馈，不依赖已清掉的会话焦点。
+- provisional 显示“待复核”，不显示通过；unknown 不自动重发。预算／配置暂停可在确认当前连接和预算后续接同一评估，保持原作答与操作身份；过期任务不显示续接按钮。题卡身份随已保存历史保留，不受短期运行正文 TTL 影响。
+- 草稿键包含设备／代次、区、对话、exercise、activity 和内容版本；清理只针对练习草稿，不影响来源导入状态。新增题卡／反馈卡使用简短中文；依据引用可打开原来源片段，界面隐藏内部节点标记，核验仍使用未改动的原文、范围和 hash。
+
+**公共端点。** 全部要求明确学习区、原设备与当前 generation；读需 learning:read，写需 learning:write，均需 knowledge:read。新端点未公开内部 task 的 device/token/request 字段。
+
+| 方法／路径 | 合同 |
+| --- | --- |
+| GET `/v1/learning/exercises/{exerciseID}` | 固定题目、内容与会话版本、帮助下限、收起状态、原答案反馈、评估状态及允许继续标志；GET 不调用模型 |
+| POST `…/commands` | `{operation_id, kind: defer\|resume}`；原操作幂等；不产生学习完成事实 |
+| POST `…/help` | `{operation_id, source_selection}`；先登记提示；来源选择不匹配为 `exercise_source_selection_mismatch` |
+| GET `…/help/{operationID}` | 原提示正文与等级，重验权限和来源 |
+| POST `…/assessment/resume` | 原运行版本、当前 configuration、显式请求／token 预算；未知结果或过期任务拒绝续接 |
+| GET `…/citations/{referenceID}` | 从该题真实 activity references 解析原 manifest 内的确切片段；不能引用其他题目或新版本 |
+
+题卡发布仍通过原 conversation turns；`TutorTurn` 增加可选 `exercise_id`。收起／恢复与评估续接的丢响应通过原 learning operations 核对。出题预算与后续评估预算按阶段分别受相同请求上限约束，OpenAPI 已说明；服务端继续校验实际配置上限。
+
+**改动文件。**
+
+| 文件／组 | 职责 |
+| --- | --- |
+| **migration（追加）** `server/migrations/000040_study_exercises.sql`；`migrations_test.go` | turn 的唯一 exercise FK、收起状态和索引；更新迁移嵌入检查，不修改旧迁移 |
+| **OpenAPI** `server/api/openapi.yaml`；`openapi_exercise_test.go`；`clients/web/src/api/schema.d.ts` | 六条公共路径、请求／响应合同、生产 DTO 校验及 `npm run generate` 产物 |
+| `server/internal/mentorrun/study.go`、`study_exercise.go`（新）、`study_exercise_ports.go`（新） | 单题候选、原子发布、题卡／帮助／续接／引用端口 |
+| `server/internal/mentorrun/{store,types,conversation,source_selection}.go` | 保存评估策略、加密历史题卡身份、来源门禁内同事务发布 |
+| `server/internal/learningstart/question.go` | 单题完成条件文案简化；桥接及评分语义不变 |
+| `server/internal/mentorrun/study_exercise_test.go`、`study_exercise_privacy_test.go`、`study_exercise_live_test.go`（新）；`study_test.go` | 对话组合 DB 矩阵、清除／并发、真实模型；既有讲解夹具适配 nullable exercise |
+| `server/internal/transport/httpapi/study_exercise.go`、`study_exercise_test.go`（新）；`mentor_runs.go`；`deploy/web/nginx.conf` | 公共路由、scope／响应读许可、路由分类与反向代理白名单 |
+| `clients/web/src/api/exercises.ts`、`exercises.test.ts`（新）；`client.ts`、`conversations.ts` | 卡片 DTO、身份核验、帮助下限、待复核文案、来源不匹配错误 |
+| `clients/web/src/components/notebook/practice-card.tsx`、`practice-card.test.tsx`、`inline-exercise-card.tsx`、`feedback-card.tsx`（新） | 可控共享展示层、study 操作控制器、回执核对和反馈卡 |
+| `clients/web/src/components/notebook/{chat-panel,source-viewer}.tsx`；`styles.css` | 时间线、零来源入口、原引用定位与手机布局 |
+| `clients/web/scripts/{test-server,workspace-model}.mjs`；`tests/browser/notebook-exercise.spec.ts`（新） | 确定性出题／评估夹具、端到端闭环与截图；保留原 notebook／learner 业务断言 |
+| 本文与 `docs/design/notebook-chat-c3b-plan.md` | 状态、验收、文件映射与 C4 约定 |
+
+**验证命令与结果。** Go 命令均先 `umask 022`，使用 `GOCACHE=/tmp/edu-agent-c3b-gocache`。通过后停止对应检查；补跑仅针对新增变更或已定位失败。
+
+```bash
+# clients/web
+npm run generate
+npm run check
+npm run build -- --configLoader native
+npm test -- --configLoader native src/api/exercises.test.ts src/api/conversations.test.ts \
+  src/api/feedback.test.ts src/api/teaching.test.ts src/api/source-selection.test.ts
+npm test -- --configLoader native src/components/notebook/practice-card.test.tsx
+
+# server
+umask 022
+export GOCACHE=/tmp/edu-agent-c3b-gocache C2_LIVE_SMOKE=0 C3B_LIVE_SMOKE=0
+TEST_DATABASE_URL='' go test ./internal/learningstart ./internal/mentorrun \
+  ./internal/transport/httpapi ./api ./migrations
+go vet ./internal/learningstart ./internal/mentorrun ./internal/transport/httpapi ./api ./migrations
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+go test -p=1 ./internal/mentorrun ./internal/learning/postgresstore \
+  -run '^(TestPostgreSQLStudyExercise(PublishesOneCard|DeferSubmitFeedback|AtomicFailureAndZeroSources|OldContextAndRestart|ResumeConflictsAndRevocation|HelpSubmissionConcurrency|ClearCannotRevive)|TestPostgreSQLExercise.*|TestPostgreSQLStudyModeIsExplicitAndSaved|TestPostgreSQLStudySourceAndDirectionIsolationReopen|TestPostgreSQLStudyCitationRetriesStayBounded|TestPostgreSQLStudyDirectionErasureCannotRevive|TestPostgreSQLStudioQuizFormalSessions|TestPostgreSQLProgressScopePaginationAndReplay|TestPostgreSQLReviewCarrierPreservesSourceAndReplay)$' \
+  -count=1 -json > /tmp/c3b-db-final.json
+go test -p=1 ./internal/mentorrun \
+  -run '^TestPostgreSQLStudyExercise(AssessmentResumeProjection|OldContextAndRestart)$' \
+  -count=1 -json > /tmp/c3b-resume-final.json
+```
+
+| 检查 | 实际结果与证据 |
+| --- | --- |
+| OpenAPI／前端 | generate、check、build PASS；相关 vitest 6 文件、16 项均有通过证据。`/tmp/c3b-web-build.log`；生成器既有 discriminator 提示、Zod 注释与包体积构建警告保留 |
+| 受影响 Go 包 | 五包最终均 PASS；主包结果在 `/tmp/c3b-go-unit.log`，其中旧迁移检查仍把 38 当最新导致初次失败，随新增 40 更新后单独 PASS `/tmp/c3b-migrations.log`；新增 DTO 合同另行 PASS。未把无 DB 的 skip 算数据库证据 |
+| go vet | 指定五包 PASS，`/tmp/c3b-go-vet.log` 为空；续接投影补验后 mentorrun vet 再通过 |
+| PostgreSQL | 主矩阵 29 顶层＋13 子用例全部 PASS，无失败／skip；mentorrun 205.095s，learning/postgresstore 15.281s。续接与真实 TTL 补验 21.058s PASS；去重合计 30 顶层＋15 子用例 |
+| Chromium | 24 个不同场景通过：exercise 2、chat 5、sources 3、studio 5、workspace 8、learner 1；均无 retry／skip。回归 JSON 和日志在 `/tmp/c3b-regressions/` |
+| 格式／范围 | `git diff --check`、改动 Go 的 `gofmt -l` 无输出；CLI／agentcore 无差异；未暂存或提交 |
+
+浏览器使用隔离 schema 包装器。沙箱不可写用户缓存目录，因此等价构建到 `/tmp/c3b-webdatabase`，未请求安装或变更容器：
+
+```bash
+# server
+go build -o /tmp/c3b-webdatabase ./testutil/webdatabase
+go build -tags web_release -o edu-agentd ./cmd/edu-agentd
+go build -tags web_release -o /tmp/c3b-webnotebook ./testutil/webnotebook
+# clients/web；每个文件单独由包装器建立、清理 schema
+export WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0
+export WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome
+export WEB_VISUAL_DIR=/tmp/c3b-screenshots
+/tmp/c3b-webdatabase npm run test:browser -- notebook-exercise.spec.ts --project=chromium
+# 同样分别执行 notebook-chat、notebook-studio、notebook-workspace、learner。
+WEB_NOTEBOOK_FIXTURE_BINARY=/tmp/c3b-webnotebook /tmp/c3b-webdatabase \
+  npm run test:browser -- notebook-sources.spec.ts --project=chromium
+```
+
+来源组初轮缺少专用搜索／网页夹具，未计通过；正确夹具下前两项通过，第三项发现对话拒读清理误伤来源草稿。收窄到 `study-exercise` 键后，仅补跑第三项 `--grep '三种添加方式'`，9.8s PASS（`notebook-sources-fixed.json`）；前两项证据在 `notebook-sources-verified.json`。共享展示组件、继续后保留反馈与草稿修复接回后，exercise 两项最后 32.2s PASS（`notebook-exercise-final.json`）。其余回归对应文件名 JSON。没有删去来源导入、旧 Studio 顺序、旧课堂双标签草稿、权限或幂等断言。
+
+截图：`/tmp/c3b-screenshots/current-exercise-1440.png`、`current-feedback-1440.png`、`current-exercise-390.png`、`current-feedback-390.png`；恢复后的手机题卡另有 `current-exercise-mobile-390.png`。
+
+**真实模型链路。** 在独立 shell 以 `set -a; . ~/.config/edu-agent-acceptance/model.env; set +a` 读入凭据，显式设置 `C3B_LIVE_SMOKE=1`，执行：
+
+```bash
+go test -p=1 ./internal/mentorrun -run '^TestPostgreSQLStudyExerciseLiveResponses$' -count=1 -v
+```
+
+教学 responses、deepseek-v4-flash，导师复用教学连接，输出预算 8192（推理计入输出）。成功出题 → 作答 → 自动评估 → 反馈读回，3 项评分依据均可定位，最终 disposition 为 accepted。成功链路 22.687s，测试含建库／准备共 25.349s；日志 `/tmp/c3b-live.log`。
+
+| 阶段 | 模型耗时 | 输入 token | 输出 token | 其中推理 token | 总 token |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 出题 | 3.867s | 1510 | 536 | 294 | 2046 |
+| 评估 | 14.720s | 2804 | 3679 | 2673 | 6483 |
+| 成功链路合计 | 18.587s 模型时间 | 4314 | 4215 | 2967 | 8529 |
+
+成功链路 2 次调用；此前 1 次请求被网关以 incompatible 拒绝。本地严格 schema 测试随后复现 nullable exercise 缺少 required 声明，修复后真实调用通过，未放宽校验。**本任务真实调用总计 3 次，低于 15 次上限**；被拒请求未报告 token 用量，不能把成功链路的 8529 当成未知用量的估计。未记录或输出 Key。
+
+**留给 C4 的约定。**
+
+1. `PracticeCard` 是独立于 HTTP／身份存储的受控共享组件：输入题干、答案、实际帮助、允许选项、提交／收起状态；由调用方提供提交、提示、收起／恢复回调。缺少答案或帮助时不能提交，收起不表示完成。`InlineExerciseCard` 是 study 专用读回与 operation 控制器；Studio 不得伪造 conversation ID 调用 study 端点。
+2. `FeedbackCard` 读取原 `Feedback`，按真实 disposition 展示；C4 可通过 `renderCitation(referenceId, index)` 提供 Studio／content 的原引用入口，通过 `onContinue` 调用原 acknowledge_feedback。没有 study exercise ID 时使用引用回调，不伪造来源身份。provisional 不自动 confirm／override。
+3. 新方向模式受理时解析并保存确切 goal revision 与 source manifest；发布沿 `PublishQuestionTx`，在调用方事务提交 Studio 映射与真实 session/activity/content。进入可答状态继续走 present_activity。若新模式启用自动评估，明确使用 `PublishExerciseTx` 及已授权 `AssessmentPolicy`，提供自己的 owner 读回适配；旧未映射 Studio 行为不被隐式改写。
+4. Studio 保留题序、前题完成、旧手选目标版本冲突与原操作幂等；方向变化不能把旧题挂到 latest。作答使用原 content answers，任务／证据／进度继续共享 C3a；无需另建评分或进度体系。
+
+**决策与限制。** 无需新增用户决策。首版只有文字开放题，提示为固定策略；未知模型结果不自动重发，过期评估保留答案。构建警告不影响本轮验收。未跑三引擎、Go 全量、race 或 Compose；未安装／升级依赖，也未操作其他项目容器。C4 Studio 方向与交互适配、C5 汇总验收仍按原批次推进。
 
 #### C4：Studio 全部接入方向与内嵌作答（2–4 人日）
 

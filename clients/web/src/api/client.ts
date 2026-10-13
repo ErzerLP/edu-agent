@@ -95,6 +95,7 @@ export function learningClient(session: Session, spaceId?: string) {
 
 export function errorText(error: unknown) {
   if (!(error instanceof ApiError)) return '网络连接失败，输入已保留。请检查连接后重试。'
+  if (error.code === 'exercise_source_selection_mismatch') return '先选择这道题的资料，再获取提示。'
   const tutorErrors: Record<string, string> = {
     run_storage_limit: '导师历史或上下文已达上限，未删除旧历史。可清理不需要的对话或新建对话。',
     run_storage_unavailable: '加密历史不可读取或保存，请检查服务器密钥及存储。未回退明文或空历史。',

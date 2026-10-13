@@ -58,7 +58,7 @@ func TestPostgreSQLStudySourceAndDirectionIsolationReopen(t *testing.T) {
 		inputs = append(inputs, string(raw))
 		// The real structured adapter is exercised; only the remote model is replaced.
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"role": "assistant", "content": fmt.Sprintf(`{"answer":"讲解 %d [1]","citations":[{"source":1,"fragment":1}]}`, n)}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"role": "assistant", "content": fmt.Sprintf(`{"answer":"讲解 %d [1]","citations":[{"source":1,"fragment":1}],"exercise":null}`, n)}}}})
 	})
 	ctx := context.Background()
 	spaces := spacepg.New(f.pool, f.service.directions)
@@ -163,7 +163,7 @@ func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
 					fragment = 1
 				}
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": fmt.Sprintf(`{"answer":"说明 [1]","citations":[{"source":1,"fragment":%d}]}`, fragment)}}}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": fmt.Sprintf(`{"answer":"说明 [1]","citations":[{"source":1,"fragment":%d}],"exercise":null}`, fragment)}}}})
 			})
 			ctx := context.Background()
 			direction := "从资料理解概念"

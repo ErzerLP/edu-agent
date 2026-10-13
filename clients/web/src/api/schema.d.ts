@@ -1221,9 +1221,155 @@ export interface paths {
         put?: never;
         /**
          * 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
-         * @description study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。纯讲解，不创建练习。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
+         * @description study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。有来源时可原子发布至多一道文字练习，每对话同时一张待答卡；零来源请求出题只返回添加或选择来源入口。请求和 token 预算分别用于本轮生成与提交后的自动评估；每个阶段均有相同上限和独立计量。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
          */
         post: operations["submitTutorTurn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/exercises/{exerciseID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 读取对话题目、帮助下限及原学习反馈
+         * @description 校验原设备、学习区、generation、对话与原题来源。读取不会调用模型；不随当前来源选择或方向更新替换题目。提交继续用 content answers，丢响应查原 session operation；feedback 来自 learning。
+         */
+        get: operations["readStudyExercise"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/exercises/{exerciseID}/commands": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 收起或恢复同一道未答题
+         * @description 原 operation 幂等；通过 learning operations 核对丢失的响应。defer 不产生作答、证据或完成；resume 遇同对话另一待答题返回 409。
+         */
+        post: operations["changeStudyExercise"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/exercises/{exerciseID}/help": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 记录并交付提示
+         * @description 先提交 hint 帮助下限，再披露策略提示。新提示要求当前选择与原题 manifest 相同；提交先成功时拒绝新提示。已成功 operation 可在改选后核对；原来源仍须可读。
+         */
+        post: operations["publishStudyHelp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/exercises/{exerciseID}/help/{operationID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        /** 核对原提示操作 */
+        get: operations["readStudyHelpOperation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/exercises/{exerciseID}/assessment/resume": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认当前配置与预算后续接同一次评估
+         * @description 仅 paused_budget 或可重新核验的 context_changed 可以续接。保持原作答、proposal request 与评估 operation；unknown 不自动重发。configuration 必须等于当前读模型，且 expected_version 匹配任务运行。
+         */
+        post: operations["resumeStudyAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/exercises/{exerciseID}/citations/{referenceID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+                referenceID: string;
+            };
+            cookie?: never;
+        };
+        /** 定位原题反馈的来源依据 */
+        get: operations["readStudyExerciseCitation"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4073,10 +4219,83 @@ export interface components {
             destination_endpoint: string;
             confirmation_required: boolean;
         };
+        StudyExerciseCommand: {
+            /** Format: uuid */
+            operation_id: string;
+            /** @enum {string} */
+            kind: "defer" | "resume";
+        };
+        StudyExerciseHelp: {
+            /** Format: uuid */
+            operation_id: string;
+            /** @enum {string} */
+            level: "hint" | "scaffold" | "answer_revealed";
+            text: string;
+        };
+        StudyExercise: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            conversation_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            space_id: string;
+            privacy_generation: number;
+            /** Format: uuid */
+            session_id: string;
+            /** Format: uuid */
+            activity_id: string;
+            /** Format: uuid */
+            artifact_id: string;
+            content_version: number;
+            session_version: number;
+            prompt: string;
+            allowed_help: ("none" | "hint" | "scaffold" | "answer_revealed")[];
+            help_version: number;
+            /** @enum {string} */
+            help_floor?: "hint" | "scaffold" | "answer_revealed";
+            deferred: boolean;
+            /** @description 允许通过原 session acknowledge_feedback 动作继续；待复核时为 false。继续后仍读回原反馈。 */
+            can_continue: boolean;
+            /** Format: uuid */
+            attempt_id?: string;
+            feedback?: components["schemas"]["LearningFeedback"];
+            assessment?: {
+                /** @enum {string} */
+                status: "queued" | "running" | "paused_budget" | "succeeded" | "failed" | "cancelled";
+                version: number;
+                reason?: string;
+                result_unknown: boolean;
+                can_resume: boolean;
+                configuration: string;
+                destination: string;
+            };
+        };
+        StudyExerciseCitation: {
+            /** Format: uuid */
+            id: string;
+            source: components["schemas"]["KnowledgeSourceItem"];
+            document_sha256: string;
+            slice_sha256: string;
+            fragment: {
+                /** Format: uuid */
+                node_id: string;
+                /** Format: uuid */
+                node_revision_id: string;
+                title: string;
+                range: components["schemas"]["SourceRange"];
+                text: string;
+                truncated: boolean;
+                page?: number;
+            };
+        };
         TutorTurnPage: {
             conversation: components["schemas"]["TutorConversation"];
             next_cursor?: number;
             items: {
+                /** Format: uuid */
+                exercise_id?: string;
                 /** Format: uuid */
                 run_id: string;
                 ordinal: number;
@@ -10313,6 +10532,187 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readStudyExercise: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 卡片权威读模型 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyExercise"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    changeStudyExercise: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudyExerciseCommand"];
+            };
+        };
+        responses: {
+            /** @description 原操作回执 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    publishStudyHelp: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    source_selection: components["schemas"]["SourceSelection"];
+                };
+            };
+        };
+        responses: {
+            /** @description 已登记提示 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyExerciseHelp"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readStudyHelpOperation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+                operationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原已交付提示 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyExerciseHelp"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    resumeStudyAssessment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    expected_version: number;
+                    configuration: string;
+                    request_budget: number;
+                    token_budget: number;
+                };
+            };
+        };
+        responses: {
+            /** @description 原评估续接回执 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readStudyExerciseCitation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                exerciseID: string;
+                referenceID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原题引用和确切来源片段 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudyExerciseCitation"];
                 };
             };
             default: components["responses"]["WebFailure"];

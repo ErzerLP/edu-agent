@@ -233,6 +233,8 @@ Studio 新 Web 通过方向模式的生成参数／适配端口，由服务端 e
 
 H1–H4 是主要新增能力，H5/H7 是必须随生产路径完成的边界，不能统一延期到最后。G0 卡片真实汇总／最近排序仍为额外增强，不包含在本轮工时。零来源可评估练习、多题一次提交、跨设备聊天合并、智能跨来源历史摘要不在默认计划。
 
+**C3 分阶段结论（2026-10-13）：** 用户已接受 C3a/C3b 拆分。C3a 实现 H3/H4 的单题内核及 H5/H7 的练习内核边界，验收结果见下；对话候选发布、卡片、公开端点与整段交互仍待 C3b，H3/H4 和 C3 整体退出标准尚未关闭。
+
 ### J. 旧测试迁移策略与本轮证据
 
 旧断言先分“被替代入口”与“仍有效领域事实”。改变定位／按钮用词后仍验证同一个 operation、Attempt、来源版本和权限结果，不能删掉安全断言换成“卡片可见”。
@@ -553,6 +555,126 @@ Compose，未安装依赖、暂存、提交或推送。无需用户决策。
 - **延期：** 零来源可评估题、多题单次提交、聊天中自动编排整套复习；既有复习页继续可用。
 - **退出标准：** 真实来源→有效题→Attempt→AssessmentDecision→Evidence／进度／到期复习；改选 B／改方向后旧 A 题评估仍 A；响应丢失一次 Attempt，重复任务不重复评估，提示并发不可降低 help。服务重启、provisional、来源撤权／全局清除均有真实 DB 证据；Chromium 卡片完整闭环及一次受预算约束的真实模型链路证据，旧 3c 桥接兼容绿色。更新缺口结论与 child 验收。
 - **重型证据：** 全仓 DB 历史／三引擎到 C5；本批的正式评估、重放、帮助、跨 owner 原子性与清除不能延期。若该闭环无法在一个候选控制验证范围，先回 Shape 拆子 change，不用半个卡片假作完成。
+
+##### C3 实施记录（2026-10-13：已拆分：C3a 已交付 / C3b 待实施）
+
+**状态。** 已拆分：C3a 已交付 / C3b 待实施。用户已接受下述拆分并授权 C3a；实现、验收及内部端口见新增实施记录，C3 原退出标准保持有效。下表与基线检查保留第一次仅调查、未交付时的依据，不能将原调查状态或本次内核证据当作 C3 对话闭环已交付。
+
+**调查依据与合同边界。**
+
+| 边界 | 当前实现与需要完成的工作 |
+| --- | --- |
+| 单题发布 | `server/internal/learningstart/studio_quiz.go` 已走 CreateSession → Propose → ApplyAction → EnsureTx。首题通过 GetGoal 取当前目标，后续题沿前题会话取修订；需抽取接收确切目标修订、来源 manifest、已核验题目的通用端口，同时保留旧 Studio 顺序与冲突合同。 |
+| 共用提交事务 | `server/internal/transport/httpapi/learning_content.go` 的 contentAnswer 和 `learning.go` 的 session actions 都能进入 ApplyAction。`server/internal/learning/postgresstore/store.go` 在聚合锁内调用 `learningcontent.ValidateAttemptTx`，这是绑定内容版本、帮助下限与自动评估登记必须共同覆盖的边界。只改新增 exercise handler 无法保证旧入口不漏登记任务。 |
+| 帮助下限 | `learning/command.go` 已核验实际 help 属于 allowed_help；尚无题卡帮助事件及单调下限。帮助发布与作答必须竞争同一活动／会话锁，帮助正文返回前登记等级；后到的提示不能改写已提交答案的帮助。不能以默认 none 处理不允许的等级。 |
+| 两层恢复 | `mentorrun/worker.go` 对过期且 call_started 的任务记录结果／费用未知，不自动重发；`learning/postgresstore/proposal.go` 对过期 processing 请求可重新取得 proposal 租约，对 ready 返回原产物。C3 需明确衔接两层状态，先核对原 proposal 与 record_assessment operation，再决定恢复动作，并保持预算和来源门禁。现有各自的恢复行为不能直接当作 C3 组合链路的证明。 |
+| 对话与事实 | `mentorrun/study.go` 当前仅输出讲解与引用。题卡映射、模型运行结果和历史引用需原子发布；反馈从 learning 的真实决定／证据投影，不能把生成题目、稍后再做或读完反馈当成通过。 |
+| 隐私及历史 | 新映射、帮助记录和评估任务须进入 learning owner 清除及 Remaining；新增密文须进入轮换。来源撤权／全局清除与迟到任务需要组合验证，原 3c 的清除测试只证明旧对象。 |
+
+上表记录拆分前的调查边界；C3a 对应实现与失败复现见后文。
+
+**建议拆分（用户已接受）：两个串行 child，C3 完成状态只在第二个 child 达成全部退出标准后更新。**
+
+1. **C3a：单题执行与恢复内核。** 抽取通用单题桥接；增加内部映射、帮助状态与评估任务 owner 端口；在共用提交事务原子登记任务，复用原评分路径。完成真实 PostgreSQL 的来源 → 单题 → Attempt → AssessmentDecision → Evidence／进度／到期复习，以及旧版本、丢响应、重复任务、提示并发、重启、provisional、撤权、清除、轮换和旧 3c 回归。此 child 不开放对话题卡，也不宣称完成 C3。追加 migration 随这些对象一起交付，不修改已合并迁移；旧入口行为不擅自改成自动评估。
+2. **C3b：对话完整闭环。** 在 C3a 内核上一次接通 study 候选生成与原子发布、Q2/Q4、题卡／反馈卡、引用定位、稍后再做与恢复、操作核对。随端点一同更新 OpenAPI、生成类型、合同测试、路由分类与 nginx 白名单。完成指定前端检查、受影响 Go 检查、C3 对话层真实 DB 集成、Chromium 完整流程及 notebook-*／learner 回归；必须再完成 responses／deepseek-v4-flash／8192 的真实出题 → 作答 → 评估反馈，调用总数不超过 15。C3a 结果只能证明同一文件状态下的内核边界，不能替代新增对话组合的验证。
+
+本次按用户明确授权交付先行内核 child；C3a 可独立验收，不能替代 C3b 的对话组合验证。
+
+**后续文件映射。** 单题桥接归 `learningstart`；映射／帮助／内容版本及其清除、轮换归 `learningcontent`；共用提交与学习事实归 `learning/postgresstore`；候选生成、来源与方向隔离、持久任务运行及历史归 `mentorrun`；模型评估复用 `integrations/tutormodel` 与 `learning/proposal_retry.go`。Web 集成入口为 `clients/web/src/components/notebook/chat-panel.tsx`，卡片拆独立组件；HTTP 合同归 `server/api/openapi.yaml` 与 `server/internal/transport/httpapi`。这些是计划归属，不是本次改动清单。
+
+**检查记录。** 在 `server/` 执行一次：
+
+```bash
+umask 022 && TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable' GOCACHE=/tmp/edu-agent-c3-gocache go test -p=1 ./internal/mentorrun -run '^TestPostgreSQLStudioQuizFormalSessions$' -count=1
+```
+
+结果：PASS，包报告 `13.870s`。测试在独立 schema 上迁移并清理，覆盖旧 3c 单题会话、allowed_help、提交重放、评估／证据／进度、重建、轮换与全局清除；评估使用确定性夹具。这是旧链路基线，不是 C3 验收，也不证明到期复习、自动评估任务或提示并发。
+
+仅确认真实模型环境文件可读、指定 Chromium 可执行；未加载模型凭据、未调用真实模型（0/15）。没有 C3 端点可供闭环验收，因此未执行前端 check/build/vitest、Chromium、Go vet 或 C3 DB 矩阵；没有练习卡、反馈卡或手机截图。指定缓存目录中的 webdatabase 二进制尚不存在，后续可沿用 C1 记录在 `/tmp` 构建隔离工具的做法。
+
+**C4 约定。** C3a 提供通用 `PublishQuestionTx`，旧 3c 已委托该端口并保留原目标／版本与题序校验。真实卡片合同仍等待 C3b；Studio 方向适配继续归 C4。
+
+##### C3a 实施记录（2026-10-13：已交付）
+
+**范围与状态。** 沿用已批准设计实施单题内核，所有入口均为内部 Go 端口。新增 migration `server/migrations/000039_exercise_kernel.sql`，不改已合并迁移。对话生成、原子发布 turn/card 引用、题卡／反馈卡、Q2/Q4、公开练习端点及前端留给 C3b；CLI 与 agentcore 协议未改。所有改动留在 `feat-chat-c3` 工作树，未暂存、提交或推送。
+
+**内核合同。**
+
+- `learningstart.PublishQuestionTx` 接收确切 `GoalRevisionID`、generation、来源 manifest、已核验题目及 citations，事务内重新核验来源与引用，使用 CreateSession → Propose → ApplyAction → EnsureTx 创建专用单题会话；不读取 latest 替换题目修订、不调用外部生成模型。旧 Studio 入口保留首题目标版本冲突、后题沿前题修订、前题正式完成与题序检查。
+- `PublishExerciseTx` 在相同外层事务增加幂等映射。相同设备／operation／请求摘要返回原映射，不同请求冲突；外层 rollback 同时撤销 session、activity、content 和映射。单独 `PublishQuestionTx` 不启用自动评估，旧 Studio 仍手动评分。
+- `PublishHelp` 与共用提交竞争 `learning-aggregate:session:<id>` 锁，先登记并提交帮助，再返回正文。不可变帮助记录的数量作为版本，等级最大值作为下限；未披露时等级为空，不替用户默认选择 `none`。低于下限的提交以 `help_below_disclosed_floor` 拒绝，不改写实际申报；非法或不在 allowed_help 的等级拒绝。答案先提交时拒绝新的帮助，原成功帮助 operation 可读回且不改变原 Attempt。
+- `learning/postgresstore.Commit` 在同一聚合锁及事务内检查映射、原来源、固定 content version、帮助下限、提交者权限，并将 Attempt 和唯一 `attempt_id` 的任务一起登记。任务登记故障整体回滚。content answers 通过 `WithAnswer` 传入身份与版本，HTTP session actions 和 MCP apply_action 透传 `WithAssessmentActor`；所有 ApplyAction 入口共用该检查，缺少身份的内部新题提交失败关闭，未映射旧活动不创建任务。
+- 任务在提交时固定 request_id、record_assessment operation_id、session version、提交设备／token；模型配置指纹和预算来自练习的加密策略。mentorrun 通过 learning owner 端口将任务与持久 run 原子关联，复用原 tutormodel schema／quote support、proposal 重试与评分决定，不创建第二套评分／进度逻辑。输入仅为原 Activity、Attempt、rubric、references，不携带当前勾选或新方向。
+- worker 恢复先读取原 proposal 租约与 operation；operation 必须有该 Attempt 的真实 AssessmentRecorded 事件，其他成功动作不能假冒评估。ready 复用产物，已提交操作只收尾，processing 有效租约等待，未发请求且 proposal 租约过期可重领；已发出且无持久结果时保留 unknown、不自动重发。已知拒绝与未知响应分开记录。provisional 留在原待复核状态，不自动确认或生成 Evidence。
+- 模型 HTTP 调用继续经过请求／token 预算、配置、身份、来源和隐私门禁；源链接锁覆盖派发，最终提交重新核验。`ResumeAssessment` 是显式预算／目的地确认端口，保留原任务、Attempt 与操作身份，只续接预算暂停或可重新核验的配置变化；unknown 不会因此自动重发。
+- 映射、帮助、任务均纳入 learning owner 的 `RedactTx`／`Remaining`。manifest／评估策略与帮助正文使用新 AAD 加密，映射与帮助只允许授权清除或锁表密钥轮换；mentor checkpoint 沿现有轮换。旧 learning 正式事实保持原存储策略，不能把此变更描述为全学习数据库加密。
+
+**migration 与文件映射。**
+
+| 文件 | 职责 |
+| --- | --- |
+| `server/migrations/000039_exercise_kernel.sql`（新增） | `learning_exercises`、`learning_exercise_help`、`learning_assessment_tasks`，唯一性／FK／隐私与不可变约束，内部 mentor `assessment` kind |
+| `server/internal/learningstart/question.go`（新增）、`studio_quiz.go` | 通用单题事务桥接、C3 映射编排、旧 Studio 委托 |
+| `server/internal/learningcontent/exercise.go`（新增）、`store.go`、`rotation.go` | 映射、帮助及读回、共用提交校验；清除、Remaining、轮换 |
+| `server/internal/learning/assessment_task.go`（新增） | 内部任务／恢复类型和认证上下文 |
+| `server/internal/learning/postgresstore/assessment_task.go`（新增）、`store.go` | 原子登记、任务与 run 绑定、原 operation／proposal 核对与租约续接 owner 端口 |
+| `server/internal/mentorrun/assessment.go`、`assessment_ports.go`（新增），`worker.go`、`types.go`、`query.go`、`command.go` | 自动评估、持久恢复、预算与状态内部端口；现有公开导师接口排除内部任务 |
+| `server/internal/integrations/tutormodel/adapter.go` | 允许对原 Chat 请求套入 worker 计量门禁，评分请求与校验不分叉 |
+| `server/internal/transport/httpapi/learning.go`、`server/internal/transport/mcp/callbacks.go` | 原 session action 入口只透传认证身份；无公共协议变更 |
+| `server/internal/mentorrun/assessment_test.go`、`assessment_privacy_test.go`（新增）、`studio_quiz_test.go`；`server/internal/transport/mcp/handler_test.go` | 新内核 DB 矩阵、旧 Studio 不自动评分与 MCP 身份边界回归 |
+
+**验证。** 下列检查在 `server/` 执行，统一 `umask 022`、`GOCACHE=/tmp/edu-agent-c3-gocache`，`C2_LIVE_SMOKE=0`。开发中先复现缺口再修复；最终限定矩阵通过一次即停止，不重试伪通过。数据库测试使用独立 schema，评分为确定性本地 HTTP 夹具，真实模型调用为 0。
+
+```bash
+umask 022
+export GOCACHE=/tmp/edu-agent-c3-gocache C2_LIVE_SMOKE=0
+TEST_DATABASE_URL='' go test ./internal/learningstart ./internal/learningcontent \
+  ./internal/learning/... ./internal/mentorrun ./internal/tutoring/... ./internal/integrations/tutormodel
+go vet ./internal/learningstart ./internal/learningcontent ./internal/learning/... \
+  ./internal/mentorrun ./internal/tutoring/... ./internal/integrations/tutormodel ./internal/transport/httpapi
+TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable' \
+  go test -p=1 ./internal/mentorrun ./internal/learning/postgresstore \
+  -run '^(TestPostgreSQLExercise.*|TestPostgreSQLStudioQuizFormalSessions|TestPostgreSQLStudioGenerationRestartAndUnknown|TestPostgreSQLMentorRealCoreRecoveryAndIdempotency|TestPostgreSQLLearningContentVersionsAnswersAndErasure|TestPostgreSQLProgressScopePaginationAndReplay|TestPostgreSQLReviewCarrierPreservesSourceAndReplay)$' \
+  -count=1 -json > /tmp/c3a-db-final.json
+TEST_DATABASE_URL='' go test ./internal/transport/httpapi \
+  -run '^(TestLearningHTTP.*|TestLegacyAnswerReportsContentUpgrade|TestLearningContentNegotiationAndStrictBoundary)$' -count=1
+go test ./internal/transport/mcp -run '^TestActorInjectionAndSensitiveIdentityFieldsAreNotAccepted$' -count=1
+go vet ./internal/transport/mcp
+```
+
+最终结果：
+
+| 检查 | 结果 |
+| --- | --- |
+| 受影响 Go 包 | 上述 8 个包 go test PASS；不带 DB 的这一轮只计单元／包内检查，DB 证据单列 |
+| go vet | 指定 owner 包及 HTTP、MCP 适配器全部通过，无输出 |
+| 真实 PostgreSQL | 21 个顶层测试及 10 个子用例全部 PASS，无失败／跳过；mentorrun `127.278s`，learning/postgresstore `23.181s`；完整 JSON 日志 `/tmp/c3a-db-final.json` |
+| 旧 HTTP／MCP 边界 | HTTP 局部集 `0.237s`、MCP 认证身份边界 `0.015s`，均 PASS |
+| 格式 | 所有 21 个改动 Go 文件 `gofmt -l` 无输出，`git diff --check` 无输出 |
+
+DB 矩阵覆盖来源 → 单题 → Attempt → AssessmentDecision → Evidence／真实进度／到期复习，旧 A 修订、丢响应、唯一任务、帮助竞争两种锁序、外层发布回滚、任务登记故障回滚、帮助读回、只读 token 拒绝、原 operation 类型核对、预算与配置显式续接、已知拒绝、provisional、来源撤权、轮换及全局清除。重启覆盖 queued、未发请求的过期 proposal、ready proposal、已提交 operation、未知请求和有效 proposal 租约；旧 3c 额外断言任务表为空。开发失败已分别定位到缺失内核、冻结评估输入、恢复分支、租约约束、配置状态和 operation 类型核对；修复后才计最终通过。
+
+最终格式命令在仓库根执行：
+
+```bash
+umask 022
+git ls-files --modified --others --exclude-standard -- '*.go' | xargs -r gofmt -l
+git diff --check
+```
+
+**留给 C3b 的接口约定。**
+
+| C3b 调用 | 语义与调用方责任 |
+| --- | --- |
+| `mentorrun.AssessmentPolicy(requests, tokens)` | 在已获用户模型授权的范围内获取当前配置指纹和有界预算；不让模型自行提供该策略 |
+| `learningstart.PublishExerciseTx(ctx, tx, actor, ExerciseRequest)` | 在持有有效候选 run／隐私／身份门禁的外层事务调用；同时提交 turn/card 引用与返回的真实 Exercise ID。Question 使用本轮已接受的确切目标修订及 manifest，不能重读 latest |
+| `learningcontent.ExerciseTransaction`、`ExerciseTx` | 事务与来源门禁下读取映射、固定内容版本、Help.Version／Help.Level；正式题目从 Content.ReadTx／learning.Session 读取，服务端映射决定会话与活动 |
+| `PublishHelp`、`HelpOperationTx` | 只交付已提交的帮助正文；提示生成必须先有明确等级并遵守 allowed_help，丢响应查询原 operation。低等级／晚到提示不能降低已经登记的下限 |
+| `learning.ApplyAction` + `Content.WithAnswer` | 卡片提交复用原 present／submit 合同、版本和 operation；不要另发一个独立“登记评估”请求。答案未知先用原 SessionOperation／收据核对，不换 UUID 重交 |
+| `mentorrun.AssessmentStatus`、`ResumeAssessment` | 内部持久任务状态与显式预算／配置续接；task 内保存原 request／operation 身份。C3b 应投影成公开 DTO，不直接序列化内部 device/token 字段。unknown 保持可见，不能自动重新评分；这些端口本批不挂 HTTP |
+| `learning.Feedback`、`Progress`、`Reviews` | 反馈、Evidence、进度、复习直接读取原正式事实；不把生成题目、展示提示、稍后再做或确认读过当成通过，不自动确认 provisional |
+
+**限制与风险。** C3b 仍需完整实现候选／历史的原子发布及公开请求合同；内核证据不能替代前端与对话组合验收。内部任务沿现有 7 天 run 正文寿命；unknown 及过期任务不自动再发模型请求，已提交 Attempt 保留。续接需明确预算与当前配置确认。未执行前端、Chromium、三引擎、Go 全量、race 或 Compose；未调用真实模型、安装／升级依赖。无需新增用户决策。
 
 #### C4：Studio 全部接入方向与内嵌作答（2–4 人日）
 

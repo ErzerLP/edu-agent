@@ -490,7 +490,7 @@ func (a *API) handleLearningAction(w http.ResponseWriter, r *http.Request) {
 	operation.Payload = append(json.RawMessage(nil), data...)
 	command.Operation = operation
 	credential, _ := credentialFromContext(r.Context())
-	result, err := a.learning.ApplyAction(r.Context(), credential.Device.ID, sessionID, command)
+	result, err := a.learning.ApplyAction(learning.WithAssessmentActor(r.Context(), credential), credential.Device.ID, sessionID, command)
 	if err != nil {
 		a.writeLearningFailure(w, r, "session_action", err)
 		return

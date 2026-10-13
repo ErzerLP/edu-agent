@@ -310,9 +310,19 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 		versions[key] = current
 	}
 
+	var exercise *learningcontent.Exercise
+	var assessmentToken string
 	if attempt := request.Batch.Attempt; attempt != nil {
 		if err := learningcontent.ValidateAttemptTx(ctx, tx, *attempt, s.content); err != nil {
 			return learning.OperationResult{}, err
+		}
+		mapped, actor, err := s.content.ExerciseAttemptTx(ctx, tx, attempt)
+		if err != nil {
+			return learning.OperationResult{}, err
+		}
+		exercise, assessmentToken = mapped, actor.TokenID
+		if exercise != nil {
+			ctx = s.content.WithAnswer(ctx, actor, exercise.ContentArtifactID, exercise.ContentVersion)
 		}
 	}
 	if err := prepareOnlineEvidenceEligibility(ctx, tx, &request.Batch); err != nil {
@@ -416,6 +426,11 @@ func (s *Store) Commit(ctx context.Context, request learning.CommitRequest) (lea
 	// Persist immutable records before their canonical event envelopes.
 	if err := s.insertTypedRecords(ctx, tx, request); err != nil {
 		return learning.OperationResult{}, err
+	}
+	if exercise != nil {
+		if err := registerAssessmentTaskTx(ctx, tx, *request.Batch.Attempt, exercise.ID, assessmentToken, versions[aggregateKey{"session", exercise.SessionID}]); err != nil {
+			return learning.OperationResult{}, err
+		}
 	}
 	for _, event := range events {
 		payloadHash, _ := hex.DecodeString(event.PayloadHash)

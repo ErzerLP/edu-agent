@@ -216,6 +216,10 @@ func TestPostgreSQLStudioQuizFormalSessions(t *testing.T) {
 		t.Fatal("classroom changed", err)
 	}
 	// Rotate both encrypted quiz revisions and formal content, preserving mappings.
+	var automaticTasks int
+	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM learning_assessment_tasks`).Scan(&automaticTasks); err != nil || automaticTasks != 0 {
+		t.Fatal("legacy Studio silently opted into automatic assessment", automaticTasks, err)
+	}
 	key := bytes.Repeat([]byte{43}, 32)
 	rewrap, _ := keyrotation.New(bytes.Repeat([]byte{42}, 32), key)
 	tx, err := f.pool.Begin(ctx)

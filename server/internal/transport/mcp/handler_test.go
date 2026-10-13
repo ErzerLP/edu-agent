@@ -127,6 +127,7 @@ func (f *testKnowledge) Get(_ context.Context, proposalID string) (knowledge.Pro
 }
 
 type testLearning struct {
+	assessmentActor        identity.Credential
 	progressQuery          learning.ProgressQuery
 	mu                     sync.Mutex
 	actor                  string
@@ -183,6 +184,7 @@ func (f *testLearning) ApplyAction(ctx context.Context, actor, _ string, command
 	f.record("apply_action", actor)
 	f.mu.Lock()
 	f.lastAction = command
+	f.assessmentActor, _ = learning.AssessmentActor(ctx)
 	f.lastTeachingSpace = learningspace.Scope(ctx)
 	f.mu.Unlock()
 	return f.operation, f.err
@@ -560,7 +562,8 @@ func TestMemoryDescriptorsUseComposedReadServiceAndExporterOnly(t *testing.T) {
 }
 
 func TestActorInjectionAndSensitiveIdentityFieldsAreNotAccepted(t *testing.T) {
-	handler, _, _, learningService, _, _ := newProtocolFixture(t, []string{"knowledge:read", "learning:read", "learning:write", "memory:read"})
+	handler, actor, _, learningService, _, _ := newProtocolFixture(t, []string{"knowledge:read", "learning:read", "learning:write", "memory:read"})
+	actor.credential.TokenID = "90000000-0000-4000-8000-000000000002"
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	session := connectSDKClient(t, server.URL, testToken)
@@ -614,6 +617,12 @@ func TestActorInjectionAndSensitiveIdentityFieldsAreNotAccepted(t *testing.T) {
 		t.Fatalf("apply action result=%+v err=%v", result, err)
 	}
 	assertRecordedActor(t, learningService, "apply_action")
+	learningService.mu.Lock()
+	assessmentActor := learningService.assessmentActor
+	learningService.mu.Unlock()
+	if assessmentActor.Device.ID != testDeviceID || assessmentActor.TokenID != actor.credential.TokenID {
+		t.Fatal("MCP action lost authenticated assessment submitter")
+	}
 
 	learningService.mu.Lock()
 	beforeActionExtra := learningService.calls

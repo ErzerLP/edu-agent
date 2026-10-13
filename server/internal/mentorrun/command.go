@@ -56,6 +56,9 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 	if item.Version != c.ExpectedVersion {
 		return Receipt{}, ErrConflict
 	}
+	if item.Kind == "assessment" {
+		return Receipt{}, ErrNotFound
+	}
 	if (c.Kind == "respond" || c.Kind == "continue_budget") && (time.Now().After(item.ExpiresAt) || !item.BodyAvailable) {
 		return Receipt{}, ErrInactive
 	}

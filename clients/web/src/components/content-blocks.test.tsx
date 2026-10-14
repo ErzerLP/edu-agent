@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 vi.hoisted(() => vi.stubGlobal('window', { location: { origin: 'http://localhost' } }))
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ContentBlocks, SafeMarkdown, safeLink, safeMath } from './content-blocks'
+import { ContentBlocks, MathBlock, SafeMarkdown, safeLink, safeMath } from './content-blocks'
 
 describe('安全学习正文', () => {
   it('不执行原始 HTML，不自动请求图片，不允许危险链接', () => {
@@ -37,6 +37,19 @@ describe('安全学习正文', () => {
     const bounded = safeMath('\\rule{100000em}{100000em}')
     expect(bounded).toContain('width="10em" height="10em"')
     expect(bounded).not.toMatch(/(?:width|height)="100000em"/)
+  })
+  it('长公式可键盘聚焦并保留 MathML，拒绝解析的公式仍可滚动阅读', () => {
+    for (const displayMode of [false, true]) {
+      const result = renderToStaticMarkup(
+        <MathBlock text={Array(24).fill('x_{123}').join('+')} displayMode={displayMode} />,
+      )
+      expect(result).toContain('tabindex="0"')
+      expect(result).toContain('<math')
+    }
+    const fallback = renderToStaticMarkup(<MathBlock text={'x'.repeat(4097)} />)
+    expect(fallback).toContain('公式文本（不支持或超过安全限制）')
+    expect(fallback).toContain('tabindex="0"')
+    expect(fallback).not.toContain('<math')
   })
   it('未知块保留语义文本；输入块本身不产生提交控件', () => {
     const result = renderToStaticMarkup(

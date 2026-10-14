@@ -23,6 +23,13 @@ test('C3b 出题、帮助、丢响应核对、自动反馈、引用、收起恢�
   const card = chat.getByRole('article', { name: '对话练习' })
   await expect(card).toBeVisible()
   await expect(card.getByRole('button', { name: '提交答案', exact: true })).toBeDisabled()
+  const pendingConversation = new URL(page.url()).searchParams.get('conversation')!
+  await chat.getByRole('button', { name: '出一道题', exact: true }).click()
+  await expect(card.getByLabel('练习答案')).toBeFocused()
+  await expect(chat.getByRole('status').filter({ hasText: '先完成这道题，或稍后再做。' })).toBeVisible()
+  await expect(card).toHaveCount(1)
+  const pendingHistory = await webAPI(page, 'GET', `/v1/learning/conversations/${pendingConversation}`, undefined, space.id)
+  expect(pendingHistory.items).toHaveLength(1)
   await captureNotebook(page, 'exercise', '对话')
   await card.getByRole('button', { name: '给我一个提示' }).click()
   await expect(card).toContainText('先找出题目中的关键概念')
@@ -95,7 +102,7 @@ test('C3b 出题、帮助、丢响应核对、自动反馈、引用、收起恢�
     space.id,
   )
   expect(second.attempt_id).toBeUndefined()
-  await page.goto(`/app/progress?space=${space.id}&status=all`)
+  await page.goto(`/app/progress?space=${space.id}`)
   await expect(page.getByRole('heading', { name: /进度/ }).first()).toBeVisible()
   await expect(page.getByText('理解偶数与整除', { exact: false }).first()).toBeVisible()
 })

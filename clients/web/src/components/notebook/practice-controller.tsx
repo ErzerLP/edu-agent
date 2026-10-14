@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import {
   availableHelp,
+  feedbackHeading,
   type PracticeExercise,
   type ExerciseHelp,
   type exerciseHelpSchema,
@@ -273,6 +274,12 @@ export function PracticeController({
   const state = exercise.assessment
   return (
     <>
+      <p className="sr-only exercise-feedback-status" role="status" aria-live="polite" aria-atomic="true">
+        {exercise.feedback?.decisions.at(-1) && feedbackHeading(
+          exercise.feedback.decisions.at(-1)!.disposition,
+          exercise.feedback.decisions.at(-1)!.items.map(item => item.conclusion),
+        )}
+      </p>
       <PracticeCard
         prompt={exercise.prompt}
         answer={exercise.feedback?.attempt.answer ?? answer}

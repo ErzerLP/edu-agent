@@ -14,11 +14,13 @@ export function SourcesPanel({
   archived = false,
   addSources = false,
   onAddSourcesClose,
+  onCitationClose,
 }: {
   spaceId: string
   archived?: boolean
   addSources?: boolean
   onAddSourcesClose?: () => void
+  onCitationClose?: () => void
 }) {
   const { session } = useIdentity()
   const { available, capabilities, sources, selection, toggle, selectAll, citation, setCitation } =
@@ -39,7 +41,8 @@ export function SourcesPanel({
     setOpened(undefined)
     setCitation(undefined)
     setExpanded(false)
-    trigger.current?.focus()
+    if (citation) onCitationClose?.()
+    else trigger.current?.focus()
   }
   return (
     <div className={`notebook-sources-content${expanded ? ' reader-expanded' : ''}`}>

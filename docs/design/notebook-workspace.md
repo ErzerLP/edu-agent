@@ -872,6 +872,179 @@ go test -p=1 ./internal/mentorrun -run '^TestPostgreSQLStudyExerciseLiveResponse
 - **退出标准：** 相关局部检查绿色后，稳定输入下完成 web-release-check／candidate、适用三引擎、真实资产／深链接、所需 DB 迁移／重放／隐私、CLI 读回兼容。无跳过／重试伪通过，完整 spec 对应证据，Runtime 后续按流程 Verify。
 - **重型证据：** 本批集中收口。复用条件满足的局部证据，不重复无变化全扫；输入变化按 evidence key 判定失效，补验真实缺口。
 
+
+##### C5a 实施记录（2026-10-14：局部收尾已完成，C5b 候选待执行）
+
+**范围与输入。** 在 `feat-chat-c5a@126758bd461bd0cc3db1f0c333d311ebcf13d40f` 的 28 个保留改动文件上续做，保留原实现；备份 patch／tgz 未覆盖工作树。本轮所有验证重新运行，只复用本轮已经通过且没有受后续改动影响的场景。C5a 共涉及 33 个文件，新增或补齐展示、移动布局、可访问性、旧测试迁移及门禁；学习方向、评分、Evidence、帮助下限和 Q4 规则保持原合同。没有修改 Go、CLI、OpenAPI 或 migration，没有暂存、提交、推送、安装依赖、操作 Docker，也没有执行完整 `make web-release-candidate`。C5 的完整候选、冻结 main 与 Runtime Verify 留给 C5b。
+
+**修复与截图。** 走查输入为 `/home/yunyue/.cache/codex-tasks/demo-c3/walkthrough-report.md` 及其同目录截图；本轮精选截图目录为 `/tmp/chat-c5a.ZUsDEu/screenshots/c5a-final/`，原始路径对应关系为 `screenshot-manifest.json`。完整五宽度双主题图保留在 `artifacts/a11y-final-*` 与 `artifacts/a11y-viewport-final-*`。
+
+| 问题／范围 | 实施与证据 | 精选截图（上述目录下） |
+| --- | --- | --- |
+| 概要暴露内部文件名和元数据 | 按来源标题／正文摘要展示；网址导入仅移除服务器封装的 provenance JSON 行，普通文本 JSON 保留，旧来源按集合名回退。单测、浏览器展示及真实抓取／导入 DTO 均验证；不改原文、范围、身份或 hash | `web-overview.png`、`real-url-viewer-390.png` |
+| 学习方向练习被默认草稿筛选隐藏 | Web 进度默认全部状态，包含草稿方向与归档区；显式状态深链接仍有效。未修改目标状态、评分或进度事实 | `progress-light-390.png` |
+| 待答卡时快捷出题无反馈 | 定位并滚动到当前待答卡，聚焦答案，提示“先完成这道题，或稍后再做。”；断言对话仍只有原轮次／一张待答卡 | `practice-light-390.png` |
+| 网页正文截断提示 | 查看器显示“部分解析：正文已截断（16 KB 上限）”；原 16000 字节限制保持 | `web-partial-viewer.png` |
+| 键盘与视口 | `visualViewport` resize／scroll 和窗口 resize 更新布局高度及底栏 inset；移除桌面 460px 最小高度，解决 1024 宽度下发送按钮超过 440px 模拟键盘视口；390／768／1024 收缩视口均检查输入和发送按钮，390×440 短窗口也验证。保留 safe-area padding 与输入字号保护 | `keyboard-1024.png`、`chat-light-390.png`、`chat-dark-1440.png` |
+| 引用返回与焦点 | 关闭引用查看器才返回原对话／Studio 及触发按钮；改看另一来源继续留在来源面板。键盘完整走菜单、来源勾选／查看、引用返回、IME／换行／发送、稍后再做／恢复／帮助／提交／反馈依据和 Studio 笔记保存 | `drawer-chromium-390.png`、`feedback-dark-390.png` |
+| 长内容与可访问公式 | 公式保留受控 MathML，容器有合法可命名角色及键盘焦点，拒绝解析的块级公式仍可滚动阅读；长标题、行内／块公式及代码在五宽度双主题下不造成整页或消息流横溢出 | `math-code-dark-390.png` |
+| 颜色对比度 | 修复小字、底栏、题卡／反馈卡、Studio 列表标题、头像单字和深色引用高亮；WebKit 原生首页 select 的颜色变量会保留初始颜色，按浅／深主题明确指定与主题相同的实际颜色 | `studio-list-dark.png`、`studio-guide-dark.png` |
+| 播报与读取撤权 | 新消息和反馈使用 polite aria-live；播报采用与可见回答相同的正文／来源读取条件，撤权后旧回答同时从可见区和播报区消失。新增原 C2 撤权断言先复现、修复后三引擎通过 | `chat-final-*.json` 中 C2 场景；保留 `announcement-red-*` 失败证据 |
+
+布局覆盖 390／768／1024／1280／1440、浅／深主题、底部标签与 drawer、草稿切换、减少动态效果。视口收缩是模拟证据，不能代替真实 IME、浏览器工具栏、缩放／平移或刘海安全区设备测试。
+
+**axe 与对比度。** 现有 `wcag2a`／`wcag2aa`／`wcag21aa`／`wcag22aa` 标签全部保留，并另跑 `color-contrast`。C5a 专用场景合计 **165 个页面／状态上下文、330 次扫描，0 violations、0 contrast violations**，原始附件汇总在 `/tmp/chat-c5a.ZUsDEu/axe-summary.json`。覆盖首页、学习区空态、来源、查看器、菜单、Studio 编辑、练习、反馈、进度及长公式／代码。Studio 的列表／指南另在双主题三引擎执行 12 次标签扫描，全部无 violations。
+
+保留 **3 条 incomplete 规则**：每引擎菜单各一条，均为 native dialog top layer／backdrop 的 `bgOverlap`，涉及各 17 个节点，不是自动通过。没有排除元素、禁用规则或移除断言；增加实际前景色／不透明背景色的独立 WCAG 对比度计算，每引擎检查 20 个可见标题、链接及 summary，最低 **5.46:1**，均 ≥4.5:1；菜单截图也已审阅。原始 incomplete 和计算结果均在上述 JSON 附件中。真实辅助技术的播报效果仍留作人工检查。
+
+**实际验证。** 环境：Node `v26.10.0`，Go `go1.27.1 linux/amd64`，Playwright `1.62.1`；Chromium `155.0.8059.12`、Firefox `153.0`、WebKit `26.5`。完整环境在 `environment.json`。证据根目录均为 `/tmp/chat-c5a.ZUsDEu/`。
+
+| 检查 | 最终结果／证据 |
+| --- | --- |
+| `npm run check` | 通过；`typecheck-final.log`，最后包括所有新增浏览器测试类型 |
+| `npm run build -- --configLoader native` | 通过；`web-build-final.log`，构建并复制真实发行资产。已有 Zod 注释／大 chunk 提示保留 |
+| 相关 Vitest | **8 文件、23 项通过**；`vitest-final.log`。覆盖 notebook-sources、progress、source-selection、conversations、exercises、feedback、PracticeCard、ContentBlocks／MathBlock |
+| `node --test scripts/web-release-results.test.mjs` | **7 项通过，0 skip**；`gate-final.log`。缺失必需 PG 场景／新增视觉场景的测试先失败后补齐 |
+| PostgreSQL 必需选择 | **41 个顶层＋39 个子场景＝80 项通过，0 fail／skip**，255.364s；`postgres.jsonl`、`postgres-results.json`。五包按 `-p=1`、`-count=1`、命名选择执行，排除未授权真实模型 opt-in 测试 |
+| Go 页面合同 | `TestWebReleasePageEntrypoints` 及其子场景通过；`deeplink-go.log`。只计该合同，不称为 Go 全量／整包通过 |
+| 发行构建／CLI 读回 | 当前前端资产后构建 `server/edu-agentd` 及来源宿主；仅从未改动的 CLI 源码编译 `/tmp/.../edu-agent`，供 review 三引擎读回正式反馈／进度／证据 |
+| 格式与范围 | `git diff --check`、三个 release 脚本 `node --check` 通过；无 Go 源码改动，因此不新增 Go vet／受影响包要求 |
+
+相关 Vitest 命令（`clients/web`）：
+
+```bash
+npm test -- --configLoader native \
+  src/api/notebook-sources.test.ts src/api/progress.test.ts \
+  src/api/source-selection.test.ts src/api/conversations.test.ts \
+  src/api/exercises.test.ts src/api/feedback.test.ts \
+  src/components/notebook/practice-card.test.tsx src/components/content-blocks.test.tsx
+```
+
+浏览器均设置 `WEB_RELEASE_MATRIX=1`，retries=0；每个引擎／文件使用 `webdatabase` 的独立随机 schema 和重新启动的夹具。沙箱不能写 `~/.cache`，故隔离工具等价编译到 `/tmp/chat-c5a.ZUsDEu/webdatabase`；没有覆盖用户给出的 cache 备份。采用 `browserFixtures(file, {notebook, review, cli})` 给出与门禁相同的夹具变量，来源必须使用专用 `webnotebook`，复习必须使用 `webreview` 与生产 CLI，memory 启用 Nocturne，notesync 的配置保留。普通浏览器命令形式：
+
+```bash
+# server：先 umask 022；GOCACHE=/tmp/c5a-go-cache
+# 当前资产构建成功后
+# go build -tags web_release -o edu-agentd ./cmd/edu-agentd
+# go build -o /tmp/chat-c5a.ZUsDEu/webdatabase ./testutil/webdatabase
+# go build -tags web_release -o /tmp/chat-c5a.ZUsDEu/webnotebook ./testutil/webnotebook
+# clients/web：示例；其他文件按 browserFixtures 设置专用夹具
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+export WEB_RELEASE_MATRIX=1 WEB_WORKSPACE_FIXTURE=1 WEB_MENTOR_FIXTURE=1 WEB_NOTESYNC_FIXTURE=0
+export WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome
+PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/chat-c5a.ZUsDEu/example.json \
+  /tmp/chat-c5a.ZUsDEu/webdatabase npm run test:browser -- \
+  'tests/browser/notebook-chat\.spec\.ts$' --project=chromium --reporter=line,json
+```
+
+**三引擎结果与旧测试迁移。** 全目录 21 份 spec 均已对照。下表数字为 **通过／失败／跳过**；“未运行”不是 skip 或通过。本轮 14 文件每引擎 **57 个不同场景**，合计 **171**，最终全部通过，0 自动重试／预期失败。完整单场景来源 JSON 与 SHA256 在 `final-matrix.json`；这是 C5a 补验汇总，**不是冻结输入的 candidate report**。初次逐文件运行日志为 `matrix-*`，修复后的局部结果为 `a11y-*`、`chat-final-*`、`studio-final-*`、`legacy-final-*`；已经通过且不受后续修改影响的场景没有反复执行。
+
+| spec | Chromium | Firefox | WebKit |
+| --- | ---: | ---: | ---: |
+| learner.spec.ts | 1/0/0 | 1/0/0 | 1/0/0 |
+| learning.spec.ts | 5/0/0 | 5/0/0 | 5/0/0 |
+| memory.spec.ts | 5/0/0 | 5/0/0 | 5/0/0 |
+| mentor.spec.ts | 1/0/0 | 1/0/0 | 1/0/0 |
+| notebook-accessibility.spec.ts | 4/0/0 | 4/0/0 | 4/0/0 |
+| notebook-chat.spec.ts | 6/0/0 | 6/0/0 | 6/0/0 |
+| notebook-exercise.spec.ts | 2/0/0 | 2/0/0 | 2/0/0 |
+| notebook-sources.spec.ts | 3/0/0 | 3/0/0 | 3/0/0 |
+| notebook-studio.spec.ts | 5/0/0 | 5/0/0 | 5/0/0 |
+| notebook-workspace.spec.ts | 8/0/0 | 8/0/0 | 8/0/0 |
+| release.spec.ts | 1/0/0 | 1/0/0 | 1/0/0 |
+| review.spec.ts | 2/0/0 | 2/0/0 | 2/0/0 |
+| tutor-history.spec.ts | 1/0/0 | 1/0/0 | 1/0/0 |
+| workspace.spec.ts | 13/0/0 | 13/0/0 | 13/0/0 |
+| knowledge-structure.spec.ts | 未运行 | 未运行 | 未运行 |
+| notesync.spec.ts | 未运行 | 未运行 | 未运行 |
+| offline.spec.ts | 未运行 | 未运行 | 未运行 |
+| pdf.spec.ts | 未运行 | 未运行 | 未运行 |
+| references.spec.ts | 未运行 | 未运行 | 未运行 |
+| settings.spec.ts | 未运行 | 未运行 | 未运行 |
+| tasks.spec.ts | 未运行 | 未运行 | 未运行 |
+
+迁移 `learning`、`memory`、`mentor`、`tutor-history` 的目标起步到 `/manage` 兼容入口；`learning` 改用唯一按钮定位新建学习区。`workspace` 的切区迟到响应场景通过应用内管理链接进入原目标与真实会话，保留旧答案响应、草稿与原 Attempt 断言。没有把这些旧业务改成普通聊天；原权限、丢响应核对、内容版本、评估复核／覆盖、隐私清除、双标签和 CLI 事实读回仍在上述矩阵中实际执行。
+
+七份未运行 spec 已确认沿用当前菜单／辅助页／兼容深链接及各自夹具，保留其业务断言；本次相关改动没有要求重写它们，完整执行留在 C5b。尤其 offline 必须经 `npm run test:offline`：Chromium 执行持久离线流程，Firefox／WebKit 执行三项实际能力降级场景，适用性筛选不能伪写为 skip 通过。
+
+初次矩阵、专门 red 和最终复验报告均保留；同前缀的中间复验报告以最终版为准。开发中发现的真实缺陷与测试问题：Studio 标题／深色引用高亮、WebKit select、公式角色／滚动焦点、引用改看另一来源、1024 键盘视口、撤权播报残留已修复；旧选择器和仅支持来源的隔离宿主被误用于聊天概要检查已修正。真实抓取 DTO 的概要检查仍保留，同时 `notebook-chat` 验证 UI 展示。键盘辅助函数按实时 DOM 顺序用 Tab／Shift+Tab，避免依赖浏览器末尾 Tab 自动回环；没有直接聚焦待测控件替代键盘断言。类型辅助变量与构建目录问题已纠正，失败步骤不计最终通过。
+
+**门禁接入与错误路由。**
+
+- 新增 `scripts/web-release-scenarios.mjs`：自动枚举全部 browser spec，明确要求 learner、五类原 notebook spec、新 accessibility 与 release 共 **8 个必需文件、30 个必需场景标题**，删除文件、改名、空选择不能悄悄缩小证据。
+- 每文件使用锚定且转义的完整路径正则；`workspace.spec.ts` 不会同时命中 `notebook-workspace.spec.ts`。候选构建来源受控网络宿主、复习夹具和生产 CLI；缺必需夹具直接拒绝。
+- 新增 C1–C4 的 **41 项 PG 必需名称**，覆盖学习端权限、方向原子性／并发／旧回执、显式保存／来源隔离／引用重试、单卡／帮助／自动评估／恢复／撤权／轮换／清除、C4 旧题组／共享读取／版本冲突以及真实进度／复习。`-run` 显式选择非 live 场景，每个名称必须实际 pass；本轮已实跑该相同选择。
+- `checkBrowserResults` 要求正确引擎、expectedStatus=passed、status=expected、恰一条 passed result、retry=0 和本文件全部必需标题。Go fail／skip／空选择／缺名称均拒绝，Playwright skip／重试／预期失败／收集错误均拒绝。结果记录 required_tests／passed_tests；退出 0 单独不算通过。
+- `release.spec.ts` 扩展当前对话 query、旧导师、内容版本等 14 个入口的直达／刷新及真实 JS；API、管理／内部路径、不存在 JS／CSS 和未知辅助页在 `Accept: text/html` 下仍返回错误而不是 SPA。三引擎和 Go 注册路由合同都通过；Nginx 白名单已核对，真实代理部署未在 C5a 执行。
+
+**改动文件清单。** 路径相对仓库根；临时计划、脚本、夹具二进制、报告及截图仅在 `/tmp`，不纳入项目文件。
+
+| 目录 | 文件 |
+| --- | --- |
+| `clients/web/src/api/` | `notebook-sources.ts`、`notebook-sources.test.ts`、`progress.ts`、`progress.test.ts` |
+| `clients/web/src/components/` | `content-blocks.tsx`、`content-blocks.test.tsx` |
+| `clients/web/src/components/notebook/` | `chat-overview.tsx`、`chat-panel.tsx`、`notebook-layout.tsx`、`practice-card.tsx`、`practice-controller.tsx`、`source-selection.tsx`、`sources-panel.tsx` |
+| `clients/web/src/` | `notebook-workspace-page.tsx`、`progress-page.tsx`、`styles.css` |
+| `clients/web/tests/browser/` | `learning.spec.ts`、`memory.spec.ts`、`mentor.spec.ts`、`notebook-accessibility.spec.ts`（新）、`notebook-chat.spec.ts`、`notebook-exercise.spec.ts`、`notebook-fixture.ts`、`notebook-sources.spec.ts`、`notebook-studio.spec.ts`、`release.spec.ts`、`tutor-history.spec.ts`、`workspace.spec.ts` |
+| `scripts/` | `check-web-release.mjs`、`web-release-results.mjs`、`web-release-results.test.mjs`、`web-release-scenarios.mjs`（新） |
+| `docs/design/` | `notebook-workspace.md` |
+
+**C5b 候选执行清单。**
+
+1. 将审阅后的 C5a 纳入 main 后冻结一次输入；记录 commit、工作树状态、锁文件、环境与输入 hash。在 `/home/yunyue/Projects/myworks/edu-agent` 的 main 执行，确认锁定依赖及三引擎已准备；当前 worktree 的只读 node_modules 符号链接不是候选缓存写入环境。不要在候选期间改代码或更新依赖。
+2. 环境及命令：候选内部已经包含局部预检，无需再无变化重复预检。每 spec 的独立 schema 与专用夹具由候选脚本生成；测试端口 32929、数据库 32995；其他项目／演示容器不参与。
+
+```bash
+cd /home/yunyue/Projects/myworks/edu-agent
+umask 022
+export GOCACHE=/tmp/chat-c5b-go-cache
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+export WEB_CHROMIUM_PATH=/home/yunyue/.cache/ms-playwright/chromium-1247/chrome-linux64/chrome
+# 仅 C5b 在冻结 main 上执行；C5a 未运行此命令
+make web-release-candidate
+```
+
+3. 保存候选打印的 `/tmp/edu-web-release-*/report.json`、每步骤日志／浏览器 JSON／SHA256 和 source input hash，核对 21 spec 的适用三引擎、全部必需 PG 名称与 CLI 读回；0 skip／重试／预期失败并不代替外部及人工验收。缺项按具体 evidence key 补，不靠退出 0 或无变化重复全扫。
+4. 补齐真实代理／HTTPS／静态资产错误路径、实际设备离线／软键盘／安全区与辅助技术、真实模型及搜索链路等对应外部／人工证据；本轮真实模型调用为 0，均使用本地确定性夹具。保留 unknown／过期不自动重发、旧题修订、旧 CLI 和隐私 owner 组合的验收要求。
+5. 将下表从草表更新为每项独立的最终结论、冻结输入 evidence key、日志及未验收项；交给 Runtime 的独立 Verifier，不据 C5a 局部绿色宣称父 spec 或整个 C5 已完成。
+
+**spec 1–30 证据映射草表。** E1＝本轮类型／构建／Vitest；E2＝`final-matrix.json` 内业务场景；E3＝`axe-summary.json`、色值核对与截图；E4＝`postgres.jsonl` 的必需名称；E5＝release／Go 深链接／已核对代理；E6＝review 的生产 CLI 读回。下表均为局部证据与 C5b 后续安排，完整结论尚待冻结候选。
+
+| spec | C5a 已执行的证据／场景 | C5b 补齐／冻结映射 |
+| --- | --- | --- |
+| 1 | E2 notebook-workspace、learning：首页、创建、搜索、分页／失败 | 冻结首页能力与真实列表证据 |
+| 2 | E2 chat 方向／归档；E4 Direction 四场景 | 旧数据与跨客户端方向版本组合 |
+| 3 | E2 新对话无需目标；E4 StudyMode／Direction | 冻结系统目标只在授权动作建立的证据 |
+| 4 | E2 chat；E3 五宽度双主题 | 对照真实设备界面与正式文案 |
+| 5 | E2 归档／恢复；旧 learning 生命周期 | 完整写入禁止／恢复与菜单组合 |
+| 6 | E2 旧目标／课堂／导师；E5 14 深链接 | 全辅助页、前进后退、真实代理及 CLI |
+| 7 | E2 来源分页、同名身份、读取撤权 | 冻结授权目录与未知覆盖组合 |
+| 8 | E2 sources 四入口及原操作核对 | references／tasks 全量导入场景 |
+| 9 | E2 sources 真实 PDF 缺口／页图 | pdf、大小／页数限制及原件权限证据 |
+| 10 | E2 sources 搜索外发／重定向／失败 | 真实外部搜索／抓取及网络策略边界 |
+| 11 | E2 chat 实时改选；E4 原题来源／方向 | 冻结受理快照与旧题评估组合 |
+| 12 | E2 零来源／未选不外发；E4 Isolation／ZeroSources | 私人历史、其他区、记忆组合 |
+| 13 | E2 chat／exercise／studio 引用；E3 返回焦点 | 真实 PDF、撤权／清除引用及代理 |
+| 14 | E2 C2／mentor／tutor-history；E4 显式保存 | 真实提供商授权、预算、未知结果与重启 |
+| 15 | E2 exercise 单卡、defer／resume；E4 PublishesOneCard | 冻结发布并发／自动节奏证据 |
+| 16 | E2 键盘／IME／帮助；E4 HelpSubmissionConcurrency | 真实 IME 与各帮助等级组合 |
+| 17 | E2 丢响应答案核对／双标签；E4 原子提交 | 全原 operation／并发及旧客户端组合 |
+| 18 | E2 自动反馈／待复核；E4 Assessment／Provisional | 真实评估、失败／unknown／复核授权 |
+| 19 | E2 默认方向进度；E4 Progress／Review；E6 | 冻结 Evidence、掌握／路线／复习事实 |
+| 20 | E2 Studio 四产物、指定版本、返回 | 完整历史、状态与存储版本组合 |
+| 21 | E2 指南／简报引用；E3 双主题 | 真实生成质量／建议与资料支持边界 |
+| 22 | E2 C4 旧方向题组；E4 FrozenQuiz／SharedRead | 所有旧测验／课堂／CLI 映射 |
+| 23 | E2 笔记保存／冲突／重开／双标签 | 冻结版本、撤权及丢响应组合 |
+| 24 | E2 笔记指定版本转来源不随修改 | references／notesync 边界与出处映射 |
+| 25 | E2 取消／重新生成／回执；E4 Recovery | 完整 TTL、重启、预算和过期证据 |
+| 26 | E2 learner；E4 learner HTTP／scope 持久化 | 冻结旧档案不升级及独立清除授权 |
+| 27 | E2 CSRF／权限／安全 Markdown；E4 HTTP／scope | 全代理、Origin、PDF／URL 与边界检查 |
+| 28 | E2 草稿隔离／撤权／清除；E4 Clear／Rotation | offline／knowledge-structure／所有 owner 清除 |
+| 29 | E2 原操作／冲突；E4 原子性／lease／恢复 | 冻结跨 owner 幂等／未知结果组合 |
+| 30 | E2 三引擎局部 171 场景；E3；E5／E6 | 完整 candidate、真机／辅助技术与全部适用 spec |
+
+**人工与风险。** 待真机验证 iOS Safari／Android Chrome 的真实软键盘、中文 IME、浏览器工具栏变化、缩放／平移、横竖屏和刘海安全区；待 VoiceOver／NVDA 验证真实消息播报、MathML 阅读及焦点返回。候选必须在冻结 main 重跑完整适用范围，七份未执行 spec、真实代理／外部提供商和人工设备证据不以本轮局部结果替代。默认全部状态会显示归档记录，用户仍可显式筛选；Go／CLI 业务状态未改变。已有大 chunk 构建提示保留，本轮未做无关性能重构。
+
 合计 **20–31 人日**（约 4–6 个单人工作周），不是撤销前三批再重建。主要不确定性是 C3 的持久自动评估、帮助竞态与跨 owner 提交；建议另留 3–5 人日风险余量，不能把余量记作新增功能授权。若 Q2 改成零来源可评估、Q3 改成多设备共享历史，需重新评估知识依据／数据所有权，不套用此估算。
 
 ### L. 待确认与本次核验边界

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { FileText, PanelLeftClose, PanelRightClose, Sparkles } from 'lucide-react'
 import { Button } from '../ui/button'
 import { MobilePanelTabs } from './mobile-panel-tabs'
@@ -24,11 +24,38 @@ export function NotebookLayout({
   legacyClassroom?: boolean
 }) {
   const { items } = useSourceSelection()
+  const layout = useRef<HTMLDivElement>(null)
   const [narrow, setNarrow] = useState(() => matchMedia('(max-width: 900px)').matches)
   const [collapsed, setCollapsed] = useState({ sources: false, studio: false })
+  const [viewport, setViewport] = useState(() => ({ height: window.visualViewport?.height ?? innerHeight, inset: 0 }))
+  useEffect(() => {
+    const view = window.visualViewport
+    const resize = () => {
+      const height = view?.height ?? innerHeight
+      setViewport({ height, inset: Math.max(0, innerHeight - height - (view?.offsetTop ?? 0)) })
+    }
+    resize()
+    view?.addEventListener('resize', resize)
+    view?.addEventListener('scroll', resize)
+    window.addEventListener('resize', resize)
+    return () => {
+      view?.removeEventListener('resize', resize)
+      view?.removeEventListener('scroll', resize)
+      window.removeEventListener('resize', resize)
+    }
+  }, [])
   useEffect(() => {
     if (sourceFocus) setCollapsed((value) => ({ ...value, sources: false }))
   }, [sourceFocus])
+  useEffect(() => {
+    if (!sourceFocus || (narrow && panel !== 'sources')) return
+    const frame = requestAnimationFrame(() => {
+      const reader = layout.current?.querySelector('.notebook-source-reader')
+      const target = reader?.querySelector<HTMLElement>('[tabindex="-1"]') ?? reader?.querySelector<HTMLElement>('button[aria-label="关闭引用片段"]')
+      target?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [sourceFocus, panel, narrow])
   useEffect(() => {
     const media = matchMedia('(max-width: 900px)')
     const resize = () => setNarrow(media.matches)
@@ -42,7 +69,7 @@ export function NotebookLayout({
     { id: 'studio', title: 'Studio', content: studio },
   ] as const
   return (
-    <>
+    <div ref={layout} className="notebook-layout" style={{ '--notebook-viewport-height': `${viewport.height}px`, '--notebook-keyboard-inset': `${viewport.inset}px` } as CSSProperties}>
       <div
         className="notebook-columns"
         data-sources-collapsed={!narrow && collapsed.sources}
@@ -95,6 +122,6 @@ export function NotebookLayout({
         ))}
       </div>
       <MobilePanelTabs panel={panel} onChange={onPanelChange} legacyClassroom={legacyClassroom} />
-    </>
+    </div>
   )
 }

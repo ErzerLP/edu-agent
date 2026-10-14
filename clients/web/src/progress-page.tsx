@@ -166,7 +166,7 @@ export function ProgressPage({ search }: { search: ProgressSearch }) {
       <label>目标状态<select value={search.status} onChange={e => change({ status: e.target.value as ProgressSearch['status'] })}>{['active', 'draft', 'paused', 'completed', 'archived', 'all'].map(s => <option key={s} value={s}>{s === 'all' ? '全部状态（含归档区）' : labels[s as keyof typeof labels]}</option>)}</select></label>
       <label>列表<select value={search.view} onChange={e => change({ view: e.target.value as ProgressSearch['view'] })}><option value="goals">活动、概念与继续位置</option><option value="reviews">到期复习</option></select></label>
       {search.view === 'goals' ? <label>排序<select value={search.order} onChange={e => change({ order: e.target.value as ProgressSearch['order'] })}><option value="priority">优先级、目标截止时间</option><option value="recent">近期学习</option></select></label> : <label>复习截止时间（UTC）<input type="datetime-local" value={search.due?.slice(0, 16) ?? ''} onChange={e => change({ due: e.target.value ? new Date(e.target.value + 'Z').toISOString() : undefined })} /></label>}
-      <p className="hint">默认只显示进行中目标及活跃区。暂停、完成与归档仅隐藏，历史和复习日期保留。</p>
+      <p className="hint">默认显示全部状态，包含学习方向的练习记录。筛选只改变显示范围。</p>
     </form>
     <ProgressPanel key={JSON.stringify(search)} search={search} />
   </>

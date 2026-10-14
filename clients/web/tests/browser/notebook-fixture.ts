@@ -47,6 +47,7 @@ export async function openNavigation(page: Page) {
 }
 
 export async function setNotebookTheme(page: Page, theme: 'light' | 'dark') {
+  if (await page.evaluate(() => (document.documentElement.dataset.theme ?? 'light')) === theme) return
   await openNavigation(page)
   await page
     .getByRole('button', { name: theme === 'dark' ? '切换深色主题' : '切换浅色主题' })
@@ -94,7 +95,7 @@ export async function createSpace(page: Page, name: string) {
 }
 
 // 只准备来源，教学会话、正式答案与反馈仍由真实 UI 和服务端领域路径执行。
-export async function seedSources(page: Page, spaceId: string, name = '偶数资料') {
+export async function seedSources(page: Page, spaceId: string, name = '偶数资料', markdown = '# 偶数\n\n偶数可以被 2 整除。2 是偶数，3 是奇数。\n') {
   const legacy = await request.newContext({ baseURL: 'http://127.0.0.1:32929' })
   try {
     const pair = await legacy.post('/v1/pairings/exchange', {
@@ -129,7 +130,7 @@ export async function seedSources(page: Page, spaceId: string, name = '偶数资
       expected_parent_revision_id: null,
       source: 'Notebook 浏览器验收',
       documents: [
-        { path: 'even.md', markdown: '# 偶数\n\n偶数可以被 2 整除。2 是偶数，3 是奇数。\n' },
+        { path: 'even.md', markdown },
         {
           path: 'examples.md',
           markdown: '# 偶数练习\n\n用原资料核对偶数，完成活动后查看反馈并继续学习。\n',

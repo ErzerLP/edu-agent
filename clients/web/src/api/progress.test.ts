@@ -3,6 +3,11 @@ vi.hoisted(() => { vi.stubGlobal('window', { location: { origin: 'http://localho
 afterAll(() => vi.unstubAllGlobals())
 import { progressQuery, progressSearch, reviewSchema, reviewsPage } from './progress'
 
+it('默认进度查询包含草稿方向的练习，显式状态深链接仍生效', () => {
+  expect(progressQuery(progressSearch.parse({}), '', 10)).toMatchObject({ status: 'all' })
+  expect(progressQuery(progressSearch.parse({ status: 'active' }), '', 10)).toMatchObject({ status: 'active' })
+})
+
 it('深链接仅保留已知范围和过滤，私人正文不进入查询', () => {
   const search = progressSearch.parse({ space: '11111111-1111-4111-8111-111111111111', status: 'paused', answer: '私人答案', cursor: '旧范围游标' })
   expect(search).not.toHaveProperty('answer')

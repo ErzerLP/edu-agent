@@ -26,7 +26,7 @@ export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { s
       </Button>
       <dialog
         ref={dialog}
-        className="source-dialog expanded"
+        className="source-dialog expanded add-source-dialog"
         aria-label="添加来源"
         onClose={() => {
           setOpen(false)
@@ -127,7 +127,9 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           </Button>
         ))}
       </div>}
-      {collections.isPending && <p role="status">正在读取目标集合…</p>}
+      <p role="status" className="add-source-status">
+        {collections.isPending ? '正在读取目标集合…' : '\u00a0'}
+      </p>
       <label>
         保存到已关联集合
         <select
@@ -146,7 +148,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           ))}
         </select>
       </label>
-      <details open={!collections.data?.items.length}>
+      <details open={!collectionId}>
         <summary>创建区内私有集合</summary>
         <label>
           新集合名称

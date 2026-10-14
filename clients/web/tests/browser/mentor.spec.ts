@@ -27,7 +27,7 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await model.getByLabel('启用Web 导师模型').check()
   await model.getByRole('button', { name: '保存Web 导师模型配置' }).click()
   await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
-  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001')
+  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001/manage')
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(`浏览器导师目标 ${randomUUID().slice(0, 8)}`)
   await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
   await page.getByRole('link', { name: '查看目标', exact: true }).click()

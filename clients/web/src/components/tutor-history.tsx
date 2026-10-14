@@ -143,7 +143,7 @@ function ConversationView({ spaceId, id, expanded, onChange, onBinding }: { spac
         <p>第 {turn.ordinal} 轮 · {mentorStatus[turn.status as keyof typeof mentorStatus] ?? turn.status}</p>
         {!turn.body_available ? <p>该轮正文未保存或已清除，不能恢复。</p> : <>
           {turn.messages.filter((m) => m.role === 'user').map((m, i) => <p className="conversation-message" key={i}>你：{m.content}</p>)}
-          {(turn.run_id !== c.current_run_id || isMentorTerminal(turn.status as Parameters<typeof isMentorTerminal>[0])) && turn.output && <p className="conversation-message">导师：<MentorAnswer spaceId={spaceId} runId={turn.run_id} text={turn.output} citations={turn.citations}/></p>}
+          {(turn.run_id !== c.current_run_id || isMentorTerminal(turn.status as Parameters<typeof isMentorTerminal>[0])) && turn.output && <div className="conversation-message">导师：<MentorAnswer spaceId={spaceId} runId={turn.run_id} text={turn.output} citations={turn.citations}/></div>}
           {turn.messages.some((m) => m.role === 'tool') && <details><summary>本轮工具与来源记录（只读）</summary>{turn.messages.filter((m) => m.role === 'tool').map((m, i) => <pre key={i}>{m.tool_call_id}：{m.content}</pre>)}</details>}
         </>}
       </article>)}

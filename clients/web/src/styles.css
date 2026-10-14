@@ -1,6 +1,11 @@
 @import 'tailwindcss';
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
+/* Restore native modal centering after preflight; the navigation drawer stays at the edge. */
+dialog:modal:not(.notebook-drawer) {
+  margin: auto;
+}
+
 /* 教学布局沿用全站视觉变量；辅栏尺寸同时支持指针和方向键。 */
 body:has(.teaching-workspace):not(:has(.notebook-workspace)) .main {
   max-width: none;
@@ -89,8 +94,15 @@ body:has(.teaching-workspace):not(:has(.notebook-workspace)) .site-header {
   font-size: 0.85em;
 }
 .safe-markdown {
+  font-synthesis: weight style;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.mentor-markdown {
+  white-space: normal;
+}
+.mentor-markdown .safe-markdown > * + * {
+  margin-top: 12px;
 }
 .safe-markdown p + p {
   margin-top: 12px;
@@ -1150,6 +1162,14 @@ body:has(.notebook-home) footer, body:has(.notebook-workspace) footer { display:
 @media (prefers-reduced-motion: reduce) { .notebook-card { transition: none; } }
 
 /* C2: conversation layout follows notebook-chat-prototype. */
+.source-dialog.add-source-dialog {
+  width: min(960px, calc(100vw - 32px));
+  height: min(720px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  border-radius: 12px;
+  scrollbar-gutter: stable;
+}
+.add-source-status { min-height: 1lh; }
 .notebook-space-dialog { width: min(510px, calc(100vw - 32px)); padding: 28px; border: 1px solid var(--border); border-radius: 22px; color: var(--text); background: var(--surface); box-shadow: 0 20px 80px #18223530; }
 .notebook-space-dialog::backdrop { background: #24262b50; }
 .notebook-space-dialog h2 { font-size: 21px; margin: 0 0 24px; }

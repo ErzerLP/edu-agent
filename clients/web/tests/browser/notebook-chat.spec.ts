@@ -48,6 +48,44 @@ test('学习区回答渲染 Markdown、公式与引用，代码和 HTML 保持�
   await expect(answer.getByRole('heading', { name: 'Markdown 学习回答', level: 1 })).toBeVisible()
 })
 
+test('C5a 网页概要显示标题与正文摘要，截断查看器给出短提示', async ({ page }, testInfo) => {
+  await pairNotebook(page, 'learner')
+  const space = await webAPI(page, 'POST', '/v1/learning-spaces', {
+    operation_id: randomUUID(), expected_version: 0, name: '网页概要验收', description: '', status: 'active', direction: '理解偶数',
+  })
+  await seedSources(page, space.id)
+  const metadata = { kind: 'url', title: '偶数的定义', locator: 'https://example.org/even', final_url: 'https://example.org/even', parser: 'safe-main-text-v2', coverage: 'partial_text_limit', fingerprint: 'INTERNAL_FINGERPRINT', status: 'partial' }
+  // Only the read DTO presentation is controlled here; identities and scope are
+  // from real imported sources. Actual fetch/receipt authorization stays in notebook-sources.
+  await page.route('**/v1/knowledge/sources?*', async route => {
+    const response = await route.fetch(), body = await response.json()
+    for (const item of body.items) if (item.path === 'even.md') {
+      item.path = 'web-INTERNAL_ID.md'
+      item.metadata = metadata
+    }
+    await route.fulfill({ response, json: body })
+  })
+  await page.route('**/v1/knowledge/sources/*/documents/*', async route => {
+    const response = await route.fetch(), body = await response.json()
+    if (body.path === 'even.md') {
+      body.path = 'web-INTERNAL_ID.md'
+      body.metadata = metadata
+      body.fragments[0].text = `    ${JSON.stringify(metadata)}\n\n    ${body.fragments[0].text}`
+    }
+    await route.fulfill({ response, json: body })
+  })
+  await page.goto(`/app/spaces/${space.id}`)
+  const overview = page.locator('.chat-source-summary')
+  await expect(overview).toContainText('偶数的定义')
+  await expect(overview).toContainText('偶数可以被 2 整除')
+  for (const internal of ['INTERNAL_ID', 'INTERNAL_FINGERPRINT', 'even.md', '"parser"']) await expect(overview).not.toContainText(internal)
+  await page.screenshot({ path: testInfo.outputPath('web-overview.png') })
+  await page.getByRole('button', { name: '打开来源：偶数的定义', exact: true }).click()
+  const viewer = page.getByRole('region', { name: '来源查看器', exact: true })
+  await expect(viewer.getByText('已保存 · 网址 · 部分解析：正文已截断（16 KB 上限）', { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('web-partial-viewer.png') })
+})
+
 test('来源行打开原文，菜单预算仍用于对话提交', async ({ page }) => {
   page.setDefaultTimeout(10000)
   await configureNotebookModel(page)
@@ -216,6 +254,7 @@ test('C2 方向、空对话、引用、实时改选、方向修订、保存重�
   })
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
   await expect(chat.locator('.chat-answer')).toHaveCount(0)
+  await expect(chat.locator('.chat-panel > [aria-live="polite"]')).toHaveText('')
   await expect(chat.getByLabel('向导师提问')).toHaveValue('')
 })
 

@@ -24,7 +24,7 @@ export type PracticeCardProps = {
 }
 export function PracticeCard(p: PracticeCardProps) {
   return (
-    <article className="chat-practice-card" aria-label="对话练习">
+    <article className="chat-practice-card" aria-label="对话练习" data-pending={!p.submitted && !p.deferred}>
       <div className="chat-practice-top">
         <span>
           <FilePenLine size={15} /> 试着想一想

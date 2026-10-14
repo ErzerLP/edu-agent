@@ -949,7 +949,9 @@ test('切区后旧答案迟到响应不修改新会话草稿', async ({ page, re
   await openNavigation(page)
   await page.getByText('切换学习区', { exact: true }).click()
   await page.getByRole('link', { name: otherSpace.name, exact: true }).click()
-  await page.getByRole('button', { name: second.goal.management.details.name, exact: true }).click()
+  await openNavigation(page)
+  await page.getByRole('link', { name: '管理学习区与目标', exact: true }).click()
+  await page.getByRole('link', { name: second.goal.management.details.name, exact: true }).click()
   await page
     .getByRole('region', { name: '教学会话', exact: true })
     .getByRole('link')

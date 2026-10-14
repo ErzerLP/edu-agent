@@ -6,7 +6,7 @@ const count = z.number().int().nonnegative()
 export const progressSearch = z.object({
   space: id.optional(),
   goal: id.optional(),
-  status: z.enum(['active', 'draft', 'paused', 'completed', 'archived', 'all']).catch('active'),
+  status: z.enum(['active', 'draft', 'paused', 'completed', 'archived', 'all']).catch('all'),
   order: z.enum(['priority', 'recent']).catch('priority'),
   due: z.iso.datetime({ offset: true }).optional(),
   view: z.enum(['goals', 'reviews']).catch('goals'),

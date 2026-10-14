@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { pairNotebook, createSpace, webAPI } from './notebook-fixture'
+import { sourceDetailSchema, sourceOverview } from '../../src/api/notebook-sources'
 
 test('搜索发现只发送明确确认的关键词，选中后读取正文并经原预览确认成为来源', async ({ page }) => {
   await pairNotebook(page, 'references')
@@ -118,7 +119,7 @@ test('搜索取消、失败和空候选如实显示，修改关键词使原外�
 
 test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作核对，查看器定位历史片段', async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(120_000)
   await pairNotebook(page, 'references')
   const space = await createSpace(page, 'Notebook 来源验收')
@@ -227,4 +228,20 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.reload()
   await expect(panel.getByRole('article')).toHaveCount(3)
+  // This network host intentionally has no learning owner. Verify the real
+  // imported DTO through the presentation helper; notebook-chat covers its UI.
+  const catalog = await webAPI(page, 'GET', '/v1/knowledge/sources', undefined, space.id)
+  const saved = catalog.items.find((item: { path: string }) => item.path === '网页来源.md')
+  const detail = await page.request.get(`/v1/knowledge/sources/${saved.revision_id}/documents/${saved.document_revision_id}`, {
+    headers: { 'X-Learning-Space-ID': space.id, 'X-Knowledge-Collection-ID': saved.collection_id },
+  })
+  expect(detail.ok(), await detail.text()).toBe(true)
+  const overview = sourceOverview(sourceDetailSchema.parse(await detail.json()))
+  expect(overview.title).toBe('Notebook 网页')
+  expect(overview.excerpt).toContain('Notebook 网页片段')
+  for (const internal of ['网页来源.md', '"kind"', '"fingerprint"', '"parser"'])
+    expect(`${overview.title}：${overview.excerpt}`).not.toContain(internal)
+  await urlRow.getByRole('button').click()
+  await expect(viewer.getByRole('heading', { name: 'Notebook 网页', exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('real-url-viewer-390.png') })
 })

@@ -108,14 +108,14 @@ function NotebookWorkspace({
   const changePanel = (panel: NotebookPanel, finishAdding = false) => {
     const nextSearch = { ...search, panel, ...(finishAdding ? { add_sources: undefined } : {}) }
     if (sessionId)
-      void navigate({
+      return navigate({
         to: '/spaces/$spaceId/learn/$sessionId',
         params: { spaceId, sessionId },
         search: nextSearch,
         replace: true,
       })
     else
-      void navigate({
+      return navigate({
         to: '/spaces/$spaceId',
         params: { spaceId },
         search: nextSearch,
@@ -127,14 +127,14 @@ function NotebookWorkspace({
       <NotebookHeader space={space.data} />
       <SourceSelectionProvider key={JSON.stringify(prefix)} spaceId={spaceId}>
         <WorkspacePanels changePanel={changePanel}>
-          {(openCitation, sourceFocus, openStudioCitation) => (
+          {(openCitation, sourceFocus, openStudioCitation, closeCitation) => (
             <NotebookLayout
               legacyClassroom={!!sessionId}
               sourceFocus={sourceFocus}
               panel={search.panel ?? 'classroom'}
               onPanelChange={changePanel}
               sources={
-                <SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} addSources={search.add_sources} onAddSourcesClose={() => changePanel('sources', true)} />
+                <SourcesPanel spaceId={spaceId} archived={space.data.status === 'archived'} addSources={search.add_sources} onAddSourcesClose={() => changePanel('sources', true)} onCitationClose={closeCitation} />
               }
               classroom={
                 sessionId ? <>
@@ -174,16 +174,26 @@ function WorkspacePanels({
   children,
   changePanel,
 }: {
-  changePanel: (panel: NotebookPanel) => void
+  changePanel: (panel: NotebookPanel) => Promise<void>
   children: (
     open: (runId: string, id: string) => void,
     sourceFocus: CitationFocus | undefined,
     openStudio: (artifactId: string, version: number, id: string) => void,
+    closeCitation: () => void,
   ) => React.ReactNode
 }) {
   const { setCitation, citation } = useSourceSelection()
+  const closeCitation = () => {
+    const closed = citation
+    if (!closed?.returnFocus) return
+    void changePanel(closed.returnPanel ?? 'classroom').then(() => {
+      requestAnimationFrame(() => {
+        if (closed.returnFocus?.isConnected) closed.returnFocus.focus()
+      })
+    })
+  }
   return children((runId, id) => {
-    setCitation({ runId, id })
+    setCitation({ runId, id, returnFocus: document.activeElement as HTMLElement, returnPanel: 'classroom' })
     changePanel('sources')
-  }, citation, (artifactId, version, id) => { setCitation({ artifactId, version, id }); changePanel('sources') })
+  }, citation, (artifactId, version, id) => { setCitation({ artifactId, version, id, returnFocus: document.activeElement as HTMLElement, returnPanel: 'studio' }); changePanel('sources') }, closeCitation)
 }

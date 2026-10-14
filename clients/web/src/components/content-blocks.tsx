@@ -86,18 +86,20 @@ export function MathBlock({ text, displayMode = true }: { text: string; displayM
   const rendered = useMemo(() => safeMath(text, displayMode), [text, displayMode])
   if (!displayMode)
     return rendered ? (
-      <span aria-label="数学公式" dangerouslySetInnerHTML={{ __html: rendered }} />
+      <span role="group" tabIndex={0} aria-label="数学公式" dangerouslySetInnerHTML={{ __html: rendered }} />
     ) : (
       <span>公式文本（不支持或超过安全限制）：{text}</span>
     )
   return rendered ? (
     <div
       className="math-block"
+      role="group"
+      tabIndex={0}
       aria-label="数学公式"
       dangerouslySetInnerHTML={{ __html: rendered }}
     />
   ) : (
-    <pre className="math-block">公式文本（不支持或超过安全限制）：{text}</pre>
+    <pre className="math-block" tabIndex={0}>公式文本（不支持或超过安全限制）：{text}</pre>
   )
 }
 

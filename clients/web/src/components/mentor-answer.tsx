@@ -2,6 +2,45 @@ import { citationParts, type MentorCitation } from '@/api/source-selection'
 import { MathBlock, SafeMarkdown } from './content-blocks'
 import { SourceDialog, MentorCitationContent } from './notebook/source-viewer'
 import { Button } from './ui/button'
+import { createContext, useContext } from 'react'
+import type { Components } from 'react-markdown'
+
+const AnswerContext = createContext<{
+  spaceId: string
+  runId: string
+  formulas: { text: string; displayMode: boolean }[]
+  onCitation?: (runId: string, id: string) => void
+}>(null!)
+
+// Keep renderer identities stable so rerenders preserve citation buttons and focus targets.
+const answerComponents: Components = {
+  div: function AnswerDiv({ node, children }) {
+    const { formulas } = useContext(AnswerContext)
+    const index = node?.properties['data-answer-math']
+    return index !== undefined ? <MathBlock {...formulas[Number(index)]} /> : <div>{children}</div>
+  },
+  span: function AnswerSpan({ node, children }) {
+    const { spaceId, runId, formulas, onCitation } = useContext(AnswerContext)
+    const index = node?.properties['data-answer-math']
+    if (index !== undefined) return <MathBlock {...formulas[Number(index)]} />
+    const id = node?.properties['data-answer-citation']
+    if (typeof id !== 'string') return <span>{children}</span>
+    return onCitation ? (
+      <Button
+        className="citation-link"
+        variant="outline"
+        onClick={() => onCitation(runId, id)}
+        aria-label={`核验引用 ${id}`}
+      >
+        [{id}]
+      </Button>
+    ) : (
+      <SourceDialog label={`[${id}]`} title={`核验引用 ${id}`}>
+        <MentorCitationContent spaceId={spaceId} runId={runId} citationId={id} />
+      </SourceDialog>
+    )
+  },
+}
 
 type MarkdownNode = {
   type: string
@@ -138,40 +177,9 @@ export function MentorAnswer({
   )
   return (
     <div className="mentor-markdown">
-      <SafeMarkdown
-        text={prepared}
-        remarkPlugins={[plugin]}
-        components={{
-          div: ({ node, children }) => {
-            const index = node?.properties['data-answer-math']
-            return index !== undefined ? (
-              <MathBlock {...formulas[Number(index)]} />
-            ) : (
-              <div>{children}</div>
-            )
-          },
-          span: ({ node, children }) => {
-            const index = node?.properties['data-answer-math']
-            if (index !== undefined) return <MathBlock {...formulas[Number(index)]} />
-            const id = node?.properties['data-answer-citation']
-            if (typeof id !== 'string') return <span>{children}</span>
-            return onCitation ? (
-              <Button
-                className="citation-link"
-                variant="outline"
-                onClick={() => onCitation(runId, id)}
-                aria-label={`核验引用 ${id}`}
-              >
-                [{id}]
-              </Button>
-            ) : (
-              <SourceDialog label={`[${id}]`} title={`核验引用 ${id}`}>
-                <MentorCitationContent spaceId={spaceId} runId={runId} citationId={id} />
-              </SourceDialog>
-            )
-          },
-        }}
-      />
+      <AnswerContext.Provider value={{ spaceId, runId, formulas, onCitation }}>
+        <SafeMarkdown text={prepared} remarkPlugins={[plugin]} components={answerComponents} />
+      </AnswerContext.Provider>
     </div>
   )
 }

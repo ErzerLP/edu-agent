@@ -189,6 +189,15 @@ export function ChatPanel({
   }
   const send = async (text = prompt, retry = false) => {
     if (busy || (!retry && (!ready || !text.trim()))) return
+    if (!retry && text.includes('出一道题')) {
+      const waiting = stream.current?.querySelector<HTMLElement>('.chat-practice-card[data-pending="true"]')
+      if (waiting) {
+        waiting.scrollIntoView({ block: 'center' })
+        waiting.querySelector<HTMLTextAreaElement>('textarea')?.focus({ preventScroll: true })
+        setNotice('先完成这道题，或稍后再做。')
+        return
+      }
+    }
     if (!retry && text.includes('出一道题') && selection?.items.length === 0) {
       setNeedSources(true)
       return
@@ -352,6 +361,9 @@ export function ChatPanel({
     }
   }
   const options = conversations.data?.pages.flatMap((p) => p.items) ?? []
+  const lastTurn = turns.at(-1)
+  const announcedOutput = lastTurn?.body_available &&
+    (!lastTurn.source_manifest?.entries.length || sourceReadable) ? lastTurn.output : ''
   if (denied && !failure) return <p role="status">当前设备无法读取对话。</p>
   if (failure)
     return (
@@ -365,6 +377,9 @@ export function ChatPanel({
     )
   return (
     <div className="chat-panel">
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announcedOutput ? `学习导师：${announcedOutput}` : ''}
+      </p>
       <header className="chat-toolbar">
         <select
           aria-label="切换对话"

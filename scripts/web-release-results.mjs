@@ -8,18 +8,23 @@ export function checkGoResults(output, required = []) {
   return tests.length
 }
 
-export function checkBrowserResults(report, project) {
+export function checkBrowserResults(report, project, required = []) {
   const tests = []
+  const titles = new Set()
   function visit(suites) {
     for (const suite of suites) {
-      for (const spec of suite.specs ?? []) tests.push(...spec.tests)
+      for (const spec of suite.specs ?? []) {
+        tests.push(...spec.tests)
+        if (spec.tests.length) titles.add(spec.title)
+      }
       visit(suite.suites ?? [])
     }
   }
   visit(report.suites ?? [])
   if (report.errors?.length || !tests.length || tests.some(test =>
     test.projectName !== project || test.status !== 'expected' || test.expectedStatus !== 'passed' ||
-    test.results?.length !== 1 || test.results[0].status !== 'passed'))
+    test.results?.length !== 1 || test.results[0].status !== 'passed' ||
+    (test.results[0].retry ?? 0) !== 0) || required.some(title => !titles.has(title)))
     throw new Error('浏览器检查没有用例、失败、意外失败预期、重试或跳过项')
   return tests.length
 }

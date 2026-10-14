@@ -5,6 +5,7 @@ import { tmpdir, platform, arch, cpus, release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { checkGoResults, checkBrowserResults } from './web-release-results.mjs'
+import { browserFixtures, browserSpecPattern, releaseBrowserFiles, requiredBrowserScenarios, notebookPostgresPackages, requiredNotebookPostgres, notebookPostgresPattern } from './web-release-scenarios.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const web = join(root, 'clients/web')
@@ -80,26 +81,37 @@ try {
   })
   if (candidate) {
     const browserDatabase = join(output, platform() === 'win32' ? 'webdatabase.exe' : 'webdatabase')
+    const notebookFixture = join(output, platform() === 'win32' ? 'webnotebook.exe' : 'webnotebook')
+    const reviewFixture = join(output, platform() === 'win32' ? 'webreview.exe' : 'webreview')
     step('浏览器数据库隔离工具', () => command('go', ['build', '-o', browserDatabase, './testutil/webdatabase'], join(root, 'server')))
+    step('来源受控网络宿主与复习夹具', () =>
+      command('go', ['build', '-tags', 'web_release', '-o', notebookFixture, './testutil/webnotebook'], join(root, 'server')) +
+      command('go', ['build', '-o', reviewFixture, './testutil/webreview'], join(root, 'server')))
     step('生产 CLI 构建', () => command('make', ['cli-build']))
     step('真实 PostgreSQL、空库研究、CLI 同一教学、竞态和 SSE', () => {
       const log = command('go', ['test', '-json', '-p=1', '-count=1', '-timeout=10m', './internal/transport/httpapi', './internal/mentorrun', '-run', '^TestPostgreSQL(Web|StudyCLI|StartLearning|Research|Adaptive|MentorCookieHTTPAndSSERecovery)'], join(root, 'server'), { EDU_AGENT_INTEGRATION_CLI: join(root, 'clients/cli-go/bin/edu-agent') }, 1500000)
       checkGoResults(log, ['TestPostgreSQLStudyCLIResearchAndWebContent', 'TestPostgreSQLStartLearningEmptyLibrary', 'TestPostgreSQLAdaptiveQueueImmediateAndCompensation', 'TestPostgreSQLResearchGlobalErasureCannotReviveSources', 'TestPostgreSQLMentorCookieHTTPAndSSERecovery'])
       return log
     })
+    step('C1–C4 PostgreSQL：权限、方向、对话练习、Studio、进度与复习', () => {
+      const log = command('go', ['test', '-json', '-p=1', '-count=1', '-timeout=10m', ...notebookPostgresPackages, '-run', notebookPostgresPattern], join(root, 'server'), {}, 1500000)
+      report.steps.at(-1).required_tests = requiredNotebookPostgres
+      report.steps.at(-1).passed_tests = checkGoResults(log, requiredNotebookPostgres)
+      return log
+    })
     // 每个浏览器/文件使用独立 schema 并重启夹具，隔离持久清除状态和模型配置。
     for (const project of ['chromium', 'firefox', 'webkit']) {
-      for (const file of readdirSync(join(web, 'tests/browser')).filter(file => file.endsWith('.spec.ts')).sort()) {
+      for (const file of releaseBrowserFiles(readdirSync(join(web, 'tests/browser')))) {
         step(`${project} / ${file}`, () => {
           const json = join(output, `${project}-${file}.json`)
-          const fixture = !['learning.spec.ts', 'settings.spec.ts'].includes(file)
           const browserCommand = file === 'offline.spec.ts'
             ? ['run', 'test:offline', '--']
-            : ['run', 'test:browser', '--', file]
+            : ['run', 'test:browser', '--', browserSpecPattern(file)]
           const log = command(browserDatabase, ['npm', ...browserCommand, `--project=${project}`, '--reporter=json'], web, {
-            WEB_RELEASE_MATRIX: '1', WEB_WORKSPACE_FIXTURE: fixture ? '1' : '0', WEB_MENTOR_FIXTURE: fixture ? '1' : '0', WEB_NOTESYNC_FIXTURE: file === 'notesync.spec.ts' ? '1' : '0', WEB_NOCTURNE_FIXTURE: file === 'memory.spec.ts' ? '1' : '0', PLAYWRIGHT_JSON_OUTPUT_FILE: json,
+            ...browserFixtures(file, { notebook: notebookFixture, review: reviewFixture, cli: join(root, 'clients/cli-go/bin/edu-agent') }), PLAYWRIGHT_JSON_OUTPUT_FILE: json,
           }, 1200000)
-          checkBrowserResults(JSON.parse(readFileSync(json, 'utf8')), project)
+          report.steps.at(-1).required_tests = requiredBrowserScenarios[file] ?? []
+          report.steps.at(-1).passed_tests = checkBrowserResults(JSON.parse(readFileSync(json, 'utf8')), project, requiredBrowserScenarios[file])
           return log + `\n浏览器报告 SHA256：${hash(readFileSync(json))}`
         })
       }

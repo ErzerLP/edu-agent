@@ -240,7 +240,7 @@ test('导师申请必须在内嵌候选面板批准才可取得回执', async ({
   await context.clearCookies()
   await pair(page)
   // 前一个隐私清除场景会擦除区名；按原区 ID 进入，不能依赖旧的默认名称。
-  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001')
+  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001/manage')
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(`记忆导师 ${randomUUID()}`)
   await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
   await page.getByRole('link', { name: '查看目标', exact: true }).click()

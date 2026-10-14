@@ -1,7 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
+import AxeBuilder from '@axe-core/playwright'
 import { captureNotebook } from './notebook-visual'
 import { randomUUID } from 'node:crypto'
-import { pairNotebook, createSpace, webAPI, seedSources } from './notebook-fixture'
+import { pairNotebook, createSpace, webAPI, seedSources, setNotebookTheme } from './notebook-fixture'
 
 async function configureStudioModel(page: Page) {
   await pairNotebook(page, 'settings')
@@ -22,6 +23,7 @@ async function configureStudioModel(page: Page) {
 }
 
 test('所选来源生成指南和简报、引用定位、刷新重开、取消并重新生成版本', async ({ page }) => {
+  test.setTimeout(120000)
   await configureStudioModel(page)
   await pairNotebook(page, 'references')
   const space = await createSpace(page, 'Studio 生成验收')
@@ -56,6 +58,17 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
   expect(outgoing.every((c) => c.goal_id === null && c.source_selection.items.length === 1)).toBe(
     true,
   )
+  for (const theme of ['light', 'dark'] as const) {
+    await setNotebookTheme(page, theme)
+    const library = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
+    expect(library.violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) })), `Studio 列表 ${theme}`).toEqual([])
+    await page.screenshot({ path: test.info().outputPath(`studio-list-${theme}.png`) })
+    await studio.getByRole('button', { name: /夹具学习指南.*第 1 版/ }).click()
+    const document = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
+    expect(document.violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) })), `Studio 指南 ${theme}`).toEqual([])
+    await page.screenshot({ path: test.info().outputPath(`studio-guide-${theme}.png`) })
+    await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
+  }
   await page.reload()
   await studio.getByRole('button', { name: /夹具学习指南.*第 1 版/ }).click()
   await expect(studio.getByRole('heading', { name: '术语', exact: true })).toBeVisible()

@@ -1,7 +1,7 @@
 import { useQueries } from '@tanstack/react-query'
 import { Sparkles, ArrowRight, History, MessageSquare } from 'lucide-react'
 import { ApiError, learningClient, unwrap } from '@/api/client'
-import { sourceDetailSchema } from '@/api/notebook-sources'
+import { sourceDetailSchema, sourceOverview, sourceTitle } from '@/api/notebook-sources'
 import { sourceKey } from '@/api/source-selection'
 import type { Space } from '@/api/runtime'
 import { useIdentity } from '@/lib/session'
@@ -84,15 +84,14 @@ export function ChatOverview({
               <ErrorState error={summary.error} />
             ) : summary.data ? (
               <p>
-                <strong>{summary.data.path}</strong>：
-                {summary.data.fragments[0]?.text.replace(/\s+/g, ' ').trim().slice(0, 160) ??
-                  '没有可定位的正文片段。'}
+                <strong>{sourceOverview(summary.data).title}</strong>：
+                {sourceOverview(summary.data).excerpt}
                 {summary.data.fragments[0] && (
                   <button
                     className="chat-citation"
                     aria-label={`概要引用 ${index + 1}`}
-                    onClick={() => {
-                      setCitation({ id: String(index + 1), source: selected[index] })
+                    onClick={(event) => {
+                      setCitation({ id: String(index + 1), source: selected[index], returnFocus: event.currentTarget, returnPanel: 'classroom' })
                       onSource()
                     }}
                   >
@@ -101,7 +100,7 @@ export function ChatOverview({
                 )}
               </p>
             ) : (
-              <p role="status">正在读取 {selected[index].path}…</p>
+              <p role="status">正在读取 {selected[index].metadata?.title || selected[index].collection_name}…</p>
             )}
           </div>
         ))}
@@ -110,7 +109,7 @@ export function ChatOverview({
             以及{' '}
             {selected
               .slice(3)
-              .map((s) => s.path)
+              .map((s) => s.metadata?.kind === 'url' ? sourceTitle(s) : s.metadata?.title || s.collection_name)
               .join('、')}
           </p>
         )}

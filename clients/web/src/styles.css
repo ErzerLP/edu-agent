@@ -120,6 +120,35 @@ body:has(.teaching-workspace):not(:has(.notebook-workspace)) .site-header {
   margin: 8px 0;
   padding-left: 12px;
 }
+.safe-markdown .markdown-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.safe-markdown .markdown-table table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+.safe-markdown .markdown-table th,
+.safe-markdown .markdown-table td {
+  min-width: 100px;
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+}
+.safe-markdown .markdown-table th {
+  background: var(--soft);
+  color: var(--text);
+  font-weight: 600;
+}
+.safe-markdown .contains-task-list {
+  list-style: none;
+}
+.safe-markdown .task-list-item input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
 .content-callout {
   padding: 16px;
   border-left: 3px solid var(--accent);

@@ -4,6 +4,51 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { ContentBlocks, MathBlock, SafeMarkdown, safeLink, safeMath } from './content-blocks'
 
 describe('安全学习正文', () => {
+  it('GFM 表格、删除线、自动链接与只读任务列表使用安全渲染', () => {
+    const result = renderToStaticMarkup(
+      <SafeMarkdown
+        text={[
+          '| 概念 | 说明 |',
+          '| :--- | ---: |',
+          '| 偶数 | ~~旧说法~~ **可被 2 整除** |',
+          '',
+          'https://example.org/doc',
+          '',
+          '- [x] 已阅读',
+          '- [ ] 待复习',
+        ].join('\n')}
+      />,
+    )
+    expect(result).toContain('tabindex="0" aria-label="表格，可横向滚动"')
+    expect(result).toContain('<table>')
+    expect(result).toContain('<thead>')
+    expect(result).toContain('text-align:right')
+    expect(result).toContain('<del>旧说法</del>')
+    expect(result).toContain('href="https://example.org/doc"')
+    const tasks = result.match(/<input[^>]*>/g) ?? []
+    expect(tasks).toHaveLength(2)
+    expect(
+      tasks.every((task) => task.includes('disabled=""') && task.includes('type="checkbox"')),
+    ).toBe(true)
+    expect(tasks[0]).toContain('checked=""')
+    expect(tasks[0]).toContain('aria-label="已完成任务"')
+    expect(tasks[1]).not.toContain('checked=""')
+    expect(tasks[1]).toContain('aria-label="未完成任务"')
+  })
+  it('GFM 单元格不渲染 HTML 或危险链接，自动链接沿用 HTTPS 限制', () => {
+    const result = renderToStaticMarkup(
+      <SafeMarkdown
+        text={
+          '| 内容 |\n| --- |\n| <img src=x onerror=alert(1)> [危险](javascript:alert%281%29) |\n\nhttp://example.org/unsafe https://user:secret@example.org/ contact@example.org'
+        }
+      />,
+    )
+    expect(result).toContain('<table>')
+    expect(result).not.toMatch(
+      /<img|onerror=|href="(?:javascript:|http:|mailto:|https:\/\/user:secret@)/,
+    )
+    expect(result).toContain('链接已禁用')
+  })
   it('不执行原始 HTML，不自动请求图片，不允许危险链接', () => {
     const result = renderToStaticMarkup(
       <SafeMarkdown

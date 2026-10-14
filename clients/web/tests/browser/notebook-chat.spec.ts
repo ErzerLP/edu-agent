@@ -10,6 +10,71 @@ import {
 } from './notebook-fixture'
 import { captureNotebook } from './notebook-visual'
 
+test('GFM 回答表格在桌面与窄屏可读，空态概要去除 Markdown 标记', async ({ page }) => {
+  await configureNotebookModel(page)
+  await pairNotebook(page, 'learner')
+  const space = await webAPI(page, 'POST', '/v1/learning-spaces', {
+    operation_id: randomUUID(), expected_version: 0, name: 'GFM 表格与概要',
+    description: '', status: 'active', direction: '理解偶数与整除',
+  })
+  await seedSources(page, space.id, '偶数对照资料', [
+    '# 偶数对照', '',
+    '| 概念 | 定义 | 例子 | 依据 | 复习状态 |',
+    '| :--- | --- | ---: | --- | --- |',
+    '| 偶数 | $n=2k$ | 2、4、6 | 原资料 [1] | ~~待确认~~ 已核验 |', '',
+    '- [x] 已阅读', '- [ ] 待复习', '',
+    'https://example.org/even', '',
+    '```text', '$x$ [1]', '```', '',
+    '<img src=x onerror=alert(1)>',
+  ].join('\n'))
+  await page.goto(`/app/spaces/${space.id}`)
+  const overview = page.locator('.chat-source-summary')
+  await expect(overview).toContainText('偶数对照')
+  await expect(overview).toContainText('已核验')
+  await expect(overview).toContainText('$x$ [1]')
+  await expect(overview).not.toContainText('```')
+  await expect(overview).not.toContainText('~~')
+  await expect(overview).not.toContainText('|')
+  await expect(overview.locator('table, pre, code, input')).toHaveCount(0)
+  await captureNotebook(page, 'gfm-overview', '对话')
+  // The deterministic model echoes the first selected source; do not depend on UUID ordering.
+  await page.getByRole('checkbox', { name: '选择全部来源', exact: true }).uncheck()
+  await page.getByRole('checkbox', { name: /^选择来源：even.md/ }).check()
+  await page.getByLabel('向导师提问', { exact: true }).fill('解释这张偶数对照表')
+  await page.getByRole('button', { name: '发送提问', exact: true }).click()
+  const answer = page.locator('.chat-answer')
+  const table = answer.getByRole('table')
+  await expect(table.getByRole('columnheader')).toHaveText(['概念', '定义', '例子', '依据', '复习状态'])
+  await expect(table.getByRole('cell', { name: '2、4、6', exact: true })).toBeVisible()
+  await expect(table.locator('math')).toHaveCount(1)
+  await expect(answer.locator('del')).toHaveText('待确认')
+  await expect(answer.locator('input[type="checkbox"]')).toHaveCount(2)
+  for (const task of await answer.locator('input[type="checkbox"]').all()) await expect(task).toBeDisabled()
+  await expect(answer.locator('pre code')).toHaveText('$x$ [1]\n')
+  await expect(answer.locator('img, script')).toHaveCount(0)
+  await expect(answer.getByRole('link', { name: /https:\/\/example.org\/even/ })).toHaveAttribute('rel', 'noopener noreferrer')
+  await captureNotebook(page, 'gfm-table', '对话')
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 844 })
+    if (width === 390) await page.getByRole('tab', { name: '对话', exact: true }).click()
+    await expect(table).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    expect(await page.locator('.chat-stream').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+    if (width === 390) {
+      const region = answer.getByRole('region', { name: '表格，可横向滚动', exact: true })
+      expect(await region.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true)
+      await region.focus()
+      await page.keyboard.press('ArrowRight')
+      await expect.poll(() => region.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+    }
+  }
+  await table.getByRole('button', { name: '核验引用 1', exact: true }).click()
+  await expect(page.getByRole('region', { name: '来源查看器', exact: true })).toContainText('偶数')
+  await page.reload()
+  await page.getByRole('tab', { name: '对话', exact: true }).click()
+  await expect(answer.getByRole('table')).toBeVisible()
+})
+
 test('学习区回答渲染 Markdown、公式与引用，代码和 HTML 保持安全', async ({ page }) => {
   await configureNotebookModel(page)
   await pairNotebook(page, 'learner')
@@ -70,7 +135,7 @@ test('C5a 网页概要显示标题与正文摘要，截断查看器给出短提�
     if (body.path === 'even.md') {
       body.path = 'web-INTERNAL_ID.md'
       body.metadata = metadata
-      body.fragments[0].text = `    ${JSON.stringify(metadata)}\n\n    ${body.fragments[0].text}`
+      body.fragments[0].text = `    ${JSON.stringify(metadata)}\n\n    \`\`\`text\n    ${body.fragments[0].text}\n    \`\`\``
     }
     await route.fulfill({ response, json: body })
   })
@@ -79,6 +144,7 @@ test('C5a 网页概要显示标题与正文摘要，截断查看器给出短提�
   await expect(overview).toContainText('偶数的定义')
   await expect(overview).toContainText('偶数可以被 2 整除')
   for (const internal of ['INTERNAL_ID', 'INTERNAL_FINGERPRINT', 'even.md', '"parser"']) await expect(overview).not.toContainText(internal)
+  await expect(overview).not.toContainText('```')
   await page.screenshot({ path: testInfo.outputPath('web-overview.png') })
   await page.getByRole('button', { name: '打开来源：偶数的定义', exact: true }).click()
   const viewer = page.getByRole('region', { name: '来源查看器', exact: true })

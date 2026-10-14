@@ -238,6 +238,7 @@ function start() {
       MODEL_ENDPOINT_ALLOWLIST: '["http://127.0.0.1:1/v1","http://127.0.0.1:32930/v1","http://127.0.0.1:32930/alternate"]',
       DEVICE_RATE_LIMIT_PER_MINUTE: '10000',
       PAIRING_RATE_LIMIT_PER_MINUTE: '1000',
+      AUTH_FAILURE_LIMIT_PER_MINUTE: '1000',
       ...(nocturneDirectory ? {
         NOCTURNE_ENABLED: 'true', NOCTURNE_BASE_URL: nocturneFixtureURL,
         NOCTURNE_API_TOKEN: nocturneFixtureSecrets[0], NOCTURNE_MAINTENANCE_TOKEN: nocturneFixtureSecrets[1],

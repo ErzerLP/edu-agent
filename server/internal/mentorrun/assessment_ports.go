@@ -8,6 +8,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 )
 
 type AssessmentStatus struct {
@@ -18,6 +19,19 @@ type AssessmentResume struct {
 	OperationID     string
 	ExpectedVersion int64
 	Policy          learningcontent.AssessmentPolicy
+}
+
+// Each submitted answer gets its own allowance for an evaluation and the one
+// proposal repair. Dispatch checks input/schema plus configured output against
+// ContextTokens, so two context windows cover both reservations even without
+// usage refunds. Generation/turn budgets authorize only their own run; settings
+// remain the upper bounds, including when they cannot cover both assessments.
+func automaticAssessmentPolicy(configuration string, limits settings.Limits) learningcontent.AssessmentPolicy {
+	return learningcontent.AssessmentPolicy{
+		Configuration: configuration,
+		Requests:      min(2, limits.ResearchRequests),
+		Tokens:        min(2*limits.ContextTokens, limits.ResearchTokens),
+	}
 }
 
 // AssessmentPolicy binds explicit bounded authorization to the current model

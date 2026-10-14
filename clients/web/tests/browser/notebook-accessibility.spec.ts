@@ -319,7 +319,8 @@ test('C5a 长标题、公式与代码留在窄屏消息内', async ({ page }, te
     operation_id: randomUUID(), expected_version: 0, name: '内容边界', description: '', status: 'active', direction: '理解代数表达式',
   })
   const formula = Array(24).fill('x_{123}').join('+')
-  await seedSources(page, space.id, '长标题'.repeat(40), `# 公式与代码\n\n$${formula}$\n\n$$${formula}$$\n\n\`\`\`text\n${'LongUnbrokenCode'.repeat(40)}\n\`\`\`\n`)
+  const gfm = '| 概念 | 定义 | 例子 | 依据 | 复习状态 |\n| --- | --- | --- | --- | --- |\n| 偶数 | 可被 2 整除 | 2、4、6 | 原资料 [1] | ~~待确认~~ 已核验 |\n\n- [x] 已阅读\n- [ ] 待复习\n\n'
+  await seedSources(page, space.id, '长标题'.repeat(40), `# 公式与代码\n\n${gfm}$${formula}$\n\n$$${formula}$$\n\n\`\`\`text\n${'LongUnbrokenCode'.repeat(40)}\n\`\`\`\n`)
   await page.goto(`/app/spaces/${space.id}`)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('tab', { name: '来源', exact: true }).click()
@@ -331,6 +332,8 @@ test('C5a 长标题、公式与代码留在窄屏消息内', async ({ page }, te
   await page.getByRole('button', { name: '发送提问', exact: true }).click()
   const answer = page.locator('.chat-answer')
   await expect(answer.getByLabel('数学公式')).toHaveCount(2)
+  await expect(answer.getByRole('table').getByRole('columnheader')).toHaveText(['概念', '定义', '例子', '依据', '复习状态'])
+  for (const task of await answer.getByRole('checkbox').all()) await expect(task).toBeDisabled()
   for (const theme of ['light', 'dark'] as const) {
     await setNotebookTheme(page, theme)
     for (const width of [390, 768, 1024, 1280, 1440]) {
@@ -338,6 +341,12 @@ test('C5a 长标题、公式与代码留在窄屏消息内', async ({ page }, te
       if (width <= 900) await page.getByRole('tab', { name: '对话', exact: true }).click()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       expect(await page.locator('.chat-stream').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+      if (width === 390) {
+        const region = answer.getByRole('region', { name: '表格，可横向滚动', exact: true })
+        await tabTo(page, region)
+        await page.keyboard.press('ArrowRight')
+        await expect.poll(() => region.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+      }
       await audit(page, `公式代码 ${theme}/${width}`)
       await page.screenshot({ path: testInfo.outputPath(`math-code-${theme}-${width}.png`) })
     }

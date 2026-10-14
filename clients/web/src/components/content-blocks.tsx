@@ -1,6 +1,7 @@
 import { SourceDialog } from './notebook/source-viewer'
 import { memo, useMemo } from 'react'
 import Markdown, { type Options } from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import type { Block, Reference } from '@/api/teaching'
@@ -34,7 +35,8 @@ export const SafeMarkdown = memo(function SafeMarkdown({
       <Markdown
         skipHtml
         urlTransform={safeLink}
-        remarkPlugins={remarkPlugins}
+        // Register GFM syntax before caller transforms (answer math and citations).
+        remarkPlugins={[remarkGfm, ...(remarkPlugins ?? [])]}
         components={{
           a: ({ href, children }) =>
             href ? (
@@ -49,6 +51,25 @@ export const SafeMarkdown = memo(function SafeMarkdown({
             <pre tabIndex={0} aria-label="代码，可横向滚动">
               {children}
             </pre>
+          ),
+          table: ({ children }) => (
+            <div
+              className="markdown-table"
+              role="region"
+              tabIndex={0}
+              aria-label="表格，可横向滚动"
+            >
+              <table>{children}</table>
+            </div>
+          ),
+          th: ({ node, ...props }) => <th {...props} scope="col" />,
+          input: ({ checked }) => (
+            <input
+              type="checkbox"
+              disabled
+              checked={!!checked}
+              aria-label={checked ? '已完成任务' : '未完成任务'}
+            />
           ),
           ...components,
         }}
@@ -86,7 +107,12 @@ export function MathBlock({ text, displayMode = true }: { text: string; displayM
   const rendered = useMemo(() => safeMath(text, displayMode), [text, displayMode])
   if (!displayMode)
     return rendered ? (
-      <span role="group" tabIndex={0} aria-label="数学公式" dangerouslySetInnerHTML={{ __html: rendered }} />
+      <span
+        role="group"
+        tabIndex={0}
+        aria-label="数学公式"
+        dangerouslySetInnerHTML={{ __html: rendered }}
+      />
     ) : (
       <span>公式文本（不支持或超过安全限制）：{text}</span>
     )
@@ -99,7 +125,9 @@ export function MathBlock({ text, displayMode = true }: { text: string; displayM
       dangerouslySetInnerHTML={{ __html: rendered }}
     />
   ) : (
-    <pre className="math-block" tabIndex={0}>公式文本（不支持或超过安全限制）：{text}</pre>
+    <pre className="math-block" tabIndex={0}>
+      公式文本（不支持或超过安全限制）：{text}
+    </pre>
   )
 }
 

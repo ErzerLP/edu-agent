@@ -10,6 +10,44 @@ import {
 } from './notebook-fixture'
 import { captureNotebook } from './notebook-visual'
 
+test('学习区回答渲染 Markdown、公式与引用，代码和 HTML 保持安全', async ({ page }) => {
+  await configureNotebookModel(page)
+  await pairNotebook(page, 'learner')
+  const space = await createSpace(page, 'Markdown 渲染验收')
+  await webAPI(page, 'PUT', `/v1/learning-spaces/${space.id}`, {
+    operation_id: randomUUID(),
+    expected_version: space.version,
+    name: space.name,
+    description: '',
+    status: 'active',
+    direction: '理解公式与资料',
+  })
+  await seedSources(page, space.id)
+  await page.goto(`/app/spaces/${space.id}`)
+  await page.getByLabel('向导师提问').fill('Markdown 渲染验收')
+  await page.getByRole('button', { name: '发送提问' }).click()
+  const answer = page.locator('.chat-answer')
+  await expect(answer.getByRole('heading', { name: 'Markdown 学习回答', level: 1 })).toBeVisible()
+  await expect(answer.locator('strong')).toHaveText('重点')
+  await expect(answer.locator('em')).toHaveText('解释')
+  await expect(answer.locator('ul > li')).toHaveCount(2)
+  await expect(answer.locator('ol > li')).toHaveCount(1)
+  await expect(answer.locator('blockquote')).toContainText('资料需要核验')
+  await expect(answer.locator('math')).toHaveCount(2)
+  await expect(answer.locator('math[display="block"]')).toHaveCount(1)
+  await expect(answer.locator('pre code')).toHaveText('const x = "$x$ [1]"\n')
+  await expect(answer.locator('img, script')).toHaveCount(0)
+  await expect(answer.getByRole('link', { name: /资料链接/ })).toHaveAttribute(
+    'rel',
+    'noopener noreferrer',
+  )
+  await captureNotebook(page, 'markdown', '对话')
+  await answer.getByRole('button', { name: '核验引用 1' }).click()
+  await expect(page.getByRole('region', { name: '来源查看器', exact: true })).toContainText('偶数')
+  await page.reload()
+  await expect(answer.getByRole('heading', { name: 'Markdown 学习回答', level: 1 })).toBeVisible()
+})
+
 test('来源行打开原文，菜单预算仍用于对话提交', async ({ page }) => {
   page.setDefaultTimeout(10000)
   await configureNotebookModel(page)

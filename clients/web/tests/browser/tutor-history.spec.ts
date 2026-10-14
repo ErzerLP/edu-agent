@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
+import { captureNotebook } from './notebook-visual'
 
 async function configure(page: Page, endpoint = 'http://127.0.0.1:32930/v1') {
   await page.goto('/app/settings')
@@ -24,7 +25,7 @@ test('真实导师历史：多轮、展开草稿、回执核对、端点确认�
   await page.getByRole('button', { name: '配对并进入' }).click()
   await expect(page.getByRole('heading', { name: '你的学习区', exact: true, level: 1 })).toBeVisible()
   await configure(page)
-  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001')
+  await page.goto('/app/spaces/00000000-0000-4000-8000-000000000001/manage')
   await page.getByLabel('今天想学会什么？', { exact: true }).fill(`历史验收 ${randomUUID().slice(0, 8)}`)
   await page.getByRole('button', { name: '仅保存目标', exact: true }).click()
   await page.getByRole('link', { name: '查看目标', exact: true }).click()
@@ -32,9 +33,15 @@ test('真实导师历史：多轮、展开草稿、回执核对、端点确认�
   await page.getByRole('button', { name: '新建对话', exact: true }).click()
   const panel = page.getByRole('region', { name: '目标内导师', exact: true })
   const prompt = panel.getByLabel('想和导师讨论什么？')
-  await prompt.fill('第一轮历史问题')
+  await prompt.fill('第一轮历史问题，Markdown 渲染验收')
   await panel.getByRole('button', { name: '发起导师交流' }).click()
   await expect(panel.getByRole('status')).toContainText('已完成')
+  await expect(panel.getByLabel('导师输出').getByRole('heading', { name: 'Markdown 学习回答' })).toBeVisible()
+  await expect(panel.getByLabel('导师输出').locator('math')).toHaveCount(2)
+  const history = page.getByLabel('已提交聊天轮次')
+  await expect(history.getByRole('heading', { name: 'Markdown 学习回答' })).toBeVisible()
+  await expect(history.locator('pre code')).toHaveText('const x = "$x$ [1]"\n')
+  await captureNotebook(page, 'mentor-markdown')
   await prompt.fill('展开后应保留的草稿')
   const before = await (await page.request.get('http://127.0.0.1:32930/stats')).json()
   await page.getByRole('link', { name: '展开导师对话' }).click()

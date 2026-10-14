@@ -1,6 +1,6 @@
 import { SourceDialog } from './notebook/source-viewer'
 import { memo, useMemo } from 'react'
-import Markdown from 'react-markdown'
+import Markdown, { type Options } from 'react-markdown'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import type { Block, Reference } from '@/api/teaching'
@@ -24,12 +24,17 @@ export function safeLink(value: string) {
   }
 }
 
-export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string }) {
+export const SafeMarkdown = memo(function SafeMarkdown({
+  text,
+  components,
+  remarkPlugins,
+}: { text: string } & Pick<Options, 'components' | 'remarkPlugins'>) {
   return (
     <div className="safe-markdown">
       <Markdown
         skipHtml
         urlTransform={safeLink}
+        remarkPlugins={remarkPlugins}
         components={{
           a: ({ href, children }) =>
             href ? (
@@ -45,6 +50,7 @@ export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string 
               {children}
             </pre>
           ),
+          ...components,
         }}
       >
         {text}

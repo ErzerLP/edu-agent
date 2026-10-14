@@ -27,6 +27,23 @@ writeFileSync(mentorKeyFile, randomBytes(32), { mode: 0o600 })
 if (process.env.WEB_NOTESYNC_FIXTURE === '1') await startNotesyncFixture()
 if (nocturneDirectory) await startNocturneFixture()
 if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE === '1') {
+  const markdownAnswer = String.raw`# Markdown 学习回答
+
+这是 **重点** 与 *解释*，行内公式 \(x^2\)。
+
+- 第一项 [1]
+- 第二项
+
+1. 有序步骤
+
+> 资料需要核验。
+
+\[x^2 + y^2 = 1\]
+
+[资料链接](https://example.org/doc)
+
+<img src=x onerror=alert(1)>
+` + '\n```ts\nconst x = "$x$ [1]"\n```'
   let calls = 0
   let historyRequests = 0
   let studioCalls = 0
@@ -53,6 +70,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       const result = fragment ? { answer: `围绕${material.direction}，已核对${source.collection_name}：${fragment.text} [1]`, citations: [{ source: 1, fragment: 1 }] } : { answer: `围绕${material.direction}，我们可以先理解核心概念。`, citations: [] }
       result.exercise = null
       const question = payload.messages.findLast(message => message.role === 'user')?.content ?? ''
+      if (question.includes('Markdown 渲染验收')) result.answer = markdownAnswer
       if (fragment && question.includes('出一道题') && !payload.messages[0].content.includes('当前不能发布新练习')) {
         result.answer = '试着用自己的话解释资料中的概念。[1]'
         result.exercise = { prompt: '怎样判断一个数是不是偶数？请举一个例子。', rubric: [{id:'even',criterion:'说明能被 2 整除，并给出偶数例子'}],allowed_help:['none','hint','scaffold','answer_revealed'],citations:[{source:1,fragment:1}] }
@@ -153,6 +171,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       (message) => message.role === 'tool' && message.tool_call_id === 'browser-question',
     )
     const delta = { role: 'assistant', content: '浏览器真实导师：已读取本次绑定目标。' }
+    if (input.includes('Markdown 渲染验收')) delta.content = markdownAnswer
     let finish = 'stop'
     if (input.includes('结构化') && !answered) {
       delta.content = ''

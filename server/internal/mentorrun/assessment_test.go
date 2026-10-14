@@ -31,12 +31,12 @@ type exerciseFixture struct {
 	request learningstart.ExerciseRequest
 }
 
-func newExerciseFixture(t *testing.T) *exerciseFixture {
+func newExerciseFixture(t *testing.T, modelAddress ...string) *exerciseFixture {
 	t.Helper()
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
 		t.Error("unexpected model call")
 		http.Error(w, "unexpected", 500)
-	})
+	}, modelAddress...)
 	selected := selectedDocument(t, f, "SELECTED_EVEN_SOURCE")
 	k := knowledgepg.New(f.pool)
 	store := learningpg.New(f.pool, tutoringpg.New(f.pool), k)

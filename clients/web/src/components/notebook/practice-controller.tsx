@@ -331,7 +331,9 @@ export function PracticeController({
             {state?.result_unknown
               ? '评估结果待核对，未重复发送。'
               : state?.can_resume
-                ? '评估已暂停，答案已保存。'
+                ? state.reason === 'budget_exhausted'
+                  ? '评估预算不足，答案已保存。请在“继续评估”中增加请求次数或 Token 预留；若已达到上限，请先提高设置中的研究预算。'
+                  : '评估已暂停，答案已保存。'
                 : state?.status === 'failed'
                   ? '评估未完成，答案已保存。'
                   : '正在评估…'}

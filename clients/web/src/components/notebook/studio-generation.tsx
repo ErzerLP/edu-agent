@@ -359,12 +359,14 @@ export function StudioGenerator({
             <p className="hint">
               所选片段{directionMode ? '和学习方向' : ''}将发送到{' '}
               {configuration.data?.effective_mentor.endpoint}。
-              {directionMode ? '每题作答将按同一预算自动评估。' : ''}
+              {directionMode
+                ? '每题作答使用独立评估预算，最多自动重试一次，受设置中的请求次数和 Token 上限约束。'
+                : ''}
             </p>
           )}
           {(!selection || selection.mode === 'none') && <p>请先勾选至少一个可读取的来源。</p>}
           <label>
-            本次总 token 预算
+            本次生成 Token 预算
             <input
               type="number"
               min={1}

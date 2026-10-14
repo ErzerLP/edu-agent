@@ -194,7 +194,7 @@ func (c assessmentChat) Chat(ctx context.Context, request llm.ChatRequest) (llm.
 	}
 	// Keep call_started until the proposal artifact is durable. Receiving a
 	// response alone is insufficient to safely repeat this evaluation on restart.
-	if err == nil {
+	if err == nil || result.Usage.TotalTokens > 0 {
 		if e := h.service.mutate(ctx, &h.owned, "assessment_received", func(item *row) error {
 			if result.Usage.TotalTokens > 0 && result.Usage.TotalTokens <= h.reserve {
 				item.TokensLeft += h.reserve - result.Usage.TotalTokens

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -117,10 +118,10 @@ type runtimeFixture struct {
 	calls         atomic.Int32
 }
 
-func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)) *runtimeFixture {
+func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int), modelAddress ...string) *runtimeFixture {
 	t.Helper()
 	f := &runtimeFixture{pool: runtimePool(t), goal: uuid.NewString()}
-	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	provider := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		call := int(f.calls.Add(1))
 		if f.modelHook != nil {
 			f.modelHook(call)
@@ -134,6 +135,15 @@ func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)
 		}
 		handler(w, r, call)
 	}))
+	if len(modelAddress) > 0 {
+		_ = provider.Listener.Close()
+		listener, err := net.Listen("tcp", modelAddress[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider.Listener = listener
+	}
+	provider.Start()
 	t.Cleanup(provider.Close)
 	configuration, err := settings.Open(settings.Options{Path: filepath.Join(t.TempDir(), "private", "settings.json"), ModelEndpoints: []string{provider.URL}})
 	if err != nil {

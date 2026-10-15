@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUp, Copy, FileText, Plus, Sparkles, StickyNote } from 'lucide-react'
+import { Copy, FileText, Plus, Sparkles, StickyNote } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import {
@@ -28,6 +28,8 @@ import { ChatOverview } from './chat-overview'
 import { SpaceDialog } from './space-dialog'
 import { useNotebookChrome } from './notebook-chrome'
 import { InlineExerciseCard } from './inline-exercise-card'
+import { ChatInput } from './chat-input'
+import { SubmissionNotice } from './submission-notice'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -50,7 +52,11 @@ export function ChatPanel({
   const key = JSON.stringify([...prefix, space.id, 'study-draft', conversationId ?? 'new'])
   const [prompt, setPrompt] = useState(() => drafts.get<string>(key) ?? '')
   const [pendingTurn, setPendingTurn] = useState(() => drafts.get<PendingTurn>(key + ':pending'))
+  const [recovering, setRecovering] = useState(!!pendingTurn)
+  const recoveryStarted = useRef(false)
+  const [stopping, setStopping] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<unknown>()
   const [notice, setNotice] = useState('')
   const [needSources, setNeedSources] = useState(false)
@@ -168,9 +174,9 @@ export function ChatPanel({
     (!conversationId || !!conversation?.writable) &&
     (!conversation?.confirmation_required || destination === conversation.destination)
   useEffect(() => {
-    if (turns.length > 0 && follow.current && stream.current)
+    if ((turns.length > 0 || pendingTurn) && follow.current && stream.current)
       stream.current.scrollTop = stream.current.scrollHeight
-  }, [turns.length, turns.at(-1)?.output])
+  }, [turns.length, turns.at(-1)?.output, pendingTurn])
   const refresh = () => {
     void query.invalidateQueries({ queryKey: [...prefix, space.id, 'study-turns'] })
     void query.invalidateQueries({ queryKey: [...prefix, space.id, 'study-conversations'] })
@@ -204,6 +210,7 @@ export function ChatPanel({
     }
     setNeedSources(false)
     setBusy(true)
+    setSubmitting(true)
     setError(undefined)
     setNotice('')
     try {
@@ -263,7 +270,10 @@ export function ChatPanel({
         setError(e)
       }
     } finally {
-      if (live.current) setBusy(false)
+      if (live.current) {
+        setBusy(false)
+        setSubmitting(false)
+      }
     }
   }
   const reconcile = async () => {
@@ -282,40 +292,61 @@ export function ChatPanel({
     } catch (e) {
       if (live.current) setError(e)
     } finally {
-      if (live.current) setBusy(false)
+      if (live.current) {
+        setBusy(false)
+        setRecovering(false)
+      }
     }
   }
+  useEffect(() => {
+    if (recovering && !recoveryStarted.current && !denied && sourceReadable) {
+      recoveryStarted.current = true
+      void reconcile()
+    }
+  }, [recovering, denied, sourceReadable])
+  useEffect(() => {
+    if (run && isMentorTerminal(run.status)) setStopping(false)
+  }, [run?.status])
   const command = async (kind: 'stop' | 'continue_budget') => {
     if (!run || busy) return
     setBusy(true)
+    if (kind === 'stop') setStopping(true)
     setError(undefined)
-    const payload = {
-      expected_version: run.version,
-      kind,
-      ...(kind === 'continue_budget'
-        ? {
-            request_budget: Math.min(
-              requests,
-              configuration.data?.limits.research_requests ?? requests,
-            ),
-            token_budget: Math.min(tokens, configuration.data?.limits.research_tokens ?? tokens),
-          }
-        : {}),
-    }
     try {
-      await unwrap(
-        api().POST('/v1/learning/runs/{runID}/commands', {
+      // Run versions advance while the model works. Read the current version
+      // before commanding it, and retry only a known version conflict once.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const current = await unwrap(api().GET('/v1/learning/runs/{runID}', {
           params: { header, path: { runID: run.run_id } },
-          body: { ...payload, operation_id: drafts.operation(key + ':command', payload) },
-        }),
-        mentorReceiptSchema,
-      )
+        }), mentorSnapshotSchema)
+        if (isMentorTerminal(current.status) || current.status === 'cancelling') break
+        const payload = {
+          expected_version: current.version,
+          kind,
+          ...(kind === 'continue_budget' ? {
+            request_budget: Math.min(requests, configuration.data?.limits.research_requests ?? requests),
+            token_budget: Math.min(tokens, configuration.data?.limits.research_tokens ?? tokens),
+          } : {}),
+        }
+        try {
+          await unwrap(api().POST('/v1/learning/runs/{runID}/commands', {
+            params: { header, path: { runID: run.run_id } },
+            body: { ...payload, operation_id: drafts.operation(key + ':command', payload) },
+          }), mentorReceiptSchema)
+          break
+        } catch (e) {
+          if (!(e instanceof ApiError) || e.status !== 409 || attempt === 1) throw e
+        }
+      }
       if (live.current) {
         void currentRun.refetch()
         refresh()
       }
     } catch (e) {
-      if (live.current) setError(e)
+      if (live.current) {
+        setError(e)
+        setStopping(false)
+      }
     } finally {
       if (live.current) setBusy(false)
     }
@@ -362,8 +393,13 @@ export function ChatPanel({
   }
   const options = conversations.data?.pages.flatMap((p) => p.items) ?? []
   const lastTurn = turns.at(-1)
-  const announcedOutput = lastTurn?.body_available &&
-    (!lastTurn.source_manifest?.entries.length || sourceReadable) ? lastTurn.output : ''
+  const posting = submitting && !!pendingTurn
+  const thinking = !!(lastTurn?.body_available && ['queued', 'running'].includes(lastTurn.status) && !lastTurn.output)
+  const readableTurn = lastTurn?.body_available &&
+    (!lastTurn.source_manifest?.entries.length || sourceReadable)
+  const turnLabel = `学习导师第 ${lastTurn?.ordinal} 轮`
+  const announcement = !sourceReadable ? '' : thinking ? '学习导师正在思考' : readableTurn && isMentorTerminal(lastTurn.status as keyof typeof mentorStatus)
+    ? lastTurn.status === 'cancelled' ? `${turnLabel}已停止生成` : lastTurn.status === 'failed' ? `${turnLabel}未完成` : `${turnLabel}回答已完成` : ''
   if (denied && !failure) return <p role="status">当前设备无法读取对话。</p>
   if (failure)
     return (
@@ -378,7 +414,7 @@ export function ChatPanel({
   return (
     <div className="chat-panel">
       <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {announcedOutput ? `学习导师：${announcedOutput}` : ''}
+        {announcement}
       </p>
       <header className="chat-toolbar">
         <select
@@ -456,7 +492,7 @@ export function ChatPanel({
                       </div>
                       {turn.output ? (
                         <>
-                          <div className="chat-answer">
+                          <div className="chat-answer" data-generating={!isMentorTerminal(turn.status as keyof typeof mentorStatus) || undefined}>
                             <MentorAnswer
                               renderMath
                               spaceId={space.id}
@@ -493,8 +529,10 @@ export function ChatPanel({
                             </Button>
                           </div>
                         </>
+                      ) : ['queued', 'running'].includes(turn.status) ? (
+                        <ThinkingIndicator />
                       ) : (
-                        <p role="status">
+                        <p>
                           {mentorStatus[turn.status as keyof typeof mentorStatus] ?? turn.status}
                         </p>
                       )}
@@ -518,26 +556,31 @@ export function ChatPanel({
             )}
           </>
         )}
+        {posting && <article className="chat-turn">
+          <div className="chat-user"><div>{pendingTurn.body.prompt}</div></div>
+          <div className="chat-ai">
+            <div className="chat-author"><Sparkles size={17} aria-hidden="true" />学习导师</div>
+            <ThinkingIndicator />
+          </div>
+        </article>}
       </div>
       <div className="chat-composer">
         {needSources && <p role="status">先选一份资料。<Button variant="ghost" onClick={onSource}>添加或选择来源</Button></p>}
         {!!notice && <p role="status">{notice}</p>}
-        {!!error && <ErrorState error={error} retry={refresh} />}
+        {!!error && !pendingTurn && <ErrorState error={error} retry={refresh} />}
         {configuration.error && <ErrorState error={configuration.error} />}
         {configuration.data && !configuration.data.effective_mentor.configured && (
           <p>请在设置中配置教学模型。</p>
         )}
-        {pendingTurn && (
-          <div role="alert">
-            上一轮提交结果待核对。
-            <Button disabled={busy} onClick={() => void reconcile()}>
-              核对提交结果
+        <SubmissionNotice pending={!!pendingTurn} inFlight={busy || recovering}>
+            提交结果待核对。
+            <Button variant="ghost" onClick={() => void reconcile()}>
+              核对
             </Button>
-            <Button disabled={busy} onClick={() => void send('', true)}>
-              重试原提交
+            <Button variant="ghost" onClick={() => void send('', true)}>
+              重试
             </Button>
-          </div>
-        )}
+        </SubmissionNotice>
         {conversation?.confirmation_required && (
           <label className="check-label">
             <input
@@ -548,7 +591,7 @@ export function ChatPanel({
             同意将当前方向、所选来源和同范围历史发送到 {conversation.destination_endpoint}
           </label>
         )}
-        {run?.result_unknown && <p role="alert">模型请求结果未知，未自动重发。</p>}
+        {run?.result_unknown && <p className="submission-notice" role="status">模型请求结果未知，未自动重发。</p>}
         {run?.status === 'failed' && <p role="alert">本轮未完成：{run.reason}</p>}
         <div className="chat-quick">
           {['换个讲法', '举个例子', '出一道题', '总结一下'].map((text) => (
@@ -571,34 +614,13 @@ export function ChatPanel({
             void send()
           }}
         >
-          <div className="chat-input">
-            <textarea
-              aria-label="向导师提问"
-              placeholder="对这些资料，你有什么好奇的？"
-              rows={1}
-              maxLength={16000}
-              value={prompt}
-              disabled={!canWrite || !!pendingTurn}
-              onChange={(e) => {
-                setPrompt(e.target.value)
-                drafts.set(key, e.target.value)
-              }}
-              onKeyDown={(e) => {
-                if (
-                  e.key === 'Enter' &&
-                  !e.shiftKey &&
-                  !e.nativeEvent.isComposing &&
-                  e.keyCode !== 229
-                ) {
-                  e.preventDefault()
-                  void send()
-                }
-              }}
-            />
-            <Button aria-label="发送提问" type="submit" disabled={!ready || !prompt.trim()}>
-              <ArrowUp size={15} />
-            </Button>
-          </div>
+          <ChatInput value={prompt} onChange={value => {
+            setPrompt(value)
+            drafts.set(key, value)
+          }} onSend={() => void send()} onStop={() => void command('stop')}
+            disabled={!canWrite || !!pendingTurn} ready={ready}
+            running={active} stopping={stopping || run?.status === 'cancelling'}
+            stopDisabled={busy || !run || !canWrite} />
           <div className="chat-input-footer">
             <FileText size={12} aria-hidden="true" />
             <span>基于 {selection?.items.length ?? '…'} 个来源</span>
@@ -632,11 +654,6 @@ export function ChatPanel({
             </details>,
             menu,
           )}
-        {active && (
-          <Button variant="ghost" disabled={busy || !run} onClick={() => void command('stop')}>
-            停止运行
-          </Button>
-        )}
         {run?.status === 'paused_budget' && (
           <Button
             disabled={busy || !canWrite || !!conversation?.confirmation_required}
@@ -648,4 +665,11 @@ export function ChatPanel({
       </div>
     </div>
   )
+}
+
+function ThinkingIndicator() {
+  return <div className="chat-thinking" aria-hidden="true">
+    <span className="chat-thinking-dots"><i /><i /><i /></span>
+    <span>正在思考…</span>
+  </div>
 }

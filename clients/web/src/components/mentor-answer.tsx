@@ -57,10 +57,11 @@ function answerMarkdown(text: string, renderMath: boolean, citationIds: string[]
   // The marker is absent from the input, and code/HTML/link nodes are left untouched below.
   let marker = '\uE000math'
   while (text.includes(marker)) marker += 'x'
-  const prepared = renderMath
-    ? text.replace(
-        /\\\\|\\\$|^ {0,3}(?<fence>`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?(?:^ {0,3}\k<fence>[`~]*[ \t]*(?:\n|$)|$(?![\s\S])))?|^(?: {4}|\t)[^\n]*(?:\n|$)|(?<ticks>`+)[\s\S]*?\k<ticks>(?!`)|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\$(?:\\.|[^$\\\n])+?\$(?!\d)|\\[([]/gm,
+  const prepared = text.replace(
+        /\\[*\\$]|!?\[[^\]\n]*\]\([^\n)]*\)|<[^>\n]*>|https?:\/\/[^\s<>]+|^ {0,3}(?<fence>`{3,}|~{3,})[^\n]*(?:\n[\s\S]*?(?:^ {0,3}\k<fence>[`~]*[ \t]*(?:\n|$)|$(?![\s\S])))?|^(?: {4}|\t)[^\n]*(?:\n|$)|(?<ticks>`+)[\s\S]*?\k<ticks>(?!`)|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|\$\$[\s\S]*?\$\$|\$(?:\\.|[^$\\\n])+?\$(?!\d)|\\[([]|(?<=[\p{L}\p{N}])\*(?=[\p{L}\p{N}])/gmu,
         (segment) => {
+          if (segment === '*') return '\\*'
+          if (!renderMath) return segment
           if (!/^(?:\\\(|\\\[|\$)/.test(segment)) return segment
           if (segment.length === 2 && segment.startsWith('\\')) return `\\${segment}`
           const displayMode = segment.startsWith('\\[') || segment.startsWith('$$')
@@ -73,7 +74,6 @@ function answerMarkdown(text: string, renderMath: boolean, citationIds: string[]
           return `${marker}${formulas.length - 1}\uE001`
         },
       )
-    : text
   const tokens = new RegExp(`(${marker}[0-9]+\uE001)`, 'g')
   const plugin = () => (tree: MarkdownNode) => {
     function visit(node: MarkdownNode) {

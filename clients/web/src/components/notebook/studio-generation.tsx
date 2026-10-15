@@ -16,6 +16,7 @@ import { useIdentity } from '@/lib/session'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { useSourceSelection } from './source-selection'
+import { SubmissionNotice } from './submission-notice'
 
 export const studioNames = { guide: '学习指南', brief: '简报', note: '笔记', quiz: '测验' }
 const reasons: Record<string, string> = {
@@ -23,7 +24,7 @@ const reasons: Record<string, string> = {
   response_not_completed: '模型未完成输出，未发布产物。',
   schema_mismatch: '模型结果不符合结构要求，未发布产物。',
   invalid_source_citation: '引用核验失败，未发布产物。',
-  source_coverage_partial: '部分完成：可核验内容已保存，请查看资料覆盖说明。',
+  source_coverage_partial: '内容已保存；所选资料覆盖不全，解析缺口或截断范围未补写。打开产物查看覆盖说明。',
   lease_expired: '运行租约失效；已发出的请求不会自动重试。',
   budget_exhausted: '预算不足，尚未发出下一次模型请求。',
   source_unavailable: '来源权限或版本不可用，已隐藏受保护内容。',
@@ -376,17 +377,15 @@ export function StudioGenerator({
               onChange={(e) => setTokens(Number(e.target.value))}
             />
           </label>
-          {pending && (
-            <p role="alert">
+          <SubmissionNotice pending={!!pending} inFlight={busy}>
+            {pending && <>
               请求结果待核对，已选定 {pending.source_selection.items.length}{' '}
               个来源。请先核对原操作；重新发送也会使用同一操作和原来源选择。
-            </p>
-          )}
-          {pending && (
-            <Button disabled={busy} onClick={() => void reconcile()}>
+            <Button variant="ghost" disabled={busy} onClick={() => void reconcile()}>
               核对原生成操作
             </Button>
-          )}
+            </>}
+          </SubmissionNotice>
           <Button
             disabled={
               busy ||
@@ -400,7 +399,7 @@ export function StudioGenerator({
             }
             onClick={() => void submit()}
           >
-            {pending ? '重新发送原请求' : `开始生成${studioNames[kind]}`}
+            {busy ? '正在提交…' : pending ? '重新发送原请求' : `开始生成${studioNames[kind]}`}
           </Button>
           {goal.error && <ErrorState error={goal.error} />}
           {!!error && <ErrorState error={error} />}

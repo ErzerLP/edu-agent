@@ -178,7 +178,7 @@ export function SourceDiscovery({
   }
   const capability = capabilities.data?.source_discovery
   return (
-    <section aria-label="搜索发现">
+    <section className="source-discovery" aria-label="搜索发现">
       <h3>搜索公开来源</h3>
       <p>
         只发送你在这里填写并确认的公开关键词和域名限制。不会自动加入学习目标或学习区资料。每次最多 1
@@ -258,7 +258,7 @@ export function SourceDiscovery({
           <fieldset disabled={!!busy}>
             <legend>候选摘要（不能作为正文导入或引用）</legend>
             {draft.items.map((candidate) => (
-              <article key={candidate.url} className="panel compact">
+              <article key={candidate.url} className="panel compact source-candidate">
                 <label>
                   <input
                     type="checkbox"
@@ -277,7 +277,7 @@ export function SourceDiscovery({
                 </label>
                 <p className="reference-text">{candidate.url}</p>
                 <p>{candidate.summary}</p>
-                <p>{draft.readings[candidate.url] ?? '摘要，未读取正文'}</p>
+                <p className={`source-badge ${draft.readings[candidate.url]?.includes('失败') ? 'failed' : ''}`}>{draft.readings[candidate.url] ?? '摘要，未读取正文'}</p>
               </article>
             ))}
             <p>

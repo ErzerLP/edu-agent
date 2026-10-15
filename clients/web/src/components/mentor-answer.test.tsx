@@ -4,6 +4,20 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { MentorAnswer } from './mentor-answer'
 import type { MentorCitation } from '@/api/source-selection'
 
+it('未定界的字母数字乘法保留星号，正常强调、代码、链接和定界公式不变', () => {
+  const result = renderToStaticMarkup(
+    <MentorAnswer spaceId="space" runId="run" text={String.raw`c1*v1+...+cn*vn=0，x*y*z，2*x+3*y。**重点** 与 *解释*。
+
+代码：\`x*y*z\`；[资料](https://example.org/x*y*z)。$x*y*z$ 与 \(a*b*c\)。`.replaceAll('\\`', '`')} />,
+  )
+  expect(result).toContain('c1*v1+...+cn*vn=0，x*y*z，2*x+3*y。')
+  expect(result).toContain('<strong>重点</strong>')
+  expect(result).toContain('<em>解释</em>')
+  expect(result).toContain('<code>x*y*z</code>')
+  expect(result).toContain('href="https://example.org/x*y*z"')
+  expect(result.match(/<math /g)).toHaveLength(2)
+})
+
 it('GFM 表格与删除线保留公式和引用，自动链接与代码内的标记保持原文', () => {
   const result = renderToStaticMarkup(
     <MentorAnswer

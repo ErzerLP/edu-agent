@@ -9,6 +9,140 @@ import {
   webAPI,
 } from './notebook-fixture'
 import { captureNotebook } from './notebook-visual'
+import AxeBuilder from '@axe-core/playwright'
+
+test('UX 正常提交无核对提示，思考与发送停止切换，失败保留原请求可重试', async ({ page }) => {
+  test.setTimeout(120000)
+  await configureNotebookModel(page)
+  await pairNotebook(page, 'learner')
+  const space = await webAPI(page, 'POST', '/v1/learning-spaces', {
+    operation_id: randomUUID(), expected_version: 0, name: '对话体验验收', description: '', status: 'active', direction: '理解偶数',
+  })
+  await seedSources(page, space.id)
+  await page.goto(`/app/spaces/${space.id}`)
+  const input = page.getByLabel('向导师提问', { exact: true })
+  const send = page.getByRole('button', { name: '发送提问', exact: true })
+  await expect(send).toBeDisabled()
+  const initialHeight = (await input.boundingBox())!.height
+  await input.fill('多行问题\n'.repeat(30))
+  expect((await input.boundingBox())!.height).toBeGreaterThan(initialHeight)
+  expect((await input.boundingBox())!.height).toBeLessThanOrEqual(144)
+  expect(await input.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true)
+  expect(await input.evaluate(el => getComputedStyle(el).borderTopWidth)).toBe('0px')
+  await input.fill('UX 慢速思考')
+  await expect(send).toBeEnabled()
+  await captureNotebook(page, 'input-idle', '对话')
+  const submitted: Record<string, unknown>[] = []
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/v1/learning/conversations/*/turns', async route => {
+    submitted.push(route.request().postDataJSON())
+    const response = await route.fetch()
+    await gate
+    await route.fulfill({ response })
+  })
+  await input.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true })
+  expect(submitted).toHaveLength(0)
+  await input.press('Shift+Enter')
+  await expect(input).toHaveValue('UX 慢速思考\n')
+  await input.press('Enter')
+  await expect.poll(() => submitted.length).toBe(1)
+  await expect(page.locator('.chat-thinking')).toBeVisible()
+  await expect(page.locator('.submission-notice')).toHaveCount(0)
+  release()
+  const stop = page.getByRole('button', { name: '停止生成', exact: true })
+  await expect(stop).toBeEnabled()
+  await expect(page.locator('.chat-input button')).toHaveCount(1)
+  await expect(page.locator('.chat-panel > [aria-live="polite"]')).toHaveText('学习导师正在思考')
+  await captureNotebook(page, 'thinking-stop', '对话')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  expect(await page.locator('.chat-thinking-dots i').first().evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+  const thinkingAudit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
+  expect(thinkingAudit.violations.map(v => v.id)).toEqual([])
+  let releaseStop!: () => void
+  const stopGate = new Promise<void>(resolve => { releaseStop = resolve })
+  await page.route('**/v1/learning/runs/*/commands', async route => {
+    expect(route.request().postDataJSON().kind).toBe('stop')
+    const response = await route.fetch()
+    await stopGate
+    await route.fulfill({ response })
+  })
+  await stop.click()
+  await expect(stop).toBeDisabled()
+  await expect(stop).toHaveAttribute('aria-busy', 'true')
+  releaseStop()
+  await expect(send).toBeVisible()
+  await expect(page.locator('.chat-thinking')).toHaveCount(0)
+  await page.unroute('**/v1/learning/runs/*/commands')
+  await page.unroute('**/v1/learning/conversations/*/turns')
+
+  const attempts: Record<string, unknown>[] = []
+  await page.route('**/v1/learning/conversations/*/turns', async route => {
+    attempts.push(route.request().postDataJSON())
+    if (attempts.length === 1) {
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      return route.abort('failed')
+    }
+    await route.continue()
+  })
+  await input.fill('用例子解释偶数')
+  await send.click()
+  const notice = page.locator('.submission-notice').filter({ hasText: '提交结果待核对' })
+  await expect(notice).toContainText('提交结果待核对')
+  await expect(notice).toHaveAttribute('role', 'status')
+  await captureNotebook(page, 'submission-unknown', '对话')
+  const failureAudit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
+  expect(failureAudit.violations.map(v => v.id)).toEqual([])
+  await notice.getByRole('button', { name: '重试', exact: true }).click()
+  await expect(page.locator('.chat-answer')).toBeVisible()
+  await expect.poll(() => attempts.length).toBe(2)
+  await expect(input).toHaveValue('')
+  await expect(notice).toHaveCount(0)
+  expect(attempts[1]).toEqual(attempts[0])
+  await expect(page.locator('.chat-panel > [aria-live="polite"]')).toHaveText('学习导师第 2 轮回答已完成')
+  await expect(send).toBeDisabled()
+  await page.unroute('**/v1/learning/conversations/*/turns')
+  let unavailable = true
+  const serverAttempts: Record<string, unknown>[] = []
+  await page.route('**/v1/learning/conversations/*/turns', async route => {
+    serverAttempts.push(route.request().postDataJSON())
+    if (unavailable) return route.fulfill({ status: 503, json: { code: 'unavailable' } })
+    await route.continue()
+  })
+  await input.fill('服务器恢复后继续')
+  await send.click()
+  await expect(notice).toContainText('提交结果待核对')
+  let releaseCheck!: () => void
+  const checkGate = new Promise<void>(resolve => { releaseCheck = resolve })
+  await page.route('**/v1/learning/operations/*', async route => {
+    await checkGate
+    await route.continue()
+  })
+  await notice.getByRole('button', { name: '核对', exact: true }).click()
+  await expect(notice).toHaveCount(0)
+  // Checking a lost receipt is not a new model request.
+  await expect(page.locator('.chat-thinking')).toHaveCount(0)
+  releaseCheck()
+  await expect(notice).toContainText('提交结果待核对')
+  await page.unroute('**/v1/learning/operations/*')
+  const conversationId = new URL(page.url()).searchParams.get('conversation')!
+  await page.getByRole('button', { name: '新建对话', exact: true }).click()
+  await page.getByLabel('切换对话').selectOption(conversationId)
+  // Restoring a draft checks its operation first. A 404 leaves the original
+  // request available for an explicit retry, without automatically resending.
+  await expect(notice).toContainText('提交结果待核对')
+  expect(serverAttempts).toHaveLength(1)
+  unavailable = false
+  await notice.getByRole('button', { name: '重试', exact: true }).click()
+  await expect.poll(() => serverAttempts.length).toBe(2)
+  await expect(input).toHaveValue('')
+  await expect(notice).toHaveCount(0)
+  expect(serverAttempts[1]).toEqual(serverAttempts[0])
+  // Distinct completed turns still announce completion when the model answers
+  // too quickly for a queued/running poll to be observed.
+  await expect(page.locator('.chat-panel > [aria-live="polite"]')).toHaveText('学习导师第 3 轮回答已完成')
+})
 
 test('GFM 回答表格在桌面与窄屏可读，空态概要去除 Markdown 标记', async ({ page }) => {
   await configureNotebookModel(page)

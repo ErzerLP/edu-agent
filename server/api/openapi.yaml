@@ -1530,7 +1530,7 @@ paths:
     post:
       operationId: commandMentorRun
       summary: 回应交互、继续预算、明确停止或清除正文
-      description: expected_version 是运行版本。respond 同时绑定 interaction_id，过期回答不能授权新候选。continue_budget 显式分配新的有界额度；不继续时停止不会产生新付费调用。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
+      description: expected_version 是运行版本。stop 接受不大于当前版本的已观察版本；正在停止或已结束的运行仍返回 202 和操作回执，不改变已有结果或运行版本。其他命令要求精确版本匹配。respond 同时绑定 interaction_id，过期回答不能授权新候选。continue_budget 显式分配新的有界额度；不继续时停止不会产生新付费调用。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:

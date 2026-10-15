@@ -10,6 +10,7 @@ import {
   mentorReceiptSchema,
   mentorSnapshotSchema,
   mentorStatus,
+  stopMentor,
 } from '@/api/mentor'
 import { studioAPI, type StudioGenerate, type StudioRevision } from '@/api/studio'
 import { useIdentity } from '@/lib/session'
@@ -17,6 +18,7 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { useSourceSelection } from './source-selection'
 import { SubmissionNotice } from './submission-notice'
+import { RunResultNotice } from '../run-result-notice'
 
 export const studioNames = { guide: '学习指南', brief: '简报', note: '笔记', quiz: '测验' }
 const reasons: Record<string, string> = {
@@ -106,52 +108,39 @@ export function StudioRun({
   }, [run.data?.status, query, prefix, spaceId])
   const state = run.data
   const command = async (kind: 'stop' | 'continue_budget') => {
-    if (!state) return
+    if (!state || busy) return
     setBusy(true)
     setError(undefined)
     try {
-      for (let attempt = 0; attempt < 2; attempt++) {
+      if (kind === 'stop') {
+        await stopMentor(session, spaceId, runId, body =>
+          drafts.operation(JSON.stringify([...prefix, spaceId, runId, kind]), body),
+        )
+      } else {
         const current = await unwrap(
           client.GET('/v1/learning/runs/{runID}', { params: { header, path: { runID: runId } } }),
           mentorSnapshotSchema,
         )
-        if (isMentorTerminal(current.status) || current.status === 'cancelling') break
+        if (isMentorTerminal(current.status) || current.status === 'cancelling') return
         const body = {
           kind,
           expected_version: current.version,
-          ...(kind === 'continue_budget'
-            ? {
-                request_budget: current.studio?.request.request_budget ?? 1,
-                token_budget: current.studio?.request.token_budget ?? 50000,
-              }
-            : {}),
+          request_budget: current.studio?.request.request_budget ?? 1,
+          token_budget: current.studio?.request.token_budget ?? 50000,
         }
-        try {
-          await unwrap(
-            client.POST('/v1/learning/runs/{runID}/commands', {
-              params: { header, path: { runID: runId } },
-              body: {
-                ...body,
-                operation_id: drafts.operation(
-                  JSON.stringify([...prefix, spaceId, runId, kind]),
-                  body,
-                ),
-              },
-            }),
-            mentorReceiptSchema,
-          )
-          break
-        } catch (e) {
-          // Only a definitive version rejection permits rebasing the same stop intent.
-          // An unknown response never gets a fresh operation automatically.
-          if (
-            kind !== 'stop' ||
-            attempt > 0 ||
-            !(e instanceof ApiError) ||
-            e.code !== 'version_conflict'
-          )
-            throw e
-        }
+        await unwrap(
+          client.POST('/v1/learning/runs/{runID}/commands', {
+            params: { header, path: { runID: runId } },
+            body: {
+              ...body,
+              operation_id: drafts.operation(
+                JSON.stringify([...prefix, spaceId, runId, kind]),
+                body,
+              ),
+            },
+          }),
+          mentorReceiptSchema,
+        )
       }
       await run.refetch()
     } catch (e) {
@@ -166,10 +155,8 @@ export function StudioRun({
   return (
     <section aria-label="Studio 运行状态">
       <p role="status">{state.status === 'running' ? '正在生成' : mentorStatus[state.status]}</p>
-      {state.reason && <p>{reasons[state.reason] ?? `运行说明：${state.reason}`}</p>}
-      {state.result_unknown && (
-        <p role="alert">结果未知：请求可能已发送，但未确认发布；不会自动重复生成。</p>
-      )}
+      {state.reason && state.reason !== 'user_stopped' && <p>{reasons[state.reason] ?? `运行说明：${state.reason}`}</p>}
+      <RunResultNotice run={state}>结果未知：请求可能已发送，但未确认发布；不会自动重复生成。</RunResultNotice>
       {state.cost_unknown && <p className="hint">提供商费用尚未核实。</p>}
       <p className="hint">
         剩余请求 {state.requests_left} · 剩余 token 预算 {state.tokens_left}

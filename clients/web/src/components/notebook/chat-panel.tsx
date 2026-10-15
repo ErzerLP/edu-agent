@@ -15,6 +15,7 @@ import {
   mentorReceiptSchema,
   mentorSnapshotSchema,
   mentorStatus,
+  stopMentor,
 } from '@/api/mentor'
 import { settingsSchema } from '@/api/settings'
 import { studioAPI, studioRequest } from '@/api/studio'
@@ -30,6 +31,7 @@ import { useNotebookChrome } from './notebook-chrome'
 import { InlineExerciseCard } from './inline-exercise-card'
 import { ChatInput } from './chat-input'
 import { SubmissionNotice } from './submission-notice'
+import { RunResultNotice } from '../run-result-notice'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -313,29 +315,29 @@ export function ChatPanel({
     if (kind === 'stop') setStopping(true)
     setError(undefined)
     try {
-      // Run versions advance while the model works. Read the current version
-      // before commanding it, and retry only a known version conflict once.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const current = await unwrap(api().GET('/v1/learning/runs/{runID}', {
-          params: { header, path: { runID: run.run_id } },
-        }), mentorSnapshotSchema)
-        if (isMentorTerminal(current.status) || current.status === 'cancelling') break
-        const payload = {
-          expected_version: current.version,
-          kind,
-          ...(kind === 'continue_budget' ? {
+      if (kind === 'stop') {
+        await stopMentor(session, space.id, run.run_id, payload => drafts.operation(key + ':command', payload))
+      } else {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const current = await unwrap(api().GET('/v1/learning/runs/{runID}', {
+            params: { header, path: { runID: run.run_id } },
+          }), mentorSnapshotSchema)
+          if (isMentorTerminal(current.status) || current.status === 'cancelling') break
+          const payload = {
+            expected_version: current.version,
+            kind,
             request_budget: Math.min(requests, configuration.data?.limits.research_requests ?? requests),
             token_budget: Math.min(tokens, configuration.data?.limits.research_tokens ?? tokens),
-          } : {}),
-        }
-        try {
-          await unwrap(api().POST('/v1/learning/runs/{runID}/commands', {
-            params: { header, path: { runID: run.run_id } },
-            body: { ...payload, operation_id: drafts.operation(key + ':command', payload) },
-          }), mentorReceiptSchema)
-          break
-        } catch (e) {
-          if (!(e instanceof ApiError) || e.status !== 409 || attempt === 1) throw e
+          }
+          try {
+            await unwrap(api().POST('/v1/learning/runs/{runID}/commands', {
+              params: { header, path: { runID: run.run_id } },
+              body: { ...payload, operation_id: drafts.operation(key + ':command', payload) },
+            }), mentorReceiptSchema)
+            break
+          } catch (e) {
+            if (!(e instanceof ApiError) || e.status !== 409 || attempt === 1) throw e
+          }
         }
       }
       if (live.current) {
@@ -502,6 +504,7 @@ export function ChatPanel({
                               onCitation={onCitation}
                             />
                           </div>
+                          {turn.status === 'cancelled' && <p role="status">已停止生成</p>}
                           <div className="chat-message-actions">
                             <Button
                               variant="ghost"
@@ -591,7 +594,7 @@ export function ChatPanel({
             同意将当前方向、所选来源和同范围历史发送到 {conversation.destination_endpoint}
           </label>
         )}
-        {run?.result_unknown && <p className="submission-notice" role="status">模型请求结果未知，未自动重发。</p>}
+        {run && <RunResultNotice run={run} className="submission-notice" role="status">模型请求结果未知，未自动重发。</RunResultNotice>}
         {run?.status === 'failed' && <p role="alert">本轮未完成：{run.reason}</p>}
         <div className="chat-quick">
           {['换个讲法', '举个例子', '出一道题', '总结一下'].map((text) => (

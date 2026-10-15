@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { learningClient, unwrap, ApiError } from './api/client'
 import { goalSchema, spaceSchema, type Goal } from './api/runtime'
-import { mentorCurrentSchema, mentorSnapshotSchema, mentorReceiptSchema, isMentorTerminal, observeMentor, type MentorSnapshot } from './api/mentor'
+import { mentorCurrentSchema, mentorSnapshotSchema, mentorReceiptSchema, mentorStatus, isMentorTerminal, observeMentor, stopMentor, type MentorSnapshot } from './api/mentor'
 import { researchStage, sourceStatus, sourceSchema, type ResearchSource } from './api/research'
 import { settingsSchema } from './api/settings'
 import { useIdentity } from './lib/session'
@@ -14,6 +14,7 @@ import { publicTopic } from './api/start'
 import { referenceState } from './api/references'
 import { PDFCoverage, PDFPageViewer } from './components/pdf-source'
 import { SourceDialog, ResearchSourceContent } from './components/notebook/source-viewer'
+import { RunResultNotice } from './components/run-result-notice'
 
 export function ResearchPage({ spaceId, goalId, startLearning = false }: { spaceId: string; goalId: string; startLearning?: boolean }) {
   const { session, prefix } = useIdentity()
@@ -96,8 +97,12 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
   })
   const command = (kind: 'stop' | 'clear' | 'continue_budget' | 'retry_start') => act(async () => {
     if (!run) return
-    const payload = { expected_version: run.version, kind, ...(['continue_budget', 'retry_start'].includes(kind) ? { request_budget: requestBudget, token_budget: tokenBudget } : {}) }
-    await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id: drafts.operation(key + ':command', payload) } }), mentorReceiptSchema)
+    if (kind === 'stop') {
+      await stopMentor(session, goal.learning_space_id, run.run_id, payload => drafts.operation(key + ':command', payload))
+    } else {
+      const payload = { expected_version: run.version, kind, ...(['continue_budget', 'retry_start'].includes(kind) ? { request_budget: requestBudget, token_budget: tokenBudget } : {}) }
+      await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id: drafts.operation(key + ':command', payload) } }), mentorReceiptSchema)
+    }
     await refresh(run.run_id)
   })
   const decide = (source: ResearchSource, kind: 'adopt' | 'reject', acceptPartial = false) => act(async () => {
@@ -137,10 +142,10 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
       </fieldset>
     </form>
     <div className="filters"><label>外部请求预算<input type="number" min={1} max={limits?.research_requests ?? 1000} value={requestBudget} onChange={(e) => setRequests(Math.max(1, Number(e.target.value)))} /></label><label>Token 预算<input type="number" min={1} max={limits?.research_tokens ?? 10000000} value={tokenBudget} onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))} /></label></div>
-    {run && <section className="panel"><p role="status">{researchStage[run.stage] ?? run.stage} · {run.status === 'partial' ? '有缺口，未完整完成' : run.status === 'succeeded' ? '结果可查看' : ''}</p><p>已发出 {run.requests_used} 次外部请求，剩余 {run.requests_left} 次 / {run.tokens_left} Token。实际费用未核实。</p>
-      {run.reason && <p>运行说明：{run.reason}</p>}{run.result_unknown && <p role="alert">在途请求的结果未知，没有自动重发。</p>}
+    {run && <section className="panel"><p role="status">{['cancelling', 'cancelled'].includes(run.status) ? mentorStatus[run.status] : researchStage[run.stage] ?? run.stage} · {run.status === 'partial' ? '有缺口，未完整完成' : run.status === 'succeeded' ? '结果可查看' : ''}</p><p>已发出 {run.requests_used} 次外部请求，剩余 {run.requests_left} 次 / {run.tokens_left} Token。实际费用未核实。</p>
+      {run.reason && run.reason !== 'user_stopped' && <p>运行说明：{run.reason}</p>}<RunResultNotice run={run}>在途请求的结果未知，没有自动重发。</RunResultNotice>
       {!run.body_available && <p>正文已清除、到期或临时副本不可恢复。</p>}
-      {active && <Button disabled={pending} variant="outline" onClick={() => void command('stop')}>停止研究</Button>}
+      {active && <Button disabled={pending || run.status === 'cancelling'} variant="outline" onClick={() => void command('stop')}>停止研究</Button>}
       {run.status === 'paused_budget' && <Button disabled={pending || inactive} onClick={() => void command('continue_budget')}>按以上预算继续</Button>}
       {startLearning && run.body_available && !run.start_learning?.result && ['partial', 'failed'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('retry_start')}>按以上预算重试并保留已有结果</Button>}
       {run.body_available && <Confirm label="清除研究运行" title="清除本次研究运行？" disabled={pending} onConfirm={() => void command('clear')}>候选正文、来源缓存和综合结果将清除。已经正式采纳的参考属于知识库，遵循知识库清除流程。</Confirm>}

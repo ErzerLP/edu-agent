@@ -18,6 +18,7 @@ it('空输入禁用发送，运行时同一按钮变为停止，停止中禁用�
   expect(renderToStaticMarkup(<ChatInput {...input} />)).toMatch(/aria-label="发送提问"[^>]*disabled/)
   const running = renderToStaticMarkup(<ChatInput {...input} running />)
   expect(running).toContain('aria-label="停止生成"')
+  expect(running).toMatch(/<button [^>]*type="button"/)
   expect(running.match(/<button /g)).toHaveLength(1)
   expect(running).not.toContain('disabled=""')
   const stopping = renderToStaticMarkup(<ChatInput {...input} running stopping />)

@@ -1,7 +1,27 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { readFileSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
+import AxeBuilder from '@axe-core/playwright'
 import { pairNotebook, createSpace, webAPI } from './notebook-fixture'
 import { sourceDetailSchema, sourceOverview } from '../../src/api/notebook-sources'
+
+async function captureSourceMethod(page: Page, method: string, candidates = false) {
+  if (!process.env.WEB_VISUAL_DIR) return
+  await mkdir(process.env.WEB_VISUAL_DIR, { recursive: true })
+  const original = page.viewportSize()!
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 844 })
+    await page.locator('.add-source-body').evaluate(el => { el.scrollTop = 0 })
+    await page.screenshot({ path: `${process.env.WEB_VISUAL_DIR}/source-${method}-${width}.png` })
+    if (candidates) {
+      await page.locator('.source-candidate').first().scrollIntoViewIfNeeded()
+      await page.screenshot({ path: `${process.env.WEB_VISUAL_DIR}/source-search-candidates-${width}.png` })
+    }
+    const audit = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
+    expect(audit.violations.map(v => ({ id: v.id, nodes: v.nodes.map(n => n.target) }))).toEqual([])
+  }
+  await page.setViewportSize(original)
+}
 
 test('搜索发现只发送明确确认的关键词，选中后读取正文并经原预览确认成为来源', async ({ page }) => {
   await pairNotebook(page, 'references')
@@ -28,6 +48,7 @@ test('搜索发现只发送明确确认的关键词，选中后读取正文并�
   await dialog.getByRole('checkbox', { name: /我确认只外发/ }).check()
   await dialog.getByRole('button', { name: '确认外发并搜索' }).click()
   await expect(dialog.getByText('摘要，未读取正文', { exact: true })).toHaveCount(4)
+  await captureSourceMethod(page, 'search', true)
   expect(outgoing).toEqual([
     {
       keywords: 'public algebra',
@@ -132,6 +153,7 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await dialog.getByRole('button', { name: '创建并选用集合' }).click()
   await dialog.getByLabel('粘贴资料名称').fill('粘贴来源')
   await dialog.getByLabel('粘贴原文', { exact: true }).fill('Notebook 文本片段：用户原文保持不变。')
+  await captureSourceMethod(page, 'text')
   await dialog.getByRole('button', { name: '加入粘贴文本' }).click()
   await dialog.getByRole('button', { name: '生成服务端预览' }).click()
   await expect(dialog.getByRole('heading', { name: '尚未正式导入' })).toBeVisible()
@@ -165,6 +187,7 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await panel.getByRole('button', { name: '＋ 添加来源' }).click()
   await dialog.getByRole('button', { name: /开始另一批/ }).click()
   await dialog.getByRole('button', { name: 'PDF 上传', exact: true }).click()
+  await captureSourceMethod(page, 'pdf')
   await dialog.getByRole('checkbox', { name: /我有权上传并保存 PDF/ }).check()
   await dialog.getByLabel('选择 Markdown / UTF-8 / PDF 文件（可多选）').setInputFiles({
     name: 'notebook.pdf',
@@ -202,6 +225,7 @@ test('Notebook 三种添加方式保留真实来源、部分覆盖和原操作�
   await dialog.getByRole('button', { name: /开始另一批/ }).click()
   await dialog.getByRole('button', { name: '网址', exact: true }).click()
   await dialog.getByLabel('公开网页链接').fill('http://notebook.example/start')
+  await captureSourceMethod(page, 'url')
   await dialog.getByRole('button', { name: '授权服务器读取此网页并解析' }).click()
   await dialog.getByLabel('导入相对名称').fill('网页来源.md')
   await dialog.getByRole('button', { name: '生成服务端预览' }).click()

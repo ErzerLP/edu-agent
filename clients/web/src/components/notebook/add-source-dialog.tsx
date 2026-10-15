@@ -7,6 +7,7 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { ReferenceImport } from '../reference-import'
 import { noteSourceItem, type NoteSourceCandidate } from '@/api/studio'
+import { FileText, Globe, Search, Upload, X } from 'lucide-react'
 
 export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { spaceId: string; initiallyOpen?: boolean; onClose?: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null),
@@ -34,11 +35,13 @@ export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { s
           onClose?.()
         }}
       >
-        <h2>添加来源</h2>
-        <Button autoFocus variant="outline" onClick={() => dialog.current?.close()}>
-          关闭添加来源
+        <header className="add-source-header">
+          <div><h2>添加来源</h2><p>把资料放在这里，让每次学习都有据可循。</p></div>
+        <Button autoFocus variant="ghost" aria-label="关闭添加来源" onClick={() => dialog.current?.close()}>
+          <X size={20} aria-hidden="true" />
         </Button>
-        {open && <AddSourceContent spaceId={spaceId} />}
+        </header>
+        <div className="add-source-body">{open && <AddSourceContent spaceId={spaceId} />}</div>
       </dialog>
     </>
   )
@@ -103,17 +106,17 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
   if (collections.error)
     return <ErrorState error={collections.error} retry={() => void collections.refetch()} />
   return (
-    <>
-      <p>{noteCandidate ? `复制笔记「${noteCandidate.title}」第 ${noteCandidate.derived_from.version} 版。它是个人理解，不是外部权威；以后修改笔记不会同步到此来源。` : '选择 PDF、文本、网址或搜索，预览后保存。'}已有课堂使用的资料保持不变。</p>
-      {!noteCandidate && <div className="actions" aria-label="添加方式">
+    <div className="add-source-content">
+      <p className="add-source-description">{noteCandidate ? `复制笔记「${noteCandidate.title}」第 ${noteCandidate.derived_from.version} 版。它是个人理解，不是外部权威；以后修改笔记不会同步到此来源。` : '选择一种方式，预览并确认后保存为学习来源。'}</p>
+      {!noteCandidate && <div className="source-methods" role="group" aria-label="添加方式">
         {(
           [
-            ['pdf', 'PDF 上传'],
-            ['text', '粘贴文本'],
-            ['url', '网址'],
-            ['search', '搜索发现'],
+            ['pdf', 'PDF 上传', Upload],
+            ['text', '粘贴文本', FileText],
+            ['url', '网址', Globe],
+            ['search', '搜索发现', Search],
           ] as const
-        ).map(([id, label]) => (
+        ).map(([id, label, Icon]) => (
           <Button
             key={id}
             variant="outline"
@@ -123,6 +126,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
               setMethod(id)
             }}
           >
+            <Icon size={20} aria-hidden="true" />
             {label}
           </Button>
         ))}
@@ -130,7 +134,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
       <p role="status" className="add-source-status">
         {collections.isPending ? '正在读取目标集合…' : '\u00a0'}
       </p>
-      <label>
+      <label className="source-destination">
         保存到已关联集合
         <select
           value={collectionId}
@@ -148,7 +152,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           ))}
         </select>
       </label>
-      <details open={!collectionId}>
+      <details className="source-create-collection" open={!collectionId}>
         <summary>创建区内私有集合</summary>
         <label>
           新集合名称
@@ -162,7 +166,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
             }}
           />
         </label>
-        <Button disabled={busy || !name.trim()} onClick={() => void create()}>
+        <Button variant="outline" disabled={busy || !name.trim()} onClick={() => void create()}>
           创建并选用集合
         </Button>
         {!!error && <ErrorState error={error} />}
@@ -180,6 +184,6 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           }}
         />
       )}
-    </>
+    </div>
   )
 }

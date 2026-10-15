@@ -6,6 +6,7 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { studioNames } from './studio-generation'
 import { StudioQuiz } from './studio-quiz'
+import { studioCoverageDescription } from './studio-coverage'
 
 export function StudioDocument({
   spaceId,
@@ -67,8 +68,9 @@ export function StudioDocument({
           <h3>{r.body.title}</h3>
           <p>
             {studioNames[r.kind]} · 已保存第 {r.version} 版 ·{' '}
-            {r.body.coverage === 'partial' ? '部分完成' : '已完成'}
+            {r.body.coverage === 'partial' ? '已生成 · 资料覆盖不全' : '已完成'}
           </p>
+          {r.body.coverage === 'partial' && <p className="studio-coverage-note">{studioCoverageDescription(r.body)}</p>}
           <label>
             产物版本
             <select

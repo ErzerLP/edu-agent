@@ -70,6 +70,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       const result = fragment ? { answer: `围绕${material.direction}，已核对${source.collection_name}：${fragment.text} [1]`, citations: [{ source: 1, fragment: 1 }] } : { answer: `围绕${material.direction}，我们可以先理解核心概念。`, citations: [] }
       result.exercise = null
       const question = payload.messages.findLast(message => message.role === 'user')?.content ?? ''
+      if (question.includes('UX 慢速思考')) await new Promise(resolve => setTimeout(resolve, 30000))
       if (question.includes('Markdown 渲染验收')) result.answer = markdownAnswer
       if (fragment && question.includes('出一道题') && !payload.messages[0].content.includes('当前不能发布新练习')) {
         result.answer = '试着用自己的话解释资料中的概念。[1]'

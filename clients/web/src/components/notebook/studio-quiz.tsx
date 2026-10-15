@@ -9,6 +9,7 @@ import { TeachingPage } from '@/teaching-page'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { StudioPracticeCard } from './studio-practice-card'
+import { SubmissionNotice } from './submission-notice'
 
 export function StudioQuiz({
   revision,
@@ -160,9 +161,9 @@ export function StudioQuiz({
           </section>
         )
       })}
-      {pending && (
-        <>
-          <p role="alert">开始结果待核对，请先核对原操作。</p>
+      <SubmissionNotice pending={!!pending} inFlight={busy}>
+        {pending && <>
+          开始结果待核对，请先核对原操作。
           <Button disabled={busy} onClick={() => void reconcile()}>
             核对原开始操作
           </Button>
@@ -173,8 +174,8 @@ export function StudioQuiz({
           >
             重新发送原开始请求
           </Button>
-        </>
-      )}
+        </>}
+      </SubmissionNotice>
       {!!error && <ErrorState error={error} />}
       {selected && (
         <section aria-label={`第 ${selected.question} 题作答`}>

@@ -12,6 +12,7 @@ import { useIdentity } from '@/lib/session'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { AddSourceContent } from './add-source-dialog'
+import { SubmissionNotice } from './submission-notice'
 
 export function StudioNoteEditor({
   spaceId,
@@ -235,10 +236,12 @@ export function StudioNoteEditor({
       )}
       {value.unknown ? (
         <>
-          <p role="alert">保存结果未知，本地草稿与原操作已保留。请先核对原操作。</p>
-          <Button disabled={busy} onClick={() => void run(reconcile)}>
+          <SubmissionNotice pending={!!value.unknown} inFlight={busy}>
+          保存结果未知，草稿已保留。
+          <Button variant="ghost" disabled={busy} onClick={() => void run(reconcile)}>
             核对笔记保存结果
           </Button>
+          </SubmissionNotice>
         </>
       ) : (
         <Button

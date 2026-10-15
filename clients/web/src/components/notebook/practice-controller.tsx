@@ -18,6 +18,7 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { FeedbackCard } from './feedback-card'
 import { PracticeCard } from './practice-card'
+import { SubmissionNotice } from './submission-notice'
 
 export type PracticeTransport = {
   help?: (
@@ -322,17 +323,15 @@ export function PracticeController({
               选择来源
             </Button>
           )}
-        {pending && (
-          <div role="alert">
+        <SubmissionNotice pending={!!pending} inFlight={busy}>
             操作结果待核对。
-            <Button disabled={busy} onClick={() => void perform(pending, true)}>
+            <Button variant="ghost" disabled={busy} onClick={() => pending && void perform(pending, true)}>
               核对原操作
             </Button>
-            <Button disabled={busy || !writable} onClick={() => void perform(pending)}>
+            <Button variant="ghost" disabled={busy || !writable} onClick={() => pending && void perform(pending)}>
               重试原操作
             </Button>
-          </div>
-        )}
+        </SubmissionNotice>
         {exercise.attempt_id && !exercise.feedback?.assessment && (
           <p role="status">
             {state?.result_unknown

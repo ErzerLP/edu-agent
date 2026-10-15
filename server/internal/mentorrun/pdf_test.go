@@ -54,6 +54,10 @@ func TestPostgreSQLPDFReferenceTeachingKeepsPhysicalPage(t *testing.T) {
 	f, ks, entry := referenceFixture(t)
 	f.service.starter.Content.ConfigureReferences(f.service.starter.Knowledge)
 	ctx := context.Background()
+	// 生产启动已预编译可信解析器，冷编译不应占用单份 PDF 的处理预算。
+	if err := pdfsource.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
 	cctx, _ := knowledge.WithCollection(ctx, entry.CollectionID)
 	request := knowledge.ImportCommand{OperationID: uuid.NewString(), ActorDeviceID: f.actor.Device.ID, ExpectedParentProvided: true, ExpectedParentRevisionID: &entry.RevisionID, Source: "PDF 参考", Documents: []knowledge.ImportDocument{{Path: "pages.pdf.md", PDF: &knowledge.PDFImport{Data: pdffixture.Build("第一物理页不在授权范围", "Go channel synchronizes goroutines on page two."), AcceptPartial: true}}}}
 	p, err := ks.PreviewImport(cctx, request)
@@ -109,6 +113,9 @@ func TestPostgreSQLPDFReferenceTeachingKeepsPhysicalPage(t *testing.T) {
 func TestPostgreSQLPDFResearchExplicitPartialAdoption(t *testing.T) {
 	f, _ := researchFixture(t, false)
 	ctx := context.Background()
+	if err := pdfsource.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.pool.Exec(ctx, `UPDATE device_tokens SET scopes=scopes||ARRAY['knowledge:write','research:adopt'] WHERE id=$1`, f.actor.TokenID); err != nil {
 		t.Fatal(err)
 	}

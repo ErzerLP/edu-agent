@@ -106,6 +106,8 @@ test('真实配对、IME 保存、生命周期及深浅主题四个视口', asyn
   await page.getByLabel('搜索学习区', { exact: true }).fill(spaceName)
   await page.getByRole('link', { name: spaceName, exact: true }).click()
   await expect(page.getByRole('button', { name: '开始学习', exact: true })).toBeDisabled()
+  // 按钮先于后台读取就绪；等请求稳定后再硬导航，避免 WebKit 上报取消请求的 pageerror。
+  await page.waitForLoadState('networkidle')
   await page.goto(`${page.url().split('?')[0]}/manage`)
   const input = page.getByLabel('今天想学会什么？', { exact: true })
   await input.fill('理解并发调度\n能够独立解释竞争条件')

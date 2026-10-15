@@ -1045,6 +1045,138 @@ make web-release-candidate
 
 **人工与风险。** 待真机验证 iOS Safari／Android Chrome 的真实软键盘、中文 IME、浏览器工具栏变化、缩放／平移、横竖屏和刘海安全区；待 VoiceOver／NVDA 验证真实消息播报、MathML 阅读及焦点返回。候选必须在冻结 main 重跑完整适用范围，七份未执行 spec、真实代理／外部提供商和人工设备证据不以本轮局部结果替代。默认全部状态会显示归档记录，用户仍可显式筛选；Go／CLI 业务状态未改变。已有大 chunk 构建提示保留，本轮未做无关性能重构。
 
+##### C5b 候选验收记录（2026-10-14–15）
+
+**结论。** 已执行自动化的最终结果为绿色：三引擎 **223 项通过，0 失败／跳过／重试／预期失败**；下列 Go、真实 PostgreSQL 分片和定向 race 均完成。**完整候选验收尚未通过**：父 spec 30 项中 **24 通过、0 未通过、4 未运行（外部）、2 未运行（真机）**；另有原始证据缺失，不能把汇总视为完整可重放证据包。此记录交给独立 Verifier，不生成或手改 Runtime verification。
+
+**输入与环境。** worktree 为 `/home/yunyue/Projects/myworks/edu-agent-wt/candidate`，detached 基线 `0d7755486c3e140d677fbc201db696e3026088ed`，tree `ea14959dd94ceb98805a96a01aa3dc84433c89c5`。起始 1802 个已跟踪文件与上一轮 `initial-manifest.json` 一致，起始无源码改动。本轮未执行 Git 操作；最终仅修改本记录、`clients/web/tests/browser/learning.spec.ts`、`server/internal/mentorrun/pdf_test.go`，由调用方建分支提交。
+
+| 输入 | SHA256／环境 |
+| --- | --- |
+| 原冻结源码（与发行 runner 相同的有序路径＋NUL＋内容算法） | `d547886b781836ece1cd308977eaa9257f8eadce9cdd3c6d6feb9eaa476af88d` |
+| 最小测试修复后源码；docs 不在该发行摘要范围 | `ecf9ee07662d5ec254bae43c5e0e8970ea3a25d715a0c93118f490233f3708c7` |
+| 排除各独立 browser spec 及不进入运行二进制的 Go 测试文件后的运行输入与共享夹具 | `0e671c92a5bba9ccb061114ca08d87ea8484eef975b804b08bbffd19d5cab739` |
+| `learning.spec.ts` 修复前 → 后 | `c4e375c1b597f669b0c225d4b0e6d838e0af8ebb476385cfe8d56359ddbac886` → `8ba045c059d57e0f507f39b18e3259a9c44cd0e95b765cf1e70718796127718e` |
+| `server/internal/mentorrun/pdf_test.go` 修复前 → 后 | `f8383108f8de1a89063185326b102cc7c5b0b5cae9a7b5695acd4042a8a85b1b` → `19b488a0a9f54b6a33bc3bd92b0b7d57020c51f13b1c371551d285c458e50f5f` |
+| `clients/web/package-lock.json` | `e0f1d0b264ccbfbdc129286a0669490c495297449d07b6e612b38a9a29de1049`；依赖未安装或升级 |
+| 工具／系统 | Node v26.10.0；Go go1.27.1 linux/amd64；Playwright 1.62.1；Linux x86_64，kernel 6.8.0-146-generic |
+| 浏览器 | Chromium 155.0.8059.12（指定 chromium-1247 路径）；Firefox 153.0；WebKit 26.5 |
+| 数据库 | 提供的 `127.0.0.1:32995/edu_agent_test`，PostgreSQL 17.11、UTC；初始容器证据 `postgres-container.json` 记录 digest `18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73`；未操作 Docker |
+| 执行约束 | `umask 022`；`GOCACHE=/tmp/chat-c5b-go-cache`；PG 包严格 `-p=1`，与浏览器串行；端口 32929 独占；真实模型／搜索调用为 0 |
+
+**证据位置与缺口。** `E=/tmp/chat-c5b-0d77554-ccww_hh5`，`R=$E/resume-20261015`。新日志全部保存在 E 下，不放在会话临时根目录。`R/matrix-final.json` 逐行记录 spec、引擎、计数、报告 SHA256、原件是否存在及 evidence key；key 绑定运行输入、共享夹具、该 spec、资产清单、Node／Go／Playwright／浏览器版本及平台／数据库。`R/evidence-index.json` 记录命令、日志／选择及摘要；`R/final-input.json` 记录最终文件变化。docs 修改不影响运行输入。
+
+上一轮 `/tmp/codeg-acp/888-1dcb1e87/edu-web-release-{H9ouoF,I9NsnK}` 在续做时已不存在。现存 `E/matrix-progress.json` 保存 66 行计数与 SHA256，`E/artifacts/` 保存截图；WebKit 的 19 份补跑原始报告和 learning 的 3 份新报告可以重新执行严格结果校验。其余 **44 份原始浏览器 JSON（Chromium／Firefox 各 21、WebKit 的 knowledge-structure／learner）以及原发行前置步骤的详细日志缺失**。已询问备份位置，未取得恢复文件；未重跑这些输入未变的检查，也未使用 `17bdc54` 的旧输入证据。下表为记录的执行结论，44 行只具汇总／哈希，Verifier 必须判定复用是否充分或补齐原件；不把 `matrix-final.json` 的汇总绿色称为原始报告齐全。
+
+**浏览器失败与最小修复。** 原矩阵 `webkit / learning.spec.ts` 的“真实配对、IME 保存、生命周期及深浅主题四个视口”在检查 `pageerror` 为空时失败，收到 conversations、settings、Studio runs／artifacts、source-capabilities 五条同源请求 access-control 错误。测试在“开始学习”禁用按钮出现后立即 `page.goto(.../manage)`；按钮可见早于后台查询完成，整文档导航取消在途读取，绕过应用内卸载时机。现有查询已向 TanStack Query 提供的 AbortSignal 透传，应用内导航探针无同类失败，未发现需要新增产品请求生命周期逻辑的证据。此前 memory 的相同处理仍保留。
+
+只在该硬导航前增加 `await page.waitForLoadState('networkidle')` 及说明。保留全部 `pageerror`、禁止教学请求、存储、IME、权限和 axe 断言；没有过滤错误、改变产品请求或放宽权限。原失败保存在 `E/matrix-progress.json` 和 `web-release-candidate.log`；原 trace 复跑已通过，说明该失败依赖时序，不把它记作稳定红测试；原导航探针 `navigation-probe-direct.browser.json` 的硬导航／应用内导航两项亦保留。修复后先运行 WebKit 精确场景，再运行整个 learning 的三引擎，各 5 项全通过。其余 spec、生产输入、锁文件、schema 和 129 个资产／二进制 hash 均未变化，按 evidence key 复用；没有重跑整矩阵。
+
+**race PDF 失败与最小修复。** 初轮定向 race 的 `TestPostgreSQLPDFReferenceTeachingKeepsPhysicalPage` 在 `pdf_test.go:61` 返回 `pdf_timeout`，23.64s；其后的 PDF 研究场景在同进程缓存已建立后通过，未发现 DATA RACE。生产 `app.Run` 和 knowledge／research 的 TestMain 都先 `pdfsource.Prepare`，mentorrun 直接创建服务的 PDF 测试缺该启动步骤，race 下可信 WASM 冷编译耗尽单份 PDF 的 10 秒预算。等原轮结束后，只给该文件的两个 PDF 场景在接触文件前显式 `Prepare`；没有改变解析超时、页数／大小边界或任何断言。两个场景各在独立冷进程中定向 `-race` 通过，其他原轮 PASS 按依赖复用。原失败轮次 exit 1 与日志保留，`R/race-final.json` 明确替换两个受影响测试的证据，不伪改整命令退出码。Go 测试文件不进入浏览器运行二进制，产品输入与资产未变，因此不使其余 browser spec 或七个不含 mentorrun 的 PG 分片失效。
+
+**命令与结果。** 下表路径均相对 E 或 R；JSON 保存完整命令参数，长 PG 名称选择不在正文复制。
+
+| 命令／检查 | 实际结果及证据 |
+| --- | --- |
+| `make web-release-check`（10-14） | exit 0；结果门禁单测 7/0/0；`E/web-release-check.{json,log}`。OpenAPI 一致性、类型／单测、非 DB 合同、vet、真实前端与 Go 发行、缺资产应失败均由既有 runner 执行；详细步骤原件缺失如上 |
+| `TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable make web-release-candidate`（10-14） | **原命令 exit 2，不能称整命令通过**；前置检查后完整执行 Chromium／Firefox，停在 WebKit learning。`E/web-release-candidate.{json,log}`；补跑后按文件汇总，不伪改原退出码 |
+| `node E/resume-webkit.mjs`（10-14） | 补齐后续 WebKit 19 文件；`E/webkit-supplement/report.json` 及各 `webkit-*.spec.ts.json`、日志；所有单场景严格校验通过 |
+| 各 spec 的隔离 `webdatabase npm run test:browser -- 'tests/browser/<escaped-spec>$' --project=<engine> --reporter=json` | 三引擎逐文件、retries=0；使用 `browserFixtures`；sources 为专用网络宿主，review 为真实 CLI／复习夹具，memory 为 Nocturne 夹具，notesync 保留受控上游。完整逐文件结果见下表 |
+| 离线文件的 `webdatabase npm run test:offline -- --project=<engine> --reporter=json` | Chromium 7、Firefox／WebKit 各 3。后两者由既有 `grepInvert @chromium-offline` 选择真实能力降级场景；不记为跳过，也不声称执行 Chromium 独有持久离线流程 |
+| `cd server && go build -o R/webdatabase ./testutil/webdatabase` | 通过；原隔离工具随临时目录丢失，按用户给定源码等价重建到可写的 R，未写不可写的用户 cache |
+| `node R/run-learning.mjs exact` | WebKit 精确 1/0/0/0；`R/learning-exact.json`、`exact-webkit-learning.browser.json`、trace |
+| `node R/run-learning.mjs matrix` | learning 三引擎各 5/0/0/0；`R/learning-matrix.json`、`{chromium,firefox,webkit}-learning.browser.json`、日志与截图 |
+| `cd clients/web && npm run check` | 修复后通过；`R/web-typecheck.{json,log}`；只改测试，不重复无变化的产品构建／Vitest |
+| `make test`，`GOFLAGS='-v -count=1' TEST_DATABASE_URL=''` | exit 0；agentcore／server／CLI **4603 条 PASS、0 FAIL、409 条 SKIP（含子测试）**；skip 不计通过。其中 377 条后续已有当前 PG／race 原始 PASS；另 32 条仍不计当前原始通过，含仅有历史 guard 的方向／HTTP、范围外 HTTP／工具及外部／原生 opt-in，逐项见 `R/go-skip-accounting.json`。`R/make-test.{json,log}`、`make-test-counts.json` |
+| `make vet` | 三个 Go 模块均通过；`R/make-vet.{json,log}` |
+| PDF 夹具修复后，`go test -json -race -p=1 -count=1 -timeout=10m -run '^TestPostgreSQLPDFReferenceTeachingKeepsPhysicalPage$' ./internal/mentorrun` 及对应 `PDFResearchExplicitPartialAdoption` | 两个独立冷进程均通过；`R/race-pdf-{reference,research}.{json,log}`。只补变更夹具相关输入 |
+| 修复后 `go test -json -p=1 -count=1 ./internal/mentorrun`（DB 未配置）及 `go vet ./internal/mentorrun` | 74 PASS、0 FAIL、166 SKIP（DB／live／CLI 依赖未配置，不计通过）；vet 通过；`R/mentorrun-{unit,vet}-final.{json,log}`。原 `make test/vet` 其余输入未变，未重复全模块 |
+| `make cli-build`（10-14 候选内） | 已构建并复用未变二进制，SHA256 `e791fc16aaa37d73e398547cd5563f08c52264bf124fcdc0664623b00147eb73`；未修改 CLI。当前真实读回证据见 C |
+
+**三引擎 spec 结果。** 数字为通过／失败／跳过／重试；所有行预期失败也为 0。22 文件／引擎；Chromium 77、Firefox 73、WebKit 73，合计 223。learning 三行是修复后的新证据；其他行复用原输入，原始报告可用性逐行见 B。
+
+| spec 文件 | Chromium | Firefox | WebKit |
+| --- | ---: | ---: | ---: |
+| knowledge-structure.spec.ts | 3/0/0/0 | 3/0/0/0 | 3/0/0/0 |
+| learner.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| learning.spec.ts | 5/0/0/0 | 5/0/0/0 | 5/0/0/0 |
+| memory.spec.ts | 5/0/0/0 | 5/0/0/0 | 5/0/0/0 |
+| mentor.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| notebook-accessibility.spec.ts | 4/0/0/0 | 4/0/0/0 | 4/0/0/0 |
+| notebook-chat.spec.ts | 8/0/0/0 | 8/0/0/0 | 8/0/0/0 |
+| notebook-dialogs.spec.ts | 2/0/0/0 | 2/0/0/0 | 2/0/0/0 |
+| notebook-exercise.spec.ts | 2/0/0/0 | 2/0/0/0 | 2/0/0/0 |
+| notebook-sources.spec.ts | 3/0/0/0 | 3/0/0/0 | 3/0/0/0 |
+| notebook-studio.spec.ts | 5/0/0/0 | 5/0/0/0 | 5/0/0/0 |
+| notebook-workspace.spec.ts | 8/0/0/0 | 8/0/0/0 | 8/0/0/0 |
+| notesync.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| offline.spec.ts | 7/0/0/0 | 3/0/0/0 | 3/0/0/0 |
+| pdf.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| references.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| release.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| review.spec.ts | 2/0/0/0 | 2/0/0/0 | 2/0/0/0 |
+| settings.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| tasks.spec.ts | 2/0/0/0 | 2/0/0/0 | 2/0/0/0 |
+| tutor-history.spec.ts | 1/0/0/0 | 1/0/0/0 | 1/0/0/0 |
+| workspace.spec.ts | 13/0/0/0 | 13/0/0/0 | 13/0/0/0 |
+
+**真实 PostgreSQL 与 race。** 未调用会操作 Docker／读取 Git 且固定另一 Go 版本的 `make postgres-candidate`；在指定现有库上直接执行 testing-strategy 的七个稳定分片，分片边界与选择相同，仅排除真实 NoteSync 上游 opt-in。每个分片独立 Go 进程，`go test -json -p=1 -count=1 -timeout=45m -run '^<explicit names>$' <packages>`。完整包与名称在 `R/<label>.selection.json`，完整可复制命令在同名 `.json`；所有选择名称必须实际终结为 pass，无 missing、fail 或 skip。补跑的 learningspace 仅选候选未覆盖的两个生命周期场景。
+
+| 检查 | 选择的顶层名称数 | PASS/FAIL/SKIP（含子测试） | 耗时／证据 |
+| --- | ---: | ---: | --- |
+| `postgres-db-core` | 106 | 156/0/0 | 原轮 189.718s；`R/postgres-db-core.json`、`.selection.json`、`.log` |
+| `postgres-learning-core` | 39 | 57/0/0 | 原轮 134.906s；`R/postgres-learning-core.json`、`.selection.json`、`.log` |
+| `postgres-learning-offline` | 9 | 28/0/0 | 原轮 62.966s；`R/postgres-learning-offline.json`、`.selection.json`、`.log` |
+| `postgres-learning-fault` | 1 | 22/0/0 | 原轮 58.168s；`R/postgres-learning-fault.json`、`.selection.json`、`.log` |
+| `postgres-memory` | 33 | 59/0/0 | 原轮 231.996s；`R/postgres-memory.json`、`.selection.json`、`.log` |
+| `postgres-privacy-core` | 29 | 31/0/0 | 原轮 64.726s；`R/postgres-privacy-core.json`、`.selection.json`、`.log` |
+| `postgres-privacy-fault` | 1 | 21/0/0 | 原轮 121.192s；`R/postgres-privacy-fault.json`、`.selection.json`、`.log` |
+| `postgres-learningspace-extra` | 2 | 2/0/0 | 原轮 3.522s；`R/postgres-learningspace-extra.json`、`.selection.json`、`.log` |
+| `go-race-targeted` | 211 | 399/0/0 | 原轮 1127.625s；`R/go-race-targeted.json`、`.selection.json`、`.log`；原轮 exit 1，PDF 定向补验后闭合，见 `R/race-final.json` |
+
+race 仅对 `./internal/mentorrun ./internal/learning/postgresstore ./internal/learningcontent/... ./internal/learningdirection/... ./internal/identity/...`，沿相同串行命令加 `-race`，保留真实 PostgreSQL；三个 live 模型测试从名称选择中排除，不用 skip 充通过。learningdirection 只有 `store.go`，没有自有测试文件；race 编译该包，并由 mentorrun 的真实方向／对话／Studio 场景调用，不把 `[no test files]` 记成独立测试通过。`R/go-summary.json` 保留原分片进度，`R/go-final-summary.json` 是 PDF 补验后的最终汇总。C1–C4 的 41 个发布必需名称及源码位置在 `R/required-postgres-map.json`；原候选在进入浏览器矩阵前已执行其拒绝 skip／缺名称的 guard，但详细日志丢失，此推断不能替代原日志。新 PG／race 可直接核对 **36** 个名称，另 **5** 个仅保留原 guard 的有界历史证据，明细见 `R/required-postgres-coverage.json`。
+
+**CLI、资产与深链接。** C＝`E/webkit-supplement/webkit-review.spec.ts.json` 的 2 个完整场景：生产 CLI 读回同一 Attempt、评估决策、进度、Evidence／复习出处，验证跨区／目标、恢复与清除；同时引用新 race 中实际执行的 CLI 兼容具名场景，逐项见 `R/cli-assets-deeplinks.json`。CLI 构建使用原源码，未新增字段要求或修改缺省语义。A＝`E/webkit-supplement/webkit-release.spec.ts.json` 的直达／刷新／真实 JS 场景：14 个深链接、8 个 API／管理／内部／缺失 JS／CSS／未知辅助页错误入口；`Accept: text/html` 不使错误返回 SPA。其余浏览器结果复用 B。真实构建的前端 dist、Go embed、server／CLI 二进制共 **129 个文件 hash 未变**，见 `E/built-assets.json`；未重跑无变化构建。真实反向代理／HTTPS 部署与实际设备离线未运行，不把内嵌服务路由测试扩大成部署验收。
+
+**spec 1–30 独立映射。** B＝`R/matrix-final.json` 的同名文件行；可用原始报告在该行的 evidence 路径，缺失行明确是汇总复用。D＝上述分片／race 的具名 PASS；G＝`R/make-test.log`、`make-vet.log` 及原候选必需 guard 的有界历史证据；A／C 如上。X＝外部真实提供商未调用；M＝真机与辅助技术未运行。下表的“通过”不消除证据原件缺失，最终复用是否充分由 Verifier 判断；包含外部／真机要求的整条合同保守记未运行。
+
+| spec | 独立结论 | 本轮观察与边界 | 证据 |
+| --- | --- | --- | --- |
+| 1 | 通过 | notebook-workspace / learning；真实创建、搜索、筛选、分页、空态/失败和原草稿 | B（对应同名 spec） |
+| 2 | 通过 | notebook-chat；Direction 四个 PG 必需场景；旧区确认、expected version、方向修订与旧回执 | B（对应同名 spec）；D/G |
+| 3 | 通过 | learner / notebook-chat；StudyModeIsExplicitAndSaved / Direction；授权学习动作才维护系统目标 | B（对应同名 spec）；D/G |
+| 4 | 通过 | notebook-chat / notebook-accessibility / notebook-dialogs；桌面三栏、手机标签与弹窗稳定性 | B（对应同名 spec） |
+| 5 | 通过 | notebook-workspace / notebook-chat / learning；DefaultArchiveBlocksWrites / SpaceLifecycle；归档/恢复与菜单 | B（对应同名 spec）；D/G |
+| 6 | 通过 | release / notebook-workspace / workspace / tutor-history / learning / review 及七份辅助文件；直达、刷新、身份/筛选及历史兼容 | B（对应同名 spec）；A |
+| 7 | 通过 | notebook-workspace / notebook-sources / references；分页、同名归属、部分覆盖与读取撤权 | B（对应同名 spec） |
+| 8 | 通过 | notebook-sources / references / tasks；四入口、正文审阅、确认保存、原操作核对 | B（对应同名 spec） |
+| 9 | 通过 | pdf / notebook-sources；真实 PDF 上传、缺口确认、受控页图、页定位、原件授权及边界 | B（对应同名 spec）；D/G |
+| 10 | 未运行（外部） | notebook-sources 与 research/PG 已验证外发、正文、重定向、预算和引用边界；真实搜索/抓取链路与质量未调用 | B（对应同名 spec）；X |
+| 11 | 通过 | notebook-chat / notebook-exercise / notebook-studio；StudySourceAndDirectionIsolationReopen / ExerciseOriginalDirectionAndSources / FrozenQuiz | B（对应同名 spec）；D/G |
+| 12 | 通过 | notebook-workspace / notebook-chat / notebook-exercise；StudySourceAndDirectionIsolationReopen / AtomicFailureAndZeroSources；未选来源不复用私人旧上下文 | B（对应同名 spec）；D/G |
+| 13 | 通过 | notebook-chat / notebook-exercise / notebook-studio / pdf / notebook-accessibility；核验版本、页/片段、撤权与返回焦点 | B（对应同名 spec） |
+| 14 | 未运行（外部） | notebook-chat / mentor / tutor-history；StudyMode / TutorHistory / MentorRecovery；持久对话、授权、取消和恢复通过，真实模型目的地/讲解质量未调用 | B（对应同名 spec）；X |
+| 15 | 通过 | notebook-exercise；StudyExercisePublishesOneCard / DeferSubmitFeedback / AtomicFailure；单题发布及稍后恢复不形成作答 | B（对应同名 spec）；D/G |
+| 16 | 未运行（真机） | notebook-accessibility / notebook-exercise；ExerciseSubmissionAndHelp / HelpSubmissionConcurrency / ProvisionalAndAllowedHelp；帮助和模拟 IME/键盘通过，真实中文 IME 未运行 | B（对应同名 spec）；D/G；M |
+| 17 | 通过 | notebook-exercise / workspace；ExerciseTaskFailureRollsBackAttempt / HelpCompetesWithSubmission；原 operation、丢响应核对与双标签竞争 | B（对应同名 spec）；D/G |
+| 18 | 未运行（外部） | notebook-exercise / workspace；ExerciseAutomaticAssessment / AssessmentRecovery / RecoveryChecksAssessmentOperation / KnownRejection；评估编排、待复核和授权通过，真实模型评分质量未调用 | B（对应同名 spec）；D/G；X |
+| 19 | 通过 | review 的生产 CLI 读回 / workspace / notebook-exercise；ProgressScopePaginationAndReplay / ReviewCarrierPreservesSourceAndReplay；同一 Evidence/掌握/复习事实 | B（对应同名 spec）；D/G；C |
+| 20 | 通过 | notebook-studio；StudioGenerationStates / PublishesAndRecovers / VersionsRotationAndRevocation；真实类型、状态、指定版本与列表 | B（对应同名 spec） |
+| 21 | 未运行（外部） | notebook-studio 与 Studio/研究 PG 验证指南、简报、核验引用和历史；真实生成内容质量未调用 | B（对应同名 spec）；X |
+| 22 | 通过 | notebook-studio / workspace / review；StudioDirectionFrozenQuizAndAutomaticFeedback / StudioQuizFormalSessions / SharedReadRetainsAssessmentOwner；旧题组和 CLI 兼容 | B（对应同名 spec）；D/G；C |
+| 23 | 通过 | notebook-studio；笔记创建/明确保存/重开、版本冲突、标签页/学习区隔离和丢响应核对 | B（对应同名 spec） |
+| 24 | 通过 | notebook-studio / references / notesync；指定已保存笔记版本转独立来源、副本出处、不重复导入且不随笔记修改 | B（对应同名 spec） |
+| 25 | 通过 | notebook-studio / mentor / tutor-history / tasks；StudioGenerationRestartAndUnknown / CancelAndAtomicPublication / ExerciseLeaseRecovery；重启、取消、预算和 unknown 恢复 | B（对应同名 spec）；D/G |
+| 26 | 通过 | learner；LearnerAdminIssuanceAndHTTPPermissionMatrix / WebLearnerScopesPersistWithoutUpgradingOldDevice / identity；旧权限、settings、管理身份和清除 grant 独立 | B（对应同名 spec）；D/G |
+| 27 | 通过 | learner / notebook-studio / notebook-chat / pdf / release / API 与 httpapi 安全契约；scope、Cookie、CSRF、Origin、归属、代次与受控输出 | B（对应同名 spec）；D/G；A |
+| 28 | 通过 | notebook-workspace / notebook-studio / memory / knowledge-structure / offline；Clear / Revocation / Rotation / 七分片 privacy；草稿不持久化、失权隐藏和迟到响应隔离 | B（对应同名 spec）；D/G |
+| 29 | 通过 | 全部写入业务浏览器场景；DirectionRollback / AtomicFailure / LeaseRecovery / 七分片 write-fault、privacy-fault；内容绑定幂等、版本冲突与原操作恢复 | B（对应同名 spec）；D/G |
+| 30 | 未运行（真机） | 三引擎完整矩阵 / notebook-accessibility / release / review / Go&PG；自动化通过，真实软键盘、安全区、工具栏/缩放/横竖屏、VoiceOver/NVDA 未运行 | B（对应同名 spec）；A；C；M |
+
+**未运行清单。** 外部：spec **10** 真实搜索／公开 URL 网络链路与结果质量、**14** 真实模型目的地与多轮讲解质量、**18** 真实模型评分质量及复核体验、**21** 真实指南／简报内容质量；本地确定性服务与安全／预算／引用合同已运行，不替代这些外部结论。真机：spec **16** 中文 IME 确认与误提交、**30** iOS Safari／Android Chrome 的软键盘、工具栏变化、缩放／平移、横竖屏、刘海安全区、长内容及 VoiceOver／NVDA 的消息播报、MathML 阅读与焦点返回。真实代理／HTTPS、原生平台 opt-in 和真实 NoteSync 上游也未运行，未计作自动化通过。
+
+**风险与交接。** learning 硬导航时序和 race PDF 启动夹具缺口均已通过最小测试修复闭合，无产品功能／权限／幂等语义变化；保留两个原失败轮次与修复后证据。主要剩余风险是上述外部／真机项和 44 份原始浏览器报告及前置明细的遗失。调用方需保留 E 的新证据并由 Verifier 判断汇总复用的充分性；不能因源 hash 相同或某条命令 exit 0 就把缺失／未运行记通过。工作树改动只含 `clients/web/tests/browser/learning.spec.ts`、`server/internal/mentorrun/pdf_test.go` 与本文件，未提交、未推送。
+
 合计 **20–31 人日**（约 4–6 个单人工作周），不是撤销前三批再重建。主要不确定性是 C3 的持久自动评估、帮助竞态与跨 owner 提交；建议另留 3–5 人日风险余量，不能把余量记作新增功能授权。若 Q2 改成零来源可评估、Q3 改成多设备共享历史，需重新评估知识依据／数据所有权，不套用此估算。
 
 ### L. 待确认与本次核验边界

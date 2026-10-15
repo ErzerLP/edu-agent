@@ -53,11 +53,23 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 	if err != nil {
 		return Receipt{}, err
 	}
-	if item.Version != c.ExpectedVersion {
+	// Stop is a monotonic intent scoped to this run. Worker checkpoints may
+	// advance between reading its snapshot and sending the command. All other
+	// commands still require an exact version; future versions are never valid.
+	if c.ExpectedVersion > item.Version || c.Kind != "stop" && item.Version != c.ExpectedVersion {
 		return Receipt{}, ErrConflict
 	}
 	if item.Kind == "assessment" {
 		return Receipt{}, ErrNotFound
+	}
+	if c.Kind == "stop" && (terminal(item.Status) || item.Status == "cancelling") {
+		// Acknowledge the operation without rewriting the outcome, emitting an
+		// event or requiring body recovery for an already satisfied stop.
+		r, err := receipt(ctx, tx, item, c.OperationID, hash)
+		if err != nil {
+			return Receipt{}, err
+		}
+		return r, tx.Commit(ctx)
 	}
 	if (c.Kind == "respond" || c.Kind == "continue_budget") && (time.Now().After(item.ExpiresAt) || !item.BodyAvailable) {
 		return Receipt{}, ErrInactive
@@ -90,10 +102,7 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 			return Receipt{}, err
 		}
 	case "stop":
-		if terminal(item.Status) || item.Status == "cancelling" {
-			return Receipt{}, ErrConflict
-		}
-		if item.Status == "running" || item.Status == "cancelling" {
+		if item.Status == "running" {
 			item.Status = "cancelling"
 		} else {
 			item.Status = "cancelled"

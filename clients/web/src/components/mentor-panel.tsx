@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router'
 import { ApiError, learningClient, unwrap } from '@/api/client'
 import { conversationDraftKey, conversationsSchema, type TutorConversation, type TurnSubmission } from '@/api/conversations'
 import { settingsSchema } from '@/api/settings'
-import { isMentorTerminal, mentorCurrentSchema, mentorReceiptSchema, mentorSnapshotSchema, mentorStatus, observeMentor, type MentorSnapshot } from '@/api/mentor'
+import { isMentorTerminal, mentorCurrentSchema, mentorReceiptSchema, mentorSnapshotSchema, mentorStatus, observeMentor, stopMentor, type MentorSnapshot } from '@/api/mentor'
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { Confirm, ErrorState } from './common'
@@ -12,6 +12,7 @@ import { ReferenceLink } from '@/knowledge-page'
 import { CandidateReview } from '@/memory-page'
 import { CompanionPanel } from './companion-panel'
 import { MentorAnswer } from './mentor-answer'
+import { RunResultNotice } from './run-result-notice'
 import type { SourceSelection } from '@/api/source-selection'
 
 export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversation, onChange, notebook }: { notebook?: {selection?:SourceSelection; draftKey:string; ensureConversation:(saved:boolean)=>Promise<TutorConversation>; onCitation:(runId:string,id:string)=>void}; goal: { learning_space_id: string; goal_id: string; revision: number; management: { status: string } }; archivedSpace: boolean; teachingSessionId?: string; conversation?: TutorConversation; onChange?: () => void }) {
@@ -131,13 +132,17 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
   const command = async (kind: 'stop' | 'clear' | 'respond' | 'continue_budget', selected?: string) => {
     if (!run || pending) return
     setPending(true); setError(undefined)
-    const payload = { expected_version: run.version, kind,
-      ...(kind === 'respond' ? { interaction_id: run.interaction?.id, answer: selected ?? answer } : {}),
-      ...(kind === 'continue_budget' ? { request_budget: requestBudget, token_budget: tokenBudget } : {}),
-    }
-    const operation_id = drafts.operation(key + ':command', payload)
     try {
-      await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id } }), mentorReceiptSchema)
+      if (kind === 'stop') {
+        await stopMentor(session, goal.learning_space_id, run.run_id, payload => drafts.operation(key + ':command', payload))
+      } else {
+        const payload = { expected_version: run.version, kind,
+          ...(kind === 'respond' ? { interaction_id: run.interaction?.id, answer: selected ?? answer } : {}),
+          ...(kind === 'continue_budget' ? { request_budget: requestBudget, token_budget: tokenBudget } : {}),
+        }
+        const operation_id = drafts.operation(key + ':command', payload)
+        await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id } }), mentorReceiptSchema)
+      }
       await refresh(run.run_id)
       if (mounted.current) { setAnswer(''); onChange?.() }
     } catch (e) {
@@ -170,7 +175,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       <div className="mentor-output" ref={output} onScroll={() => { const element = output.current; if (element) follow.current = element.scrollHeight - element.scrollTop - element.clientHeight < 40 }} aria-label="导师输出">
         {run.output ? <MentorAnswer spaceId={goal.learning_space_id} runId={run.run_id} text={run.output} citations={run.citations} onCitation={notebook?.onCitation}/> : (run.body_available ? '等待导师输出…' : '正文已清除、来源不可用、到期，或临时交流不能在此进程恢复。')}
       </div>
-      {run.result_unknown && <p role="alert">请求可能已到达模型服务，但结果无法确认；不会自动重发。</p>}
+      <RunResultNotice run={run}>请求可能已到达模型服务，但结果无法确认；不会自动重发。</RunResultNotice>
       {run.reason === 'history_context_limit' && <p role="alert">对话或工具上下文达到上限，本次未继续请求。已有历史保留，请新建对话。</p>}
       {run.cost_unknown && <p className="hint">已发出 {run.requests_used} 次模型请求，实际费用未核实。</p>}
       <p className="hint">剩余预算：{run.requests_left} 次请求 / {run.tokens_left} Token 预留额度。</p>

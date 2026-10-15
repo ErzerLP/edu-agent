@@ -61,9 +61,11 @@ test('UX 正常提交无核对提示，思考与发送停止切换，失败保�
   expect(thinkingAudit.violations.map(v => v.id)).toEqual([])
   let releaseStop!: () => void
   const stopGate = new Promise<void>(resolve => { releaseStop = resolve })
+  const stopResponses: number[] = []
   await page.route('**/v1/learning/runs/*/commands', async route => {
     expect(route.request().postDataJSON().kind).toBe('stop')
     const response = await route.fetch()
+    stopResponses.push(response.status())
     await stopGate
     await route.fulfill({ response })
   })
@@ -73,6 +75,29 @@ test('UX 正常提交无核对提示，思考与发送停止切换，失败保�
   releaseStop()
   await expect(send).toBeVisible()
   await expect(page.locator('.chat-thinking')).toHaveCount(0)
+  await expect(page.locator('.chat-ai').getByText('已停止', { exact: true })).toBeVisible()
+  await expect(page.locator('.chat-panel')).not.toContainText('结果未知')
+  expect(stopResponses).toEqual([202])
+  await page.screenshot({ path: test.info().outputPath('chat-stopped.png'), fullPage: true })
+  await page.reload()
+  await expect(page.locator('.chat-ai').getByText('已停止', { exact: true })).toBeVisible()
+  await expect(page.locator('.chat-panel')).not.toContainText('结果未知')
+  // Exercise a saved partial answer at the history boundary as well. The
+  // deterministic study model normally publishes only complete structured text.
+  const historyPath = /\/v1\/learning\/conversations\/[0-9a-f-]+(?:\?.*)?$/
+  await page.route(historyPath, async route => {
+    const response = await route.fetch()
+    const history = await response.json()
+    for (const turn of history.items) {
+      if (turn.status === 'cancelled') turn.output = '停止前已生成的部分讲解。'
+    }
+    await route.fulfill({ response, json: history })
+  })
+  await page.reload()
+  await expect(page.locator('.chat-answer')).toContainText('停止前已生成的部分讲解。')
+  await expect(page.locator('.chat-ai').getByText('已停止生成', { exact: true })).toBeVisible()
+  await expect(page.locator('.chat-panel')).not.toContainText('结果未知')
+  await page.unroute(historyPath)
   await page.unroute('**/v1/learning/runs/*/commands')
   await page.unroute('**/v1/learning/conversations/*/turns')
 

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { ApiError, learningClient } from './client'
+import { ApiError, learningClient, unwrap } from './client'
 import type { Session } from './runtime'
 import { researchStateSchema } from './research'
 import { startStateSchema } from './start'
@@ -129,3 +129,34 @@ export const mentorStatus: Record<MentorSnapshot['status'], string> = {
   paused_budget: '预算已用完，等待决定', succeeded: '已完成', partial: '仅保留部分结果', failed: '运行失败', cancelling: '正在停止', cancelled: '已停止',
 }
 export const isMentorTerminal = (status: MentorSnapshot['status']) => ['succeeded', 'partial', 'failed', 'cancelled'].includes(status)
+
+const stops = new Map<string, Promise<void>>()
+type StopPayload = { kind: 'stop'; expected_version: number }
+
+// Share the intent across handlers/panels until the command settles. Only a
+// definitive version rejection permits a new operation with a newer snapshot.
+export function stopMentor(session: Session, spaceId: string, runId: string, operation: (payload: StopPayload) => string): Promise<void> {
+  const key = JSON.stringify([session.server_id, session.device.id, session.generation, spaceId, runId])
+  const pending = stops.get(key)
+  if (pending) return pending
+  const client = learningClient(session, spaceId)
+  const params = { path: { runID: runId }, header: { 'X-Learning-Space-ID': spaceId } }
+  const stop = async () => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const current = await unwrap(client.GET('/v1/learning/runs/{runID}', { params }), mentorSnapshotSchema)
+      if (isMentorTerminal(current.status) || current.status === 'cancelling') return
+      const payload: StopPayload = { kind: 'stop', expected_version: current.version }
+      try {
+        await unwrap(client.POST('/v1/learning/runs/{runID}/commands', {
+          params, body: { ...payload, operation_id: operation(payload) },
+        }), mentorReceiptSchema)
+        return
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 409 || error.code !== 'version_conflict' || attempt > 0) throw error
+      }
+    }
+  }
+  const promise = stop().finally(() => stops.delete(key))
+  stops.set(key, promise)
+  return promise
+}

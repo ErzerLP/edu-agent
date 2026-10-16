@@ -2,12 +2,63 @@ package knowledge
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/pdffixture"
 	"github.com/google/uuid"
 )
+
+func TestShiftedPDFNodeReviewIncludesBoundedBeforeAfterEvidence(t *testing.T) {
+	store := &previewGenerationStore{memoryCatalogStore: newMemoryCatalogStore(), generation: 1}
+	s, err := NewService(store, NewCanonicalizer(), ServiceOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := []string{"原书25页 真值与机器数", "原书26页 模与补码", "原书27页 原码与补码", "原书28页 定点数", "原书29页 浮点数", "原书30页 移码 " + strings.Repeat("旧正文。", 60)}
+	c := ImportCommand{OperationID: uuid.NewString(), ExpectedParentProvided: true, Source: "test", ActorDeviceID: uuid.NewString(), Documents: []ImportDocument{{Path: "教材.pdf.md", PDF: &PDFImport{Data: pdffixture.Build(pages...), AcceptPartial: true}}}}
+	first, err := s.Import(t.Context(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.OperationID, c.ExpectedParentRevisionID = uuid.NewString(), &first.Revision.ID
+	shifted := append(append([]string{}, pages[1:]...), "原书31页 校验码 "+strings.Repeat("新正文。", 60))
+	c.Documents = []ImportDocument{{Path: "教材.pdf.md", PDF: &PDFImport{Data: pdffixture.Build(shifted...), AcceptPartial: true}}}
+	p, err := s.PreviewImport(t.Context(), c)
+	if err != nil || p.Review == nil || len(p.Review.Documents) != 1 {
+		t.Fatalf("document review: %+v %v", p, err)
+	}
+	c.OperationID = uuid.NewString()
+	c.IdentityReviewBasisHash, c.IdentityReviewOperationID, c.IdentityReviewReceipt = p.Review.BasisHash, p.Review.OperationID, p.Review.Receipt
+	c.DocumentResolutions = []DocumentResolution{{Locator: p.Review.Documents[0].Locator, Action: "preserve", DocumentID: first.Revision.Documents[0].Revision.DocumentID, Reason: "same book"}}
+	p, err = s.PreviewImport(t.Context(), c)
+	if err != nil || p.Review == nil || len(p.Review.Nodes) != 1 || p.Review.Nodes[0].Preorder != 5 {
+		t.Fatalf("node review: %+v %v", p, err)
+	}
+	oldLast := first.Revision.Documents[0].Revision.Nodes[6]
+	var found bool
+	for _, candidate := range p.Review.Nodes[0].Candidates {
+		if candidate.RevisionID != oldLast.ID {
+			continue
+		}
+		found = true
+		evidence := candidate.Evidence
+		if evidence["title"] != "第 6 页" || evidence["incoming_title"] != "第 6 页" {
+			t.Errorf("missing concrete page titles: %+v", evidence)
+		}
+		for key, prefix := range map[string]string{"excerpt": "原书30页 移码", "incoming_excerpt": "原书31页 校验码"} {
+			value, _ := evidence[key].(string)
+			if !strings.HasPrefix(value, prefix) || len([]rune(value)) > 161 || !strings.HasSuffix(value, "…") || strings.Contains(value, "解析状态") {
+				t.Errorf("%s must show bounded actual page text, got %q", key, value)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing previous page-six candidate")
+	}
+}
 
 type previewGenerationStore struct {
 	*memoryCatalogStore

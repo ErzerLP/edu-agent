@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorText } from '@/api/client'
 import { knowledgeAPI, type Collection, type ImportRequest, type ImportResult } from '@/api/references'
-import { editImport, emptyImport, fetchedItem, importDocuments, maxFile, pastedItem, scanFiles, type ImportDraft, type ScanItem } from '@/lib/reference-import'
+import { editImport, emptyImport, fetchedItem, importDocuments, maxFile, pastedItem, reviewedImport, scanFiles, type ImportDraft, type ScanItem } from '@/lib/reference-import'
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { ErrorState } from './common'
@@ -47,7 +47,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
     finally { if (live.current) setBusy(false) }
   }
   const preview = async (request?: ImportRequest) => {
-    const body = request ?? { operation_id: crypto.randomUUID(), expected_parent_revision_id: (await api.collections()).items.find(c => c.id === collection.id)?.head_revision_id ?? null, source: `浏览器授权单批${draft.previousOperation ? `；关联原操作 ${draft.previousOperation}` : ''}`, documents: importDocuments(draft.items) }
+    const body = request ?? draft.request ?? { operation_id: crypto.randomUUID(), expected_parent_revision_id: (await api.collections()).items.find(c => c.id === collection.id)?.head_revision_id ?? null, source: `浏览器授权单批${draft.previousOperation ? `；关联原操作 ${draft.previousOperation}` : ''}`, documents: importDocuments(draft.items) }
     save({ ...draft, request: body, preview: undefined, result: undefined, unknown: false })
     const value = await api.preview(collection.id, body)
     save({ ...draft, request: body, preview: value, result: undefined, unknown: false })
@@ -70,14 +70,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
       setLocalError('已为新资料分配独立名称，请核对后重新生成服务端预览。不会继承原文档或节点身份。')
       return
     }
-    const body: ImportRequest = { ...draft.request, operation_id: crypto.randomUUID(), ...review,
-      document_resolutions: documents.map(v => ({ locator: v.locator, action: decisions[v.locator] === 'new' ? 'new' : 'preserve', ...(decisions[v.locator] !== 'new' ? { document_id: decisions[v.locator] } : {}), reason: '用户在浏览器逐项审阅身份' })),
-      node_resolutions: nodes.map(v => ({ locator: v.locator, action: decisions[v.locator] === 'new' ? 'new' : 'rewrite', source_node_revision_ids: decisions[v.locator] === 'new' ? [] : [decisions[v.locator]], reason: '用户在浏览器审阅章节承接关系' })),
-    }
-    // 审阅列表是响应数据，不能混入闭合的请求合同。
-    delete (body as unknown as Record<string, unknown>).document_reviews
-    delete (body as unknown as Record<string, unknown>).node_reviews
-    await preview(body)
+    await preview(reviewedImport(draft.request, review, decisions))
   }
   const accepted = (result: ImportResult) => {
     if (result.summary.operation_id !== draft.request?.operation_id || result.summary.collection_id !== collection.id || result.summary.space_id !== spaceId || result.summary.actor_device_id !== session.device.id) throw new ApiError(502, 'invalid_response')
@@ -160,11 +153,17 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
     {review && !draft.result && <section aria-label="身份审阅">
       <h3>身份冲突：逐项决定</h3><p>更新保留原身份和历史。作为新资料需要未被占用的相对名称；可返回修改名称后重新预览。跳过会排除该文档。</p>
       <div className="reference-scroll" tabIndex={0}>
-        {[...review.document_reviews.map(v => ({ ...v, node: false })), ...review.node_reviews.map(v => ({ ...v, node: true }))].filter(v => v.path.includes(search) || !search).map(v => <label key={v.locator}>{v.path} · {v.node ? '章节' : '文档'} · {v.reason_code}
-          <select value={decisions[v.locator] ?? ''} disabled={busy || draft.unknown} onChange={e => setDecisions({ ...decisions, [v.locator]: e.target.value })}>
-            <option value="">请选择身份处理</option>{v.candidates.map((c, i) => <option key={c.revision_id} value={v.node ? c.revision_id : c.stable_id}>更新原{v.node ? '章节' : '资料'}候选 {i + 1}（{c.reason_code}）</option>)}<option value="new">作为新{v.node ? '章节' : '资料'}</option><option value="skip">本次跳过此文档</option>
-          </select>
-        </label>)}
+        {[...review.document_reviews.map(v => ({ ...v, node: false, title: v.path })), ...review.node_reviews.map(v => ({ ...v, node: true, title: v.candidates[0]?.evidence?.incoming_title ?? `章节 ${v.preorder + 1}` }))].filter(v => v.path.includes(search) || !search).map(v => <article className="panel compact identity-review-item" key={v.locator}>
+          <p className="hint">{v.path} · {v.node ? '章节' : '文档'}</p>
+          {v.node && <><h4>本次章节：{v.title}</h4><p>{v.candidates[0]?.evidence?.incoming_excerpt || '本章节没有可用正文摘录，可展开原文核对。'}</p>
+            {v.candidates.map((c, i) => <div className="reference-context" key={c.revision_id}><h4>旧章节：{c.evidence?.title ?? `候选 ${i + 1}`}</h4><p>{c.evidence?.excerpt || '此候选没有可用正文摘录，可展开原版本核对。'}</p></div>)}
+          </>}
+          <label>{v.node ? `章节身份决定：${v.title}` : `文档身份决定：${v.path}`}
+            <select value={decisions[v.locator] ?? ''} disabled={busy || draft.unknown} onChange={e => setDecisions({ ...decisions, [v.locator]: e.target.value })}>
+              <option value="">请选择身份处理</option>{v.candidates.map((c, i) => <option key={c.revision_id} value={v.node ? c.revision_id : c.stable_id}>{v.node ? `更新原章节：${c.evidence?.title ?? `候选 ${i + 1}`}` : `更新原资料候选 ${i + 1}`}</option>)}<option value="new">作为新{v.node ? '章节' : '资料'}</option><option value="skip">本次跳过此文档</option>
+            </select>
+          </label>
+        </article>)}
         {draft.preview?.before?.map((d, i) => <details key={i}><summary>原版本：{d.path}</summary><pre className="reference-text">{d.markdown}</pre></details>)}
       </div>
       <Button disabled={busy || draft.unknown} onClick={() => void run(reviewed)}>按身份决定重新预览</Button>

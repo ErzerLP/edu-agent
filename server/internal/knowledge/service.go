@@ -806,8 +806,48 @@ func reviewNodeCandidates(document preparedDocument, draft DraftNode, oldNodes m
 			})
 		}
 	}
+	// 展示证据复用现有 evidence 合同，不参与身份打分或批准校验。
+	if len(result) != 0 {
+		source := []byte(document.inspected.Body)
+		headings := canonicalizer.headingBlocks(source)
+		end := len(source)
+		if draft.Preorder+1 < len(headings) {
+			end = headings[draft.Preorder+1].start
+		}
+		incoming := string(visibleMarkdown(source[headings[draft.Preorder].end:end], canonicalizer.markdown))
+		if document.pdf != nil {
+			incoming = document.pdf.Report.Pages[draft.Preorder].Text
+		}
+		incomingExcerpt := identityReviewExcerpt(incoming)
+		for i := range result {
+			candidate := &result[i]
+			old := oldNodes[candidate.StableID]
+			body := document.old.Revision.CanonicalMarkdown[old.LocalBodyRange.Start:old.LocalBodyRange.End]
+			previous := string(visibleMarkdown([]byte(body), canonicalizer.markdown))
+			if pdf := document.old.Revision.PDF; pdf != nil {
+				for index, node := range document.old.Revision.Nodes[1:] {
+					if node.NodeID == old.NodeID {
+						previous = pdf.Report.Pages[index].Text
+						break
+					}
+				}
+			}
+			candidate.Evidence["title"] = old.Title
+			candidate.Evidence["excerpt"] = identityReviewExcerpt(previous)
+			candidate.Evidence["incoming_title"] = draft.Title
+			candidate.Evidence["incoming_excerpt"] = incomingExcerpt
+		}
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].StableID < result[j].StableID })
 	return result
+}
+
+func identityReviewExcerpt(body string) string {
+	runes := []rune(strings.Join(strings.Fields(body), " "))
+	if len(runes) > 160 {
+		return string(runes[:160]) + "…"
+	}
+	return string(runes)
 }
 
 func candidateContainsStableID(candidates []IdentityCandidate, stableID string) bool {

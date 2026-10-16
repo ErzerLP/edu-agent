@@ -99,3 +99,18 @@ export function editImport(draft: ImportDraft, change: Partial<ImportDraft>): Im
   if (draft.unknown) throw new Error('请先核对原操作结果')
   return { ...draft, ...change, previousOperation: draft.request?.operation_id ?? draft.previousOperation, request: undefined, preview: undefined, result: undefined }
 }
+
+export function reviewedImport(request: ImportRequest, review: NonNullable<ImportPreview['identity_review']>, decisions: Record<string, string>): ImportRequest {
+  // 后续阶段只返回尚待审阅的项；空列表不表示撤销此前已确认的决定。
+  const merge = <T extends { locator: string }>(previous: T[] | undefined, updates: T[]): T[] =>
+    [...new Map([...(previous ?? []), ...updates].map(v => [v.locator, v])).values()]
+  return {
+    ...request,
+    operation_id: crypto.randomUUID(),
+    identity_review_basis_hash: review.identity_review_basis_hash,
+    identity_review_operation_id: review.identity_review_operation_id,
+    identity_review_receipt: review.identity_review_receipt,
+    document_resolutions: merge<NonNullable<ImportRequest['document_resolutions']>[number]>(request.document_resolutions, review.document_reviews.map(v => ({ locator: v.locator, action: decisions[v.locator] === 'new' ? 'new' : 'preserve', ...(decisions[v.locator] !== 'new' ? { document_id: decisions[v.locator] } : {}), reason: '用户在浏览器逐项审阅身份' }))),
+    node_resolutions: merge<NonNullable<ImportRequest['node_resolutions']>[number]>(request.node_resolutions, review.node_reviews.map(v => ({ locator: v.locator, action: decisions[v.locator] === 'new' ? 'new' : 'rewrite', source_node_revision_ids: decisions[v.locator] === 'new' ? [] : [decisions[v.locator]], reason: '用户在浏览器审阅章节承接关系' }))),
+  }
+}

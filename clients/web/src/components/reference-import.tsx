@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, errorText } from '@/api/client'
 import { knowledgeAPI, type Collection, type ImportRequest, type ImportResult } from '@/api/references'
-import { editImport, emptyImport, fetchedItem, importDocuments, pastedItem, scanFiles, type ImportDraft, type ScanItem } from '@/lib/reference-import'
+import { editImport, emptyImport, fetchedItem, importDocuments, maxFile, pastedItem, scanFiles, type ImportDraft, type ScanItem } from '@/lib/reference-import'
 import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { ErrorState } from './common'
@@ -9,6 +9,19 @@ import { PDFCoverage } from './pdf-source'
 import { SourceDiscovery } from './notebook/source-discovery'
 import { Upload, FileText } from 'lucide-react'
 import { SubmissionNotice } from './notebook/submission-notice'
+
+function itemDescription(item: ScanItem) {
+  if (item.status !== 'ready') {
+    if (item.status === 'error' && item.bytes > maxFile && item.reason.startsWith('超过单文件')) {
+      return `${(item.bytes / (1 << 20)).toFixed(1)} MiB，超过单个 ${/\.pdf$/i.test(item.name) ? 'PDF' : '文件'} ${maxFile / (1 << 20)} MiB 上限`
+    }
+    if (item.pdf && !item.markdown.trim() && item.pdf.report.pages.length > 0 && item.pdf.report.pages.every(p => p.status === 'no_text')) {
+      return '没有可导入的文本：这份 PDF 是扫描图片，暂不支持 OCR。请使用可选中文字的 PDF。'
+    }
+    return `${item.reason} · ${item.bytes} 字节`
+  }
+  return `${item.reason} · ${item.bytes} 字节 · ${item.coverage}${!item.selected ? ' · 本次排除' : ''}`
+}
 
 export function ReferenceImport({ spaceId, collection, target, onImported, method, initialItems }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' | 'search' | 'note'; initialItems?: ScanItem[] }) {
   const { session, prefix, drafts } = useIdentity()
@@ -138,7 +151,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
       {draft.items.filter(i => `${i.name} ${i.path} ${i.markdown}`.includes(search)).map(item => <article className="panel compact" key={item.id}>
         <label><input type="checkbox" checked={item.selected} disabled={busy || draft.unknown || !!draft.result || item.status !== 'ready' || !!item.pdf && item.pdf.report.coverage !== 'complete_text' && !item.pdf.acceptPartial} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, selected: e.target.checked } : i) })} />{item.name}</label>
         <span className={`source-badge ${item.status !== 'ready' ? 'failed' : item.pdf && item.pdf.report.coverage !== 'complete_text' ? 'partial' : 'ready'}`}>{item.status === 'error' ? '解析失败' : item.status === 'unsupported' ? '不支持' : item.pdf && item.pdf.report.coverage !== 'complete_text' ? '部分解析' : '可预览'}</span>
-        <p>{item.reason} · {item.bytes} 字节 · {item.coverage}{!item.selected && item.status === 'ready' ? ' · 本次排除' : ''}</p>
+        <p>{itemDescription(item)}</p>
         {item.pdf && <><PDFCoverage report={item.pdf.report} />{item.status === 'ready' && item.pdf.report.coverage !== 'complete_text' && <label><input type="checkbox" checked={item.pdf.acceptPartial} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id && i.pdf ? { ...i, selected: e.target.checked, pdf: { ...i.pdf, acceptPartial: e.target.checked } } : i) })} />我已核对逐页缺口，仅纳入「{item.name}」的可用文本；未解析页不算已验证</label>}</>}
         {item.status === 'ready' && <><label>导入相对名称<input value={item.path} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, path: e.target.value } : i) })} /></label><label><input type="checkbox" checked={!!item.asNew} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, asNew: e.target.checked, path: e.target.checked ? i.path.replace(/\.md$/i, '') + `-副本-${i.id.slice(0, 8)}.md` : i.path } : i) })} />作为全新资料（不继承原身份，使用独立名称）</label><details><summary>查看本次原文</summary><pre className="reference-text">{item.markdown}</pre></details></>}
       </article>)}

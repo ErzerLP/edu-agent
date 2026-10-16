@@ -1,220 +1,158 @@
-# Issue #37：在线发布候选记录
+# Issue #37：在线发布验收最终状态与人工交接
 
-日期：2026-09-19；基线：`b0ddfac`；任务分支：`task/58`。
-方案与先确认的代码位置见 [web-release.md](../design/web-release.md)。
+整理日期：2026-10-16（UTC）；核查基线：`617f8b509c9d4a7bb3faf5890bfc3bd081d1f293`（PR #113）；分支：`docs-37-40-final`。本次只核查文档、Git 历史及 GitHub 只读信息，没有重跑产品测试、调用提供商、部署、修改 issue 或生成新的候选验证结果。
 
 ## 发布结论
 
-**未达到完整在线发布验收，不能据此关闭 #37 或发布生产版本。** 已修复确认的四个页面
-刷新 404 与九条代理 API 漏放，补充自动化候选入口及三浏览器配置。
-真实提供商、完整浏览器核心脚本及下面列出的外部/人工项目仍需取得实际证据。
-“自动化候选 passed”只描述该命令的覆盖，不代表所有本表项目通过。
+**实现及已执行的技术验收已落地，建议建立后续人工验收单并回链后关闭 #37；当前不能把原 issue 的全部发布门禁勾为通过，也不能据此声明已获生产发布验收。** #18–#36 均已关闭；旧浏览器缺口、真实研究、模型协议、升级恢复、容器与 SSE 已有后续证据。现行主流程以 PR #96 确认的对话式学习区及 [spec 1–30](../comet/specs/notebook-workspace/spec.md) 为准，不再要求用户手工选目标、先生成课程路线才能学习。
 
-此处没有使用旧原型 32 项检查，也没有把历史任务摘要或截图算作当前生产验收。
-本机桥接 #38、浏览器离线 #39 不属于本轮在线前置；不声明网页等价于全部原生 CLI。
+剩余必需工作集中于真机／人工：真实 IME、软键盘／安全区／工具栏、读屏器、三类教学质量与来源审查，以及尚未实测的交互性能和候选证据完整性复核。后两项也必须保留，不能因自动化计数全绿而省略。可选真实 NoteSync 上游仍未运行（外部），与受控上游通过分开报告，启用前另补实际环境确认。整本书 PDF／大文档精准检索属于 [#111](https://github.com/ErzerLP/edu-agent/issues/111)，OCR 尚未承诺，不倒列为 #29 或本轮的实现缺陷。
 
-## 复现与修复
+## 证据口径与索引
 
-新增回归后，在修改生产代码前运行：
+“通过”表示对应现行合同有已执行证据，不表示本次又跑过或所有环境均通过。表中状态仅使用“通过／未通过／未运行（外部）／未运行（真机或人工）”；已修复的历史失败仍保留在原记录中。fixture、真实 PG／CLI／浏览器、真实提供商及真人签收分别记账，原型与截图不充当生产测试。
 
-```bash
-cd server
-go test ./internal/transport/httpapi ./api -run '^TestWebRelease' -count=1
-```
-
-真实 `webAsset` handler 对 `/app/progress`、`/app/memory`、`/app/settings/data`、
-`/app/settings/devices` 返回 404。原因是 `web.go` 的页面白名单未随前端路由扩展。
-已补齐四个确定的页面，未开放任意 settings 子路径。
-
-从 Web 实际请求提取路径并匹配部署配置，发现以下 API 全部落到代理默认 404：
-`/v1/learning/progress`、`/v1/learning/reviews`、
-`/v1/knowledge/imports/previews`、`/confirm`、`/operations/:id`、
-`/v1/knowledge/reference-sources`、`/v1/knowledge/scopes/:id`、`/:id/export`、
-`/v1/knowledge/revisions/:revision/documents/:document/pages/:page`。
-已按正式 API 边界补齐，直接导入 `/v1/knowledge/imports`、内部/管理/未知写路径仍不公开。
-回归从 `main.tsx` 与 Web 消费路径取样，后续页面或 API 漏接会再次失败。
-
-## 可复现检查入口
-
-先按已有锁文件安装依赖（需要操作者授权），无需升级依赖：
-
-```bash
-cd clients/web
-npm ci --no-fund
-cd ../..
-make web-release-check
-# 显式提供可销毁的专用测试库，并准备三个 Playwright 引擎之后：
-make web-release-candidate
-```
-
-`web-release-check`：生成一致性、类型/单测、受影响 Go 契约/vet、Web + Go 发行构建、
-缺资产失败。普通 Go 测试里没有数据库的 skip 不作为数据库证据。
-`web-release-candidate` 再构建真实 CLI，串行运行真实 PostgreSQL 集成与所有浏览器文件，
-每个文件重启夹具；三个引擎分别运行，禁止将 Chromium 路径传给 Firefox/WebKit。
-通过 `WEB_RELEASE_MATRIX=1 npm run test:browser -- --project=firefox` 可定向调试，
-定向结果不能代替完整候选。脚本不安装依赖、不拉取镜像、不调用真实付费提供商、不部署。
-
-候选需要 `TEST_DATABASE_URL` 指向独立测试库；浏览器包含全局清除，不得指向既有实例数据。
-本地测试监听 32929–32931；同一主机不能同时运行其他占用这些端口或数据库资源的矩阵。
-证据写入命令输出的临时目录：提交 SHA、全部相关源码输入摘要、工具/宿主环境、
-执行时间、命令日志摘要和浏览器 JSON 报告。输入中途变化、没有用例、失败、skip、
-意外“预期失败”或浏览器重试均不生成候选通过。报告保存在本机，不提交私人测试数据。
-通过记录只能在相同输入/工具/环境复用，旧文档不是可复用的机器证据。
-
-## 本次实际结果
-
-| 检查 | 当前结论 |
+| 引用 | 已执行证据与适用范围 |
 | --- | --- |
-| 先失败的页面/代理回归 | 确认 4 个页面与 9 条 API 漏接 |
-| 修复后 `TestWebRelease*`、`TestWorkspaceProxyAllowlist`、`TestWebProduction*` | 通过；错误路由、管理边界和 Cookie 配置保留 |
-| `go test ./api ./internal/transport/httpapi ./internal/research -count=1` | 通过；未配置 PG 的 skip 不计数据库证据 |
-| `go vet ./api ./internal/transport/httpapi` | 通过 |
-| `make cli-build` | Linux 生产 CLI 构建通过 |
-| `go build ./cmd/edu-agentd` | Go 开发构建通过，不等于带资产发行 |
-| `go build -tags web_release ./internal/webassets` | 缺资产按预期失败：`pattern dist/assets: no matching files found` |
-| `node --test scripts/web-release-results.test.mjs` 与脚本语法 | 通过；验证 skip/空选择/失败不能冒充通过 |
-| `make web-release-check` | 预期失败：未安装 Web 依赖，未自动安装，未宣称前端通过 |
-| 真实 PG/CLI 定向集成 | 25 个顶层用例、含子例 57 项通过，0 失败、0 skip；不是浏览器证据 |
-| Web 类型/单测/生成/发行及三浏览器 | 未运行；依赖安装授权待回复 |
+| E1：旧任务补验 | PR #75、#76、#77：[#30 浏览器补验](issue-30-acceptance.md#浏览器补验2026-10-11)、[#32 端到端补验](issue-32-acceptance.md#端到端补验2026-10-11)、[#34 最终结论](issue-34-acceptance.md#按-issue-验收项的最终结论)。分别覆盖知识维护／草稿／清除、真实复习与同服务 CLI、记忆纠正／导出／删除／重放。PR #78 的[离线核对竞态](issue-37-offline-flake.md)已闭合；#38/#39 仍是独立专项。 |
+| E2：真实研究与模型 | PR #84 的[#22 真实搜索浏览器闭环](issue-22-acceptance.md#真实搜索浏览器闭环补验2026-10-11)：真实 Brave、RFC 正文／PDF、预算续接及采纳，模型仍为 fixture，真人来源核对未完成。PR #83（issue #82）的[Responses smoke](issue-82-acceptance.md#真实-smoke)、#85/#94 的[真实开学修复](start-learning-e2e-fix.md#本地真实端到端结果)、#95 的[连续两次真实端到端](real-model-robustness.md#连续两次真实端到端)补齐真实模型运行；#95 两轮置信度 720，正确保留 provisional。 |
+| E3：升级与部署 | PR #79 的[升级、回滚、备份恢复](issue-37-upgrade-backup.md)，#86 的[CLI 同版本与外部备份决定](issue-37-upgrade-backup.md#用户决定2026-10-12)；#81 的[容器、版本、缓存与路由](issue-37-release-deploy.md#容器版本缓存与路由结果)及[真实 Nginx SSE](issue-37-release-deploy.md#真实-nginxsse-时间与连接回收)。[#67 验收结果](issue-67-acceptance.md#验收结果)另证明真实 Nocturne Compose full、受管备份销毁及销毁后恢复拒绝。 |
+| E4：现行 C1–C4 | [Notebook 方向变更与实施记录](../design/notebook-workspace.md#方向变更2026-10-12)：复用 #87–#93 的壳层、来源、引用与 Studio 底座；#97（C1）、#98/#99（C2）、#101/#102（C3a/b）、#103（C4）；#100/#104/#105/#107 为公式、弹窗／Markdown、独立评估预算、GFM 修复。C2 `TestPostgreSQLStudyLiveResponsesSmoke`、C3b `TestPostgreSQLStudyExerciseLiveResponses`、C4 真实模型测验均通过；C3b 出题→作答→自动评估 accepted 有真实模型证据。 |
+| E5：C5a/b 候选 | PR #106/#108：[C5b 候选验收记录](../design/notebook-workspace.md#c5b-候选验收记录2026-10-1415)。三引擎 223 项、真实 PG 七个稳定分片 374 项（另有生命周期补验 2 项）、定向 race 399 项最终通过；不是全仓 race。父 spec 原记录仍是 **24 通过、0 未通过、4 未运行（外部）、2 未运行（真机）**。下表浏览器文件见该节逐文件结果；PG 具名测试见其分片／必需名称映射。 |
+| E6：候选后修复 | PR [#109](https://github.com/ErzerLP/edu-agent/pull/109)：类型／构建、28 项相关单测、Chromium 25 场景；[#110](https://github.com/ErzerLP/edu-agent/pull/110)：停止幂等、30 项单测、Go 停止／HTTP 测试及 Chromium 聊天／Studio 停止；[#112](https://github.com/ErzerLP/edu-agent/pull/112)：10 项单测、Chromium PDF／来源 5 场景；[#113](https://github.com/ErzerLP/edu-agent/pull/113)：13 项单测、类型／构建、受影响 Go test/vet／发行构建、Chromium 来源／参考／PDF 7 场景。局部通过不改写 C5b 输入或计数。 |
+| E7：演示站补充观察 | 来源为本次任务提供的走查结果：真实模型讲解、出题、评估（置信度记录为 930/900、自动采纳）、Studio 指南／简报均已走通。仓库未找到该次走查日期、SHA、操作 ID 或原始日志，仅作补充观察，不伪造日志／测试名，不替代质量签收或冻结候选。 |
 
-环境：Linux amd64、Go 1.26.6、Node 24.20.0；独立临时 PostgreSQL 17.11，
-现有本机镜像 ID `sha256:67f41722b7a8cbdb868a44a4995c846eddfdc2973bccb291ce937dce88ad5675`，
-仅监听 `127.0.0.1:32958`。数据库集成每例使用独立 schema，真实 CLI 使用临时客户端目录。
-未修改现有部署或用户配置。测试结束后删除了本次可销毁 PostgreSQL 容器及数据库，未保留恢复副本。
+**候选证据限制：** E5 原 `make web-release-candidate` 退出 2，其后按文件补验汇总为绿，不能改称原命令一次通过。44 份原始浏览器 JSON 及原发行前置详细日志缺失，现有汇总／哈希与部分新报告不等于完整可重放证据包。41 个必需 PG 名称中，36 个有新 PG／race 直接证据，5 个仅有原 guard 历史记录。需人工核定复用是否充分、恢复原件或只补必要证据。C5b 基于 `0d77554` 及 #108 测试修复，不直接代表 #109–#113 后整套矩阵重跑；后续使用 E6 局部结果，正式发布仍须绑定实际候选 SHA。
 
-真实 PG 命令（`TEST_DATABASE_URL` 与 `EDU_AGENT_INTEGRATION_CLI` 指向上述隔离环境）：
+## 在线能力矩阵与方向映射
 
-```bash
-cd server
-go test -json -p=1 -count=1 -timeout=10m ./internal/transport/httpapi ./internal/mentorrun \
-  -run '^TestPostgreSQL(Web|StudyCLI|StartLearning|Research|Adaptive|MentorCookieHTTPAndSSERecovery)'
-```
+`v1` 指既有 `/v1` HTTP；协议版本沿用既有协商值。入口及旧测试迁移见设计的 G／J 节。
 
-本机 JSONL 日志 `/tmp/edu-agent-task58-postgres.jsonl`，SHA256
-`a760dfddb5d236c70ff87a40c66854cb8195943323bea64a03eddefc1efe17b0`；该路径不是随仓库交付的证据附件，
-可按命令重现。覆盖 Web 配对/目标/导入、SSE 恢复、原 CLI 与 Web 同状态、三类目标空库开学、
-失败/预算恢复、同名跨区、具体变更审批/补偿、暂停/撤销/清除竞态。模型/搜索/来源均为 HTTP
-fixture；数据库和 CLI 是真实实现。HTTP 两端通过不能代替浏览器呈现与未保存草稿验证。
+| 能力／任务 | 现行入口、兼容与版本边界 | 已执行证据 |
+| --- | --- | --- |
+| 身份／学习区／目标／共享核心 #18/#19 | `/app/` 卡片墙、名称／方向创建；`/app/spaces/:id/manage` 设置；旧目标详情／历史兼容保留。学习动作惰性维护系统目标，CLI `space/goal` 和 agentcore 保留。 | E4/E5 `learner`、`learning`、`notebook-chat`；[#19 核心检查](issue-19-acceptance.md#实际执行的检查)。 |
+| 配置／运行／对话 #20/#21/#33 | 设置仍需 settings；主区统一输入、保存重开、临时模式和恢复；learner 无 admin／清除授权。capabilities schema 1、原运行／conversation 协议保留。 | E2/E4/E5/E6；`settings`、`mentor`、`tutor-history`、`notebook-chat`。 |
+| 研究／参考／导入／PDF #22/#24/#27–#29 | 左栏 PDF／文本／网址／搜索，先审阅保存再勾选，不自动外发方向。旧研究、知识页／任务中心兼容；PDF 为有限文本层，非整书／OCR。 | E2/E5/E6；`notebook-sources`、`references`、`tasks`、`pdf`；#113 同名修订不循环、旧引用读旧版。 |
+| 内容／版本／动态调整 #23/#25/#26 | 对话讲解、内嵌练习／反馈；新方向影响后续轮次。旧 `/learn/:session`、`/app/content/:id` 的选段／版本／变更兼容保留，不宣称聊天消息可原位改写正式块。content/change protocol 1。 | E4/E5；`notebook-exercise`、`workspace`；C3 单题发布／评估任务。 |
+| 知识维护／评估／进度 #30–#32 | 菜单知识维护、评估与证据、进度／复习；新卡片共用既有事实，不按聊天次数计掌握。structure protocol 1、进度投影 2。 | E1/E4/E5；`knowledge-structure`、`workspace`、`review`。 |
+| 记忆／隐私／设备 #34 | 全局长期记忆、独立清除 grant 与设备撤销保留；草稿仅标签页内存。 | E1/E3/E5；`memory`；真实 Nocturne／受管备份用 #67 证据。 |
+| Studio／NoteSync／导出 #25/#35，#91–#93/#103 | 四种真实产物及指定版本；测验取消选目标门槛，笔记转来源为审阅后的独立副本。旧内容库、默认映射 NoteSync／导出兼容保留。 | E4/E5；`notebook-studio`、`notesync`；真实 NoteSync 上游仍未运行。 |
+| 同教学跨端继续 #36 | `study/learn/assessment/progress/reviews` 共用服务事实；服务端／CLI 同版本升级，不承诺旧二进制或 CLI 新聊天 UI。 | E3/E5；`review`、`TestPostgreSQLStudyCLIResearchAndWebContent`／`TestPostgreSQLStudyCLIAndWebShareChanges`；[#36 双端](issue-36-acceptance.md#真实生产-cligo-http-与-pg)。 |
 
-## 在线能力矩阵
-
-`v1` 指已有 `/v1` HTTP；若能力没有独立协商版本则明确标注，不能杜撰版本号。
-所有入口均为仓库已有生产代码；测试文件是证据入口，不代表本次已运行。
-
-| 能力 / 实现任务 | Web 生产入口 | CLI / 能力版本 | 证据入口与限制 |
-| --- | --- | --- | --- |
-| 学习区、目标结构/历史/生命周期 #18 | `/app/`、`/app/spaces/:id`、`…/goals/:id` | `space`、`goal`；操作 envelope 1 | `learning.spec.ts`；Go Web 身份/目标集成 |
-| 共享核心 #19 | 导师和学习服务使用共享核心 | CLI agent；无单独 Web 能力版本 | `packages/agentcore`；历史 #19 不自动重计 |
-| 模型/搜索/预算 #20 | `/app/settings` | CLI 本地模型与服务器配置独立；capabilities schema 1 | `settings.spec.ts`；提供商未实测 |
-| 导师运行/自由问答 #21、#23 | 目标/课堂侧栏、`…/chat` | `learn`、`study mentor`；v1 运行协议 | `mentor.spec.ts`、`workspace.spec.ts` |
-| 研究/出处/无上传开学 #22、#24 | `…/goals/:id/research`、首页开始学习 | `study research/start`；start protocol 1 | `mentorrun/start_test.go`、`research_test.go`；浏览器核心路径缺证据 |
-| 内容/版本/Studio #23、#25 | `…/learn/:id`、`/app/content/:id`、`…/studio` | `study content/context`；content protocol 1 | `workspace.spec.ts`；独立版本、选段、补偿 |
-| 规划/动态调整 #26 | 课堂导师和具体变更面板 | `study change`；change protocol 1 | `mentorrun/changes_test.go`、`workspace.spec.ts` |
-| 集合/共享/范围/单批导入 #27 | `…/knowledge`、目标参考入口 | `knowledge library/import`；v1，无独立 Web 协商版本 | `references.spec.ts`；代理漏接已修 |
-| 大任务导入/任务中心 #28 | `/app/runs`、`/app/runs/import/:id` | `knowledge import`；v1 import-jobs | `tasks.spec.ts` |
-| 文本层 PDF #29 | 知识来源、PDF 页面出处 | 既有来源协议；无独立 Web 协商版本 | `pdf.spec.ts`；不支持扫描件 OCR |
-| 知识结构/维护/回滚 #30 | `…/knowledge` 维护面板 | 知识维护与 `study` 变更；structure protocol 1 | `knowledge-structure.spec.ts`；旧文档维护默认区限制 |
-| 评估处置/继承 #31 | `…/feedback`、`…/feedback/:attempt` | `assessment`；v1，独立审批 scope | `workspace.spec.ts`；继承仍有默认区限制 |
-| 进度/复习 #32 | `/app/progress`、目标详情 | `progress/reviews`；服务端投影版本 2 | `workspace.spec.ts`；不能把投影失败当空列表 |
-| 导师历史/临时模式 #33 | `…/chat/:conversation` | CLI 本地加密历史不自动转换；v1 conversation | `tutor-history.spec.ts` |
-| 记忆/隐私/设备 #34 | `/app/memory`、`/app/settings/data`、`…/devices` | `memory`、`privacy`、设备命令；v1，memory 配对档案 | `memory.spec.ts`；Nocturne 外部交付未实测 |
-| NoteSync/导出 #35 | `…/notesync`、知识/内容导出 | 既有 NoteSync/知识导出；v1，无独立 Web 协商版本 | `notesync.spec.ts`；仅默认映射，真实远端未实测 |
-| 同一教学跨端继续 #36 | 课堂/进度读取同一状态 | `study`、`learn`；协商 content/change 1 | `study_cli_external_test.go`；HTTP Web 不是浏览器证据 |
-
-本地文件、Shell/PTY、原生钥匙串、浏览器离线、音视频、代码执行判题、证明验证、OCR、
-Office、多用户学校/班级系统不在当前在线发布声明内。未知交互沿用明确升级提示。
+浏览器测试短名均指 `clients/web/tests/browser/<名称>.spec.ts`。本地 Shell／PTY、浏览器离线为 #38/#39 独立交付，非 #37 前置；不声明网页等价全部原生 CLI。OCR、Office、音视频生成、代码执行判题、证明验证、多用户学校系统不在本轮声明内。
 
 ## A01–A36 总追踪
 
-定义沿用 [#40](https://github.com/ErzerLP/edu-agent/issues/40)。下表中的 G 是本次 Go/PG
-定向检查，B 是 `clients/web/tests/browser/` 的生产浏览器测试入口，H 是前序记录。
-“部分”表示只具备服务端或 fixture 证据，完整生产验收仍未通过；B/H 不自动计为通过。
+行为定义来自 [#40](https://github.com/ErzerLP/edu-agent/issues/40)，按现行 spec 映射。“兼容保留”指旧入口仍受回归保护，不是新主界面必经步骤。测试名定位已执行记录；E5 证据缺件限制统一适用，不因每行写“通过”而消失。
 
-| 编号 / 必须证明的行为 | owner | 生产入口 / 证据入口 | 本候选结论 |
+| 编号／行为 | 责任与现行入口／spec | 当前结论 | PR／章节／测试证据 |
 | --- | --- | --- | --- |
-| A01 空库无上传首活动 | #24 | 首页；G `StartLearningEmptyLibrary` | G 通过；真实浏览器/提供商未通过 |
-| A02 保存不建会话/调模型 | #18/#24 | 首页仅保存；G `WebHTTPIdentityAndRealGoals`、B learning | G 通过；浏览器未通过 |
-| A03 复用已知/未知可追问跳过 | #24 | 开学；G start_test.go | G 通过；浏览器未通过 |
-| A04 候选/正文/解析/采用准确 | #22/#29 | 研究/来源；G research_test.go、B pdf | G 通过；真实搜索/PDF 浏览器未通过 |
-| A05 失败/预算停止恢复 | #20–#22 | 运行页；G start_test.go/research_test.go | G 通过；外部提供商未通过 |
-| A06 查询去标识/外发确认 | #20/#22/#27 | 研究确认；G research_test.go、H #22 | G 通过；真实外发未通过 |
-| A07 参考角色影响检索 | #27 | 目标参考；B references、H user-references 设计 | 未运行，不计通过 |
-| A08 审阅/确认/未知回执 | #27–#29 | 参考/导入；B references/tasks/pdf | 未运行，不计通过 |
-| A09 大任务恢复不重复发布 | #28 | 任务中心；B tasks | 未运行，不计通过 |
-| A10 概念与来源分离/待核实 | #24/#30 | 研究/知识；G start_test.go、B knowledge-structure | 部分，浏览器未通过 |
-| A11 内容身份/版本/块定位 | #23/#25 | 课堂/Studio；B workspace | 未运行，不计通过 |
-| A12 流式半成品不能作答 | #23–#25 | 课堂；B workspace、G start_test.go | 部分，浏览器未通过 |
-| A13 局部改写保留草稿 | #25/#26 | 课堂选段；B workspace | 未运行，不计通过 |
-| A14 普通解释无需逐轮批准 | #25/#26 | 导师/选段；G changes_test.go、B workspace | 部分，浏览器未通过 |
-| A15 标准变化确认具体差异 | #26/#27 | 变更面板；G changes_test.go | G 通过；浏览器未通过 |
-| A16 旧批准不能用于新候选 | #21/#25/#26 | 变更面板；G changes_test.go | G 通过；浏览器未通过 |
-| A17 作答中安全/立即接入 | #23/#26 | 课堂；G changes_test.go、B workspace | G 通过；草稿浏览器未通过 |
-| A18 补偿保留既有证据 | #26/#30 | 变更/维护；G changes_test.go、B knowledge-structure | 部分，维护浏览器未通过 |
-| A19 建议/规则/正式证据区分 | #31 | feedback；B workspace | 未运行，不计通过 |
-| A20 揭示/自述不升掌握 | #26/#31/#32 | 课堂/反馈/进度；B workspace | 未运行，不计通过 |
-| A21 路径分母变更准确 | #32 | progress；B workspace | 未运行，不计通过 |
-| A22 投影失败不是没有复习 | #32 | progress；B workspace | 未运行，不计通过 |
-| A23 双区/标签页无串扰 | #18/#21/#23/#33/#36 | 目标/课堂/聊天；G StartLearningConcurrentGoals、B learning/workspace | 部分，标签页未通过 |
-| A24 服务端拒绝跨区组合 | 各 owner | 正式 API；G Web/Research/StartLearning/StudyCLI | 部分，未重跑所有 owner |
-| A25 恢复不重复副作用 | #21/#24/#26/#28/#31/#33/#36 | 运行/课堂；G StudyCLI/Adaptive、B tasks/workspace | 部分，浏览器及丢响应闭环未通过 |
-| A26 草稿不默认明文落盘 | #18/#23/#33 | 全部编辑页；B learning/workspace/tutor-history | 未运行，不计通过 |
-| A27 临时要求不是长期授权 | #34 | memory/导师；B memory | 未运行，不计通过 |
-| A28 清除不复活正文 | 各 owner/#34/#37 | 数据页；G ResearchGlobalErasure/StartLearningGlobalErasure、B memory | 部分，全 owner 贯通未通过 |
-| A29 Key 不进入页面/存储/日志 | #18/#20/#21/#33–#35 | 设置/导师；B settings/tutor-history/notesync | 未运行，不计通过 |
-| A30 学习身份无 admin/撤销拒写 | #18/#20/#34/#35 | 配对/设备；G WebHTTPIdentityAndRealGoals、B memory | 部分，设备浏览器未通过 |
-| A31 CLI 兼容或明确受限 | 协议 owner/#36 | CLI study/learn；G StudyCLI、H #36 | G 跨端通过；完整兼容与原生全平台未通过 |
-| A32 四视口不整页横溢出 | 各页面/#37 | 全部 Web；B learning/workspace 等 | 未运行，三引擎配置不算通过 |
-| A33 IME/焦点/键盘正确 | 各页面/#37 | 全部 Web；B learning/workspace | 未运行，原生输入法/软键盘未通过 |
-| A34 XSS/来源工具注入阻断 | #22/#23/#25/#29 | 来源/正文；G research、B workspace、内容块单测 | 部分，浏览器渲染未通过 |
-| A35 DNS/跳转/IPv6/压缩边界 | #22/#29 | 来源获取；G `internal/research` | HTTP fixture 通过，真实网络代理串联未通过 |
-| A36 缺资产失败/404 不回 SPA | #18/#37 | 发行/代理；G WebRelease/WorkspaceProxy | 路由回归通过，完整发行/容器未通过 |
+| A01 空库无上传首活动 | #24；spec 3/10/14/15：方向→对话，按需搜索保存来源后出题；旧研究开学兼容。无上传不等于零来源可生成有依据练习。 | 通过 | E2 #84 真实 Brave 空库起步、#94/#95 真实研究开学；E4/E5 `TestPostgreSQLStartLearningEmptyLibrary`、`TestPostgreSQLStudyExerciseAtomicFailureAndZeroSources`、C3b live。新合同不要求对话自动研究。 |
+| A02 保存不建会话／调模型 | #18/#24；spec 2/3：保存方向不启动教学，旧仅保存目标兼容。 | 通过 | E4 #98、E5 spec 2/3；`learning`、`notebook-chat`、`TestPostgreSQLStudyModeIsExplicitAndSaved`。 |
+| A03 已知复用／未知可追问跳过 | #24；spec 3/14/15：方向／轮次上下文，普通交流无需答完澄清；旧开学澄清兼容。 | 通过 | E2 #95、E4 C2、E5 `start_test.go`／`notebook-chat`；追问质量另列人工，不据自动化推断教学质量。 |
+| A04 候选／获取／解析／采用准确 | #22/#29；spec 7–10/13，左栏来源／覆盖／引用。 | 通过 | E2 #84 真实正文和 partial 报告；E5 `pdf`／`notebook-sources`；E6 #112/#113 超限／无文本／同名修订。 |
+| A05 失败／预算停止恢复 | #20–#22；spec 14/25/29，聊天／研究／Studio 恢复。 | 通过 | E2 #95、E4 #105 独立评估预算；E5 `tasks`／`mentor`、`TestPostgreSQLStartLearningBudgetRecovery`；E6 #110。 |
+| A06 查询去标识／外发授权 | #20/#22/#27；spec 10/12/27，明确公开关键词／网址／当前选择。 | 通过 | E2 #84；E5 `notebook-sources`、`TestPostgreSQLResearchRequiresSpecificConsentAndKnowledgeScope`、`TestPostgreSQLStudySourceAndDirectionIsolationReopen`。 |
+| A07 参考角色影响检索 | #27；spec 8/11/12，新轮用当前选择；旧目标参考角色兼容。 | 通过 | E5 `references`／`notebook-chat`；E4 `TestPostgreSQLExerciseOriginalDirectionAndSources` 验证旧题不随改选漂移。 |
+| A08 审阅／确认／未知回执 | #27–#29；spec 8/9/17/29，添加来源／任务核对。 | 通过 | E5 `references`／`tasks`／`pdf`；E6 #113 文档／章节决定累计及同名平移修订场景。 |
+| A09 大任务恢复不重复发布 | #28；spec 25/29，任务中心兼容保留。 | 通过 | E5 `tasks`“大清单分段、刷新重启、来源变化与提交响应丢失按原任务恢复”及取消／归档场景。 |
+| A10 概念／来源分离、冲突可见 | #24/#30；spec 7/13，知识维护辅助页。 | 通过 | E1 #75 的 #30“浏览器补验”；E5 `knowledge-structure` 三场景／引擎及 PG 多来源／主张／关系检查。 |
+| A11 内容身份／版本／块定位 | #23/#25；spec 13/15/20/23，新卡片／Studio；旧内容块兼容。 | 通过 | E5 `workspace` 版本／选段、`notebook-studio` 指定版本；E4 C3 session/activity/content 事务映射。 |
+| A12 半成品不可作答 | #23–#25；spec 15/17/20/25，题发布后可提交。 | 通过 | E4 #101/#102；E5 `TestPostgreSQLStudyExercisePublishesOneCard`、`TestPostgreSQLExercisePublicationRollbackAndHelpState`、`notebook-exercise`。 |
+| A13 局部改写保留阅读／草稿 | #25/#26；spec 6/28/29，旧选段兼容；对话追加不覆盖原题。 | 通过 | E5 `workspace`“选段模型加工、答案保留、Studio、来源、固定与补偿版本”；`notebook-workspace` 草稿隔离。 |
+| A14 普通解释无需逐轮审批 | #25/#26；spec 14，连续对话；旧解释调整兼容。 | 通过 | E4 C2 live；E5 `notebook-chat`、`TestPostgreSQLAdaptiveApprovalVersionsAndExplanation`；E7 真实讲解补充观察。 |
+| A15 标准变化确认具体差异 | #26/#27；spec 2/3/11/29，明确保存方向版本；旧具体变更审批兼容。 | 通过 | E5 `notebook-chat` 方向冲突／修订、`workspace` 具体变更、`TestPostgreSQLAdaptiveGoalRevisionAndQueueFences`。 |
+| A16 旧批准不用于新候选 | #21/#25/#26；spec 2/29，原批准绑定具体版本。 | 通过 | E5 `TestPostgreSQLAdaptiveApprovalVersionsAndExplanation`、`workspace`／`notebook-studio` 冲突。 |
+| A17 作答中安全／立即接入 | #23/#26；spec 11/15/28，新方向不改旧题；旧排队／立即切换兼容。 | 通过 | E5 `workspace`“教学变更显示具体差异、排队、立即切换与原题草稿焦点恢复”；E1 #75；E4 原方向／来源 PG。 |
+| A18 补偿保留既有证据 | #26/#30；spec 6/19/29，旧变更／知识维护兼容。 | 通过 | E1 #75；E5 `knowledge-structure`、`workspace` 补偿版本、`TestPostgreSQLAdaptiveQueueImmediateAndCompensation`。 |
+| A19 建议／规则／正式证据分开 | #31；spec 18/19，反馈卡／评估详情。 | 通过 | E5 `workspace` 复核／覆盖、`notebook-exercise` 待复核；E4 C3b accepted，E2 #95 provisional 未冒充 accepted。 |
+| A20 揭示／自述不升掌握 | #26/#31/#32；spec 16/18/19，帮助下限、accepted 才计证据。 | 通过 | E4/E5 `TestPostgreSQLExerciseSubmissionAndHelp`、`TestPostgreSQLExerciseProvisionalAndAllowedHelp`、`TestPostgreSQLStudyExerciseHelpSubmissionConcurrency`、`notebook-exercise`。 |
+| A21 分母变化不冒充能力下降 | #32；spec 3/19，无伪方向完成比例，旧进度保留。 | 通过 | E1 #76“端到端补验”；E5 `workspace` 动态进度、`TestProgressExplainsRouteVersionsWithoutInventingMastery`。 |
+| A22 投影失败不是没有复习 | #32；spec 19，进度／复习菜单。 | 通过 | E1 #76；E5 `workspace`“动态进度真实跨区续学、版本、范围、失败与原答案入口”、`review`。 |
+| A23 双标签／双区无串扰 | 横向 owner；spec 11/12/17/28，区／对话／卡片草稿隔离。 | 通过 | E5 `learning`、`workspace` 迟到响应、`notebook-workspace`／`notebook-studio`；`TestPostgreSQLStudySourceAndDirectionIsolationReopen`。 |
+| A24 服务端拒绝跨区实体 | 各 owner；spec 11/26–29，正式 HTTP／PG。 | 通过 | E5 PG core/privacy 分片、`TestPostgreSQLStudyCLIResearchAndWebContent`；E4 C3b/C4 原方向／来源、跨设备读取检查，不只依靠前端筛选。 |
+| A25 恢复不重复副作用 | #21/#24/#26/#28/#31/#33/#36；spec 14/17/25/29。 | 通过 | E5 `tasks`／`mentor`／`notebook-exercise` 丢响应、`TestPostgreSQLExerciseLeaseRecovery`、`TestPostgreSQLExerciseRecoveryChecksAssessmentOperation`。 |
+| A26 草稿不默认明文落盘 | #18/#23/#33；spec 28，未发送／提交／保存输入。 | 通过 | E5 `learning`／`workspace`／`tutor-history`／`notebook-workspace` 存储断言；授权离线库另计。 |
+| A27 临时要求不自动长期保存 | #34；spec 26/28，记忆明确审阅。 | 通过 | E1 #77 的 #34 最终结论第 2 项、`TestPostgreSQLMentorMemory*`；E5 `memory` 内嵌批准。 |
+| A28 清除后不复活正文 | 各 owner/#34；spec 28/29，新方向／卡片／评估任务同样纳入。 | 通过 | E1 #75/#76/#77；E5 privacy 分片、`TestPostgreSQLStudyExerciseClearCannotRevive`／`TestPostgreSQLExerciseGlobalErasureCancelsInFlight`；E3 #67 受管备份。外部快照边界见下文。 |
+| A29 Key 不入页面／存储／日志 | #18/#20/#21/#33–#35；spec 27/28。 | 通过 | E5 `settings` Key 不回显、`memory`／`notesync` canary 脱敏；E2 真实调用凭据检查；E1 #34 成功导出。 |
+| A30 学习登录无 admin、撤销拒写 | #18/#20/#34/#35；spec 26–28，learner 只组合学习 scope。 | 通过 | E4 #97 `TestPostgreSQLLearnerAdminIssuanceAndHTTPPermissionMatrix`；E5 `learner`／`memory`；E3 #81 撤销 SSE 后 401。 |
+| A31 CLI 兼容或明确受限 | 协议 owner/#36；spec 6/19/22/30，同版本，非旧版或全原生平台保证。 | 通过 | E3 #86；E5 CLI／资产小节、`review` 生产 CLI；[#36](issue-36-acceptance.md#真实生产-cligo-http-与-pg)同教学调整／幂等。macOS 另列。 |
+| A32 四视口无整页横溢出 | 各页面；spec 4/30，主区及兼容页。 | 通过 | E5 #106/#108 `notebook-accessibility` 五宽度 390/768/1024/1280/1440、双主题、公式／代码／长标题，三引擎；`learning` 四视口。 |
+| A33 IME／焦点／键盘 | 各页面；spec 16/30，自动化 composition／键盘／焦点通过，真机未签收。 | 未运行（真机或人工） | E5 spec 16/30 明列未运行；`notebook-accessibility` 键盘全流程、`learning` 合成 IME 不能替代原生中文输入、软键盘和读屏器。 |
+| A34 XSS／来源工具注入阻断 | #22/#23/#25/#29；spec 13/27，安全 Markdown／公式／PDF。 | 通过 | E5 `workspace` 来源安全、`notebook-chat`“学习区回答渲染 Markdown、公式与引用，代码和 HTML 保持安全”、`pdf`；E2 research 伪引用／来源拒绝。 |
+| A35 DNS／跳转／IPv6／压缩安全 | #22/#29；spec 10/27，抓取边界不随入口变化。 | 通过 | E2 #84 真实网络；[#29 检查](issue-29-acceptance.md#已执行并通过)、`TestFetchPublicBoundary`／`TestFetchRedirectRebindingAndScope`／`TestFetchParsingLimitsAndRestrictions`。恶意边界用受控测试，非公网逐项攻击重演。 |
+| A36 缺资产失败／404 不回 SPA | #18/#37；spec 6/27/30，发行／错误路径。 | 通过 | E3 #81 Docker 缺资产负例、无 Node、直连／HTTPS 路由；E5 `release` 14 深链接／8 错误入口；E6 #113 发行构建。 |
 
-## 八步核心脚本与剩余发布门禁
+A 表合计 **35 通过、0 未通过、0 未运行（外部）、1 未运行（真机或人工）**，只代表现行功能映射。三类质量、性能、原件等附加义务仍在下表，不以此合计替换 E5 父 spec 历史 24/0/4/2。
 
-使用新建测试数据库、研究档案配对的浏览器、独立 CLI 客户端和明确授权的搜索/模型配置。
-记录 commit/input SHA、资产摘要、协议版本、浏览器/视口、服务/数据库版本、操作 ID 与时间。
-先验证库内无资料；不能调用 legacySession 导入夹具代替这一前置。
+## 八步核心脚本的现行等价证据
 
-1. 浏览器输入目标，仅保存时核对零新教学会话、零外部调用；再明确授权研究和开学。
-2. 检查研究运行、获取成功的正文片段和引用身份，进入首活动；记录首活动时刻及缺口。
-3. 选段改解释，核对 artifact/version/block/range；未选部分和原答案草稿保持原值。
-4. 作答中提出补前置，分别检查排队与明确立即切换；恢复原活动时核对原题/草稿。
-5. 代理在服务器接收答案后丢弃响应，记录原 operation，查询并重试；核对答案、评估及
-   Evidence 的数据库身份/数量，没有第二份。不能在请求发出前 abort 冒充丢响应。
-6. 刷新、停止并重启服务，核对原活动/正式结果；未保存草稿丢失须与提示一致。
-7. CLI 配对后 `learn show --session ID`、`study context --session ID` 读取原教学；
-   按 `study help` 发起支持的具体调整，Web 显示同一候选/结果；核对另一学习区未改变。
-8. 运行排队期间分别暂停目标、撤销设备、执行授权清除；释放迟到响应后确认无非法新活动，
-   旧页面、运行、索引和引用不能恢复正文。此操作只针对可销毁验收库。
+以下是**新真实模型流程＋现行自动化＋兼容回归的组合证据**，不是宣称在同一次新空库、真实提供商、浏览器与 CLI 中连续跑完原八步。
 
-当前 G 覆盖其中的服务端/CLI 部分；**尚无一份贯通八步的浏览器真实提供商证据**。
-外部 smoke 只用明确允许外发的公开任务，不能借用用户已有部署中的秘密。
-
-| 发布附加项 | 执行/记录要求 | 当前结果 |
+| 原步骤 | 当前等价行为／结论 | 已执行证据及边界 |
 | --- | --- | --- |
-| 三类模型样本 | 概念/推导、代码/算法、长文阅读；逐项记录引用支持、针对调整、目标保护、费用、延迟、不确定性 | 只有已有三学科 HTTP fixture；真实提供商/人工样本未运行 |
-| 代理 SSE | 部署候选 Nginx，观察心跳跨代理即时到达、75s 超时配置、禁缓冲、断开/撤销后连接回收；直接 SSE 用例不能替代 | 未运行真实代理 |
-| 三浏览器与原生设备 | 390/768/1280/1440、主题、长内容、键盘/焦点/读屏阶段；原生 IME、软键盘、安全区另记录设备 | 未运行；没有声明支持实测范围 |
-| 性能 | 环境/样本数/p50/p95，输入反馈目标 <100ms；流式合并目标 30–60ms；分页请求数量 | 未测量，不编造数字 |
-| 容器/版本/缓存 | 无 Node 运行镜像、资产/schema/capability 一致、敏感 API no-store、404 边界 | 路由单测通过；发行/容器与部署未运行 |
-| 迁移/旧数据/离线签名 | 旧版本库副本升级与只读/清除、关闭新能力后保留新数据，原离线 golden/签名回归；CLI 兼容按“同版本 CLI 兼容 + 升级说明”验收，服务端与 CLI 同仓库同版本发布、同步升级 | [演练证据](issue-37-upgrade-backup.md#旧库升级与-cli-读取)：旧库升级、原数据读取/清除、Web 开关回滚及离线 golden/签名回归通过；旧 CLI `progress` 失败保留，不做服务端旧客户端兼容；同版本 CLI 完整兼容矩阵仍未证明 |
-| 备份/恢复与权限 | 独立库恢复演练，确认配置/设置恢复、正文可解密及密钥/设置文件权限；数据库外部备份（pg_dump、WAL、宿主备份等）不在应用隐私清除保证范围，运维人员须在清除后自行销毁或轮换清除前备份；恢复旧快照会恢复其中的身份与正文 | [演练证据](issue-37-upgrade-backup.md#备份独立库恢复与权限)：独立库恢复、正文解密及文件权限检查通过；[旧快照恢复](issue-37-upgrade-backup.md#撤销隐私清除与旧快照恢复)确实复活已撤销身份与已清除正文，按外部备份边界处理，不做加密销毁；生产权限、备份加密及 Nocturne 受管备份恢复未验证 |
+| 1. 空库配对、输入目标，无上传 | 通过：learner 配对、创建区／方向，保存不发模型。 | E4/E5 `learner`／`learning`／`notebook-chat`；E2 #84/#95 空库研究。不强制普通对话自动外发方向。 |
+| 2. 真实正文、尽早首活动 | 通过：可先讲解，显式搜索／审阅后勾选出题，无整课生成前置。 | E2 #84 Brave／正文；E4 C2/C3b live、E7 讲解／出题。各链路组合，非一次连续走查。 |
+| 3. 选段改解释、核对正式版本 | 通过：新对话形成新轮次、不覆盖原题；旧原位选段入口兼容。 | E5 `workspace` 选段、artifact/version/block 和原草稿，C2 对话／引用版本。未把追问说成更新旧正式块。 |
+| 4. 作答中补前置、安全切换 | 通过：新卡片稍后／恢复，新方向不改旧题；旧排队／apply_now 兼容。 | E4/E5 `notebook-exercise`、`TestPostgreSQLExerciseOriginalDirectionAndSources`、`workspace` 排队／立即切换；E1 #75。 |
+| 5. 接收答案后丢响应、不重复 | 通过：原 operation 核对，同一 Attempt／评估／Evidence。 | E5 `notebook-exercise`“C3b 出题、帮助、丢响应核对、自动反馈、引用、收起恢复与进度”；`ExerciseTaskFailureRollsBackAttempt`／`ExerciseRecoveryChecksAssessmentOperation`。已受理后丢响应，与发出前 abort 分开。 |
+| 6. 刷新／重启恢复 | 通过：保存对话／卡片／反馈重开，评估任务恢复；草稿仅内存。 | E5 `learning` 进程重启、`mentor`／`tasks`、`TestPostgreSQLStudyExerciseOldContextAndRestart`／`TestPostgreSQLExerciseLeaseRecovery`。 |
+| 7. CLI 同教学继续／调整、另区不变 | 通过：CLI 同事实，旧受支持调整合同兼容。 | E5 `review` 正式复习＋CLI；[#36 双端](issue-36-acceptance.md#真实生产-cligo-http-与-pg)两个 `StudyCLI*` 场景。CLI 不必拥有新对话 UI。 |
+| 8. 暂停／撤销／清除与迟到任务竞态 | 通过：生命周期／generation fence 阻断非法发布和复活。 | E5 `StartLearningLifecycleRace`、`ExerciseRevocationAndRotation`／`ExerciseGlobalErasureCancelsInFlight`、`memory`／`knowledge-structure`；E3 #81 SSE 撤销、#67 受管备份。 |
+
+**保留缺口：** 尚无绑定最终 SHA、同一次真实浏览器／CLI／模型的完整八步记录。按已确认新方向使用上述组合覆盖现行行为；若发布签收仍要求旧原文“一次贯通”，需在人工单中安排适配新入口的综合走查，不能事后把拼合证据写成已经执行。
+
+## 发布附加项
+
+| 发布附加项 | 当前结论 | 已执行证据／剩余边界 |
+| --- | --- | --- |
+| 真实搜索／模型运行可用性 | 通过 | E2 #83/#84/#94/#95，E4 C2/C3b/C4/#105，E7 补充。#80 的 schema／开学阻断已有修复及成功链路，不再列为当前实现失败；旧报告不改写。 |
+| 三类模型教学质量签收 | 未运行（真机或人工） | [#80 三类样本](issue-37-model-samples.md#三类教学样本)概念／推导、代码／算法、长文阅读当时均阻断；后续调用未补齐三类质量审查。需审引用、针对性调整、目标保护、帮助／不确定性、延迟与实际 token／费用；置信度或一次 accepted 不是质量结论。 |
+| 来源／真实教材独立核对 | 未运行（真机或人工） | [#22 真人清单](issue-22-acceptance.md#给真人的来源核对清单待真人完成)、[#29 页图核对](issue-29-acceptance.md#页图核对与发现的问题)；#112/#113 技术补验已过，仍需真人对照正文、页码、字体、缺口和旧版本引用。 |
+| 真实代理 SSE | 通过 | E3 #81：真实 Nginx/TLS，心跳比较最大差 1.134ms、活跃流超过 75s、静默探针 75072ms 关闭、断开／撤销回收及管理隔离。C5b 自身未跑代理，不否定既有结果，也非最终站点全量重验。 |
+| 三浏览器／视口／主题／长内容／键盘 | 通过 | E5 Chromium 77、Firefox 73、WebKit 73，五宽度、双主题、长公式／代码、焦点／axe；E6 仅后续局部 Chromium。C5b 原件缺失另列。 |
+| 原生 IME／软键盘／安全区／辅助技术 | 未运行（真机或人工） | E5 spec 16/30：iOS Safari／Android Chrome 中文确认／Enter、工具栏、缩放／横竖屏、安全区、VoiceOver／NVDA 播报／MathML／焦点。合成事件／模拟视口／axe 不替代。 |
+| 性能目标实测 | 未运行（真机或人工） | 未有本地反馈 <100ms、流式 30–60ms 合并更新的环境／样本数／p50/p95 记录；E5 分页行为、E3 SSE 时延和 E4 模型耗时不等于这些指标。人工采样并如实报告未达项，不编造测量或静默删除目标。 |
+| 容器／资产／schema／缓存／404 | 通过 | E3 #81 无 Node、缺资产失败、63 资产直连／HTTPS 一致、schema/capabilities、敏感 API no-store；E5 `release`，E6 后续发行构建。 |
+| 迁移／旧数据／同版本 CLI／离线签名 | 通过 | E3 #79 升级 19→33、原活动／答案／Evidence、Web 开关回滚、golden／签名；E4 后续迁移／清除及 E5 PG／CLI。#86 同版本同步升级；旧 CLI `progress` 拒绝 `data_cleared` 的失败保留于不保证的跨版本范围，不声称所有开关／升级组合均演练。 |
+| 备份恢复／权限／Nocturne 受管备份 | 通过 | E3 #79 独立库恢复／解密、错密钥拒绝、密钥／设置 0600；#67 full 证明受管备份销毁／恢复拒绝。#86 明确 pg_dump/WAL/宿主快照在应用清除保证外，恢复会复活旧身份／正文；运维须自行销毁／轮换。 |
+| 安装／升级／保存／权限／限制文档 | 通过 | E3 #86、[Web README](../../clients/web/README.md)、[环境配置](../../deploy/env.example)及本表。learner 不带 settings/admin/清除 grant；PDF 与 #111 边界明确。 |
+| 候选证据完整性与最终签收 | 未运行（真机或人工） | E5 缺 44 份原始 browser JSON／前置明细、5 个 PG 名称仅历史 guard，需评定复用／补原件或最小检查。E7 缺日期／SHA／操作记录；#109–#113 后需绑定实际发布输入，非整套矩阵重跑。 |
+| 真实 NoteSync 上游（可选集成） | 未运行（外部） | [#35 待验收](issue-35-acceptance.md#待验收没有宣称通过)、E5 `notesync`：真实 Go/PG、受控 REST 上游通过，实际远端 opt-in 未运行。默认区／默认集合限制保留，启用前另补 smoke。 |
+
+E5 原列外部 spec 10/14/18/21 的真实调用部分已有 E2/E4/E7 补充，来源与讲解／评分／指南／简报质量仍需人工逐项签收。保留原候选 **24/0/4/2**，不据零散 smoke 改成父 spec 28 项通过。当前范围未发现有证据支持的未修复技术失败；未运行／证据不足不等于通过。
+
+## 可复现入口与历史初验
+
+沿用现有锁文件和已准备的依赖／三个浏览器引擎，技术检查入口为 `make web-release-check`；完整候选为 `TEST_DATABASE_URL=<独立可销毁测试库> make web-release-candidate`。后者构建真实 CLI、串行运行 PG 与逐文件浏览器矩阵，包含全局清除，不得使用已有实例数据。测试端口 32929–32931 及测试库不可与其他矩阵共用；脚本不安装依赖、不拉镜像、不调用真实付费提供商、不部署。补验时按 E5/E6 的输入／环境判断最小范围，不为本次文档整理重跑。
+
+保留 2026-09-19 初验的历史定位：基线 `b0ddfac`、分支 `task/58`，修复四个页面刷新 404 与九条代理 API 漏放；`TestWebRelease*`、`TestWorkspaceProxyAllowlist`、`TestWebProduction*` 通过。真实 PG／生产 CLI 定向检查为 25 个顶层、含子例 57 项通过、0 fail/skip，模型／搜索／来源均为 HTTP fixture；当时前端依赖未准备，Web／浏览器未运行，不能倒改为当时通过。后续结果以前文为准。
+
+原 PG 检查入口：`cd server && go test -json -p=1 -count=1 -timeout=10m ./internal/transport/httpapi ./internal/mentorrun -run '^TestPostgreSQL(Web|StudyCLI|StartLearning|Research|Adaptive|MentorCookieHTTPAndSSERecovery)'`，需设置独立 `TEST_DATABASE_URL` 与 `EDU_AGENT_INTEGRATION_CLI`。原日志 `/tmp/edu-agent-task58-postgres.jsonl`，SHA256 `a760dfddb5d236c70ff87a40c66854cb8195943323bea64a03eddefc1efe17b0`；本机路径不是随仓库交付的附件，本次未核定其仍可读取。
+
+## 关闭方式与后续人工验收单草案
+
+严格保持 #37 原全部勾选标准时，目前不可标为全部完成。建议先建立后续单、复制未运行项并回链，再以“实现与自动化收尾，剩余发布签收独立跟踪”关闭 #37；不等待 #111，也不把关闭当成发布授权。[#40 最终跟踪](issue-40-acceptance.md)采用同一口径。本次未创建或关闭任何 issue。
+
+建议标题：**发布前人工验收：对话学习区真机、教学质量、性能与证据签收（承接 #37/#40）**。
+
+建议正文：承接 #37/#40 的人工发布门禁，按现行 Notebook spec 1–30。已执行自动化见 PR #108／C5b（223 浏览器、374 PG、399 定向 race）及 #109/#110/#112/#113 局部补验，不重建已交付功能，不包含 #111 的整本书 PDF，也不扩张为 OCR。关闭原单不代表下列项目通过。
+
+- [ ] 记录发布 SHA／资产摘要、站点、OS／浏览器／设备、操作者和日期；综合走查方向→讲解→选来源→出题→帮助／提交→反馈／复核→刷新恢复→Studio，按需核对 CLI 同事实。若仍要求原八步一次贯通，在可销毁隔离环境补兼容选段／路径调整与撤销／清除，记录操作身份。
+- [ ] 真机中文 IME：iOS Safari／Android Chrome 及声明支持的桌面输入法，确认词、Enter／换行、切卡片不误发／误提交。
+- [ ] 真机软键盘、工具栏伸缩、缩放／横竖屏、安全区及长内容；提交不遮挡，草稿与焦点正确。
+- [ ] VoiceOver／NVDA：生成／停止／反馈播报、MathML、标签／菜单／弹窗和引用焦点返回，记录限制。
+- [ ] 概念／推导、代码／算法、长文阅读各一例：独立核对正文／页码／缺口，审讲解、调整、目标保护、帮助、评分／待复核、Studio 指南／简报，记录模型、预算、延迟、已知 token／费用及不确定性。优先复用已授权结果；新增调用按实际授权执行，不用置信度 930/900 或一次自动采纳代替审查。
+- [ ] 性能：记录设备／环境、样本数、p50/p95，实测反馈 <100ms、流式合并 30–60ms 和分页请求；如实登记未达项。
+- [ ] 证据签收：恢复／审核 44 份原始报告及前置明细，核定 5 个历史 guard 名称；无法接受复用时只补必要检查。补演示站日期／版本／操作，明确 #109–#113 后的证据复用范围。
+
+退出条件：每项有通过／未通过／未运行、设备／样本及证据链接；未通过需修复或明确范围决定，未运行不得默认放行。启用真实 NoteSync、声明 macOS 原生或真机离线支持等可选环境时另附 smoke／真机结果，不因未启用能力扩大核心范围。
 
 ## 安装、升级、保存与回退
 
-安装和配置见 [Web README](../../clients/web/README.md)、[部署环境说明](../../deploy/env.example)。
-Node 只在前端构建阶段需要；运行使用带 `web_release` 资产的 Go 二进制和 PostgreSQL。
-HTTPS 精确 Origin、独立配对档案、模型端点允许列表、服务器 Key 文件按既有文档配置。
-教学配置修改后重启生效；未提交草稿仅进程/标签页内存，正式状态保存于服务端。
+安装配置见 [Web README](../../clients/web/README.md) 和[部署环境说明](../../deploy/env.example)。Node 仅用于构建，运行使用带 `web_release` 资产的 Go 服务及 PostgreSQL。配置精确 HTTPS Origin、配对 scope、模型端点允许列表和受保护 Key；教学配置保存后按说明重启。未发送／提交／保存草稿仅标签页内存，明确保存的对话／内容／产物在服务端受保护存储。
 
-升级前在维护窗口备份 PostgreSQL、配置文件、正文加密密钥及相关外部记忆数据，分别保存
-且限制权限；先在隔离副本恢复并检查版本、迁移、解密、登录与原课堂读取，再更新同一候选
-的 Go、静态资产与代理配置。密钥轮换前的备份仍需要相应旧密钥，不把数据库快照当独立完备备份。
-升级服务端时必须同时升级 CLI；服务端与 CLI 同仓库同版本发布，不提供服务端对旧 CLI 的兼容保证。
-数据库外部备份（pg_dump、WAL、宿主备份等）不在应用隐私清除保证范围内，运维人员须在清除后
-自行销毁或轮换清除前的备份；恢复旧快照会恢复其中的身份与正文。外部提供商和导出文件也须单独处置。
-两项口径依据见[用户决定（2026-10-12）](issue-37-upgrade-backup.md#用户决定2026-10-12)。
+升级前分别备份 PG、配置、正文密钥和外部记忆数据并限制权限；先在隔离副本核对迁移、解密、身份和原课堂，再同步升级同版本服务端、CLI、资产与代理。外部数据库备份不受应用清除保证，运维自行销毁／轮换清除前快照；恢复旧快照会恢复旧身份与正文，密钥轮换前备份仍需旧密钥。依据见[#86 用户决定](issue-37-upgrade-backup.md#用户决定2026-10-12)。
 
-回退优先关闭受影响的新能力，保留可读和清除路径；不要删除新表、修改历史迁移 checksum
-或让旧代码强写未知 schema。旧二进制不能确认读取新数据时保留当前服务并停用受影响功能。
-真正回退方案需在副本验证；本记录不宣称现有所有开关已经通过只读/清除测试。
+回退优先关闭受影响能力，保留读取／清除，不删新表／改历史 checksum，不让旧代码强写未知 schema。已演练路径见 E3，不推断所有开关、历史版本或生产权限已逐一验收。

@@ -144,12 +144,16 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           }}
         >
           <option value="">请选择或创建集合</option>
-          {collections.data?.items.map((c) => (
+          {collections.data?.items.map((c) => {
+            const sameName = collections.data.items.filter(other => other.name === c.name)
+            return (
             <option key={c.id} value={c.id}>
               {c.name}
-              {c.shared ? '（共享集合）' : ''} · {c.id.slice(0, 8)}
+              {c.shared ? '（共享集合）' : ''}
+              {sameName.length > 1 ? `（同名集合 ${sameName.findIndex(other => other.id === c.id) + 1}）` : ''}
             </option>
-          ))}
+            )
+          })}
         </select>
       </label>
       <details className="source-create-collection" open={!collectionId}>

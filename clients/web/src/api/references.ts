@@ -24,7 +24,7 @@ export const treeSchema = z.object({ revision: z.object({ revision_id: id, paren
 export const exportSchema = z.object({ revision_id: id, documents: z.array(z.object({ path: z.string(), markdown: z.string(), collection_id: id.optional() })) })
 export const scopeSchema = z.object({ id, space_id: id, entries: z.array(entrySchema), updates: z.array(entrySchema).optional() })
 export const summarySchema = z.object({ operation_id: id, space_id: id, collection_id: id, actor_device_id: id, document_ids: z.array(id).nullable().transform(v => v ?? []), added: count, updated: count, unchanged: count })
-const candidate = z.object({ stable_id: id, revision_id: id, reason_code: z.string() })
+const candidate = z.object({ stable_id: id, revision_id: id, reason_code: z.string(), evidence: z.object({ title: z.string().optional(), excerpt: z.string().optional(), incoming_title: z.string().optional(), incoming_excerpt: z.string().optional() }).optional() })
 const reviewItem = z.object({ path: z.string(), locator: z.string(), reason_code: z.string(), candidates: z.array(candidate).nullable().transform(v => v ?? []) })
 export const importPreviewSchema = z.object({
   status: z.enum(['ready', 'review']), receipt: z.string().optional(), summary: summarySchema,

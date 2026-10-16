@@ -1,5 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { bytesToBase64, editImport, emptyImport, fetchedItem, importDocuments, pastedItem, scanFiles, textDocument } from './reference-import'
+import { bytesToBase64, editImport, emptyImport, fetchedItem, importDocuments, pastedItem, reviewedImport, scanFiles, textDocument } from './reference-import'
+import type { ImportPreview, ImportRequest } from '@/api/references'
+
+type Review = NonNullable<ImportPreview['identity_review']>
+const review = (operation: string): Review => ({ identity_review_basis_hash: 'basis', identity_review_operation_id: operation, identity_review_receipt: `receipt-${operation}`, document_reviews: [], node_reviews: [] })
+const request: ImportRequest = { operation_id: 'initial', expected_parent_revision_id: 'parent', source: 'test', documents: [{ path: '教材.pdf.md', markdown: '' }] }
+const documentReview = { path: '教材.pdf.md', locator: 'document-locator', reason_code: 'ambiguous', candidates: [] }
+const nodeReview = { ...documentReview, locator: 'node-locator', preorder: 5 }
+
+describe('分阶段身份审阅请求', () => {
+  it('文档决定 → 章节决定 → 再预览携带完整决定和最新审阅回执', () => {
+    const document = reviewedImport(request, { ...review('document-review'), document_reviews: [documentReview] }, { 'document-locator': 'original-document' })
+    const node = reviewedImport(document, { ...review('node-review'), node_reviews: [nodeReview] }, { 'node-locator': 'new' })
+    const again = reviewedImport(node, review('ready-preview'), {})
+    expect(again.document_resolutions).toEqual([{ locator: 'document-locator', action: 'preserve', document_id: 'original-document', reason: '用户在浏览器逐项审阅身份' }])
+    expect(again.node_resolutions).toEqual([{ locator: 'node-locator', action: 'new', source_node_revision_ids: [], reason: '用户在浏览器审阅章节承接关系' }])
+    expect(again).toMatchObject({ documents: request.documents, expected_parent_revision_id: 'parent', identity_review_operation_id: 'ready-preview', identity_review_receipt: 'receipt-ready-preview' })
+    expect(new Set([request.operation_id, document.operation_id, node.operation_id, again.operation_id]).size).toBe(4)
+    expect(again).not.toHaveProperty('document_reviews')
+    expect(again).not.toHaveProperty('node_reviews')
+    expect(request).not.toHaveProperty('document_resolutions')
+  })
+
+  it('同 locator 的新决定覆盖旧决定，同时保留其他文档与章节决定', () => {
+    const original = { ...request,
+      document_resolutions: [{ locator: 'document-locator', action: 'preserve' as const, document_id: 'old-document', reason: 'old' }, { locator: 'other-document', action: 'preserve' as const, document_id: 'other', reason: 'keep' }],
+      node_resolutions: [{ locator: 'node-locator', action: 'new' as const, source_node_revision_ids: [], reason: 'old' }, { locator: 'other-node', action: 'new' as const, source_node_revision_ids: [], reason: 'keep' }],
+    }
+    const next = reviewedImport(original, { ...review('review'), document_reviews: [documentReview], node_reviews: [nodeReview] }, { 'document-locator': 'new-document', 'node-locator': 'old-node-revision' })
+    expect(next.document_resolutions).toHaveLength(2)
+    expect(next.document_resolutions).toEqual(expect.arrayContaining([{ locator: 'document-locator', action: 'preserve', document_id: 'new-document', reason: '用户在浏览器逐项审阅身份' }, original.document_resolutions[1]]))
+    expect(next.node_resolutions).toHaveLength(2)
+    expect(next.node_resolutions).toEqual(expect.arrayContaining([{ locator: 'node-locator', action: 'rewrite', source_node_revision_ids: ['old-node-revision'], reason: '用户在浏览器审阅章节承接关系' }, original.node_resolutions[1]]))
+    expect(original.document_resolutions[0].document_id).toBe('old-document')
+    const edited = editImport({ ...emptyImport(), request: next }, { paste: '变更原文' })
+    expect(edited.request).toBeUndefined()
+  })
+})
 
 describe('浏览器真实来源与原操作草稿', () => {
   it('搜索摘要和禁止保存的正文均不能进入正式导入，只有实际正文与回执可预览', () => {

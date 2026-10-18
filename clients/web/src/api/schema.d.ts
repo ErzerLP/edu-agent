@@ -1385,6 +1385,99 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/conversations/{conversationID}/topics": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        /** 分页查看只读话题和整理进度，读取不调用模型 */
+        get: operations["listConversationTopics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/conversations/{conversationID}/topics/{topicID}/anchors": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+                topicID: string;
+            };
+            cookie?: never;
+        };
+        /** 按消息顺序读取话题位置 */
+        get: operations["listConversationTopicAnchors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/conversations/{conversationID}/messages/{messageID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+                messageID: string;
+            };
+            cookie?: never;
+        };
+        /** 返回包含确切消息的一轮历史页，失效时不回退其他位置 */
+        get: operations["locateConversationMessage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/conversations/{conversationID}/topic-index": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 主动整理已提交快照内、本次授权范围的未覆盖消息
+         * @description study 必须提供当前 direction_version 和 source_selection。目的地改变时须确认。索引 revision 与对话发送 version 独立；失败不推进水位。临时对话不建立持久索引。
+         */
+        post: operations["requestConversationTopicIndex"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/exercises/{exerciseID}": {
         parameters: {
             query?: never;
@@ -3641,6 +3734,11 @@ export interface components {
              * @description 仅原任务仍可读时提供；删除对话后为空
              */
             run_id: string | null;
+            /**
+             * Format: uuid
+             * @description 话题整理关联的可读对话；删除后为空
+             */
+            conversation_id?: string | null;
             totals: components["schemas"]["ModelUsageTotals"];
         };
         ModelUsageCall: components["schemas"]["ModelUsageIdentity"] & {
@@ -4671,6 +4769,72 @@ export interface components {
                 page?: number;
             };
         };
+        ConversationMessageAnchor: {
+            /** Format: uuid */
+            message_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** @description -1 为展示回答；其他值为原 Messages 的用户消息位置 */
+            message_slot: number;
+            ordinal: number;
+        };
+        ConversationTopicEvidence: {
+            anchor_ids: string[];
+            scope_fingerprint: string;
+            /** Format: uuid */
+            direction_revision?: string;
+            source_fingerprint?: string;
+            exercise_ids: string[];
+            privacy_generation: number;
+            knowledge_generation?: number;
+            memory_generation?: number;
+            /** Format: date-time */
+            observed_at: string;
+        };
+        ConversationTopic: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            anchor_count: number;
+            revision: number;
+            exercise_related: boolean;
+            points: (components["schemas"]["ConversationTopicEvidence"] & {
+                text: string;
+            })[];
+            observations: (components["schemas"]["ConversationTopicEvidence"] & {
+                text: string;
+                /** @enum {string} */
+                state: "understood_in_chat" | "question_open" | "exercise_error_observed" | "unassessed";
+                /** @enum {string} */
+                evidence: "user_report" | "tutor_explanation";
+            })[];
+        };
+        ConversationTopicPage: {
+            /** Format: uuid */
+            conversation_id: string;
+            privacy_generation: number;
+            revision: number;
+            /** @description 所有范围均已覆盖的连续前缀 */
+            covered_through: number;
+            /** @description 已覆盖的最远位置，不代表中间无缺口 */
+            covered_tail: number;
+            covered_messages: number;
+            total_messages: number;
+            /** @description 尚待惰性建立消息映射的旧轮次 */
+            unmapped_turns: number;
+            /** @enum {string} */
+            status: "not_started" | "queued" | "running" | "ready" | "failed";
+            /** Format: uuid */
+            next_cursor?: string;
+            items: components["schemas"]["ConversationTopic"][];
+        };
+        ConversationTopicAnchorPage: {
+            /** Format: uuid */
+            conversation_id: string;
+            privacy_generation: number;
+            next_cursor?: number;
+            items: components["schemas"]["ConversationMessageAnchor"][];
+        };
         TutorTurnPage: {
             conversation: components["schemas"]["TutorConversation"];
             next_cursor?: number;
@@ -4682,6 +4846,7 @@ export interface components {
                 ordinal: number;
                 status: string;
                 body_available: boolean;
+                message_anchors?: components["schemas"]["ConversationMessageAnchor"][];
                 source_manifest?: components["schemas"]["SourceManifest"];
                 citations?: components["schemas"]["MentorCitation"][];
                 output: string;
@@ -11217,6 +11382,132 @@ export interface operations {
         };
         responses: {
             /** @description 原运行回执，需继续查询或订阅 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listConversationTopics: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 最后完整提交的索引；未覆盖消息与尚未建立映射的旧轮次单独计数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationTopicPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listConversationTopicAnchors: {
+        parameters: {
+            query?: {
+                cursor?: number;
+                /** @description 向前分页；cursor 必须大于零；返回项仍按消息升序 */
+                before?: boolean;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+                topicID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 真实消息位置；next_cursor 继续同方向翻页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationTopicAnchorPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    locateConversationMessage: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+                messageID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 原始消息不改写；原 Messages 语义不变 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TutorTurnPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    requestConversationTopicIndex: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    operation_id: string;
+                    expected_index_revision: number;
+                    privacy_generation: number;
+                    direction_version?: number;
+                    source_selection?: components["schemas"]["SourceSelection"];
+                    confirm_destination?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 幂等运行回执；在 topics 中读取状态与进度 */
             202: {
                 headers: {
                     [name: string]: unknown;

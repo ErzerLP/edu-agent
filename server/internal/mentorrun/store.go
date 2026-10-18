@@ -231,6 +231,9 @@ func goalGate(ctx context.Context, tx pgx.Tx, space, goal string, version int64)
 }
 
 func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) error {
+	if kind == "completed" && item.Kind == "mentor" && item.ConversationID != "" && item.Saved && item.Status == "succeeded" {
+		item.TopicIndexPending = true
+	}
 	item.Version++
 	item.Watermark++
 	item.UpdatedAt = time.Now().UTC()
@@ -521,7 +524,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if sessionID != c.SessionID {
 		return Receipt{}, ErrConflict
 	}
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_mentor_runs WHERE session_id=$1 AND state->>'status' NOT IN ('succeeded','partial','failed','cancelled'))`, sessionID).Scan(&busy); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_mentor_runs WHERE session_id=$1 AND COALESCE(state->>'kind','mentor')<>'topic_index' AND state->>'status' NOT IN ('succeeded','partial','failed','cancelled'))`, sessionID).Scan(&busy); err != nil {
 		return Receipt{}, err
 	}
 	if busy {
@@ -588,7 +591,7 @@ func (s *Service) quota(ctx context.Context, tx pgx.Tx, additional int64) error 
 		return err
 	}
 	var reserved int64
-	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations))::bigint FROM learning_mentor_runs`).Scan(&reserved)
+	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_conversation_topics)+(SELECT count(*)*256 FROM learning_conversation_messages)+(SELECT count(*)*128 FROM learning_topic_anchors)+(SELECT count(*)*256 FROM learning_topic_index_heads)+(SELECT count(*)*256 FROM learning_topic_index_scopes))::bigint FROM learning_mentor_runs`).Scan(&reserved)
 	if err != nil {
 		return err
 	}

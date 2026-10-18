@@ -76,6 +76,7 @@ type Receipt struct {
 }
 
 type Meta struct {
+	TopicIndexPending bool      `json:"topic_index_pending,omitempty"`
 	ConversationID    string    `json:"conversation_id,omitempty"`
 	TeachingSessionID string    `json:"teaching_session_id,omitempty"`
 	Kind              string    `json:"kind,omitempty"`
@@ -113,16 +114,18 @@ type Interaction struct {
 }
 
 type Body struct {
-	ToolSteps      int                         `json:"tool_steps,omitempty"`
-	StudyExercise  *StudyExerciseState         `json:"study_exercise,omitempty"`
-	Assessment     *learning.AssessmentTask    `json:"assessment,omitempty"`
-	Study          *learningdirection.Revision `json:"study,omitempty"`
-	Studio         *StudioState                `json:"studio,omitempty"`
-	SourceManifest *knowledge.SourceManifest   `json:"source_manifest,omitempty"`
-	Citations      []SourceCitation            `json:"citations,omitempty"`
-	MemorySources  []MemorySource              `json:"memory_sources,omitempty"`
-	MemoryStatus   string                      `json:"memory_status,omitempty"`
-	HistoryCount   int                         `json:"history_count,omitempty"`
+	TopicProvenance bool                        `json:"topic_provenance,omitempty"`
+	TopicIndex      *TopicIndexState            `json:"topic_index,omitempty"`
+	ToolSteps       int                         `json:"tool_steps,omitempty"`
+	StudyExercise   *StudyExerciseState         `json:"study_exercise,omitempty"`
+	Assessment      *learning.AssessmentTask    `json:"assessment,omitempty"`
+	Study           *learningdirection.Revision `json:"study,omitempty"`
+	Studio          *StudioState                `json:"studio,omitempty"`
+	SourceManifest  *knowledge.SourceManifest   `json:"source_manifest,omitempty"`
+	Citations       []SourceCitation            `json:"citations,omitempty"`
+	MemorySources   []MemorySource              `json:"memory_sources,omitempty"`
+	MemoryStatus    string                      `json:"memory_status,omitempty"`
+	HistoryCount    int                         `json:"history_count,omitempty"`
 	// PDF 原件仅进入加密运行正文，不属于快照、模型输入或工具输出。
 	SourceFiles   map[string][]byte      `json:"source_files,omitempty"`
 	ChangeBase    *learningchange.Base   `json:"change_base,omitempty"`

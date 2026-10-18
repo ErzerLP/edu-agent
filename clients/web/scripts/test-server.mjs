@@ -69,6 +69,18 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       response.end(JSON.stringify({choices:[{message:{role:'assistant',content:'已读取目标，还需整理例子。'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}}))
       return
     }
+    if (payload.messages?.[0]?.content?.includes('整理对话的只读话题索引')) {
+      const batch = JSON.parse(payload.messages[1].content)
+      const anchor_ids = batch.messages.map(message => message.id)
+      const topics = ['TCP', '子网'].map(title => ({
+        id: batch.candidates.find(topic => topic.title === title)?.id ?? '', title, anchor_ids,
+        points: [{ text: '比较连接与地址的作用', anchor_ids }],
+        observations: [{ state: 'question_open', text: '继续比较两个概念', evidence: 'tutor_explanation', anchor_ids }],
+      }))
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ topics }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 } }))
+      return
+    }
     if (payload.messages?.[0]?.content?.includes('你是学习导师，围绕用户已确认的学习方向')) {
       const material = JSON.parse(payload.messages[1].content)
       const source = material.sources[0], fragment = source?.fragments[0]

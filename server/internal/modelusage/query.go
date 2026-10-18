@@ -189,7 +189,8 @@ func (s *Store) Tasks(ctx context.Context, actor identity.Credential, q Query) (
 		return p, err
 	}
 	rows, err := tx.Query(ctx, `SELECT t.id::text,t.space_id::text,t.kind,t.source,min(c.started_at),
-	 CASE WHEN EXISTS(SELECT 1 FROM learning_mentor_runs r WHERE r.id=t.origin_id AND r.device_id=$9 AND r.privacy_generation=$1 AND (r.state->>'body_available')::boolean AND r.expires_at>clock_timestamp()) THEN t.origin_id::text ELSE NULL END,`+sums+selected+`
+	 CASE WHEN EXISTS(SELECT 1 FROM learning_mentor_runs r WHERE r.id=t.origin_id AND r.device_id=$9 AND r.privacy_generation=$1 AND (r.state->>'body_available')::boolean AND r.expires_at>clock_timestamp()) THEN t.origin_id::text ELSE NULL END,
+	 CASE WHEN t.kind='topic_index' AND EXISTS(SELECT 1 FROM learning_tutor_conversations c WHERE c.id=t.origin_id AND c.device_id=$9 AND c.privacy_generation=$1 AND NOT c.deleted) THEN t.origin_id::text ELSE NULL END,`+sums+selected+`
 	 GROUP BY t.id HAVING (min(c.started_at),t.id)<($6,$7::uuid) ORDER BY min(c.started_at) DESC,t.id DESC LIMIT $8`, append(args(g, q), after.At, after.ID, q.Limit+1, actor.Device.ID)...)
 	if err != nil {
 		return p, err
@@ -197,7 +198,7 @@ func (s *Store) Tasks(ctx context.Context, actor identity.Credential, q Query) (
 	defer rows.Close()
 	for rows.Next() {
 		var item Task
-		if err = rows.Scan(append([]any{&item.ID, &item.SpaceID, &item.Kind, &item.Source, &item.StartedAt, &item.RunID}, targets(&item.Totals)...)...); err != nil {
+		if err = rows.Scan(append([]any{&item.ID, &item.SpaceID, &item.Kind, &item.Source, &item.StartedAt, &item.RunID, &item.ConversationID}, targets(&item.Totals)...)...); err != nil {
 			return p, err
 		}
 		p.Items = append(p.Items, item)

@@ -1675,3 +1675,30 @@ section:is([aria-label='学习进度'], [aria-label='到期复习']) p a { text-
   .chat-thinking-dots i, .chat-spinner, .chat-answer, .chat-answer[data-generating]::after { animation: none; }
   .notebook-workspace .chat-input { transition: none; }
 }
+
+/* Conversation topics share the toolbar and keep the chat input mounted. */
+.chat-toolbar { position: relative; flex-wrap: wrap; }
+.chat-topics { margin-left: auto; }
+.chat-topics-panel {
+  position: absolute; z-index: 30; right: 0; top: 100%; width: min(26rem, 100%);
+  max-height: min(65vh, 40rem); overflow: auto; padding: 1rem;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface, var(--background)); box-shadow: 0 12px 36px #0002;
+}
+.chat-topics-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.chat-topics-panel p { margin: .5rem 0; line-height: 1.6; }
+.chat-topics-hint { font-size: .85rem; color: var(--muted); }
+.chat-topics-list { list-style: none; padding: 0; margin: 1rem 0; }
+.chat-topics-list > li { padding: .75rem 0; border-top: 1px solid var(--border); }
+.chat-topics-list > li > button { display: flex; justify-content: space-between; gap: 1rem; width: 100%; padding: .5rem; text-align: left; border-radius: 6px; }
+.chat-topics-list ul { padding-left: 1.25rem; }
+.chat-topics-list p { font-size: .85rem; }
+.chat-topics-panel label { display: block; margin: .75rem 0; overflow-wrap: anywhere; }
+.chat-topic-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; font-size: .85rem; }
+.chat-topic-navigation > span { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-stream [data-message-id]:focus { outline: 2px solid var(--accent, #5578bd); outline-offset: 4px; border-radius: 8px; }
+@media (max-width: 640px) {
+  .chat-topics-panel { width: 100%; max-height: 60dvh; }
+  .chat-topic-navigation { width: 100%; }
+  .chat-topic-navigation .button { min-height: 44px; }
+}

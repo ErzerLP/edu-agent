@@ -1406,6 +1406,79 @@ paths:
       responses:
         "202": { description: 原运行回执，需继续查询或订阅, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations/{conversationID}/topics:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listConversationTopics
+      summary: 分页查看只读话题和整理进度，读取不调用模型
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, format: uuid } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200": { description: 最后完整提交的索引；未覆盖消息与尚未建立映射的旧轮次单独计数, content: { application/json: { schema: { $ref: "#/components/schemas/ConversationTopicPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations/{conversationID}/topics/{topicID}/anchors:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: topicID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listConversationTopicAnchors
+      summary: 按消息顺序读取话题位置
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: cursor, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: before, in: query, schema: { type: boolean, default: false }, description: 向前分页；cursor 必须大于零；返回项仍按消息升序 }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200": { description: 真实消息位置；next_cursor 继续同方向翻页, content: { application/json: { schema: { $ref: "#/components/schemas/ConversationTopicAnchorPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations/{conversationID}/messages/{messageID}:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: messageID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: locateConversationMessage
+      summary: 返回包含确切消息的一轮历史页，失效时不回退其他位置
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        "200": { description: 原始消息不改写；原 Messages 语义不变, content: { application/json: { schema: { $ref: "#/components/schemas/TutorTurnPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/conversations/{conversationID}/topic-index:
+    parameters:
+      - $ref: "#/components/parameters/MentorSpaceID"
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: requestConversationTopicIndex
+      summary: 主动整理已提交快照内、本次授权范围的未覆盖消息
+      description: study 必须提供当前 direction_version 和 source_selection。目的地改变时须确认。索引 revision 与对话发送 version 独立；失败不推进水位。临时对话不建立持久索引。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operation_id, expected_index_revision, privacy_generation]
+              properties:
+                operation_id: { type: string, format: uuid }
+                expected_index_revision: { type: integer, minimum: 0 }
+                privacy_generation: { type: integer, minimum: 1 }
+                direction_version: { type: integer, minimum: 1 }
+                source_selection: { $ref: "#/components/schemas/SourceSelection" }
+                confirm_destination: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        "202": { description: 幂等运行回执；在 topics 中读取状态与进度, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/exercises/{exerciseID}:
     parameters:
       - $ref: "#/components/parameters/MentorSpaceID"
@@ -5080,6 +5153,7 @@ components:
         source: { type: string, enum: [web, cli, server] }
         started_at: { type: string, format: date-time }
         run_id: { type: [string, 'null'], format: uuid, description: 仅原任务仍可读时提供；删除对话后为空 }
+        conversation_id: { type: [string, 'null'], format: uuid, description: 话题整理关联的可读对话；删除后为空 }
         totals: { $ref: '#/components/schemas/ModelUsageTotals' }
     ModelUsageCall:
       allOf:
@@ -6334,6 +6408,79 @@ components:
             text: { type: string, maxLength: 4096 }
             truncated: { type: boolean }
             page: { type: integer, minimum: 1 }
+    ConversationMessageAnchor:
+      type: object
+      required: [message_id, run_id, message_slot, ordinal]
+      properties:
+        message_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        message_slot: { type: integer, minimum: -1, description: -1 为展示回答；其他值为原 Messages 的用户消息位置 }
+        ordinal: { type: integer, minimum: 1 }
+    ConversationTopicEvidence:
+      type: object
+      required: [anchor_ids, scope_fingerprint, exercise_ids, privacy_generation, observed_at]
+      properties:
+        anchor_ids: { type: array, items: { type: string, format: uuid } }
+        scope_fingerprint: { type: string }
+        direction_revision: { type: string, format: uuid }
+        source_fingerprint: { type: string }
+        exercise_ids: { type: array, items: { type: string, format: uuid } }
+        privacy_generation: { type: integer, minimum: 1 }
+        knowledge_generation: { type: integer, minimum: 1 }
+        memory_generation: { type: integer, minimum: 1 }
+        observed_at: { type: string, format: date-time }
+    ConversationTopic:
+      type: object
+      required: [id, title, points, observations, anchor_count, revision, exercise_related]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        anchor_count: { type: integer, minimum: 0 }
+        revision: { type: integer, minimum: 1 }
+        exercise_related: { type: boolean }
+        points:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/ConversationTopicEvidence"
+              - type: object
+                required: [text]
+                properties:
+                  text: { type: string }
+        observations:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/ConversationTopicEvidence"
+              - type: object
+                required: [text, state, evidence]
+                properties:
+                  text: { type: string }
+                  state: { type: string, enum: [understood_in_chat, question_open, exercise_error_observed, unassessed] }
+                  evidence: { type: string, enum: [user_report, tutor_explanation] }
+    ConversationTopicPage:
+      type: object
+      required: [conversation_id, privacy_generation, revision, covered_through, covered_tail, covered_messages, total_messages, unmapped_turns, status, items]
+      properties:
+        conversation_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        revision: { type: integer, minimum: 0 }
+        covered_through: { type: integer, minimum: 0, description: 所有范围均已覆盖的连续前缀 }
+        covered_tail: { type: integer, minimum: 0, description: 已覆盖的最远位置，不代表中间无缺口 }
+        covered_messages: { type: integer, minimum: 0 }
+        total_messages: { type: integer, minimum: 0 }
+        unmapped_turns: { type: integer, minimum: 0, description: 尚待惰性建立消息映射的旧轮次 }
+        status: { type: string, enum: [not_started, queued, running, ready, failed] }
+        next_cursor: { type: string, format: uuid }
+        items: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/ConversationTopic" } }
+    ConversationTopicAnchorPage:
+      type: object
+      required: [conversation_id, privacy_generation, items]
+      properties:
+        conversation_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        next_cursor: { type: integer, minimum: 1 }
+        items: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/ConversationMessageAnchor" } }
     TutorTurnPage:
       type: object
       required: [conversation, items]
@@ -6351,6 +6498,7 @@ components:
               ordinal: { type: integer, minimum: 1 }
               status: { type: string }
               body_available: { type: boolean }
+              message_anchors: { type: array, items: { $ref: "#/components/schemas/ConversationMessageAnchor" } }
               source_manifest: { $ref: "#/components/schemas/SourceManifest" }
               citations: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MentorCitation" } }
               output: { type: string }

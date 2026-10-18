@@ -121,6 +121,7 @@ type ConversationPage struct {
 }
 
 type TutorTurn struct {
+	MessageAnchors []MessageAnchor           `json:"message_anchors,omitempty"`
 	ExerciseID     string                    `json:"exercise_id,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
 	Citations      []SourceCitation          `json:"citations,omitempty"`
@@ -469,6 +470,11 @@ func (s *Service) ReadConversation(ctx context.Context, actor identity.Credentia
 	if err = s.describeConversation(ctx, tx, &c); err != nil {
 		return err
 	}
+	return s.readConversationPage(ctx, tx, actor, space, c, after, limit, send)
+}
+
+func (s *Service) readConversationPage(ctx context.Context, tx pgx.Tx, actor identity.Credential, space string, c Conversation, after int64, limit int, send func(TurnPage) error) error {
+	id, generation := c.ID, c.Generation
 	rows, err := tx.Query(ctx, `SELECT t.run_id::text,t.ordinal,t.ciphertext,r.state FROM learning_tutor_turns t JOIN learning_mentor_runs r ON r.id=t.run_id WHERE t.conversation_id=$1 AND t.ordinal>$2 ORDER BY t.ordinal LIMIT $3`, id, after, limit+1)
 	if err != nil {
 		return err
@@ -526,6 +532,7 @@ func (s *Service) ReadConversation(ctx context.Context, actor identity.Credentia
 			return e
 		}
 		turn.SourceManifest, turn.Citations = body.SourceManifest, body.Citations
+		turn.MessageAnchors = displayAnchors(turn.RunID, turn.Ordinal, body)
 		if body.StudyExercise != nil {
 			turn.ExerciseID = body.StudyExercise.ID
 		}
@@ -642,10 +649,15 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 	if _, err = tx.Exec(ctx, `DELETE FROM learning_tutor_turns WHERE conversation_id=$1`, id); err != nil {
 		return err
 	}
+	for _, table := range []string{"learning_conversation_topics", "learning_topic_index_scopes", "learning_topic_index_heads"} {
+		if _, err = tx.Exec(ctx, `DELETE FROM `+table+` WHERE conversation_id=$1`, id); err != nil {
+			return err
+		}
+	}
 	if _, err = tx.Exec(ctx, `UPDATE learning_mentor_operations SET request_hash=decode(repeat('00',32),'hex') WHERE run_id IN (SELECT id FROM learning_mentor_runs WHERE session_id=$1)`, id); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE learning_tutor_conversations SET title=NULL,request_hash=''::bytea,provider='',endpoint='',deleted=TRUE,version=version+1 WHERE id=$1`, id); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE learning_tutor_conversations SET title=NULL,request_hash=''::bytea,provider='',endpoint='',topic_index_scope=NULL,deleted=TRUE,version=version+1 WHERE id=$1`, id); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -662,10 +674,13 @@ func turnBody(item row) Body {
 	if start < 0 || start > len(item.body.Messages) {
 		return Body{}
 	}
-	return Body{Study: item.body.Study, StudyExercise: item.body.StudyExercise, Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
+	return Body{TopicProvenance: true, Study: item.body.Study, StudyExercise: item.body.StudyExercise, MemorySources: item.body.MemorySources, Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
 }
 
 func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
+	if item.Kind == "topic_index" {
+		return s.saveTopicState(ctx, tx, item)
+	}
 	if item.ConversationID == "" || !item.Saved || !item.BodyAvailable {
 		return nil
 	}
@@ -679,6 +694,12 @@ func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE learning_tutor_turns SET ciphertext=$2 WHERE run_id=$1`, item.RunID, raw)
+	if err == nil && terminal(item.Status) {
+		var ordinal int64
+		if err = tx.QueryRow(ctx, `SELECT ordinal FROM learning_tutor_turns WHERE run_id=$1`, item.RunID).Scan(&ordinal); err == nil {
+			err = s.mapTopicMessages(ctx, tx, item.ConversationID, item.RunID, item.Generation, ordinal, body)
+		}
+	}
 	return err
 }
 
@@ -796,7 +817,11 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 			history = committedMessages(item.body.Messages)
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE learning_tutor_conversations SET version=version+1,provider=$2,endpoint=$3,title=$4,updated_at=clock_timestamp() WHERE id=$1`, c.ID, view.Provider, view.Endpoint, c.titleCipher); err != nil {
+	var scope any
+	if c.Saved {
+		scope = topicScope(Body{SourceManifest: manifest, Study: request.study})
+	}
+	if _, err = tx.Exec(ctx, `UPDATE learning_tutor_conversations SET version=version+1,provider=$2,endpoint=$3,title=$4,topic_index_scope=$5,updated_at=clock_timestamp() WHERE id=$1`, c.ID, view.Provider, view.Endpoint, c.titleCipher, scope); err != nil {
 		return nil, err
 	}
 	return history, nil

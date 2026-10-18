@@ -1,6 +1,6 @@
 # Studio 规划与分段生成：设计
 
-状态：Shape 待审（2026-10-18）。对应 [brief](../comet/specs/studio-staged-generation/brief.md)、[spec](../comet/specs/studio-staged-generation/spec.md)。前置为 [U 用量台账](model-usage.md)和 [T 话题及受限来源读取](conversation-topics.md)。S1–S3 暂按建议默认值，用户审阅后才进入 Build。
+状态：Shape 已确认（2026-10-18）。对应 [brief](../comet/specs/studio-staged-generation/brief.md)、[spec](../comet/specs/studio-staged-generation/spec.md)。前置为 [U 用量台账](model-usage.md)和 [T 话题及受限来源读取](conversation-topics.md)。S1–S3 已确认采用建议默认值，前置契约稳定后进入相应 Build。
 
 ## 1. 现状与方案选择
 
@@ -35,7 +35,7 @@
 5. **立即校验**：按确切源版本、node revision、range、文本和 hash 核验引用，保存校验后的结构化部分；不等最终汇总才校验。范围缺口作为 coverage 元数据，不要求模型为“未覆盖”伪造引用。
 6. **汇总**：全部单元完成后，用一次简短调用读取有界段落摘要、允许复用的已核验 claim/citation ID 和未覆盖目录，产生总览／衔接／缺口。只可重述已支持的事实；不允许新取全文或扩展来源。不把完整产物重新塞进模型。
 
-窗口计算使用 T 的 C/O/M/F 规则，规划／分段／修复／汇总分别估算，所有输入含 schema。超大规划上下文分页缩小，超大正文拆子单元；最终合并通过确定性程序完成，不再做一次全量模型请求。用户确认的结构和有限片段决定工作量，不用累计 Token／调用次数阈值代替预算。
+窗口计算使用 T 的 C/O/M/F 规则，规划／分段／修复／汇总分别估算，所有输入含 schema。超大规划上下文分页缩小，超大正文拆子单元；最终合并通过确定性程序完成，不再做一次全量模型请求。用户确认的大纲和有限片段决定步数，不用累计 Token／调用次数阈值代替预算，也不受 U 的“每轮工具调用上限”影响。
 
 推理模型的 reasoning Token 计入输出。沿 `settings.StudioClient` 和 `integrations/llm` 的 API style 适配，在配置支持时通过 Responses native json_schema；普通 Chat Completions 仍需本地闭合结构校验，不假设有原生 schema。不能把 Responses 强塞进共享 agentcore。输出因长度截断而 JSON 不完整时不保存为成功：保留其他单元，允许缩小当前单元的内容粒度后重试，或说明需要调整单次输出配置，不自动提高 `output_tokens`。
 
@@ -49,7 +49,7 @@
 | --- | --- |
 | `learning_studio_jobs` | `id,space_id,device_id,privacy_generation,version,status,kind,active_plan_revision,confirmed_plan_revision,usage_task_id,target_artifact_id,expected_artifact_version,created_at`；输入快照和关联范围放密文。 |
 | `learning_studio_plans` | `(job_id,revision)` 唯一；规划密文、输入指纹、方向／来源／状态／话题快照身份、确认时间、schema version。每次修改追加修订，不覆盖已确认版本。 |
-| `learning_studio_plan_messages` | 按 S1 保存已发送的修改文字、模型修改说明、operation 及顺序，全部加密；不保存未发送草稿。 |
+| `learning_studio_plan_messages` | 按已确认的 S1 保存已发送的修改文字、模型修改说明、operation 及顺序，全部加密；不保存未发送草稿。 |
 | `learning_studio_units` | `(job_id,plan_revision,unit_id)` 唯一；顺序、父 section／question ID、输入指纹、状态、执行 run ID、attempt、结果密文及引用；只校验成功才有 committed result。 |
 | `learning_studio_job_operations` | device、operation ID、请求哈希版本、job ID、回执；创建、修改、确认、停止／继续均可核对。 |
 | `learning_studio_section_revisions` | `(artifact_id,version,section_id)` 唯一，保存发布后的不可变部分和引用；不能因删除生成 job 丢失已发布内容。 |
@@ -103,7 +103,7 @@ stateDiagram-v2
 | 发布版本冲突 | 保留 job 和已完成部分，提示目标内容已更新；通过明确“另存为新产物”或重新选择目标版本解决，不覆盖较新的笔记。 |
 | 未知外部结果 | 不宣称 exactly-once 调用；检查原 stage 是否已提交，只有未提交才重试，新 attempt 新计数。业务发布和题目映射幂等。 |
 
-按 S3，stopped／failed 下已完成部分可查看，不作为完成产物、不开放部分测验。最终 `coverage=partial` 表示相对于所选资料还有未覆盖范围，**不等于执行只完成了 3/8**；已确认八部分全部完成仍可能 coverage partial。两种状态必须分开显示。
+按已确认的 S3，stopped／failed 下已完成部分可查看、可从已保存进度继续；全部规划内容及汇总完成后才发布产物并开放测验，不提前采用部分结果或开放部分测验。最终 `coverage=partial` 表示相对于所选资料还有未覆盖范围，**不等于执行只完成了 3/8**；已确认八部分全部完成仍可能 coverage partial。两种状态必须分开显示。
 
 ## 6. API 草案与面板
 
@@ -129,7 +129,7 @@ Studio 面板为“规划／生成进度／结果”三个阶段。规划修改�
 
 ### 测验
 
-按 S2 首版默认 3 题、支持现有 1–8 题，简答／解释均沿开放式文字回答内核，不新增客观题自动判分。每题规划含稳定 ID、知识点、难度、题型与源章节；用户修改“更难一点”更新规划，仍由确认开始。
+按已确认的 S2，首版只做文字作答的开放题，分简答和解释两类，难度可选；默认 3 题、支持现有 1–8 题，沿用开放式文字回答内核。选择题、自动判分以后另做 Shape。每题规划含稳定 ID、知识点、难度、题型与源章节；用户修改“更难一点”更新规划，仍由确认开始。
 
 逐题生成 prompt、rubric、allowed_help 和核验引用，均保存为单元。题目汇总只描述练习覆盖和建议顺序，不提前暴露答案或 rubric。全部完成后发布一个 quiz artifact/version；保留现有 quiz 可读形状和 question 顺序，生成过程本身不创建学习会话。
 

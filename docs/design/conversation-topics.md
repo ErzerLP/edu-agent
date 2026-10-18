@@ -1,6 +1,6 @@
 # 对话话题索引与上下文压缩：设计
 
-状态：Shape 待审（2026-10-18）。对应 [brief](../comet/specs/conversation-topics/brief.md)、[spec](../comet/specs/conversation-topics/spec.md)，前置为 [U](model-usage.md)。T1 暂按建议默认值。
+状态：Shape 已确认（2026-10-18）。对应 [brief](../comet/specs/conversation-topics/brief.md)、[spec](../comet/specs/conversation-topics/spec.md)，前置为 [U](model-usage.md)。T1 已确认采用建议默认值。
 
 ## 1. 现状与选择
 
@@ -104,7 +104,7 @@
 
 worker 在读取、外发前、结果提交和响应输出均检查 gate。清除屏障取消在途调用，旧 generation 的摘要即使完成也不能提交。撤销来源链接后不从旧摘要恢复正文；响应与 UI 同样不能显示失效摘要。用量由 U 按其 owner 清除。
 
-旧数据按 T1 惰性补建，不在 migration 中调用模型。首次只创建必要锚点并按原水位分批整理；历史格式不可识别时保留现有 schema 错误，不能解析成空历史。现有客户端不需要新字段；新增 topics API 独立，原历史 DTO 仅可增加稳定 message 标识，不改变旧 Messages 意义。关闭新 UI 不删除已保存索引，也不回退到无界历史组装。
+按已确认的 T1，升级或仅打开页面不自动外发旧对话内容，migration 不调用模型。用户继续该对话、主动“整理话题”或使用“整理本次对话”时，才在当前授权范围内补建必要锚点并从水位分批整理；界面显示整理进度和未覆盖范围。历史格式不可识别时保留现有 schema 错误，不能解析成空历史。现有客户端不需要新字段；新增 topics API 独立，原历史 DTO 仅可增加稳定 message 标识，不改变旧 Messages 意义。关闭新 UI 不删除已保存索引，也不回退到无界历史组装。
 
 ## 8. 垂直批次与退出标准
 

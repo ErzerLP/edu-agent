@@ -1,6 +1,6 @@
 # 用量台账与取消预算：设计
 
-状态：Shape 待审（2026-10-18）。对应 [brief](../comet/specs/model-usage/brief.md)、[spec](../comet/specs/model-usage/spec.md)；依赖和 Ready 判定见 [Supervisor](learning-generation-shape.md)。U1 未决定前，范围暂按“全部服务端模型调用，不含 CLI 本地直连”设计。
+状态：Shape 已确认（2026-10-18）。对应 [brief](../comet/specs/model-usage/brief.md)、[spec](../comet/specs/model-usage/spec.md)；依赖和 Ready 判定见 [Supervisor](learning-generation-shape.md)。U1 确认统计全部服务端模型调用，不含 CLI 本地直连；U2 确认工具调用上限默认不限、可配置。
 
 ## 1. 现状与方案
 
@@ -25,7 +25,7 @@
 
 不将 token estimator 结果写入实际用量。合法但没有 usage 的拒绝响应保留未知；提供 usage 的 schema 错误或输出截断照样入账。总量与细项明显矛盾时保留原始数字的结构化审计值及 `usage_inconsistent` 标记，页面不生成伪精确合计；不存整个响应包。
 
-研究里的搜索／抓取不产生模型 Token，也不进入“模型调用次数”；其次数预算同样取消，原有 URL、重定向、响应大小、来源数和授权约束保留。模型探测、多次 structured-output 修复、知识目录选择与摘要等模型请求都必须计数。独立 CLI 直连的不可见范围按 U1 明示。
+研究里的搜索／抓取不产生模型 Token，也不进入“模型调用次数”；其次数预算同样取消，原有 URL、重定向、响应大小、来源数和授权约束保留。模型探测、多次 structured-output 修复、知识目录选择与摘要等模型请求都必须计数。按 U1，用量页明确不含 CLI 本地直连。
 
 ## 3. 数据模型与 migration 草案
 
@@ -33,12 +33,14 @@
 
 | 表 | 主要字段与约束 |
 | --- | --- |
-| `learning_model_tasks` | `id`、`privacy_generation`、可空 `space_id`、`actor_device_id`、`kind`、`origin_id`、`created_at`；同代次、任务类型、origin 唯一；保护任务关联信息。 |
+| `learning_model_tasks` | `id`、`privacy_generation`、可空 `space_id`、`source`（web／cli／server）、可空 `actor_device_id`、`kind`、`origin_id`、`created_at`；同代次、任务类型、origin 唯一；保护任务关联信息。 |
 | `learning_model_calls` | `id`、`task_id`、`privacy_generation`、`stage`、`attempt_key`、`attempt_no`、`dispatch_state`、开始／结束时间、provider/model/api_style、配置指纹；输入／输出／推理／总 Token 为 nullable bigint，且非负；每字段有 reported 状态。 |
 | 调用约束 | `(task_id, attempt_key)` 唯一；同一外发尝试的 Finish 幂等，不能以应用重试复用 attempt_key；关联 task 与 call 的 generation 必须相同。 |
 | 查询索引 | `(privacy_generation, started_at, id)`、`(privacy_generation, space_id, started_at)` 的等价关联索引、task ID 与模型索引；明细 cursor 分页。 |
 
 首版直接聚合台账，不建需要独立回补的永久累计表；以后添加缓存也必须按 generation 分区、可删除且可由同一台账重算。无学习区的模型探测／后台操作用明确的全局归属，不伪造一个学习区。
+
+来源与设备归属从首版 migration 起提供：`source` 必填，标识任务发起来源；调用继承根任务的来源与设备。独立后台任务用 `server`，无发起设备时 `actor_device_id` 为空，不伪造设备。归属由服务端受理上下文确定。后续 [#122](https://github.com/ErzerLP/edu-agent/issues/122) 的 CLI 网关任务使用 `cli` 和已认证设备，直接写入此结构，无需为接入另改数据库结构；本地直连不入账。
 
 关系标识和计数仅用于查询；任务标题、可读目的地等如确需保存，使用现有 AEAD 机制加密并纳入轮换，不存源输入／内容哈希来代替正文。AAD 绑定用途、实体、代次。只允许 owner 写计数，客户端不能提交“已消费 Token”。
 
@@ -67,6 +69,7 @@
 | Studio、评估、教学、知识选择 | `settings.StudioClient`、`TeachingClient` 和 `integrations/llm` 共用同一计数端口；解析 nullable usage，覆盖 Chat Completions 与 Responses。 |
 | 设置探测 | `settings/probe.go` 每个真正的模型请求单独尝试，归全局用途 `model_probe`；搜索探测不进入模型台账。 |
 | 未来 #117／#118 | 强制传 task、stage、attempt_key、generation；自动摘要有独立 task，Studio 多 run 共享同一个 job 根任务。 |
+| 后续 #122 模型网关 | 默认 CLI 模型请求经服务端，归 `cli` 与已认证设备，复用台账及工具调用上限设置；保留不统计的本地直连。独立 Shape 在 U 之后，不在 U/T/S 实现网关或 CLI 改造。 |
 
 计数只在一个外发层产生，业务结果层仅附加结果关联。流式响应采用受限 SSE／JSON usage 观察器，不缓冲整个输出、不改变背压、不记录正文；正常 `Close`、错误和取消都结算。完成标志和输出截断属于业务结果，不能抹去 usage。所有自动协议回退必须经过此层。
 
@@ -96,7 +99,17 @@
 
 **幂等兼容**：为新操作增加规范化哈希版本；历史操作先按旧版本完整载荷核对回执，不先删预算字段重算导致冲突。新操作哈希仍绑定用户提交载荷，包括收到的兼容字段；虽然预算无执行意义，同 operation 改载荷仍冲突。缺省与显式字段的规范化规则随 API 固定，不能随配置变化。
 
-`output_tokens` 继续写入协议对应的单次输出字段（Chat Completions 的 max_tokens／对应适配字段、Responses 的 max_output_tokens），推理消耗在其内。`context_tokens` 包含输入、输出预留和安全余量。不得通过设置假大上限绕过它们。取消任务预算后仍保留有意义的有限计划、一次修复策略和失败后用户重试，不能用累计请求阈值伪装预算；agent 循环发现无进展应报告失败／等待输入，而不是要求“充值”或追加 Token。
+`output_tokens` 继续写入协议对应的单次输出字段（Chat Completions 的 max_tokens／对应适配字段、Responses 的 max_output_tokens），推理消耗在其内。`context_tokens` 包含输入、输出预留和安全余量。不得通过设置假大上限绕过它们。取消任务预算后仍保留有意义的有限计划、一次修复策略和失败后用户重试，不能用累计请求阈值伪装预算。
+
+### 每轮工具调用上限（U2）
+
+设置新增“每轮工具调用上限”，拟字段 `max_tool_steps`：`null` 表示不限，默认 `null`；设置值只能是正整数，拒绝零、负数、小数、错误类型和整数溢出，不用零或假大数表达不限。此项适用于服务端导师对话、研究等 agent 工具循环，与模型 HTTP 调用次数、Token 台账及旧预算余额分开。
+
+默认不限时不因步数停止，也不增加默认生效的重复调用检测；重复检测可作为以后的可选项。设置上限后，达到时参考 opencode 的收尾方式：收回工具，最后一步仅让模型用文字说明当前进展和还缺什么，再进入可继续的暂停状态。界面显示“继续”，用户点击后重新计数，从已有进展接着执行；不直接报上限错误，不要求增额或追加 Token。收尾模型调用照常进入台账。
+
+Studio 分段生成的工作量由确认后的大纲决定，不读取此上限，不因它暂停。该设置不能用于恢复累计请求或 Token 预算。#122 落地后 CLI 与网页共用此设置，CLI 接入留给该独立 Shape。
+
+兼容时旧设置缺少此字段按不限读取，更新其他设置而省略此字段时保留已有值；旧任务及 checkpoint 没有工具步数时不从 `requests_used` 或旧预算余额推导。恢复旧预算暂停仍遵从上文用户触发规则。新增暂停与旧 `paused_budget` 区分，旧 CLI 的服务端请求继续兼容，不以本 child 要求 CLI 更新。设置、服务端循环及暂停／继续展示归 U-C。
 
 ## 7. 隐私、并发与旧数据
 
@@ -111,7 +124,7 @@
 ### U-A：一次对话的真实用量可查
 
 - **结果**：用户完成一次服务端对话，在独立用量页查看该任务的调用明细、区累计和全局累计。
-- **范围**：新台账／查询／隐私／轮换、导师出口及 Web 页面；最小 migration 和 app 装配一起交付。
+- **范围**：新台账／查询／隐私／轮换、导师出口及 Web 页面；首版 migration 即含来源和设备归属，连同 app 装配一起交付。
 - **延期**：其他模型出口、取消预算、旧暂停恢复；UI 明示此批统计覆盖范围，不能称全部已接入。
 - **退出标准**：真实 HTTP 模型桩覆盖成功、缺 usage、推理计数、超时、双回调与重启；查询聚合不重复；清除后迟到结果不能回写。相关 Go package、数据库迁移和页面检查通过，更新覆盖说明。
 - **重型证据**：多 provider 真实模型和跨浏览器放到候选；本批已有一条真实生产入口而非只有表或 mock。
@@ -124,10 +137,10 @@
 - **退出标准**：逐个生产模型出口映射到台账；流式、非流式、Chat Completions／Responses、兼容回退各有相关验证；搜索请求不误计为模型调用。检查缺 context 的出口并修复，不要求改共享包协议。
 - **重型证据**：最终候选抽查真实 DeepSeek 推理 usage、截断响应及不同 API style；不以桩数据证明 provider 一定返回推理字段。
 
-### U-C：无累计预算且旧任务可恢复
+### U-C：无累计预算、可选工具上限与继续
 
-- **结果**：所有入口无预算输入，旧小预算不阻断，旧暂停可由用户继续。
-- **范围**：mentorrun 的 worker／core／command／query／research／assessment_ports／study_exercise_ports、settings 校验、HTTP 兼容和相关 Web 表单。
-- **延期**：长对话与分段生成留给 T/S，明确当前旧上下文限制。
-- **退出标准**：极小旧预算、字段省略、旧哈希回执、旧暂停升级、停止后不再派发均通过最小验证；保留输出／窗口／权限门禁；旧 CLI 请求兼容检查通过，无 CLI 源码改动。文档和 OpenAPI 在 Build 同步。
+- **结果**：所有入口无预算输入，旧小预算不阻断，旧暂停可由用户继续；工具调用默认不限，自设上限后说明进展并可继续。
+- **范围**：mentorrun 的 worker／core／command／query／research／assessment_ports／study_exercise_ports、settings 字段与校验、HTTP 兼容和相关 Web 表单；包含工具步数、收回工具后的收尾、暂停及重新计数继续。
+- **延期**：长对话与分段生成留给 T/S，明确当前旧上下文限制；CLI 共用设置和模型网关留 #122，不新增默认重复检测。
+- **退出标准**：极小旧预算、字段省略、旧哈希回执、旧暂停升级、停止后不再派发均通过最小验证；工具上限缺省／不限时不因步数暂停，正整数校验、到达上限收尾说明、点击继续重新计数及 Studio 不受影响均有相关验证；保留输出／窗口／权限门禁；旧 CLI 请求兼容检查通过，无 CLI 源码改动。文档和 OpenAPI 在 Build 同步。
 - **重型证据**：child Candidate 才核对完整 U spec、代表性旧 CLI 和真实 provider；Supervisor 完成前不能宣称 T/S 场景通过。

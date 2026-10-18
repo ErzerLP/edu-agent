@@ -60,6 +60,7 @@ func TestPostgreSQLStudioGenerationPublishesAndRecovers(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.work(t)
+		assertTaskUsage(t, f, receipt.RunID, "studio", "studio_"+value, 1)
 		snapshot := f.snapshot(t, receipt.RunID)
 		if snapshot.Status != "succeeded" || snapshot.Studio == nil || snapshot.Studio.Result == nil {
 			t.Fatalf("not published: %+v", snapshot)

@@ -191,6 +191,8 @@ func TestPostgreSQLResearchPipelineAdoptionAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := f.snapshot(t, r.RunID)
+	// 搜索及两次网页抓取沿用旧预算，但只把综合模型的 HTTP 尝试计入台账。
+	assertTaskUsage(t, f, r.RunID, "research", "checking_synthesis", 1)
 	if result.Status != "partial" || result.Research == nil || result.Research.Synthesis == nil {
 		t.Fatalf("没有真实部分研究结果：%+v", result)
 	}

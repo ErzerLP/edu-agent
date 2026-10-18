@@ -29,8 +29,12 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 40 || latest.name != "000040_study_exercises.sql" || len(latest.checksum) != 64 {
-		t.Fatalf("对话练习迁移未正确嵌入: %s", latest.name)
+	if latest.version != 42 || latest.name != "000042_model_usage_server_exits.sql" || len(latest.checksum) != 64 {
+		t.Fatalf("服务端模型用量迁移未正确嵌入: %s", latest.name)
+	}
+	study := items[39]
+	if study.version != 40 || study.name != "000040_study_exercises.sql" {
+		t.Fatalf("对话练习迁移未保留: %s", study.name)
 	}
 	previous := items[31]
 	if previous.version != 32 || previous.name != "000032_tutor_history.sql" {

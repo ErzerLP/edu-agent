@@ -138,7 +138,7 @@ Studio 分段生成的工作量由确认后的大纲决定，不读取此上限�
 - 查询接口要求明确的 `from,to`，复用 IANA 时区、周一周界与 `[from,to)`；汇总在同一数据库快照内计算，任务／调用用绑定身份、代次和筛选的游标分页。当前 `learning:read` 可以读取所有学习区（含归档区）；原导师任务跳转还受原设备及正文可读状态约束。
 - 台账只存计数、模型标识、目的地摘要和必要 UUID 归属，不存标题、原始端点或新的密文，因此轮换没有新增重封装字段；新表已纳入轮换停机锁。隐私清除删除任务并级联删除调用，验证器检查两表，旧代次不能结算。
 - Web `/app/usage` 提供合计、每项未知数、日／周／月、模型与学习区筛选、任务和调用明细，并标明仅覆盖导师对话、统计起点及隐私清除语义。浏览器使用既有身份／代次隔离和 no-store 请求。
-- U-B 的其他出口，以及 U-C 的预算取消、工具上限和旧暂停兼容尚未实施；本批保留现有预算执行行为。真实多 provider、CLI 网关和多浏览器证据仍不属于本批。
+- 其他出口的接入见下述 U-B；U-C 的预算取消、工具上限和旧暂停兼容尚未实施。U-A 保留现有预算执行行为；真实多 provider、CLI 网关和多浏览器证据仍不属于该批。
 
 ### U-B：全部服务端模型出口可追溯
 
@@ -147,6 +147,31 @@ Studio 分段生成的工作量由确认后的大纲决定，不读取此上限�
 - **延期**：预算字段和旧暂停语义移除留给 U-C；CLI 直连遵从 U1。
 - **退出标准**：逐个生产模型出口映射到台账；流式、非流式、Chat Completions／Responses、兼容回退各有相关验证；搜索请求不误计为模型调用。检查缺 context 的出口并修复，不要求改共享包协议。
 - **重型证据**：最终候选抽查真实 DeepSeek 推理 usage、截断响应及不同 API style；不以桩数据证明 provider 一定返回推理字段。
+
+#### U-B 实现覆盖（2026-10-18）
+
+计数仍只发生在实际 HTTP 外发层。worker 出口复用 `budgetTransport` 的身份、配置、租约、资料链接、ReadPermit 和预算门禁；其余出口由 settings 装配 `modelusage.Transport`，业务只附加任务上下文。每次协议回退、网络重试或结构化修复均生成新的 attempt；搜索、网页抓取、能力缓存的 HEAD 检查不计模型调用。
+
+| 生产出口 | kind / stage | 根任务与接入 |
+| --- | --- | --- |
+| 导师 modelclient Complete／Stream（含来源问答） | `mentor / mentor` | run ID；U-A transport 保留 |
+| 学习方向 `generateCited` | `mentor / study_answer` | run ID；U-A 观察器保留 |
+| Studio `generateStudio` → llm | `studio / studio_guide, studio_brief, studio_quiz` | 当前实现没有独立多阶段 job，run ID 即根任务；接入同一预算 transport |
+| 研究综合／开学准备 `generateCited` | `research / checking_synthesis, preparing_activity` | 研究／开学根 run ID，修复不拆任务；接入同一预算 transport |
+| 自动练习评估 `assessmentChat` → tutormodel | `assessment / assessment` | 既有 assessment task 的 attempt ID；接入同一预算 transport |
+| 教学内容选段修改 → modelclient | `content_edit / content_edit` | 修改 run ID；复用已装配的 modelclient 观察器 |
+| 教学 `tutormodel.Generate` | `teaching / route, activity, assessment, free_answer, explanation` | proposal request ID；教学 client transport |
+| 规划建议 `generatePlanning` → tutormodel | `planning / planning` | 本次生成 operation ID；教学 client transport |
+| 离线备课 → tutormodel | `offline_prepare / activity` | 备课 operation ID，多活动及重试共用根任务；教学 client transport |
+| 离线评估 → tutormodel | `offline_assessment / assessment` | outbox job ID，沿用持久任务 generation 和原目标学习区；教学 client transport |
+| 知识检索 → llmselector | `knowledge / directory_selection` | 每次检索独立根 ID，所有目录层共用；教学 client transport |
+| settings 模型探测／旧能力 API | `model_probe / teaching, mentor, capabilities` | 每次探测独立根 ID，全局归属；共用 transport |
+
+- source 和设备继承服务端认证上下文：Web session 为 `web`，已认证服务端 CLI 请求为 `cli`；独立后台工作为 `server`、无设备。提案、规划及备课的 request／operation ID 原按设备隔离，写入台账时按设备与用途派生稳定 UUID origin，避免跨设备复用 ID 合并任务；重试仍归同一根任务。探测不伪造学习区。教学配置、模型和目的地摘要与实际 client 一起冻结，不保存提示词、正文、原始端点或凭据。
+- 同步调用记录配置的 HTTP 截止时间及短结算余量；worker 调用继续使用 run 租约，评估通过已有 task → run 绑定查租约。现有清理流程将过期的已外发尝试转为 `outcome_unknown`，不为统计重新外发；同步调用结算失败也不会因服务进程仍存活而一直保持处理中。
+- 现有知识摘要是 `knowledge_node_artifacts` 的已存储产物读取，仓库没有独立模型摘要／话题整理生成出口，因而没有虚构此类调用。`app.buildModelClient` 仅被配置兼容测试使用，运行时由带台账的 `settings.TeachingClient` 装配；`modelHealthProbe` 未接入运行时，readiness 读取保存的设置探测结果。
+- `000042_model_usage_server_exits.sql` 增加可空的 `full_started_at` 和同步调用 `lease_until`，不新建表。原 coverage 表只有一个起点，设置文件可不配置，构建常量不能代表实际部署时间；同步调用也没有可复用的持久 run 租约，因此需要这两个字段。U-B 首次启动、开始受理前写入全覆盖起点，重启和隐私清除均保留。API 同时返回首版统计与全覆盖起点，Web 明示“全部服务端调用”、此前仅覆盖导师及不含 CLI 本地直连，并按用途展示任务和阶段。
+- 本批保持原预算与暂停行为，不改 agentcore 协议、CLI 或 U-C。发布仍须遵守排空旧 worker 后切换版本的顺序；全覆盖时间不回填此前调用。
 
 ### U-C：无累计预算、可选工具上限与继续
 

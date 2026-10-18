@@ -5047,11 +5047,12 @@ components:
         destination: { type: string, description: 不含端点或秘密的目的地标识，仅用于归类 }
     ModelUsageSummary:
       type: object
-      required: [privacy_generation, coverage_since, coverage, from, to, timezone, grain, totals, buckets, models]
+      required: [privacy_generation, coverage_since, full_coverage_since, coverage, from, to, timezone, grain, totals, buckets, models]
       properties:
         privacy_generation: { type: integer, format: int64 }
         coverage_since: { type: string, format: date-time }
-        coverage: { type: string, const: mentor }
+        full_coverage_since: { type: [string, 'null'], format: date-time, description: 首次启用全部服务端出口统计的部署时间；不随隐私清除或重启改变 }
+        coverage: { type: string, enum: [mentor, server] }
         from: { type: string, format: date-time }
         to: { type: string, format: date-time }
         timezone: { type: string }

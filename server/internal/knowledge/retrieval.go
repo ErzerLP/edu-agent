@@ -8,6 +8,9 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 )
 
 const (
@@ -33,6 +36,7 @@ type queueItem struct {
 }
 
 func (s *Service) Retrieve(ctx context.Context, command RetrievalCommand) (RetrievalResult, error) {
+	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "knowledge", OriginID: s.newUUID(), Stage: "directory_selection", SpaceID: learningspace.Scope(ctx)})
 	if err := s.checkScopeAdapter(ctx); err != nil {
 		return RetrievalResult{}, err
 	}

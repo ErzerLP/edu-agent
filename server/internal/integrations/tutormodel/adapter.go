@@ -9,6 +9,8 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/learning"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 )
 
 type ChatClient interface {
@@ -38,6 +40,7 @@ func (e *modelError) Unwrap() error         { return e.cause }
 func (e *modelError) ModelCategory() string { return e.category }
 
 func (a *Adapter) Generate(ctx context.Context, request learning.ProposalRequest) (json.RawMessage, error) {
+	ctx = modelusage.ForTask(ctx, modelusage.TaskContext{Kind: "teaching", OriginID: request.RequestID, Stage: string(request.Type), SpaceID: learningspace.Scope(ctx)})
 	schema := schemaFor(request.Type)
 	if schema == nil {
 		return nil, &modelError{category: "invalid_request"}

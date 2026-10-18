@@ -122,6 +122,10 @@ func (s *Store) BeginOfflineEvaluation(ctx context.Context, message outbox.Messa
 	if err != nil {
 		return learning.OfflineEvaluationSnapshot{}, err
 	}
+	var space string
+	if err = tx.QueryRow(ctx, `SELECT space_id::text FROM learning_goal_revisions WHERE id=$1`, activity.GoalRevisionID).Scan(&space); err != nil {
+		return learning.OfflineEvaluationSnapshot{}, err
+	}
 	attempt, err := loadAttemptForView(ctx, tx, attemptID)
 	if err != nil {
 		return learning.OfflineEvaluationSnapshot{}, err
@@ -159,7 +163,8 @@ func (s *Store) BeginOfflineEvaluation(ctx context.Context, message outbox.Messa
 		artifact = &value
 	}
 	return learning.OfflineEvaluationSnapshot{
-		Task: task, Attempt: attempt, Activity: activity, AggregateVersion: aggregateVersion,
+		SpaceID: space,
+		Task:    task, Attempt: attempt, Activity: activity, AggregateVersion: aggregateVersion,
 		AttemptCount: attempts, RetryDeadline: retryDeadline, RetryExpired: retryExpired,
 		LastErrorCategory: lastErrorCategory, Now: now.UTC().Truncate(time.Microsecond),
 		LeaseToken: message.LeaseToken, ModelArtifact: artifact,

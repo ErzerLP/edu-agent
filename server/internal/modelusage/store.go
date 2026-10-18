@@ -4,14 +4,20 @@ import (
 	"context"
 	"errors"
 
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store struct{ pool *pgxpool.Pool }
+type Store struct {
+	pool    *pgxpool.Pool
+	permits *privacy.ReadPermitManager
+}
 
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func New(pool *pgxpool.Pool) *Store {
+	return &Store{pool: pool, permits: privacy.DefaultReadPermits}
+}
 
 func gate(ctx context.Context, tx pgx.Tx, generation int64) error {
 	var current int64
@@ -38,9 +44,9 @@ func (s *Store) BeginTx(ctx context.Context, tx pgx.Tx, r BeginRequest) (CallRef
 	if err != nil {
 		return ref, err
 	}
-	err = tx.QueryRow(ctx, `INSERT INTO learning_model_calls(id,task_id,privacy_generation,stage,attempt_key,attempt_no,lease_id,dispatch_state,provider,destination,model,api_style,configuration)
-	 SELECT $1,$2,$3,$4,$5,COALESCE(max(attempt_no),0)+1,$6,'prepared',$7,$8,$9,$10,$11 FROM learning_model_calls WHERE task_id=$2
-	 ON CONFLICT(task_id,attempt_key) DO UPDATE SET attempt_key=excluded.attempt_key RETURNING id::text`, ref.ID, task, r.Generation, r.Stage, r.AttemptKey, r.LeaseID, r.Provider, r.Destination, r.Model, r.APIStyle, r.Configuration).Scan(&ref.ID)
+	err = tx.QueryRow(ctx, `INSERT INTO learning_model_calls(id,task_id,privacy_generation,stage,attempt_key,attempt_no,lease_id,dispatch_state,provider,destination,model,api_style,configuration,lease_until)
+	 SELECT $1,$2,$3,$4,$5,COALESCE(max(attempt_no),0)+1,$6,'prepared',$7,$8,$9,$10,$11,$12 FROM learning_model_calls WHERE task_id=$2
+	 ON CONFLICT(task_id,attempt_key) DO UPDATE SET attempt_key=excluded.attempt_key RETURNING id::text`, ref.ID, task, r.Generation, r.Stage, r.AttemptKey, r.LeaseID, r.Provider, r.Destination, r.Model, r.APIStyle, r.Configuration, r.LeaseUntil).Scan(&ref.ID)
 	return ref, err
 }
 
@@ -114,11 +120,20 @@ func (s *Store) Finish(ctx context.Context, ref CallRef, state string, u Usage) 
 	return tx.Commit(ctx)
 }
 
-// RecoverTx uses the production run lease, including saved and temporary runs.
+// RecoverTx uses run leases (saved and temporary) or a synchronous HTTP deadline.
+// Assessment task origins refer to attempts, which retain their run binding.
 // It never replays an outbound HTTP request to repair statistics.
 func (s *Store) RecoverTx(ctx context.Context, tx pgx.Tx, generation int64) error {
 	_, err := tx.Exec(ctx, `UPDATE learning_model_calls c SET dispatch_state=CASE WHEN c.dispatch_state='prepared' THEN 'not_dispatched' ELSE 'outcome_unknown' END,finished_at=clock_timestamp()
-	 FROM learning_model_tasks t WHERE c.task_id=t.id AND t.kind='mentor' AND c.privacy_generation=$1 AND c.dispatch_state IN ('prepared','dispatching') AND NOT EXISTS (
-	 SELECT 1 FROM learning_mentor_runs r WHERE r.id=t.origin_id AND r.lease_id=c.lease_id AND r.lease_until>clock_timestamp() AND r.state->>'status' IN ('running','cancelling'))`, generation)
+	 FROM learning_model_tasks t WHERE c.task_id=t.id AND c.privacy_generation=$1 AND c.dispatch_state IN ('prepared','dispatching') AND (
+	 c.lease_until<clock_timestamp() OR c.lease_until IS NULL AND NOT EXISTS (
+	 SELECT 1 FROM learning_mentor_runs r WHERE r.id=CASE WHEN t.kind='assessment' THEN (SELECT a.run_id FROM learning_assessment_tasks a WHERE a.attempt_id=t.origin_id) ELSE t.origin_id END
+	 AND r.lease_id=c.lease_id AND r.lease_until>clock_timestamp() AND r.state->>'status' IN ('running','cancelling')))`, generation)
+	return err
+}
+
+// The deployment marker is independent of learner data and survives erasure.
+func (s *Store) EnableFullCoverage(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `UPDATE model_usage_coverage SET full_started_at=clock_timestamp() WHERE full_started_at IS NULL`)
 	return err
 }

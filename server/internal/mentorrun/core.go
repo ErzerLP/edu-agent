@@ -366,7 +366,7 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			item.callStarted = false
 			return nil
 		}
-		// Only transports explicitly composed for mentor conversation are counted.
+		// Accounting identity is frozen with the client used for this HTTP attempt.
 		if t.connection.Model != "" {
 			source := "cli"
 			var web bool
@@ -387,9 +387,21 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 				stage = "mentor"
 				style = "chat_completions"
 			}
+			kind, origin := "mentor", item.RunID
+			switch {
+			case h.body.Assessment != nil:
+				kind, origin = "assessment", h.body.Assessment.AttemptID
+			case h.body.Studio != nil:
+				kind = "studio"
+			case h.body.Research != nil:
+				kind = "research"
+			case h.body.ContentEdit != nil:
+				kind = "content_edit"
+				stage = "content_edit"
+			}
 			usageCall, beginErr = h.service.usage.BeginTx(request.Context(), tx, modelusage.BeginRequest{
 				Generation: item.Generation, SpaceID: item.SpaceID, Source: source, ActorDeviceID: item.device,
-				Kind: "mentor", OriginID: item.RunID, Stage: stage, AttemptKey: uuid.NewString(), LeaseID: *item.lease,
+				Kind: kind, OriginID: origin, Stage: stage, AttemptKey: uuid.NewString(), LeaseID: *item.lease,
 				Provider: t.connection.Provider, Destination: hex.EncodeToString(digest[:]), Model: t.connection.Model,
 				APIStyle: style, Configuration: item.Configuration,
 			})

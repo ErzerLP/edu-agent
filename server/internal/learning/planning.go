@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 )
 
@@ -193,6 +194,7 @@ func planningKnown(d GoalDetails) map[string]string {
 }
 
 func (s *Service) ChangePlanning(ctx context.Context, device, goalID, id string, c PlanningCommand) (PlanningDraft, error) {
+	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "planning", OriginID: c.OperationID, Stage: "planning", SpaceID: learningspace.Scope(ctx)})
 	if !learningspace.ValidID(device) || !learningspace.ValidID(goalID) || !learningspace.ValidID(id) || !learningspace.ValidID(c.OperationID) || c.ExpectedVersion < 0 {
 		return PlanningDraft{}, &Error{Code: CodeInvalidRequest}
 	}

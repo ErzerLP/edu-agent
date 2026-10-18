@@ -14,6 +14,17 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 )
 
+func assertTaskUsage(t *testing.T, f *runtimeFixture, origin, kind, stage string, count int) {
+	t.Helper()
+	var calls int
+	var gotKind, gotStage, source, device, space string
+	err := f.pool.QueryRow(context.Background(), `SELECT count(*),min(t.kind),min(c.stage),min(t.source),min(t.actor_device_id::text),min(t.space_id::text)
+	 FROM learning_model_calls c JOIN learning_model_tasks t ON t.id=c.task_id WHERE t.origin_id=$1 AND c.started_at IS NOT NULL`, origin).Scan(&calls, &gotKind, &gotStage, &source, &device, &space)
+	if err != nil || calls != count || gotKind != kind || gotStage != stage || source != "cli" || device != f.actor.Device.ID || space != learningspace.DefaultID {
+		t.Fatalf("任务用量归属错误: calls=%d kind=%s stage=%s source=%s device=%s space=%s err=%v", calls, gotKind, gotStage, source, device, space, err)
+	}
+}
+
 func TestMentorModelUsageHTTP(t *testing.T) {
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
 		w.Header().Set("Content-Type", "text/event-stream")

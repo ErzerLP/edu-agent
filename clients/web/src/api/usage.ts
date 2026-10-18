@@ -20,7 +20,8 @@ const model = z.object({
 export const usageSummary = z.object({
   privacy_generation: counter,
   coverage_since: z.string(),
-  coverage: z.literal('mentor'),
+  full_coverage_since: z.string().nullable(),
+  coverage: z.enum(['mentor', 'server']),
   from: z.string(),
   to: z.string(),
   timezone: z.string(),

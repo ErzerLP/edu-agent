@@ -220,6 +220,7 @@ func TestPostgreSQLExerciseAutomaticAssessment(t *testing.T) {
 	if f.calls.Load() != 1 {
 		t.Fatal("duplicate task repeated model", f.calls.Load())
 	}
+	assertTaskUsage(t, f.runtimeFixture, view.WorkItem.Attempt.ID, "assessment", "assessment", 1)
 	due := time.Now().Add(90 * 24 * time.Hour)
 	reviews, err := f.start.Learning.Reviews(ctx, learning.ReviewQuery{Status: "all", DueBefore: &due, Page: learning.CursorPageRequest{Limit: 10}})
 	if err != nil || len(reviews.Items) != 1 || reviews.Items[0].AttemptID != view.WorkItem.Attempt.ID {

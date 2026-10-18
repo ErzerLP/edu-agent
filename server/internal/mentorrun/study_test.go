@@ -155,15 +155,36 @@ func TestPostgreSQLStudySourceAndDirectionIsolationReopen(t *testing.T) {
 }
 
 func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
-	for _, scenario := range []string{"repair", "invalid", "budget"} {
+	for _, scenario := range []string{"repair", "invalid", "budget", "schema_repair", "json_repair"} {
 		t.Run(scenario, func(t *testing.T) {
+			repair := scenario == "repair" || scenario == "schema_repair" || scenario == "json_repair"
 			f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
 				fragment := 99
-				if scenario == "repair" && n == 2 {
+				if repair && n == 2 {
 					fragment = 1
 				}
-				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": fmt.Sprintf(`{"answer":"说明 [1]","citations":[{"source":1,"fragment":%d}],"exercise":null}`, fragment)}}}})
+				content := fmt.Sprintf(`{"answer":"说明 [1]","citations":[{"source":1,"fragment":%d}],"exercise":null}`, fragment)
+				if scenario == "schema_repair" && n == 1 {
+					content = `{"answer":"说明 [1]","citations":[{"source":1,"fragment":1}]}`
+				}
+				if scenario == "json_repair" && n == 1 {
+					content = "```json\n" + content + "\n```"
+				}
+				if (scenario == "schema_repair" || scenario == "json_repair") && n == 2 {
+					var request struct {
+						Messages []struct{ Content string } `json:"messages"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+						t.Error(err)
+					}
+					var feedback struct {
+						Reason string `json:"rejection_reason"`
+					}
+					if len(request.Messages) == 0 || json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &feedback) != nil || feedback.Reason != "schema_mismatch" {
+						t.Error("structured response repair is missing schema rejection feedback")
+					}
+				}
+				studioReply(w, content, "stop")
 			})
 			ctx := context.Background()
 			direction := "从资料理解概念"
@@ -185,7 +206,7 @@ func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
 			}
 			f.work(t)
 			snapshot := f.snapshot(t, receipt.RunID)
-			if scenario == "repair" {
+			if repair {
 				if snapshot.Status != "succeeded" || len(snapshot.Citations) != 1 || f.calls.Load() != 2 {
 					t.Fatal("repair failed or exceeded bounds")
 				}

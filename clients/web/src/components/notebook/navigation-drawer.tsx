@@ -1,7 +1,30 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Moon, Sun, X } from 'lucide-react'
+import {
+  BadgeCheck,
+  BookOpen,
+  Brain,
+  ChartNoAxesCombined,
+  ChevronDown,
+  ClipboardList,
+  FolderOpen,
+  History,
+  LayoutGrid,
+  LibraryBig,
+  LogOut,
+  Moon,
+  PanelsTopLeft,
+  Settings2,
+  ShieldCheck,
+  SquarePen,
+  Sun,
+  TabletSmartphone,
+  Unplug,
+  Workflow,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { useIdentity } from '@/lib/session'
 import { learningClient, unwrap } from '@/api/client'
 import { pageOf, spaceSchema } from '@/api/runtime'
@@ -11,17 +34,17 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 
 type Destination = 'feedback' | 'chat' | 'knowledge' | 'notesync' | 'runs' | 'studio' | 'manage'
-const destinations: { id: Destination; label: string }[] = [
-  { id: 'feedback', label: '评估与证据' },
-  { id: 'chat', label: '导师历史' },
-  { id: 'runs', label: '任务中心' },
-  { id: 'knowledge', label: '知识与参考' },
-  { id: 'notesync', label: 'NoteSync' },
-  { id: 'studio', label: 'Studio 内容库' },
-  { id: 'manage', label: '管理学习区与目标' },
+const destinations: { id: Destination; label: string; icon: LucideIcon }[] = [
+  { id: 'feedback', label: '评估与证据', icon: BadgeCheck },
+  { id: 'chat', label: '导师历史', icon: History },
+  { id: 'runs', label: '任务中心', icon: ClipboardList },
+  { id: 'knowledge', label: '知识与参考', icon: LibraryBig },
+  { id: 'notesync', label: 'NoteSync', icon: Workflow },
+  { id: 'studio', label: 'Studio 内容库', icon: PanelsTopLeft },
+  { id: 'manage', label: '管理学习区与目标', icon: SquarePen },
 ]
 
-function spaceLink(destination: Destination, spaceId: string, label: string): ReactNode {
+function spaceLink(destination: Destination, spaceId: string, label: ReactNode): ReactNode {
   const params = { spaceId }
   switch (destination) {
     case 'feedback':
@@ -100,7 +123,16 @@ export function SpaceSwitcher({
   })
   return (
     <details className="space-switcher" open={!!destination}>
-      <summary>{destination ? '请选择学习区' : '切换学习区'}</summary>
+      <summary data-current={spaceId ? 'true' : undefined}>
+        <FolderOpen size={18} aria-hidden="true" />
+        <span>
+          {destination ? '请选择学习区' : '切换学习区'}
+          {spaceId && (
+            <small>{spaces.data?.items.find((space) => space.id === spaceId)?.name}</small>
+          )}
+        </span>
+        <ChevronDown className="notebook-switcher-chevron" size={16} aria-hidden="true" />
+      </summary>
       <div className="switcher-menu">
         {spaces.isPending && session.capabilities.spaces && <p role="status">正在读取学习区…</p>}
         {spaces.error && <ErrorState error={spaces.error} retry={() => void spaces.refetch()} />}
@@ -183,7 +215,15 @@ export function NavigationDrawer({
       }}
     >
       <div className="notebook-drawer-heading">
-        <h2>edu-agent</h2>
+        <div className="notebook-drawer-brand">
+          <span className="notebook-brand-mark">
+            <BookOpen size={23} aria-hidden="true" />
+          </span>
+          <div>
+            <h2>edu-agent</h2>
+            <p>你的学习空间</p>
+          </div>
+        </div>
         <Button variant="ghost" aria-label="关闭侧边菜单" onClick={onClose}>
           <X size={20} aria-hidden="true" />
         </Button>
@@ -229,35 +269,80 @@ export function NavigationDrawer({
         </section>
       ) : (
         <>
-          <nav aria-label="全局导航" className="notebook-drawer-links">
-            <Link to="/">全部学习区</Link>
-            <Link to="/progress" search={progressSearch.parse(spaceId ? { space: spaceId } : {})}>
-              进度与复习
-            </Link>
-            {destinations.map(({ id, label }) => (
-              <div key={id}>
-                {spaceId ? (
-                  spaceLink(id, spaceId, label)
-                ) : (
-                  <Button variant="ghost" onClick={() => setDestination(id)}>
-                    {label}
-                  </Button>
+          <div className="notebook-drawer-body">
+            <nav aria-label="全局导航" className="notebook-drawer-links">
+              <section className="notebook-drawer-group" aria-labelledby="drawer-spaces-title">
+                <h3 id="drawer-spaces-title">学习空间</h3>
+                <Link to="/" activeOptions={{ exact: true }}>
+                  <LayoutGrid size={18} aria-hidden="true" />
+                  <span>全部学习区</span>
+                </Link>
+                <Link
+                  to="/progress"
+                  search={progressSearch.parse(spaceId ? { space: spaceId } : {})}
+                >
+                  <ChartNoAxesCombined size={18} aria-hidden="true" />
+                  <span>进度与复习</span>
+                </Link>
+              </section>
+              <section className="notebook-drawer-group" aria-labelledby="drawer-study-title">
+                <h3 id="drawer-study-title">学习与资料</h3>
+                <SpaceSwitcher spaceId={spaceId} destination={destination} />
+                {destinations.map(({ id, label, icon: Icon }) => (
+                  <div key={id}>
+                    {spaceId ? (
+                      spaceLink(
+                        id,
+                        spaceId,
+                        <>
+                          <Icon size={18} aria-hidden="true" />
+                          <span>{label}</span>
+                        </>,
+                      )
+                    ) : (
+                      <Button variant="ghost" onClick={() => setDestination(id)}>
+                        <Icon size={18} aria-hidden="true" />
+                        <span>{label}</span>
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                {destination && (
+                  <p className="hint">
+                    选择“{destinations.find((item) => item.id === destination)?.label}
+                    ”所属的学习区。
+                  </p>
                 )}
-              </div>
-            ))}
-            {destination && (
-              <p className="hint">
-                选择“{destinations.find((item) => item.id === destination)?.label}”所属的学习区。
-              </p>
-            )}
-            <SpaceSwitcher spaceId={spaceId} destination={destination} />
-            <Link to="/memory">长期记忆</Link>
-            <a href="/app/offline">离线学习</a>
-            <Link to="/settings">设置与能力</Link>
-            <Link to="/settings/data">数据与隐私</Link>
-            <Link to="/settings/devices">设备管理</Link>
-          </nav>
-          <div className="notebook-menu-options" ref={onOptionsMount} />
+              </section>
+              <section className="notebook-drawer-group" aria-labelledby="drawer-personal-title">
+                <h3 id="drawer-personal-title">我的学习</h3>
+                <Link to="/memory">
+                  <Brain size={18} aria-hidden="true" />
+                  <span>长期记忆</span>
+                </Link>
+                <a href="/app/offline">
+                  <Unplug size={18} aria-hidden="true" />
+                  <span>离线学习</span>
+                </a>
+              </section>
+              <section className="notebook-drawer-group" aria-labelledby="drawer-settings-title">
+                <h3 id="drawer-settings-title">设置与管理</h3>
+                <Link to="/settings" activeOptions={{ exact: true }}>
+                  <Settings2 size={18} aria-hidden="true" />
+                  <span>设置与能力</span>
+                </Link>
+                <Link to="/settings/data">
+                  <ShieldCheck size={18} aria-hidden="true" />
+                  <span>数据与隐私</span>
+                </Link>
+                <Link to="/settings/devices">
+                  <TabletSmartphone size={18} aria-hidden="true" />
+                  <span>设备管理</span>
+                </Link>
+              </section>
+            </nav>
+            <div className="notebook-menu-options" ref={onOptionsMount} />
+          </div>
           <div className="notebook-drawer-actions">
             <Button
               variant="ghost"
@@ -272,7 +357,8 @@ export function NavigationDrawer({
               <span>{theme === 'dark' ? '浅色主题' : '深色主题'}</span>
             </Button>
             <Button variant="outline" onClick={() => setConfirmLogout(true)}>
-              退出
+              <LogOut size={18} aria-hidden="true" />
+              <span>退出</span>
             </Button>
           </div>
         </>

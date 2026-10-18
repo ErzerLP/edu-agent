@@ -70,6 +70,7 @@ type usageJSON struct {
 	name                                                 []byte
 	raw                                                  []byte
 	usage                                                Usage
+	complete                                             bool
 }
 
 func (p *usageJSON) feed(data []byte) {
@@ -122,6 +123,9 @@ func (p *usageJSON) feed(data []byte) {
 			p.depth++
 		case '}', ']':
 			p.depth--
+			if p.depth == 0 {
+				p.complete = true
+			}
 			if p.capture && p.depth == 1 {
 				if !p.overflow {
 					p.usage = parseProtocolUsage(p.raw, p.responses)
@@ -165,17 +169,17 @@ func (s *Store) settle(ctx context.Context, ref CallRef, state string, usage Usa
 
 type observedBody struct {
 	io.ReadCloser
-	store     *Store
-	ctx       context.Context
-	ref       CallRef
-	sse       bool
-	status    int
-	parser    usageJSON
-	line      []byte
-	frame     []byte
-	overflow  bool
-	done, eof bool
-	once      sync.Once
+	store        *Store
+	ctx          context.Context
+	ref          CallRef
+	sse          bool
+	status       int
+	parser       usageJSON
+	line         []byte
+	frame        []byte
+	overflow     bool
+	done, failed bool
+	once         sync.Once
 }
 
 func (b *observedBody) event() {
@@ -183,7 +187,25 @@ func (b *observedBody) event() {
 	if bytes.Equal(data, []byte("[DONE]")) {
 		b.done = true
 	} else if len(data) > 0 {
-		u := ParseChatUsage(data)
+		var u Usage
+		if b.ref.APIStyle == "responses" {
+			var event struct {
+				Type     string `json:"type"`
+				Response struct {
+					Usage json.RawMessage `json:"usage"`
+				} `json:"response"`
+			}
+			if json.Unmarshal(data, &event) == nil {
+				switch event.Type {
+				case "response.completed", "response.incomplete", "response.failed":
+					b.done = true
+					b.failed = event.Type == "response.failed"
+				}
+				u = parseProtocolUsage(event.Response.Usage, true)
+			}
+		} else {
+			u = ParseChatUsage(data)
+		}
 		if u.Input != nil || u.Output != nil || u.Reasoning != nil || u.ProviderTotal != nil || u.Inconsistent {
 			b.parser.usage = u
 		}
@@ -226,13 +248,13 @@ func (b *observedBody) feed(data []byte) {
 func (b *observedBody) finish(err error) {
 	b.once.Do(func() {
 		state := "outcome_unknown"
-		if (errors.Is(err, context.Canceled) || errors.Is(context.Cause(b.ctx), context.Canceled)) && !errors.Is(context.Cause(b.ctx), context.DeadlineExceeded) {
-			state = "cancelled"
-		} else if b.done || !b.sse && b.eof {
+		if b.done || !b.sse && b.parser.complete {
 			state = "received"
-			if b.status >= 400 {
+			if b.status >= 400 || b.failed {
 				state = "failed"
 			}
+		} else if (errors.Is(err, context.Canceled) || errors.Is(context.Cause(b.ctx), context.Canceled)) && !errors.Is(context.Cause(b.ctx), context.DeadlineExceeded) {
+			state = "cancelled"
 		}
 		b.store.settle(b.ctx, b.ref, state, b.parser.usage)
 		clear(b.line)
@@ -245,8 +267,9 @@ func (b *observedBody) Read(p []byte) (int, error) {
 	if n > 0 {
 		b.feed(p[:n])
 	}
-	if err != nil {
-		b.eof = errors.Is(err, io.EOF)
+	// A decoder/stream consumer can stop at protocol completion without EOF.
+	// Persist the receipt before it can finish the run and release its lease.
+	if b.done || !b.sse && b.parser.complete || err != nil {
 		b.finish(err)
 	}
 	return n, err

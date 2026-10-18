@@ -318,7 +318,7 @@ export function UsagePage() {
         推理 Token
         是输出的子项，不重复加入合计。模型未报告的字段显示“未知”；有未知项时仅展示已知小计。
       </p>
-      <form className="panel filters" onSubmit={(e) => e.preventDefault()}>
+      <form className="panel filters usage-filters" onSubmit={(e) => e.preventDefault()}>
         <label>
           学习区范围
           <select value={space} onChange={(e) => setSpace(e.target.value)}>

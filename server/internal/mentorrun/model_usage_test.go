@@ -6,13 +6,117 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 )
+
+type usageResponseTransport struct {
+	wire, contentType string
+}
+
+func (t usageResponseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{t.contentType}},
+		Body:       io.NopCloser(strings.NewReader(t.wire)),
+	}, nil
+}
+
+func TestMentorResponsesUsageAfterRunRecovery(t *testing.T) {
+	const response = `{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"{}"}]}],"usage":{"input_tokens":11,"output_tokens":7,"output_tokens_details":{"reasoning_tokens":3},"total_tokens":18}}`
+	for _, tc := range []struct {
+		name, contentType, wire, state string
+		invalid                        bool
+	}{
+		{"json", "application/json", response, "received", false},
+		{"stream", "text/event-stream", "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":" + response + "}\n\n", "received", false},
+		{"interrupted_stream", "text/event-stream", "data: {\"type\":\"response.in_progress\",\"response\":" + response + "}\n\n", "outcome_unknown", false},
+		{"interrupted_json", "application/json", strings.TrimSuffix(response, "}"), "outcome_unknown", true},
+		{"incomplete_stream", "text/event-stream", "data: {\"type\":\"response.incomplete\",\"response\":" + strings.Replace(response, "completed", "incomplete", 1) + "}\n\n", "received", false},
+		{"failed_stream", "text/event-stream", "data: {\"type\":\"response.failed\",\"response\":" + strings.Replace(response, "completed", "failed", 1) + "}\n\n", "failed", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := fixture(t, func(http.ResponseWriter, *http.Request, int) { t.Error("unexpected HTTP dispatch") })
+			receipt := f.accept(t)
+			ctx := context.Background()
+			owned, err := f.service.claim(ctx)
+			if err != nil || owned == nil {
+				t.Fatalf("claim: %v", err)
+			}
+			h := &executionHost{service: f.service, owned: *owned, body: owned.body}
+			connection := f.settings.View().EffectiveMentor.Connection
+			connection.APIStyle = "responses"
+			transport := budgetTransport{host: h, connection: connection, stage: "study_answer", next: usageResponseTransport{wire: tc.wire, contentType: tc.contentType}}
+			var pendingBody io.ReadCloser
+			if tc.contentType == "application/json" {
+				endpoint, err := url.Parse(connection.Endpoint)
+				if err != nil {
+					t.Fatal(err)
+				}
+				client, err := llm.New(llm.Options{BaseURL: endpoint, WireAPI: llm.Responses, Model: connection.Model, AllowNoKey: true, ContextWindow: 32768, MinimumContext: 1, Timeout: time.Second, HTTPClient: &http.Client{Transport: transport}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = client.Chat(ctx, llm.ChatRequest{Messages: []llm.Message{{Role: llm.RoleUser, Content: "test"}}})
+				if (err != nil) != tc.invalid {
+					t.Fatalf("Chat: %v", err)
+				}
+			} else {
+				request, _ := http.NewRequestWithContext(ctx, http.MethodPost, connection.Endpoint+"/responses", strings.NewReader(`{}`))
+				response, err := transport.RoundTrip(request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer response.Body.Close()
+				pendingBody = response.Body
+				// Consume the protocol event without reading EOF or closing the body.
+				if _, err = io.ReadFull(response.Body, make([]byte, len(tc.wire))); err != nil {
+					t.Fatal(err)
+				}
+				if tc.state == "outcome_unknown" {
+					if err = response.Body.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if _, err = h.Complete(ctx, modelclient.Message{Role: "assistant", Content: "done"}); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot := f.snapshot(t, receipt.RunID); snapshot.Status != "succeeded" {
+				t.Fatalf("run did not finish: %+v", snapshot)
+			}
+			// A later worker claim runs RecoverTx after the run released its lease.
+			if next, err := f.service.claim(ctx); err != nil || next != nil {
+				t.Fatalf("next claim: %+v %v", next, err)
+			}
+			assertUsage := func() {
+				t.Helper()
+				var state string
+				var calls, input, output, reasoning, total int64
+				err := f.pool.QueryRow(ctx, `SELECT min(dispatch_state),count(*),sum(input_tokens),sum(output_tokens),sum(reasoning_tokens),sum(total_tokens) FROM learning_model_calls`).Scan(&state, &calls, &input, &output, &reasoning, &total)
+				if err != nil || state != tc.state || calls != 1 || input != 11 || output != 7 || reasoning != 3 || total != 18 {
+					t.Fatalf("settlement after recovery: state=%s calls=%d tokens=%d/%d/%d/%d err=%v", state, calls, input, output, reasoning, total, err)
+				}
+			}
+			assertUsage()
+			if pendingBody != nil {
+				for range 2 {
+					if err = pendingBody.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				assertUsage()
+			}
+		})
+	}
+}
 
 func assertTaskUsage(t *testing.T, f *runtimeFixture, origin, kind, stage string, count int) {
 	t.Helper()

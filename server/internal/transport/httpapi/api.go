@@ -28,6 +28,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/research"
@@ -159,6 +160,7 @@ type Options struct {
 	LearningContent         *learningcontent.Store
 	StudioQuiz              *learningstart.Service
 	MentorRuns              *mentorrun.Service
+	ModelUsage              *modelusage.Store
 	MentorHeartbeat         time.Duration
 	MentorWriteTimeout      time.Duration
 	Settings                *settings.Service
@@ -203,6 +205,7 @@ type API struct {
 	studioQuiz              *learningstart.Service
 	learningChanges         *learningchange.Service
 	mentorRuns              *mentorrun.Service
+	modelUsage              *modelusage.Store
 	mentorHeartbeat         time.Duration
 	mentorWriteTimeout      time.Duration
 	mentorStreamsMu         sync.Mutex
@@ -291,7 +294,7 @@ func New(options Options) (http.Handler, error) {
 		learningContent:  options.LearningContent,
 		studioQuiz:       options.StudioQuiz,
 		learningChanges:  options.LearningChanges,
-		mentorRuns:       options.MentorRuns, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
+		mentorRuns:       options.MentorRuns, modelUsage: options.ModelUsage, mentorHeartbeat: options.MentorHeartbeat, mentorWriteTimeout: options.MentorWriteTimeout, mentorStreams: map[string]int{},
 		settings:       options.Settings,
 		learningSpaces: options.LearningSpaces,
 		identity:       options.Identity, model: options.Model, knowledge: options.Knowledge, notesync: options.Notesync, learning: options.Learning,
@@ -345,6 +348,7 @@ func New(options Options) (http.Handler, error) {
 		protected.Use(api.authenticate)
 		protected.Use(api.resolveLearningSpace)
 		api.mountMentorRuns(protected)
+		api.mountUsage(protected)
 		api.mountLearningContent(protected)
 		api.mountStudio(protected)
 		api.mountLearningChanges(protected)

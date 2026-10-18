@@ -14,6 +14,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/research"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -32,16 +33,19 @@ func (s *Service) claim(ctx context.Context) (*row, error) {
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(210021)`); err != nil {
 		return nil, err
 	}
+	if err = s.usage.RecoverTx(ctx, tx, generation); err != nil {
+		return nil, err
+	}
 	var active int
 	if err = tx.QueryRow(ctx, `SELECT count(*) FROM learning_mentor_runs WHERE lease_until>clock_timestamp() AND state->>'status' IN ('running','cancelling')`).Scan(&active); err != nil {
 		return nil, err
 	}
 	if active >= s.settings.View().Limits.Concurrency {
-		return nil, nil
+		return nil, tx.Commit(ctx)
 	}
 	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE privacy_generation=$1 AND expires_at>clock_timestamp() AND ((state->>'saved')::boolean OR process_id=$2) AND (state->>'status'='queued' OR (state->>'status' IN ('running','cancelling') AND lease_until<clock_timestamp())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, generation, s.process))
 	if errors.Is(err, ErrNotFound) {
-		return nil, nil
+		return nil, tx.Commit(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -223,6 +227,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	wasCancelling := item.Status == "cancelling"
 	item.Status = "failed"
 	item.Reason = "model_failed"
+	if errors.Is(cause, ErrStorage) {
+		item.Reason = "run_storage_unavailable"
+	}
 	if errors.Is(cause, errCitation) {
 		item.Reason = "invalid_source_citation"
 	}
@@ -302,6 +309,8 @@ func logRunFailure(ctx context.Context, item row, cause error) {
 			category = "context_changed"
 		case errors.Is(cause, ErrLimit):
 			category = "history_context_limit"
+		case errors.Is(cause, ErrStorage):
+			category = "run_storage_unavailable"
 		case errors.Is(cause, errCitation):
 			category = "invalid_source_citation"
 		case errors.Is(cause, research.ErrPolicy):
@@ -400,7 +409,9 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 		}
 	}()
 	host := &executionHost{service: s, owned: *item, body: item.body, limits: limits, model: model}
-	host.model, _, _, err = s.settings.MentorClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: host, next: next} })
+	host.model, _, _, err = s.settings.MentorUsageClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
+		return budgetTransport{host: host, next: next, connection: connection}
+	})
 	if host.body.Assessment != nil {
 		err = host.assess(execution)
 	} else if host.body.Studio != nil {
@@ -450,6 +461,9 @@ func (s *Service) Sweep(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_processes(id,live_until) VALUES($1,clock_timestamp()+interval '30 seconds') ON CONFLICT(id) DO UPDATE SET live_until=excluded.live_until`, s.process); err != nil {
+		return 0, err
+	}
+	if err = s.usage.RecoverTx(ctx, tx, generation); err != nil {
 		return 0, err
 	}
 	rows, err := tx.Query(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE privacy_generation=$1 AND (state->>'body_available')::boolean AND (expires_at<=clock_timestamp() OR ((state->>'saved')::boolean=FALSE AND process_id<>$2 AND NOT EXISTS(SELECT 1 FROM learning_mentor_processes p WHERE p.id=process_id AND p.live_until>clock_timestamp()) AND (lease_until IS NULL OR lease_until<clock_timestamp()))) FOR UPDATE SKIP LOCKED`, generation, s.process)

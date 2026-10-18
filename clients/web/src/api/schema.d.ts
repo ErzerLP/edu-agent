@@ -4,6 +4,60 @@
  */
 
 export interface paths {
+    "/v1/learning/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 查看导师对话真实用量、未知数与时间分布
+         * @description 当前仅覆盖导师对话，不含 CLI 本地直连。区间为 [from,to)，按外发开始时间归桶；周从周一开始。省略 space_id 为全局，有 space_id 时必须与 X-Learning-Space-ID 一致。沿用浏览器身份、Origin、CSRF 和隐私读取门禁，响应 no-store。
+         */
+        get: operations["getModelUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/usage/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分页查看筛选范围内的导师任务用量 */
+        get: operations["listModelUsageTasks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/usage/tasks/{taskID}/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分页查看一次导师任务的实际外发尝试 */
+        get: operations["listModelUsageCalls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/exercises/{exerciseID}": {
         parameters: {
             query?: never;
@@ -3521,6 +3575,105 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ModelUsageMetric: {
+            /** Format: int64 */
+            known_sum: number;
+            /** Format: int64 */
+            unknown_calls: number;
+        };
+        ModelUsageTotals: {
+            /** Format: int64 */
+            calls: number;
+            /** Format: int64 */
+            pending_calls: number;
+            /** Format: int64 */
+            outcome_unknown_calls: number;
+            input: components["schemas"]["ModelUsageMetric"];
+            output: components["schemas"]["ModelUsageMetric"];
+            reasoning: components["schemas"]["ModelUsageMetric"];
+            total: components["schemas"]["ModelUsageMetric"];
+        };
+        ModelUsageIdentity: {
+            provider: string;
+            model: string;
+            api_style: string;
+            /** @description 不含端点或秘密的目的地标识，仅用于归类 */
+            destination: string;
+        };
+        ModelUsageSummary: {
+            /** Format: int64 */
+            privacy_generation: number;
+            /** Format: date-time */
+            coverage_since: string;
+            /** @constant */
+            coverage: "mentor";
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            timezone: string;
+            /** @enum {string} */
+            grain: "day" | "week" | "month";
+            totals: components["schemas"]["ModelUsageTotals"];
+            buckets: (components["schemas"]["ModelUsageTotals"] & {
+                /** Format: date-time */
+                start: string;
+            })[];
+            models: components["schemas"]["ModelUsageIdentity"][];
+        };
+        ModelUsageTask: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            space_id: string | null;
+            kind: string;
+            /** @enum {string} */
+            source: "web" | "cli" | "server";
+            /** Format: date-time */
+            started_at: string;
+            /**
+             * Format: uuid
+             * @description 仅原任务仍可读时提供；删除对话后为空
+             */
+            run_id: string | null;
+            totals: components["schemas"]["ModelUsageTotals"];
+        };
+        ModelUsageCall: components["schemas"]["ModelUsageIdentity"] & {
+            /** Format: uuid */
+            id: string;
+            stage: string;
+            /** Format: int64 */
+            attempt_no: number;
+            /** @enum {string} */
+            state: "dispatching" | "received" | "failed" | "cancelled" | "outcome_unknown";
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** Format: int64 */
+            input_tokens: number | null;
+            /** Format: int64 */
+            output_tokens: number | null;
+            /** Format: int64 */
+            reasoning_tokens: number | null;
+            /** Format: int64 */
+            provider_total_tokens: number | null;
+            /** Format: int64 */
+            total_tokens: number | null;
+            usage_inconsistent: boolean;
+        };
+        ModelUsageTasks: {
+            items: components["schemas"]["ModelUsageTask"][];
+            next_cursor?: string;
+            /** Format: int64 */
+            privacy_generation: number;
+        };
+        ModelUsageCalls: {
+            items: components["schemas"]["ModelUsageCall"][];
+            next_cursor?: string;
+            /** Format: int64 */
+            privacy_generation: number;
+        };
         /** @description Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently. */
         StudioGenerate: {
             /** @enum {string} */
@@ -8411,6 +8564,19 @@ export interface components {
         };
     };
     parameters: {
+        UsageFrom: string;
+        UsageTo: string;
+        /** @description IANA 时区；客户端默认发送浏览器时区 */
+        UsageTimezone: string;
+        UsageGrain: "day" | "week" | "month";
+        UsageModel: string;
+        /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
+        UsageSpace: string;
+        /** @description 查询指定 space_id 时必须提供且一致；Header 和筛选同时省略时统计全局可见范围。 */
+        UsageSpaceHeader: components["schemas"]["LearningUUID"];
+        /** @description 绑定身份、代次及全部筛选条件的不透明游标 */
+        UsageCursor: string;
+        UsageLimit: number;
         WebOfflineAdapter: "1";
         WebOfflineDevice: components["schemas"]["LearningUUID"];
         WebOfflineGeneration: components["schemas"]["Uint63Decimal"];
@@ -8448,6 +8614,113 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getModelUsage: {
+        parameters: {
+            query: {
+                from: components["parameters"]["UsageFrom"];
+                to: components["parameters"]["UsageTo"];
+                /** @description IANA 时区；客户端默认发送浏览器时区 */
+                timezone?: components["parameters"]["UsageTimezone"];
+                grain?: components["parameters"]["UsageGrain"];
+                model?: components["parameters"]["UsageModel"];
+                /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
+                space_id?: components["parameters"]["UsageSpace"];
+            };
+            header?: {
+                /** @description 查询指定 space_id 时必须提供且一致；Header 和筛选同时省略时统计全局可见范围。 */
+                "X-Learning-Space-ID"?: components["parameters"]["UsageSpaceHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前可见代次的真实用量，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelUsageSummary"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listModelUsageTasks: {
+        parameters: {
+            query: {
+                from: components["parameters"]["UsageFrom"];
+                to: components["parameters"]["UsageTo"];
+                /** @description IANA 时区；客户端默认发送浏览器时区 */
+                timezone?: components["parameters"]["UsageTimezone"];
+                grain?: components["parameters"]["UsageGrain"];
+                model?: components["parameters"]["UsageModel"];
+                /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
+                space_id?: components["parameters"]["UsageSpace"];
+                /** @description 绑定身份、代次及全部筛选条件的不透明游标 */
+                cursor?: components["parameters"]["UsageCursor"];
+                limit?: components["parameters"]["UsageLimit"];
+            };
+            header?: {
+                /** @description 查询指定 space_id 时必须提供且一致；Header 和筛选同时省略时统计全局可见范围。 */
+                "X-Learning-Space-ID"?: components["parameters"]["UsageSpaceHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前代次任务；累计只包含相同筛选内的调用，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelUsageTasks"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listModelUsageCalls: {
+        parameters: {
+            query: {
+                from: components["parameters"]["UsageFrom"];
+                to: components["parameters"]["UsageTo"];
+                /** @description IANA 时区；客户端默认发送浏览器时区 */
+                timezone?: components["parameters"]["UsageTimezone"];
+                grain?: components["parameters"]["UsageGrain"];
+                model?: components["parameters"]["UsageModel"];
+                /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
+                space_id?: components["parameters"]["UsageSpace"];
+                /** @description 绑定身份、代次及全部筛选条件的不透明游标 */
+                cursor?: components["parameters"]["UsageCursor"];
+                limit?: components["parameters"]["UsageLimit"];
+            };
+            header?: {
+                /** @description 查询指定 space_id 时必须提供且一致；Header 和筛选同时省略时统计全局可见范围。 */
+                "X-Learning-Space-ID"?: components["parameters"]["UsageSpaceHeader"];
+            };
+            path: {
+                taskID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 同筛选的调用；缺失字段为 null；推理包含在输出中，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelUsageCalls"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     readStudioExercise: {
         parameters: {
             query?: never;

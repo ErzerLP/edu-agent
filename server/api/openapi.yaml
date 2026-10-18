@@ -6,6 +6,63 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/learning/usage:
+    get:
+      operationId: getModelUsage
+      summary: 查看导师对话真实用量、未知数与时间分布
+      description: 当前仅覆盖导师对话，不含 CLI 本地直连。区间为 [from,to)，按外发开始时间归桶；周从周一开始。省略 space_id 为全局，有 space_id 时必须与 X-Learning-Space-ID 一致。沿用浏览器身份、Origin、CSRF 和隐私读取门禁，响应 no-store。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { $ref: '#/components/parameters/UsageFrom' }
+        - { $ref: '#/components/parameters/UsageTo' }
+        - { $ref: '#/components/parameters/UsageTimezone' }
+        - { $ref: '#/components/parameters/UsageGrain' }
+        - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSpace' }
+        - { $ref: '#/components/parameters/UsageSpaceHeader' }
+      responses:
+        '200': { description: 当前可见代次的真实用量，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/ModelUsageSummary' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/usage/tasks:
+    get:
+      operationId: listModelUsageTasks
+      summary: 分页查看筛选范围内的导师任务用量
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { $ref: '#/components/parameters/UsageFrom' }
+        - { $ref: '#/components/parameters/UsageTo' }
+        - { $ref: '#/components/parameters/UsageTimezone' }
+        - { $ref: '#/components/parameters/UsageGrain' }
+        - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSpace' }
+        - { $ref: '#/components/parameters/UsageSpaceHeader' }
+        - { $ref: '#/components/parameters/UsageCursor' }
+        - { $ref: '#/components/parameters/UsageLimit' }
+      responses:
+        '200': { description: 当前代次任务；累计只包含相同筛选内的调用，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/ModelUsageTasks' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/usage/tasks/{taskID}/calls:
+    get:
+      operationId: listModelUsageCalls
+      summary: 分页查看一次导师任务的实际外发尝试
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: taskID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/UsageFrom' }
+        - { $ref: '#/components/parameters/UsageTo' }
+        - { $ref: '#/components/parameters/UsageTimezone' }
+        - { $ref: '#/components/parameters/UsageGrain' }
+        - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSpace' }
+        - { $ref: '#/components/parameters/UsageSpaceHeader' }
+        - { $ref: '#/components/parameters/UsageCursor' }
+        - { $ref: '#/components/parameters/UsageLimit' }
+      responses:
+        '200': { description: 同筛选的调用；缺失字段为 null；推理包含在输出中，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/ModelUsageCalls' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
   /v1/learning/studio/exercises/{exerciseID}:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -4580,6 +4637,48 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    UsageFrom:
+      name: from
+      in: query
+      required: true
+      schema: { type: string, format: date-time }
+    UsageTo:
+      name: to
+      in: query
+      required: true
+      schema: { type: string, format: date-time }
+    UsageTimezone:
+      name: timezone
+      in: query
+      description: IANA 时区；客户端默认发送浏览器时区
+      schema: { type: string, default: UTC }
+    UsageGrain:
+      name: grain
+      in: query
+      schema: { type: string, enum: [day, week, month], default: day }
+    UsageModel:
+      name: model
+      in: query
+      schema: { type: string, maxLength: 200 }
+    UsageSpace:
+      name: space_id
+      in: query
+      description: 与 X-Learning-Space-ID 一致；省略为全局
+      schema: { type: string, format: uuid }
+    UsageSpaceHeader:
+      name: X-Learning-Space-ID
+      in: header
+      description: 查询指定 space_id 时必须提供且一致；Header 和筛选同时省略时统计全局可见范围。
+      schema: { $ref: '#/components/schemas/LearningUUID' }
+    UsageCursor:
+      name: cursor
+      in: query
+      description: 绑定身份、代次及全部筛选条件的不透明游标
+      schema: { type: string, maxLength: 2048 }
+    UsageLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
     WebOfflineAdapter:
       name: X-Offline-Adapter
       in: header
@@ -4921,6 +5020,98 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    ModelUsageMetric:
+      type: object
+      required: [known_sum, unknown_calls]
+      properties:
+        known_sum: { type: integer, format: int64, minimum: 0 }
+        unknown_calls: { type: integer, format: int64, minimum: 0 }
+    ModelUsageTotals:
+      type: object
+      required: [calls, pending_calls, outcome_unknown_calls, input, output, reasoning, total]
+      properties:
+        calls: { type: integer, format: int64, minimum: 0 }
+        pending_calls: { type: integer, format: int64, minimum: 0 }
+        outcome_unknown_calls: { type: integer, format: int64, minimum: 0 }
+        input: { $ref: '#/components/schemas/ModelUsageMetric' }
+        output: { $ref: '#/components/schemas/ModelUsageMetric' }
+        reasoning: { $ref: '#/components/schemas/ModelUsageMetric' }
+        total: { $ref: '#/components/schemas/ModelUsageMetric' }
+    ModelUsageIdentity:
+      type: object
+      required: [provider, model, api_style, destination]
+      properties:
+        provider: { type: string }
+        model: { type: string }
+        api_style: { type: string }
+        destination: { type: string, description: 不含端点或秘密的目的地标识，仅用于归类 }
+    ModelUsageSummary:
+      type: object
+      required: [privacy_generation, coverage_since, coverage, from, to, timezone, grain, totals, buckets, models]
+      properties:
+        privacy_generation: { type: integer, format: int64 }
+        coverage_since: { type: string, format: date-time }
+        coverage: { type: string, const: mentor }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        timezone: { type: string }
+        grain: { type: string, enum: [day, week, month] }
+        totals: { $ref: '#/components/schemas/ModelUsageTotals' }
+        buckets:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/ModelUsageTotals' }
+              - type: object
+                required: [start]
+                properties:
+                  start: { type: string, format: date-time }
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/ModelUsageIdentity' }
+    ModelUsageTask:
+      type: object
+      required: [id, space_id, kind, source, started_at, run_id, totals]
+      properties:
+        id: { type: string, format: uuid }
+        space_id: { type: [string, 'null'], format: uuid }
+        kind: { type: string }
+        source: { type: string, enum: [web, cli, server] }
+        started_at: { type: string, format: date-time }
+        run_id: { type: [string, 'null'], format: uuid, description: 仅原任务仍可读时提供；删除对话后为空 }
+        totals: { $ref: '#/components/schemas/ModelUsageTotals' }
+    ModelUsageCall:
+      allOf:
+        - { $ref: '#/components/schemas/ModelUsageIdentity' }
+        - type: object
+          required: [id, stage, attempt_no, state, started_at, finished_at, input_tokens, output_tokens, reasoning_tokens, provider_total_tokens, total_tokens, usage_inconsistent]
+          properties:
+            id: { type: string, format: uuid }
+            stage: { type: string }
+            attempt_no: { type: integer, format: int64 }
+            state: { type: string, enum: [dispatching, received, failed, cancelled, outcome_unknown] }
+            started_at: { type: string, format: date-time }
+            finished_at: { type: [string, 'null'], format: date-time }
+            input_tokens: { type: [integer, 'null'], format: int64, minimum: 0 }
+            output_tokens: { type: [integer, 'null'], format: int64, minimum: 0 }
+            reasoning_tokens: { type: [integer, 'null'], format: int64, minimum: 0 }
+            provider_total_tokens: { type: [integer, 'null'], format: int64, minimum: 0 }
+            total_tokens: { type: [integer, 'null'], format: int64, minimum: 0 }
+            usage_inconsistent: { type: boolean }
+    ModelUsageTasks:
+      type: object
+      required: [items, privacy_generation]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ModelUsageTask' } }
+        next_cursor: { type: string }
+        privacy_generation: { type: integer, format: int64 }
+    ModelUsageCalls:
+      type: object
+      required: [items, privacy_generation]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ModelUsageCall' } }
+        next_cursor: { type: string }
+        privacy_generation: { type: integer, format: int64 }
     StudioGenerate:
       type: object
       additionalProperties: false

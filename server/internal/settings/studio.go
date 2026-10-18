@@ -14,6 +14,17 @@ import (
 func (s *Service) StudioClient(wrap func(http.RoundTripper) http.RoundTripper) (*llm.Client, string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.studioClient(wrap, nil)
+}
+
+// CitedMentorClient exposes the frozen connection only to server composition.
+func (s *Service) CitedMentorClient(wrap func(Connection, http.RoundTripper) http.RoundTripper) (*llm.Client, string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.studioClient(nil, wrap)
+}
+
+func (s *Service) studioClient(wrap func(http.RoundTripper) http.RoundTripper, observe func(Connection, http.RoundTripper) http.RoundTripper) (*llm.Client, string, bool, error) {
 	slot := s.state.Mentor
 	if s.state.MentorUsesTeaching {
 		slot = s.state.Teaching
@@ -24,6 +35,9 @@ func (s *Service) StudioClient(wrap func(http.RoundTripper) http.RoundTripper) (
 	var transport http.RoundTripper = modelTransport()
 	if wrap != nil {
 		transport = wrap(transport)
+	}
+	if observe != nil {
+		transport = observe(slot.Connection, transport)
 	}
 	limits := s.state.Limits
 	u, _ := url.Parse(slot.Endpoint)

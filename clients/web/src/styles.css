@@ -1653,6 +1653,11 @@ section:is([aria-label='学习进度'], [aria-label='到期复习']) p a { text-
 .chat-answer[data-generating]::after { content: ''; display: inline-block; width: 6px; height: 1em; border-radius: 3px; margin-left: 5px; vertical-align: middle; background: var(--accent); animation: chat-think 1.4s ease-in-out infinite; }
 @keyframes chat-think { 0%, 80%, 100% { opacity: .4; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
+.usage-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+.usage-totals dd { margin: 6px 0 0; font-variant-numeric: tabular-nums; }
+.usage-table { overflow-x: auto; }
+.usage-table table { width: 100%; border-collapse: collapse; }
+.usage-table th, .usage-table td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
 @keyframes chat-answer-in { from { opacity: .4; } to { opacity: 1; } }
 :root[data-theme='dark'] .source-badge.partial, :root[data-theme='dark'] .source-badge.failed { background: var(--soft); color: var(--text); }
 @media (max-width: 900px) {

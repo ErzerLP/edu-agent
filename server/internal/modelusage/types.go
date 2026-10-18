@@ -42,6 +42,7 @@ type BeginRequest struct {
 	Generation                                            int64
 	SpaceID, Source, ActorDeviceID, Kind, OriginID        string
 	Stage, AttemptKey, LeaseID                            string
+	LeaseUntil                                            *time.Time
 	Provider, Destination, Model, APIStyle, Configuration string
 }
 type CallRef struct {
@@ -73,16 +74,17 @@ type Model struct {
 	Destination string `json:"destination"`
 }
 type Summary struct {
-	Generation    int64     `json:"privacy_generation"`
-	CoverageSince time.Time `json:"coverage_since"`
-	Coverage      string    `json:"coverage"`
-	From          time.Time `json:"from"`
-	To            time.Time `json:"to"`
-	Timezone      string    `json:"timezone"`
-	Grain         string    `json:"grain"`
-	Totals        Totals    `json:"totals"`
-	Buckets       []Bucket  `json:"buckets"`
-	Models        []Model   `json:"models"`
+	Generation        int64      `json:"privacy_generation"`
+	CoverageSince     time.Time  `json:"coverage_since"`
+	FullCoverageSince *time.Time `json:"full_coverage_since"`
+	Coverage          string     `json:"coverage"`
+	From              time.Time  `json:"from"`
+	To                time.Time  `json:"to"`
+	Timezone          string     `json:"timezone"`
+	Grain             string     `json:"grain"`
+	Totals            Totals     `json:"totals"`
+	Buckets           []Bucket   `json:"buckets"`
+	Models            []Model    `json:"models"`
 }
 type Task struct {
 	ID        string    `json:"id"`

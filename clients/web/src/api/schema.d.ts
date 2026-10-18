@@ -3605,8 +3605,13 @@ export interface components {
             privacy_generation: number;
             /** Format: date-time */
             coverage_since: string;
-            /** @constant */
-            coverage: "mentor";
+            /**
+             * Format: date-time
+             * @description 首次启用全部服务端出口统计的部署时间；不随隐私清除或重启改变
+             */
+            full_coverage_since: string | null;
+            /** @enum {string} */
+            coverage: "mentor" | "server";
             /** Format: date-time */
             from: string;
             /** Format: date-time */

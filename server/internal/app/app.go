@@ -87,7 +87,8 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("initialize identity service: %w", err)
 	}
-	settingsService, err := openLearningSettings(cfg)
+	modelUsage := modelusage.New(pool)
+	settingsService, err := openLearningSettings(cfg, modelUsage)
 	if err != nil {
 		return err
 	}
@@ -154,6 +155,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	mentorRuns.ConfigureMemory(bridge.memoryExporter, bridge.readPermits)
+	modelUsage.ConfigureReadPermits(bridge.readPermits)
 	notesyncBridge, err := composeNotesync(cfg, notesyncDependencies{
 		publicationStore: stores.knowledge, reviewStore: stores.knowledge, outboxStore: stores.outbox,
 		importer: knowledgeService, canonicalizer: canonicalizer,
@@ -204,7 +206,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		StudioQuiz:       &learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore},
 		LearningChanges:  changes,
 		MentorRuns:       mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
-		ModelUsage:     modelusage.New(pool),
+		ModelUsage:     modelUsage,
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool, directions),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, OfflineEnabled: cfg.WebOfflineEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},
@@ -233,6 +235,10 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("listen on configured address: %w", err)
+	}
+	if err = modelUsage.EnableFullCoverage(ctx); err != nil {
+		_ = listener.Close()
+		return fmt.Errorf("record model usage coverage: %w", err)
 	}
 	requestContext, cancelRequests := context.WithCancel(context.Background())
 	defer cancelRequests()
@@ -565,7 +571,7 @@ func buildModelClient(cfg config.Config) (*llm.Client, error) {
 	return client, nil
 }
 
-func openLearningSettings(cfg config.Config) (*settings.Service, error) {
+func openLearningSettings(cfg config.Config, usage *modelusage.Store) (*settings.Service, error) {
 	endpoint := ""
 	if cfg.Model.BaseURL != nil {
 		endpoint = cfg.Model.BaseURL.String()
@@ -575,7 +581,7 @@ func openLearningSettings(cfg config.Config) (*settings.Service, error) {
 		limits.ContextTokens = cfg.Model.ContextWindow
 		limits.IdleTimeoutSeconds = int(cfg.Model.Timeout.Seconds())
 	}
-	return settings.Open(settings.Options{Path: cfg.LearningSettingsFile, ModelEndpoints: cfg.ModelEndpointAllowlist,
+	return settings.Open(settings.Options{ModelUsage: usage, Path: cfg.LearningSettingsFile, ModelEndpoints: cfg.ModelEndpointAllowlist,
 		Teaching:    settings.Connection{Enabled: cfg.Model.Enabled, Provider: "openai_compatible", Endpoint: endpoint, Model: cfg.Model.Name, AuthMode: "bearer", APIStyle: cfg.Model.APIStyle},
 		TeachingKey: cfg.Model.APIKey, Limits: &limits})
 }

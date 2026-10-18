@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/google/uuid"
 )
 
 func (s *Service) GenerateOfflinePrepare(ctx context.Context, request OfflinePrepareGenerationRequest) (OfflinePrepareArtifact, error) {
+	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "offline_prepare", OriginID: request.OperationID, Stage: "activity", SpaceID: learningspace.Scope(ctx)})
 	if s == nil || request.Count < 1 || request.Count > OfflineMaxPackCount || uuid.Validate(request.DeviceID) != nil || uuid.Validate(request.OperationID) != nil || uuid.Validate(request.SessionID) != nil || request.ExpectedSessionVersion < 1 || request.GoalRevisionID == "" || request.Route.ID == "" || request.RouteStepID == "" || request.KnowledgeRevisionID == "" || request.Route.GoalRevisionID != request.GoalRevisionID || request.Route.KnowledgeRevisionID != request.KnowledgeRevisionID || !StableRouteSteps(request.Route.Steps) {
 		return OfflinePrepareArtifact{}, &Error{Code: CodeInvalidRequest, Reason: "invalid_offline_prepare_generation"}
 	}

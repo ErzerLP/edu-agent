@@ -18,6 +18,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/edu-agent/edu-agent/server/internal/tutoring"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -254,7 +255,9 @@ func (h *executionHost) assess(ctx context.Context) error {
 	}
 	proposal := recovery.ProposalID
 	if proposal == "" && view.WorkItem.Activity.Type != learning.ActivityObjective {
-		client, model, _, e := h.service.settings.StudioClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: h, next: next} })
+		client, model, _, e := h.service.settings.CitedMentorClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
+			return budgetTransport{host: h, next: next, connection: connection, stage: "assessment"}
+		})
 		if e != nil {
 			return e
 		}

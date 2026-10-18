@@ -38,6 +38,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/transport/problem"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 )
 
 type IdentityService interface {
@@ -764,7 +765,8 @@ func (a *API) modelCapabilities(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, llm.Capabilities{Profile: "openai-chat-completions-v1", Compatible: false, IncompatibilityReasons: []string{"not_configured"}})
 		return
 	}
-	writeJSON(w, http.StatusOK, a.model.Probe(r.Context()))
+	ctx := modelusage.WithTask(r.Context(), modelusage.TaskContext{Kind: "model_probe", OriginID: uuid.NewString(), Stage: "capabilities"})
+	writeJSON(w, http.StatusOK, a.model.Probe(ctx))
 }
 
 func (a *API) knowledgeHead(w http.ResponseWriter, r *http.Request) {

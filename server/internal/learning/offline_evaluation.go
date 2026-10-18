@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/platform/outbox"
 )
 
@@ -23,6 +24,7 @@ type OfflineEvaluationTask struct {
 
 // OfflineEvaluationSnapshot contains the frozen authority required by one worker attempt.
 type OfflineEvaluationSnapshot struct {
+	SpaceID           string
 	Task              OfflineEvaluationTask
 	Attempt           Attempt
 	Activity          Activity
@@ -148,6 +150,7 @@ func (c *OfflineEvaluationConsumer) Apply(ctx context.Context, message outbox.Me
 }
 
 func (c *OfflineEvaluationConsumer) generate(ctx context.Context, snapshot OfflineEvaluationSnapshot) (AssessmentArtifact, []string, error) {
+	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "offline_assessment", OriginID: snapshot.Task.JobID, Stage: "assessment", SpaceID: snapshot.SpaceID, Generation: snapshot.Task.LearnerGeneration})
 	input := struct {
 		Activity Activity `json:"activity"`
 		Attempt  Attempt  `json:"attempt"`

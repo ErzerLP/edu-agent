@@ -14,9 +14,11 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 )
 
 type Options struct {
+	ModelUsage     *modelusage.Store
 	Path           string
 	ModelEndpoints []string
 	Teaching       Connection
@@ -26,6 +28,7 @@ type Options struct {
 }
 
 type Service struct {
+	usage          *modelusage.Store
 	mu             sync.Mutex
 	path           string
 	modelEndpoints []string
@@ -40,7 +43,7 @@ func Open(o Options) (*Service, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &Service{path: o.Path, modelEndpoints: append([]string{}, o.ModelEndpoints...), now: o.Now}
+	s := &Service{usage: o.ModelUsage, path: o.Path, modelEndpoints: append([]string{}, o.ModelEndpoints...), now: o.Now}
 	for _, endpoint := range s.modelEndpoints {
 		if _, err := endpointURL(endpoint); err != nil {
 			return nil, ErrInvalid
@@ -309,7 +312,21 @@ func (s *Service) TeachingClient() (*llm.Client, error) {
 	if !s.activeTeaching.Enabled || !configured(s.activeTeaching) {
 		return nil, nil
 	}
-	return modelClient(s.activeTeaching, s.activeLimits, false, modelTransport())
+	return modelClient(s.activeTeaching, s.activeLimits, false, s.usageTransport(s.activeTeaching, s.activeLimits, modelTransport()))
+}
+
+func (s *Service) usageTransport(slot secretSlot, limits Limits, next http.RoundTripper) http.RoundTripper {
+	if s.usage == nil {
+		return next
+	}
+	destination := sha256.Sum256([]byte(slot.Provider + "\n" + slot.Endpoint))
+	raw, _ := json.Marshal(struct {
+		Connection Connection
+		Key        string
+		Limits     Limits
+	}{slot.Connection, slot.Key, limits})
+	configuration := sha256.Sum256(raw)
+	return s.usage.Transport(next, modelusage.Model{Provider: slot.Provider, Destination: hex.EncodeToString(destination[:]), Model: slot.Model, APIStyle: slot.APIStyle}, hex.EncodeToString(configuration[:]))
 }
 
 // MentorClient 每次承领和付费调用前重新读取配置；返回的摘要绑定端点及预算，不暴露秘密。

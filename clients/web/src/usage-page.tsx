@@ -18,6 +18,45 @@ import { Button } from './components/ui/button'
 const count = (n: number) => n.toLocaleString('zh-CN')
 const token = (n: number | null) => (n === null ? '未知' : count(n))
 const when = (date: string) => new Date(date).toLocaleString('zh-CN')
+const taskLabels: Record<string, string> = {
+  mentor: '导师对话',
+  studio: 'Studio 生成',
+  research: '研究',
+  assessment: '练习评估',
+  teaching: '教学生成',
+  planning: '学习规划',
+  knowledge: '知识处理',
+  content_edit: '教学内容修改',
+  offline_prepare: '离线备课',
+  offline_assessment: '离线评估',
+  model_probe: '模型连接探测',
+}
+const taskLabel = (kind: string) => taskLabels[kind] ?? '模型任务'
+const stageLabels: Record<string, string> = {
+  mentor: '导师交流',
+  study_answer: '导师讲解',
+  studio_guide: '学习指南',
+  studio_brief: '学习简报',
+  studio_quiz: '测验生成',
+  checking_synthesis: '研究综合',
+  preparing_activity: '准备学习活动',
+  assessment: '评估',
+  directory_selection: '目录选择',
+  planning: '规划建议',
+  route: '路线生成',
+  activity: '活动生成',
+  free_answer: '自由回答',
+  explanation: '讲解',
+  content_edit: '内容修改',
+  teaching: '教学模型探测',
+  capabilities: '模型能力探测',
+}
+function stageLabel(kind: string, stage: string) {
+  if (kind === 'model_probe') {
+    return stage === 'mentor' ? '导师模型探测' : stageLabels[stage] ?? taskLabel(kind)
+  }
+  return stageLabels[stage] ?? taskLabel(kind)
+}
 function metricText(metric: UsageTotals['total']) {
   return metric.unknown_calls
     ? `已知 ${count(metric.known_sum)} Token；未知：${count(metric.unknown_calls)} 次调用`
@@ -82,7 +121,7 @@ function Calls({
           关闭明细
         </Button>
       </div>
-      <p>导师对话 · {when(task.started_at)}</p>
+      <p>{taskLabel(task.kind)} · {when(task.started_at)}</p>
       {result.isPending && <p role="status">正在读取调用明细…</p>}
       {result.error ? (
         <ErrorState error={result.error} retry={() => void result.refetch()} />
@@ -95,7 +134,7 @@ function Calls({
                 <h3>{call.model}</h3>
                 <p>
                   {when(call.started_at)} ·{' '}
-                  {call.stage === 'study_answer' ? '导师讲解' : '导师交流'} · 第 {call.attempt_no}{' '}
+                  {stageLabel(task.kind, call.stage)} · 第 {call.attempt_no}{' '}
                   次调用
                 </p>
                 <p>
@@ -174,7 +213,7 @@ function Tasks({ filter }: { filter: UsageFilter }) {
               {!result.data.items.length && <p>此范围内尚无记录。启用统计前的用量未记录。</p>}
               {result.data.items.map((task) => (
                 <article className="panel compact" key={task.id}>
-                  <h3>导师对话 · {when(task.started_at)}</h3>
+                  <h3>{taskLabel(task.kind)} · {when(task.started_at)}</h3>
                   <p>
                     来自{{ web: '网页', cli: 'CLI 服务端任务', server: '后台任务' }[task.source]}
                   </p>
@@ -269,7 +308,9 @@ export function UsagePage() {
         <span className="eyebrow">真实模型用量</span>
         <h1>用量</h1>
         <p>
-          当前仅统计导师对话，包括导师讲解与交流；其他服务端生成功能尚未接入，CLI 本地直连不统计。
+          {summary.data?.coverage === 'server'
+            ? '统计全部服务端调用，包括导师、Studio、研究、评估、知识处理、教学和模型连接探测；CLI 本地直连不统计。'
+            : '当前仅统计导师对话；CLI 本地直连不统计。'}
         </p>
       </section>
       <p className="hint">
@@ -343,6 +384,9 @@ export function UsagePage() {
       ) : summary.data ? (
         <>
           <p>统计起始时间：{when(summary.data.coverage_since)}。更早的用量未记录。</p>
+          {summary.data.full_coverage_since && (
+            <p>全覆盖起点：{when(summary.data.full_coverage_since)}。此前仅记录导师对话。</p>
+          )}
           <p className="hint">仅显示当前保留的记录；隐私清除会一并移除用量明细和累计。</p>
           <p className="hint">
             本次范围：{from ? when(filter.from) : '启用统计时'} 至 {when(filter.to)}（不含）。

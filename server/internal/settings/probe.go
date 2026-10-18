@@ -8,6 +8,8 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
+	"github.com/google/uuid"
 )
 
 type countingTransport struct {
@@ -34,7 +36,8 @@ func (s *Service) probeConnection(ctx context.Context, target Target, slot secre
 		result.Status = "ready"
 		return result
 	}
-	transport := &countingTransport{base: modelTransport()}
+	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "model_probe", OriginID: uuid.NewString(), Stage: string(target)})
+	transport := &countingTransport{base: s.usageTransport(slot, limits, modelTransport())}
 	client, err := modelClient(slot, limits, true, transport)
 	if err != nil {
 		result.Reason = "invalid_request"

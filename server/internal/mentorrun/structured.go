@@ -65,11 +65,7 @@ func quoteConstrainedSchema(base json.RawMessage, sources []research.Source, poi
 // its wire API. Every attempt crosses the existing HTTP budget and lease gate.
 func (h *executionHost) generateCited(ctx context.Context, request modelclient.Request, schema json.RawMessage, stage string, validate func([]byte) error) error {
 	client, _, native, err := h.service.settings.CitedMentorClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
-		t := budgetTransport{host: h, next: next, stage: stage}
-		if h.body.Study != nil {
-			t.connection = connection
-		}
-		return t
+		return budgetTransport{host: h, next: next, stage: stage, connection: connection}
 	})
 	if err != nil || client == nil {
 		return ErrModel

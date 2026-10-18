@@ -95,8 +95,11 @@ func (s *Store) Summary(ctx context.Context, actor identity.Credential, q Query)
 	}
 	defer tx.Rollback(context.Background())
 	result.Generation = g
-	if err = tx.QueryRow(ctx, `SELECT started_at FROM model_usage_coverage`).Scan(&result.CoverageSince); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT started_at,full_started_at FROM model_usage_coverage`).Scan(&result.CoverageSince, &result.FullCoverageSince); err != nil {
 		return result, err
+	}
+	if result.FullCoverageSince != nil {
+		result.Coverage = "server"
 	}
 	if err = tx.QueryRow(ctx, `SELECT `+sums+selected, args(g, q)...).Scan(targets(&result.Totals)...); err != nil {
 		return result, err

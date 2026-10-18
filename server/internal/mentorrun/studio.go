@@ -13,6 +13,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -91,7 +92,9 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	client, model, native, err := h.service.settings.StudioClient(func(next http.RoundTripper) http.RoundTripper { return budgetTransport{host: h, next: next} })
+	client, model, native, err := h.service.settings.CitedMentorClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
+		return budgetTransport{host: h, next: next, connection: connection, stage: "studio_" + h.body.Studio.Request.Kind}
+	})
 	if err != nil || client == nil {
 		return ErrModel
 	}

@@ -30,7 +30,7 @@ func TestEnvironmentResponsesStyleReachesBothConstructors(t *testing.T) {
 	if result := client.Probe(t.Context()); !result.NativeJSONSchema {
 		t.Fatalf("legacy constructor: %+v", result)
 	}
-	s, err := openLearningSettings(cfg)
+	s, err := openLearningSettings(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestEnvironmentResponsesStyleReachesBothConstructors(t *testing.T) {
 
 func TestSavedTeachingSettingsAreConsumedAtStartup(t *testing.T) {
 	cfg := config.Config{LearningSettingsFile: filepath.Join(t.TempDir(), "private", "settings.json"), ModelEndpointAllowlist: []string{"http://127.0.0.1:11434/v1"}}
-	s, err := openLearningSettings(cfg)
+	s, err := openLearningSettings(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestSavedTeachingSettingsAreConsumedAtStartup(t *testing.T) {
 	if client != nil {
 		t.Fatal("保存隐式切换了运行中教学")
 	}
-	restarted, err := openLearningSettings(cfg)
+	restarted, err := openLearningSettings(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

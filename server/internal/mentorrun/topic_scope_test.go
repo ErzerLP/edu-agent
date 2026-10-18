@@ -126,8 +126,9 @@ func TestPostgreSQLManyTopicsRelevantProjectionAndFailure(t *testing.T) {
 	if _, err = f.pool.Exec(ctx, `UPDATE learning_topic_index_heads SET status='failed' WHERE conversation_id=$1`, id); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(assemble(), "早期要点") || !strings.Contains(h.body.ContextNotice, "较早内容未纳入") {
-		t.Fatal("摘要失败未降级")
+	// A failed later batch never commits output; earlier committed points remain usable.
+	if !strings.Contains(assemble(), "早期要点") || !strings.Contains(h.body.ContextNotice, "较早内容未纳入") {
+		t.Fatal("摘要失败后未保留已提交要点或未提示", h.body.ContextNotice)
 	}
 }
 

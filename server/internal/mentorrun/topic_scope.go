@@ -270,8 +270,10 @@ func (h *executionHost) contextTopics(ctx context.Context, budget int) ([]modelc
 	if err != nil {
 		return nil, true, err
 	}
-	// A failed/in-progress index is not presented as complete current context.
-	if status != "ready" {
+	// Committed points stay usable while a later batch is pending or has failed;
+	// failed output is never committed. The projection still checks each point's
+	// scope/evidence and reports pending coverage.
+	if revision < 1 {
 		return nil, true, nil
 	}
 	if h.body.Context.TopicRevision == 0 {

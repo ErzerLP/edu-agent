@@ -11,6 +11,40 @@ import {
 import { captureNotebook } from './notebook-visual'
 import AxeBuilder from '@axe-core/playwright'
 
+test('切换对话菜单支持键盘选择与 Esc 返回焦点', async ({ page }) => {
+  await configureNotebookModel(page)
+  await pairNotebook(page, 'learner')
+  const space = await createSpace(page, '对话菜单键盘验收')
+  await webAPI(page, 'POST', '/v1/learning/conversations', {
+    id: randomUUID(), mode: 'study', saved: true, title: '较早的对话',
+  }, space.id)
+  const latest = await webAPI(page, 'POST', '/v1/learning/conversations', {
+    id: randomUUID(), mode: 'study', saved: true, title: '最近的对话',
+  }, space.id)
+  await page.goto(`/app/spaces/${space.id}`)
+  const trigger = page.getByRole('button', { name: '切换对话', exact: true })
+  await trigger.focus()
+  await page.keyboard.press('ArrowDown')
+  const list = page.getByRole('listbox', { name: '切换对话', exact: true })
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  await expect(list.getByRole('option', { name: '新对话', exact: true })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(list.getByRole('option', { name: '最近的对话', exact: true })).toBeFocused()
+  await page.keyboard.press('ArrowDown')
+  await expect(list.getByRole('option', { name: '较早的对话', exact: true })).toBeFocused()
+  await page.keyboard.press('ArrowUp')
+  await page.keyboard.press('Enter')
+  await expect(page).toHaveURL(new RegExp(`conversation=${latest.id}`))
+  await expect(list).toHaveCount(0)
+  await trigger.focus()
+  await page.keyboard.press('Enter')
+  await expect(list.getByRole('option', { name: '最近的对话', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await page.keyboard.press('Escape')
+  await expect(list).toHaveCount(0)
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  await expect(trigger).toBeFocused()
+})
+
 test('UX 正常提交无核对提示，思考与发送停止切换，失败保留原请求可重试', async ({ page }) => {
   test.setTimeout(120000)
   await configureNotebookModel(page)
@@ -152,8 +186,10 @@ test('UX 正常提交无核对提示，思考与发送停止切换，失败保�
   await expect(notice).toContainText('提交结果待核对')
   await page.unroute('**/v1/learning/operations/*')
   const conversationId = new URL(page.url()).searchParams.get('conversation')!
+  const savedConversation = await webAPI(page, 'GET', `/v1/learning/conversations/${conversationId}`, undefined, space.id)
   await page.getByRole('button', { name: '新建对话', exact: true }).click()
-  await page.getByLabel('切换对话').selectOption(conversationId)
+  await page.getByRole('button', { name: '切换对话', exact: true }).click()
+  await page.getByRole('option', { name: savedConversation.conversation.title, exact: true }).click()
   // Restoring a draft checks its operation first. A 404 leaves the original
   // request available for an explicit retry, without automatically resending.
   await expect(notice).toContainText('提交结果待核对')

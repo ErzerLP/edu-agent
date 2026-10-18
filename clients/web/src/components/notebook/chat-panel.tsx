@@ -30,6 +30,7 @@ import { SpaceDialog } from './space-dialog'
 import { useNotebookChrome } from './notebook-chrome'
 import { InlineExerciseCard } from './inline-exercise-card'
 import { ChatInput } from './chat-input'
+import { ConversationSwitcher } from './conversation-switcher'
 import { SubmissionNotice } from './submission-notice'
 import { RunResultNotice } from '../run-result-notice'
 
@@ -419,22 +420,13 @@ export function ChatPanel({
         {announcement}
       </p>
       <header className="chat-toolbar">
-        <select
-          aria-label="切换对话"
-          value={conversationId ?? ''}
-          disabled={busy}
-          onChange={(e) => onConversation(e.target.value || undefined)}
-        >
-          <option value="">新对话</option>
-          {conversation && !options.some((c) => c.id === conversation.id) && (
-            <option value={conversation.id}>{conversation.title}</option>
-          )}
-          {options.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.title}
-            </option>
-          ))}
-        </select>
+        <ConversationSwitcher
+          options={options}
+          conversation={conversation}
+          conversationId={conversationId}
+          busy={busy}
+          onConversation={onConversation}
+        />
         <Button
           variant="ghost"
           aria-label="新建对话"

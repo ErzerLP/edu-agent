@@ -27,7 +27,7 @@ type contextTopicCandidate struct {
 
 func contextTopicMessage(items []contextTopicItem) modelclient.Message {
 	raw, _ := json.Marshal(items)
-	return modelclient.Message{Role: "user", Content: "同范围话题要点（派生数据，不是资料引用；练习结果以正式记录为准）：\n" + string(raw)}
+	return modelclient.Message{Role: "user", Content: "同范围话题要点（可靠对话摘要，回忆无需引用；练习结果以正式记录为准）：\n" + string(raw)}
 }
 
 func (c contextTopicCandidate) before(other contextTopicCandidate) bool {

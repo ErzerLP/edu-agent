@@ -231,6 +231,11 @@ func goalGate(ctx context.Context, tx pgx.Tx, space, goal string, version int64)
 }
 
 func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) error {
+	if item.body.StudioPlan != nil && (item.Status == "failed" || item.Status == "cancelled") {
+		if err := s.failStudioPlanTx(ctx, tx, *item); err != nil {
+			return err
+		}
+	}
 	if kind == "completed" && item.Kind == "mentor" && item.ConversationID != "" && item.Saved && item.Status == "succeeded" {
 		item.TopicIndexPending = true
 	}
@@ -516,7 +521,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 		sessionID = c.ConversationID
 		history, err = s.prepareConversation(ctx, tx, actor, space, goal, generation, fingerprint, c, manifest)
 	} else {
-		err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) WHERE NOT history DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation, kind).Scan(&sessionID)
+		err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) WHERE NOT history AND studio_job_id IS NULL DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, c.SessionID, actor.Device.ID, space, goal, generation, kind).Scan(&sessionID)
 	}
 	if err != nil {
 		return Receipt{}, err
@@ -603,7 +608,7 @@ func (s *Service) quota(ctx context.Context, tx pgx.Tx, additional int64) error 
 		return err
 	}
 	var reserved int64
-	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_conversation_topics)+(SELECT count(*)*256 FROM learning_conversation_messages)+(SELECT count(*)*128 FROM learning_topic_anchors)+(SELECT count(*)*256 FROM learning_topic_index_heads)+(SELECT count(*)*256 FROM learning_topic_index_scopes))::bigint FROM learning_mentor_runs`).Scan(&reserved)
+	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_conversation_topics)+(SELECT count(*)*256 FROM learning_conversation_messages)+(SELECT count(*)*128 FROM learning_topic_anchors)+(SELECT count(*)*256 FROM learning_topic_index_heads)+(SELECT count(*)*256 FROM learning_topic_index_scopes)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_jobs)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_plans)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_plan_messages)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_job_operations))::bigint FROM learning_mentor_runs`).Scan(&reserved)
 	if err != nil {
 		return err
 	}

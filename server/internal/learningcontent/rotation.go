@@ -8,6 +8,9 @@ import (
 
 // RotateKeyTx 与导师历史共用服务端密钥；轮换不改变正文版本、状态或来源。
 func RotateKeyTx(ctx context.Context, tx pgx.Tx, rewrap keyrotation.Rewrap) error {
+	if err := rotateStudioJobsTx(ctx, tx, rewrap); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `LOCK TABLE learning_exercises,learning_exercise_help IN ACCESS EXCLUSIVE MODE NOWAIT`); err != nil {
 		return err
 	}

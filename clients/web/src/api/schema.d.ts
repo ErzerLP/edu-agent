@@ -213,6 +213,172 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/studio/focus": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 根据本学习区正式学习记录获取侧重点建议
+         * @description 仅使用有界学习状态，不读取原始对话。记录为空或暂不可用时仍可按资料规划。
+         */
+        get: operations["getStudioFocus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/jobs": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** 恢复本学习区已保存的大纲任务 */
+        get: operations["listStudioJobs"];
+        put?: never;
+        /**
+         * 保存生成任务并开始生成大纲
+         * @description 固定确切资料版本、学习方向和有界学习状态。侧重点作为数据处理，不扩大资料范围。不接受对话或预算字段；相同 operation_id 重放原操作，载荷不同返回冲突。
+         */
+        post: operations["createStudioJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/jobs/{jobID}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        /** 查看大纲及已发送的修改记录 */
+        get: operations["getStudioJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/jobs/{jobID}/plan-messages": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 通过对话修改当前大纲
+         * @description 修改文字与模型说明随任务保存，不进入导师对话；expected_version 与 plan_revision 必须对应当前大纲。冲突保留本地输入，由客户端回读任务后协调。
+         */
+        post: operations["modifyStudioPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/jobs/{jobID}/plan": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * 删除或排序大纲部分
+         * @description 按稳定部分 ID 原子删除和排序，追加新规划修订。ordered_ids 给出删除后保留部分的完整顺序；不使用数组下标定位部分。
+         */
+        patch: operations["patchStudioPlan"];
+        trace?: never;
+    };
+    "/v1/learning/studio/jobs/{jobID}/confirm": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认当前大纲并保存为待生成
+         * @description 确认绑定确切修订及输入指纹，重复操作返回原回执。S-A 仅保存 queued 状态，不生成正文或发布产物。
+         */
+        post: operations["confirmStudioPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/jobs/{jobID}/commands": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重试规划或删除任务
+         * @description S-A 仅支持 retry 和 delete；删除同时清除规划输入与修改记录。尚无大纲时 plan_revision 为 0。
+         */
+        post: operations["commandStudioJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/generations": {
         parameters: {
             query?: never;
@@ -3776,6 +3942,137 @@ export interface components {
             next_cursor?: string;
             /** Format: int64 */
             privacy_generation: number;
+        };
+        StudioFocus: {
+            suggested_focus: string[];
+            /** @description 学习状态覆盖情况；不足时仍可按所选资料生成大纲 */
+            coverage: string;
+        };
+        StudioJobCreate: {
+            /** Format: uuid */
+            operation_id: string;
+            privacy_generation: number;
+            /** @enum {string} */
+            kind: "guide" | "brief" | "note";
+            source_selection: {
+                /** @enum {string} */
+                mode: "items";
+                items: components["schemas"]["SourceIdentity"][];
+            };
+            /** @description 当前方向版本，尚未设置方向时为 0 */
+            direction_version: number;
+            focus?: string;
+            /** Format: uuid */
+            artifact_id?: string;
+            expected_artifact_version?: number;
+        };
+        StudioPlanMessageRequest: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_version: number;
+            plan_revision: number;
+            text: string;
+        };
+        /** @description delete_ids 与 ordered_ids 至少提供一项，至少包含一个要删除或排序的部分。 */
+        StudioPlanPatch: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_version: number;
+            plan_revision: number;
+            delete_ids?: string[];
+            ordered_ids?: string[];
+        };
+        StudioPlanConfirm: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_version: number;
+            plan_revision: number;
+        };
+        StudioJobCommand: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_version: number;
+            plan_revision: number;
+            /** @enum {string} */
+            kind: "retry" | "delete";
+        };
+        StudioPlanChapter: {
+            /** Format: uuid */
+            collection_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            document_revision_id: string;
+            /** Format: uuid */
+            node_id: string;
+            /** Format: uuid */
+            node_revision_id: string;
+            title: string;
+            range: components["schemas"]["SourceRange"];
+        };
+        StudioPlanSection: {
+            /** @description 跨修订稳定的部分身份，用于删除和排序 */
+            id: string;
+            topic: string;
+            objective: string;
+            chapters: components["schemas"]["StudioPlanChapter"][];
+            unit_count: number;
+        };
+        StudioPlan: {
+            revision: number;
+            title: string;
+            /**
+             * @description 相对所选资料的规划覆盖，不代表正文执行进度
+             * @enum {string}
+             */
+            coverage: "partial" | "complete";
+            sections: components["schemas"]["StudioPlanSection"][];
+            uncovered: string[];
+            input_fingerprint: string;
+            /** @description 预检使用的片段大小，确认后固定 */
+            slice_bytes: number;
+        };
+        StudioPlanMessage: {
+            /** Format: uuid */
+            operation_id: string;
+            text: string;
+            explanation: string;
+            /** @enum {string} */
+            status: "pending" | "succeeded" | "failed";
+            plan_revision: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        StudioJob: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "guide" | "brief" | "note";
+            version: number;
+            privacy_generation: number;
+            /**
+             * @description queued 仅表示待生成，不能作为已完成产物展示
+             * @enum {string}
+             */
+            status: "planning" | "awaiting_confirmation" | "queued" | "failed" | "invalidated" | "deleted";
+            active_plan_revision: number;
+            confirmed_plan_revision: number;
+            plan?: components["schemas"]["StudioPlan"];
+            messages: components["schemas"]["StudioPlanMessage"][];
+            suggested_focus: string[];
+            reason?: string;
+            /** Format: uuid */
+            run_id?: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        StudioJobPage: {
+            items: components["schemas"]["StudioJob"][];
+            next_cursor?: string;
         };
         /** @description Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently. */
         StudioGenerate: {
@@ -9190,6 +9487,236 @@ export interface operations {
                     "application/json": components["schemas"]["StudioQuizState"];
                 };
             };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getStudioFocus: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前可读的建议；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioFocus"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listStudioJobs: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 可读的任务及其当前规划；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJobPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    createStudioJob: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioJobCreate"];
+            };
+        };
+        responses: {
+            /** @description 已保存任务和规划执行状态；no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJob"];
+                };
+            };
+            409: components["responses"]["WebFailure"];
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    getStudioJob: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 权限和资料代次核验后的任务快照；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJob"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    modifyStudioPlan: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioPlanMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description 修改已受理；no-store */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJob"];
+                };
+            };
+            409: components["responses"]["WebFailure"];
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    patchStudioPlan: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioPlanPatch"];
+            };
+        };
+        responses: {
+            /** @description 新大纲修订；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJob"];
+                };
+            };
+            409: components["responses"]["WebFailure"];
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    confirmStudioPlan: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioPlanConfirm"];
+            };
+        };
+        responses: {
+            /** @description 已确认的待生成任务；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJob"];
+                };
+            };
+            409: components["responses"]["WebFailure"];
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    commandStudioJob: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioJobCommand"];
+            };
+        };
+        responses: {
+            /** @description 原操作的任务回执；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioJob"];
+                };
+            };
+            409: components["responses"]["WebFailure"];
             default: components["responses"]["WebFailure"];
         };
     };

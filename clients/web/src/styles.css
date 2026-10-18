@@ -1635,6 +1635,28 @@ section:is([aria-label='学习进度'], [aria-label='到期复习']) p a { text-
 .submission-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 8px 0 12px; font-size: 12px; color: var(--muted); line-height: 1.7; }
 .submission-notice .button { min-height: 28px; padding: 3px 2px; font-size: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .studio-coverage-note { padding: 10px 13px; border-radius: 12px; background: var(--soft); color: var(--muted); font-size: 13px; }
+.studio-planning { display: flex; flex-direction: column; gap: 12px; min-height: 100%; min-width: 0; }
+.studio-planning :is(h3, h4, p) { margin: 0; overflow-wrap: anywhere; }
+.studio-planning label { display: grid; gap: 7px; }
+.studio-planning textarea { width: 100%; resize: vertical; }
+.studio-focus-tags, .studio-plan-buttons, .studio-outline-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.studio-focus-tags .button { min-height: 36px; font-size: 12px; white-space: normal; }
+.studio-outline { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.studio-outline > li { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 12px; min-width: 0; }
+.studio-outline > li[data-dragging='true'] { opacity: .65; }
+.studio-outline > li[data-drop-target='true'] { outline: 2px solid var(--text); outline-offset: 2px; }
+.studio-outline-title { display: flex; align-items: center; gap: 6px; }
+.studio-outline-title h4 { font-size: 14px; }
+.studio-drag-handle { touch-action: none; cursor: grab; flex: none; min-width: 40px; min-height: 44px; }
+.studio-drag-handle:active { cursor: grabbing; }
+.studio-outline-actions .button { min-height: 40px; font-size: 12px; padding-inline: 8px; }
+.studio-plan-messages { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.studio-plan-messages article { display: grid; gap: 6px; font-size: 13px; }
+.studio-plan-request { background: var(--soft); border-radius: 10px; padding: 9px 12px; white-space: pre-wrap; }
+.studio-plan-composer { margin-top: auto; display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 14px; }
+.studio-job-delete { margin-top: 8px; font-size: 12px; }
+.studio-job-delete summary { cursor: pointer; padding-block: 8px; }
+.studio-job-delete .button { margin-top: 8px; }
 
 /* One input surface, with an embedded send/stop control. Keep keyboard focus visible. */
 .notebook-workspace .chat-input { background: var(--surface); border-color: var(--border); transition: border-color .15s, box-shadow .15s; }

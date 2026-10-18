@@ -163,6 +163,125 @@ paths:
       responses:
         "200": { description: Original operation's quiz carriers; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioQuizState" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/focus:
+    get:
+      operationId: getStudioFocus
+      summary: 根据本学习区正式学习记录获取侧重点建议
+      description: 仅使用有界学习状态，不读取原始对话。记录为空或暂不可用时仍可按资料规划。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, knowledge:read]
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+      responses:
+        "200": { description: 当前可读的建议；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioFocus" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+    get:
+      operationId: listStudioJobs
+      summary: 恢复本学习区已保存的大纲任务
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, knowledge:read]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string, maxLength: 1024 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        "200": { description: 可读的任务及其当前规划；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJobPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+    post:
+      operationId: createStudioJob
+      summary: 保存生成任务并开始生成大纲
+      description: 固定确切资料版本、学习方向和有界学习状态。侧重点作为数据处理，不扩大资料范围。不接受对话或预算字段；相同 operation_id 重放原操作，载荷不同返回冲突。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, learning:write, knowledge:read]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioJobCreate" } } }
+      responses:
+        "202": { description: 已保存任务和规划执行状态；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJob" } } } }
+        "409": { $ref: "#/components/responses/WebFailure" }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs/{jobID}:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: getStudioJob
+      summary: 查看大纲及已发送的修改记录
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, knowledge:read]
+      responses:
+        "200": { description: 权限和资料代次核验后的任务快照；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJob" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs/{jobID}/plan-messages:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: modifyStudioPlan
+      summary: 通过对话修改当前大纲
+      description: 修改文字与模型说明随任务保存，不进入导师对话；expected_version 与 plan_revision 必须对应当前大纲。冲突保留本地输入，由客户端回读任务后协调。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, learning:write, knowledge:read]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioPlanMessageRequest" } } }
+      responses:
+        "202": { description: 修改已受理；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJob" } } } }
+        "409": { $ref: "#/components/responses/WebFailure" }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs/{jobID}/plan:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: patchStudioPlan
+      summary: 删除或排序大纲部分
+      description: 按稳定部分 ID 原子删除和排序，追加新规划修订。ordered_ids 给出删除后保留部分的完整顺序；不使用数组下标定位部分。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, learning:write, knowledge:read]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioPlanPatch" } } }
+      responses:
+        "200": { description: 新大纲修订；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJob" } } } }
+        "409": { $ref: "#/components/responses/WebFailure" }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs/{jobID}/confirm:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: confirmStudioPlan
+      summary: 确认当前大纲并保存为待生成
+      description: 确认绑定确切修订及输入指纹，重复操作返回原回执。S-A 仅保存 queued 状态，不生成正文或发布产物。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, learning:write, knowledge:read]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioPlanConfirm" } } }
+      responses:
+        "200": { description: 已确认的待生成任务；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJob" } } } }
+        "409": { $ref: "#/components/responses/WebFailure" }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs/{jobID}/commands:
+    parameters:
+      - { $ref: "#/components/parameters/MentorSpaceID" }
+      - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: commandStudioJob
+      summary: 重试规划或删除任务
+      description: S-A 仅支持 retry 和 delete；删除同时清除规划输入与修改记录。尚无大纲时 plan_revision 为 0。
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scopes: [learning:read, learning:write, knowledge:read]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioJobCommand" } } }
+      responses:
+        "200": { description: 原操作的任务回执；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioJob" } } } }
+        "409": { $ref: "#/components/responses/WebFailure" }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/studio/generations:
     post:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
@@ -5187,6 +5306,135 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/ModelUsageCall' } }
         next_cursor: { type: string }
         privacy_generation: { type: integer, format: int64 }
+    StudioFocus:
+      type: object
+      required: [suggested_focus, coverage]
+      properties:
+        suggested_focus: { type: array, items: { type: string } }
+        coverage: { type: string, description: 学习状态覆盖情况；不足时仍可按所选资料生成大纲 }
+    StudioJobCreate:
+      type: object
+      additionalProperties: false
+      required: [operation_id, privacy_generation, kind, source_selection, direction_version]
+      properties:
+        operation_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [guide, brief, note] }
+        source_selection:
+          type: object
+          additionalProperties: false
+          required: [mode, items]
+          properties:
+            mode: { type: string, enum: [items] }
+            items: { type: array, minItems: 1, maxItems: 100, items: { $ref: "#/components/schemas/SourceIdentity" } }
+        direction_version: { type: integer, minimum: 0, description: 当前方向版本，尚未设置方向时为 0 }
+        focus: { type: string, maxLength: 2000 }
+        artifact_id: { type: string, format: uuid }
+        expected_artifact_version: { type: integer, minimum: 0 }
+    StudioPlanMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, plan_revision, text]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        plan_revision: { type: integer, minimum: 1 }
+        text: { type: string, minLength: 1, maxLength: 4000 }
+    StudioPlanPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 4
+      required: [operation_id, expected_version, plan_revision]
+      description: delete_ids 与 ordered_ids 至少提供一项，至少包含一个要删除或排序的部分。
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        plan_revision: { type: integer, minimum: 1 }
+        delete_ids: { type: array, maxItems: 24, uniqueItems: true, items: { type: string, minLength: 1 } }
+        ordered_ids: { type: array, maxItems: 24, uniqueItems: true, items: { type: string, minLength: 1 } }
+    StudioPlanConfirm:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, plan_revision]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        plan_revision: { type: integer, minimum: 1 }
+    StudioJobCommand:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version, plan_revision, kind]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_version: { type: integer, minimum: 1 }
+        plan_revision: { type: integer, minimum: 0 }
+        kind: { type: string, enum: [retry, delete] }
+    StudioPlanChapter:
+      type: object
+      required: [collection_id, revision_id, document_id, document_revision_id, node_id, node_revision_id, title, range]
+      properties:
+        collection_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_revision_id: { type: string, format: uuid }
+        node_id: { type: string, format: uuid }
+        node_revision_id: { type: string, format: uuid }
+        title: { type: string }
+        range: { $ref: "#/components/schemas/SourceRange" }
+    StudioPlanSection:
+      type: object
+      required: [id, topic, objective, chapters, unit_count]
+      properties:
+        id: { type: string, minLength: 1, description: 跨修订稳定的部分身份，用于删除和排序 }
+        topic: { type: string }
+        objective: { type: string }
+        chapters: { type: array, items: { $ref: "#/components/schemas/StudioPlanChapter" } }
+        unit_count: { type: integer, minimum: 1 }
+    StudioPlan:
+      type: object
+      required: [revision, title, coverage, sections, uncovered, input_fingerprint, slice_bytes]
+      properties:
+        revision: { type: integer, minimum: 1 }
+        title: { type: string }
+        coverage: { type: string, enum: [partial, complete], description: 相对所选资料的规划覆盖，不代表正文执行进度 }
+        sections: { type: array, items: { $ref: "#/components/schemas/StudioPlanSection" } }
+        uncovered: { type: array, items: { type: string } }
+        input_fingerprint: { type: string }
+        slice_bytes: { type: integer, minimum: 1, description: 预检使用的片段大小，确认后固定 }
+    StudioPlanMessage:
+      type: object
+      required: [operation_id, text, explanation, status, plan_revision, created_at]
+      properties:
+        operation_id: { type: string, format: uuid }
+        text: { type: string }
+        explanation: { type: string }
+        status: { type: string, enum: [pending, succeeded, failed] }
+        plan_revision: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+    StudioJob:
+      type: object
+      required: [id, kind, version, privacy_generation, status, active_plan_revision, confirmed_plan_revision, messages, suggested_focus, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [guide, brief, note] }
+        version: { type: integer, minimum: 1 }
+        privacy_generation: { type: integer, minimum: 1 }
+        status: { type: string, enum: [planning, awaiting_confirmation, queued, failed, invalidated, deleted], description: queued 仅表示待生成，不能作为已完成产物展示 }
+        active_plan_revision: { type: integer, minimum: 0 }
+        confirmed_plan_revision: { type: integer, minimum: 0 }
+        plan: { $ref: "#/components/schemas/StudioPlan" }
+        messages: { type: array, items: { $ref: "#/components/schemas/StudioPlanMessage" } }
+        suggested_focus: { type: array, items: { type: string } }
+        reason: { type: string }
+        run_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    StudioJobPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/StudioJob" } }
+        next_cursor: { type: string }
     StudioGenerate:
       type: object
       additionalProperties: false

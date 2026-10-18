@@ -77,7 +77,7 @@ func (s *Service) enqueueAssessment(ctx context.Context) error {
 		return err
 	}
 	var session string
-	err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,'assessment') ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) WHERE NOT history DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, uuid.NewString(), task.DeviceID, task.SpaceID, goal.GoalID, generation).Scan(&session)
+	err = tx.QueryRow(ctx, `INSERT INTO learning_mentor_sessions(id,device_id,space_id,goal_id,privacy_generation,kind) VALUES($1,$2,$3,$4,$5,'assessment') ON CONFLICT(device_id,space_id,goal_id,privacy_generation,kind) WHERE NOT history AND studio_job_id IS NULL DO UPDATE SET id=learning_mentor_sessions.id RETURNING id::text`, uuid.NewString(), task.DeviceID, task.SpaceID, goal.GoalID, generation).Scan(&session)
 	if err != nil {
 		return err
 	}

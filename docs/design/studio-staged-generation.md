@@ -200,3 +200,26 @@ job、规划修改、学习状态投影、topic scope、unit、发布 section �
 - **延期**：整本书导入和其他产物类型不纳入本入口。
 - **退出标准**：部分话题选择无越界；最新尾部未覆盖能先整理或明确采用旧范围；无来源可操作提示；删除对话／清除时迟到 job 不能复活；相关浏览器和后端最小检查通过。
 - **重型证据**：S Candidate 再核对全部 28 项，用真实模型抽查跨对话学习状态对重点的影响、长对话相关性、移动端和可访问性；Supervisor 核对 U/T/S 的统一统计、隐私与旧客户端契约。#111 仅用已有大目录 fixture 验证衔接，不要求导入实现。
+
+## 11. S-A 实现覆盖
+
+本批实现指南、简报、生成笔记的“生成大纲 → 多轮修改／删除／排序 → 确认 → 待生成”。`queued` 仅表示大纲已确认，不创建 artifact、内容版本、练习或学习证据。新 Web 将生成任务单列，旧产物和手工笔记继续使用原入口；测验仍使用旧固定结构入口，待 S-C 接入题目规划。
+
+| 范围 | 实际落点与边界 |
+| --- | --- |
+| 持久化 | `000045_studio_jobs.sql` 创建 `learning_studio_jobs`、`learning_studio_plans`、`learning_studio_plan_messages`、`learning_studio_job_operations`。规划只追加修订，修改记录保存已发送文字及成功／失败说明；操作回执保存确切版本、修订和运行身份，不复制不断增长的修改正文。输入、规划、修改和回执分别加密，AAD 绑定用途、学习区、任务、隐私代次及修订／操作身份。 |
+| 独立执行 | `mentorrun/studio_jobs.go` 为每个任务建立独立 Studio session，每次规划／修改建立 stage run，沿用原 worker 租约、checkpoint、身份和代次检查。新 `studio_job_id` 不参加旧 session 的唯一绑定；旧查询和插入仍只匹配 legacy 行。任务永久状态独立于七日运行载体，已保存大纲和修改不因运行过期而丢失。 |
+| 学习状态 | `learning/postgresstore.ReadStudioLearningStateTx` 从同学习区正式 Attempt、Assessment／Decision、有效 Evidence、实际帮助记录读取明确的元数据列，不读取题干、答案或原始对话。先对全区知识点排序和计数，再选择最多 **24 个**；错误／需帮助优先，其次近期记录，再补历史证据。类别可以共享知识点，短标签最多 **48 字符**，建议最多 **4 条**；返回事件水位、总数、纳入数和 coverage。掌握沿用 `ReduceNode` 的 retained 判定，pending、失效和旧方向不变成当前掌握。 |
+| 状态不可用 | 查询保留 **2 秒**局部超时，明确的查询取消或锁争用通过 savepoint 回滚，仅将状态标为 `unavailable`；界面提示“学习记录暂不可用，本次按资料生成”。权限、隐私、格式和数据库结构错误继续失败，不用空摘要绕过授权。 |
+| 来源与目录 | 创建时冻结 manifest、方向 revision、状态和侧重点；只读取方向文本，不为指南／简报／笔记创建 managed goal。目录由 T 的 `ReadSourceDirectoryTx` 每页最多 **64** 条遍历，按方向、状态、侧重点及本次修改排序保留至多 **48** 个候选，再按包含 schema、输出及安全余量的窗口估算缩小。正文不进入规划请求；未纳入章节数量及尚未核验正文的提示随规划保存。 |
+| 模型协议 | 模型返回 title、coverage、sections、uncovered、explanation。section 包含稳定 id、topic、objective 和本次 directory 的章节序号；本地闭合解码、去重和范围校验后，映射为真实 node revision 与原文范围，未知章节拒绝。最多 **24 部分**、每部分 **8 章**；根据配置固定不超过 **4096 字节**的预计切片粒度，显示预计小段数。正式逐段读取和引用验证留 S-B。 |
+| 多轮修改 | 只发送当前规划、最近 **3 条**有界修改背景（每条文字最多 1200 字节、说明最多 800 字节）及本次完整修改（最多 4000 字节）。不进入导师对话，不创建 Attempt／Assessment。结构或章节无效时最多一次带明确错误反馈的修复，仍失败则保留上次大纲及失败记录，由用户重试。 |
+| 并发与确认 | 修改必须带 `expected_version`、`plan_revision`、`operation_id`；删除与排序原子执行，并以稳定 section ID 寻址。CAS 冲突不覆盖当前规划。确认核对规划输入指纹并重新分页检查确切目录身份和范围，保存 `confirmed_plan_revision` 与 `queued`；修改新修订撤销旧确认。重复操作回放原版本回执。 |
+| 用量与隐私 | 所有规划及修复调用经现有 HTTP 用量出口，kind 为 `studio`、origin 为 job ID；同一 job 多次调用归同一根任务。不设置 Token／请求预算，不应用 `max_tool_steps`。外发及提交复核所选来源、身份、learning／tutoring／knowledge 代次；响应使用读取许可。新表和 stage checkpoint 接入 learning 清除，密文接入 `learningcontent.RotateKeyTx` 及已有 app 轮换组合。删除任务同时清除输入、规划、修改、回执和 stage 运行。 |
+| Web | `studio-planning.tsx` 提供侧重点／标签、大纲底部输入、已发送记录、删除、Pointer 拖动（含触摸）、方向键及上移／下移按钮、确认和重开。未发送草稿仅保留在标签页 DraftStore，刷新提示，失败保留文字；身份或权限失效清理草稿。 |
+
+新增 API：`GET /focus`、`POST/GET /jobs`、`GET /jobs/{jobID}`、`POST /jobs/{jobID}/plan-messages`、`PATCH /jobs/{jobID}/plan`、`POST /jobs/{jobID}/confirm`、`POST /jobs/{jobID}/commands`（本批仅 retry／delete），均位于 `/v1/learning/studio` 下。OpenAPI 和 Web 生成类型同步；新入口不接受预算或原始对话字段。
+
+S-A 未创建 units、发布 section 或 schema 2 产物表，未实现内容执行、停止／继续、汇总或发布。旧 `/generations` 保留固定结构和 schema 1 行为；新指南／简报／生成笔记不再调用它。旧入口的大输入完整分段兼容按 §10 留 S-B，现有 T 的有界来源切片仍生效。旧指南／简报浏览器用例已改为通过 legacy API 启动任务，再由生成记录验证停止、旧产物阅读、引用及重新生成版本；新大纲另有单流程用例，本批未额外运行旧浏览器用例。
+
+验收采用真实 PostgreSQL 与确定性模型响应：规划、多轮修改、CAS、删除排序、重开恢复（含密钥轮换）、同区真实对话不外发、大目录末页选择和伪造章节拒绝。Chromium 单用例通过真实 API、PostgreSQL 和确定性模型 HTTP 桩覆盖生成、两轮修改、实际拖动、确认待生成及刷新恢复，并确认没有发布产物。真实模型质量、真实移动浏览器和其他浏览器留 Candidate 抽查。

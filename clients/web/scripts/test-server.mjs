@@ -64,6 +64,21 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
+    if (payload.messages?.[0]?.content?.includes('你在 Studio 规划学习大纲')) {
+      const material = JSON.parse(payload.messages[1].content)
+      if (!material.directory?.[0]?.node_revision_id) { response.writeHead(400); response.end(); return }
+      const instruction = material.instruction
+      const result = {
+        title: '偶数学习大纲', coverage: 'partial', uncovered: [], explanation: '已调整学习顺序与重点。',
+        sections: [
+          { id: 'definition', topic: instruction === '' ? '偶数的定义' : instruction.includes('简洁') ? '先理解整除' : '从整除认识偶数', objective: '理解整除', chapters: [1] },
+          { id: 'examples', topic: '偶数的例子', objective: '辨认偶数', chapters: [1] },
+        ],
+      }
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 } }))
+      return
+    }
     if (payload.messages?.[0]?.content?.includes('本轮已达到用户设置的工具调用上限')) {
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({choices:[{message:{role:'assistant',content:'已读取目标，还需整理例子。'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}}))

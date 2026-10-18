@@ -353,6 +353,9 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 		if h.body.SourceManifest != nil {
 			owners = append(owners, privacy.OwnerKnowledge)
 		}
+		if h.body.StudioPlan != nil {
+			owners = append(owners, privacy.OwnerTutoring)
+		}
 		if len(h.modelMemorySources()) > 0 {
 			owners = append(owners, privacy.OwnerMemory)
 		}
@@ -411,6 +414,8 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 				kind, origin, source = "topic_index", item.ConversationID, "server"
 			case h.body.Assessment != nil:
 				kind, origin = "assessment", h.body.Assessment.AttemptID
+			case h.body.StudioPlan != nil:
+				kind, origin = "studio", h.body.StudioPlan.JobID
 			case h.body.Studio != nil:
 				kind = "studio"
 			case h.body.Research != nil:

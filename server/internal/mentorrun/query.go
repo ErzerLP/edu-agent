@@ -52,6 +52,7 @@ func (s *Service) ReadList(ctx context.Context, actor identity.Credential, space
 	}
 	rows, err := tx.Query(ctx, `SELECT state FROM learning_mentor_runs
 		WHERE device_id=$1 AND space_id=$2 AND privacy_generation=$3
+		AND studio_job_id IS NULL
 		AND COALESCE(state->>'kind','mentor') NOT IN ('assessment','topic_index')
 		AND ($4='' OR COALESCE(state->>'kind','mentor')=$4) AND ($5='' OR state->>'status'=$5)
 		AND ($6='' OR id>NULLIF($6,'')::uuid) ORDER BY id LIMIT $7`,

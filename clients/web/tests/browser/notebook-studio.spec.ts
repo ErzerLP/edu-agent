@@ -22,7 +22,7 @@ async function configureStudioModel(page: Page) {
   expect(logout.ok()).toBe(true)
 }
 
-test('所选来源生成指南和简报、引用定位、刷新重开、取消并重新生成版本', async ({ page }) => {
+test('旧固定结构 API 生成指南和简报、引用定位、刷新重开、取消并重新生成版本', async ({ page }) => {
   test.setTimeout(120000)
   await configureStudioModel(page)
   await pairNotebook(page, 'references')
@@ -33,18 +33,47 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
   const sources = page.getByRole('region', { name: '来源', exact: true })
   await expect(sources.getByRole('article')).toHaveCount(2)
   await sources.getByRole('checkbox', { name: /examples.md/ }).uncheck()
-  const outgoing: any[] = []
-  page.on('request', (r) => {
-    if (r.url().endsWith('/studio/generations') && r.method() === 'POST')
-      outgoing.push(r.postDataJSON())
-  })
-  for (const kind of ['学习指南', '简报']) {
-    await studio.getByRole('button', { name: new RegExp(`^${kind}`) }).click()
-    await studio.getByRole('button', { name: `开始生成${kind}`, exact: true }).click()
+  // 新 Web 入口只建立待确认大纲；此用例继续验证旧固定结构 API 及旧产物读取。
+  const catalog = await webAPI(page, 'GET', '/v1/knowledge/sources', undefined, space.id)
+  const selected = catalog.items.find((item: any) => item.path === 'even.md')
+  expect(selected).toBeTruthy()
+  const { collection_id, revision_id, document_id, document_revision_id } = selected
+  const source = { collection_id, revision_id, document_id, document_revision_id }
+  const session = await webAPI(page, 'GET', '/v1/web/session')
+  const generateLegacy = (kind: 'guide' | 'brief', artifactId: string | null = null, version = 0) =>
+    webAPI(page, 'POST', '/v1/learning/studio/generations', {
+      operation_id: randomUUID(),
+      privacy_generation: session.generation,
+      kind,
+      goal_id: null,
+      goal_version: 0,
+      artifact_id: artifactId,
+      expected_version: version,
+      source_selection: { mode: 'items', items: [source] },
+    }, space.id)
+  const openLegacyRun = async (runId: string) => {
+    const runs = await webAPI(page, 'GET', '/v1/learning/runs?task_kind=studio', undefined, space.id)
+    const index = runs.items.findIndex((run: any) => run.run_id === runId)
+    expect(index).toBeGreaterThanOrEqual(0)
+    await studio.getByLabel('生成记录', { exact: true }).click()
+    const runButtons = studio.getByRole('region', { name: 'Studio 生成记录', exact: true }).getByRole('button')
+    await expect(runButtons).toHaveCount(runs.items.length)
+    const opened = page.waitForResponse(response =>
+      new URL(response.url()).pathname === `/v1/learning/runs/${runId}` &&
+      response.request().method() === 'GET',
+    )
+    await runButtons.nth(index).click()
+    const snapshot = await (await opened).json()
+    expect(snapshot.studio.request.goal_id).toBeNull()
+    expect(snapshot.studio.request.source_selection.items).toEqual([source])
+  }
+  for (const kind of ['guide', 'brief'] as const) {
+    const receipt = await generateLegacy(kind)
+    await openLegacyRun(receipt.run_id)
     await studio.getByRole('button', { name: '打开已保存产物' }).click()
     await expect(
       studio.getByRole('heading', {
-        name: kind === '学习指南' ? '核心要点' : '一页综述',
+        name: kind === 'guide' ? '核心要点' : '一页综述',
         exact: true,
       }),
     ).toBeVisible()
@@ -54,10 +83,9 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
     )
     await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
   }
-  expect(outgoing).toHaveLength(2)
-  expect(outgoing.every((c) => c.goal_id === null && c.source_selection.items.length === 1)).toBe(
-    true,
-  )
+  const artifacts = await webAPI(page, 'GET', '/v1/learning/studio/artifacts', undefined, space.id)
+  const originalGuide = artifacts.items.find((item: any) => item.kind === 'guide')
+  expect(originalGuide.version).toBe(1)
   for (const theme of ['light', 'dark'] as const) {
     await setNotebookTheme(page, theme)
     const library = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
@@ -73,8 +101,8 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
   await studio.getByRole('button', { name: /夹具学习指南.*第 1 版/ }).click()
   await expect(studio.getByRole('heading', { name: '术语', exact: true })).toBeVisible()
   await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
-  await studio.getByRole('button', { name: /^学习指南/ }).click()
-  await studio.getByRole('button', { name: '开始生成学习指南', exact: true }).click()
+  const cancelled = await generateLegacy('guide')
+  await openLegacyRun(cancelled.run_id)
   await expect(studio.getByText('正在生成', { exact: true })).toBeVisible()
   const stopResponses: number[] = []
   await page.route('**/v1/learning/runs/*/commands', async route => {
@@ -91,9 +119,8 @@ test('所选来源生成指南和简报、引用定位、刷新重开、取消�
   await page.screenshot({ path: test.info().outputPath('studio-stopped.png'), fullPage: true })
   await page.unroute('**/v1/learning/runs/*/commands')
   await studio.getByRole('button', { name: '返回 Studio', exact: true }).click()
-  await studio.getByRole('button', { name: /夹具学习指南.*第 1 版/ }).click()
-  await studio.getByRole('button', { name: '重新生成新版本' }).click()
-  await studio.getByRole('button', { name: '开始生成学习指南', exact: true }).click()
+  const regenerated = await generateLegacy('guide', originalGuide.artifact_id, originalGuide.version)
+  await openLegacyRun(regenerated.run_id)
   await studio.getByRole('button', { name: '打开已保存产物' }).click()
   await expect(studio.getByText(/已保存第 2 版/)).toBeVisible()
   await studio.getByLabel('产物版本').selectOption('1')

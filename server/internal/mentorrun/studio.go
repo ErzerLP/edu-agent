@@ -63,7 +63,7 @@ func (s *Service) CreateStudio(ctx context.Context, actor identity.Credential, s
 	// Select the existing session without reading any prior task content. The
 	// request hash excludes this internal session ID, preserving response-loss replay.
 	session := uuid.NewString()
-	err := s.pool.QueryRow(ctx, `SELECT id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND kind='studio' AND NOT history`, actor.Device.ID, space, goal, c.Generation).Scan(&session)
+	err := s.pool.QueryRow(ctx, `SELECT id::text FROM learning_mentor_sessions WHERE device_id=$1 AND space_id=$2 AND goal_id=$3 AND privacy_generation=$4 AND kind='studio' AND NOT history AND studio_job_id IS NULL`, actor.Device.ID, space, goal, c.Generation).Scan(&session)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Receipt{}, err
 	}

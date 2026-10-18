@@ -189,6 +189,11 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 			return err
 		}
 	}
+	if item.body.StudioPlan != nil {
+		if err = s.studioPlanGateTx(ctx, tx, item); err != nil {
+			return err
+		}
+	}
 	if err = change(tx, &item); err != nil {
 		return err
 	}
@@ -292,7 +297,7 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 		}
 		item.Reason = "context_changed"
 	}
-	if item.body.Studio != nil {
+	if item.body.Studio != nil || item.body.StudioPlan != nil {
 		item.Reason = studioFailureCategory(cause)
 	}
 	if wasCancelling {
@@ -445,6 +450,8 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	})
 	if host.body.TopicIndex != nil {
 		err = host.generateTopics(execution)
+	} else if host.body.StudioPlan != nil {
+		err = host.generateStudioPlan(execution)
 	} else if host.body.Assessment != nil {
 		err = host.assess(execution)
 	} else if host.body.Studio != nil {
@@ -458,7 +465,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
+	if err == nil && host.body.StudioPlan == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

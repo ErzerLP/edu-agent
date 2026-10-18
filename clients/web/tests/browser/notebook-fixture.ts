@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 export const defaultSpace = '00000000-0000-4000-8000-000000000001'
 
 export function pairingCode(profile = 'user') {
-  return execFileSync('../../server/edu-agentd', ['pairing-code', 'create', '--profile', profile], {
+  return execFileSync(process.env.WEB_NOTEBOOK_FIXTURE_BINARY || '../../server/edu-agentd', ['pairing-code', 'create', '--profile', profile], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {

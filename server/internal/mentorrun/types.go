@@ -114,6 +114,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	StudioPlan      *StudioPlanStage            `json:"studio_plan,omitempty"`
 	TurnMessages    []modelclient.Message       `json:"turn_messages,omitempty"`
 	Context         *ConversationContext        `json:"context,omitempty"`
 	ContextNotice   string                      `json:"context_notice,omitempty"`

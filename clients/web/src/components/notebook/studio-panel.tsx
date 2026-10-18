@@ -17,11 +17,13 @@ import { ErrorState } from '../common'
 import { StudioNoteEditor } from './studio-note-editor'
 import { StudioDocument } from './studio-document'
 import { StudioGenerator, StudioRun, StudioRuns, studioNames } from './studio-generation'
+import { StudioJobs, StudioPlanCreator, StudioPlanning } from './studio-planning'
 
 const tiles = [
   { name: '学习指南', kind: 'guide', Icon: BookOpen, color: 1, description: '梳理要点与思路' },
   { name: '测验', kind: 'quiz', Icon: ClipboardList, color: 0, description: '检验你的理解' },
   { name: '简报', kind: 'brief', Icon: Presentation, color: 2, description: '把资料读薄一点' },
+  { name: '笔记', kind: 'note', Icon: StickyNote, color: 3, description: '按资料整理学习笔记' },
 ]
 
 export function StudioPanel({
@@ -39,10 +41,11 @@ export function StudioPanel({
   const [selected, setSelected] = useState<string>()
   const [document, setDocument] = useState<string>()
   const [generation, setGeneration] = useState<{
-    kind: 'guide' | 'brief' | 'quiz'
+    kind: 'guide' | 'brief' | 'note' | 'quiz'
     base?: StudioRevision
   }>()
   const [runId, setRunId] = useState<string>()
+  const [jobId, setJobId] = useState<string>()
   const canRead = session.device.scopes.includes('learning:read')
   const canWrite = session.device.scopes.includes('learning:write') && !archived
   const canGenerate =
@@ -51,6 +54,7 @@ export function StudioPanel({
     setDocument(undefined)
     setGeneration(undefined)
     setRunId(undefined)
+    setJobId(undefined)
   }
   const openDocument = (id: string) => {
     back()
@@ -76,6 +80,9 @@ export function StudioPanel({
       drafts.deletePrefix(JSON.stringify([...prefix, spaceId, 'studio-draft']).slice(0, -1) + ',')
       drafts.deletePrefix(
         JSON.stringify([...prefix, spaceId, 'studio-generation']).slice(0, -1) + ',',
+      )
+      drafts.deletePrefix(
+        JSON.stringify([...prefix, spaceId, 'studio-planning']).slice(0, -1) + ',',
       )
       drafts.deletePrefix(
         JSON.stringify([...prefix, spaceId, 'studio-quiz-start']).slice(0, -1) + ',',
@@ -105,13 +112,30 @@ export function StudioPanel({
     )
   if (generation)
     return canGenerate ? (
-      <StudioGenerator
-        key={generation.base?.artifact_id ?? generation.kind}
-        space={space}
-        {...generation}
-        onBack={back}
-        onOpen={openDocument}
-      />
+      generation.kind !== 'quiz' ? (
+        <StudioPlanCreator
+          key={generation.base?.artifact_id ?? generation.kind}
+          space={space}
+          kind={generation.kind}
+          base={generation.base}
+          onBack={back}
+          onCreated={(job) => {
+            queryClient.setQueryData([...prefix, spaceId, 'studio-job', job.id], job)
+            void queryClient.invalidateQueries({ queryKey: [...prefix, spaceId, 'studio-jobs'] })
+            setGeneration(undefined)
+            setJobId(job.id)
+          }}
+        />
+      ) : (
+        <StudioGenerator
+          key={generation.base?.artifact_id ?? generation.kind}
+          space={space}
+          kind="quiz"
+          base={generation.base}
+          onBack={back}
+          onOpen={openDocument}
+        />
+      )
     ) : (
       <>
         <Button onClick={back}>返回 Studio</Button>
@@ -124,6 +148,16 @@ export function StudioPanel({
         <Button onClick={back}>返回 Studio</Button>
         <StudioRun spaceId={spaceId} runId={runId} onOpen={openDocument} />
       </>
+    )
+  if (jobId)
+    return (
+      <StudioPlanning
+        key={jobId}
+        spaceId={spaceId}
+        jobId={jobId}
+        canWrite={canWrite}
+        onBack={back}
+      />
     )
   if (selected)
     return (
@@ -148,27 +182,18 @@ export function StudioPanel({
             className={`notebook-studio-tile notebook-color-${color}`}
             key={name}
             disabled={!canGenerate}
-            onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' | 'quiz' })}
+            onClick={() => setGeneration({ kind: kind as 'guide' | 'brief' | 'note' | 'quiz' })}
           >
             <Icon size={22} aria-hidden="true" />
             <h3>{name}</h3>
             <span>{description}</span>
           </button>
         ))}
-        <button
-          type="button"
-          className="notebook-studio-tile notebook-color-3"
-          disabled={!canWrite}
-          onClick={() => setSelected('new')}
-        >
-          <StickyNote size={22} aria-hidden="true" />
-          <h3>笔记</h3>
-          <span>留下自己的想法</span>
-        </button>
       </div>
       {!canGenerate && (
         <p className="hint">{archived ? '已归档，只读。' : '生成暂不可用，请查看设置。'}</p>
       )}
+      <StudioJobs spaceId={spaceId} onOpen={setJobId} />
       <div className="studio-section-head">
         <h3>已生成</h3>
         {session.capabilities.runs && (

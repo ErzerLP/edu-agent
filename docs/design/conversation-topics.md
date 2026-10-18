@@ -1,6 +1,6 @@
 # 对话话题索引与上下文压缩：设计
 
-状态：Shape 已确认（2026-10-18）。对应 [brief](../comet/specs/conversation-topics/brief.md)、[spec](../comet/specs/conversation-topics/spec.md)，前置为 [U](model-usage.md)。T1 已确认采用建议默认值。
+状态：Shape 已确认（2026-10-18），T-A 已实现并通过本批检查，T-B 尚未实施。对应 [brief](../comet/specs/conversation-topics/brief.md)、[spec](../comet/specs/conversation-topics/spec.md)，前置为 [U](model-usage.md)。T1 已确认采用建议默认值。
 
 ## 1. 现状与选择
 
@@ -123,3 +123,35 @@ worker 在读取、外发前、结果提交和响应输出均检查 gate。清�
 - **延期**：Studio 产品入口由 S 实施，#111 导入不纳入。
 - **退出标准**：构造超过窗口且超过原累计 checkpoint 体积的已保存对话，原文可完整分页、请求有界；零来源／换来源／换方向不泄漏旧摘要；大量话题、摘要失败和工具组不拆散有最小检查；相关 Go／数据库／Web 检查通过。端口与兼容约束更新。
 - **重型证据**：T 候选用真实模型抽查早期要点召回、摘要漂移和推理输出余量，再检查完整 spec；不能以一次成功代表所有历史事实完整保留。
+
+## 9. T-A 实现覆盖
+
+T-A 实现位于 `mentorrun`，migration 为 `000044_conversation_topics.sql`。本节只记录增量话题索引；§5 的上下文装载、超窗组装及来源切片仍属于 T-B，不能据此宣称长对话问题已解决。
+
+### 数据与提交
+
+- `learning_conversation_messages` 只存消息身份、位置、范围指纹与覆盖标记；原文继续由 `learning_tutor_turns` 解密读取。稳定 ID 绑定 run 与展示 slot，用户消息沿用原数组位置，`-1` 专用于该轮展示回答；工具消息不单独成为可见位置。ordinal 使用固定的轮次／slot 顺序空间，因此旧轮次惰性补建不会改变后续 ID 或复用位置。
+- `learning_conversation_topics` 只保存加密正文，包含标题、带消息证据的要点和理解观察。`learning_topic_anchors` 用同对话、同代次的复合外键约束多对多关系。候选仅在同来源／方向范围内匹配；不把跨范围文字合成一个可外发标题。
+- `learning_topic_index_heads` 与 `learning_topic_index_scopes` 分别保存索引 revision、连续成功前缀、范围扫描与成功水位；每条消息的 `covered=false` 表示未处理区间。API 同时返回已覆盖尾部、已覆盖／映射消息数量及未建立映射的旧轮次数，尾部成功不代表中间已覆盖。
+- 整理使用 `topic_index` 导师运行，复用持久租约、并发配额与运行回执；head 只关联一个活动任务。读取保持完整提交快照；提交在同事务中检查当前授权范围、隐私代次、有效租约、run 身份与输入 revision，再原子保存话题、锚点和水位。索引 revision 不改变对话发送 version。
+
+### 触发、授权与失败
+
+- 新的已保存回答提交时持久化整理触发标记。每新增四个完成轮次、未整理输入达到窗口的 15%，或失败后有新轮次时受理整理；普通对话优先取得执行槽位。服务重启只恢复这些新触发及已受理任务，不为升级前历史制造触发。
+- 用户主动 `POST topic-index` 时冻结已提交轮次快照、来源 manifest、方向修订、配置和目的地授权。仅打开历史或话题列表不会调用模型或补写旧消息映射。后台以每页 16 轮补建缺失映射、每批最多 32 条消息整理，并按窗口估算缩小输入；只提交实际处理的批次。
+- 新对话动作改变当前授权范围后，旧范围任务在续租、外发和提交门禁失效。话题候选最多读取 32 项、投影最多 8 项，按标题匹配及最近修订确定候选；无法安全匹配时新建话题。输出不拥有执行权限，只接受本批消息 ID、候选 topic ID 和限定状态；练习不生成“通过”或掌握度记录。
+- 读取、外发、提交与响应沿用 learning／knowledge／memory owner 和来源链接门禁。旧格式缺失记忆依赖时，只从仍可读取的原 checkpoint 恢复依赖标识；无法核验来源的旧课堂工具内容或依赖已经丢失的旧记录不外发，保留未覆盖状态。不会从当前来源或当前记忆猜补旧授权。
+- 模型失败保留上次成功结果和水位；不自动循环重试失败区间，用户主动整理或后续新轮次才重试。超大单条消息无法在当前窗口内整理时保留缺口；T-A 不添加 T-B 的单条临时压缩或上下文降级。
+- 每次实际模型 HTTP 调用进入用量台账，`kind=topic_index`、`source=server`，origin 关联 conversation；用量页可返回仍有权限读取的原对话。无模型外发的 GET 不增加调用次数。
+
+### API、Web 与生命周期
+
+四个接口为 `GET topics`、`GET topics/{topicID}/anchors`、`GET messages/{messageID}` 与 `POST topic-index`。topics 使用有界游标分页；anchors 支持前后游标，位置端点只返回包含确切消息的一轮历史。历史 DTO 新增 `message_anchors`，原 `messages` 的语义保持不变。
+
+Web 工具栏提供只读话题面板、整理状态与覆盖进度、主动整理及目的地确认。选择话题后聚焦真实消息，“上一处／下一处”按消息顺序导航；移动端可返回列表，方向键／Home／End／Esc 可操作列表。定位页与原对话共同渲染，输入组件与标签页草稿保持挂载；后台进度刷新不抢回底部。界面固定提示“练习结果以学习记录为准”。
+
+话题、锚点、scope/head 均纳入 learning 清除和验证；对话删除同时删除派生数据并取消其运行。密文话题纳入导师密钥轮换和停机锁边界。临时对话不会创建消息映射、话题或整理任务，本批整理入口仅面向已保存对话。
+
+验证范围：真实 PostgreSQL 的受影响包 `go test -p=1`／`go vet -p=1`，确定性模型响应覆盖多对多、失败水位、并发 CAS、分页定位、惰性补建、临时不落盘、隐私清除迟到响应及轮换；Web 类型检查与单个 Chromium 话题导航用例。真实模型话题质量、三浏览器交互及 T-B 长对话验收仍未包含在本批证据中。
+
+2026-10-18 检查结果：`mentorrun`、`modelusage`、`learning/postgresstore`、`transport/httpapi`、`app`、`migrations` 的包测试与 vet 通过，使用指定真实测试库和 `-p=1`；`mentorrun` 使用 `-timeout=20m`，149 个顶层测试通过，其中新增话题测试 8 个全部通过。3 个既有真实模型用例和 1 个外部 CLI 用例因未显式启用而跳过，不属于本批验证范围。`npm run check`、前端构建、单个 Chromium 话题导航用例、文档相对链接和 `git diff --check` 通过。OpenAPI schema 已生成，生成器仍提示既有 `ActionExposureRequest` discriminator 警告。浏览器使用同一测试库内的独立 schema，完成后已清理。

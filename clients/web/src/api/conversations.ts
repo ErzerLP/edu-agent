@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ApiError } from './client'
+import { messageAnchorSchema } from './conversation-topics'
 import { mentorCitationSchema, sourceManifestSchema, type SourceSelection } from './source-selection'
 
 const version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -22,7 +23,7 @@ export const tutorMessage = z.object({
 })
 export const turnsSchema = z.object({
   conversation: conversationSchema,
-  items: z.array(z.object({ run_id: z.uuid(), exercise_id: z.uuid().optional(), ordinal: version, status: z.string(), body_available: z.boolean(), messages: z.array(tutorMessage), output: z.string(),source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional() })).max(50),
+  items: z.array(z.object({ run_id: z.uuid(), exercise_id: z.uuid().optional(), ordinal: version, status: z.string(), body_available: z.boolean(), messages: z.array(tutorMessage), message_anchors: z.array(messageAnchorSchema).optional(), output: z.string(),source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional() })).max(50),
   next_cursor: version.optional(),
 })
 

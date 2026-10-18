@@ -20,6 +20,10 @@ func (a *API) mountConversations(router chi.Router) {
 	write.Patch("/v1/learning/conversations/{conversationID}", a.tutorChange)
 	write.Delete("/v1/learning/conversations/{conversationID}", a.tutorChange)
 	write.Post("/v1/learning/conversations/{conversationID}/turns", a.tutorTurn)
+	read.Get("/v1/learning/conversations/{conversationID}/topics", a.tutorTopics)
+	read.Get("/v1/learning/conversations/{conversationID}/topics/{topicID}/anchors", a.tutorTopicAnchors)
+	read.Get("/v1/learning/conversations/{conversationID}/messages/{messageID}", a.tutorMessage)
+	write.Post("/v1/learning/conversations/{conversationID}/topic-index", a.tutorTopicIndex)
 }
 
 func (a *API) tutorList(w http.ResponseWriter, r *http.Request) {

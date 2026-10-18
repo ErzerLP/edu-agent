@@ -403,6 +403,8 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			}
 			kind, origin := "mentor", item.RunID
 			switch {
+			case h.body.TopicIndex != nil:
+				kind, origin, source = "topic_index", item.ConversationID, "server"
 			case h.body.Assessment != nil:
 				kind, origin = "assessment", h.body.Assessment.AttemptID
 			case h.body.Studio != nil:

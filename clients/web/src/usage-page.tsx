@@ -20,6 +20,7 @@ const token = (n: number | null) => (n === null ? '未知' : count(n))
 const when = (date: string) => new Date(date).toLocaleString('zh-CN')
 const taskLabels: Record<string, string> = {
   mentor: '导师对话',
+  topic_index: '话题整理',
   studio: 'Studio 生成',
   research: '研究',
   assessment: '练习评估',
@@ -220,6 +221,7 @@ function Tasks({ filter }: { filter: UsageFilter }) {
                   </p>
                   <Totals value={task.totals} />
                   <div className="actions">
+                    {task.conversation_id && task.space_id && <Link to="/spaces/$spaceId" params={{ spaceId: task.space_id }} search={{ conversation: task.conversation_id }}>查看原对话</Link>}
                     <Button variant="outline" onClick={() => setSelected(task)}>
                       查看调用明细
                     </Button>

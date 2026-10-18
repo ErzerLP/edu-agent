@@ -37,6 +37,7 @@ export const usageTask = z.object({
   source: z.enum(['web', 'cli', 'server']),
   started_at: z.string(),
   run_id: z.string().uuid().nullable(),
+  conversation_id: z.string().uuid().nullable().optional(),
   totals: usageTotals,
 })
 export const usageTasks = z.object({

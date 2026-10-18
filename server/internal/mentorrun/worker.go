@@ -43,7 +43,7 @@ func (s *Service) claim(ctx context.Context) (*row, error) {
 	if active >= s.settings.View().Limits.Concurrency {
 		return nil, tx.Commit(ctx)
 	}
-	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE privacy_generation=$1 AND expires_at>clock_timestamp() AND ((state->>'saved')::boolean OR process_id=$2) AND (state->>'status'='queued' OR (state->>'status' IN ('running','cancelling') AND lease_until<clock_timestamp())) ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, generation, s.process))
+	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE privacy_generation=$1 AND expires_at>clock_timestamp() AND ((state->>'saved')::boolean OR process_id=$2) AND (state->>'status'='queued' OR (state->>'status' IN ('running','cancelling') AND lease_until<clock_timestamp())) ORDER BY (state->>'kind'='topic_index'),created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, generation, s.process))
 	if errors.Is(err, ErrNotFound) {
 		return nil, tx.Commit(ctx)
 	}
@@ -135,6 +135,16 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	if err = actorGate(ctx, tx, owned.device, owned.token, true); err != nil {
 		return err
 	}
+	if owned.Kind == "topic_index" {
+		var deleted bool
+		var scope string
+		if err = tx.QueryRow(ctx, `SELECT deleted,COALESCE(topic_index_scope,'') FROM learning_tutor_conversations WHERE id=$1 FOR SHARE`, owned.ConversationID).Scan(&deleted, &scope); err != nil {
+			return err
+		}
+		if deleted || scope != owned.body.TopicIndex.Scope {
+			return ErrInactive
+		}
+	}
 	if owned.TeachingSessionID != "" {
 		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "learning-aggregate:goal:"+owned.GoalID); err != nil {
 			return err
@@ -163,6 +173,17 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	if _, err = s.sourceMaterialTx(ctx, tx, item.SpaceID, item.token, item.body); err != nil {
 		return err
 	}
+	if item.Kind == "topic_index" {
+		h := executionHost{service: s, owned: item, body: item.body}
+		if err = h.topicGate(ctx, tx); err != nil {
+			return err
+		}
+		if len(item.body.MemorySources) > 0 {
+			if err = h.validateMemorySources(ctx, tx); err != nil {
+				return err
+			}
+		}
+	}
 	if item.body.ContentEdit != nil {
 		if err = s.contentReadable(ctx, tx, item); err != nil {
 			return err
@@ -182,6 +203,9 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	}
 	if kind == "" {
 		_, err = tx.Exec(ctx, `UPDATE learning_mentor_runs SET lease_until=clock_timestamp()+($2::bigint*interval '1 microsecond') WHERE id=$1`, item.RunID, s.Lease.Microseconds())
+		if err == nil && item.Kind == "topic_index" {
+			_, err = tx.Exec(ctx, `UPDATE learning_topic_index_heads SET lease_until=clock_timestamp()+($2::bigint*interval '1 microsecond') WHERE run_id=$1`, item.RunID, s.Lease.Microseconds())
+		}
 	} else {
 		if terminal(item.Status) || item.Status == "waiting_input" || item.Status == "waiting_approval" || item.Status == "paused_budget" || item.Status == "paused_tool_steps" {
 			item.lease = nil
@@ -378,6 +402,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	if err := s.enqueueAssessment(ctx); err != nil {
 		return 0, err
 	}
+	s.schedulePendingTopics(ctx)
 	item, err := s.claim(ctx)
 	if err != nil || item == nil {
 		return 0, err
@@ -412,7 +437,9 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	host.model, _, _, err = s.settings.MentorUsageClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
 		return budgetTransport{host: host, next: next, connection: connection}
 	})
-	if host.body.Assessment != nil {
+	if host.body.TopicIndex != nil {
+		err = host.generateTopics(execution)
+	} else if host.body.Assessment != nil {
 		err = host.assess(execution)
 	} else if host.body.Studio != nil {
 		err = host.generateStudio(execution)
@@ -425,7 +452,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
+	if err == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {
@@ -443,6 +470,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 		defer cancel()
 		return 1, s.finish(settle, *item, err)
 	}
+	s.scheduleTopics(ctx, *item)
 	return 1, nil
 }
 

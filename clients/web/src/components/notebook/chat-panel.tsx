@@ -33,6 +33,8 @@ import { ChatInput } from './chat-input'
 import { ConversationSwitcher } from './conversation-switcher'
 import { SubmissionNotice } from './submission-notice'
 import { RunResultNotice } from '../run-result-notice'
+import { ConversationTopics } from './conversation-topics'
+import type { MessageAnchor } from '@/api/conversation-topics'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -64,6 +66,7 @@ export function ChatPanel({
   const [notice, setNotice] = useState('')
   const [needSources, setNeedSources] = useState(false)
   const [destination, setDestination] = useState('')
+  const [locatedAnchor, setLocatedAnchor] = useState<MessageAnchor>()
   const live = useRef(true),
     stream = useRef<HTMLDivElement>(null),
     follow = useRef(true)
@@ -122,7 +125,37 @@ export function ChatPanel({
       unwrap(learningClient(session).GET('/v1/settings', { signal }), settingsSchema),
   })
   const conversation = history.data?.pages[0]?.conversation
-  const turns = history.data?.pages.flatMap((p) => p.items) ?? []
+  const locationOptions = (anchor: MessageAnchor) => ({
+    queryKey: [...prefix, space.id, 'topic-location', conversationId, anchor.message_id],
+    queryFn: async ({ signal }: { signal: AbortSignal }) => {
+      const page = await unwrap(api().GET('/v1/learning/conversations/{conversationID}/messages/{messageID}', {
+        params: { header, path: { conversationID: conversationId!, messageID: anchor.message_id } }, signal,
+      }), turnsSchema)
+      checkConversation(page.conversation, space.id, session.generation, conversationId)
+      if (!page.items.some(turn => turn.body_available && turn.run_id === anchor.run_id && turn.message_anchors?.some(a => a.message_id === anchor.message_id))) throw new ApiError(404, 'topic_position_unavailable')
+      return page
+    },
+  })
+  const location = useQuery({
+    ...(locatedAnchor ? locationOptions(locatedAnchor) : { queryKey: [...prefix, space.id, 'topic-location', conversationId] }),
+    enabled: !!locatedAnchor, retry: false, gcTime: 0, refetchInterval: 1500,
+  })
+  const turns = [...new Map([
+    ...(history.data?.pages.flatMap(p => p.items) ?? []),
+    ...(location.error ? [] : location.data?.items ?? []),
+  ].map(turn => [turn.run_id, turn])).values()].sort((a, b) => a.ordinal - b.ordinal)
+  const locate = async (anchor: MessageAnchor) => {
+    await query.fetchQuery({ ...locationOptions(anchor), staleTime: 0 })
+    if (!live.current || !contentAllowed.current) return
+    follow.current = false
+    setLocatedAnchor(anchor)
+  }
+  useEffect(() => {
+    if (!locatedAnchor) return
+    const target = stream.current?.querySelector<HTMLElement>(`[data-message-id="${locatedAnchor.message_id}"]`)
+    target?.scrollIntoView({ block: 'center' })
+    target?.focus({ preventScroll: true })
+  }, [locatedAnchor])
   const currentRun = useQuery({
     queryKey: [...prefix, space.id, 'study-run', conversation?.current_run_id],
     enabled: !!conversation?.current_run_id,
@@ -191,6 +224,8 @@ export function ChatPanel({
     setPrompt('')
     setPendingTurn(undefined)
     setDestination('')
+    setLocatedAnchor(undefined)
+    follow.current = true
     refresh()
     onConversation(id)
   }
@@ -432,13 +467,15 @@ export function ChatPanel({
           </Button>
         )}
         <span className="chat-saved">{conversation ? '已保存' : '学习助手'}</span>
+        {conversation?.saved && sourceReadable && <ConversationTopics key={conversation.id} conversation={conversation} space={space} canWrite={canWrite}
+          onLocate={locate} />}
       </header>
       <div
         className="chat-stream"
         ref={stream}
         onScroll={() => {
           const el = stream.current
-          if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+          if (el && !locatedAnchor) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
         }}
       >
         {conversationId && !history.data ? (
@@ -464,13 +501,14 @@ export function ChatPanel({
                 (!turn.source_manifest?.entries.length || sourceReadable) ? (
                   <>
                     {turn.messages
-                      .filter((m) => m.role === 'user')
-                      .map((m, i) => (
-                        <div className="chat-user" key={i}>
+                      .map((m, slot) => ({ m, slot })).filter(({ m }) => m.role === 'user')
+                      .map(({ m, slot }) => (
+                        <div className="chat-user" key={slot} tabIndex={-1}
+                          data-message-id={turn.message_anchors?.find(a => a.message_slot === slot)?.message_id}>
                           <div>{m.content}</div>
                         </div>
                       ))}
-                    <div className="chat-ai">
+                    <div className="chat-ai" tabIndex={-1} data-message-id={turn.message_anchors?.find(a => a.message_slot === -1)?.message_id}>
                       <div className="chat-author">
                         <Sparkles size={17} />
                         学习导师

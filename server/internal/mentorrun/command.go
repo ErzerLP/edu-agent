@@ -62,6 +62,9 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 	if item.Kind == "assessment" {
 		return Receipt{}, ErrNotFound
 	}
+	if item.Kind == "topic_index" && c.Kind != "stop" {
+		return Receipt{}, ErrInvalid
+	}
 	if c.Kind == "stop" && (terminal(item.Status) || item.Status == "cancelling") {
 		// Acknowledge the operation without rewriting the outcome, emitting an
 		// event or requiring body recovery for an already satisfied stop.

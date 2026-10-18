@@ -87,13 +87,14 @@ type Summary struct {
 	Models            []Model    `json:"models"`
 }
 type Task struct {
-	ID        string    `json:"id"`
-	SpaceID   *string   `json:"space_id"`
-	Kind      string    `json:"kind"`
-	Source    string    `json:"source"`
-	StartedAt time.Time `json:"started_at"`
-	RunID     *string   `json:"run_id"`
-	Totals    Totals    `json:"totals"`
+	ConversationID *string   `json:"conversation_id"`
+	ID             string    `json:"id"`
+	SpaceID        *string   `json:"space_id"`
+	Kind           string    `json:"kind"`
+	Source         string    `json:"source"`
+	StartedAt      time.Time `json:"started_at"`
+	RunID          *string   `json:"run_id"`
+	Totals         Totals    `json:"totals"`
 }
 type Call struct {
 	ID         string     `json:"id"`

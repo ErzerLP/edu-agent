@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
-	"strings"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
@@ -81,6 +80,53 @@ func (s *Service) ReadTopicScope(ctx context.Context, actor identity.Credential,
 }
 
 func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversation, token string, scope Body, ids []string, revision, through int64, question string, budget int) (TopicScopeProjection, error) {
+	type candidate struct {
+		topic Topic
+		score int
+	}
+	best := []candidate{}
+	omitted := false
+	p, err := s.scanTopicScopeTx(ctx, tx, c, token, scope, ids, revision, through, func(topic Topic) {
+		text := topic.Title
+		for _, point := range topic.Points {
+			text += " " + point.Text
+		}
+		for _, obs := range topic.Observations {
+			text += " " + obs.Text
+		}
+		best = append(best, candidate{topic, relevance(question, text)})
+		sort.SliceStable(best, func(i, j int) bool {
+			if best[i].score != best[j].score {
+				return best[i].score > best[j].score
+			}
+			return best[i].topic.Revision > best[j].topic.Revision
+		})
+		if len(best) > 32 {
+			best = best[:32]
+			omitted = true
+		}
+	})
+	if err != nil {
+		return p, err
+	}
+	for _, b := range best {
+		next := append(append([]Topic(nil), p.Topics...), b.topic)
+		raw, _ := json.Marshal(next)
+		if messageCost([]modelclient.Message{{Role: "user", Content: string(raw)}}) > budget {
+			omitted = true
+			continue
+		}
+		p.Topics = next
+	}
+	if omitted {
+		p.Gaps = append(p.Gaps, "仅纳入本次选取的有界话题要点，其他话题或证据未纳入。")
+	}
+	return p, nil
+}
+
+// Share the owner and per-evidence gates between the public evidence projection
+// and the compact model projection. Only readable, same-scope items reach visit.
+func (s *Service) scanTopicScopeTx(ctx context.Context, tx pgx.Tx, c Conversation, token string, scope Body, ids []string, revision, through int64, visit func(Topic)) (TopicScopeProjection, error) {
 	p := TopicScopeProjection{Revision: revision, Through: through, Topics: []Topic{}, Gaps: []string{}}
 	fingerprint := topicScope(scope)
 	if _, err := s.sourceMaterialTx(ctx, tx, c.SpaceID, token, Body{SourceManifest: scope.SourceManifest}); err != nil {
@@ -98,11 +144,6 @@ func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversati
 	if pending || unmapped {
 		p.Gaps = append(p.Gaps, "较早内容未纳入：话题整理尚未覆盖全部消息。")
 	}
-	type candidate struct {
-		topic Topic
-		score int
-	}
-	best := []candidate{}
 	cursor := ""
 	omitted := false
 	for {
@@ -162,7 +203,6 @@ func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversati
 				err := tx.QueryRow(ctx, `SELECT count(*) FROM learning_conversation_messages WHERE conversation_id=$1 AND message_id=ANY($2::uuid[]) AND ordinal<=$3 AND privacy_generation=$4`, c.ID, ev.AnchorIDs, through, c.Generation).Scan(&count)
 				return len(ev.AnchorIDs) > 0 && count == len(ev.AnchorIDs), err
 			}
-			text := topic.Title
 			for _, point := range body.Points {
 				ok, e := valid(point.TopicEvidence)
 				if e != nil {
@@ -170,7 +210,6 @@ func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversati
 				}
 				if ok {
 					topic.Points = append(topic.Points, point)
-					text += " " + point.Text
 				} else {
 					omitted = true
 					topicHasGap = true
@@ -183,7 +222,6 @@ func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversati
 				}
 				if ok {
 					topic.Observations = append(topic.Observations, obs)
-					text += " " + obs.Text
 				} else {
 					omitted = true
 					topicHasGap = true
@@ -195,27 +233,8 @@ func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversati
 			if topicHasGap {
 				topic.Title = "所选话题（部分证据未纳入）"
 			}
-			best = append(best, candidate{topic, relevance(question, text)})
+			visit(topic)
 		}
-		sort.SliceStable(best, func(i, j int) bool {
-			if best[i].score != best[j].score {
-				return best[i].score > best[j].score
-			}
-			return best[i].topic.Revision > best[j].topic.Revision
-		})
-		if len(best) > 32 {
-			best = best[:32]
-			omitted = true
-		}
-	}
-	for _, b := range best {
-		next := append(append([]Topic(nil), p.Topics...), b.topic)
-		raw, _ := json.Marshal(next)
-		if messageCost([]modelclient.Message{{Role: "user", Content: string(raw)}}) > budget {
-			omitted = true
-			continue
-		}
-		p.Topics = next
 	}
 	if omitted {
 		p.Gaps = append(p.Gaps, "仅纳入本次选取的有界话题要点，其他话题或证据未纳入。")
@@ -224,7 +243,7 @@ func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversati
 }
 
 func (h *executionHost) contextTopics(ctx context.Context, budget int) ([]modelclient.Message, bool, error) {
-	if h.body.Context == nil || h.owned.ConversationID == "" || !h.owned.Saved || budget < 128 {
+	if h.body.Context == nil || h.owned.ConversationID == "" || !h.owned.Saved || budget <= 0 {
 		return nil, true, nil
 	}
 	tx, err := h.service.pool.Begin(ctx)
@@ -267,21 +286,5 @@ func (h *executionHost) contextTopics(ctx context.Context, budget int) ([]modelc
 		}
 	}
 	c := Conversation{ID: h.owned.ConversationID, SpaceID: h.owned.SpaceID, Generation: g}
-	p, err := h.service.topicProjectionTx(ctx, tx, c, h.owned.token, h.body, nil, revision, (h.body.Context.ThroughTurn+1)*MaxBody-1, question, max(0, budget-100))
-	if err != nil {
-		return nil, true, err
-	}
-	if len(p.Topics) == 0 {
-		return nil, true, nil
-	}
-	for _, topic := range p.Topics {
-		for _, point := range topic.Points {
-			h.rememberContextMemory(point.MemorySources)
-		}
-		for _, obs := range topic.Observations {
-			h.rememberContextMemory(obs.MemorySources)
-		}
-	}
-	raw, _ := json.Marshal(p.Topics)
-	return []modelclient.Message{{Role: "user", Content: "同范围话题要点（派生数据，不是资料引用；练习结果以正式记录为准）：\n" + string(raw)}}, len(p.Gaps) > 0 || strings.TrimSpace(status) != "ready", nil
+	return h.projectContextTopicsTx(ctx, tx, c, revision, question, budget)
 }

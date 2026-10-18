@@ -23,12 +23,20 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPostgreSQLExerciseBudgetAndInternalPorts(t *testing.T) {
+func TestPostgreSQLExerciseLegacyPauseAndInternalPorts(t *testing.T) {
 	f := newExerciseFixture(t)
 	ctx := context.Background()
 	f.request.Assessment.Tokens = 1
 	e, attempt := f.submitted(t)
 	assessmentReply(t, f, e, 1000)
+	if err := f.service.enqueueAssessment(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := f.service.AssessmentStatus(ctx, f.actor, attempt.ID)
+	if err != nil || before.Run == nil {
+		t.Fatal(err)
+	}
+	legacyPause(t, f.runtimeFixture, before.Task.RunID)
 	f.work(t)
 	state, err := f.service.AssessmentStatus(ctx, f.actor, attempt.ID)
 	if err != nil || state.Run == nil || state.Run.Status != "paused_budget" || f.calls.Load() != 0 {

@@ -21,8 +21,6 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
   const key = notebook?.draftKey ?? (conversation ? conversationDraftKey(prefix, conversation.id) : JSON.stringify([...prefix, goal.learning_space_id, goal.goal_id, teachingSessionId, 'mentor']))
   const [prompt, setPrompt] = useState(() => drafts.get<string>(key) ?? '')
   const [save, setSave] = useState(false)
-  const [requests, setRequests] = useState(3)
-  const [tokens, setTokens] = useState(30000)
   const [run, setRun] = useState<MentorSnapshot>()
   const [error, setError] = useState<unknown>()
   const [pending, setPending] = useState(false)
@@ -81,9 +79,6 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
   }, [run?.run_id, session, key])
   useEffect(() => { if (follow.current && output.current) output.current.scrollTop = output.current.scrollHeight }, [run?.output])
   useEffect(() => { setAnswer('') }, [run?.interaction?.id])
-  const limits = configuration.data?.limits
-  const requestBudget = Math.min(requests, limits?.research_requests ?? requests)
-  const tokenBudget = Math.min(tokens, limits?.research_tokens ?? tokens)
   const inactive = archivedSpace || !['draft', 'active'].includes(goal.management.status)
   const destinationBlocked = !!conversation?.confirmation_required && confirmedDestination !== conversation.destination
   const modelReady = configuration.data?.effective_mentor.enabled && configuration.data.effective_mentor.configured
@@ -97,11 +92,11 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
   const start = async () => {
     if (pending || !prompt.trim() || notebook && !notebook.selection && !unconfirmed) return
     setPending(true); setError(undefined)
-    const payload = { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), session_id: run?.session_id ?? sessionId.current, expected_version: goal.revision, prompt, save, request_budget: requestBudget, token_budget: tokenBudget, ...(teachingSessionId ? { teaching_session_id: teachingSessionId } : {}) }
+    const payload = { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), session_id: run?.session_id ?? sessionId.current, expected_version: goal.revision, prompt, save, ...(teachingSessionId ? { teaching_session_id: teachingSessionId } : {}) }
     const operation_id = drafts.operation(key + ':create', payload)
     try {
       const target = conversation ?? (notebook ? await notebook.ensureConversation(save) : undefined)
-      const turn = target ? { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), expected_version: target.version, prompt, request_budget: requestBudget, token_budget: tokenBudget, ...(confirmedDestination ? { confirm_destination: confirmedDestination } : {}) } : undefined
+      const turn = target ? { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), expected_version: target.version, prompt, ...(confirmedDestination ? { confirm_destination: confirmedDestination } : {}) } : undefined
       const submission = turn ? (unconfirmed ?? { ...turn, operation_id: drafts.operation(key + ':turn', turn) }) : undefined
       if (submission) { drafts.set(key + ':unconfirmed', submission); setUnconfirmed(submission) }
       const receipt = target && turn
@@ -129,7 +124,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
     } catch (e) { if (mounted.current) setError(e) }
     finally { if (mounted.current) setPending(false) }
   }
-  const command = async (kind: 'stop' | 'clear' | 'respond' | 'continue_budget', selected?: string) => {
+  const command = async (kind: 'stop' | 'clear' | 'respond' | 'resume', selected?: string) => {
     if (!run || pending) return
     setPending(true); setError(undefined)
     try {
@@ -138,7 +133,6 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       } else {
         const payload = { expected_version: run.version, kind,
           ...(kind === 'respond' ? { interaction_id: run.interaction?.id, answer: selected ?? answer } : {}),
-          ...(kind === 'continue_budget' ? { request_budget: requestBudget, token_budget: tokenBudget } : {}),
         }
         const operation_id = drafts.operation(key + ':command', payload)
         await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id } }), mentorReceiptSchema)
@@ -177,10 +171,8 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       </div>
       <RunResultNotice run={run}>请求可能已到达模型服务，但结果无法确认；不会自动重发。</RunResultNotice>
       {run.reason === 'history_context_limit' && <p role="alert">对话或工具上下文达到上限，本次未继续请求。已有历史保留，请新建对话。</p>}
-      {run.cost_unknown && <p className="hint">已发出 {run.requests_used} 次模型请求，实际费用未核实。</p>}
-      <p className="hint">剩余预算：{run.requests_left} 次请求 / {run.tokens_left} Token 预留额度。</p>
       {run.saved && run.body_available && <p className="hint">{conversation ? '已提交轮次保留至主动删除；' : ''}本次运行恢复缓存最晚保留至 {new Date(run.expires_at).toLocaleString('zh-CN')}。</p>}
-      {run.interaction && <fieldset disabled={pending || inactive || !!conversation?.confirmation_required}>
+      {run.interaction && ['waiting_input', 'waiting_approval'].includes(run.status) && <fieldset disabled={pending || inactive || !!conversation?.confirmation_required}>
         <legend>{run.interaction.memory_candidate_id ? '长期记忆申请：等待具体审批' : run.interaction.approval ? '确认交流方向' : '导师需要你的回答'}</legend>
         <p>{run.interaction.question}</p>
         {run.interaction.reference_selection && <ReferenceLink spaceId={goal.learning_space_id} goalId={goal.goal_id} sessionId={teachingSessionId} />}
@@ -200,12 +192,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       </div>
       <details><summary>技术信息</summary><p>会话：{run.session_id}<br />运行：{run.run_id}<br />版本：{run.version} · watermark：{run.watermark}<br />阶段：{run.stage} · 原因：{run.reason || '无'}</p></details>
     </>}
-    <details open={run?.status === 'paused_budget'}><summary>本次模型预算</summary>
-      <div className="filters"><label>请求次数上限<input type="number" min={1} max={limits?.research_requests ?? 1000} value={requestBudget} onChange={(e) => setRequests(Math.max(1, Number(e.target.value)))} /></label>
-        <label>Token 预留上限<input type="number" min={1} max={limits?.research_tokens ?? 10000000} value={tokenBudget} onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))} /></label></div>
-      <p className="hint">每次请求预留输入估算与最大输出，额度不足时停止新调用。继续分配会产生新的外部请求及可能费用。</p>
-      {run?.status === 'paused_budget' && <div className="actions"><Button disabled={pending || inactive || !modelReady || !!conversation?.confirmation_required} onClick={() => void command('continue_budget')}>分配上述预算并继续</Button><Button variant="outline" disabled={pending} onClick={() => void command('stop')}>不增加预算，停止</Button></div>}
-    </details>
+    {run && ['paused_budget', 'paused_tool_steps'].includes(run.status) && <div className="actions"><Button disabled={pending || inactive || !modelReady || !!conversation?.confirmation_required} onClick={() => void command('resume')}>继续</Button></div>}
     {!active && <form onSubmit={(e) => { e.preventDefault(); void start() }} onKeyDown={(e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }}>
       <fieldset disabled={pending || inactive || destinationBlocked || otherActive || !modelReady || !current.data || !session.capabilities.save_goal || !!notebook && !notebook.selection}>
         {notebook&&<div className="notebook-quick-questions">{['换个讲法','补前置知识','举个例子','要提示'].map(question=><Button key={question} type="button" variant="outline" disabled={!!unconfirmed} onClick={()=>{setPrompt(question);drafts.set(key,question)}}>{question}</Button>)}</div>}

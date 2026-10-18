@@ -20,7 +20,7 @@ const studioReceiptSchema = z.object({
 })
 const directionSchema = z.object({ id: z.uuid(), version, goal_revision_id: z.uuid() }).strict()
 const assessmentPolicySchema = z
-  .object({ configuration: z.string().min(1), requests: version, tokens: version })
+  .object({ configuration: z.string().min(1), requests: z.number().int().nonnegative(), tokens: z.number().int().nonnegative() })
   .strict()
 export const studioClaimSchema = z
   .object({ text: z.string().min(1).max(1500), citations: z.array(z.string()).min(1).max(10) })
@@ -94,8 +94,8 @@ export const studioGenerateSchema = z.object({
   artifact_id: z.uuid().nullable(),
   expected_version: z.number().int().nonnegative(),
   source_selection: sourceSelectionSchema,
-  request_budget: version,
-  token_budget: version,
+  request_budget: z.number().int().nonnegative().optional(),
+  token_budget: z.number().int().nonnegative().optional(),
   mode: z.literal('direction').optional(),
   direction_version: version.optional(),
 })

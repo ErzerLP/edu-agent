@@ -110,6 +110,7 @@ func scan(r pgx.Row) (row, error) {
 	if json.Unmarshal(raw, &item.Meta) != nil {
 		return item, ErrStorage
 	}
+	item.RequestsLeft, item.TokensLeft = 0, 0
 	return item, nil
 }
 
@@ -285,12 +286,16 @@ func operation(ctx context.Context, tx pgx.Tx, device, id string, hash [32]byte)
 		return result, false, err
 	}
 	var stored, raw []byte
-	err := tx.QueryRow(ctx, `SELECT request_hash,receipt FROM learning_mentor_operations WHERE device_id=$1 AND operation_id=$2`, device, id).Scan(&stored, &raw)
+	var version int
+	err := tx.QueryRow(ctx, `SELECT request_hash,receipt,hash_version FROM learning_mentor_operations WHERE device_id=$1 AND operation_id=$2`, device, id).Scan(&stored, &raw, &version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return result, false, nil
 	}
 	if err != nil {
 		return result, false, err
+	}
+	if version == 2 {
+		hash = operationHashV2(hash)
 	}
 	if !bytes.Equal(stored, hash[:]) {
 		return result, false, ErrOperation
@@ -307,8 +312,15 @@ func receipt(ctx context.Context, tx pgx.Tx, item row, operationID string, hash 
 	if err != nil {
 		return r, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO learning_mentor_operations(device_id,operation_id,request_hash,run_id,receipt) VALUES($1,$2,$3,$4,$5)`, item.device, operationID, hash[:], item.RunID, raw)
+	hash = operationHashV2(hash)
+	_, err = tx.Exec(ctx, `INSERT INTO learning_mentor_operations(device_id,operation_id,request_hash,run_id,receipt,hash_version) VALUES($1,$2,$3,$4,$5,2)`, item.device, operationID, hash[:], item.RunID, raw)
 	return r, err
+}
+
+// v2 keeps the complete typed payload, including deprecated fields. Omitted
+// budgets normalize to zero, independently of mutable settings.
+func operationHashV2(hash [32]byte) [32]byte {
+	return sha256.Sum256(append([]byte("mentor-operation:v2\n"), hash[:]...))
 }
 
 func (s *Service) Create(ctx context.Context, actor identity.Credential, space, goal string, c Create) (Receipt, error) {
@@ -351,7 +363,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if c.SourceSelection != nil && (kind != "mentor" && kind != "studio" || c.SourceSelection.Validate() != nil) {
 		return Receipt{}, ErrInvalid
 	}
-	if !validID(space) || (!validID(goal) && !((validID(c.ConversationID) || kind == "studio") && goal == uuid.Nil.String())) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 1 || c.TokenBudget < 1 {
+	if !validID(space) || (!validID(goal) && !((validID(c.ConversationID) || kind == "studio") && goal == uuid.Nil.String())) || !validID(c.OperationID) || !validID(c.SessionID) || c.ExpectedVersion < 1 || !validText(c.Prompt, 16000) || c.RequestBudget < 0 || c.TokenBudget < 0 {
 		return Receipt{}, ErrInvalid
 	}
 	if c.ConversationID != "" && (kind != "mentor" || c.ConversationID != c.SessionID || !validID(c.ConversationID) || c.ConversationVersion < 1) || c.ConversationID == "" && (c.ConversationVersion != 0 || c.ConfirmDestination != "") {
@@ -485,9 +497,6 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 			}
 		}
 	}
-	if c.RequestBudget > limits.ResearchRequests || c.TokenBudget > limits.ResearchTokens {
-		return Receipt{}, ErrInvalid
-	}
 	if c.Save && !s.CanSave() {
 		return Receipt{}, ErrStorage
 	}
@@ -518,7 +527,7 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	if busy {
 		return Receipt{}, ErrConflict
 	}
-	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, RequestsLeft: c.RequestBudget, TokensLeft: c.TokenBudget, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
+	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.ConversationID = c.ConversationID
 	item.body.SourceManifest = manifest
 	item.body.Study = c.study

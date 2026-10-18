@@ -183,7 +183,7 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 	if kind == "" {
 		_, err = tx.Exec(ctx, `UPDATE learning_mentor_runs SET lease_until=clock_timestamp()+($2::bigint*interval '1 microsecond') WHERE id=$1`, item.RunID, s.Lease.Microseconds())
 	} else {
-		if terminal(item.Status) || item.Status == "waiting_input" || item.Status == "waiting_approval" || item.Status == "paused_budget" {
+		if terminal(item.Status) || item.Status == "waiting_input" || item.Status == "waiting_approval" || item.Status == "paused_budget" || item.Status == "paused_tool_steps" {
 			item.lease = nil
 			item.leaseUntil = nil
 		}
@@ -434,7 +434,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	close(done)
 	cancel()
 	<-renewed
-	if errors.Is(err, ErrBudget) {
+	if errors.Is(err, errToolStepsPaused) {
 		return 1, nil
 	}
 	if err != nil {

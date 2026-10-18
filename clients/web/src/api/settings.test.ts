@@ -40,7 +40,7 @@ describe('设置限额与状态', () => {
       }
     }
     expect(limitsSchema.safeParse({ ...defaults, output_tokens: 32768 }).success).toBe(false)
-    expect(limitsSchema.safeParse({ ...defaults, research_tokens: 1024 }).success).toBe(false)
+    expect(limitsSchema.safeParse({ ...defaults, research_tokens: 1024 }).success).toBe(true)
   })
   it('区分不可用类别，不将未知类别误报就绪', () => {
     const codes = [
@@ -58,4 +58,13 @@ describe('设置限额与状态', () => {
     expect(settingsReason('probe_failed:unauthorized')).toContain('鉴权失败')
     expect(settingsReason('future_unknown_reason')).toBe('当前能力不可用')
   })
+})
+
+it('每轮工具调用上限缺省为不限，仅接受正整数或 null', () => {
+  expect(limitsSchema.parse(defaults).max_tool_steps).toBeNull()
+  expect(limitsSchema.parse({ ...defaults, max_tool_steps: null }).max_tool_steps).toBeNull()
+  expect(limitsSchema.parse({ ...defaults, max_tool_steps: 2 }).max_tool_steps).toBe(2)
+  for (const value of [0, -1, 1.5, '2', Number.MAX_SAFE_INTEGER + 1]) {
+    expect(limitsSchema.safeParse({ ...defaults, max_tool_steps: value }).success).toBe(false)
+  }
 })

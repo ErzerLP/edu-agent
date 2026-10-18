@@ -146,8 +146,6 @@ export function GoalComposer({
             expected_version: response.result.revision,
             prompt: queryTopic,
             save: true,
-            request_budget: Math.min(12, capability.data.request_budget),
-            token_budget: Math.min(50000, capability.data.token_budget),
             research: {
               topic: queryTopic,
               external_consent: true as const,
@@ -331,9 +329,7 @@ export function GoalComposer({
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
             />
-            允许搜索、模型准备及采纳资料，并加密保存开学运行七天；本次最多{' '}
-            {Math.min(12, capability.data?.request_budget ?? 12)} 次请求 /{' '}
-            {Math.min(50000, capability.data?.token_budget ?? 50000)} Token，可能消耗额度。
+            允许搜索、模型准备及采纳资料，并加密保存开学运行七天；可能产生外部费用。
           </label>
           {capability.data && !capability.data.available && (
             <p className="hint">

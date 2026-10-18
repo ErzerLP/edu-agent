@@ -48,7 +48,7 @@ func TestDiscoveryUsesOnlyConfirmedQueryAndReturnsSummaries(t *testing.T) {
 }
 
 func TestDiscoveryRejectsBeforeExternalRequest(t *testing.T) {
-	for _, state := range []string{"no_consent", "empty", "private_domain", "missing_domains", "too_long", "query_budget", "budget", "cancelled"} {
+	for _, state := range []string{"no_consent", "empty", "private_domain", "missing_domains", "too_long", "query_budget", "cancelled"} {
 		t.Run(state, func(t *testing.T) {
 			input, budget, ctx := discoveryInput(), 1, t.Context()
 			switch state {
@@ -64,8 +64,6 @@ func TestDiscoveryRejectsBeforeExternalRequest(t *testing.T) {
 				input.Keywords = strings.Repeat("a", 301)
 			case "query_budget":
 				input.Policy.Domains = []string{strings.Repeat("a", 240) + ".org", strings.Repeat("b", 240) + ".org", strings.Repeat("c", 240) + ".org", strings.Repeat("d", 240) + ".org", strings.Repeat("e", 240) + ".org"}
-			case "budget":
-				budget = 0
 			case "cancelled":
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
@@ -139,7 +137,7 @@ func (s repeatedSearch) Search(ctx context.Context, _ websearch.Request) ([]webs
 type discoveryRoundTrip func(*http.Request) (*http.Response, error)
 
 func (f discoveryRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-func TestDiscoveryTransportEnforcesOneRequestBudget(t *testing.T) {
+func TestDiscoveryTransportIgnoresLegacyBudget(t *testing.T) {
 	calls := 0
 	factory := func(wrap func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error) {
 		return repeatedSearch{wrap(discoveryRoundTrip(func(r *http.Request) (*http.Response, error) {
@@ -147,9 +145,8 @@ func TestDiscoveryTransportEnforcesOneRequestBudget(t *testing.T) {
 			return &http.Response{StatusCode: 200, Body: http.NoBody, Header: make(http.Header)}, nil
 		}))}, "", nil
 	}
-	_, err := Discover(t.Context(), discoveryInput(), factory, 20)
-	var failure *DiscoveryError
-	if !errors.As(err, &failure) || failure.Reason != "budget_exceeded" || failure.RequestsUsed != 1 || calls != 1 {
+	result, err := Discover(t.Context(), discoveryInput(), factory, 0)
+	if err != nil || result.RequestsUsed != 2 || calls != 2 {
 		t.Fatal(err, calls)
 	}
 }

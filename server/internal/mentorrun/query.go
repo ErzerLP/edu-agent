@@ -34,7 +34,7 @@ func (s *Service) ReadList(ctx context.Context, actor identity.Credential, space
 		return ErrInvalid
 	}
 	switch q.Status {
-	case "", "queued", "running", "waiting_input", "waiting_approval", "paused_budget", "succeeded", "partial", "failed", "cancelling", "cancelled":
+	case "", "queued", "running", "waiting_input", "waiting_approval", "paused_budget", "paused_tool_steps", "succeeded", "partial", "failed", "cancelling", "cancelled":
 	default:
 		return ErrInvalid
 	}

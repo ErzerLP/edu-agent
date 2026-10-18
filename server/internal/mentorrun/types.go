@@ -28,7 +28,6 @@ var (
 	ErrResync    = errors.New("resync_required")
 	ErrStorage   = errors.New("run_storage_unavailable")
 	ErrLimit     = errors.New("run_storage_limit")
-	ErrBudget    = errors.New("run_budget_exhausted")
 	ErrLease     = errors.New("run_lease_lost")
 	ErrModel     = errors.New("mentor_not_configured")
 )
@@ -114,6 +113,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	ToolSteps      int                         `json:"tool_steps,omitempty"`
 	StudyExercise  *StudyExerciseState         `json:"study_exercise,omitempty"`
 	Assessment     *learning.AssessmentTask    `json:"assessment,omitempty"`
 	Study          *learningdirection.Revision `json:"study,omitempty"`

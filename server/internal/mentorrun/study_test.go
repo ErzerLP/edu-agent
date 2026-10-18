@@ -196,8 +196,8 @@ func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
 				if scenario == "invalid" && (snapshot.Status != "failed" || f.calls.Load() != 2) {
 					t.Fatal("invalid citations exceeded retry bound")
 				}
-				if scenario == "budget" && (snapshot.Status != "paused_budget" || f.calls.Load() != 1) {
-					t.Fatal("retry bypassed budget")
+				if scenario == "budget" && (snapshot.Status != "failed" || f.calls.Load() != 2) {
+					t.Fatal("legacy budget blocked validation repair")
 				}
 			}
 		})

@@ -45,7 +45,7 @@ func (c StudioGenerate) Validate() error {
 	} else if c.Mode != "" || c.DirectionVersion != 0 || c.StudioTarget.Validate() != nil {
 		return ErrInvalid
 	}
-	if !validID(c.OperationID) || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || c.GoalID == nil && c.GoalVersion != 0 || c.GoalID != nil && c.GoalVersion < 1 || c.RequestBudget < 1 || c.TokenBudget < 1 {
+	if !validID(c.OperationID) || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || c.GoalID == nil && c.GoalVersion != 0 || c.GoalID != nil && c.GoalVersion < 1 || c.RequestBudget < 0 || c.TokenBudget < 0 {
 		return ErrInvalid
 	}
 	return nil
@@ -139,7 +139,6 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 		err = h.service.mutate(ctx, &h.owned, "model_received", func(item *row) error {
 			item.callStarted = false
 			if response.Usage.TotalTokens > 0 && response.Usage.TotalTokens <= h.reserve {
-				item.TokensLeft += h.reserve - response.Usage.TotalTokens
 				item.CostUnknown = false
 			}
 			item.Stage = "validating_studio"

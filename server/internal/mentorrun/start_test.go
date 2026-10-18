@@ -199,31 +199,14 @@ func TestPostgreSQLStartLearningAtomicFailureAndRetry(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLStartLearningBudgetRecovery(t *testing.T) {
+func TestPostgreSQLStartLearningIgnoresLegacyBudget(t *testing.T) {
 	f := startFixture(t, "英语阅读")
-	f.create.RequestBudget = 4
+	f.create.RequestBudget, f.create.TokenBudget = 1, 1
 	r := f.accept(t)
 	f.work(t)
 	s := f.snapshot(t, r.RunID)
-	if s.Status != "paused_budget" || s.StartLearning.Result != nil {
-		t.Fatal("预算未阻止活动准备", s)
-	}
-	old := f.service
-	restarted, err := New(f.pool, f.settings, bytes.Repeat([]byte{42}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	restarted.ConfigureStart(old.starter)
-	restarted.search = old.search
-	restarted.fetcher = old.fetcher
-	f.service = restarted
-	if _, err = f.service.Command(context.Background(), f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: s.Version, Kind: "continue_budget", RequestBudget: 2, TokenBudget: 50000}); err != nil {
-		t.Fatal(err)
-	}
-	f.work(t)
-	s = f.snapshot(t, r.RunID)
-	if s.StartLearning.Result == nil || s.RequestsUsed != 5 {
-		t.Fatal("重启续预算重复搜索或未开学", s)
+	if s.Status != "succeeded" || s.StartLearning.Result == nil || s.RequestsUsed != 2 {
+		t.Fatal("legacy budget prevented start", s)
 	}
 }
 
@@ -400,8 +383,8 @@ func TestPostgreSQLStartLearningEmptyLibrary(t *testing.T) {
 				t.Fatalf("没有首项正式活动：%+v", snapshot)
 			}
 			result := snapshot.StartLearning.Result
-			if snapshot.Status != "succeeded" || snapshot.RequestsUsed != 5 {
-				t.Fatalf("运行未成功或预算失真：%+v", snapshot.Meta)
+			if snapshot.Status != "succeeded" || snapshot.RequestsUsed != 2 {
+				t.Fatalf("运行未成功或模型调用数不符：%+v", snapshot.Meta)
 			}
 			var oldActivity []byte
 			if err := f.pool.QueryRow(ctx, `SELECT to_jsonb(a) FROM learning_activities a WHERE id=$1`, result.ActivityID).Scan(&oldActivity); err != nil {

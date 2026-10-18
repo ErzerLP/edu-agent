@@ -17,8 +17,8 @@ export const discoveryCandidateSchema = z.strictObject({
 export type DiscoveryCandidate = z.infer<typeof discoveryCandidateSchema>
 export const discoveryResultSchema = z.strictObject({
   items: z.array(discoveryCandidateSchema).max(4),
-  request_budget: z.literal(1),
-  requests_used: z.literal(1),
+  request_budget: z.number().int().nonnegative(),
+  requests_used: z.number().int().nonnegative(),
   cost_estimate: z.literal('unknown'),
 })
 export const discoveryCapabilitiesSchema = z.object({
@@ -27,7 +27,7 @@ export const discoveryCapabilitiesSchema = z.object({
       available: z.boolean(),
       reason: z.enum(['', 'missing_scope', 'search_not_configured']),
       max_candidates: z.literal(4),
-      request_budget: z.literal(1),
+      request_budget: z.number().int().nonnegative(),
     })
     .optional(),
 })
@@ -64,7 +64,7 @@ export function discoveryRequest(
     ? `(${domains.map((domain) => `site:${domain}`).join(' OR ')}) (${keywords})`
     : keywords
   if (new TextEncoder().encode(query).length > 1024)
-    throw new Error('关键词与域名限制合计超过搜索请求预算')
+    throw new Error('关键词与域名限制合计过长')
   return { keywords, external_consent: true, policy }
 }
 

@@ -22,13 +22,13 @@ import { RunResultNotice } from '../run-result-notice'
 
 export const studioNames = { guide: '学习指南', brief: '简报', note: '笔记', quiz: '测验' }
 const reasons: Record<string, string> = {
-  output_budget_exceeded: '模型输出预算耗尽，结果未通过完整校验，未发布产物。',
+  output_budget_exceeded: '模型达到单次输出上限，结果未通过完整校验，未发布产物。',
   response_not_completed: '模型未完成输出，未发布产物。',
   schema_mismatch: '模型结果不符合结构要求，未发布产物。',
   invalid_source_citation: '引用核验失败，未发布产物。',
   source_coverage_partial: '内容已保存；所选资料覆盖不全，解析缺口或截断范围未补写。打开产物查看覆盖说明。',
   lease_expired: '运行租约失效；已发出的请求不会自动重试。',
-  budget_exhausted: '预算不足，尚未发出下一次模型请求。',
+  budget_exhausted: '已暂停，可继续。',
   source_unavailable: '来源权限或版本不可用，已隐藏受保护内容。',
   studio_version_conflict: '产物已有新版本，本次结果未发布。请重开最新版本。',
 }
@@ -107,7 +107,7 @@ export function StudioRun({
       void query.invalidateQueries({ queryKey: [...prefix, spaceId, 'studio-list'] })
   }, [run.data?.status, query, prefix, spaceId])
   const state = run.data
-  const command = async (kind: 'stop' | 'continue_budget') => {
+  const command = async (kind: 'stop' | 'resume') => {
     if (!state || busy) return
     setBusy(true)
     setError(undefined)
@@ -125,8 +125,8 @@ export function StudioRun({
         const body = {
           kind,
           expected_version: current.version,
-          request_budget: current.studio?.request.request_budget ?? 1,
-          token_budget: current.studio?.request.token_budget ?? 50000,
+
+
         }
         await unwrap(
           client.POST('/v1/learning/runs/{runID}/commands', {
@@ -158,9 +158,6 @@ export function StudioRun({
       {state.reason && state.reason !== 'user_stopped' && <p>{reasons[state.reason] ?? `运行说明：${state.reason}`}</p>}
       <RunResultNotice run={state}>结果未知：请求可能已发送，但未确认发布；不会自动重复生成。</RunResultNotice>
       {state.cost_unknown && <p className="hint">提供商费用尚未核实。</p>}
-      <p className="hint">
-        剩余请求 {state.requests_left} · 剩余 token 预算 {state.tokens_left}
-      </p>
       {state.body_available && state.source_manifest && (
         <p>本次使用 {state.source_manifest.entries.length} 个来源；后续勾选不会改变本次生成。</p>
       )}
@@ -172,9 +169,9 @@ export function StudioRun({
           取消生成
         </Button>
       )}
-      {state.status === 'paused_budget' && (
-        <Button disabled={busy} onClick={() => void command('continue_budget')}>
-          按原请求预算继续
+      {['paused_budget', 'paused_tool_steps'].includes(state.status) && (
+        <Button disabled={busy} onClick={() => void command('resume')}>
+          继续
         </Button>
       )}
       {!!error && <ErrorState error={error} retry={() => void run.refetch()} />}
@@ -203,7 +200,6 @@ export function StudioGenerator({
   const [runId, setRunId] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>()
-  const [tokens, setTokens] = useState(50000)
   const alive = useRef(true)
   useEffect(() => {
     alive.current = true
@@ -259,8 +255,8 @@ export function StudioGenerator({
       artifact_id: base?.artifact_id ?? null,
       expected_version: base?.version ?? 0,
       source_selection: selection,
-      request_budget: 1,
-      token_budget: tokens,
+
+
     }
     const body: StudioGenerate =
       pending ??
@@ -348,22 +344,12 @@ export function StudioGenerator({
               所选片段{directionMode ? '和学习方向' : ''}将发送到{' '}
               {configuration.data?.effective_mentor.endpoint}。
               {directionMode
-                ? '每题作答使用独立评估预算，最多自动重试一次，受设置中的请求次数和 Token 上限约束。'
+                ? '每题作答单独评估，必要时自动修复一次。'
                 : ''}
             </p>
           )}
           {(!selection || selection.mode === 'none') && <p>请先勾选至少一个可读取的来源。</p>}
-          <label>
-            本次生成 Token 预算
-            <input
-              type="number"
-              min={1}
-              max={10000000}
-              value={tokens}
-              disabled={!!pending}
-              onChange={(e) => setTokens(Number(e.target.value))}
-            />
-          </label>
+
           <SubmissionNotice pending={!!pending} inFlight={busy}>
             {pending && <>
               请求结果待核对，已选定 {pending.source_selection.items.length}{' '}
@@ -380,9 +366,7 @@ export function StudioGenerator({
               (directionMode && !space.direction_version) ||
               !selection?.items.length ||
               !!goal.error ||
-              (!!targetGoal && !goal.data) ||
-              !Number.isInteger(tokens) ||
-              tokens < 1
+              (!!targetGoal && !goal.data)
             }
             onClick={() => void submit()}
           >

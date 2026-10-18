@@ -21,6 +21,7 @@ it('候选摘要不能充当正文、回执或已解析来源，响应最多四�
     status: 'summary_only',
   }
   const response = { items: [item], request_budget: 1, requests_used: 1, cost_estimate: 'unknown' }
+  expect(discoveryResultSchema.safeParse({ ...response, requests_used: 2 }).success).toBe(true)
   expect(discoveryResultSchema.parse(response).items[0]).toEqual(item)
   expect(() =>
     discoveryResultSchema.parse({

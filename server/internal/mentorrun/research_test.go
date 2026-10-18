@@ -200,7 +200,7 @@ func TestPostgreSQLResearchPipelineAdoptionAndIsolation(t *testing.T) {
 	if len(sources) != 2 || sources[0].Status != "adopted" || sources[1].Status != "failed" || sources[1].Text != "" || sources[1].Failure != "body_unavailable" {
 		t.Fatalf("来源阶段混淆：%+v", sources)
 	}
-	if strings.Contains(sources[0].Text, "搜索摘要") || result.RequestsUsed != 4 || calls.Load() != 1 {
+	if strings.Contains(sources[0].Text, "搜索摘要") || result.RequestsUsed != 1 || calls.Load() != 1 {
 		t.Fatal("摘要或预算不符合契约")
 	}
 	var markdown, source string
@@ -254,9 +254,9 @@ func TestPostgreSQLResearchPipelineAdoptionAndIsolation(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLResearchBudgetAndForgedCitation(t *testing.T) {
+func TestPostgreSQLResearchIgnoresBudgetAndRejectsForgedCitation(t *testing.T) {
 	for _, forged := range []bool{false, true} {
-		t.Run(map[bool]string{false: "预算恢复", true: "伪片段拒绝"}[forged], func(t *testing.T) {
+		t.Run(map[bool]string{false: "旧小预算", true: "伪片段拒绝"}[forged], func(t *testing.T) {
 			f, calls := researchFixture(t, forged)
 			ctx := context.Background()
 			if !forged {
@@ -271,16 +271,6 @@ func TestPostgreSQLResearchBudgetAndForgedCitation(t *testing.T) {
 			}
 			result := f.snapshot(t, r.RunID)
 			if !forged {
-				if result.Status != "paused_budget" || result.RequestsUsed != 1 || result.Research.Sources[0].Status != "candidate" {
-					t.Fatal("预算未在正文请求前阻止", result.Status)
-				}
-				if _, err = f.service.Command(ctx, f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: result.Version, Kind: "continue_budget", RequestBudget: 5, TokenBudget: 50000}); err != nil {
-					t.Fatal(err)
-				}
-				if _, err = f.service.RunOnce(ctx); err != nil {
-					t.Fatal(err)
-				}
-				result = f.snapshot(t, r.RunID)
 				if result.Research.Synthesis == nil || calls.Load() != 1 {
 					t.Fatal("恢复重新搜索或未完成")
 				}

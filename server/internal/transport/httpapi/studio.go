@@ -63,7 +63,7 @@ func (a *API) studioGenerate(w http.ResponseWriter, r *http.Request) {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}
-	for _, name := range []string{"operation_id", "privacy_generation", "kind", "goal_id", "goal_version", "artifact_id", "expected_version", "source_selection", "request_budget", "token_budget"} {
+	for _, name := range []string{"operation_id", "privacy_generation", "kind", "goal_id", "goal_version", "artifact_id", "expected_version", "source_selection"} {
 		value, ok := fields[name]
 		if !ok || name != "goal_id" && name != "artifact_id" && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			mentorFailure(w, r, mentorrun.ErrInvalid)

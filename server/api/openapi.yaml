@@ -545,7 +545,7 @@ paths:
     post:
       operationId: discoverKnowledgeSources
       summary: 确认公开关键词后发现最多四个候选摘要；不读取正文、不创建研究任务或正式来源
-      description: 每次最多一次 Brave 请求，受 settings research_requests、concurrency 和设备限流约束；20 秒超时，无自动重试。关键词最多 300 UTF-8 字节，拼接域约束后最多 1024 字节。候选仅供用户勾选，再经 reference-sources 读取与预览确认。取消、超时、失败不能保证外部费用为零；请求结果不持久化，重试需用户重新明确发起。
+      description: 每次最多一次 Brave 请求，受 concurrency 和设备限流约束；20 秒超时，无自动重试。关键词最多 300 UTF-8 字节，拼接域约束后最多 1024 字节。候选仅供用户勾选，再经 reference-sources 读取与预览确认。取消、超时、失败不能保证外部费用为零；请求结果不持久化，重试需用户重新明确发起。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scopes: [learning:write, knowledge:read, knowledge:write, research:adopt]
       parameters:
@@ -1240,7 +1240,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [operation_id, session_id, expected_version, prompt, save, request_budget, token_budget]
+              required: [operation_id, session_id, expected_version, prompt, save]
               properties:
                 source_selection: { $ref: "#/components/schemas/SourceSelection" }
                 operation_id: { type: string, format: uuid }
@@ -1248,8 +1248,8 @@ paths:
                 expected_version: { type: integer, minimum: 1 }
                 prompt: { type: string, minLength: 1, maxLength: 16000, description: UTF-8 最多 16000 字节 }
                 save: { type: boolean, description: 明确同意七日内加密保存必要恢复正文；false 仅服务进程内存，跨进程不可恢复 }
-                request_budget: { type: integer, minimum: 1, maximum: 1000 }
-                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+                request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+                token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
                 research: { $ref: "#/components/schemas/ResearchRequest" }
                 start_learning: { $ref: "#/components/schemas/StartLearningRequest" }
                 teaching_session_id: { type: string, format: uuid, description: 可选显式教学现场，只有绑定后才提供教学变更工具 }
@@ -1393,15 +1393,15 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [operation_id, expected_version, prompt, request_budget, token_budget]
+              required: [operation_id, expected_version, prompt]
               properties:
                 direction_version: { type: integer, minimum: 1, description: study 使用的当前方向版本；过期返回 409 }
                 source_selection: { $ref: "#/components/schemas/SourceSelection" }
                 operation_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
                 prompt: { type: string, minLength: 1, maxLength: 16000 }
-                request_budget: { type: integer, minimum: 1, maximum: 1000 }
-                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+                request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+                token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
                 confirm_destination: { type: string, pattern: '^[a-f0-9]{64}$' }
       responses:
         "202": { description: 原运行回执，需继续查询或订阅, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
@@ -1489,13 +1489,13 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [operation_id, expected_version, configuration, request_budget, token_budget]
+              required: [operation_id, expected_version, configuration]
               properties:
                 operation_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
                 configuration: { type: string, minLength: 1 }
-                request_budget: { type: integer, minimum: 1, maximum: 1000 }
-                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+                request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+                token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
       responses:
         "200": { description: 原评估续接回执, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -1521,7 +1521,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/MentorSpaceID"
         - { name: task_kind, in: query, schema: { type: string, enum: [mentor, research, start_learning, content_edit, studio] } }
-        - { name: status, in: query, schema: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, succeeded, partial, failed, cancelling, cancelled] } }
+        - { name: status, in: query, schema: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, paused_tool_steps, succeeded, partial, failed, cancelling, cancelled] } }
         - { name: cursor, in: query, schema: { type: string, format: uuid } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
       responses:
@@ -1587,7 +1587,7 @@ paths:
     post:
       operationId: commandMentorRun
       summary: 回应交互、继续预算、明确停止或清除正文
-      description: expected_version 是运行版本。stop 接受不大于当前版本的已观察版本；正在停止或已结束的运行仍返回 202 和操作回执，不改变已有结果或运行版本。其他命令要求精确版本匹配。respond 同时绑定 interaction_id，过期回答不能授权新候选。continue_budget 显式分配新的有界额度；不继续时停止不会产生新付费调用。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
+      description: expected_version 是运行版本。stop 接受不大于当前版本的已观察版本；正在停止或已结束的运行仍返回 202 和操作回执，不改变已有结果或运行版本。其他命令要求精确版本匹配。respond 同时绑定 interaction_id，过期回答不能授权新候选。resume 仅继续 paused_tool_steps 或旧 paused_budget；continue_budget 是兼容别名，预算字段不影响执行。停止后不再派发请求。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:write
       requestBody:
@@ -1601,11 +1601,11 @@ paths:
               properties:
                 operation_id: { type: string, format: uuid }
                 expected_version: { type: integer, minimum: 1 }
-                kind: { type: string, enum: [respond, continue_budget, retry_start, stop, clear], description: retry_start 只用于未发布成功的开学运行，显式授权新预算后复用已有结果 }
+                kind: { type: string, enum: [respond, resume, continue_budget, retry_start, stop, clear], description: retry_start 只用于未发布成功的开学运行，显式重试并复用已有结果 }
                 interaction_id: { type: string, format: uuid }
                 answer: { type: string, maxLength: 8000 }
-                request_budget: { type: integer, minimum: 1, maximum: 1000 }
-                token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+                request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+                token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
       responses:
         "202": { description: 可通过原操作 ID 查询回执, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -5116,7 +5116,7 @@ components:
     StudioGenerate:
       type: object
       additionalProperties: false
-      required: [operation_id, privacy_generation, kind, goal_id, goal_version, artifact_id, expected_version, source_selection, request_budget, token_budget]
+      required: [operation_id, privacy_generation, kind, goal_id, goal_version, artifact_id, expected_version, source_selection]
       description: Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently.
       oneOf:
         - required: [mode, direction_version]
@@ -5145,8 +5145,8 @@ components:
         artifact_id: { type: [string, "null"], format: uuid }
         expected_version: { type: integer, minimum: 0 }
         source_selection: { $ref: "#/components/schemas/SourceSelection" }
-        request_budget: { type: integer, minimum: 1 }
-        token_budget: { type: integer, minimum: 1 }
+        request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+        token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
     StudioState:
       type: object
       required: [request]
@@ -5771,8 +5771,8 @@ components:
         protocol_version: { type: integer, const: 1 }
         available: { type: boolean }
         reason: { type: string }
-        request_budget: { type: integer, minimum: 1 }
-        token_budget: { type: integer, minimum: 1 }
+        request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+        token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
         legacy_projection: { type: string, const: open_activity }
     StartLearningRequest:
       type: object
@@ -6226,8 +6226,8 @@ components:
       required: [configuration, requests, tokens]
       properties:
         configuration: { type: string, minLength: 1 }
-        requests: { type: integer, minimum: 1, maximum: 1000 }
-        tokens: { type: integer, minimum: 1, maximum: 10000000 }
+        requests: { type: integer, minimum: 0, deprecated: true, description: 兼容旧评估授权；不限制执行 }
+        tokens: { type: integer, minimum: 0, deprecated: true, description: 兼容旧评估授权；不限制执行 }
     StudioHelpRequest:
       type: object
       additionalProperties: false
@@ -6237,13 +6237,13 @@ components:
     StudioAssessmentResume:
       type: object
       additionalProperties: false
-      required: [operation_id, expected_version, configuration, request_budget, token_budget]
+      required: [operation_id, expected_version, configuration]
       properties:
         operation_id: { type: string, format: uuid }
         expected_version: { type: integer, minimum: 1 }
         configuration: { type: string, minLength: 1 }
-        request_budget: { type: integer, minimum: 1, maximum: 1000 }
-        token_budget: { type: integer, minimum: 1, maximum: 10000000 }
+        request_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
+        token_budget: { type: integer, minimum: 0, deprecated: true, description: 兼容旧客户端的非负整数；不限制累计消耗 }
     StudioExercise:
       type: object
       additionalProperties: false
@@ -6489,13 +6489,13 @@ components:
         privacy_generation: { type: integer, minimum: 1 }
         version: { type: integer, minimum: 1 }
         watermark: { type: integer, minimum: 1 }
-        status: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, succeeded, partial, failed, cancelling, cancelled] }
+        status: { type: string, enum: [queued, running, waiting_input, waiting_approval, paused_budget, paused_tool_steps, succeeded, partial, failed, cancelling, cancelled] }
         stage: { type: string }
         reason: { type: string }
         saved: { type: boolean }
         body_available: { type: boolean }
-        requests_left: { type: integer, minimum: 0 }
-        tokens_left: { type: integer, minimum: 0 }
+        requests_left: { type: integer, const: 0, deprecated: true, description: 兼容值；不表示可用额度 }
+        tokens_left: { type: integer, const: 0, deprecated: true, description: 兼容值；不表示可用额度 }
         requests_used: { type: integer, minimum: 0 }
         result_unknown: { type: boolean }
         cost_unknown: { type: boolean, description: 提供商实际费用未核实；与结果是否已知分别表达 }
@@ -6539,8 +6539,8 @@ components:
       required: [items, request_budget, requests_used, cost_estimate]
       properties:
         items: { type: array, maxItems: 4, items: { $ref: "#/components/schemas/SourceDiscoveryCandidate" } }
-        request_budget: { type: integer, const: 1 }
-        requests_used: { type: integer, const: 1, description: 在发送前预留的一次搜索请求，不包含之后独立授权的正文读取 }
+        request_budget: { type: integer, const: 1, deprecated: true, description: 兼容旧客户端；不限制执行 }
+        requests_used: { type: integer, minimum: 0, deprecated: true, description: 搜索外发次数的旧兼容字段；不包含独立授权的正文读取，不作为模型用量 }
         cost_estimate: { type: string, const: unknown }
     SourceDiscoveryCapability:
       type: object
@@ -6550,7 +6550,7 @@ components:
         available: { type: boolean, description: 已配置搜索且具有发现权限；不表示外部连接已探测成功 }
         reason: { type: string, enum: ["", missing_scope, search_not_configured] }
         max_candidates: { type: integer, const: 4 }
-        request_budget: { type: integer, const: 1 }
+        request_budget: { type: integer, const: 1, deprecated: true, description: 兼容旧客户端；不限制执行 }
     ResearchRequest:
       type: object
       additionalProperties: false
@@ -6691,11 +6691,25 @@ components:
     SettingsLimits:
       type: object
       additionalProperties: false
-      required: [research_requests, research_tokens, output_tokens, context_tokens, idle_timeout_seconds, concurrency, storage_mib]
-      description: 运行接受/续行时重新执行；不代表固定教学轮数，SSE 活跃流量重置无响应计时。输出须小于上下文且不大于研究 Token 预算。
+      required: [max_tool_steps, research_requests, research_tokens, output_tokens, context_tokens, idle_timeout_seconds, concurrency, storage_mib]
+      description: 单次输出须小于上下文。每轮工具调用上限默认为 null（不限），只允许正整数；达到时说明进展并等待继续，Studio 不受影响。SSE 活跃流量重置无响应计时。
       properties:
-        research_requests: { type: integer, minimum: 1, maximum: 1000, default: 20 }
-        research_tokens: { type: integer, minimum: 1024, maximum: 10000000, default: 100000 }
+        max_tool_steps: { type: [integer, "null"], minimum: 1, default: null, description: 每轮工具调用上限；null 表示不限 }
+        research_requests: { deprecated: true, description: 仅保留旧设置值；不参与执行, type: integer, minimum: 1, maximum: 1000, default: 20 }
+        research_tokens: { deprecated: true, description: 仅保留旧设置值；不参与执行, type: integer, minimum: 1024, maximum: 10000000, default: 100000 }
+        output_tokens: { type: integer, minimum: 64, maximum: 32768, default: 2048 }
+        context_tokens: { type: integer, minimum: 4096, maximum: 2000000, default: 32768 }
+        idle_timeout_seconds: { type: integer, minimum: 5, maximum: 600, default: 60 }
+        concurrency: { type: integer, minimum: 1, maximum: 16, default: 2 }
+        storage_mib: { type: integer, minimum: 16, maximum: 1048576, default: 512 }
+    SettingsLimitsUpdate:
+      type: object
+      additionalProperties: false
+      description: 单次输出须小于上下文。每轮工具调用上限默认为 null（不限），只允许正整数；达到时说明进展并等待继续，Studio 不受影响。SSE 活跃流量重置无响应计时。
+      properties:
+        max_tool_steps: { type: [integer, "null"], minimum: 1, default: null, description: 每轮工具调用上限；null 表示不限 }
+        research_requests: { deprecated: true, description: 仅保留旧设置值；不参与执行, type: integer, minimum: 1, maximum: 1000, default: 20 }
+        research_tokens: { deprecated: true, description: 仅保留旧设置值；不参与执行, type: integer, minimum: 1024, maximum: 10000000, default: 100000 }
         output_tokens: { type: integer, minimum: 64, maximum: 32768, default: 2048 }
         context_tokens: { type: integer, minimum: 4096, maximum: 2000000, default: 32768 }
         idle_timeout_seconds: { type: integer, minimum: 5, maximum: 600, default: 60 }
@@ -6711,7 +6725,7 @@ components:
       type: object
       additionalProperties: false
       required: [expected_revision]
-      description: 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。顶层字段缺省保留当前值；connection.api_style 缺省为 chat_completions；切换 endpoint/provider/auth_mode/api_style 清除旧 Key。
+      description: 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。顶层和 limits 内字段缺省保留当前值；max_tool_steps 显式 null 设为不限；connection.api_style 缺省为 chat_completions；切换 endpoint/provider/auth_mode/api_style 清除旧 Key。
       properties:
         expected_revision: { type: integer, minimum: 0 }
         target: { type: string, enum: [teaching, mentor, search] }
@@ -6719,7 +6733,7 @@ components:
         new_key: { type: string, minLength: 1, maxLength: 4096, writeOnly: true, description: 仅接受可见 ASCII；只写入服务端秘密边界 }
         clear_key: { type: boolean }
         mentor_uses_teaching: { type: boolean }
-        limits: { $ref: "#/components/schemas/SettingsLimits" }
+        limits: { $ref: "#/components/schemas/SettingsLimitsUpdate" }
         policy: { $ref: "#/components/schemas/SettingsPolicy" }
     LearningSettings:
       type: object

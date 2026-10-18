@@ -341,7 +341,7 @@ func TestPostgreSQLMentorLeaseCompetitionAndUnknownResult(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLMentorInteractionBudgetAndStaleApproval(t *testing.T) {
+func TestPostgreSQLMentorInteractionIgnoresBudgetAndRejectsStaleApproval(t *testing.T) {
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
 		if n < 3 {
 			stream(w, modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{ID: fmt.Sprint("confirm-", n), Type: "function", Function: modelclient.ToolFunction{Name: "confirm_focus", Arguments: `{"focus":"先讨论概率直觉？"}`}}}})
@@ -358,14 +358,6 @@ func TestPostgreSQLMentorInteractionBudgetAndStaleApproval(t *testing.T) {
 	}
 	c := Command{OperationID: uuid.NewString(), ExpectedVersion: first.Version, Kind: "respond", InteractionID: first.Interaction.ID, Answer: "同意"}
 	if _, err := f.service.Command(context.Background(), f.actor, learningspace.DefaultID, r.RunID, c); err != nil {
-		t.Fatal(err)
-	}
-	f.work(t)
-	paused := f.snapshot(t, r.RunID)
-	if paused.Status != "paused_budget" || f.calls.Load() != 1 {
-		t.Fatal("预算耗尽仍启动新调用")
-	}
-	if _, err := f.service.Command(context.Background(), f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: paused.Version, Kind: "continue_budget", RequestBudget: 2, TokenBudget: 20000}); err != nil {
 		t.Fatal(err)
 	}
 	f.work(t)
@@ -388,7 +380,7 @@ func TestPostgreSQLMentorInteractionBudgetAndStaleApproval(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLMentorCompatibilityFallbackCannotBypassBudget(t *testing.T) {
+func TestPostgreSQLMentorCompatibilityFallbackIgnoresLegacyBudget(t *testing.T) {
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(400)
@@ -397,8 +389,8 @@ func TestPostgreSQLMentorCompatibilityFallbackCannotBypassBudget(t *testing.T) {
 	f.create.RequestBudget = 1
 	r := f.accept(t)
 	f.work(t)
-	if snapshot := f.snapshot(t, r.RunID); snapshot.Status != "paused_budget" || snapshot.RequestsUsed != 1 || f.calls.Load() != 1 {
-		t.Fatalf("协议回退绕过预算：%+v", snapshot)
+	if snapshot := f.snapshot(t, r.RunID); snapshot.Status != "failed" || snapshot.RequestsUsed != 2 || f.calls.Load() != 2 {
+		t.Fatalf("兼容重试未执行或超出有限重试策略：%+v", snapshot)
 	}
 }
 

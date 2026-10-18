@@ -2,6 +2,8 @@
 package settings
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -35,6 +37,8 @@ type Connection struct {
 }
 
 type Limits struct {
+	MaxToolSteps *int `json:"max_tool_steps"`
+	// Deprecated: retained for old settings files; neither field limits execution.
 	ResearchRequests   int `json:"research_requests"`
 	ResearchTokens     int `json:"research_tokens"`
 	OutputTokens       int `json:"output_tokens"`
@@ -44,14 +48,16 @@ type Limits struct {
 	StorageMiB         int `json:"storage_mib"`
 }
 
-func DefaultLimits() Limits { return Limits{20, 100000, 2048, 32768, 60, 2, 512} }
+func DefaultLimits() Limits {
+	return Limits{ResearchRequests: 20, ResearchTokens: 100000, OutputTokens: 2048, ContextTokens: 32768, IdleTimeoutSeconds: 60, Concurrency: 2, StorageMiB: 512}
+}
 func (l Limits) Validate() error {
 	for _, v := range [][3]int{{l.ResearchRequests, 1, 1000}, {l.ResearchTokens, 1024, 10000000}, {l.OutputTokens, 64, 32768}, {l.ContextTokens, 4096, 2000000}, {l.IdleTimeoutSeconds, 5, 600}, {l.Concurrency, 1, 16}, {l.StorageMiB, 16, 1048576}} {
 		if v[0] < v[1] || v[0] > v[2] {
 			return ErrInvalid
 		}
 	}
-	if l.OutputTokens >= l.ContextTokens || l.OutputTokens > l.ResearchTokens {
+	if l.OutputTokens >= l.ContextTokens || l.MaxToolSteps != nil && *l.MaxToolSteps <= 0 {
 		return ErrInvalid
 	}
 	return nil
@@ -97,6 +103,7 @@ type View struct {
 }
 
 type Update struct {
+	limitsJSON         json.RawMessage
 	ExpectedRevision   int64       `json:"expected_revision"`
 	Target             Target      `json:"target"`
 	Connection         *Connection `json:"connection,omitempty"`
@@ -105,6 +112,57 @@ type Update struct {
 	MentorUsesTeaching *bool       `json:"mentor_uses_teaching,omitempty"`
 	Limits             *Limits     `json:"limits,omitempty"`
 	Policy             *Policy     `json:"policy,omitempty"`
+}
+
+// Keep omitted limit fields when older clients update settings. Decode strictly
+// here because a custom unmarshaler otherwise bypasses the HTTP decoder's rule.
+func (u *Update) UnmarshalJSON(raw []byte) error {
+	type plain Update
+	var decoded plain
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return err
+	}
+	*u = Update(decoded)
+	if u.Limits != nil {
+		u.limitsJSON = fields["limits"]
+		var limits map[string]json.RawMessage
+		if err := json.Unmarshal(u.limitsJSON, &limits); err != nil {
+			return err
+		}
+		for name, value := range limits {
+			if name != "max_tool_steps" && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return ErrInvalid
+			}
+		}
+	}
+	return nil
+}
+
+func sameLimits(a, b Limits) bool {
+	if (a.MaxToolSteps == nil) != (b.MaxToolSteps == nil) {
+		return false
+	}
+	if a.MaxToolSteps != nil && *a.MaxToolSteps != *b.MaxToolSteps {
+		return false
+	}
+	a.MaxToolSteps, b.MaxToolSteps = nil, nil
+	return a == b
+}
+
+// Keep destination fingerprints compatible with existing checkpoints. Tool
+// steps control the current round, not which endpoint is authorized.
+func (l Limits) configuration() any {
+	type plain Limits
+	return struct {
+		plain
+		MaxToolSteps *int `json:"max_tool_steps,omitempty"`
+	}{plain: plain(l)}
 }
 
 // 更新结构也禁止通过格式化输出意外记录新 Key。

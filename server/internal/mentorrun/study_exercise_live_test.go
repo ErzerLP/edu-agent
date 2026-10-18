@@ -97,5 +97,5 @@ func TestPostgreSQLStudyExerciseLiveResponses(t *testing.T) {
 	if requests > 4 {
 		t.Fatal("live call bound exceeded")
 	}
-	t.Logf("responses deepseek-v4-flash output_budget=8192 elapsed_ms=%d generation_requests=%d assessment_requests=%d total_requests=%d generation_tokens=%d assessment_tokens=%d disposition=%s citations=%d", time.Since(started).Milliseconds(), generated.RequestsUsed, state.Run.RequestsUsed, requests, 50000-generated.TokensLeft, 50000-state.Run.TokensLeft, card.Feedback.Decisions[len(card.Feedback.Decisions)-1].Disposition, len(card.Feedback.Assessment.Items))
+	t.Logf("responses deepseek-v4-flash output_budget=8192 elapsed_ms=%d generation_requests=%d assessment_requests=%d total_requests=%d disposition=%s citations=%d", time.Since(started).Milliseconds(), generated.RequestsUsed, state.Run.RequestsUsed, requests, card.Feedback.Decisions[len(card.Feedback.Decisions)-1].Disposition, len(card.Feedback.Assessment.Items))
 }

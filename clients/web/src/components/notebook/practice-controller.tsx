@@ -56,8 +56,6 @@ type Pending =
       operation: string
       version: number
       configuration: string
-      requests: number
-      tokens: number
     }
 
 export function PracticeController({
@@ -100,8 +98,6 @@ export function PracticeController({
   const [hint, setHint] = useState(() => drafts.get<string>(key + ':hint') ?? ''),
     [error, setError] = useState<unknown>(),
     [busy, setBusy] = useState(false)
-  const [requests, setRequests] = useState(2),
-    [tokens, setTokens] = useState(30000)
   const live = useRef(true),
     busyRef = useRef(false)
   useEffect(() => {
@@ -239,8 +235,6 @@ export function PracticeController({
                 operation_id: p.operation,
                 expected_version: p.version,
                 configuration: p.configuration,
-                request_budget: p.requests,
-                token_budget: p.tokens,
               })
             : await transport.change!(p.kind, p.operation)
         if (result.operation_id !== p.operation) throw new ApiError(502, 'invalid_response')
@@ -337,9 +331,7 @@ export function PracticeController({
             {state?.result_unknown
               ? '评估结果待核对，未重复发送。'
               : state?.can_resume
-                ? state.reason === 'budget_exhausted'
-                  ? '评估预算不足，答案已保存。请在“继续评估”中增加请求次数或 Token 预留；若已达到上限，请先提高设置中的研究预算。'
-                  : '评估已暂停，答案已保存。'
+                ? '评估已暂停，答案已保存。'
                 : state?.status === 'failed'
                   ? '评估未完成，答案已保存。'
                   : '正在评估…'}
@@ -349,36 +341,14 @@ export function PracticeController({
           <details>
             <summary>继续评估</summary>
             <p>使用当前模型连接 {state.destination}</p>
-            <label>
-              请求次数上限
-              <input
-                type="number"
-                min={1}
-                max={1000}
-                value={requests}
-                onChange={(e) => setRequests(Number(e.target.value))}
-              />
-            </label>
-            <label>
-              Token 预留上限
-              <input
-                type="number"
-                min={1}
-                max={10000000}
-                value={tokens}
-                onChange={(e) => setTokens(Number(e.target.value))}
-              />
-            </label>
             <Button
-              disabled={!writable || busy || !!pending || requests < 1 || tokens < 1}
+              disabled={!writable || busy || !!pending}
               onClick={() =>
                 void perform({
                   kind: 'assessment',
                   operation: crypto.randomUUID(),
                   version: state.version,
                   configuration: state.configuration,
-                  requests,
-                  tokens,
                 })
               }
             >

@@ -32,5 +32,5 @@ export const researchStage: Record<string, string> = {
   learning_started: '课堂已就绪', sources_insufficient: '来源不足，目标和已有结果已保留',
   queued: '等待执行', query_planned: '查询已拟定', running: '正在研究', discovering: '搜索候选', discovered: '候选已发现',
   fetching: '读取正文', parsed: '解析正文', checking_fragments: '核对相关片段', waiting_model: '整理有来源的要点',
-  synthesized: '综合已保存', completed: '研究结束', paused_budget: '预算用尽', cancelled: '已停止', partial: '仅有部分结果', failed: '研究失败',
+  synthesized: '综合已保存', completed: '研究结束', paused_budget: '已暂停，可继续', paused_tool_steps: '本轮工具调用已达上限，可继续', cancelled: '已停止', partial: '仅有部分结果', failed: '研究失败',
 }

@@ -33,6 +33,7 @@ const taskLabels: Record<string, string> = {
 }
 const taskLabel = (kind: string) => taskLabels[kind] ?? '模型任务'
 const stageLabels: Record<string, string> = {
+  tool_step_summary: '本轮进展说明',
   mentor: '导师交流',
   study_answer: '导师讲解',
   studio_guide: '学习指南',

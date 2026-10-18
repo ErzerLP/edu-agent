@@ -130,7 +130,18 @@ func (h *executionHost) assembleContext(ctx context.Context, fixed modelclient.R
 	compressed := missing || est.EstimateRequest(fixed)+used+sourceUsed+historyUsed+fixed.MaxTokens >= h.limits.ContextTokens*3/4
 	topics := []modelclient.Message{}
 	if compressed {
-		topics, _, err = h.contextTopics(ctx, min(8192, capacity/5, room))
+		topicBudget := min(8192, capacity/5, room)
+		// Reserve the initial topic share, then transfer room that complete
+		// recent turns cannot fill. Charge the entire projection to this budget.
+		topicRoom := room
+		for _, group := range history {
+			cost := messageCost(group)
+			if cost+topicBudget > topicRoom {
+				break
+			}
+			topicRoom -= cost
+		}
+		topics, _, err = h.contextTopics(ctx, min(8192, topicRoom))
 		if err != nil {
 			return agentcore.ContextPlan{}, err
 		}

@@ -7,6 +7,9 @@ export function RunResultNotice({ run, children, role = 'alert', className }: {
   role?: 'alert' | 'status'
   className?: string
 }) {
+  if (run.reason === 'context_configuration_invalid') {
+    return <p className={className} role={role}>模型上下文窗口不足以容纳系统要求和输出预留，请增大上下文窗口或减小单次输出上限。</p>
+  }
   if (run.reason === 'run_storage_unavailable') {
     return <p className={className} role={role}>存储暂不可用，已停止后续模型请求。请稍后重试。</p>
   }

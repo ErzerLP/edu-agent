@@ -18,6 +18,10 @@ type StudioSourceReader interface {
 	ReadSourceSelectionTx(context.Context, pgx.Tx, knowledge.SourceManifest) ([]knowledge.SourceDetail, error)
 }
 
+type StudioSliceReader interface {
+	ReadSourceSliceTx(context.Context, pgx.Tx, knowledge.SourceManifest, knowledge.SourceSliceRequest) (knowledge.SourceDetail, error)
+}
+
 func (s *Store) ConfigureStudioSources(reader StudioSourceReader) { s.studioSources = reader }
 
 type StudioTarget struct {
@@ -67,12 +71,37 @@ func (s *Store) studioSourcesTx(ctx context.Context, tx pgx.Tx, token string, bo
 	if body.SourceManifest == nil {
 		return ErrInvalid
 	}
-	sources, err := s.studioSources.ReadSourceSelectionTx(ctx, tx, *body.SourceManifest)
-	if err != nil {
-		return err
+	sources := []knowledge.SourceDetail{}
+	legacy := false
+	for _, c := range body.Citations {
+		if c.Fragment.Proof == nil {
+			legacy = true
+		}
+	}
+	if legacy {
+		var err error
+		sources, err = s.studioSources.ReadSourceSelectionTx(ctx, tx, *body.SourceManifest)
+		if err != nil {
+			return err
+		}
+	}
+	for _, c := range body.Citations {
+		if c.Fragment.Proof == nil {
+			continue
+		}
+		reader, ok := s.studioSources.(StudioSliceReader)
+		if !ok || c.Fragment.Proof.Schema != 2 {
+			return ErrInvalid
+		}
+		detail, err := reader.ReadSourceSliceTx(ctx, tx, *body.SourceManifest, knowledge.SourceSliceRequest{SourceIdentity: c.Source.Identity(), NodeID: c.Fragment.NodeID, NodeRevisionID: c.Fragment.NodeRevisionID, Start: c.Fragment.Range.Start, End: c.Fragment.Range.End})
+		if err != nil {
+			return err
+		}
+		sources = append(sources, detail)
 	}
 	return VerifyStudioSources(body, sources)
 }
+
 func (s *Store) StudioTargetTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, c StudioTarget) error {
 	if !s.Available() {
 		return ErrUnavailable

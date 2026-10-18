@@ -4846,6 +4846,7 @@ export interface components {
                 ordinal: number;
                 status: string;
                 body_available: boolean;
+                context_notice?: string;
                 message_anchors?: components["schemas"]["ConversationMessageAnchor"][];
                 source_manifest?: components["schemas"]["SourceManifest"];
                 citations?: components["schemas"]["MentorCitation"][];
@@ -4952,8 +4953,16 @@ export interface components {
                 range: components["schemas"]["SourceRange"];
                 text: string;
                 truncated: boolean;
+                proof?: components["schemas"]["SourceSliceProof"];
                 page?: number;
             };
+        };
+        SourceSliceProof: {
+            /** @constant */
+            schema: 2;
+            original_range: components["schemas"]["SourceRange"];
+            range: components["schemas"]["SourceRange"];
+            sha256: string;
         };
         MentorSnapshot: {
             studio?: components["schemas"]["StudioState"];
@@ -5008,6 +5017,8 @@ export interface components {
             expires_at: string;
             /** @description 执行配置的不可逆摘要 */
             configuration: string;
+            /** @description 本次请求未纳入内容的中文提示 */
+            context_notice?: string;
             output: string;
             interaction?: components["schemas"]["MentorInteraction"];
             memory_sources?: components["schemas"]["MentorMemorySource"][];
@@ -5494,6 +5505,7 @@ export interface components {
                 text: string;
                 /** @description 片段超过 4096 UTF-8 字节时截断，不表示源解析缺失 */
                 truncated: boolean;
+                proof?: components["schemas"]["SourceSliceProof"];
                 page?: number;
             }[];
         };

@@ -74,7 +74,16 @@ func studioText(s string, max int) bool {
 func DecodeStudioCandidate(kind string, raw []byte, manifest *knowledge.SourceManifest, sources []knowledge.SourceDetail) (StudioBody, error) {
 	body := StudioBody{Schema: 1, SourceManifest: manifest, Citations: []StudioCitation{}}
 	fields := studioFields(kind)
-	if fields == nil || manifest == nil || len(sources) == 0 || len(manifest.Entries) != len(sources) {
+	if fields == nil || manifest == nil || len(sources) == 0 {
+		return body, ErrInvalid
+	}
+	legacy := true
+	for _, source := range sources {
+		for _, fragment := range source.Fragments {
+			legacy = legacy && fragment.Proof == nil
+		}
+	}
+	if legacy && len(manifest.Entries) != len(sources) {
 		return body, ErrInvalid
 	}
 	var values map[string]json.RawMessage
@@ -125,7 +134,7 @@ func DecodeStudioCandidate(kind string, raw []byte, manifest *knowledge.SourceMa
 					seen[ref] = id
 					source := sources[ref.Source-1]
 					fragment := source.Fragments[ref.Fragment-1]
-					body.Citations = append(body.Citations, StudioCitation{ID: id, Source: source.SourceItem, Fragment: fragment, DocumentSHA256: manifest.Entries[ref.Source-1].SHA256, SliceSHA256: knowledge.SourceTextHash(fragment.Text)})
+					body.Citations = append(body.Citations, StudioCitation{ID: id, Source: source.SourceItem, Fragment: fragment, DocumentSHA256: knowledge.SourceDocumentHash(*manifest, source.Identity()), SliceSHA256: knowledge.SourceTextHash(fragment.Text)})
 				}
 				stored.Citations = append(stored.Citations, id)
 			}
@@ -158,7 +167,14 @@ func DecodeStudioCandidate(kind string, raw []byte, manifest *knowledge.SourceMa
 // VerifyStudioSources is called on publication and on every later read. It
 // verifies exact historical identity, range, text and hashes, never a new head.
 func VerifyStudioSources(body StudioBody, sources []knowledge.SourceDetail) error {
-	if body.SourceManifest == nil || len(body.SourceManifest.Entries) != len(sources) || len(sources) == 0 || len(body.Citations) == 0 {
+	if body.SourceManifest == nil || len(sources) == 0 || len(body.Citations) == 0 {
+		return ErrInvalid
+	}
+	legacy := true
+	for _, citation := range body.Citations {
+		legacy = legacy && citation.Fragment.Proof == nil
+	}
+	if legacy && len(body.SourceManifest.Entries) != len(sources) {
 		return ErrInvalid
 	}
 	for i, c := range body.Citations {
@@ -170,11 +186,17 @@ func VerifyStudioSources(body StudioBody, sources []knowledge.SourceDetail) erro
 			if source.CollectionID != c.Source.CollectionID || source.RevisionID != c.Source.RevisionID || source.DocumentID != c.Source.DocumentID || source.DocumentRevisionID != c.Source.DocumentRevisionID {
 				continue
 			}
-			if body.SourceManifest.Entries[j].SHA256 != c.DocumentSHA256 {
+			hash := ""
+			if c.Fragment.Proof != nil {
+				hash = knowledge.SourceDocumentHash(*body.SourceManifest, source.Identity())
+			} else if j < len(body.SourceManifest.Entries) {
+				hash = body.SourceManifest.Entries[j].SHA256
+			}
+			if hash != c.DocumentSHA256 {
 				return ErrInvalid
 			}
 			for _, fragment := range source.Fragments {
-				if fragment.NodeID == c.Fragment.NodeID && fragment.NodeRevisionID == c.Fragment.NodeRevisionID && fragment.Range == c.Fragment.Range && fragment.Text == c.Fragment.Text && knowledge.SourceTextHash(fragment.Text) == c.SliceSHA256 {
+				if knowledge.VerifySourceFragment(c.Fragment, fragment, c.SliceSHA256) {
 					found = true
 					break
 				}

@@ -53,13 +53,14 @@ type SourcePage struct {
 	NextCursor string       `json:"next_cursor,omitempty"`
 }
 type SourceFragment struct {
-	NodeID         string      `json:"node_id"`
-	NodeRevisionID string      `json:"node_revision_id"`
-	Title          string      `json:"title"`
-	Range          SourceRange `json:"range"`
-	Text           string      `json:"text"`
-	Truncated      bool        `json:"truncated"`
-	Page           int         `json:"page,omitempty"`
+	Proof          *SourceSliceProof `json:"proof,omitempty"`
+	NodeID         string            `json:"node_id"`
+	NodeRevisionID string            `json:"node_revision_id"`
+	Title          string            `json:"title"`
+	Range          SourceRange       `json:"range"`
+	Text           string            `json:"text"`
+	Truncated      bool              `json:"truncated"`
+	Page           int               `json:"page,omitempty"`
 }
 type SourceDetail struct {
 	SourceItem

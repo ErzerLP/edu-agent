@@ -1,6 +1,6 @@
 # 对话话题索引与上下文压缩：设计
 
-状态：Shape 已确认（2026-10-18），T-A 已实现并通过本批检查，T-B 尚未实施。对应 [brief](../comet/specs/conversation-topics/brief.md)、[spec](../comet/specs/conversation-topics/spec.md)，前置为 [U](model-usage.md)。T1 已确认采用建议默认值。
+状态：Shape 已确认（2026-10-18），T-A 已实现并通过本批检查，T-B 实现覆盖见 §10。对应 [brief](../comet/specs/conversation-topics/brief.md)、[spec](../comet/specs/conversation-topics/spec.md)，前置为 [U](model-usage.md)。T1 已确认采用建议默认值。
 
 ## 1. 现状与选择
 
@@ -155,3 +155,33 @@ Web 工具栏提供只读话题面板、整理状态与覆盖进度、主动整�
 验证范围：真实 PostgreSQL 的受影响包 `go test -p=1`／`go vet -p=1`，确定性模型响应覆盖多对多、失败水位、并发 CAS、分页定位、惰性补建、临时不落盘、隐私清除迟到响应及轮换；Web 类型检查与单个 Chromium 话题导航用例。真实模型话题质量、三浏览器交互及 T-B 长对话验收仍未包含在本批证据中。
 
 2026-10-18 检查结果：`mentorrun`、`modelusage`、`learning/postgresstore`、`transport/httpapi`、`app`、`migrations` 的包测试与 vet 通过，使用指定真实测试库和 `-p=1`；`mentorrun` 使用 `-timeout=20m`，149 个顶层测试通过，其中新增话题测试 8 个全部通过。3 个既有真实模型用例和 1 个外部 CLI 用例因未显式启用而跳过，不属于本批验证范围。`npm run check`、前端构建、单个 Chromium 话题导航用例、文档相对链接和 `git diff --check` 通过。OpenAPI schema 已生成，生成器仍提示既有 `ActionExposureRequest` discriminator 警告。浏览器使用同一测试库内的独立 schema，完成后已清理。
+
+
+## 10. T-B 实现覆盖
+
+### 窗口与历史
+
+- `mentorrun/context.go` 共用组装器覆盖 `Prepare`、`prepareSelected`、学习方向问答和 `max_tool_steps` 的文字收尾。使用 `C=context_tokens`、`O=output_tokens`、`M=max(256,ceil(0.05*C))`；固定输入计入 system、方向、工具定义和结构化 schema。输入加输出达到 75% 或尾部装载发现缺口时使用话题投影。话题最多占 B 的 20%（另设 8192 Token 投影上限），来源最多 35%，剩余约 45% 给本轮及最近原文；空池空间返还原文。本轮问题先预留，来源选择相应缩小，完整工具组从近到远装入。
+- `prepareConversation` 仅确认会话、目的地、临时正文可用性并更新会话版本。新 checkpoint 的 `context` 保存已提交轮次快照、本轮起点、所用话题 revision、临时输入投影及续跑依赖，不再包含跨轮累计 Messages。`context_history.go` 用 ordinal 反向游标，每页至多 8 轮，按窗口停止读取；异范围扫描也受输入估算限制，不以固定保留轮数决定请求。临时对话通过原有效期内的 checkpoint 引用装载，没有新增持久正文。
+- `turnBody` 使用显式 `context.turn_start`，旧 checkpoint 保留 `history_count` 兼容分支。已保存旧 turn 不迁移、不压缩、不改写；原历史 API 继续完整分页。可放下的最新工具结果保留原文，较旧或超大的结果使用带“仅纳入部分内容”说明的有界摘录；checkpoint 达到整理阈值时单独保留可展示消息，淘汰已完成的旧内部工具组，保留最新／未完成组及执行状态。
+- 普通历史增长不再走 `history_context_limit`。固定输入和输出预留无法容纳时使用独立 `context_configuration_invalid`，Web 提示增大窗口或减小输出上限。`MaxBody` 与 `StorageMiB` 仍为独立存储约束。
+
+### 来源读取与引用兼容
+
+- knowledge 新增 `ValidateSourceManifestTx`、`ReadSourceDirectoryTx` 和 `ReadSourceSliceTx`。manifest 校验只读取确切版本的身份、链接、代次和服务端计算的 canonical hash；目录每页最多 64 个节点，仅返回有界标题、节点身份和原区间。候选按本轮问题与标题匹配，分页扫描时仅保留至多 16 个候选，再读取正文；没有调用 `Retrieve` 或集合导出。
+- 切片请求绑定完整 `SourceIdentity`、node ID／revision 和半开 UTF-8 字节区间，单次最多 4096 字节；读取端规范化字符边界及行号，PDF 只接受已提取文本的真实页区间。SQL 只返回指定正文区间，未将全篇 canonical Markdown 装入服务端请求组装器；文档 hash 与前缀行数的计算仍需 PostgreSQL 访问对应文档载荷。
+- `SourceFragment.proof.schema=2` 保存原节点区间、实际规范化区间和切片 SHA256；原 document／node 身份由已有 source／fragment 字段携带。`verifyStoredCitations` 和 `VerifyStudioSources` 显式区分无 proof 的旧整片与 schema 2。发布和后续读取通过 owner 从确切版本重新取片，比较身份、区间、正文、原区间和 hash；未知 schema、篡改行／字节区间及跨 manifest 身份均拒绝。
+- 外发前校验 owner 代次，网络期间仅保留来源链接锁，清除屏障使用既有 permit／取消机制；不把 owner 读取锁持有到模型响应结束。已有 Studio／练习消费者支持新证明，没有新增 Studio 产品入口。
+
+### 话题读取、隔离与降级
+
+- `ReadTopicScope(ctx, actor, space, conversation, TopicScopeRequest, send)` 面向后续 S：请求含 topic IDs、index revision、through-message ID、当前 manifest、direction revision 和 MaxTokens。最多选择 64 个 topic，投影限额 128–8192 Token；选定 ID 必须全部属于当前对话及范围，版本变化返回冲突，message 身份在该对话内核验。只返回 Topic 要点／观察、证据锚点身份、连续覆盖水位和缺口，不返回原始 Messages，也不产生模型调用或资料引用。
+- 自动上下文投影按同 scope、冻结 revision 分页，每页 32 个候选；标题／要点按当前问题排序，仅保留有界候选。每项证据检查来源、方向、代次及消息上界；跨上界的标题不当作已受理内容。来源撤销或记忆依赖失效的项省略，旧课堂工具正文没有确切来源证明时不外发。新增依赖随 checkpoint 保存并在模型外发门禁重新核验。
+- 索引未就绪或失败时退回能放下的最近原文，保留索引已有结果和水位。回答附加“较早内容未纳入”，历史与运行 DTO 的可选 `context_notice` 让 Web 在生成期间也能显示缺口；原 Messages 的用户输入语义保持不变。
+- 单条当前输入超过可变容量时，按有界字符片段调用模型生成临时要点，stage 为 `input_projection`，经过原外发门禁并进入用量台账。失败时不使用失败输出，保留可容纳的末尾原文；提示原输入字符数、保留数量和未纳入前缀数量，并允许拆开发送。完整用户输入仍保存于原 turn。投影不写入练习、评估、证据或长期记忆。
+
+### 验证与边界
+
+- 确定性模型与真实 PostgreSQL 测试覆盖：累计超过窗口和旧 checkpoint 体积的对话继续、原文逐页完整、当前轮保存边界、完整工具组、有界多轮工具 checkpoint、大量话题相关匹配、失败降级、零来源／换方向隔离、超大输入失败继续及台账、目录分页／大来源请求／子范围篡改拒绝、ReadTopicScope 与 Studio 新证明核验。
+- 真实 PostgreSQL、`umask 022`、`-p=1` 下，`mentorrun`（最终整包 863 秒）、`knowledge/...`、`learningcontent`、`transport/httpapi` 和 `api` 的 `go test` 均通过；同范围 `go vet` 通过。首次导师整包发现最新工具结果过早截短及零来源提示回归，修复后相关用例与导师整包均通过；旧整片引用的完整来源约束也在新 schema 分支中保留并通过检查。Web `npm run check` 与构建通过，Chromium 的 `conversation-topics.spec.ts`、`notebook-chat.spec.ts` 共 11 项通过；浏览器使用独立测试 schema。未运行全量项目测试、三浏览器矩阵或真实 provider 质量抽查。
+- 当前候选筛选使用标题／要点的确定性词语与中文二元片段匹配；话题和来源目录虽然分页且内存有界，扫描时间仍随候选规模增长。模型质量、同义问题的早期召回和摘要漂移留给 T 候选验证；本批不承诺每项旧事实均进入请求。旧工具采用可说明缺口的摘录，未引入额外工具摘要模型调用。

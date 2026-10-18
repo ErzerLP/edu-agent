@@ -24,10 +24,18 @@ test('话题列表可跳转和上下处导航，键盘与移动布局保留输�
     }, space.id)
     await expect.poll(async () => (await webAPI(page, 'GET', `/v1/learning/runs/${receipt.run_id}`, undefined, space.id)).status).toBe('succeeded')
   }
+  // Exercise the additive coverage notice independently of model wording.
+  await page.route(`**/v1/learning/conversations/${conversation.id}?**`, async route => {
+    const response = await route.fetch()
+    const body = await response.json()
+    if (body.items?.[0]) body.items[0].context_notice = '较早内容未纳入；本次仅依据最近原文。'
+    await route.fulfill({ response, json: body })
+  })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`/app/spaces/${space.id}?conversation=${conversation.id}`)
   await page.getByRole('tab', { name: '对话', exact: true }).click()
   const input = page.getByLabel('向导师提问', { exact: true })
+  await expect(page.getByRole('status').filter({ hasText: '较早内容未纳入' })).toBeVisible()
   await input.fill('这段草稿不能丢失')
   const trigger = page.getByRole('button', { name: '查看话题', exact: true })
   await trigger.focus(); await page.keyboard.press('Enter')

@@ -57,9 +57,11 @@ func (h *executionHost) pauseForToolSteps(ctx context.Context) error {
 			request.Messages = append(request.Messages, modelclient.Message{Role: "user", Content: "尚待用户回答的问题（数据）：" + h.body.Interaction.Question})
 		}
 	}
-	if agentcore.NewTokenEstimator().EstimateRequest(request)+request.MaxTokens+256 > h.limits.ContextTokens {
-		return ErrLimit
+	plan, err := h.assembleContext(ctx, modelclient.Request{MaxTokens: request.MaxTokens, Messages: request.Messages[:1]}, nil, request.Messages[1:])
+	if err != nil {
+		return err
 	}
+	request = plan.Request
 	h.summarizing = true
 	defer func() { h.summarizing = false }()
 	response, err := (callModel{h}).Complete(ctx, request)
@@ -73,7 +75,7 @@ func (h *executionHost) pauseForToolSteps(ctx context.Context) error {
 	if len(h.prefix)+len(message.Content) > MaxOutput {
 		return ErrLimit
 	}
-	h.body.Output = h.prefix + message.Content
+	h.body.Output = h.withContextNotice(h.prefix + message.Content)
 	// A summary is presentation, not a synthetic tool result or a new user turn.
 	if err = h.service.mutate(ctx, &h.owned, "tool_steps_paused", func(item *row) error {
 		item.body = h.body

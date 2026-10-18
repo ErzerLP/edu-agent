@@ -114,6 +114,9 @@ type Interaction struct {
 }
 
 type Body struct {
+	TurnMessages    []modelclient.Message       `json:"turn_messages,omitempty"`
+	Context         *ConversationContext        `json:"context,omitempty"`
+	ContextNotice   string                      `json:"context_notice,omitempty"`
 	TopicProvenance bool                        `json:"topic_provenance,omitempty"`
 	TopicIndex      *TopicIndexState            `json:"topic_index,omitempty"`
 	ToolSteps       int                         `json:"tool_steps,omitempty"`
@@ -139,6 +142,7 @@ type Body struct {
 }
 
 type Snapshot struct {
+	ContextNotice  string                    `json:"context_notice,omitempty"`
 	Studio         *StudioState              `json:"studio,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
 	Citations      []SourceCitation          `json:"citations,omitempty"`

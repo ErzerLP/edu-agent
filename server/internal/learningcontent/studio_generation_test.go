@@ -18,6 +18,29 @@ func TestStudioTargetRejectsNonCanonicalEncryptedIdentity(t *testing.T) {
 	}
 }
 
+func TestStudioSliceProofCannotBeChanged(t *testing.T) {
+	fragment := knowledge.SourceFragment{NodeID: "node", NodeRevisionID: "revision", Text: "原文", Range: knowledge.SourceRange{Start: 0, End: 6, StartLine: 1, EndLine: 1}}
+	fragment.Proof = &knowledge.SourceSliceProof{Schema: 2, OriginalRange: knowledge.SourceRange{Start: 0, End: 60, StartLine: 1, EndLine: 10}, Range: fragment.Range, SHA256: knowledge.SourceTextHash(fragment.Text)}
+	source := knowledge.SourceDetail{Fragments: []knowledge.SourceFragment{fragment}}
+	body := StudioBody{SourceManifest: &knowledge.SourceManifest{Entries: []knowledge.SourceManifestEntry{{SHA256: "document"}}}, Citations: []StudioCitation{{ID: "1", Fragment: fragment, DocumentSHA256: "document", SliceSHA256: knowledge.SourceTextHash(fragment.Text)}}}
+	if err := VerifyStudioSources(body, []knowledge.SourceDetail{source}); err != nil {
+		t.Fatal(err)
+	}
+	changed := *fragment.Proof
+	changed.OriginalRange.End = 600
+	body.Citations[0].Fragment.Proof = &changed
+	if err := VerifyStudioSources(body, []knowledge.SourceDetail{source}); err == nil {
+		t.Fatal("发布接受了篡改的子范围证明")
+	}
+	// Adding the subrange schema must not relax the old complete-source contract.
+	body.Citations[0].Fragment.Proof = nil
+	source.Fragments[0].Proof = nil
+	body.SourceManifest.Entries = append(body.SourceManifest.Entries, knowledge.SourceManifestEntry{SHA256: "another-document"})
+	if err := VerifyStudioSources(body, []knowledge.SourceDetail{source}); err == nil {
+		t.Fatal("旧整片引用接受了不完整来源集合")
+	}
+}
+
 func TestStudioStructuredClaims(t *testing.T) {
 	sources := []knowledge.SourceDetail{{Fragments: []knowledge.SourceFragment{{Text: "偶数可被 2 整除。"}}}}
 	manifest := &knowledge.SourceManifest{Entries: []knowledge.SourceManifestEntry{{SHA256: "document-hash"}}}

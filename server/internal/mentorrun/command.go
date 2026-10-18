@@ -126,7 +126,7 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 				return Receipt{}, err
 			}
 		}
-		item.body.Messages = append(item.body.Messages, modelclient.Message{Role: "tool", ToolCallID: pending.CallID, Content: answer})
+		item.body.appendMessage(modelclient.Message{Role: "tool", ToolCallID: pending.CallID, Content: answer})
 		item.body.Interaction = nil
 		item.Status = "queued"
 		item.Reason = ""

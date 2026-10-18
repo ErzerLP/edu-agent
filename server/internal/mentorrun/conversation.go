@@ -121,6 +121,7 @@ type ConversationPage struct {
 }
 
 type TutorTurn struct {
+	ContextNotice  string                    `json:"context_notice,omitempty"`
 	MessageAnchors []MessageAnchor           `json:"message_anchors,omitempty"`
 	ExerciseID     string                    `json:"exercise_id,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`
@@ -503,6 +504,7 @@ func (s *Service) readConversationPage(ctx context.Context, tx pgx.Tx, actor ide
 			}
 			turn.Messages = body.Messages
 			turn.Output = body.Output
+			turn.ContextNotice = body.ContextNotice
 			turn.BodyAvailable = true
 			bodies[turn.RunID] = body
 		}
@@ -522,6 +524,7 @@ func (s *Service) readConversationPage(ctx context.Context, tx pgx.Tx, actor ide
 		if sourceUnavailable(e) {
 			turn.Messages = []modelclient.Message{}
 			turn.Output = ""
+			turn.ContextNotice = ""
 			turn.BodyAvailable = false
 			continue
 		}
@@ -560,6 +563,7 @@ func (s *Service) readConversationPage(ctx context.Context, tx pgx.Tx, actor ide
 				}
 				page.Items[i].Messages = turnBody(item).Messages
 				page.Items[i].Output = item.body.Output
+				page.Items[i].ContextNotice = item.body.ContextNotice
 				page.Items[i].BodyAvailable = true
 				page.Items[i].SourceManifest, page.Items[i].Citations = item.body.SourceManifest, item.body.Citations
 			}
@@ -671,10 +675,17 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 
 func turnBody(item row) Body {
 	start := item.body.HistoryCount
+	if item.body.Context != nil {
+		start = item.body.Context.TurnStart
+	}
 	if start < 0 || start > len(item.body.Messages) {
 		return Body{}
 	}
-	return Body{TopicProvenance: true, Study: item.body.Study, StudyExercise: item.body.StudyExercise, MemorySources: item.body.MemorySources, Messages: item.body.Messages[start:], Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
+	messages := item.body.Messages[start:]
+	if item.body.TurnMessages != nil {
+		messages = item.body.TurnMessages
+	}
+	return Body{ContextNotice: item.body.ContextNotice, TopicProvenance: true, Study: item.body.Study, StudyExercise: item.body.StudyExercise, MemorySources: (&executionHost{body: item.body}).modelMemorySources(), Messages: messages, Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
 }
 
 func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
@@ -762,37 +773,6 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 	}
 	history := []modelclient.Message{}
 	if c.Saved {
-		rows, e := tx.Query(ctx, `SELECT run_id::text,ciphertext FROM learning_tutor_turns WHERE conversation_id=$1 ORDER BY ordinal`, c.ID)
-		if e != nil {
-			return nil, e
-		}
-		for rows.Next() {
-			var runID string
-			var raw []byte
-			var body Body
-			if e = rows.Scan(&runID, &raw); e != nil {
-				rows.Close()
-				return nil, e
-			}
-			if raw == nil {
-				continue
-			}
-			if e = openHistory(s.aead, historyAAD(c.ID, generation, runID), raw, &body); e != nil {
-				rows.Close()
-				return nil, e
-			}
-			if sameSourceScope(manifest, body.SourceManifest) && sameDirectionScope(request.study, body.Study) {
-				history = append(history, committedMessages(body.Messages)...)
-			}
-			if checkpointJSONSize(Body{Messages: history}) > MaxBody-20000 {
-				rows.Close()
-				return nil, ErrLimit
-			}
-		}
-		rows.Close()
-		if err = rows.Err(); err != nil {
-			return nil, err
-		}
 		var title conversationTitle
 		if err = openHistory(s.aead, historyAAD(c.ID, generation, "title"), c.titleCipher, &title); err != nil {
 			return nil, err
@@ -813,9 +793,7 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 		if !item.BodyAvailable || time.Now().After(item.ExpiresAt) || s.decode(&item) != nil {
 			return nil, ErrTemporary
 		}
-		if sameSourceScope(manifest, item.body.SourceManifest) && sameDirectionScope(request.study, item.body.Study) {
-			history = committedMessages(item.body.Messages)
-		}
+
 	}
 	var scope any
 	if c.Saved {

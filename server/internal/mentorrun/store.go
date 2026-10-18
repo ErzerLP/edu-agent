@@ -240,6 +240,7 @@ func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) e
 	var ciphertext []byte
 	var err error
 	if item.BodyAvailable {
+		item.body.compactToolCheckpoint()
 		raw, e := json.Marshal(item.body)
 		if e != nil || len(raw) > maxSealedBody || checkpointJSONSize(item.body) > MaxBody {
 			return ErrLimit
@@ -536,6 +537,17 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	item.body.Study = c.study
 	if c.study != nil {
 		item.body.StudyExercise = &StudyExerciseState{Policy: automaticAssessmentPolicy(fingerprint, limits)}
+	}
+	item.body.Context = &ConversationContext{}
+	if c.ConversationID != "" {
+		if err = tx.QueryRow(ctx, `SELECT COALESCE(max(ordinal),0) FROM learning_tutor_turns WHERE conversation_id=$1`, c.ConversationID).Scan(&item.body.Context.ThroughTurn); err != nil {
+			return Receipt{}, err
+		}
+		if !c.Save {
+			if err = tx.QueryRow(ctx, `SELECT COALESCE(current_run_id::text,'') FROM learning_mentor_sessions WHERE id=$1`, c.ConversationID).Scan(&item.body.Context.PreviousRun); err != nil {
+				return Receipt{}, err
+			}
+		}
 	}
 	item.body.HistoryCount = len(history)
 	item.body.Messages = append(history, modelclient.Message{Role: "user", Content: c.Prompt})

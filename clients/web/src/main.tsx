@@ -27,6 +27,7 @@ import { FeedbackListPage, FeedbackPage } from './feedback-page'
 import { OfflinePage } from './offline-page'
 import { TutorHistory } from './components/tutor-history'
 import { ProgressPage } from './progress-page'
+import { UsagePage } from './usage-page'
 import { progressSearch } from './api/progress'
 import { NotesyncPage, NotesyncReviewPage } from './notesync-page'
 import { notesyncCollection } from './api/notesync'
@@ -54,6 +55,7 @@ const root = createRootRoute({
   ),
 })
 const home = createRoute({ getParentRoute: () => root, path: '/', component: NotebookHomePage })
+const usage = createRoute({ getParentRoute: () => root, path: '/usage', component: UsagePage })
 const offline = createRoute({
   getParentRoute: () => root,
   path: '/offline',
@@ -354,6 +356,7 @@ const router = createRouter({
     home,
     offline,
     progress,
+    usage,
     space,
     spaceManage,
     goal,

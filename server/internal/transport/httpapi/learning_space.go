@@ -189,7 +189,7 @@ func legacyBusinessPath(path string) bool {
 }
 func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Has("learning_space_id") || r.URL.Query().Has("space_id") || r.URL.Query().Has("collection_id") || r.URL.Query().Has("scope_snapshot_id") {
+		if r.URL.Query().Has("learning_space_id") || r.URL.Query().Has("space_id") && !usagePath(r.URL.Path) || r.URL.Query().Has("collection_id") || r.URL.Query().Has("scope_snapshot_id") {
 			spaceFailure(w, r, space.Invalid())
 			return
 		}
@@ -234,7 +234,8 @@ func (a *API) resolveLearningSpace(next http.Handler) http.Handler {
 					supportsProgress := hasProgress && progress.SupportsProgress() && (r.URL.Path == "/v1/learning/progress" || r.URL.Path == "/v1/learning/reviews")
 					supportsMentor := a.mentorRuns != nil && mentorPath(r.URL.Path)
 					supportsContent := strings.HasPrefix(r.URL.Path, "/v1/learning/content/") || a.learningContent != nil && studioPath(r.URL.Path)
-					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions && !supportsProgress && !supportsMentor && !supportsContent {
+					supportsUsage := a.modelUsage != nil && usagePath(r.URL.Path)
+					if id != space.DefaultID && !(supportsKnowledge && scopedKnowledgePath(r.URL.Path)) && !supportsGoals && !supportsSessions && !supportsProgress && !supportsMentor && !supportsContent && !supportsUsage {
 						spaceFailure(w, r, &space.Error{Code: "learning_space_module_unavailable"})
 						return
 					}

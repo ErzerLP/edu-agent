@@ -50,7 +50,9 @@ func RotateMentorKey(ctx context.Context, cfg config.Config, newPath string) err
 	if err = tx.QueryRow(ctx, `SELECT privacy_lock_owner_gate('learning','write',NULL)`).Scan(&generation); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `LOCK TABLE learning_mentor_processes,learning_mentor_runs,learning_tutor_conversations,learning_tutor_turns,learning_content_artifacts,learning_content_revisions,learning_changes,learning_change_revisions IN ACCESS EXCLUSIVE MODE NOWAIT`); err != nil {
+	// Usage stores only counters and opaque attribution, with no new ciphertext
+	// to rewrap. Lock its writes together with the mentor maintenance boundary.
+	if _, err = tx.Exec(ctx, `LOCK TABLE learning_mentor_processes,learning_mentor_runs,learning_tutor_conversations,learning_tutor_turns,learning_content_artifacts,learning_content_revisions,learning_changes,learning_change_revisions,learning_model_tasks,learning_model_calls IN ACCESS EXCLUSIVE MODE NOWAIT`); err != nil {
 		return errors.New("仍有活动事务，请停止所有服务再轮换")
 	}
 	var live bool

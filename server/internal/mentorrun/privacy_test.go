@@ -13,6 +13,7 @@ import (
 	learningdb "github.com/edu-agent/edu-agent/server/internal/learning/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	memorydb "github.com/edu-agent/edu-agent/server/internal/memory/postgresstore"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	outboxdb "github.com/edu-agent/edu-agent/server/internal/platform/outbox/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	privacydb "github.com/edu-agent/edu-agent/server/internal/privacy/postgresstore"
@@ -43,6 +44,10 @@ func TestPostgreSQLMentorPrivacyBarrierClearsSavedAndInFlightTemporary(t *testin
 	f.create = historyRequest(t, f, newHistory(t, f, true, f.goal), "需要清除的持久问题")
 	f.accept(t)
 	f.work(t)
+	var usageRef modelusage.CallRef
+	if err := f.pool.QueryRow(context.Background(), `SELECT id::text,privacy_generation FROM learning_model_calls LIMIT 1`).Scan(&usageRef.ID, &usageRef.Generation); err != nil {
+		t.Fatal(err)
+	}
 	f.create = historyRequest(t, f, newHistory(t, f, false, f.goal), "需要清除的临时问题")
 	current := f.accept(t)
 	done := make(chan error, 1)
@@ -85,6 +90,13 @@ func TestPostgreSQLMentorPrivacyBarrierClearsSavedAndInFlightTemporary(t *testin
 	}
 	if _, err = privacyStore.RunLocalScrub(ctx, barrier.ErasureID); err != nil {
 		t.Fatal(err)
+	}
+	if err = f.service.usage.Finish(ctx, usageRef, "received", modelusage.ParseChatUsage([]byte(`{"usage":{"prompt_tokens":11,"completion_tokens":7}}`))); err == nil {
+		t.Fatal("清除后迟到用量被接受")
+	}
+	var usageRemaining int
+	if err = f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_model_tasks)+(SELECT count(*) FROM learning_model_calls)`).Scan(&usageRemaining); err != nil || usageRemaining != 0 {
+		t.Fatalf("清除残留用量: %d %v", usageRemaining, err)
 	}
 	_, _ = f.service.Sweep(ctx)
 	var remaining int

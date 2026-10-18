@@ -2,6 +2,8 @@ package mentorrun
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore"
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
@@ -314,8 +317,10 @@ func (m callModel) begin(ctx context.Context, request modelclient.Request) error
 
 // HTTP 级门禁也覆盖共享客户端的协议兼容重试，不能借回退绕过预算。
 type budgetTransport struct {
-	host *executionHost
-	next http.RoundTripper
+	host       *executionHost
+	next       http.RoundTripper
+	connection settings.Connection
+	stage      string
 }
 
 func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -346,6 +351,7 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 		return nil, ErrInactive
 	}
 	paused := false
+	var usageCall modelusage.CallRef
 	err := h.service.mutateTx(request.Context(), &h.owned, "model_started", func(tx pgx.Tx, item *row) error {
 		if len(h.body.MemorySources) > 0 {
 			if err := h.validateMemorySources(request.Context(), tx); err != nil {
@@ -359,6 +365,37 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			item.Reason = "budget_exhausted"
 			item.callStarted = false
 			return nil
+		}
+		// Only transports explicitly composed for mentor conversation are counted.
+		if t.connection.Model != "" {
+			source := "cli"
+			var web bool
+			if err := tx.QueryRow(request.Context(), `SELECT EXISTS(SELECT 1 FROM identity_web_sessions WHERE token_id=$1)`, item.token).Scan(&web); err != nil {
+				return err
+			}
+			if web {
+				source = "web"
+			}
+			digest := sha256.Sum256([]byte(t.connection.Provider + "\n" + t.connection.Endpoint))
+			var beginErr error
+			style := t.connection.APIStyle
+			if style == "" {
+				style = "chat_completions"
+			}
+			stage := t.stage
+			if stage == "" {
+				stage = "mentor"
+				style = "chat_completions"
+			}
+			usageCall, beginErr = h.service.usage.BeginTx(request.Context(), tx, modelusage.BeginRequest{
+				Generation: item.Generation, SpaceID: item.SpaceID, Source: source, ActorDeviceID: item.device,
+				Kind: "mentor", OriginID: item.RunID, Stage: stage, AttemptKey: uuid.NewString(), LeaseID: *item.lease,
+				Provider: t.connection.Provider, Destination: hex.EncodeToString(digest[:]), Model: t.connection.Model,
+				APIStyle: style, Configuration: item.Configuration,
+			})
+			if beginErr != nil {
+				return ErrStorage
+			}
 		}
 		item.RequestsLeft--
 		item.RequestsUsed++
@@ -397,7 +434,32 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			return nil, err
 		}
 	}
-	response, err := t.next.RoundTrip(request)
+	if usageCall.ID != "" {
+		err = h.service.usage.Dispatch(request.Context(), usageCall)
+		if err != nil {
+			if errors.Is(err, modelusage.ErrInactive) {
+				err = ErrInactive
+			} else {
+				err = ErrStorage
+			}
+		}
+	}
+	if err != nil {
+		if sourceTx != nil {
+			_ = sourceTx.Rollback(context.Background())
+		}
+		if permit != nil {
+			permit.Release()
+		}
+		h.transportErr = err
+		return nil, err
+	}
+	var response *http.Response
+	if usageCall.ID != "" {
+		response, err = h.service.usage.Observe(request.Context(), usageCall, t.next, request)
+	} else {
+		response, err = t.next.RoundTrip(request)
+	}
 	if sourceTx != nil {
 		if err != nil {
 			_ = sourceTx.Rollback(context.Background())

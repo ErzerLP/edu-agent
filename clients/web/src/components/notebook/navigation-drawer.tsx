@@ -320,6 +320,10 @@ export function NavigationDrawer({
                   <Brain size={18} aria-hidden="true" />
                   <span>长期记忆</span>
                 </Link>
+                <Link to="/usage">
+                  <ChartNoAxesCombined size={18} aria-hidden="true" />
+                  <span>用量</span>
+                </Link>
                 <a href="/app/offline">
                   <Unplug size={18} aria-hidden="true" />
                   <span>离线学习</span>

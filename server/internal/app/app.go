@@ -27,6 +27,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
@@ -203,6 +204,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		StudioQuiz:       &learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore},
 		LearningChanges:  changes,
 		MentorRuns:       mentorRuns, MentorHeartbeat: cfg.MentorHeartbeat, MentorWriteTimeout: cfg.MentorWriteTimeout,
+		ModelUsage:     modelusage.New(pool),
 		Settings:       settingsService,
 		LearningSpaces: spacepostgres.New(pool, directions),
 		WebUI:          httpapi.WebUIOptions{Enabled: cfg.WebUIEnabled, OfflineEnabled: cfg.WebOfflineEnabled, AllowLoopbackHTTP: cfg.WebUIAllowLoopbackHTTP, PublicBaseURL: cfg.PublicBaseURL, Identity: identityService, Assets: webassets.Files()},

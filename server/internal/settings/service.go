@@ -316,6 +316,18 @@ func (s *Service) TeachingClient() (*llm.Client, error) {
 func (s *Service) MentorClient(wrappers ...func(http.RoundTripper) http.RoundTripper) (*modelclient.Client, Limits, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.mentorClient(nil, wrappers...)
+}
+
+// MentorUsageClient freezes the accounting identity with the actual client.
+// The shared agentcore protocol is unchanged.
+func (s *Service) MentorUsageClient(wrap func(Connection, http.RoundTripper) http.RoundTripper) (*modelclient.Client, Limits, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mentorClient(wrap)
+}
+
+func (s *Service) mentorClient(observe func(Connection, http.RoundTripper) http.RoundTripper, wrappers ...func(http.RoundTripper) http.RoundTripper) (*modelclient.Client, Limits, string, error) {
 	slot := s.state.Mentor
 	if s.state.MentorUsesTeaching {
 		slot = s.state.Teaching
@@ -341,6 +353,9 @@ func (s *Service) MentorClient(wrappers ...func(http.RoundTripper) http.RoundTri
 	var transport http.RoundTripper = modelTransport()
 	for _, wrap := range wrappers {
 		transport = wrap(transport)
+	}
+	if observe != nil {
+		transport = observe(slot.Connection, transport)
 	}
 	client, err := modelclient.New(slot.Endpoint, slot.Model, slot.Key, time.Duration(limits.IdleTimeoutSeconds)*time.Second, &http.Client{Transport: transport, CheckRedirect: rejectRedirect})
 	return client, limits, hex.EncodeToString(digest[:]), err

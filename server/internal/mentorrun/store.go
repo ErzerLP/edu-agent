@@ -23,6 +23,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningdirection"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
@@ -32,6 +33,7 @@ import (
 )
 
 type Service struct {
+	usage               *modelusage.Store
 	directions          *learningdirection.Store
 	studio              *learningcontent.Store
 	companion           *companion.Broker
@@ -69,7 +71,7 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 	if err != nil {
 		return nil, err
 	}
-	return &Service{directions: directions, pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
+	return &Service{usage: modelusage.New(pool), directions: directions, pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
 }
 func (s *Service) CanSave() bool { return s.aead != nil }
 

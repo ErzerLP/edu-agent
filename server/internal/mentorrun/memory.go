@@ -236,7 +236,7 @@ func (h *executionHost) validateMemorySources(ctx context.Context, tx pgx.Tx) er
 	if !allowed {
 		return ErrForbidden
 	}
-	for _, source := range h.body.MemorySources {
+	for _, source := range h.modelMemorySources() {
 		view, err := memorydb.InTransaction(tx).Record(ctx, source.MemoryID)
 		if err != nil {
 			return err
@@ -246,4 +246,22 @@ func (h *executionHost) validateMemorySources(ctx context.Context, tx pgx.Tx) er
 		}
 	}
 	return nil
+}
+
+func (h *executionHost) modelMemorySources() []MemorySource {
+	sources := append([]MemorySource(nil), h.body.MemorySources...)
+	if h.body.Context != nil {
+		sources = append(sources, h.body.Context.MemorySources...)
+	}
+	return sources
+}
+func (h *executionHost) rememberContextMemory(sources []MemorySource) {
+	if h.body.Context == nil {
+		return
+	}
+	for _, source := range sources {
+		if !slices.Contains(h.body.Context.MemorySources, source) {
+			h.body.Context.MemorySources = append(h.body.Context.MemorySources, source)
+		}
+	}
 }

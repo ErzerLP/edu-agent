@@ -23,6 +23,7 @@ export const mentorSnapshotSchema = z.object({
   requests_left: z.number().int().nonnegative(), tokens_left: z.number().int().nonnegative(),
   requests_used: z.number().int().nonnegative(), result_unknown: z.boolean(), cost_unknown: z.boolean(),
   updated_at: z.iso.datetime({ offset: true }), expires_at: z.iso.datetime({ offset: true }),
+  context_notice: z.string().optional(),
   configuration: z.string(), output: z.string().max(65536),
   memory_sources: z.array(z.object({ memory_id: z.uuid(), candidate_id: z.uuid(), revision: positive, scope: z.string() })).max(10).optional(),
   memory_status: z.enum(['not_authorized', 'unavailable', 'available', 'partial']).optional(),
@@ -109,7 +110,7 @@ async function watch(session: Session, sub: Subscription) {
       if (signal.aborted) return
       if (error instanceof ApiError && [401, 403, 404, 503].includes(error.status)) {
         // 身份失效或隐私门禁关闭后立即隐藏旧正文，不能依赖下一次成功查询。
-        sub.snapshot = { ...sub.snapshot, output: '', citations:undefined,source_manifest:undefined, interaction: undefined, research: undefined, start_learning: undefined, content_edit: undefined, memory_sources: undefined, memory_status: undefined, body_available: false }
+        sub.snapshot = { ...sub.snapshot, output: '', context_notice: undefined, citations:undefined,source_manifest:undefined, interaction: undefined, research: undefined, start_learning: undefined, content_edit: undefined, memory_sources: undefined, memory_status: undefined, body_available: false }
         report(error)
         return
       }

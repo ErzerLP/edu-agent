@@ -45,7 +45,7 @@ func (s *Store) FreezeSourceSelectionTx(ctx context.Context, tx pgx.Tx, selectio
 	}
 	manifest := &knowledge.SourceManifest{Schema: 1, SpaceID: space.Scope(ctx), Generation: generation, Entries: []knowledge.SourceManifestEntry{}}
 	for _, item := range selection.Items {
-		_, hash, err := s.selectedSourceTx(ctx, tx, item)
+		_, hash, err := s.sourceIdentityTx(ctx, tx, item)
 		if err != nil {
 			return nil, err
 		}

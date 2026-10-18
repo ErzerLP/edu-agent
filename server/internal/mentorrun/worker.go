@@ -257,6 +257,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	if errors.Is(cause, errCitation) {
 		item.Reason = "invalid_source_citation"
 	}
+	if errors.Is(cause, ErrContextConfiguration) {
+		item.Reason = "context_configuration_invalid"
+	}
 	if errors.Is(cause, ErrLimit) {
 		item.Reason = "history_context_limit"
 	}
@@ -385,6 +388,9 @@ func studioFailureCategory(cause error) string {
 	}
 	if errors.Is(cause, learningcontent.ErrInvalid) {
 		return "invalid_source_citation"
+	}
+	if errors.Is(cause, ErrContextConfiguration) {
+		return "context_configuration_invalid"
 	}
 	if errors.Is(cause, ErrLimit) {
 		return "history_context_limit"

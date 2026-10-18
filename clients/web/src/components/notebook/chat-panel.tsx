@@ -513,6 +513,7 @@ export function ChatPanel({
                         <Sparkles size={17} />
                         学习导师
                       </div>
+                      {turn.context_notice && !turn.output.includes(turn.context_notice) && <p role="status">{turn.context_notice}</p>}
                       {turn.output ? (
                         <>
                           <div className="chat-answer" data-generating={!isMentorTerminal(turn.status as keyof typeof mentorStatus) || undefined}>

@@ -121,7 +121,7 @@ func (s *Store) ValidateQuestionTx(ctx context.Context, tx pgx.Tx, actor identit
 // PublishExerciseTx owns publication idempotency. The callback creates only a
 // formal question; mapping and caller's history commit in the same transaction.
 func (s *Store) PublishExerciseTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, operation string, generation int64, hash string, body ExerciseBody, create func() (Revision, error)) (Exercise, error) {
-	if uuid.Validate(operation) != nil || body.Assessment.Configuration == "" || body.Assessment.Requests < 1 || body.Assessment.Tokens < 1 {
+	if uuid.Validate(operation) != nil || body.Assessment.Configuration == "" {
 		return Exercise{}, ErrInvalid
 	}
 	g, err := gates(ctx, tx, actor, true)

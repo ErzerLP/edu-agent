@@ -62,7 +62,7 @@ func quoteConstrainedSchema(base json.RawMessage, sources []research.Source, poi
 }
 
 // Server-only structured generation reuses the configured mentor connection and
-// its wire API. Every attempt crosses the existing HTTP budget and lease gate.
+// its wire API. Every attempt crosses the existing HTTP authorization and lease gate.
 func (h *executionHost) generateCited(ctx context.Context, request modelclient.Request, schema json.RawMessage, stage string, validate func([]byte) error) error {
 	client, _, native, err := h.service.settings.CitedMentorClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
 		return budgetTransport{host: h, next: next, stage: stage, connection: connection}
@@ -110,7 +110,6 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 			if err = h.service.mutate(ctx, &h.owned, "model_received", func(item *row) error {
 				item.callStarted = false
 				if response.Usage.TotalTokens > 0 && response.Usage.TotalTokens <= h.reserve {
-					item.TokensLeft += h.reserve - response.Usage.TotalTokens
 					item.CostUnknown = false
 				}
 				item.Stage = stage

@@ -25,8 +25,6 @@ const titles: Record<Target, string> = {
   search: '搜索',
 }
 const limitFields: [keyof Limits, string, number, number][] = [
-  ['research_requests', '单次研究请求预算', 1, 1000],
-  ['research_tokens', '单次研究 Token 预算', 1024, 10000000],
   ['output_tokens', '单次输出 Token 上限', 64, 32768],
   ['context_tokens', '上下文 Token 上限', 4096, 2000000],
   ['idle_timeout_seconds', '无响应超时（秒）', 5, 600],
@@ -226,7 +224,7 @@ function ConnectionCard({
   )
 }
 
-function BudgetForm({
+function LimitsForm({
   value,
   disabled,
   update,
@@ -240,10 +238,10 @@ function BudgetForm({
     event.preventDefault()
     const data = new FormData(event.currentTarget)
     const result = limitsSchema.safeParse(
-      Object.fromEntries(limitFields.map(([key]) => [key, Number(data.get(key))])),
+      { ...value.limits, ...Object.fromEntries(limitFields.map(([key]) => [key, Number(data.get(key))])), max_tool_steps: data.get('max_tool_steps') === '' ? null : Number(data.get('max_tool_steps')) },
     )
     if (!result.success) {
-      setError('请检查预算范围：输出须小于上下文，且不超过研究 Token 预算。')
+      setError('请检查输入：输出须小于上下文，每轮工具调用上限须为正整数或留空。')
       return
     }
     setError('')
@@ -254,14 +252,15 @@ function BudgetForm({
   }
   return (
     <section className="panel">
-      <h3>预算与外发策略</h3>
+      <h3>调用限制与外发策略</h3>
       <p>
-        目标内导师在受理、继续预算和每次模型请求前检查这些上限。教学没有固定轮数上限，但请求、上下文、并发和存储各有边界。
+        任务不限制累计请求或 Token。每轮工具调用默认不限；达到自设上限时会说明进展，点击“继续”后接着执行。Studio 不受此项影响。
         活跃模型流量重置无响应计时，不作为整次交流时长。
       </p>
       <form onSubmit={submit}>
         <fieldset disabled={disabled}>
           <legend>资源上限</legend>
+          <label>每轮工具调用上限（留空为不限）<input name="max_tool_steps" type="number" min={1} step={1} defaultValue={value.limits.max_tool_steps ?? ''} /></label>
           <div className="form-grid">
             {limitFields.map(([key, label, min, max]) => (
               <label key={key}>
@@ -273,7 +272,7 @@ function BudgetForm({
                   min={min}
                   max={max}
                   step={1}
-                  defaultValue={value.limits[key]}
+                  defaultValue={value.limits[key] ?? undefined}
                 />
               </label>
             ))}
@@ -290,7 +289,7 @@ function BudgetForm({
             模型运行会把所需学习上下文发送到所选模型端点；搜索仅发送获准的查询。提供商保留策略由其自身决定。当前测试始终只使用固定公开样本。
           </p>
           {error && <p role="alert">{error}</p>}
-          <Button type="submit">保存预算与外发策略</Button>
+          <Button type="submit">保存调用限制与外发策略</Button>
         </fieldset>
       </form>
     </section>
@@ -417,7 +416,7 @@ export function SettingsPage() {
           </details>
         )}
         {error instanceof ApiError && error.code === 'invalid_settings' ? (
-          <p role="alert">配置格式、预算范围或端点许可无效。请检查输入；新的 Key 需重新填写。</p>
+          <p role="alert">配置格式、限制范围或端点许可无效。请检查输入；新的 Key 需重新填写。</p>
         ) : (
           !!error && <ErrorState error={error} retry={() => void settings.refetch()} />
         )}
@@ -440,7 +439,7 @@ export function SettingsPage() {
               test={(target) => run(undefined, target)}
             />
           ))}
-          <BudgetForm
+          <LimitsForm
             key={`limits-${value.revision}`}
             value={value}
             disabled={!write || pending}

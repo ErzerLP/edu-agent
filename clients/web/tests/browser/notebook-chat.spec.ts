@@ -347,7 +347,7 @@ test('C5a 网页概要显示标题与正文摘要，截断查看器给出短提�
   await page.screenshot({ path: testInfo.outputPath('web-partial-viewer.png') })
 })
 
-test('来源行打开原文，菜单预算仍用于对话提交', async ({ page }) => {
+test('来源行打开原文，对话提交不需要累计预算', async ({ page }) => {
   page.setDefaultTimeout(10000)
   await configureNotebookModel(page)
   await pairNotebook(page, 'learner')
@@ -380,15 +380,17 @@ test('来源行打开原文，菜单预算仍用于对话提交', async ({ page 
   await openNavigation(page)
   const menu = page.getByRole('dialog', { name: '侧边菜单', exact: true })
   await menu.getByText('对话设置', { exact: true }).click()
-  await menu.getByLabel('请求次数上限', { exact: true }).fill('1')
-  await menu.getByLabel('Token 预留上限', { exact: true }).fill('10000')
+  await expect(menu.getByLabel('请求次数上限', { exact: true })).toHaveCount(0)
+  await expect(menu.getByLabel('Token 预留上限', { exact: true })).toHaveCount(0)
   await page.keyboard.press('Escape')
   const submitted = page.waitForRequest(
     (r) => r.method() === 'POST' && /\/conversations\/[^/]+\/turns$/.test(r.url()),
   )
   await page.getByLabel('向导师提问').fill('解释偶数')
   await page.getByRole('button', { name: '发送提问' }).click()
-  expect((await submitted).postDataJSON()).toMatchObject({ request_budget: 1, token_budget: 10000 })
+  const payload = (await submitted).postDataJSON()
+  expect(payload).not.toHaveProperty('request_budget')
+  expect(payload).not.toHaveProperty('token_budget')
   await expect(page.getByRole('button', { name: '核验引用 1' })).toBeVisible()
   const answer = page.locator('.chat-answer')
   await expect(answer.locator('math')).toHaveCount(4)

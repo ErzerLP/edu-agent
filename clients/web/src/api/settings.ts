@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 export const limitsSchema = z
   .object({
+    max_tool_steps: z.number().int().positive().nullable().default(null),
     research_requests: z.number().int().min(1).max(1000),
     research_tokens: z.number().int().min(1024).max(10000000),
     output_tokens: z.number().int().min(64).max(32768),
@@ -11,8 +12,8 @@ export const limitsSchema = z
     storage_mib: z.number().int().min(16).max(1048576),
   })
   .refine(
-    (v) => v.output_tokens < v.context_tokens && v.output_tokens <= v.research_tokens,
-    '单次输出须小于上下文，且不大于研究 Token 预算',
+    (v) => v.output_tokens < v.context_tokens,
+    '单次输出须小于上下文',
   )
 const probeSchema = z.object({
   status: z.enum(['ready', 'failed']),
@@ -80,7 +81,7 @@ export function settingsReason(reason: string) {
     rate_limited: '提供商限流',
     upstream_error: '提供商服务错误',
     invalid_response: '提供商返回了无效响应',
-    output_budget_exceeded: '输出 Token 预算耗尽，请调大单次输出上限后重新测试',
+    output_budget_exceeded: '达到单次输出 Token 上限，请调大单次输出上限后重新测试',
     response_not_completed: '提供商响应未完成，请检查提供商状态后重新测试',
     schema_mismatch: '提供商响应不符合所需 Schema',
     incompatible: '端点不兼容或拒绝重定向',

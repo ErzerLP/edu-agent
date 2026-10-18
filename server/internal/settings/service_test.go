@@ -237,6 +237,9 @@ func TestLimitsAndProtectedStorage(t *testing.T) {
 		t.Fatal("默认限额无效")
 	}
 	for i := 0; i < reflect.TypeOf(defaults).NumField(); i++ {
+		if reflect.TypeOf(defaults).Field(i).Name == "MaxToolSteps" {
+			continue
+		} // Nullable field is covered by TestToolStepSettingsAndDeprecatedBudgets.
 		for _, bad := range []int{0, -1, 1000000000} {
 			l := defaults
 			reflect.ValueOf(&l).Elem().Field(i).SetInt(int64(bad))

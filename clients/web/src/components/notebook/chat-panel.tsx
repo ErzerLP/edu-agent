@@ -64,8 +64,6 @@ export function ChatPanel({
   const [notice, setNotice] = useState('')
   const [needSources, setNeedSources] = useState(false)
   const [destination, setDestination] = useState('')
-  const [requests, setRequests] = useState(2)
-  const [tokens, setTokens] = useState(30000)
   const live = useRef(true),
     stream = useRef<HTMLDivElement>(null),
     follow = useRef(true)
@@ -242,11 +240,6 @@ export function ChatPanel({
         direction_version: space.direction_version!,
         source_selection: selection!,
         prompt: text,
-        request_budget: Math.min(
-          requests,
-          configuration.data?.limits.research_requests ?? requests,
-        ),
-        token_budget: Math.min(tokens, configuration.data?.limits.research_tokens ?? tokens),
         ...(destination ? { confirm_destination: destination } : {}),
       }
       const pending = pendingTurn ?? {
@@ -310,7 +303,7 @@ export function ChatPanel({
   useEffect(() => {
     if (run && isMentorTerminal(run.status)) setStopping(false)
   }, [run?.status])
-  const command = async (kind: 'stop' | 'continue_budget') => {
+  const command = async (kind: 'stop' | 'resume') => {
     if (!run || busy) return
     setBusy(true)
     if (kind === 'stop') setStopping(true)
@@ -327,8 +320,6 @@ export function ChatPanel({
           const payload = {
             expected_version: current.version,
             kind,
-            request_budget: Math.min(requests, configuration.data?.limits.research_requests ?? requests),
-            token_budget: Math.min(tokens, configuration.data?.limits.research_tokens ?? tokens),
           }
           try {
             await unwrap(api().POST('/v1/learning/runs/{runID}/commands', {
@@ -626,36 +617,19 @@ export function ChatPanel({
             <details>
               <summary>对话设置</summary>
               <p>{configuration.data?.effective_mentor.endpoint}</p>
-              <label>
-                请求次数上限
-                <input
-                  type="number"
-                  min={1}
-                  max={configuration.data?.limits.research_requests ?? 2}
-                  value={requests}
-                  onChange={(e) => setRequests(Math.max(1, Number(e.target.value)))}
-                />
-              </label>
-              <label>
-                Token 预留上限
-                <input
-                  type="number"
-                  min={1}
-                  max={configuration.data?.limits.research_tokens ?? 30000}
-                  value={tokens}
-                  onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))}
-                />
-              </label>
             </details>,
             menu,
           )}
-        {run?.status === 'paused_budget' && (
+        {!!run && ['paused_budget', 'paused_tool_steps'].includes(run.status) && (
+          <div>
+          <p role="status">{mentorStatus[run.status]}</p>
           <Button
             disabled={busy || !canWrite || !!conversation?.confirmation_required}
-            onClick={() => void command('continue_budget')}
+            onClick={() => void command('resume')}
           >
-            分配预算并继续
+            继续
           </Button>
+          </div>
         )}
       </div>
     </div>

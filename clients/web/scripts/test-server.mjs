@@ -64,6 +64,11 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
+    if (payload.messages?.[0]?.content?.includes('本轮已达到用户设置的工具调用上限')) {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({choices:[{message:{role:'assistant',content:'已读取目标，还需整理例子。'},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}}))
+      return
+    }
     if (payload.messages?.[0]?.content?.includes('你是学习导师，围绕用户已确认的学习方向')) {
       const material = JSON.parse(payload.messages[1].content)
       const source = material.sources[0], fragment = source?.fragments[0]
@@ -174,6 +179,11 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
     const delta = { role: 'assistant', content: '浏览器真实导师：已读取本次绑定目标。' }
     if (input.includes('Markdown 渲染验收')) delta.content = markdownAnswer
     let finish = 'stop'
+    if (input.includes('工具上限验收')) {
+      delta.content = ''
+      delta.tool_calls = [{index:0,id:`browser-goal-${calls}`,type:'function',function:{name:'read_goal',arguments:'{}'}}]
+      finish = 'tool_calls'
+    }
     if (input.includes('结构化') && !answered) {
       delta.content = ''
       delta.tool_calls = [

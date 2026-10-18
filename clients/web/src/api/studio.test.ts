@@ -80,6 +80,7 @@ describe('Studio saved revision and tab drafts', () => {
       assessment_policy: { configuration: 'fixture', requests: 2, tokens: 50000 },
     }
     expect(studioQuizSchema.safeParse(frozen).success).toBe(true)
+    expect(studioQuizSchema.safeParse({ ...frozen, assessment_policy: { configuration: 'fixture', requests: 0, tokens: 0 } }).success).toBe(true)
     expect(studioQuizSchema.safeParse({ goal_version: 3, questions: [question] }).success).toBe(
       true,
     )

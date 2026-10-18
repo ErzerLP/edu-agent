@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { reconnectAndWaitForReads } from './network-recovery'
 
-test('真实浏览器导师、结构化等待、断线重启恢复、预算与清除', async ({ page, context }) => {
+test('真实浏览器导师、结构化等待、断线重启恢复、工具暂停继续与清除', async ({ page, context }) => {
   test.skip(process.env.WEB_MENTOR_FIXTURE !== '1', '需要显式启用本地模型 fixture')
   test.setTimeout(120000)
   page.setDefaultTimeout(15000)
@@ -81,14 +81,25 @@ test('真实浏览器导师、结构化等待、断线重启恢复、预算与�
   await expect(panel.getByLabel('导师输出')).not.toContainText('浏览器真实导师')
   await expect(other.getByLabel('导师输出')).not.toContainText('浏览器真实导师')
   await other.close()
-  await prompt.fill('预算等待场景')
-  await panel.getByText('本次模型预算', { exact: true }).click()
-  await panel.getByLabel('Token 预留上限').fill('1')
+  await page.goto('/app/settings')
+  await page.getByLabel('每轮工具调用上限（留空为不限）').fill('1')
+  await page.getByRole('button', { name: '保存调用限制与外发策略' }).click()
+  await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
+  await page.goto(goalURL)
+  await prompt.fill('工具上限验收')
   await panel.getByRole('button', { name: '发起导师交流' }).click()
-  await expect(panel.getByRole('status')).toContainText('预算已用完')
-  await panel.getByRole('button', { name: '不增加预算，停止' }).click()
-  await expect(panel.getByRole('status')).toContainText('已停止')
-  expect((await (await page.request.get('http://127.0.0.1:32930/stats')).json()).calls).toBe(stats.calls)
+  await expect(panel.getByRole('status')).toContainText('本轮工具调用已达上限')
+  await expect(panel.getByLabel('导师输出')).toContainText('已读取目标，还需整理例子')
+  await panel.getByRole('button', { name: '继续', exact: true }).click()
+  await expect.poll(async () => (await (await page.request.get('http://127.0.0.1:32930/stats')).json()).calls).toBe(stats.calls + 4)
+  await expect(panel.getByRole('status')).toContainText('本轮工具调用已达上限')
+  await panel.getByRole('button', { name: '停止运行', exact: true }).click()
+  await expect(panel.getByRole('status').filter({ hasText: '已停止' })).toBeVisible()
+  await page.goto('/app/settings')
+  await page.getByLabel('每轮工具调用上限（留空为不限）').fill('')
+  await page.getByRole('button', { name: '保存调用限制与外发策略' }).click()
+  await expect(page.getByText('配置已保存。', { exact: true })).toBeVisible()
+  await page.goto(goalURL)
   for (const width of [390, 768, 1280]) {
     await page.setViewportSize({ width, height: 1000 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)

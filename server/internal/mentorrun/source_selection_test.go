@@ -239,6 +239,7 @@ func TestPostgreSQLSourceSelectionPausedRunPinsHistoricalVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyPause(t, f, receipt.RunID)
 	f.work(t)
 	before := f.snapshot(t, receipt.RunID)
 	if before.Status != "paused_budget" || f.calls.Load() != 0 {

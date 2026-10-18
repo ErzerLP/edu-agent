@@ -34,7 +34,7 @@ export function checkConversation(c: TutorConversation, space: string, generatio
 export const conversationDraftKey = (prefix: readonly unknown[], id: string) => JSON.stringify([...prefix, 'tutor-conversation', id])
 export const conversationSelectionKey = (prefix: readonly unknown[], space: string, goal?: string, teaching?: string) => JSON.stringify([...prefix, 'tutor-selection', space, goal, teaching])
 
-export type TurnSubmission = { direction_version?: number; operation_id: string; expected_version: number; prompt: string; request_budget: number; token_budget: number; confirm_destination?: string;source_selection?:SourceSelection }
+export type TurnSubmission = { direction_version?: number; operation_id: string; expected_version: number; prompt: string; confirm_destination?: string;source_selection?:SourceSelection }
 type Result<T, Code extends number = 200> = { responses: { [K in Code]: { content: { 'application/json': T } } } }
 type Body<T> = { requestBody: { content: { 'application/json': T } } }
 type Scope = { header: { 'X-Learning-Space-ID': string } }

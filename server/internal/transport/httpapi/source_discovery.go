@@ -56,7 +56,7 @@ func (a *API) mountSourceDiscovery(r chi.Router) {
 		if factory == nil {
 			factory = a.settings.SearchClient
 		}
-		result, err := research.Discover(r.Context(), input, factory, limits.ResearchRequests)
+		result, err := research.Discover(r.Context(), input, factory, 0)
 		if err != nil {
 			status, code := 502, "source_discovery_unavailable"
 			var failure *research.DiscoveryError
@@ -65,7 +65,7 @@ func (a *API) mountSourceDiscovery(r chi.Router) {
 				switch failure.Reason {
 				case "unavailable":
 					status = 503
-				case "budget_exceeded", "rate_limited":
+				case "rate_limited":
 					status = 429
 				case "timeout":
 					status = 504

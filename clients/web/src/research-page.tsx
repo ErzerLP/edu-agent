@@ -57,8 +57,6 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
   const [save, setSave] = useState(startLearning)
   const [mode, setMode] = useState<'supplement' | 'prefer' | 'restrict'>('supplement')
   const [domains, setDomains] = useState('')
-  const [requests, setRequests] = useState(10)
-  const [tokens, setTokens] = useState(30000)
   const [run, setRun] = useState<MentorSnapshot>()
   const [error, setError] = useState<unknown>()
   const [pending, setPending] = useState(false)
@@ -84,23 +82,20 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
   const ready = (useReferences || configuration.data?.search.enabled && configuration.data.search.configured) && configuration.data?.effective_mentor.enabled && configuration.data.effective_mentor.configured
   const inactive = archived || !['draft', 'active'].includes(goal.management.status)
   const active = run && !isMentorTerminal(run.status)
-  const limits = configuration.data?.limits
-  const requestBudget = Math.min(requests, limits?.research_requests ?? requests)
-  const tokenBudget = Math.min(tokens, limits?.research_tokens ?? tokens)
   const refresh = async (id: string) => { const result = await unwrap(client().GET('/v1/learning/runs/{runID}', { params: { path: { runID: id }, header } }), mentorSnapshotSchema); if (mounted.current) setRun(result) }
   const act = async (fn: () => Promise<void>) => { setPending(true); setError(undefined); try { await fn() } catch (e) { if (mounted.current) setError(e) } finally { if (mounted.current) setPending(false) } }
   const start = () => act(async () => {
-    const payload = { session_id: run?.session_id ?? sessionID.current, expected_version: goal.revision, prompt: topic, save, request_budget: requestBudget, token_budget: tokenBudget, research: { topic, external_consent: true as const, auto_adopt: autoAdopt, policy: { mode, domains: domains.split(/[\s,，]+/).filter(Boolean) } }, ...(startLearning ? { start_learning: { new_session: true as const, model_consent: true as const, ...(useReferences ? { reference_context_id: references.data!.context_id } : {}) } } : {}) }
+    const payload = { session_id: run?.session_id ?? sessionID.current, expected_version: goal.revision, prompt: topic, save, research: { topic, external_consent: true as const, auto_adopt: autoAdopt, policy: { mode, domains: domains.split(/[\s,，]+/).filter(Boolean) } }, ...(startLearning ? { start_learning: { new_session: true as const, model_consent: true as const, ...(useReferences ? { reference_context_id: references.data!.context_id } : {}) } } : {}) }
     const operation_id = drafts.operation(key + ':create:' + (run?.run_id ?? 'new'), payload)
     const receipt = await unwrap(client().POST('/v1/learning/goals/{goalID}/runs', { params: { path: { goalID: goal.goal_id }, header }, body: { ...payload, operation_id } }), mentorReceiptSchema)
     await refresh(receipt.run_id)
   })
-  const command = (kind: 'stop' | 'clear' | 'continue_budget' | 'retry_start') => act(async () => {
+  const command = (kind: 'stop' | 'clear' | 'resume' | 'retry_start') => act(async () => {
     if (!run) return
     if (kind === 'stop') {
       await stopMentor(session, goal.learning_space_id, run.run_id, payload => drafts.operation(key + ':command', payload))
     } else {
-      const payload = { expected_version: run.version, kind, ...(['continue_budget', 'retry_start'].includes(kind) ? { request_budget: requestBudget, token_budget: tokenBudget } : {}) }
+      const payload = { expected_version: run.version, kind }
       await unwrap(client().POST('/v1/learning/runs/{runID}/commands', { params: { path: { runID: run.run_id }, header }, body: { ...payload, operation_id: drafts.operation(key + ':command', payload) } }), mentorReceiptSchema)
     }
     await refresh(run.run_id)
@@ -141,13 +136,13 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
         <Button disabled={!ready || !!references.error || !consent || !topic.trim() || (startLearning && (!session.device.scopes.includes('research:adopt') || !current.data?.save_available))} type="submit">{useReferences ? '使用已采用参考准备新课堂' : startLearning ? '按以上主题重新准备并开学' : run ? '重新研究' : '研究相关知识'}</Button>
       </fieldset>
     </form>
-    <div className="filters"><label>外部请求预算<input type="number" min={1} max={limits?.research_requests ?? 1000} value={requestBudget} onChange={(e) => setRequests(Math.max(1, Number(e.target.value)))} /></label><label>Token 预算<input type="number" min={1} max={limits?.research_tokens ?? 10000000} value={tokenBudget} onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))} /></label></div>
-    {run && <section className="panel"><p role="status">{['cancelling', 'cancelled'].includes(run.status) ? mentorStatus[run.status] : researchStage[run.stage] ?? run.stage} · {run.status === 'partial' ? '有缺口，未完整完成' : run.status === 'succeeded' ? '结果可查看' : ''}</p><p>已发出 {run.requests_used} 次外部请求，剩余 {run.requests_left} 次 / {run.tokens_left} Token。实际费用未核实。</p>
-      {run.reason && run.reason !== 'user_stopped' && <p>运行说明：{run.reason}</p>}<RunResultNotice run={run}>在途请求的结果未知，没有自动重发。</RunResultNotice>
+    {run && <section className="panel"><p role="status">{['cancelling', 'cancelled'].includes(run.status) ? mentorStatus[run.status] : researchStage[run.stage] ?? run.stage} · {run.status === 'partial' ? '有缺口，未完整完成' : run.status === 'succeeded' ? '结果可查看' : ''}</p>
+      {run.status === 'paused_tool_steps' && <p>{run.output}</p>}
+      {run.reason && !['user_stopped', 'tool_steps_reached', 'budget_exhausted'].includes(run.reason) && <p>运行说明：{run.reason}</p>}<RunResultNotice run={run}>在途请求的结果未知，没有自动重发。</RunResultNotice>
       {!run.body_available && <p>正文已清除、到期或临时副本不可恢复。</p>}
       {active && <Button disabled={pending || run.status === 'cancelling'} variant="outline" onClick={() => void command('stop')}>停止研究</Button>}
-      {run.status === 'paused_budget' && <Button disabled={pending || inactive} onClick={() => void command('continue_budget')}>按以上预算继续</Button>}
-      {startLearning && run.body_available && !run.start_learning?.result && ['partial', 'failed'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('retry_start')}>按以上预算重试并保留已有结果</Button>}
+      {['paused_budget', 'paused_tool_steps'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('resume')}>继续</Button>}
+      {startLearning && run.body_available && !run.start_learning?.result && ['partial', 'failed'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('retry_start')}>重试并保留已有结果</Button>}
       {run.body_available && <Confirm label="清除研究运行" title="清除本次研究运行？" disabled={pending} onConfirm={() => void command('clear')}>候选正文、来源缓存和综合结果将清除。已经正式采纳的参考属于知识库，遵循知识库清除流程。</Confirm>}
     </section>}
     {state && <>

@@ -273,7 +273,6 @@ func TestPostgreSQLExerciseLeaseRecovery(t *testing.T) {
 						r.callStarted = true
 						r.CostUnknown = true
 						r.RequestsUsed++
-						r.RequestsLeft--
 						return nil
 					}); err != nil {
 						t.Fatal(err)

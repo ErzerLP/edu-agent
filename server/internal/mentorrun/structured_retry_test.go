@@ -10,7 +10,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/research"
 )
 
-func TestPostgreSQLStartCitationRetryRevalidatesAndChargesBudget(t *testing.T) {
+func TestPostgreSQLStartCitationRetryRevalidatesWithoutBudget(t *testing.T) {
 	for _, scenario := range []string{"repair", "still_invalid", "budget"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := startFixture(t, "Go 并发")
@@ -70,20 +70,15 @@ func TestPostgreSQLStartCitationRetryRevalidatesAndChargesBudget(t *testing.T) {
 			f.work(t)
 			s := f.snapshot(t, r.RunID)
 			switch scenario {
-			case "repair":
+			case "repair", "budget":
 				assertTaskUsage(t, f, r.RunID, "research", "checking_synthesis", 3)
-				if s.Status != "succeeded" || s.StartLearning.Result == nil || f.calls.Load() != 3 || s.RequestsUsed != 6 || s.TokensLeft != 49910 {
+				if s.Status != "succeeded" || s.StartLearning.Result == nil || f.calls.Load() != 3 || s.RequestsUsed != 3 || s.TokensLeft != 0 {
 					t.Fatalf("repair/budget incorrect: status=%s calls=%d requests=%d tokens=%d", s.Status, f.calls.Load(), s.RequestsUsed, s.TokensLeft)
 				}
 			case "still_invalid":
 				assertTaskUsage(t, f, r.RunID, "research", "checking_synthesis", 2)
 				if s.Reason != "invalid_source_citation" || s.StartLearning.Result != nil || s.Research.Synthesis != nil || f.calls.Load() != 2 {
 					t.Fatalf("retry bypassed validation: status=%s reason=%s calls=%d", s.Status, s.Reason, f.calls.Load())
-				}
-			case "budget":
-				assertTaskUsage(t, f, r.RunID, "research", "checking_synthesis", 1)
-				if s.Status != "paused_budget" || f.calls.Load() != 1 || s.StartLearning.Result != nil {
-					t.Fatalf("retry bypassed budget: status=%s calls=%d", s.Status, f.calls.Load())
 				}
 			}
 		})

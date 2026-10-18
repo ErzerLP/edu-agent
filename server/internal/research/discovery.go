@@ -11,7 +11,7 @@ import (
 )
 
 // SearchClient is the settings-owned factory. Trusted hosts may substitute its
-// transport, but must preserve the per-request budget wrapper.
+// transport, but must preserve the cancellation and request accounting wrapper.
 type SearchClient func(func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error)
 
 type DiscoveryRequest struct {
@@ -49,21 +49,15 @@ type DiscoveryError struct {
 func (e *DiscoveryError) Error() string { return "source_discovery_" + e.Reason }
 
 type discoveryTransport struct {
-	mu           sync.Mutex
-	next         http.RoundTripper
-	budget, used int
-	failure      error
+	mu      sync.Mutex
+	next    http.RoundTripper
+	used    int
+	failure error
 }
 
 func (t *discoveryTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	t.mu.Lock()
 	if err := r.Context().Err(); err != nil {
-		t.failure = err
-		t.mu.Unlock()
-		return nil, err
-	}
-	if t.used >= t.budget {
-		err := &DiscoveryError{Reason: "budget_exceeded", RequestsUsed: t.used}
 		t.failure = err
 		t.mu.Unlock()
 		return nil, err
@@ -75,20 +69,17 @@ func (t *discoveryTransport) RoundTrip(r *http.Request) (*http.Response, error) 
 
 // Discover is synchronous and stateless: one provider request, no fetch, no
 // retry, no model, and no saved task. Cancellation cannot undo external costs.
-func Discover(ctx context.Context, input DiscoveryRequest, factory SearchClient, requestBudget int) (DiscoveryResult, error) {
-	result := DiscoveryResult{Items: []DiscoveryCandidate{}, RequestBudget: min(1, requestBudget), CostEstimate: "unknown"}
+func Discover(ctx context.Context, input DiscoveryRequest, factory SearchClient, _ int) (DiscoveryResult, error) {
+	result := DiscoveryResult{Items: []DiscoveryCandidate{}, RequestBudget: 1, CostEstimate: "unknown"}
 	if input.Validate() != nil {
 		return result, ErrPolicy
 	}
 	if ctx.Err() != nil {
 		return result, &DiscoveryError{Reason: "cancelled"}
 	}
-	if requestBudget < 1 {
-		return result, &DiscoveryError{Reason: "budget_exceeded"}
-	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	transport := &discoveryTransport{budget: result.RequestBudget}
+	transport := &discoveryTransport{}
 	adapter, _, err := factory(func(next http.RoundTripper) http.RoundTripper { transport.next = next; return transport })
 	if err != nil {
 		return result, &DiscoveryError{Reason: "unavailable"}

@@ -21,27 +21,21 @@ type AssessmentResume struct {
 	Policy          learningcontent.AssessmentPolicy
 }
 
-// Each submitted answer gets its own allowance for an evaluation and the one
-// proposal repair. Dispatch checks input/schema plus configured output against
-// ContextTokens, so two context windows cover both reservations even without
-// usage refunds. Generation/turn budgets authorize only their own run; settings
-// remain the upper bounds, including when they cannot cover both assessments.
-func automaticAssessmentPolicy(configuration string, limits settings.Limits) learningcontent.AssessmentPolicy {
+// Assessment authorization binds the destination; cumulative budgets are obsolete.
+func automaticAssessmentPolicy(configuration string, _ settings.Limits) learningcontent.AssessmentPolicy {
 	return learningcontent.AssessmentPolicy{
 		Configuration: configuration,
-		Requests:      min(2, limits.ResearchRequests),
-		Tokens:        min(2*limits.ContextTokens, limits.ResearchTokens),
 	}
 }
 
 // AssessmentPolicy binds explicit bounded authorization to the current model
 // destination/configuration. C3b must obtain this before publishing a candidate.
 func (s *Service) AssessmentPolicy(requests, tokens int) (learningcontent.AssessmentPolicy, error) {
-	model, limits, configuration, err := s.settings.MentorClient()
+	model, _, configuration, err := s.settings.MentorClient()
 	if err != nil || model == nil {
 		return learningcontent.AssessmentPolicy{}, ErrModel
 	}
-	if requests < 1 || tokens < 1 || requests > limits.ResearchRequests || tokens > limits.ResearchTokens {
+	if requests < 0 || tokens < 0 {
 		return learningcontent.AssessmentPolicy{}, ErrInvalid
 	}
 	return learningcontent.AssessmentPolicy{Configuration: configuration, Requests: requests, Tokens: tokens}, nil
@@ -85,7 +79,7 @@ func (s *Service) AssessmentStatus(ctx context.Context, actor identity.Credentia
 	return result, nil
 }
 
-// ResumeAssessment is explicit budget/destination authorization, not an
+// ResumeAssessment is explicit destination authorization, not an
 // automatic retry. It never creates an Attempt or changes the task's IDs.
 func (s *Service) ResumeAssessment(ctx context.Context, actor identity.Credential, attempt string, c AssessmentResume) (Receipt, error) {
 	if !s.CanStart() || !validID(attempt) || !validID(c.OperationID) || c.ExpectedVersion < 1 {
@@ -144,8 +138,6 @@ func (s *Service) ResumeAssessment(ctx context.Context, actor identity.Credentia
 	if err = s.starter.Learning.ResumeAssessmentProposalTx(ctx, tx, task); err != nil {
 		return Receipt{}, err
 	}
-	item.RequestsLeft = policy.Requests
-	item.TokensLeft = policy.Tokens
 	item.Configuration = policy.Configuration
 	item.Status = "queued"
 	item.Stage = "queued"

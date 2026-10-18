@@ -41,26 +41,12 @@ func (h *executionHost) researchReserve(ctx context.Context, stage string) error
 	if err != nil || fingerprint != h.body.Research.SearchConfiguration {
 		return ErrInactive
 	}
-	paused := false
 	err = h.service.mutate(ctx, &h.owned, "external_started", func(item *row) error {
-		if item.RequestsLeft < 1 {
-			item.Status = "paused_budget"
-			item.Stage = "paused_budget"
-			item.Reason = "budget_exhausted"
-			item.callStarted = false
-			paused = true
-			return nil
-		}
-		item.RequestsLeft--
-		item.RequestsUsed++
 		item.Stage = stage
 		item.callStarted = true
 		item.CostUnknown = true
 		return nil
 	})
-	if paused {
-		return ErrBudget
-	}
 	return err
 }
 
@@ -98,6 +84,9 @@ func (h *executionHost) runResearch(ctx context.Context) error {
 		}
 	}
 	if !state.Discovered {
+		if h.toolLimitReached() {
+			return h.pauseForToolSteps(ctx)
+		}
 		adapter, _, err := h.service.search(func(next http.RoundTripper) http.RoundTripper { return researchTransport{h, next} })
 		if err != nil {
 			return err
@@ -118,19 +107,27 @@ func (h *executionHost) runResearch(ctx context.Context) error {
 			state.Sources = append(state.Sources, research.Source{SpaceID: h.owned.SpaceID, GoalID: h.owned.GoalID, Purpose: "goal_reference", ID: uuid.NewString(), Locator: candidate.URL, Title: candidate.Title, Kind: "web", Status: "candidate", Fragments: []research.Fragment{}})
 		}
 		state.Discovered = true
+		h.body.ToolSteps++
 		if err = h.checkpoint(ctx, "discovered"); err != nil {
 			return err
+		}
+		if h.toolLimitReached() {
+			return h.pauseForToolSteps(ctx)
 		}
 	}
 	for i := range state.Sources {
 		if state.Sources[i].Status != "candidate" {
 			continue
 		}
+		if h.toolLimitReached() {
+			return h.pauseForToolSteps(ctx)
+		}
 		source, err := h.service.fetcher.Fetch(ctx, state.Sources[i], state.Request.Policy, func() error { return h.researchReserve(ctx, "fetching") })
 		if err != nil {
 			return err
 		}
 		state.Sources[i] = source
+		h.body.ToolSteps++
 		if source.PDF != nil {
 			if h.body.SourceFiles == nil {
 				h.body.SourceFiles = map[string][]byte{}
@@ -140,6 +137,9 @@ func (h *executionHost) runResearch(ctx context.Context) error {
 		}
 		if err = h.checkpoint(ctx, "parsed"); err != nil {
 			return err
+		}
+		if h.toolLimitReached() {
+			return h.pauseForToolSteps(ctx)
 		}
 	}
 	if state.Synthesis == nil {

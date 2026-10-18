@@ -71,7 +71,7 @@ func (s *Service) enqueueAssessment(ctx context.Context) error {
 		return err
 	}
 	policy := exercise.Body.Assessment
-	// Retain the originally authorized budget. Claim/dispatch checks its bound
+	// Retain the originally authorized destination. Claim/dispatch checks its bound
 	// configuration before spending, including changes to configured limits.
 	if err = s.quota(ctx, tx, 512<<10); err != nil {
 		return err
@@ -83,7 +83,7 @@ func (s *Service) enqueueAssessment(ctx context.Context) error {
 	}
 	run := uuid.NewString()
 	task.RunID = run
-	item := row{Meta: Meta{RunID: run, SessionID: session, SpaceID: task.SpaceID, GoalID: goal.GoalID, GoalVersion: goal.Revision, Generation: generation, Kind: "assessment", Status: "queued", Stage: "queued", Saved: true, BodyAvailable: true, RequestsLeft: policy.Requests, TokensLeft: policy.Tokens, Configuration: policy.Configuration, ExpiresAt: time.Now().Add(7 * 24 * time.Hour)}, device: task.DeviceID, token: task.TokenID, process: s.process}
+	item := row{Meta: Meta{RunID: run, SessionID: session, SpaceID: task.SpaceID, GoalID: goal.GoalID, GoalVersion: goal.Revision, Generation: generation, Kind: "assessment", Status: "queued", Stage: "queued", Saved: true, BodyAvailable: true, Configuration: policy.Configuration, ExpiresAt: time.Now().Add(7 * 24 * time.Hour)}, device: task.DeviceID, token: task.TokenID, process: s.process}
 	item.body = Body{Assessment: task, SourceManifest: &exercise.Body.Manifest}
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, run, session, item.device, item.token, item.SpaceID, item.GoalID, item.GoalVersion, generation, raw, s.process, item.ExpiresAt); err != nil {
@@ -198,7 +198,6 @@ func (c assessmentChat) Chat(ctx context.Context, request llm.ChatRequest) (llm.
 	if err == nil || result.Usage.TotalTokens > 0 {
 		if e := h.service.mutate(ctx, &h.owned, "assessment_received", func(item *row) error {
 			if result.Usage.TotalTokens > 0 && result.Usage.TotalTokens <= h.reserve {
-				item.TokensLeft += h.reserve - result.Usage.TotalTokens
 				item.CostUnknown = false
 			}
 			return nil

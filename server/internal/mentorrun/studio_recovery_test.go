@@ -13,6 +13,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/platform/keyrotation"
+	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
 )
 
@@ -30,10 +31,16 @@ func TestPostgreSQLStudioGenerationStates(t *testing.T) {
 		{"incomplete", studioCandidate("guide", "complete"), "", "failed", "response_not_completed", 50000, 0},
 		{"schema", `{"title":"bad"}`, "stop", "failed", "schema_mismatch", 50000, 0},
 		{"citation", strings.ReplaceAll(studioCandidate("guide", "complete"), `"source":1`, `"source":2`), "stop", "failed", "invalid_source_citation", 50000, 0},
-		{"budget", studioCandidate("guide", "complete"), "stop", "paused_budget", "budget_exhausted", 1, 0},
+		{"budget", studioCandidate("guide", "complete"), "stop", "succeeded", "", 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, c := studioFixture(t, func(w http.ResponseWriter, _ *http.Request, _ int) { studioReply(w, tc.content, tc.finish) })
+			limits := f.settings.View().Limits
+			steps := 1
+			limits.MaxToolSteps = &steps
+			if _, err := f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Limits: &limits}); err != nil {
+				t.Fatal(err)
+			}
 			c.TokenBudget = tc.budget
 			receipt, err := f.service.CreateStudio(t.Context(), f.actor, learningspace.DefaultID, c)
 			if err != nil {
@@ -47,19 +54,6 @@ func TestPostgreSQLStudioGenerationStates(t *testing.T) {
 			var count int
 			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM learning_studio_revisions`).Scan(&count); err != nil || count != tc.published {
 				t.Fatal("publication mismatch", count, err)
-			}
-			if tc.name == "budget" {
-				if f.calls.Load() != 0 {
-					t.Fatal("budget bypass")
-				}
-				_, err = f.service.Command(t.Context(), f.actor, learningspace.DefaultID, receipt.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: state.Version, Kind: "continue_budget", RequestBudget: 1, TokenBudget: 50000})
-				if err != nil {
-					t.Fatal(err)
-				}
-				f.work(t)
-				if f.snapshot(t, receipt.RunID).Status != "succeeded" {
-					t.Fatal("budget continuation failed")
-				}
 			}
 		})
 	}

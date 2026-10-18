@@ -137,7 +137,7 @@ func (s *Service) view() View {
 		mentor.APIStyle = string(llm.ChatCompletions)
 		mentor.Probe = s.state.Mentor.Probe
 	}
-	return View{Revision: s.state.Revision, Writable: s.path != "", Teaching: connectionView(s.state.Teaching, now), Mentor: connectionView(s.state.Mentor, now), EffectiveMentor: connectionView(mentor, now), Search: connectionView(s.state.Search, now), MentorUsesTeaching: s.state.MentorUsesTeaching, Limits: s.state.Limits, Policy: s.state.Policy, TeachingRestartRequired: !sameConnection(s.activeTeaching, s.state.Teaching) || s.activeLimits != s.state.Limits, ModelEndpoints: append([]string{}, s.modelEndpoints...)}
+	return View{Revision: s.state.Revision, Writable: s.path != "", Teaching: connectionView(s.state.Teaching, now), Mentor: connectionView(s.state.Mentor, now), EffectiveMentor: connectionView(mentor, now), Search: connectionView(s.state.Search, now), MentorUsesTeaching: s.state.MentorUsesTeaching, Limits: s.state.Limits, Policy: s.state.Policy, TeachingRestartRequired: !sameConnection(s.activeTeaching, s.state.Teaching) || !sameLimits(s.activeLimits, s.state.Limits), ModelEndpoints: append([]string{}, s.modelEndpoints...)}
 }
 func sameConnection(a, b secretSlot) bool { return a.Connection == b.Connection && a.Key == b.Key }
 
@@ -198,10 +198,21 @@ func (s *Service) Update(u Update) (View, error) {
 		next.Mentor.Probe = nil
 	}
 	if u.Limits != nil {
-		if u.Limits.Validate() != nil {
+		limits := *u.Limits
+		if u.limitsJSON != nil {
+			limits = next.Limits
+			if limits.MaxToolSteps != nil {
+				steps := *limits.MaxToolSteps
+				limits.MaxToolSteps = &steps
+			}
+			if err := json.Unmarshal(u.limitsJSON, &limits); err != nil {
+				return View{}, ErrInvalid
+			}
+		}
+		if limits.Validate() != nil {
 			return View{}, ErrInvalid
 		}
-		next.Limits = *u.Limits
+		next.Limits = limits
 		next.Teaching.Probe = nil
 		next.Mentor.Probe = nil
 		next.Search.Probe = nil
@@ -323,8 +334,8 @@ func (s *Service) usageTransport(slot secretSlot, limits Limits, next http.Round
 	raw, _ := json.Marshal(struct {
 		Connection Connection
 		Key        string
-		Limits     Limits
-	}{slot.Connection, slot.Key, limits})
+		Limits     any
+	}{slot.Connection, slot.Key, limits.configuration()})
 	configuration := sha256.Sum256(raw)
 	return s.usage.Transport(next, modelusage.Model{Provider: slot.Provider, Destination: hex.EncodeToString(destination[:]), Model: slot.Model, APIStyle: slot.APIStyle}, hex.EncodeToString(configuration[:]))
 }
@@ -361,8 +372,8 @@ func (s *Service) mentorClient(observe func(Connection, http.RoundTripper) http.
 	raw, err := json.Marshal(struct {
 		Connection Connection
 		Key        string
-		Limits     Limits
-	}{connection, slot.Key, limits})
+		Limits     any
+	}{connection, slot.Key, limits.configuration()})
 	if err != nil {
 		return nil, limits, "", ErrInvalid
 	}
@@ -391,7 +402,7 @@ func modelClient(slot secretSlot, limits Limits, probe bool, transport http.Roun
 func (s *Service) TeachingHealth(context.Context) (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !sameConnection(s.activeTeaching, s.state.Teaching) || s.activeLimits != s.state.Limits {
+	if !sameConnection(s.activeTeaching, s.state.Teaching) || !sameLimits(s.activeLimits, s.state.Limits) {
 		return false, "restart_required"
 	}
 	v := connectionView(s.state.Teaching, s.now())

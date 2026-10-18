@@ -30,6 +30,7 @@ type executionHost struct {
 	flushedBytes int
 	transportErr error
 	reserve      int
+	summarizing  bool
 }
 
 func (h *executionHost) goal(ctx context.Context) (string, error) {
@@ -61,6 +62,9 @@ var mentorTools = []modelclient.Tool{
 }
 
 func (h *executionHost) Prepare(ctx context.Context) (agentcore.ContextPlan, error) {
+	if h.toolLimitReached() {
+		return agentcore.ContextPlan{}, h.pauseForToolSteps(ctx)
+	}
 	if h.body.SourceManifest != nil {
 		return h.prepareSelected(ctx)
 	}
@@ -175,6 +179,9 @@ func (h *executionHost) Complete(ctx context.Context, message modelclient.Messag
 
 func (h *executionHost) Execute(ctx context.Context, calls []modelclient.ToolCall) (agentcore.ToolStep[struct{}], error) {
 	for _, call := range calls {
+		if h.toolLimitReached() {
+			return agentcore.ToolStep[struct{}]{}, h.pauseForToolSteps(ctx)
+		}
 		if h.body.SourceManifest != nil && !selectedTool(call.Function.Name) {
 			return agentcore.ToolStep[struct{}]{}, ErrInvalid
 		}
@@ -271,8 +278,15 @@ func (h *executionHost) Execute(ctx context.Context, calls []modelclient.ToolCal
 			return agentcore.ToolStep[struct{}]{}, ErrInvalid
 		}
 		h.body.Pending = h.body.Pending[1:]
+		h.body.ToolSteps++
 		if interaction != nil {
 			h.body.Interaction = interaction
+			if h.toolLimitReached() {
+				if err := h.checkpoint(ctx, "tools"); err != nil {
+					return agentcore.ToolStep[struct{}]{}, err
+				}
+				return agentcore.ToolStep[struct{}]{}, h.pauseForToolSteps(ctx)
+			}
 			err := h.service.mutate(ctx, &h.owned, "interaction", func(item *row) error {
 				item.body = h.body
 				item.Status = "waiting_input"
@@ -290,12 +304,15 @@ func (h *executionHost) Execute(ctx context.Context, calls []modelclient.ToolCal
 			return agentcore.ToolStep[struct{}]{}, err
 		}
 	}
+	if h.toolLimitReached() {
+		return agentcore.ToolStep[struct{}]{}, h.pauseForToolSteps(ctx)
+	}
 	return agentcore.ToolStep[struct{}]{Continue: true}, nil
 }
 
 func (h *executionHost) Publish(_ context.Context, _ agentcore.RunEvent) {}
 
-// callModel 独立于 HistorySink 的 Complete，实现一次请求一次预算预留。
+// callModel 独立于 HistorySink 的 Complete，检查每次请求的上下文窗口。
 type callModel struct{ host *executionHost }
 
 func (m callModel) begin(ctx context.Context, request modelclient.Request) error {
@@ -305,6 +322,9 @@ func (m callModel) begin(ctx context.Context, request modelclient.Request) error
 		return ErrInactive
 	}
 	h.reserve = agentcore.NewTokenEstimator().EstimateRequest(request) + request.MaxTokens + 256
+	if h.reserve > h.limits.ContextTokens {
+		return ErrLimit
+	}
 	h.transportErr = nil
 	h.prefix = h.body.Output
 	if h.prefix != "" {
@@ -315,7 +335,7 @@ func (m callModel) begin(ctx context.Context, request modelclient.Request) error
 	return nil
 }
 
-// HTTP 级门禁也覆盖共享客户端的协议兼容重试，不能借回退绕过预算。
+// HTTP 级门禁也覆盖共享客户端的协议兼容重试，保留授权、租约和真实用量登记。
 type budgetTransport struct {
 	host       *executionHost
 	next       http.RoundTripper
@@ -350,21 +370,12 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 		h.transportErr = ErrInactive
 		return nil, ErrInactive
 	}
-	paused := false
 	var usageCall modelusage.CallRef
 	err := h.service.mutateTx(request.Context(), &h.owned, "model_started", func(tx pgx.Tx, item *row) error {
 		if len(h.body.MemorySources) > 0 {
 			if err := h.validateMemorySources(request.Context(), tx); err != nil {
 				return err
 			}
-		}
-		if item.RequestsLeft < 1 || item.TokensLeft < h.reserve {
-			paused = true
-			item.Status = "paused_budget"
-			item.Stage = "paused_budget"
-			item.Reason = "budget_exhausted"
-			item.callStarted = false
-			return nil
 		}
 		// Accounting identity is frozen with the client used for this HTTP attempt.
 		if t.connection.Model != "" {
@@ -386,6 +397,9 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			if stage == "" {
 				stage = "mentor"
 				style = "chat_completions"
+			}
+			if h.summarizing {
+				stage = "tool_step_summary"
 			}
 			kind, origin := "mentor", item.RunID
 			switch {
@@ -409,17 +423,12 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 				return ErrStorage
 			}
 		}
-		item.RequestsLeft--
 		item.RequestsUsed++
-		item.TokensLeft -= h.reserve
 		item.callStarted = true
 		item.CostUnknown = true
 		item.Stage = "waiting_model"
 		return nil
 	})
-	if paused {
-		err = ErrBudget
-	}
 	if err != nil {
 		if permit != nil {
 			permit.Release()

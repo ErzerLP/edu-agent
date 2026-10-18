@@ -130,8 +130,8 @@ func TestPostgreSQLContentCollaborationModelVersionsAndLibrary(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLContentRejectsPartialBudgetAndConcurrentEdit(t *testing.T) {
-	for _, scenario := range []string{"invalid", "budget", "conflict", "stop", "commit_failure"} {
+func TestPostgreSQLContentRejectsPartialAndConcurrentEdit(t *testing.T) {
+	for _, scenario := range []string{"invalid", "conflict", "stop", "commit_failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			f, original := editFixture(t)
 			ctx := context.Background()
@@ -164,9 +164,6 @@ func TestPostgreSQLContentRejectsPartialBudgetAndConcurrentEdit(t *testing.T) {
 				}
 				stream(w, modelclient.Message{Content: text})
 			}
-			if scenario == "budget" {
-				f.create.TokenBudget = 1
-			}
 			r := f.accept(t)
 			f.work(t)
 			snapshot := f.snapshot(t, r.RunID)
@@ -175,9 +172,6 @@ func TestPostgreSQLContentRejectsPartialBudgetAndConcurrentEdit(t *testing.T) {
 			}
 			if scenario == "invalid" && snapshot.Output == "" {
 				t.Fatal("丢失真实部分输出")
-			}
-			if scenario == "budget" && snapshot.Status != "paused_budget" {
-				t.Fatal("预算状态不真实", snapshot)
 			}
 			if scenario == "conflict" && snapshot.Reason != "selection_expired" {
 				t.Fatal("没有说明并发冲突", snapshot)

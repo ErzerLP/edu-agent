@@ -90,9 +90,7 @@ export function ContentEditor({
   const [run, setRun] = useState<MentorSnapshot>()
   const [error, setError] = useState<unknown>()
   const [busy, setBusy] = useState(false)
-  const [tokens, setTokens] = useState(30000)
   const [save, setSave] = useState(false)
-  const [requests, setRequests] = useState(1)
   const sessionId = useRef<string>(crypto.randomUUID())
   const mounted = useRef(true)
   const delivered = useRef('')
@@ -230,8 +228,6 @@ export function ContentEditor({
       expected_version: goal.revision,
       prompt,
       save: true,
-      request_budget: requests,
-      token_budget: tokens,
       content_edit: { selection: selection.selected.location, action },
     }
     try {
@@ -249,14 +245,13 @@ export function ContentEditor({
       if (mounted.current) setBusy(false)
     }
   }
-  const command = async (kind: 'stop' | 'continue_budget') => {
+  const command = async (kind: 'stop' | 'resume') => {
     if (!run || busy) return
     setBusy(true)
     setError(undefined)
     const payload = {
       kind,
       expected_version: run.version,
-      ...(kind === 'continue_budget' ? { request_budget: requests, token_budget: tokens } : {}),
     }
     try {
       await unwrap(
@@ -356,38 +351,7 @@ export function ContentEditor({
           <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
           允许把所选正文及来源发送给已配置导师，并加密保存本次恢复正文（最多七日）
         </label>
-        <details open={run?.status === 'paused_budget'}>
-          <summary>本次模型预算</summary>
-          <label>
-            请求上限
-            <input
-              type="number"
-              min={1}
-              max={1000}
-              value={requests}
-              onChange={(e) => setRequests(Math.max(1, Number(e.target.value)))}
-            />
-          </label>
-          <label>
-            Token 上限
-            <input
-              type="number"
-              min={1}
-              max={10000000}
-              value={tokens}
-              onChange={(e) => setTokens(Math.max(1, Number(e.target.value)))}
-            />
-          </label>
-          {belongs && run?.status === 'paused_budget' && (
-            <Button
-              type="button"
-              disabled={busy || inactive}
-              onClick={() => void command('continue_budget')}
-            >
-              增加上述预算并继续
-            </Button>
-          )}
-        </details>
+        {belongs && run && ['paused_budget', 'paused_tool_steps'].includes(run.status) && <Button type="button" disabled={busy || inactive} onClick={() => void command('resume')}>继续</Button>}
         <Button
           type="submit"
           disabled={

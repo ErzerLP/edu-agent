@@ -10,13 +10,13 @@ import (
 )
 
 func (s *Service) Command(ctx context.Context, actor identity.Credential, space, id string, c Command) (Receipt, error) {
-	if !validID(id) || !validID(space) || !validID(c.OperationID) || c.ExpectedVersion < 1 {
+	if !validID(id) || !validID(space) || !validID(c.OperationID) || c.ExpectedVersion < 1 || c.RequestBudget < 0 || c.TokenBudget < 0 {
 		return Receipt{}, ErrInvalid
 	}
-	if c.Kind != "stop" && c.Kind != "clear" && c.Kind != "respond" && c.Kind != "continue_budget" && c.Kind != "retry_start" {
+	if c.Kind != "stop" && c.Kind != "clear" && c.Kind != "respond" && c.Kind != "continue_budget" && c.Kind != "resume" && c.Kind != "retry_start" {
 		return Receipt{}, ErrInvalid
 	}
-	if c.Kind != "respond" && (c.InteractionID != "" || c.Answer != "") || c.Kind != "continue_budget" && c.Kind != "retry_start" && (c.RequestBudget != 0 || c.TokenBudget != 0) {
+	if c.Kind != "respond" && (c.InteractionID != "" || c.Answer != "") || c.Kind != "continue_budget" && c.Kind != "resume" && c.Kind != "retry_start" && (c.RequestBudget != 0 || c.TokenBudget != 0) {
 		return Receipt{}, ErrInvalid
 	}
 	hash := requestHash("command", space, id, c)
@@ -36,7 +36,7 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 		return r, e
 	}
 	// 生命周期检查先于运行行锁，停止和清除仍可在目标暂停后执行。
-	if c.Kind == "respond" || c.Kind == "continue_budget" || c.Kind == "retry_start" {
+	if c.Kind == "respond" || (c.Kind == "continue_budget" || c.Kind == "resume") || c.Kind == "retry_start" {
 		var goal string
 		var version int64
 		if err = tx.QueryRow(ctx, `SELECT goal_id::text,goal_version FROM learning_mentor_runs WHERE id=$1 AND device_id=$2 AND space_id=$3`, id, actor.Device.ID, space).Scan(&goal, &version); err != nil {
@@ -71,7 +71,7 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 		}
 		return r, tx.Commit(ctx)
 	}
-	if (c.Kind == "respond" || c.Kind == "continue_budget") && (time.Now().After(item.ExpiresAt) || !item.BodyAvailable) {
+	if (c.Kind == "respond" || (c.Kind == "continue_budget" || c.Kind == "resume")) && (time.Now().After(item.ExpiresAt) || !item.BodyAvailable) {
 		return Receipt{}, ErrInactive
 	}
 	if c.Kind != "clear" {
@@ -79,7 +79,7 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 			return Receipt{}, err
 		}
 	}
-	if c.Kind == "respond" || c.Kind == "continue_budget" {
+	if c.Kind == "respond" || (c.Kind == "continue_budget" || c.Kind == "resume") {
 		if _, err = s.sourceMaterialTx(ctx, tx, space, actor.TokenID, item.body); err != nil {
 			return Receipt{}, err
 		}
@@ -127,16 +127,15 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 		item.body.Interaction = nil
 		item.Status = "queued"
 		item.Reason = ""
-	case "continue_budget", "retry_start":
-		limits := s.settings.View().Limits
-		if c.Kind == "continue_budget" && item.Status != "paused_budget" {
+	case "continue_budget", "resume", "retry_start":
+		if (c.Kind == "continue_budget" || c.Kind == "resume") && item.Status != "paused_budget" && item.Status != "paused_tool_steps" {
 			return Receipt{}, ErrConflict
 		}
 		if c.Kind == "retry_start" {
 			if item.body.StartLearning == nil || item.body.StartLearning.Result != nil || (item.Status != "partial" && item.Status != "failed") || !item.BodyAvailable {
 				return Receipt{}, ErrConflict
 			}
-			// 显式重试授权新的请求预算；已有成功片段和准备结果继续复用。
+			// 显式重试复用已有工作；已有成功片段和准备结果继续复用。
 			if len(item.body.Research.Sources) == 0 {
 				item.body.Research.Discovered = false
 			}
@@ -151,12 +150,14 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 			item.callStarted = false
 			item.ResultUnknown = false
 		}
-		if c.RequestBudget < 1 || c.TokenBudget < 1 || c.RequestBudget > limits.ResearchRequests || c.TokenBudget > limits.ResearchTokens {
-			return Receipt{}, ErrInvalid
-		}
-		item.RequestsLeft = c.RequestBudget
-		item.TokensLeft = c.TokenBudget
+		item.body.ToolSteps = 0
 		item.Status = "queued"
+		if pending := item.body.Interaction; pending != nil {
+			item.Status = "waiting_input"
+			if pending.Approval {
+				item.Status = "waiting_approval"
+			}
+		}
 		item.Reason = ""
 	}
 	item.Stage = item.Status

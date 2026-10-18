@@ -254,12 +254,9 @@ function RunList({ spaceId, kind }: { spaceId: string; kind?: RunKind }) {
               {taskKinds[run.kind ?? 'mentor']} · {taskRunStatus[run.status]}
             </h3>
             <p>
-              阶段：{run.stage} · 学习区 {run.space_id} · 目标 {run.goal_id}
+              阶段：{['paused_budget', 'paused_tool_steps'].includes(run.stage) ? '已暂停，可继续' : run.stage} · 学习区 {run.space_id} · 目标 {run.goal_id}
             </p>
             <p>{run.reason}</p>
-            <p>
-              请求已用 {run.requests_used} · 剩余 {run.requests_left}
-            </p>
             {run.result_unknown && <p role="alert">结果未知，需核对原运行；不承诺自动重试。</p>}
             {run.cost_unknown && <p>提供商费用尚未核实。</p>}
             <Link to="/runs/run/$runId" params={{ runId: run.run_id }} search={{ space: spaceId }}>
@@ -286,8 +283,6 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
   const [run, setRun] = useState<MentorSnapshot>()
   const [error, setError] = useState<unknown>()
   const [busy, setBusy] = useState(false)
-  const [requests, setRequests] = useState(1)
-  const [tokens, setTokens] = useState(30000)
   const [answer, setAnswer] = useState('')
   const mounted = useRef(true)
   const controller = useRef<AbortController | null>(null)
@@ -357,7 +352,7 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
       })
   }, [run?.run_id, session])
   const command = async (
-    kind: 'stop' | 'continue_budget' | 'retry_start' | 'respond',
+    kind: 'stop' | 'resume' | 'retry_start' | 'respond',
     response?: string,
   ) => {
     if (!run || controller.current) return
@@ -368,9 +363,6 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
     const payload = {
       expected_version: run.version,
       kind,
-      ...(['continue_budget', 'retry_start'].includes(kind)
-        ? { request_budget: requests, token_budget: tokens }
-        : {}),
       ...(kind === 'respond' ? { interaction_id: run.interaction?.id, answer: response } : {}),
     }
     const operation_id = drafts.operation(
@@ -423,15 +415,12 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
             {taskKinds[run.kind ?? 'mentor']} · {taskRunStatus[run.status]}
           </h2>
           <p>
-            运行：{run.run_id} · 阶段：{run.stage}
+            运行：{run.run_id} · 阶段：{['paused_budget', 'paused_tool_steps'].includes(run.stage) ? '已暂停，可继续' : run.stage}
           </p>
-          <p>原因：{run.reason || '无'}</p>
+          <p>原因：{run.reason === 'tool_steps_reached' ? '本轮工具调用已达上限，点击继续后接着执行。' : run.reason === 'budget_exhausted' ? '已暂停，可继续。' : run.reason || '无'}</p>
           {run.kind === 'studio' ? <Link to="/spaces/$spaceId" params={{ spaceId }} search={{ panel: 'studio' }}>打开 Studio 产物与生成记录</Link> : <Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId: run.goal_id }}>
             查看来源目标
           </Link>}
-          <p>
-            请求已用 {run.requests_used} · 剩余 {run.requests_left} · 剩余 Token {run.tokens_left}
-          </p>
           {run.result_unknown && (
             <p role="alert">外部结果未知。先核对原运行；新请求可能产生额外费用。</p>
           )}
@@ -452,43 +441,23 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
               已保存结果会保留。关闭页面本身不会停止任务。
             </Confirm>
           </div>
-          {(run.status === 'paused_budget' ||
+          {(['paused_budget', 'paused_tool_steps'].includes(run.status) ||
             (run.kind === 'start_learning' && ['partial', 'failed'].includes(run.status))) &&
             run.body_available && (
               <section className="panel">
-                <h3>明确追加本次预算</h3>
+                <h3>已暂停，可继续</h3>
                 {!canContinue && <p>当前权限、学习区、目标版本或生命周期不允许继续。</p>}
-                <label>
-                  请求预算
-                  <input
-                    type="number"
-                    min={1}
-                    max={1000}
-                    value={requests}
-                    onChange={(e) => setRequests(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  Token 预算
-                  <input
-                    type="number"
-                    min={1}
-                    max={10000000}
-                    value={tokens}
-                    onChange={(e) => setTokens(Number(e.target.value))}
-                  />
-                </label>
                 <Button
-                  disabled={busy || !canContinue || requests < 1 || tokens < 1}
+                  disabled={busy || !canContinue}
                   onClick={() =>
-                    void command(run.status === 'paused_budget' ? 'continue_budget' : 'retry_start')
+                    void command(['paused_budget', 'paused_tool_steps'].includes(run.status) ? 'resume' : 'retry_start')
                   }
                 >
-                  追加预算并继续原运行
+                  继续
                 </Button>
               </section>
             )}
-          {run.interaction && (
+          {run.interaction && ['waiting_input', 'waiting_approval'].includes(run.status) && (
             <section className="panel">
               <h3>{run.interaction.question}</h3>
               {run.interaction.choices.map((choice) => (

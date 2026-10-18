@@ -55,7 +55,7 @@ func budgetQuiz(t *testing.T, f *exerciseFixture) (string, learningcontent.Studi
 	}
 	f.work(t)
 	generated := f.snapshot(t, receipt.RunID)
-	if generated.Studio == nil || generated.Studio.Result == nil || generated.RequestsLeft != 0 || generated.TokensLeft != 3000 {
+	if generated.Studio == nil || generated.Studio.Result == nil || generated.RequestsLeft != 0 || generated.TokensLeft != 0 {
 		t.Fatalf("generation did not consume its own budget: status=%s reason=%s requests=%d tokens=%d", generated.Status, generated.Reason, generated.RequestsLeft, generated.TokensLeft)
 	}
 	r, err := f.start.Content.StudioGet(ctx, f.actor, generated.Studio.Result.ArtifactID, 1)
@@ -120,7 +120,7 @@ func TestPostgreSQLStudioAssessmentBudgetIndependentPerQuestion(t *testing.T) {
 			t.Fatalf("question %d did not assess automatically: %+v", question, card.Assessment)
 		}
 		usage, err := f.service.AssessmentStatus(context.Background(), f.actor, card.AttemptID)
-		if err != nil || usage.Run == nil || usage.Run.RequestsUsed != 2 || usage.Run.TokensLeft != 53036 || usage.Run.CostUnknown || runs[usage.Task.RunID] {
+		if err != nil || usage.Run == nil || usage.Run.RequestsUsed != 2 || usage.Run.TokensLeft != 0 || usage.Run.CostUnknown || runs[usage.Task.RunID] {
 			t.Fatalf("question %d budget/accounting not independent: %+v %v", question, usage.Run, err)
 		}
 		runs[usage.Task.RunID] = true
@@ -128,7 +128,7 @@ func TestPostgreSQLStudioAssessmentBudgetIndependentPerQuestion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if generated := f.snapshot(t, generationRun); generated.RequestsUsed != 1 || generated.TokensLeft != 3000 {
+	if generated := f.snapshot(t, generationRun); generated.RequestsUsed != 1 || generated.TokensLeft != 0 {
 		t.Fatal("assessment spent generation budget")
 	}
 }
@@ -155,10 +155,10 @@ func TestPostgreSQLStudyAssessmentBudgetIndependent(t *testing.T) {
 			t.Fatalf("study answer did not assess automatically: %+v", card.Assessment)
 		}
 		usage, err := f.service.AssessmentStatus(context.Background(), f.actor, card.AttemptID)
-		if err != nil || usage.Run == nil || usage.Run.RequestsUsed != 2 || usage.Run.TokensLeft != 53036 || usage.Run.CostUnknown || usage.Task.RunID == receipt.RunID {
+		if err != nil || usage.Run == nil || usage.Run.RequestsUsed != 2 || usage.Run.TokensLeft != 0 || usage.Run.CostUnknown || usage.Task.RunID == receipt.RunID {
 			t.Fatalf("study budget/accounting not independent: %+v %v", usage.Run, err)
 		}
-		if generated := f.snapshot(t, receipt.RunID); generated.RequestsLeft != 0 || generated.TokensLeft != 3000 {
+		if generated := f.snapshot(t, receipt.RunID); generated.RequestsLeft != 0 || generated.TokensLeft != 0 {
 			t.Fatal("assessment spent conversation budget")
 		}
 		if _, err := f.learn.ApplyAction(context.Background(), f.actor.Device.ID, e.SessionID, f.command(t, e, tutoring.ActionAcknowledgeFeedback, "")); err != nil {
@@ -185,12 +185,12 @@ func TestPostgreSQLAssessmentRejectedResponseUsage(t *testing.T) {
 	}
 	f.work(t)
 	state, err := f.service.AssessmentStatus(context.Background(), f.actor, attempt.ID)
-	if err != nil || state.Run == nil || state.Run.Status != "succeeded" || state.Run.RequestsUsed != 2 || state.Run.TokensLeft != 13500 || state.Run.CostUnknown {
+	if err != nil || state.Run == nil || state.Run.Status != "succeeded" || state.Run.RequestsUsed != 2 || state.Run.TokensLeft != 0 || state.Run.CostUnknown {
 		t.Fatalf("rejected response usage was not settled: %+v %v", state.Run, err)
 	}
 }
 
-func TestPostgreSQLAutomaticAssessmentSettingCapsAndResume(t *testing.T) {
+func TestPostgreSQLAutomaticAssessmentIgnoresLegacySettings(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		requests int
@@ -214,30 +214,8 @@ func TestPostgreSQLAutomaticAssessmentSettingCapsAndResume(t *testing.T) {
 			f.work(t)
 			card = readStudioExercise(t, f, e.ID)
 			usage, err := f.service.AssessmentStatus(context.Background(), f.actor, card.AttemptID)
-			if err != nil || usage.Run == nil || usage.Run.Status != "paused_budget" || usage.Run.Reason != "budget_exhausted" || usage.Run.RequestsUsed != tc.used || card.Assessment == nil || !card.Assessment.CanResume || card.Feedback.Assessment != nil {
-				t.Fatalf("configured %s cap bypassed or not resumable: %+v %v", tc.name, usage.Run, err)
-			}
-			attempt, run := card.AttemptID, usage.Task.RunID
-			assessmentBudgetLimits(t, f, 20, 100000)
-			_, _, configuration, err := f.settings.MentorClient()
-			if err != nil {
-				t.Fatal(err)
-			}
-			resume := StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: configuration, RequestBudget: 2, TokenBudget: 100001}
-			if _, err = f.service.ResumeStudioAssessment(context.Background(), f.actor, e.ID, resume); err == nil {
-				t.Fatal("resume exceeded configured token cap")
-			}
-			resume.OperationID, resume.TokenBudget = uuid.NewString(), 65536
-			if _, err = f.service.ResumeStudioAssessment(context.Background(), f.actor, e.ID, resume); err != nil {
-				t.Fatal(err)
-			}
-			valid := assessmentJSON(t, f, e, 1000)
-			f.modelOverride = func(w http.ResponseWriter, r *http.Request) { budgetReply(w, string(valid), 6500) }
-			f.work(t)
-			card = readStudioExercise(t, f, e.ID)
-			usage, err = f.service.AssessmentStatus(context.Background(), f.actor, card.AttemptID)
-			if err != nil || card.AttemptID != attempt || usage.Task.RunID != run || usage.Run.Status != "succeeded" || usage.Run.RequestsUsed != tc.used+1 || usage.Run.TokensLeft != 59036 || card.Feedback.Assessment == nil {
-				t.Fatalf("continuation lost answer or accounting: %+v %v", usage.Run, err)
+			if err != nil || usage.Run == nil || usage.Run.Status != "succeeded" || usage.Run.RequestsUsed != 2 || card.Feedback.Assessment == nil {
+				t.Fatalf("legacy settings blocked assessment: %+v %v", usage.Run, err)
 			}
 		})
 	}

@@ -13,6 +13,7 @@ import { Button } from '../ui/button'
 import { ErrorState } from '../common'
 import { AddSourceContent } from './add-source-dialog'
 import { SubmissionNotice } from './submission-notice'
+import { StudioSections } from './studio-sections'
 
 export function StudioNoteEditor({
   spaceId,
@@ -165,6 +166,25 @@ export function StudioNoteEditor({
     )
   if (artifactId && saved.isPending) return <p role="status">正在读取笔记…</p>
   if (saved.error) return <ErrorState error={saved.error} retry={() => void saved.refetch()} />
+  if (saved.data?.body.schema === 2)
+    return (
+      <section aria-label="笔记编辑器">
+        <Button variant="outline" onClick={onBack}>
+          返回 Studio
+        </Button>
+        <h3>{saved.data.body.title}</h3>
+        <p>已保存第 {saved.data.version} 版</p>
+        <StudioSections
+          key={`${saved.data.artifact_id}:${saved.data.version}`}
+          revision={saved.data}
+          canWrite={canWrite}
+          onSaved={(next) => {
+            queryClient.setQueryData(queryKey, next)
+            onSaved(next)
+          }}
+        />
+      </section>
+    )
   return (
     <section className="studio-note-editor" aria-label="笔记编辑器">
       <Button variant="outline" onClick={onBack}>
@@ -237,10 +257,10 @@ export function StudioNoteEditor({
       {value.unknown ? (
         <>
           <SubmissionNotice pending={!!value.unknown} inFlight={busy}>
-          保存结果未知，草稿已保留。
-          <Button variant="ghost" disabled={busy} onClick={() => void run(reconcile)}>
-            核对笔记保存结果
-          </Button>
+            保存结果未知，草稿已保留。
+            <Button variant="ghost" disabled={busy} onClick={() => void run(reconcile)}>
+              核对笔记保存结果
+            </Button>
           </SubmissionNotice>
         </>
       ) : (

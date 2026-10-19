@@ -296,6 +296,53 @@ paths:
       responses:
         "202": { description: Accepted encrypted run; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/jobs/{jobID}/units:
+    get:
+      operationId: listStudioUnits
+      summary: 分页查看已确认大纲的单元与已核验部分
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { name: jobID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: plan_revision, in: query, schema: { type: integer, minimum: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 32, default: 16 } }
+      responses:
+        "200": { description: 核验权限和确切来源后的部分；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioUnitPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}/sections:
+    get:
+      operationId: listStudioSections
+      summary: 按已保存版本分页读取分段产物
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { $ref: "#/components/parameters/ContentArtifactID" }
+        - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 32, default: 16 } }
+      responses:
+        "200": { description: 不可变顺序及已核验引用；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioSectionPage" } } } }
+        default: { $ref: "#/components/responses/WebFailure" }
+  /v1/learning/studio/artifacts/{artifactID}/sections/{sectionID}:
+    put:
+      operationId: saveStudioSection
+      summary: 显式保存笔记的一部分为新版本
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      parameters:
+        - { $ref: "#/components/parameters/MentorSpaceID" }
+        - { $ref: "#/components/parameters/ContentArtifactID" }
+        - { name: sectionID, in: path, required: true, schema: { type: string, maxLength: 80 } }
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StudioSectionSave" } } }
+      responses:
+        "200": { description: 新版本；未修改部分复用原内容，修改文字标为用户笔记；no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
+        "409": { description: 目标版本或操作冲突，保留用户输入 }
+        default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/studio/artifacts/{artifactID}/sources/{citationID}:
     get:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
@@ -347,8 +394,10 @@ paths:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       parameters:
+        - { name: X-Studio-Body-Schema, in: header, schema: { type: string, enum: ["2"] }, description: 显式协商 schema 2；未提供时仅可读取 schema 1 }
         - { name: version, in: query, schema: { type: integer, minimum: 1 } }
       responses:
+        "422": { description: "unsupported_content_schema；X-Studio-Supported-Body-Schemas 返回 1,2" }
         "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
         "409": { description: Version or operation conflict; retain draft and reconcile original operation }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -386,7 +435,10 @@ paths:
       summary: getStudioOperation
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
+      parameters:
+        - { name: X-Studio-Body-Schema, in: header, schema: { type: string, enum: ["2"] }, description: 读取 schema 2 保存回执时显式协商 }
       responses:
+        "422": { description: "unsupported_content_schema；X-Studio-Supported-Body-Schemas 返回 1,2" }
         "200": { description: Saved Studio data; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/StudioRevision" } } } }
         "409": { description: Version or operation conflict; retain draft and reconcile original operation }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -5368,7 +5420,7 @@ components:
         operation_id: { type: string, format: uuid }
         expected_version: { type: integer, minimum: 1 }
         plan_revision: { type: integer, minimum: 0 }
-        kind: { type: string, enum: [retry, delete] }
+        kind: { type: string, enum: [retry, delete, stop, resume, save_as_new, revise], description: save_as_new 仅解决全部完成后的发布冲突；不提供采用部分结果 }
     StudioPlanChapter:
       type: object
       required: [collection_id, revision_id, document_id, document_revision_id, node_id, node_revision_id, title, range]
@@ -5413,13 +5465,24 @@ components:
         created_at: { type: string, format: date-time }
     StudioJob:
       type: object
-      required: [id, kind, version, privacy_generation, status, active_plan_revision, confirmed_plan_revision, messages, suggested_focus, created_at, updated_at]
+      required: [id, kind, version, privacy_generation, status, active_plan_revision, confirmed_plan_revision, messages, suggested_focus, created_at, updated_at, completed_units, total_units]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, enum: [guide, brief, note] }
         version: { type: integer, minimum: 1 }
         privacy_generation: { type: integer, minimum: 1 }
-        status: { type: string, enum: [planning, awaiting_confirmation, queued, failed, invalidated, deleted], description: queued 仅表示待生成，不能作为已完成产物展示 }
+        status: { type: string, enum: [planning, awaiting_confirmation, queued, generating, summarizing, stopping, stopped, completed, failed, invalidated, deleted], description: 完成数来自已核验并保存的单元；全部完成并汇总成功才发布 }
+        completed_units: { type: integer, minimum: 0 }
+        total_units: { type: integer, minimum: 0 }
+        result_unknown: { type: boolean }
+        cost_unknown: { type: boolean }
+        current_unit: { type: string }
+        result:
+          type: object
+          required: [artifact_id, version]
+          properties:
+            artifact_id: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
         active_plan_revision: { type: integer, minimum: 0 }
         confirmed_plan_revision: { type: integer, minimum: 0 }
         plan: { $ref: "#/components/schemas/StudioPlan" }
@@ -5435,6 +5498,62 @@ components:
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/StudioJob" } }
         next_cursor: { type: string }
+    StudioUnit:
+      type: object
+      required: [id, section_id, ordinal, status, attempt, topic, objective, input_fingerprint]
+      properties:
+        id: { type: string }
+        section_id: { type: string }
+        ordinal: { type: integer, minimum: 1 }
+        status: { type: string, enum: [pending, running, succeeded, failed, stopped] }
+        attempt: { type: integer, minimum: 0 }
+        run_id: { type: string, format: uuid }
+        topic: { type: string }
+        objective: { type: string }
+        input_fingerprint: { type: string }
+        body: { $ref: "#/components/schemas/StudioBody" }
+    StudioUnitPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/StudioUnit" } }
+        next_cursor: { type: string }
+    StudioSection:
+      type: object
+      required: [id, section_id, ordinal, body]
+      properties:
+        id: { type: string }
+        section_id: { type: string }
+        ordinal: { type: integer, minimum: 1 }
+        body: { $ref: "#/components/schemas/StudioBody" }
+    StudioSectionPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/StudioSection" } }
+        next_cursor: { type: string }
+    StudioSectionSave:
+      type: object
+      additionalProperties: false
+      required: [operation_id, privacy_generation, expected_version, markdown]
+      properties:
+        operation_id: { type: string, format: uuid }
+        privacy_generation: { type: integer, minimum: 1 }
+        expected_version: { type: integer, minimum: 1 }
+        markdown: { type: string, minLength: 1, maxLength: 64000, description: 最多 64000 UTF-8 字节；用户修改不冒充已核验模型主张 }
+    StudioSummaryClaim:
+      type: object
+      required: [id, text]
+      properties:
+        id: { type: string, description: 单元身份与主张序号 }
+        text: { type: string, description: 复用已核验主张原文 }
+    StudioSummary:
+      type: object
+      required: [overview, transitions, uncovered]
+      properties:
+        overview: { type: array, items: { $ref: "#/components/schemas/StudioSummaryClaim" } }
+        transitions: { type: array, items: { $ref: "#/components/schemas/StudioSummaryClaim" } }
+        uncovered: { type: array, items: { type: string } }
     StudioGenerate:
       type: object
       additionalProperties: false
@@ -5579,7 +5698,7 @@ components:
       type: object
       required: [schema, title, markdown, citations]
       properties:
-        schema: { type: integer, enum: [1] }
+        schema: { type: integer, enum: [1, 2] }
         title: { type: string }
         markdown: { type: string }
         source_manifest: { $ref: "#/components/schemas/SourceManifest" }
@@ -5590,6 +5709,20 @@ components:
         guide: { $ref: "#/components/schemas/StudioGuide" }
         brief: { $ref: "#/components/schemas/StudioBrief" }
         quiz: { $ref: "#/components/schemas/StudioQuiz" }
+        claims: { type: array, items: { $ref: "#/components/schemas/StudioClaim" } }
+        summary: { $ref: "#/components/schemas/StudioSummary" }
+        user_authored: { type: boolean }
+        uncovered: { type: array, items: { type: string } }
+        sections:
+          type: array
+          maxItems: 24
+          items:
+            type: object
+            required: [id, title, unit_count]
+            properties:
+              id: { type: string }
+              title: { type: string }
+              unit_count: { type: integer, minimum: 1 }
     StudioRevision:
       type: object
       required: [artifact_id, learning_space_id, goal_id, kind, version, privacy_generation, actor_device_id, created_at, body]

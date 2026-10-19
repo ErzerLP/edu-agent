@@ -90,6 +90,9 @@ export function StudioPanel({
       drafts.deletePrefix(
         JSON.stringify([...prefix, spaceId, 'studio-exercise']).slice(0, -1) + ',',
       )
+      drafts.deletePrefix(
+        JSON.stringify([...prefix, spaceId, 'studio-section-draft']).slice(0, -1) + ',',
+      )
       setSelected(undefined)
       back()
     }
@@ -157,6 +160,7 @@ export function StudioPanel({
         jobId={jobId}
         canWrite={canWrite}
         onBack={back}
+        onOpen={openDocument}
       />
     )
   if (selected)

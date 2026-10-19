@@ -92,7 +92,11 @@ func (s *Store) StudioJobTx(ctx context.Context, tx pgx.Tx, id string, g int64, 
 		}
 		j.Messages = append(j.Messages, message)
 	}
-	return j, rows.Err()
+	if err = rows.Err(); err != nil {
+		return j, err
+	}
+	err = s.StudioProgressTx(ctx, tx, &j)
+	return j, err
 }
 func (s *Store) InsertStudioJobTx(ctx context.Context, tx pgx.Tx, j *StudioJob) error {
 	raw, err := s.sealStudioJob(*j, "input", "", j.Input)
@@ -137,6 +141,9 @@ type studioJobReceipt struct {
 	Status, RunID, Reason                              string
 	MessageCount                                       int
 	UpdatedAt                                          time.Time
+	CompletedUnits, TotalUnits                         int
+	CurrentUnit                                        string
+	Result                                             *StudioJobResult
 }
 
 func (s *Store) StudioJobOperationTx(ctx context.Context, tx pgx.Tx, device, operation, hash string, g int64) (StudioJob, bool, error) {
@@ -168,6 +175,7 @@ func (s *Store) StudioJobOperationTx(ctx context.Context, tx pgx.Tx, device, ope
 	result := current
 	result.Version, result.ActivePlanRevision, result.ConfirmedPlanRevision = receipt.Version, receipt.ActivePlanRevision, receipt.ConfirmedPlanRevision
 	result.Status, result.RunID, result.Reason, result.UpdatedAt = receipt.Status, receipt.RunID, receipt.Reason, receipt.UpdatedAt
+	result.CompletedUnits, result.TotalUnits, result.CurrentUnit, result.Result = receipt.CompletedUnits, receipt.TotalUnits, receipt.CurrentUnit, receipt.Result
 	result.Messages = result.Messages[:min(len(result.Messages), receipt.MessageCount)]
 	result.Plan = nil
 	if receipt.ActivePlanRevision > 0 {
@@ -182,7 +190,7 @@ func (s *Store) StudioJobOperationTx(ctx context.Context, tx pgx.Tx, device, ope
 	return result, true, nil
 }
 func (s *Store) RecordStudioJobOperationTx(ctx context.Context, tx pgx.Tx, j StudioJob, device, operation, hash string) error {
-	receipt := studioJobReceipt{j.Version, j.ActivePlanRevision, j.ConfirmedPlanRevision, j.Status, j.RunID, j.Reason, len(j.Messages), j.UpdatedAt}
+	receipt := studioJobReceipt{Version: j.Version, ActivePlanRevision: j.ActivePlanRevision, ConfirmedPlanRevision: j.ConfirmedPlanRevision, Status: j.Status, RunID: j.RunID, Reason: j.Reason, MessageCount: len(j.Messages), UpdatedAt: j.UpdatedAt, CompletedUnits: j.CompletedUnits, TotalUnits: j.TotalUnits, CurrentUnit: j.CurrentUnit, Result: j.Result}
 	raw, err := s.sealStudioJob(j, "operation", device+":"+operation, receipt)
 	if err != nil {
 		return err

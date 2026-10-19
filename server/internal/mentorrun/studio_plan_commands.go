@@ -38,7 +38,7 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 		}
 		return old, e
 	}
-	if action == "delete" {
+	if action == "delete" || action == "stop" || action == "resume" || action == "retry" || action == "save_as_new" || action == "revise" {
 		// Worker completion locks its run before its job. Follow that order for
 		// destructive cleanup, including an in-flight planning response.
 		rows, e := tx.Query(ctx, `SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1 ORDER BY id FOR UPDATE`, id)
@@ -56,6 +56,12 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 	if err != nil {
 		return j, err
 	}
+	if action == "stop" && j.Status == "completed" {
+		if err = s.studio.RecordStudioJobOperationTx(ctx, tx, j, actor.Device.ID, c.OperationID, hash); err != nil {
+			return j, err
+		}
+		return j, tx.Commit(ctx)
+	}
 	if j.Version != c.ExpectedVersion || j.ActivePlanRevision != c.PlanRevision {
 		return j, learningcontent.ErrConflict
 	}
@@ -64,6 +70,21 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 	}
 	if err = s.studioJobSourcesTx(ctx, tx, j); err != nil {
 		return learningcontent.StudioJob{}, err
+	}
+	if action == "stop" || action == "resume" || action == "save_as_new" || action == "revise" || action == "retry" && j.ConfirmedPlanRevision > 0 {
+		if err = s.changeStudioContentTx(ctx, tx, actor, &j, action); err != nil {
+			return j, err
+		}
+		if err = s.studio.SaveStudioJobTx(ctx, tx, &j); err != nil {
+			return j, err
+		}
+		if err = s.studio.RecordStudioJobOperationTx(ctx, tx, j, actor.Device.ID, c.OperationID, hash); err != nil {
+			return j, err
+		}
+		return j, tx.Commit(ctx)
+	}
+	if j.ConfirmedPlanRevision > 0 {
+		return j, learningcontent.ErrConflict
 	}
 	if j.Status == "planning" {
 		var status string
@@ -120,6 +141,12 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 			return j, err
 		}
 		j.ConfirmedPlanRevision = j.ActivePlanRevision
+		if err = s.prepareStudioUnitsTx(ctx, tx, &j); err != nil {
+			return j, err
+		}
+		if err = s.enqueueNextStudioUnitTx(ctx, tx, actor, &j); err != nil {
+			return j, err
+		}
 		j.Status = "queued"
 	}
 	if err = s.studio.SaveStudioJobTx(ctx, tx, &j); err != nil {

@@ -7,6 +7,7 @@ import { ErrorState } from '../common'
 import { studioNames } from './studio-generation'
 import { StudioQuiz } from './studio-quiz'
 import { studioCoverageDescription } from './studio-coverage'
+import { StudioSections } from './studio-sections'
 
 export function StudioDocument({
   spaceId,
@@ -70,7 +71,9 @@ export function StudioDocument({
             {studioNames[r.kind]} · 已保存第 {r.version} 版 ·{' '}
             {r.body.coverage === 'partial' ? '已生成 · 资料覆盖不全' : '已完成'}
           </p>
-          {r.body.coverage === 'partial' && <p className="studio-coverage-note">{studioCoverageDescription(r.body)}</p>}
+          {r.body.coverage === 'partial' && (
+            <p className="studio-coverage-note">{studioCoverageDescription(r.body)}</p>
+          )}
           <label>
             产物版本
             <select
@@ -110,6 +113,19 @@ export function StudioDocument({
               ))}
             </section>
           ))}
+          {r.body.schema === 2 && (
+            <StudioSections
+              key={`${r.artifact_id}:${r.version}`}
+              revision={r}
+              canWrite={canWrite}
+              onCitation={onCitation}
+              onSaved={(next) => {
+                setVersion(next.version)
+                void saved.refetch()
+                void history.refetch()
+              }}
+            />
+          )}
           {r.body.quiz && (
             <StudioQuiz
               key={`${r.artifact_id}:${r.version}`}

@@ -236,6 +236,11 @@ func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) e
 			return err
 		}
 	}
+	if item.body.StudioContent != nil && (item.Status == "failed" || item.Status == "cancelled") {
+		if err := s.failStudioContentTx(ctx, tx, *item); err != nil {
+			return err
+		}
+	}
 	if kind == "completed" && item.Kind == "mentor" && item.ConversationID != "" && item.Saved && item.Status == "succeeded" {
 		item.TopicIndexPending = true
 	}

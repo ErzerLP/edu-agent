@@ -63,7 +63,7 @@ func (c StudioPlanCommand) Validate(action string) error {
 		if c.Text != "" || c.Kind != "" || len(c.DeleteIDs)+len(c.OrderedIDs) > 0 {
 			return ErrInvalid
 		}
-	case "retry", "delete":
+	case "retry", "delete", "stop", "resume", "save_as_new", "revise":
 		if c.Kind != action || c.Text != "" || len(c.DeleteIDs)+len(c.OrderedIDs) > 0 {
 			return ErrInvalid
 		}
@@ -217,9 +217,19 @@ func studioJobHash(action, space, id string, c any) string {
 }
 
 func (s *Service) enqueueStudioPlanTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, j *learningcontent.StudioJob, operation string) error {
+	return s.enqueueStudioStageTx(ctx, tx, actor, j, operation, nil)
+}
+func (s *Service) enqueueStudioStageTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, j *learningcontent.StudioJob, operation string, content *StudioContentStage) error {
 	model, _, configuration, err := s.settings.MentorClient()
 	if err != nil || model == nil {
 		return ErrModel
+	}
+	if content != nil && j.Input.Configuration != "" && j.Input.Configuration != configuration {
+		return ErrInactive
+	}
+	if j.Input.Configuration == "" {
+		j.Input.Configuration = configuration
+		j.Input.Destination = s.studioDestination()
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_processes(id,live_until) VALUES($1,clock_timestamp()+interval '30 seconds') ON CONFLICT(id) DO UPDATE SET live_until=excluded.live_until`, s.process); err != nil {
 		return err
@@ -231,6 +241,14 @@ func (s *Service) enqueueStudioPlanTx(ctx context.Context, tx pgx.Tx, actor iden
 	}
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: session, SpaceID: j.SpaceID, GoalID: uuid.Nil.String(), GoalVersion: 1, Generation: j.Generation, Kind: "studio", Status: "queued", Stage: "planning", Saved: true, BodyAvailable: true, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: configuration}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.body.StudioPlan = &StudioPlanStage{JobID: j.ID, OperationID: operation, ExpectedVersion: j.Version}
+	if content != nil {
+		item.body.StudioPlan = nil
+		item.body.StudioContent = content
+		item.Stage = "studio_section"
+		if content.UnitID == "" {
+			item.Stage = "studio_summary"
+		}
+	}
 	item.body.SourceManifest = &j.Input.Manifest
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at,studio_job_id,studio_stage_operation) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12)`, item.RunID, session, actor.Device.ID, actor.TokenID, j.SpaceID, uuid.Nil.String(), j.Generation, raw, s.process, item.ExpiresAt, j.ID, operation); err != nil {
@@ -244,6 +262,12 @@ func (s *Service) enqueueStudioPlanTx(ctx context.Context, tx pgx.Tx, actor iden
 	}
 	j.RunID = item.RunID
 	j.Status = "planning"
+	if content != nil {
+		j.Status = "generating"
+		if content.UnitID == "" {
+			j.Status = "summarizing"
+		}
+	}
 	j.Reason = ""
 	return nil
 }
@@ -265,7 +289,7 @@ func (s *Service) StudioJob(ctx context.Context, actor identity.Credential, id s
 	}
 	// Lease expiry and process restart are observable even before the next worker
 	// claim. Keep the last valid plan and let an explicit retry create a new run.
-	if j.Status == "planning" && j.RunID != "" {
+	if (j.Status == "planning" || j.Status == "queued" || j.Status == "generating" || j.Status == "summarizing") && j.RunID != "" {
 		var status, reason string
 		var expired bool
 		err = tx.QueryRow(ctx, `SELECT state->>'status',COALESCE(state->>'reason',''),expires_at<=clock_timestamp() FROM learning_mentor_runs WHERE id=$1`, j.RunID).Scan(&status, &reason, &expired)
@@ -337,6 +361,7 @@ func (s *Service) StudioJobs(ctx context.Context, actor identity.Credential, cur
 			j.Messages = []learningcontent.StudioPlanMessage{}
 			j.SuggestedFocus = []string{}
 			j.Reason = "source_unavailable"
+			j.Result = nil
 		}
 		page.Items = append(page.Items, j)
 	}

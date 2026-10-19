@@ -127,7 +127,7 @@ func (s *Store) RecoverTx(ctx context.Context, tx pgx.Tx, generation int64) erro
 	_, err := tx.Exec(ctx, `UPDATE learning_model_calls c SET dispatch_state=CASE WHEN c.dispatch_state='prepared' THEN 'not_dispatched' ELSE 'outcome_unknown' END,finished_at=clock_timestamp()
 	 FROM learning_model_tasks t WHERE c.task_id=t.id AND c.privacy_generation=$1 AND c.dispatch_state IN ('prepared','dispatching') AND (
 	 c.lease_until<clock_timestamp() OR c.lease_until IS NULL AND NOT EXISTS (
-	 SELECT 1 FROM learning_mentor_runs r WHERE (r.id=CASE WHEN t.kind='assessment' THEN (SELECT a.run_id FROM learning_assessment_tasks a WHERE a.attempt_id=t.origin_id) ELSE t.origin_id END OR t.kind='topic_index' AND r.session_id=t.origin_id AND r.state->>'kind'='topic_index')
+	 SELECT 1 FROM learning_mentor_runs r WHERE (r.id=CASE WHEN t.kind='assessment' THEN (SELECT a.run_id FROM learning_assessment_tasks a WHERE a.attempt_id=t.origin_id) ELSE t.origin_id END OR t.kind='topic_index' AND r.session_id=t.origin_id AND r.state->>'kind'='topic_index' OR t.kind='studio' AND r.studio_job_id=t.origin_id)
 	 AND r.lease_id=c.lease_id AND r.lease_until>clock_timestamp() AND r.state->>'status' IN ('running','cancelling')))`, generation)
 	return err
 }

@@ -47,6 +47,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
   let calls = 0
   let historyRequests = 0
   let studioCalls = 0
+  let studioSectionCalls = 0
   const fixture = createServer(async (request, response) => {
     if (request.url === '/stats') {
       response.setHeader('Content-Type', 'application/json')
@@ -75,8 +76,25 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
           { id: 'examples', topic: '偶数的例子', objective: '辨认偶数', chapters: [1] },
         ],
       }
+      if (material.focus?.includes('分段验收')) result.sections = Array.from({length:8},(_,index)=>({id:`s${index+1}`,topic:`偶数学习第${index+1}部分`,objective:'根据所选资料整理',chapters:[1]}))
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 } }))
+      return
+    }
+    if (payload.messages?.[0]?.content?.startsWith('仅生成已确认大纲的当前部分')) {
+      const input=JSON.parse(payload.messages[1].content)
+      studioSectionCalls++
+      await new Promise(resolve=>setTimeout(resolve,studioSectionCalls===4?8000:600))
+      const result={title:input.topic,coverage:'partial',claims:[{text:'偶数可被 2 整除。',citations:[{source:1,fragment:1}]}]}
+      response.setHeader('Content-Type','application/json')
+      response.end(JSON.stringify({choices:[{message:{role:'assistant',content:JSON.stringify(result)},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:60,total_tokens:160}}))
+      return
+    }
+    if (payload.messages?.[0]?.content?.startsWith('所有已确认部分已完成')) {
+      const input=JSON.parse(payload.messages[1].content)
+      const result={overview:[input.allowed_claims[0].id],transitions:[],uncovered:[]}
+      response.setHeader('Content-Type','application/json')
+      response.end(JSON.stringify({choices:[{message:{role:'assistant',content:JSON.stringify(result)},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:30,total_tokens:130}}))
       return
     }
     if (payload.messages?.[0]?.content?.includes('本轮已达到用户设置的工具调用上限')) {

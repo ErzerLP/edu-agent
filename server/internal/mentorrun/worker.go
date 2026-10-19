@@ -194,6 +194,11 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 			return err
 		}
 	}
+	if item.body.StudioContent != nil {
+		if err = s.studioContentGateTx(ctx, tx, item); err != nil {
+			return err
+		}
+	}
 	if err = change(tx, &item); err != nil {
 		return err
 	}
@@ -297,7 +302,7 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 		}
 		item.Reason = "context_changed"
 	}
-	if item.body.Studio != nil || item.body.StudioPlan != nil {
+	if item.body.Studio != nil || item.body.StudioPlan != nil || item.body.StudioContent != nil {
 		item.Reason = studioFailureCategory(cause)
 	}
 	if wasCancelling {
@@ -378,6 +383,12 @@ func logRunFailure(ctx context.Context, item row, cause error) {
 }
 
 func studioFailureCategory(cause error) string {
+	if llm.Category(cause) == llm.ErrorContextWindowExceeded {
+		return "context_configuration_invalid"
+	}
+	if sourceUnavailable(cause) {
+		return "source_unavailable"
+	}
 	if errors.Is(cause, errCitation) {
 		return "invalid_source_citation"
 	}
@@ -410,6 +421,9 @@ func studioFailureCategory(cause error) string {
 }
 
 func (s *Service) RunOnce(ctx context.Context) (int, error) {
+	if err := s.scheduleConfirmedStudio(ctx); err != nil {
+		return 0, err
+	}
 	if err := s.enqueueAssessment(ctx); err != nil {
 		return 0, err
 	}
@@ -452,6 +466,8 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 		err = host.generateTopics(execution)
 	} else if host.body.StudioPlan != nil {
 		err = host.generateStudioPlan(execution)
+	} else if host.body.StudioContent != nil {
+		err = host.generateStudioContent(execution)
 	} else if host.body.Assessment != nil {
 		err = host.assess(execution)
 	} else if host.body.Studio != nil {
@@ -465,7 +481,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.StudioPlan == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
+	if err == nil && host.body.StudioContent == nil && host.body.StudioPlan == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

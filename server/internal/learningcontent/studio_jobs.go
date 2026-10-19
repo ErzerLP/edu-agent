@@ -45,6 +45,14 @@ type StudioJobInput struct {
 	ExpectedArtifactVersion int64                        `json:"expected_artifact_version,omitempty"`
 	Fingerprint             string                       `json:"fingerprint"`
 	Reason                  string                       `json:"reason,omitempty"`
+	Configuration           string                       `json:"configuration,omitempty"`
+	Destination             string                       `json:"destination,omitempty"`
+	Summary                 *StudioSummary               `json:"summary,omitempty"`
+	Result                  *StudioJobResult             `json:"result,omitempty"`
+}
+type StudioJobResult struct {
+	ArtifactID string `json:"artifact_id"`
+	Version    int64  `json:"version"`
 }
 type StudioJob struct {
 	ID                    string              `json:"id"`
@@ -64,6 +72,12 @@ type StudioJob struct {
 	CreatedAt             time.Time           `json:"created_at"`
 	UpdatedAt             time.Time           `json:"updated_at"`
 	Input                 StudioJobInput      `json:"-"`
+	CompletedUnits        int                 `json:"completed_units"`
+	TotalUnits            int                 `json:"total_units"`
+	CurrentUnit           string              `json:"current_unit,omitempty"`
+	Result                *StudioJobResult    `json:"result,omitempty"`
+	ResultUnknown         bool                `json:"result_unknown"`
+	CostUnknown           bool                `json:"cost_unknown"`
 }
 type StudioJobPage struct {
 	Items      []StudioJob `json:"items"`

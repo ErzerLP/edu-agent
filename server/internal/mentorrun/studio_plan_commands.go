@@ -38,32 +38,23 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 		}
 		return old, e
 	}
-	if action == "delete" || action == "stop" || action == "resume" || action == "retry" || action == "save_as_new" || action == "revise" {
-		// Worker completion locks its run before its job. Follow that order for
-		// destructive cleanup, including an in-flight planning response.
-		rows, e := tx.Query(ctx, `SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1 ORDER BY id FOR UPDATE`, id)
-		if e != nil {
-			return learningcontent.StudioJob{}, e
-		}
-		for rows.Next() {
-		}
-		rows.Close()
-		if e = rows.Err(); e != nil {
-			return learningcontent.StudioJob{}, e
-		}
-	}
-	j, err := s.studio.StudioJobTx(ctx, tx, id, g, true)
+	j, err := s.studioCommandJobTx(ctx, tx, id, g, action)
 	if err != nil {
 		return j, err
+	}
+	versionMatches := j.Version == c.ExpectedVersion
+	if action == "stop" || action == "resume" {
+		// Progress advances the job version without changing the confirmed plan.
+		versionMatches = c.ExpectedVersion <= j.Version
+	}
+	if !versionMatches || j.ActivePlanRevision != c.PlanRevision {
+		return j, learningcontent.ErrConflict
 	}
 	if action == "stop" && j.Status == "completed" {
 		if err = s.studio.RecordStudioJobOperationTx(ctx, tx, j, actor.Device.ID, c.OperationID, hash); err != nil {
 			return j, err
 		}
 		return j, tx.Commit(ctx)
-	}
-	if j.Version != c.ExpectedVersion || j.ActivePlanRevision != c.PlanRevision {
-		return j, learningcontent.ErrConflict
 	}
 	if action == "delete" {
 		return s.deleteStudioJobTx(ctx, tx, j)
@@ -157,6 +148,49 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 	}
 	return j, tx.Commit(ctx)
 }
+
+func (s *Service) studioCommandJobTx(ctx context.Context, tx pgx.Tx, id string, generation int64, action string) (learningcontent.StudioJob, error) {
+	if action != "delete" && action != "stop" && action != "resume" && action != "retry" && action != "save_as_new" && action != "revise" {
+		return s.studio.StudioJobTx(ctx, tx, id, generation, true)
+	}
+	for {
+		// Worker completion locks run -> job. A completion while this query waits
+		// can enqueue a run outside its snapshot. Release the job lock and retry
+		// in that case, so accepting an observed version cannot invert lock order.
+		locked, err := tx.Begin(ctx)
+		if err != nil {
+			return learningcontent.StudioJob{}, err
+		}
+		rows, err := locked.Query(ctx, `SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1 ORDER BY id FOR UPDATE`, id)
+		if err != nil {
+			return learningcontent.StudioJob{}, err
+		}
+		runs := map[string]bool{}
+		for rows.Next() {
+			var runID string
+			if err = rows.Scan(&runID); err != nil {
+				rows.Close()
+				return learningcontent.StudioJob{}, err
+			}
+			runs[runID] = true
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return learningcontent.StudioJob{}, err
+		}
+		j, err := s.studio.StudioJobTx(ctx, locked, id, generation, true)
+		if err != nil {
+			return j, err
+		}
+		if j.RunID == "" || runs[j.RunID] {
+			return j, locked.Commit(ctx)
+		}
+		if err = locked.Rollback(ctx); err != nil {
+			return j, err
+		}
+	}
+}
+
 func patchStudioPlan(p learningcontent.StudioPlan, c StudioPlanCommand) (learningcontent.StudioPlan, error) {
 	available := map[string]learningcontent.StudioPlanSection{}
 	for _, section := range p.Sections {

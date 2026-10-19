@@ -369,8 +369,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 重试规划或删除任务
-         * @description S-A 仅支持 retry 和 delete；删除同时清除规划输入与修改记录。尚无大纲时 plan_revision 为 0。
+         * 停止、继续、重试或删除 Studio 任务
+         * @description stop 和 resume 接受不大于当前任务版本的 expected_version，仍要求 plan_revision 与当前规划修订一致并校验状态；进度推进不会使命令失效。其他命令要求精确版本匹配。同 operation_id 同请求回放原回执，不同请求复用操作身份返回 409。停止与发布竞争时，已完成任务返回 completed。delete 同时清除规划输入与修改记录；尚无大纲时 plan_revision 为 0。
          */
         post: operations["commandStudioJob"];
         delete?: never;

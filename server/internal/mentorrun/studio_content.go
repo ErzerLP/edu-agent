@@ -104,8 +104,8 @@ func (s *Service) changeStudioContentTx(ctx context.Context, tx pgx.Tx, actor id
 		if j.Status != "planning" && j.Status != "queued" && j.Status != "generating" && j.Status != "summarizing" {
 			return learningcontent.ErrConflict
 		}
-		// All existing run rows were locked before the job. If a completion enqueued
-		// a new run while locks were acquired, reject a stale command via job CAS.
+		// The command locked the current run before the job, including a run
+		// enqueued by a completion while the command was waiting for locks.
 		item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 FOR UPDATE`, j.RunID))
 		if err != nil {
 			return err

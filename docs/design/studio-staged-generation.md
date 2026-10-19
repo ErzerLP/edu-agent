@@ -238,7 +238,7 @@ S-B 接续已确认的指南、简报和笔记大纲。确认事务固定 UTF-8 
 | 单元状态机 | `studio_content*.go` 每段建立独立 stage run，checkpoint 仅有 job、plan revision、unit ID 和固定 manifest。当前段成功提交、旧 run 完成和下一段排队在同一事务。`pending → running → succeeded`；失败或停止保留原范围，继续从首个非 succeeded 单元建立新 run。存储层拒绝覆盖成功单元。 |
 | 输入与窗口 | 每次只读当前范围（最多 4096 字节），带当前主题／目标、固定方向／侧重点及最多 6 条相关学习记录元数据。窗口包含 schema、输出和安全余量。服务方明确返回 `context_length_exceeded`／`context_window_exceeded` 时收缩当前范围重试一次，未纳入的后续范围明确记为缺口；不扩张来源、不自动提高输出上限。 |
 | 即时核验 | 文档单元使用闭合 title／coverage／claims 结构；用途由 kind 和已确认目标约束。request-local 引用映射回稳定身份，内容 owner 保存前核对确切来源版本、node revision、range、文本、hash 和子范围证明。结构／引用错误最多一次带反馈修复；仍失败不保存正文、不计完成数。截断输出保持失败并提示调整单次输出配置。 |
-| 停止与恢复 | version、plan revision、operation 回执共同处理并发。停止按 run → job 锁顺序撤销租约，心跳取消在途请求，迟到正文不能提交。未知结果／用量独立显示并由台账结算。刷新通过 job 快照及分页 units 恢复；继续重新检查权限、来源和目标。相同目的地下可在显式继续时采用更新后的配置；目的地变化拒绝恢复，需建立新任务。 |
+| 停止与恢复 | stop／resume 接受不大于当前 version 的已观察版本，仍精确匹配 plan revision 并检查当前状态；规划修改及其他命令保留精确版本校验，operation 回执保持幂等。停止按 run → job 锁顺序撤销租约；等待期间若排队了新 run，释放本轮锁并重读，确保当前 run 已锁定。心跳取消在途请求，迟到正文不能提交。未知结果／用量独立显示并由台账结算。刷新通过 job 快照及分页 units 恢复；继续重新检查权限、来源和目标。相同目的地下可在显式继续时采用更新后的配置；目的地变化拒绝恢复，需建立新任务。 |
 | 汇总 | 一次短调用只接收每个已确认部分最多一条已核验主张（最多 24 条，按窗口进一步缩减）和缺口，不读取新来源或完整产物。模型选择 claim ID 组织总览／衔接，程序复用原文及已知缺口。汇总结果先加密保存，失败只重试汇总；发布冲突解决后复用汇总。 |
 | 发布与竞争 | `PublishStudioJobTx` 分页复核全部成功单元，经 `StudioPublishTx` 创建一个版本、部分关系和回执；发布、completed 及目标 expected version 在同一事务。停止先提交拒绝迟到发布；发布先提交，停止返回 completed。目标版本冲突保留全部段落与汇总，界面提供明确“另存为新产物”。 |
 | 阅读与兼容 | schema 2 body 只保存有界总览及最多 24 个父 section 目录；正文通过 sections API 按版本分页（每页最多 32 段），不拼回旧 MaxBody 字段。引用以 `unitID:citationID` 经原 sources API 定位。schema 1 原样读取；新格式须 `X-Studio-Body-Schema: 2`，未协商返回 `unsupported_content_schema` 和 `X-Studio-Supported-Body-Schemas: 1,2`。 |

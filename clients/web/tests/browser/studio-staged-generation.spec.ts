@@ -30,9 +30,66 @@ test('Studio 确认后逐段生成、3/8 停止、刷新继续、完成并打开
   await studio.getByRole('button', { name: '生成大纲', exact: true }).click()
   const job = await (await created).json()
   await expect(studio.getByRole('list', { name: '大纲部分' }).getByRole('listitem')).toHaveCount(8)
+  // Apply a real competing plan edit immediately before the UI's stale edit.
+  await studio.getByLabel('修改大纲').fill('保留尚未发送的修改')
+  const planURL = `**/v1/learning/studio/jobs/${job.id}/plan`
+  await page.route(
+    planURL,
+    async (route) => {
+      const body = route.request().postDataJSON()
+      await webAPI(
+        page,
+        'PATCH',
+        `/v1/learning/studio/jobs/${job.id}/plan`,
+        {
+          ...body,
+          operation_id: randomUUID(),
+          ordered_ids: ['s1', 's3', 's2', 's4', 's5', 's6', 's7', 's8'],
+        },
+        space.id,
+      )
+      await route.continue()
+    },
+    { times: 1 },
+  )
+  await studio.getByRole('button', { name: '上移：偶数学习第2部分', exact: true }).click()
+  await expect(studio.getByText(/大纲已更新/)).toBeVisible()
+  await expect(studio.getByLabel('修改大纲')).toHaveValue('保留尚未发送的修改')
+  await expect(
+    studio.getByRole('list', { name: '大纲部分' }).getByRole('listitem').nth(1),
+  ).toContainText('偶数学习第3部分')
+  await studio.getByLabel('修改大纲').fill('')
+  const confirmedResponse = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === `/v1/learning/studio/jobs/${job.id}/confirm`,
+  )
   await studio.getByRole('button', { name: '确认大纲', exact: true }).click()
+  const confirmed = await (await confirmedResponse).json()
   const progress = studio.getByRole('region', { name: '生成进度', exact: true })
   await expect(progress.getByRole('status')).toHaveText('已完成 3/8', { timeout: 20_000 })
+  const commandURL = `**/v1/learning/studio/jobs/${job.id}/commands`
+  // A command-state conflict with the same plan must not accuse another page.
+  await page.route(
+    commandURL,
+    (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: { code: 'learning_content_conflict', message: '状态冲突' } }),
+      }),
+    { times: 1 },
+  )
+  await progress.getByRole('button', { name: '停止生成', exact: true }).click()
+  await expect(studio.getByText(/任务状态已变化/)).toBeVisible()
+  await expect(studio.getByText(/其他页面修改|大纲已更新/)).toHaveCount(0)
+  // Send the version observed at confirmation through the real command endpoint.
+  await page.route(commandURL, (route) =>
+    route.continue({
+      postData: JSON.stringify({
+        ...route.request().postDataJSON(),
+        expected_version: confirmed.version,
+      }),
+    }),
+  )
   await progress.getByRole('button', { name: '停止生成', exact: true }).click()
   await expect(studio.getByText('已停止', { exact: true })).toBeVisible()
   expect(

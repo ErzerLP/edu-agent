@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func contentPlan(count int) string {
@@ -202,6 +204,94 @@ func TestPostgreSQLStudioContentStopPublishRace(t *testing.T) {
 	}
 }
 
+// A worker may enqueue its next run while a command waits for the previous run.
+// The command must lock that new run before returning with the job locked.
+func TestPostgreSQLStudioContentCommandLocksRunAfterProgress(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	f, c := studioFixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		raw, _ := io.ReadAll(r.Body)
+		if !bytes.Contains(raw, []byte("directory")) {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		contentSuccess(w, r, n)
+	})
+	ctx, observed := contentJob(t, f, c)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	worker := make(chan error, 1)
+	go func() { _, err := f.service.RunOnce(ctx); worker <- err }()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("section not dispatched")
+	}
+	blocker, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocker.Rollback(context.Background())
+	var pid int
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid() FROM learning_studio_jobs WHERE id=$1 FOR UPDATE`, observed.ID).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	release <- struct{}{}
+	waitBlocked := func(want int) {
+		t.Helper()
+		for {
+			var count int
+			if err := f.pool.QueryRow(ctx, `WITH RECURSIVE waiting(pid) AS (
+ SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
+ UNION SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))
+) SELECT count(*) FROM waiting`, pid).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count == want {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitBlocked(1)
+	command, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer command.Rollback(context.Background())
+	lockedJob := make(chan learningcontent.StudioJob, 1)
+	commandError := make(chan error, 1)
+	go func() {
+		j, err := f.service.studioCommandJobTx(ctx, command, observed.ID, observed.Generation, "stop")
+		lockedJob <- j
+		commandError <- err
+	}()
+	waitBlocked(2)
+	if err = blocker.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	j := <-lockedJob
+	if err = <-commandError; err != nil {
+		t.Fatal(err)
+	}
+	if err = <-worker; err != nil {
+		t.Fatal(err)
+	}
+	if j.RunID == observed.RunID || j.CompletedUnits != 1 {
+		t.Fatal("command did not observe the worker's next run")
+	}
+	_, err = f.pool.Exec(ctx, `SELECT id FROM learning_mentor_runs WHERE id=$1 FOR UPDATE NOWAIT`, j.RunID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("current run was not locked before the job: %v", err)
+	}
+}
+
 func TestPostgreSQLStudioContentLargeSourceAndChapter(t *testing.T) {
 	sectionCalls := 0
 	windowRejected := false
@@ -279,8 +369,8 @@ func contentCommand(t *testing.T, f *runtimeFixture, ctx context.Context, j lear
 	return next
 }
 
-// Losing persisted progress or rerunning a successful section breaks this test.
-func TestPostgreSQLStudioContentStopResume(t *testing.T) {
+// Progress must not invalidate controls, lose saved units, or replay side effects.
+func TestPostgreSQLStudioContentStopResumeWithStaleVersion(t *testing.T) {
 	calls := 0
 	f, c := studioFixture(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		raw, _ := io.ReadAll(r.Body)
@@ -296,6 +386,7 @@ func TestPostgreSQLStudioContentStopResume(t *testing.T) {
 		studioReply(w, `{"title":"本段笔记","coverage":"partial","claims":[{"text":"偶数可被2整除。","citations":[{"source":1,"fragment":1}]}]}`, "stop")
 	})
 	ctx, j := contentJob(t, f, c)
+	observed := j
 	for i := 0; i < 3; i++ {
 		f.work(t)
 	}
@@ -303,9 +394,33 @@ func TestPostgreSQLStudioContentStopResume(t *testing.T) {
 	if snapshot["completed_units"] != float64(3) || snapshot["total_units"] != float64(8) {
 		t.Fatalf("expected persisted 3/8, got %+v", snapshot)
 	}
-	j = contentCommand(t, f, ctx, j, "stop")
+	if j.Version <= observed.Version {
+		t.Fatal("generation did not advance the job version")
+	}
+	staleEdit := StudioPlanCommand{OperationID: uuid.NewString(), ExpectedVersion: observed.Version, PlanRevision: observed.ActivePlanRevision, DeleteIDs: []string{"s8"}}
+	if _, err := f.service.ChangeStudioPlan(ctx, f.actor, j.ID, "patch", staleEdit); !errors.Is(err, learningcontent.ErrConflict) {
+		t.Fatalf("stale plan edit: %v", err)
+	}
+	for _, invalid := range []StudioPlanCommand{
+		{OperationID: uuid.NewString(), ExpectedVersion: j.Version + 1, PlanRevision: j.ActivePlanRevision, Kind: "stop"},
+		{OperationID: uuid.NewString(), ExpectedVersion: observed.Version, PlanRevision: j.ActivePlanRevision - 1, Kind: "stop"},
+		{OperationID: uuid.NewString(), ExpectedVersion: observed.Version, PlanRevision: j.ActivePlanRevision, Kind: "resume"},
+	} {
+		if _, err := f.service.ChangeStudioPlan(ctx, f.actor, j.ID, invalid.Kind, invalid); !errors.Is(err, learningcontent.ErrConflict) {
+			t.Fatalf("invalid control (%s): %v", invalid.Kind, err)
+		}
+	}
+	stop := StudioPlanCommand{OperationID: uuid.NewString(), ExpectedVersion: observed.Version, PlanRevision: observed.ActivePlanRevision, Kind: "stop"}
+	j, err := f.service.ChangeStudioPlan(ctx, f.actor, j.ID, "stop", stop)
+	if err != nil {
+		t.Fatalf("stop after progress with observed version %d: %v", observed.Version, err)
+	}
 	if j.Status != "stopped" {
 		t.Fatalf("stop: %s", j.Status)
+	}
+	stopped := j
+	if again := contentCommand(t, f, ctx, observed, "stop"); again.Version != stopped.Version {
+		t.Fatal("repeated stop changed the job version")
 	}
 	if n, err := f.service.RunOnce(ctx); err != nil || n != 0 {
 		t.Fatalf("dispatched after stop: %d %v", n, err)
@@ -321,8 +436,24 @@ func TestPostgreSQLStudioContentStopResume(t *testing.T) {
 	reloaded.ConfigureStudio(f.service.studio)
 	f.service = reloaded
 	j, _ = contentSnapshot(t, f, ctx, j.ID)
-	j = contentCommand(t, f, ctx, j, "resume")
-	for i := 0; i < 6; i++ {
+	resume := StudioPlanCommand{OperationID: uuid.NewString(), ExpectedVersion: observed.Version, PlanRevision: observed.ActivePlanRevision, Kind: "resume"}
+	j, err = f.service.ChangeStudioPlan(ctx, f.actor, j.ID, "resume", resume)
+	if err != nil {
+		t.Fatalf("resume with stale version: %v", err)
+	}
+	if replay, err := f.service.ChangeStudioPlan(ctx, f.actor, j.ID, "stop", stop); err != nil || replay.Status != "stopped" || replay.Version != stopped.Version {
+		t.Fatalf("stop receipt replay: status=%s version=%d err=%v", replay.Status, replay.Version, err)
+	}
+	changed := stop
+	changed.ExpectedVersion = j.Version
+	if _, err := f.service.ChangeStudioPlan(ctx, f.actor, j.ID, "stop", changed); !errors.Is(err, learningcontent.ErrConflict) {
+		t.Fatalf("changed request reused operation ID: %v", err)
+	}
+	f.work(t)
+	if replay, err := f.service.ChangeStudioPlan(ctx, f.actor, j.ID, "resume", resume); err != nil || replay.RunID != j.RunID || replay.Version != j.Version {
+		t.Fatalf("resume receipt replay: run=%s version=%d err=%v", replay.RunID, replay.Version, err)
+	}
+	for i := 0; i < 5; i++ {
 		f.work(t)
 	}
 	j, snapshot = contentSnapshot(t, f, ctx, j.ID)

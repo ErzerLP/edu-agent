@@ -21,6 +21,21 @@ type AssessmentResume struct {
 	Policy          learningcontent.AssessmentPolicy
 }
 
+func assessmentCanResume(item row, recovery learning.AssessmentRecovery) bool {
+	if !item.BodyAvailable || !time.Now().Before(item.ExpiresAt) || recovery.OperationStatus != "" || item.Status != "paused_budget" && item.Status != "failed" {
+		return false
+	}
+	// A durable proposal can be committed without another model call, including
+	// older failures whose call_started/result_unknown flags were never settled.
+	if recovery.ProposalStatus == "ready" {
+		return true
+	}
+	if item.ResultUnknown || item.callStarted || recovery.ProposalStatus == "processing" && recovery.ProposalLeaseUntil != nil && recovery.ProposalLeaseUntil.After(time.Now()) {
+		return false
+	}
+	return item.Status == "paused_budget" || item.Reason == "context_changed" || recovery.ProposalStatus == "failed"
+}
+
 // Assessment authorization binds the destination; cumulative budgets are obsolete.
 func automaticAssessmentPolicy(configuration string, _ settings.Limits) learningcontent.AssessmentPolicy {
 	return learningcontent.AssessmentPolicy{
@@ -119,7 +134,7 @@ func (s *Service) ResumeAssessment(ctx context.Context, actor identity.Credentia
 	if err != nil {
 		return Receipt{}, err
 	}
-	if item.Generation != generation || item.Version != c.ExpectedVersion || item.Status != "paused_budget" && !(item.Status == "failed" && item.Reason == "context_changed") || !item.BodyAvailable || time.Now().After(item.ExpiresAt) {
+	if item.Generation != generation || item.Version != c.ExpectedVersion || !item.BodyAvailable || time.Now().After(item.ExpiresAt) {
 		return Receipt{}, ErrConflict
 	}
 	if err = s.decode(&item); err != nil {
@@ -132,7 +147,7 @@ func (s *Service) ResumeAssessment(ctx context.Context, actor identity.Credentia
 	if err != nil {
 		return Receipt{}, err
 	}
-	if item.ResultUnknown || item.callStarted || recovery.OperationStatus != "" || recovery.ProposalStatus == "processing" && recovery.ProposalLeaseUntil != nil && recovery.ProposalLeaseUntil.After(time.Now()) {
+	if !assessmentCanResume(item, recovery) {
 		return Receipt{}, ErrConflict
 	}
 	if err = s.starter.Learning.ResumeAssessmentProposalTx(ctx, tx, task); err != nil {
@@ -142,6 +157,8 @@ func (s *Service) ResumeAssessment(ctx context.Context, actor identity.Credentia
 	item.Status = "queued"
 	item.Stage = "queued"
 	item.Reason = ""
+	item.callStarted = false
+	item.ResultUnknown = false
 	item.lease = nil
 	item.leaseUntil = nil
 	if err = s.save(ctx, tx, &item, "assessment_resumed"); err != nil {

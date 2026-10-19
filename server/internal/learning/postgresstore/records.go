@@ -200,7 +200,7 @@ func (s *Store) insertTypedRecords(ctx context.Context, tx pgx.Tx, request learn
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO learning_misconception_revisions(id,misconception_id,revision,node_revision_id,rubric_item_id,candidate_hash,candidate_text,status,source_evidence_ids,counter_evidence_ids,caused_by_evidence_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, recordID, value.ID, value.Revision, value.NodeRevisionID, value.RubricItemID, hash, value.Candidate, value.Status, value.SourceEvidenceIDs, value.CounterEvidenceIDs, value.CausedByEvidenceID, request.ReceivedAt); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO learning_misconception_revisions(id,misconception_id,revision,node_revision_id,rubric_item_id,candidate_hash,candidate_text,status,source_evidence_ids,counter_evidence_ids,caused_by_evidence_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::uuid[],'{}'),COALESCE($10::uuid[],'{}'),$11,$12)`, recordID, value.ID, value.Revision, value.NodeRevisionID, value.RubricItemID, hash, value.Candidate, value.Status, value.SourceEvidenceIDs, value.CounterEvidenceIDs, value.CausedByEvidenceID, request.ReceivedAt); err != nil {
 			return fmt.Errorf("insert misconception revision: %w", err)
 		}
 	}

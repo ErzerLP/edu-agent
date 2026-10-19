@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
@@ -172,7 +171,16 @@ func (s *Service) exerciseViewTx(ctx context.Context, tx pgx.Tx, actor identity.
 			v.Assessment.Version = m.Version
 			v.Assessment.Reason = m.Reason
 			v.Assessment.ResultUnknown = m.ResultUnknown
-			v.Assessment.CanResume = task.DeviceID == actor.Device.ID && m.BodyAvailable && time.Now().Before(m.ExpiresAt) && !m.ResultUnknown && (m.Status == "paused_budget" || m.Status == "failed" && m.Reason == "context_changed")
+			if m.Status == "failed" || m.Status == "paused_budget" {
+				recovery, err := store.InspectAssessmentTx(ctx, tx, task)
+				if err != nil {
+					return PracticeView{}, err
+				}
+				if recovery.ProposalStatus == "ready" && recovery.OperationStatus == "" {
+					v.Assessment.ResultUnknown = false
+				}
+				v.Assessment.CanResume = task.DeviceID == actor.Device.ID && assessmentCanResume(item, recovery)
+			}
 		}
 	}
 	return v, nil

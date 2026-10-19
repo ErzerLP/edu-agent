@@ -51,6 +51,9 @@ func (s *Store) PublishStudioJobTx(ctx context.Context, tx pgx.Tx, actor identit
 	if j.Status != "summarizing" || j.Input.Summary == nil || j.TotalUnits == 0 || j.CompletedUnits != j.TotalUnits {
 		return StudioRevision{}, ErrConflict
 	}
+	if j.Kind == "quiz" {
+		return s.publishStudioQuizJobTx(ctx, tx, actor, j, operation)
+	}
 	body := StudioBody{Schema: 2, Title: j.Plan.Title, SourceManifest: &j.Input.Manifest, Citations: []StudioCitation{}, Coverage: j.Plan.Coverage, InputFingerprint: j.Plan.InputFingerprint, Summary: j.Input.Summary}
 	counts := map[string]int{}
 	for after := 0; ; {

@@ -4004,15 +4004,22 @@ export interface components {
             operation_id: string;
             privacy_generation: number;
             /** @enum {string} */
-            kind: "guide" | "brief" | "note";
+            kind: "guide" | "brief" | "note" | "quiz";
             source_selection: {
                 /** @enum {string} */
                 mode: "items";
                 items: components["schemas"]["SourceIdentity"][];
             };
-            /** @description 当前方向版本，尚未设置方向时为 0 */
+            /** @description 当前方向版本；测验必须大于 0，其他类型尚未设置方向时为 0 */
             direction_version: number;
             focus?: string;
+            /** @description 仅 quiz 使用，默认 3 题；修改规划后以确认题数为准 */
+            question_count?: number;
+            /**
+             * @description 仅 quiz 使用；未指定时依据方向和学习记录安排
+             * @enum {string}
+             */
+            difficulty?: "easy" | "medium" | "hard";
             /** Format: uuid */
             artifact_id?: string;
             expected_artifact_version?: number;
@@ -4071,6 +4078,16 @@ export interface components {
             id: string;
             topic: string;
             objective: string;
+            /**
+             * @description quiz 规划及单元必有，两类均使用开放式文字作答
+             * @enum {string}
+             */
+            question_type?: "short_answer" | "explanation";
+            /**
+             * @description quiz 规划及单元必有
+             * @enum {string}
+             */
+            difficulty?: "easy" | "medium" | "hard";
             chapters: components["schemas"]["StudioPlanChapter"][];
             unit_count: number;
         };
@@ -4103,7 +4120,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            kind: "guide" | "brief" | "note";
+            kind: "guide" | "brief" | "note" | "quiz";
             version: number;
             privacy_generation: number;
             /**
@@ -4149,7 +4166,18 @@ export interface components {
             run_id?: string;
             topic: string;
             objective: string;
+            /**
+             * @description quiz 规划及单元必有，两类均使用开放式文字作答
+             * @enum {string}
+             */
+            question_type?: "short_answer" | "explanation";
+            /**
+             * @description quiz 规划及单元必有
+             * @enum {string}
+             */
+            difficulty?: "easy" | "medium" | "hard";
             input_fingerprint: string;
+            /** @description 仅文档单元返回正文；quiz 单元只返回进度元数据，正式题目从发布后的 quiz 读取 */
             body?: components["schemas"]["StudioBody"];
         };
         StudioUnitPage: {

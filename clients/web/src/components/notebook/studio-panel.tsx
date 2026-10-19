@@ -115,7 +115,7 @@ export function StudioPanel({
     )
   if (generation)
     return canGenerate ? (
-      generation.kind !== 'quiz' ? (
+      generation.kind !== 'quiz' || !generation.base || !!generation.base.body.quiz?.direction ? (
         <StudioPlanCreator
           key={generation.base?.artifact_id ?? generation.kind}
           space={space}

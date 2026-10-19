@@ -8,11 +8,13 @@ import (
 )
 
 type StudioPlanSection struct {
-	ID        string                           `json:"id"`
-	Topic     string                           `json:"topic"`
-	Objective string                           `json:"objective"`
-	Chapters  []knowledge.SourceDirectoryEntry `json:"chapters"`
-	UnitCount int                              `json:"unit_count"`
+	ID           string                           `json:"id"`
+	Topic        string                           `json:"topic"`
+	Objective    string                           `json:"objective"`
+	Chapters     []knowledge.SourceDirectoryEntry `json:"chapters"`
+	UnitCount    int                              `json:"unit_count"`
+	QuestionType string                           `json:"question_type,omitempty"`
+	Difficulty   string                           `json:"difficulty,omitempty"`
 }
 type StudioPlan struct {
 	Revision         int64               `json:"revision"`
@@ -41,6 +43,10 @@ type StudioJobInput struct {
 	LearningState           learning.StudioLearningState `json:"learning_state"`
 	TutoringGeneration      int64                        `json:"tutoring_generation"`
 	Focus                   string                       `json:"focus"`
+	QuestionCount           int                          `json:"question_count,omitempty"`
+	Difficulty              string                       `json:"difficulty,omitempty"`
+	QuizGoalID              string                       `json:"quiz_goal_id,omitempty"`
+	Quiz                    *StudioQuiz                  `json:"quiz,omitempty"`
 	ArtifactID              string                       `json:"artifact_id,omitempty"`
 	ExpectedArtifactVersion int64                        `json:"expected_artifact_version,omitempty"`
 	Fingerprint             string                       `json:"fingerprint"`

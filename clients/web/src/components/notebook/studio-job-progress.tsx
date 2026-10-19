@@ -34,21 +34,30 @@ export function StudioJobProgress({
     void units.refetch()
   }, [job.completed_units, job.status])
   const active = ['queued', 'generating', 'summarizing'].includes(job.status)
+  const quiz = job.kind === 'quiz'
+  const unitLabel = quiz ? '题目' : '段落'
   const allDone = job.total_units > 0 && job.completed_units === job.total_units
   return (
     <section aria-label="生成进度">
       <p role="status" aria-live="polite">
         已完成 {job.completed_units}/{job.total_units}
+        {quiz ? ' 题' : ''}
       </p>
       <progress
-        aria-label="已完成段落"
+        aria-label={`已完成${unitLabel}`}
         value={job.completed_units}
         max={Math.max(1, job.total_units)}
       />
       {job.status !== 'completed' && (
-        <p className="hint">可查看已完成部分；全部段落及汇总完成后才发布产物。</p>
+        <p className="hint">
+          {quiz
+            ? '全部题目及汇总完成后才发布测验并开放作答。'
+            : '可查看已完成部分；全部段落及汇总完成后才发布产物。'}
+        </p>
       )}
-      {job.status === 'summarizing' && <p>正在整理总览、衔接和未覆盖范围…</p>}
+      {job.status === 'summarizing' && (
+        <p>{quiz ? '正在整理练习覆盖范围和建议作答顺序…' : '正在整理总览、衔接和未覆盖范围…'}</p>
+      )}
       {job.result_unknown && (
         <p className="hint">
           停止前的调用结果未知，迟到正文不会保存。
@@ -58,10 +67,10 @@ export function StudioJobProgress({
       {job.status === 'failed' && (
         <p role="alert">
           {job.reason === 'studio_version_conflict'
-            ? '目标产物已有新版本。已保留全部段落，可以另存为新产物。'
+            ? `目标产物已有新版本。已保留全部${unitLabel}，可以另存为新产物。`
             : allDone
-              ? '汇总或发布未完成，已保留全部段落。'
-              : '当前段落未完成，已保留之前通过核验的部分。'}
+              ? `汇总或发布未完成，已保留全部${unitLabel}。`
+              : `当前${unitLabel}未完成，已保留之前通过核验的部分。`}
         </p>
       )}
       {canWrite && (
@@ -94,7 +103,7 @@ export function StudioJobProgress({
       {units.error ? (
         <ErrorState error={units.error} retry={() => void units.refetch()} />
       ) : (
-        <ol aria-label="生成段落">
+        <ol aria-label={`生成${unitLabel}`}>
           {units.data?.pages
             .flatMap((page) => page.items)
             .map((unit) => (
@@ -117,11 +126,13 @@ export function StudioJobProgress({
                 ) : (
                   <p>
                     {unit.ordinal}. {unit.topic} ·{' '}
-                    {unit.status === 'running' && active
-                      ? '正在生成'
-                      : unit.status === 'failed'
-                        ? '未通过生成或核验'
-                        : '待生成'}
+                    {unit.status === 'succeeded'
+                      ? '已完成'
+                      : unit.status === 'running' && active
+                        ? '正在生成'
+                        : unit.status === 'failed'
+                          ? '未通过生成或核验'
+                          : '待生成'}
                   </p>
                 )}
               </li>
@@ -134,7 +145,7 @@ export function StudioJobProgress({
           disabled={units.isFetchingNextPage}
           onClick={() => void units.fetchNextPage()}
         >
-          更多段落
+          更多{unitLabel}
         </Button>
       )}
     </section>

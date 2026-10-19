@@ -127,7 +127,7 @@ test('旧固定结构 API 生成指南和简报、引用定位、刷新重开、
   await expect(studio.getByText(/已保存第 1 版/)).toBeVisible()
 })
 
-test('C4 无手选目标生成测验、共享卡片作答与反馈、改方向后继续旧题组', async ({ page }) => {
+test('旧方向测验 API、共享卡片作答与反馈、改方向后继续旧题组', async ({ page }) => {
   test.setTimeout(120000)
   page.setDefaultTimeout(15000)
   await configureStudioModel(page)
@@ -152,14 +152,31 @@ test('C4 无手选目标生成测验、共享卡片作答与反馈、改方向�
   await expect(studio.getByRole('button', { name: /^测验/ })).toBeEnabled()
   await sources.getByRole('checkbox', { name: /examples.md/ }).uncheck()
   const outgoing: any[] = []
-  page.on('request', (r) => {
-    if (r.url().endsWith('/studio/generations') && r.method() === 'POST')
-      outgoing.push(r.postDataJSON())
-  })
-  await studio.getByRole('button', { name: /^测验/ }).click()
-  await expect(studio).toContainText('学习方向：理解偶数与整除')
-  await expect(studio.getByRole('combobox')).toHaveCount(0)
-  await studio.getByRole('button', { name: '开始生成测验', exact: true }).click()
+  // 新 Web 使用题目规划；此流程继续验证 legacy API 发布的旧测验。
+  const generateLegacyQuiz = async (directionVersion: number, artifactId: string | null = null) => {
+    const catalog = await webAPI(page, 'GET', '/v1/knowledge/sources', undefined, space.id)
+    const source = catalog.items.find((item: any) => item.path === (directionVersion === 1 ? 'even.md' : 'examples.md'))
+    const { collection_id, revision_id, document_id, document_revision_id } = source
+    const session = await webAPI(page, 'GET', '/v1/web/session')
+    const body = {
+      operation_id: randomUUID(), privacy_generation: session.generation, kind: 'quiz',
+      mode: 'direction', direction_version: directionVersion, goal_id: null, goal_version: 0,
+      artifact_id: artifactId, expected_version: artifactId ? 1 : 0,
+      source_selection: { mode: 'items', items: [{ collection_id, revision_id, document_id, document_revision_id }] },
+    }
+    outgoing.push(body)
+    const receipt = await webAPI(page, 'POST', '/v1/learning/studio/generations', body, space.id)
+    const back = studio.getByRole('button', { name: '返回 Studio', exact: true })
+    if (await back.count()) await back.click()
+    const runs = await webAPI(page, 'GET', '/v1/learning/runs?task_kind=studio', undefined, space.id)
+    const index = runs.items.findIndex((run: any) => run.run_id === receipt.run_id)
+    expect(index).toBeGreaterThanOrEqual(0)
+    await studio.getByLabel('生成记录', { exact: true }).click()
+    const buttons = studio.getByRole('region', { name: 'Studio 生成记录', exact: true }).getByRole('button')
+    await expect(buttons).toHaveCount(runs.items.length)
+    await buttons.nth(index).click()
+  }
+  await generateLegacyQuiz(1)
   await studio.getByRole('button', { name: '打开已保存产物' }).click()
   expect(outgoing[0]).toMatchObject({
     kind: 'quiz',
@@ -223,8 +240,7 @@ test('C4 无手选目标生成测验、共享卡片作答与反馈、改方向�
   await settings.getByLabel('学习方向', { exact: true }).fill('用新例子学习整除')
   await settings.getByRole('button', { name: '保存设置', exact: true }).click()
   await expect(settings).not.toBeVisible()
-  await studio.getByRole('button', { name: '重新生成新版本', exact: true }).click()
-  await studio.getByRole('button', { name: '开始生成测验', exact: true }).click()
+  await generateLegacyQuiz(2, id)
   await studio.getByRole('button', { name: '打开已保存产物' }).click()
   expect(outgoing[1]).toMatchObject({
     mode: 'direction',

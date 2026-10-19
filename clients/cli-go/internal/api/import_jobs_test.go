@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,12 +40,18 @@ func TestImportJobTransportPreservesSingleFileBudgetAndDoesNotRetryUnknown(t *te
 		}
 	}))
 	defer server.Close()
-	c := NewClient(server.URL, "token", time.Second, nil)
-	if _, err := c.RunImportJob(t.Context(), ImportJobCommand{ID: id, Action: "upload", Document: &ImportDocument{Path: "file.md", Markdown: strings.Repeat("<", 4<<20)}}); err != nil {
+	// 等待真实 HTTP 响应；期限只防止整个测试挂死，不约束大请求的处理速度。
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	c := NewClient(server.URL, "token", time.Until(deadline), nil)
+	if _, err := c.RunImportJob(ctx, ImportJobCommand{ID: id, Action: "upload", Document: &ImportDocument{Path: "file.md", Markdown: strings.Repeat("<", 4<<20)}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.RunImportJob(t.Context(), ImportJobCommand{ID: id, Action: "continue"}); err == nil {
-		t.Fatal("丢失响应被视为成功")
+	_, err := c.RunImportJob(ctx, ImportJobCommand{ID: id, Action: "continue"})
+	var transportErr *TransportError
+	if !errors.As(err, &transportErr) || transportErr.Category != "connection_failed" {
+		t.Fatalf("丢失响应应报告连接断开，不能由超时替代: %v", err)
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("未知结果自动重发: %d", calls.Load())

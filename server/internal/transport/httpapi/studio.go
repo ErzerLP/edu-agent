@@ -35,6 +35,8 @@ func (a *API) mountStudio(r chi.Router) {
 	write := r.With(a.requireScope("learning:write"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning))
 	read.Get("/v1/learning/studio/artifacts", a.studioList)
 	read.Get("/v1/learning/studio/artifacts/{artifactID}", a.studioGet)
+	read.Get("/v1/learning/studio/artifacts/{artifactID}/sections", a.studioSections)
+	r.With(a.requireScope("learning:read"), a.requireScope("learning:write"), a.requireScope("knowledge:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge)).Put("/v1/learning/studio/artifacts/{artifactID}/sections/{sectionID}", a.studioSectionSave)
 	read.Get("/v1/learning/studio/artifacts/{artifactID}/revisions", a.studioHistory)
 	read.Get("/v1/learning/studio/operations/{operationID}", a.studioOperation)
 	write.Post("/v1/learning/studio/artifacts", a.studioSave)
@@ -121,6 +123,15 @@ func (a *API) studioCitation(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if result.Body.Schema == 2 {
+		citation, e := a.learningContent.StudioSectionCitation(r.Context(), actor, result.ArtifactID, result.Version, chi.URLParam(r, "citationID"))
+		if e != nil {
+			mentorFailure(w, r, e)
+			return
+		}
+		writeJSON(w, 200, citation)
+		return
+	}
 	mentorFailure(w, r, learningcontent.ErrNotFound)
 }
 func (a *API) studioList(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +174,9 @@ func (a *API) studioGet(w http.ResponseWriter, r *http.Request) {
 	result, err := a.learningContent.StudioGet(r.Context(), actor, chi.URLParam(r, "artifactID"), version)
 	if err != nil {
 		mentorFailure(w, r, err)
+		return
+	}
+	if !studioSchemaAccepted(w, r, result) {
 		return
 	}
 	writeJSON(w, 200, result)
@@ -223,6 +237,9 @@ func (a *API) studioOperation(w http.ResponseWriter, r *http.Request) {
 		mentorFailure(w, r, err)
 		return
 	}
+	if !studioSchemaAccepted(w, r, result) {
+		return
+	}
 	writeJSON(w, 200, result)
 }
 func (a *API) studioImportCandidate(w http.ResponseWriter, r *http.Request) {
@@ -244,14 +261,7 @@ func (a *API) studioImportCandidate(w http.ResponseWriter, r *http.Request) {
 	}
 	actor, _ := credentialFromContext(r.Context())
 	result, err := service.PrepareNoteSource(r.Context(), func(ctx context.Context, id string, version int64) (knowledge.SavedNote, error) {
-		note, e := a.learningContent.StudioGet(ctx, actor, id, version)
-		if e != nil {
-			return knowledge.SavedNote{}, e
-		}
-		if note.Kind != "note" {
-			return knowledge.SavedNote{}, learningcontent.ErrInvalid
-		}
-		return knowledge.SavedNote{Title: note.Body.Title, Markdown: note.Body.Markdown}, nil
+		return a.learningContent.StudioNoteSource(ctx, actor, id, version)
 	}, chi.URLParam(r, "artifactID"), input.Version)
 	if err != nil {
 		if !contentFailure(w, r, err) {

@@ -24,6 +24,19 @@ type StudioSliceReader interface {
 
 func (s *Store) ConfigureStudioSources(reader StudioSourceReader) { s.studioSources = reader }
 
+// A staged document does not create a goal. When revising a legacy artifact it
+// retains that artifact's immutable association, including an optional goal.
+func (s *Store) StudioDocumentTargetTx(ctx context.Context, tx pgx.Tx, c StudioTarget) (StudioTarget, error) {
+	if c.ArtifactID == nil {
+		return c, nil
+	}
+	err := tx.QueryRow(ctx, `SELECT goal_id FROM learning_studio_artifacts WHERE id=$1 AND space_id=$2 AND privacy_generation=$3`, *c.ArtifactID, learningspace.Scope(ctx), c.Generation).Scan(&c.GoalID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c, ErrNotFound
+	}
+	return c, err
+}
+
 type StudioTarget struct {
 	ArtifactID      *string `json:"artifact_id"`
 	ExpectedVersion int64   `json:"expected_version"`
@@ -52,7 +65,7 @@ func (c StudioTarget) validate() error {
 		id, err := uuid.Parse(value)
 		return err == nil && id != uuid.Nil && id.String() == value
 	}
-	if c.Generation < 1 || studioFields(c.Kind) == nil || c.ExpectedVersion < 0 || (c.ArtifactID == nil) != (c.ExpectedVersion == 0) || c.ArtifactID != nil && !canonicalID(*c.ArtifactID) || c.GoalID != nil && !canonicalID(*c.GoalID) {
+	if c.Generation < 1 || (studioFields(c.Kind) == nil && c.Kind != "note") || c.ExpectedVersion < 0 || (c.ArtifactID == nil) != (c.ExpectedVersion == 0) || c.ArtifactID != nil && !canonicalID(*c.ArtifactID) || c.GoalID != nil && !canonicalID(*c.GoalID) {
 		return ErrInvalid
 	}
 	return nil
@@ -70,6 +83,15 @@ func (s *Store) studioSourcesTx(ctx context.Context, tx pgx.Tx, token string, bo
 	}
 	if body.SourceManifest == nil {
 		return ErrInvalid
+	}
+	if body.Schema == 2 && (body.Summary != nil || body.UserAuthored) {
+		reader, ok := s.studioSources.(interface {
+			ValidateSourceManifestTx(context.Context, pgx.Tx, knowledge.SourceManifest) error
+		})
+		if !ok {
+			return ErrUnavailable
+		}
+		return reader.ValidateSourceManifestTx(ctx, tx, *body.SourceManifest)
 	}
 	sources := []knowledge.SourceDetail{}
 	legacy := false
@@ -154,6 +176,9 @@ func (s *Store) StudioTargetTx(ctx context.Context, tx pgx.Tx, actor identity.Cr
 
 // The caller commits both this revision and the terminal run state in one tx.
 func (s *Store) StudioPublishTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, operation string, c StudioTarget, body StudioBody) (StudioRevision, error) {
+	return s.studioPublishTx(ctx, tx, actor, operation, c, body, fingerprint(c))
+}
+func (s *Store) studioPublishTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, operation string, c StudioTarget, body StudioBody, hash string) (StudioRevision, error) {
 	if err := s.StudioTargetTx(ctx, tx, actor, c); err != nil {
 		return StudioRevision{}, err
 	}
@@ -187,6 +212,6 @@ func (s *Store) StudioPublishTx(ctx context.Context, tx pgx.Tx, actor identity.C
 	if err = tx.QueryRow(ctx, `INSERT INTO learning_studio_revisions(artifact_id,version,actor_device_id,ciphertext) VALUES($1,$2,$3,$4) RETURNING created_at`, r.ArtifactID, r.Version, r.ActorDeviceID, raw).Scan(&r.CreatedAt); err != nil {
 		return r, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO learning_studio_operations(device_id,operation_id,artifact_id,version,request_hash) VALUES($1,$2,$3,$4,decode($5,'hex'))`, actor.Device.ID, operation, r.ArtifactID, r.Version, fingerprint(c))
+	_, err = tx.Exec(ctx, `INSERT INTO learning_studio_operations(device_id,operation_id,artifact_id,version,request_hash) VALUES($1,$2,$3,$4,decode($5,'hex'))`, actor.Device.ID, operation, r.ArtifactID, r.Version, hash)
 	return r, err
 }

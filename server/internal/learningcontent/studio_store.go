@@ -57,8 +57,17 @@ func (s *Store) studioRead(ctx context.Context, tx pgx.Tx, id string, version, g
 		return StudioRevision{}, ErrUnavailable
 	}
 	defer clear(plain)
-	if json.Unmarshal(plain, &r.Body) != nil || r.Body.Schema != 1 {
+	if json.Unmarshal(plain, &r.Body) != nil || (r.Body.Schema != 1 && r.Body.Schema != 2) {
 		return StudioRevision{}, ErrUnsupported
+	}
+	if r.Body.Schema == 2 {
+		if r.Body.Summary == nil || len(r.Body.Sections) == 0 || r.Kind == "quiz" {
+			return StudioRevision{}, ErrUnsupported
+		}
+		if err = s.studioSourcesTx(ctx, tx, token, r.Body); err != nil {
+			return StudioRevision{}, err
+		}
+		return r, nil
 	}
 	if r.Kind == "note" {
 		if r.Body.SourceManifest != nil || len(r.Body.Citations) > 0 || r.Body.Guide != nil || r.Body.Brief != nil || r.Body.Quiz != nil {
@@ -155,7 +164,7 @@ func (s *Store) StudioSave(ctx context.Context, actor identity.Credential, id st
 		if e != nil {
 			return r, e
 		}
-		if previous.Kind != "note" {
+		if previous.Kind != "note" || previous.Body.Schema != 1 {
 			return r, ErrInvalid
 		}
 		if (previous.GoalID == nil) != (c.GoalID == nil) || previous.GoalID != nil && *previous.GoalID != uuid.MustParse(*c.GoalID).String() {

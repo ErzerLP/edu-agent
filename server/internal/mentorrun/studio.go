@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/edu-agent/edu-agent/packages/agentcore"
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
@@ -38,6 +37,9 @@ type StudioState struct {
 }
 
 func (c StudioGenerate) Validate() error {
+	if c.Kind == "note" {
+		return ErrInvalid
+	}
 	if c.Mode == "direction" {
 		if c.StudioTarget.ValidateDirection() != nil || c.DirectionVersion < 1 || c.GoalVersion != 0 {
 			return ErrInvalid
@@ -115,18 +117,28 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 		}
 		request = StudioQuizModelRequest(goal, sources, native)
 	}
-	estimateRequest := modelclient.Request{MaxTokens: h.limits.OutputTokens}
-	for _, message := range request.Messages {
-		estimateRequest.Messages = append(estimateRequest.Messages, modelclient.Message{Role: string(message.Role), Content: message.Content})
-	}
-	// Native schemas are also part of the prompt, so account for their wire copy.
-	estimate := agentcore.NewTokenEstimator().EstimateRequest(estimateRequest)
-	if native {
-		estimate += len(request.Schema)
-	}
-	h.reserve = estimate + h.limits.OutputTokens + 256
-	if h.reserve > h.limits.ContextTokens {
-		return ErrLimit
+	// The legacy action authorizes fixed fields only. Fit its selected fragment
+	// pool together with schema/goal/output, keeping its schema 1 result bounded.
+	for {
+		h.reserve = h.studioPlanCost(request)
+		if h.reserve <= h.limits.ContextTokens {
+			break
+		}
+		limit := messageCost([]modelclient.Message{{Role: "user", Content: request.Messages[1].Content}}) / 2
+		if limit < 64 {
+			return ErrContextConfiguration
+		}
+		h.sourceLimit = &limit
+		h.sources = nil
+		sources, err = h.selectedMaterial(ctx)
+		if err != nil {
+			return err
+		}
+		if len(sources) == 0 {
+			return ErrContextConfiguration
+		}
+		material, _ := json.Marshal(sources)
+		request.Messages[1].Content = string(material)
 	}
 	response, callErr := client.Chat(ctx, request)
 	if h.transportErr != nil {
@@ -159,6 +171,13 @@ func (h *executionHost) generateStudio(ctx context.Context) error {
 		return &llm.Error{Category: llm.ErrorSchemaMismatch}
 	}
 	body.Model = model
+	complete, err := h.studioLegacyCoverage(ctx, sources)
+	if err != nil {
+		return err
+	}
+	if !complete {
+		body.Coverage = "partial"
+	}
 	if body.Quiz != nil {
 		body.Quiz.GoalVersion = h.body.Studio.Request.GoalVersion
 		if h.body.Studio.Request.Mode == "direction" {

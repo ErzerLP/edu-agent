@@ -420,6 +420,7 @@ func RedactTx(ctx context.Context, tx pgx.Tx) error {
 		`DELETE FROM learning_mentor_runs WHERE studio_job_id IS NOT NULL`,
 		`DELETE FROM learning_mentor_sessions WHERE studio_job_id IS NOT NULL`,
 		`DELETE FROM learning_studio_jobs`,
+		`DELETE FROM learning_studio_section_revisions`,
 	} {
 		if _, err := tx.Exec(ctx, statement); err != nil {
 			return err
@@ -438,7 +439,7 @@ func Remaining(ctx context.Context, db interface {
 }) (int64, error) {
 	var count int64
 	var jobs int64
-	if err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_studio_jobs)+(SELECT count(*) FROM learning_studio_plans)+(SELECT count(*) FROM learning_studio_plan_messages)+(SELECT count(*) FROM learning_studio_job_operations)`).Scan(&jobs); err != nil {
+	if err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_studio_jobs)+(SELECT count(*) FROM learning_studio_plans)+(SELECT count(*) FROM learning_studio_plan_messages)+(SELECT count(*) FROM learning_studio_job_operations)+(SELECT count(*) FROM learning_studio_units)+(SELECT count(*) FROM learning_studio_section_revisions)`).Scan(&jobs); err != nil {
 		return 0, err
 	}
 	err := db.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_assessment_tasks)+(SELECT count(*) FROM learning_exercise_help)+(SELECT count(*) FROM learning_exercises)+(SELECT count(*) FROM learning_studio_quiz_operations)+(SELECT count(*) FROM learning_studio_quiz_questions)+(SELECT count(*) FROM learning_studio_artifacts)+(SELECT count(*) FROM learning_studio_revisions)+(SELECT count(*) FROM learning_studio_operations)+(SELECT count(*) FROM learning_content_artifacts)+(SELECT count(*) FROM learning_content_revisions)+(SELECT count(*) FROM learning_content_operations)+(SELECT count(*) FROM learning_content_preferences)`).Scan(&count)

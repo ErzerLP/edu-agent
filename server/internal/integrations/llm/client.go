@@ -21,17 +21,18 @@ import (
 type ErrorCategory string
 
 const (
-	ErrorUnauthorized         ErrorCategory = "unauthorized"
-	ErrorRateLimited          ErrorCategory = "rate_limited"
-	ErrorUpstream             ErrorCategory = "upstream_error"
-	ErrorTimeout              ErrorCategory = "timeout"
-	ErrorUnavailable          ErrorCategory = "unavailable"
-	ErrorInvalidResponse      ErrorCategory = "invalid_response"
-	ErrorSchemaMismatch       ErrorCategory = "schema_mismatch"
-	ErrorIncompatible         ErrorCategory = "incompatible"
-	ErrorInvalidRequest       ErrorCategory = "invalid_request"
-	ErrorOutputBudgetExceeded ErrorCategory = "output_budget_exceeded"
-	ErrorResponseNotCompleted ErrorCategory = "response_not_completed"
+	ErrorUnauthorized          ErrorCategory = "unauthorized"
+	ErrorRateLimited           ErrorCategory = "rate_limited"
+	ErrorUpstream              ErrorCategory = "upstream_error"
+	ErrorTimeout               ErrorCategory = "timeout"
+	ErrorUnavailable           ErrorCategory = "unavailable"
+	ErrorInvalidResponse       ErrorCategory = "invalid_response"
+	ErrorSchemaMismatch        ErrorCategory = "schema_mismatch"
+	ErrorIncompatible          ErrorCategory = "incompatible"
+	ErrorInvalidRequest        ErrorCategory = "invalid_request"
+	ErrorOutputBudgetExceeded  ErrorCategory = "output_budget_exceeded"
+	ErrorResponseNotCompleted  ErrorCategory = "response_not_completed"
+	ErrorContextWindowExceeded ErrorCategory = "context_window_exceeded"
 )
 
 type Error struct {
@@ -253,7 +254,15 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
+		raw, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		var rejected struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if (response.StatusCode == 400 || response.StatusCode == 413) && json.Unmarshal(raw, &rejected) == nil && (rejected.Error.Code == "context_length_exceeded" || rejected.Error.Code == "context_window_exceeded") {
+			return ChatResult{}, &Error{Category: ErrorContextWindowExceeded, Status: response.StatusCode}
+		}
 		return ChatResult{}, classifyHTTPError(response.StatusCode)
 	}
 	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))

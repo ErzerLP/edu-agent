@@ -24,6 +24,11 @@ type StudioBody struct {
 	Guide            *StudioGuide              `json:"guide,omitempty"`
 	Brief            *StudioBrief              `json:"brief,omitempty"`
 	Quiz             *StudioQuiz               `json:"quiz,omitempty"`
+	Claims           []StudioClaim             `json:"claims,omitempty"`
+	Sections         []StudioSectionInfo       `json:"sections,omitempty"`
+	Summary          *StudioSummary            `json:"summary,omitempty"`
+	UserAuthored     bool                      `json:"user_authored,omitempty"`
+	Uncovered        []string                  `json:"uncovered,omitempty"`
 }
 type StudioCitation struct {
 	ID             string                   `json:"id"`

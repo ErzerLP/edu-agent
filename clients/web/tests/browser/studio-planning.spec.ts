@@ -63,7 +63,8 @@ test('Studio 大纲生成、多轮修改、拖动排序、确认与刷新恢复'
   await page.mouse.up()
   await expect(outline.getByRole('listitem').first()).toContainText('偶数的例子')
   await studio.getByRole('button', { name: '确认大纲', exact: true }).click()
-  await expect(studio.getByText('待生成', { exact: true })).toBeVisible()
+  await studio.getByRole('button', { name: '停止生成', exact: true }).click()
+  await expect(studio.getByText('已停止', { exact: true })).toBeVisible()
   await expect(studio.getByRole('button', { name: '打开已保存产物' })).toHaveCount(0)
   const confirmed = await webAPI(
     page,
@@ -72,7 +73,7 @@ test('Studio 大纲生成、多轮修改、拖动排序、确认与刷新恢复'
     undefined,
     space.id,
   )
-  expect(confirmed.status).toBe('queued')
+  expect(confirmed.status).toBe('stopped')
   expect(confirmed.confirmed_plan_revision).toBe(confirmed.active_plan_revision)
   expect(confirmed.plan.sections.map((section: any) => section.id)).toEqual([
     'examples',
@@ -87,9 +88,9 @@ test('Studio 大纲生成、多轮修改、拖动排序、确认与刷新恢复'
   await page.reload()
   await studio
     .getByRole('region', { name: '生成任务', exact: true })
-    .getByRole('button', { name: /偶数学习大纲.*待生成/ })
+    .getByRole('button', { name: /偶数学习大纲.*已停止/ })
     .click()
-  await expect(studio.getByText('待生成', { exact: true })).toBeVisible()
+  await expect(studio.getByText('已停止', { exact: true })).toBeVisible()
   await expect(outline.getByRole('listitem').first()).toContainText('偶数的例子')
   await expect(studio.getByText('定义部分再简洁一点', { exact: true })).toBeVisible()
 })

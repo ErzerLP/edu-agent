@@ -17,6 +17,7 @@ func (a *API) mountStudioJobs(r chi.Router) {
 	read.Get("/v1/learning/studio/focus", a.studioFocus)
 	read.Get("/v1/learning/studio/jobs", a.studioJobs)
 	read.Get("/v1/learning/studio/jobs/{jobID}", a.studioJob)
+	read.Get("/v1/learning/studio/jobs/{jobID}/units", a.studioUnits)
 	write.Post("/v1/learning/studio/jobs", a.studioJobCreate)
 	write.Post("/v1/learning/studio/jobs/{jobID}/plan-messages", a.studioPlanCommand("message"))
 	write.Patch("/v1/learning/studio/jobs/{jobID}/plan", a.studioPlanCommand("patch"))

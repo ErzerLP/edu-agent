@@ -20,12 +20,40 @@ const studioReceiptSchema = z.object({
 })
 const directionSchema = z.object({ id: z.uuid(), version, goal_revision_id: z.uuid() }).strict()
 const assessmentPolicySchema = z
-  .object({ configuration: z.string().min(1), requests: z.number().int().nonnegative(), tokens: z.number().int().nonnegative() })
+  .object({
+    configuration: z.string().min(1),
+    requests: z.number().int().nonnegative(),
+    tokens: z.number().int().nonnegative(),
+  })
   .strict()
 export const studioClaimSchema = z
   .object({ text: z.string().min(1).max(1500), citations: z.array(z.string()).min(1).max(10) })
   .strict()
 const claims = z.array(studioClaimSchema).min(1).max(8)
+const summaryClaimSchema = z.object({ id: z.string(), text: z.string() })
+export const studioSummarySchema = z.object({
+  overview: z.array(summaryClaimSchema),
+  transitions: z.array(summaryClaimSchema),
+  uncovered: z.array(z.string()),
+})
+export const studioSectionBodySchema = z.object({
+  schema: z.literal(2),
+  title: z.string(),
+  markdown: z.string(),
+  citations: z.array(mentorCitationSchema),
+  source_manifest: sourceManifestSchema,
+  claims: z.array(studioClaimSchema).optional(),
+  user_authored: z.boolean().optional(),
+  uncovered: z.array(z.string()).optional(),
+  coverage: z.enum(['complete', 'partial']).optional(),
+})
+export const studioSectionSchema = z.object({
+  id: z.string(),
+  section_id: z.string(),
+  ordinal: version,
+  body: studioSectionBodySchema,
+})
+export type StudioSection = z.infer<typeof studioSectionSchema>
 export const studioGuideSchema = z
   .object({ key_points: claims, terms: claims, learning_order: claims, misconceptions: claims })
   .strict()
@@ -162,7 +190,7 @@ export const studioRevisionSchema = z
     actor_device_id: z.uuid(),
     created_at: z.string(),
     body: z.object({
-      schema: z.literal(1),
+      schema: z.union([z.literal(1), z.literal(2)]),
       title: z.string(),
       markdown: z.string(),
       source_manifest: sourceManifestSchema.optional(),
@@ -173,9 +201,23 @@ export const studioRevisionSchema = z
       guide: studioGuideSchema.optional(),
       brief: studioBriefSchema.optional(),
       quiz: studioQuizSchema.optional(),
+      summary: studioSummarySchema.optional(),
+      sections: z
+        .array(z.object({ id: z.string(), title: z.string(), unit_count: version }))
+        .optional(),
     }),
   })
   .superRefine((r, ctx) => {
+    if (r.body.schema === 2) {
+      if (
+        !r.body.summary ||
+        !r.body.sections?.length ||
+        !r.body.source_manifest ||
+        r.kind === 'quiz'
+      )
+        ctx.addIssue({ code: 'custom', message: 'Invalid section document' })
+      return
+    }
     if (r.kind === 'note') {
       if (
         r.body.guide ||
@@ -256,9 +298,29 @@ export function noteSourceItem(candidate: NoteSourceCandidate): ScanItem {
   }
 }
 export function studioAPI(session: Session, spaceId: string) {
-  const header = { 'X-Learning-Space-ID': spaceId }
+  const header = { 'X-Learning-Space-ID': spaceId, 'X-Studio-Body-Schema': '2' as const }
   const api = learningClient(session, spaceId)
   return {
+    sections: (id: string, savedVersion: number, cursor?: string, signal?: AbortSignal) =>
+      unwrap(
+        api.GET('/v1/learning/studio/artifacts/{artifactID}/sections', {
+          params: { header, path: { artifactID: id }, query: { version: savedVersion, cursor } },
+          signal,
+        }),
+        z.object({ items: z.array(studioSectionSchema), next_cursor: z.string().optional() }),
+      ),
+    saveSection: (
+      id: string,
+      sectionID: string,
+      body: components['schemas']['StudioSectionSave'],
+    ) =>
+      unwrap(
+        api.PUT('/v1/learning/studio/artifacts/{artifactID}/sections/{sectionID}', {
+          params: { header, path: { artifactID: id, sectionID } },
+          body,
+        }),
+        studioRevisionSchema,
+      ),
     exercise: (id: string, signal?: AbortSignal) =>
       unwrap(
         api.GET('/v1/learning/studio/exercises/{exerciseID}', {

@@ -396,6 +396,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/studio/jobs/{jobID}/units": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分页查看已确认大纲的单元与已核验部分 */
+        get: operations["listStudioUnits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}/sections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按已保存版本分页读取分段产物 */
+        get: operations["listStudioSections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/studio/artifacts/{artifactID}/sections/{sectionID}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** 显式保存笔记的一部分为新版本 */
+        put: operations["saveStudioSection"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}": {
         parameters: {
             query?: never;
@@ -3993,8 +4044,11 @@ export interface components {
             operation_id: string;
             expected_version: number;
             plan_revision: number;
-            /** @enum {string} */
-            kind: "retry" | "delete";
+            /**
+             * @description save_as_new 仅解决全部完成后的发布冲突；不提供采用部分结果
+             * @enum {string}
+             */
+            kind: "retry" | "delete" | "stop" | "resume" | "save_as_new" | "revise";
         };
         StudioPlanChapter: {
             /** Format: uuid */
@@ -4053,10 +4107,20 @@ export interface components {
             version: number;
             privacy_generation: number;
             /**
-             * @description queued 仅表示待生成，不能作为已完成产物展示
+             * @description 完成数来自已核验并保存的单元；全部完成并汇总成功才发布
              * @enum {string}
              */
-            status: "planning" | "awaiting_confirmation" | "queued" | "failed" | "invalidated" | "deleted";
+            status: "planning" | "awaiting_confirmation" | "queued" | "generating" | "summarizing" | "stopping" | "stopped" | "completed" | "failed" | "invalidated" | "deleted";
+            completed_units: number;
+            total_units: number;
+            result_unknown?: boolean;
+            cost_unknown?: boolean;
+            current_unit?: string;
+            result?: {
+                /** Format: uuid */
+                artifact_id: string;
+                version: number;
+            };
             active_plan_revision: number;
             confirmed_plan_revision: number;
             plan?: components["schemas"]["StudioPlan"];
@@ -4073,6 +4137,53 @@ export interface components {
         StudioJobPage: {
             items: components["schemas"]["StudioJob"][];
             next_cursor?: string;
+        };
+        StudioUnit: {
+            id: string;
+            section_id: string;
+            ordinal: number;
+            /** @enum {string} */
+            status: "pending" | "running" | "succeeded" | "failed" | "stopped";
+            attempt: number;
+            /** Format: uuid */
+            run_id?: string;
+            topic: string;
+            objective: string;
+            input_fingerprint: string;
+            body?: components["schemas"]["StudioBody"];
+        };
+        StudioUnitPage: {
+            items: components["schemas"]["StudioUnit"][];
+            next_cursor?: string;
+        };
+        StudioSection: {
+            id: string;
+            section_id: string;
+            ordinal: number;
+            body: components["schemas"]["StudioBody"];
+        };
+        StudioSectionPage: {
+            items: components["schemas"]["StudioSection"][];
+            next_cursor?: string;
+        };
+        StudioSectionSave: {
+            /** Format: uuid */
+            operation_id: string;
+            privacy_generation: number;
+            expected_version: number;
+            /** @description 最多 64000 UTF-8 字节；用户修改不冒充已核验模型主张 */
+            markdown: string;
+        };
+        StudioSummaryClaim: {
+            /** @description 单元身份与主张序号 */
+            id: string;
+            /** @description 复用已核验主张原文 */
+            text: string;
+        };
+        StudioSummary: {
+            overview: components["schemas"]["StudioSummaryClaim"][];
+            transitions: components["schemas"]["StudioSummaryClaim"][];
+            uncovered: string[];
         };
         /** @description Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently. */
         StudioGenerate: {
@@ -4209,7 +4320,7 @@ export interface components {
         };
         StudioBody: {
             /** @enum {integer} */
-            schema: 1;
+            schema: 1 | 2;
             title: string;
             markdown: string;
             source_manifest?: components["schemas"]["SourceManifest"];
@@ -4221,6 +4332,15 @@ export interface components {
             guide?: components["schemas"]["StudioGuide"];
             brief?: components["schemas"]["StudioBrief"];
             quiz?: components["schemas"]["StudioQuiz"];
+            claims?: components["schemas"]["StudioClaim"][];
+            summary?: components["schemas"]["StudioSummary"];
+            user_authored?: boolean;
+            uncovered?: string[];
+            sections?: {
+                id: string;
+                title: string;
+                unit_count: number;
+            }[];
         };
         StudioRevision: {
             /** Format: uuid */
@@ -9748,6 +9868,104 @@ export interface operations {
             default: components["responses"]["WebFailure"];
         };
     };
+    listStudioUnits: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                plan_revision?: number;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 核验权限和确切来源后的部分；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioUnitPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    listStudioSections: {
+        parameters: {
+            query: {
+                version: number;
+                cursor?: string;
+                limit?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 不可变顺序及已核验引用；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioSectionPage"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    saveStudioSection: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                artifactID: components["parameters"]["ContentArtifactID"];
+                sectionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudioSectionSave"];
+            };
+        };
+        responses: {
+            /** @description 新版本；未修改部分复用原内容，修改文字标为用户笔记；no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudioRevision"];
+                };
+            };
+            /** @description 目标版本或操作冲突，保留用户输入 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     getStudioCitation: {
         parameters: {
             query: {
@@ -9854,6 +10072,8 @@ export interface operations {
             header: {
                 /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
                 "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 显式协商 schema 2；未提供时仅可读取 schema 1 */
+                "X-Studio-Body-Schema"?: "2";
             };
             path: {
                 artifactID: components["parameters"]["ContentArtifactID"];
@@ -9873,6 +10093,13 @@ export interface operations {
             };
             /** @description Version or operation conflict; retain draft and reconcile original operation */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unsupported_content_schema；X-Studio-Supported-Body-Schemas 返回 1,2 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9957,6 +10184,8 @@ export interface operations {
             header: {
                 /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
                 "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+                /** @description 读取 schema 2 保存回执时显式协商 */
+                "X-Studio-Body-Schema"?: "2";
             };
             path: {
                 operationID: string;
@@ -9976,6 +10205,13 @@ export interface operations {
             };
             /** @description Version or operation conflict; retain draft and reconcile original operation */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description unsupported_content_schema；X-Studio-Supported-Body-Schemas 返回 1,2 */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

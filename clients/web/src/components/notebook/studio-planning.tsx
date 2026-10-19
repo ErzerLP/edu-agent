@@ -17,6 +17,7 @@ import { ErrorState } from '../common'
 import { Button } from '../ui/button'
 import { studioNames } from './studio-generation'
 import { useSourceSelection } from './source-selection'
+import { StudioJobProgress } from './studio-job-progress'
 
 export function StudioJobs({ spaceId, onOpen }: { spaceId: string; onOpen: (id: string) => void }) {
   const { session, prefix, drafts } = useIdentity()
@@ -246,10 +247,11 @@ const deniedError = (error: unknown) =>
     ['content_redacted', 'privacy_clear_in_progress'].includes(error.code))
 const failureReasons: Record<string, string> = {
   source_unavailable: '所选资料已不可读取，请检查来源后重新建立任务。',
-  invalid_source_citation: '大纲引用的章节未通过核验，可以重试。',
-  schema_mismatch: '模型返回的大纲格式不完整，可以重试。',
+  invalid_source_citation: '引用未通过核验，当前部分未保存，可以重试。',
+  schema_mismatch: '模型返回的格式不完整，可以重试。',
   output_budget_exceeded: '模型达到单次输出上限，请调整单次输出配置后重试。',
   response_not_completed: '模型未完成输出，可以重试。',
+  context_changed: '生成设置或权限已变化，请核对后继续；更换服务地址需重新建立任务。',
 }
 
 export function StudioPlanning({
@@ -257,11 +259,13 @@ export function StudioPlanning({
   jobId,
   canWrite,
   onBack,
+  onOpen,
 }: {
   spaceId: string
   jobId: string
   canWrite: boolean
   onBack: () => void
+  onOpen: (id: string) => void
 }) {
   const { session, prefix, drafts } = useIdentity()
   const query = useQueryClient()
@@ -286,7 +290,12 @@ export function StudioPlanning({
     queryFn: ({ signal }) => api.get(jobId, signal),
     retry: false,
     gcTime: 0,
-    refetchInterval: (q) => (q.state.data?.status === 'planning' ? 1200 : 5000),
+    refetchInterval: (q) =>
+      ['planning', 'queued', 'generating', 'summarizing', 'stopping'].includes(
+        q.state.data?.status ?? '',
+      )
+        ? 700
+        : 5000,
   })
   const state = job.data
   const persist = (next: MessageDraft) => {
@@ -404,12 +413,23 @@ export function StudioPlanning({
           : state.plan?.title || `${studioNames[state.kind]}大纲`}
       </h3>
       <p role="status">{studioJobStatus[state.status]}</p>
-      {state.status === 'queued' && <p>大纲已确认并保存。内容尚未生成，可以稍后重开查看。</p>}
+      {state.confirmed_plan_revision > 0 && !unavailable && (
+        <StudioJobProgress
+          spaceId={spaceId}
+          job={state}
+          busy={busy}
+          canWrite={canWrite}
+          onOpen={onOpen}
+          onCommand={(kind) => void mutate(() => api.command(jobId, { ...operation(kind), kind }))}
+        />
+      )}
       {state.status === 'planning' && <p>正在依据所选资料整理大纲，离开后仍可重开查看。</p>}
       {state.status === 'failed' && (
         <p>
           {failureReasons[state.reason ?? ''] ??
-            '本次大纲修改未完成，已保留之前的大纲和已发送的修改。'}
+            (state.confirmed_plan_revision
+              ? '本次生成未完成，已保留通过核验的部分。'
+              : '本次大纲修改未完成，已保留之前的大纲和已发送的修改。')}
         </p>
       )}
       {unavailable ? (
@@ -560,7 +580,7 @@ export function StudioPlanning({
               ))}
             </section>
           )}
-          {state.status === 'failed' && canWrite && (
+          {state.status === 'failed' && !state.confirmed_plan_revision && canWrite && (
             <Button
               disabled={busy}
               onClick={() =>
@@ -572,47 +592,48 @@ export function StudioPlanning({
           )}
           {!!error && <ErrorState error={error} />}
           {notice && <p role="status">{notice}</p>}
-          {(state.status === 'awaiting_confirmation' ||
-            state.status === 'planning' ||
-            state.status === 'failed') && (
-            <div className="studio-plan-composer">
-              <label>
-                修改大纲
-                <textarea
-                  rows={3}
-                  maxLength={4000}
-                  value={draft.text}
-                  placeholder="例如：先讲基础概念，把最后两节合并"
-                  disabled={!canWrite || busy || state.status === 'planning' || !!draft.pending}
-                  onChange={(event) => persist({ text: event.target.value })}
-                />
-              </label>
-              <p className="hint">修改只用于这份大纲。未发送文字只保留在本标签页，刷新会丢失。</p>
-              <div className="studio-plan-buttons">
-                <Button
-                  variant="outline"
-                  disabled={
-                    !canWrite ||
-                    busy ||
-                    state.status !== 'awaiting_confirmation' ||
-                    !draft.text.trim()
-                  }
-                  onClick={send}
-                >
-                  {draft.pending ? '核对并重试修改' : '发送修改'}
-                </Button>
-                <Button
-                  disabled={!editable || !sections.length || !!draft.text.trim()}
-                  onClick={() => void mutate(() => api.confirm(jobId, operation('confirm')))}
-                >
-                  确认大纲
-                </Button>
+          {!state.confirmed_plan_revision &&
+            (state.status === 'awaiting_confirmation' ||
+              state.status === 'planning' ||
+              state.status === 'failed') && (
+              <div className="studio-plan-composer">
+                <label>
+                  修改大纲
+                  <textarea
+                    rows={3}
+                    maxLength={4000}
+                    value={draft.text}
+                    placeholder="例如：先讲基础概念，把最后两节合并"
+                    disabled={!canWrite || busy || state.status === 'planning' || !!draft.pending}
+                    onChange={(event) => persist({ text: event.target.value })}
+                  />
+                </label>
+                <p className="hint">修改只用于这份大纲。未发送文字只保留在本标签页，刷新会丢失。</p>
+                <div className="studio-plan-buttons">
+                  <Button
+                    variant="outline"
+                    disabled={
+                      !canWrite ||
+                      busy ||
+                      state.status !== 'awaiting_confirmation' ||
+                      !draft.text.trim()
+                    }
+                    onClick={send}
+                  >
+                    {draft.pending ? '核对并重试修改' : '发送修改'}
+                  </Button>
+                  <Button
+                    disabled={!editable || !sections.length || !!draft.text.trim()}
+                    onClick={() => void mutate(() => api.confirm(jobId, operation('confirm')))}
+                  >
+                    确认大纲
+                  </Button>
+                </div>
+                {!!draft.text.trim() && !draft.pending && (
+                  <p className="hint">请先发送或清空修改，再确认大纲。</p>
+                )}
               </div>
-              {!!draft.text.trim() && !draft.pending && (
-                <p className="hint">请先发送或清空修改，再确认大纲。</p>
-              )}
-            </div>
-          )}
+            )}
         </>
       )}
       {canWrite && state.status !== 'deleted' && (

@@ -418,11 +418,18 @@ export function StudioPlanning({
         if (currentDraft?.pending) persist({ text: currentDraft.text })
       }
       if (e instanceof ApiError && e.status === 409) {
-        setNotice(
-          `${planLabel}已在其他页面修改。你的输入已保留，正在读取最新内容，请核对后再操作。`,
-        )
+        const latest = await job.refetch()
+        if (!alive.current) return
+        if (latest.isSuccess) {
+          setNotice(
+            latest.data.active_plan_revision !== state?.active_plan_revision
+              ? `${planLabel}已更新。你的输入已保留，请核对最新内容后再操作。`
+              : '任务状态已变化或当前操作不可用，已读取最新状态，请核对后重试。',
+          )
+        }
+      } else {
+        void job.refetch()
       }
-      void job.refetch()
     } finally {
       if (alive.current) setBusy(false)
     }

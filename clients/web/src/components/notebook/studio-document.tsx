@@ -127,12 +127,42 @@ export function StudioDocument({
             />
           )}
           {r.body.quiz && (
-            <StudioQuiz
-              key={`${r.artifact_id}:${r.version}`}
-              revision={r}
-              canWrite={canWrite}
-              onCitation={onCitation}
-            />
+            <>
+              {r.body.summary && (
+                <section aria-label="练习覆盖与顺序">
+                  <h4>练习覆盖</h4>
+                  {r.body.summary.overview.map((item) => (
+                    <p key={item.id}>{item.text}</p>
+                  ))}
+                  {!!r.body.summary.transitions.length && (
+                    <>
+                      <h4>建议作答顺序</h4>
+                      <ol>
+                        {r.body.summary.transitions.map((item) => (
+                          <li key={item.id}>{item.text}</li>
+                        ))}
+                      </ol>
+                    </>
+                  )}
+                  {!!r.body.summary.uncovered.length && (
+                    <details>
+                      <summary>未覆盖的范围</summary>
+                      <ul>
+                        {r.body.summary.uncovered.map((text, index) => (
+                          <li key={index}>{text}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </section>
+              )}
+              <StudioQuiz
+                key={`${r.artifact_id}:${r.version}`}
+                revision={r}
+                canWrite={canWrite}
+                onCitation={onCitation}
+              />
+            </>
           )}
           <Button disabled={!canWrite} onClick={() => onRegenerate(r)}>
             重新生成新版本

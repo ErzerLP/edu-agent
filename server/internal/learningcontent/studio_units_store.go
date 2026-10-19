@@ -13,7 +13,7 @@ func unitIdentity(j StudioJob, id string) string {
 	return fmt.Sprintf("%d:%s", j.ConfirmedPlanRevision, id)
 }
 func (s *Store) SaveStudioUnitTx(ctx context.Context, tx pgx.Tx, j StudioJob, u StudioUnit) error {
-	payload := studioUnitPayload{u.SectionID, u.Topic, u.Objective, u.InputFingerprint, u.Slice, u.Body}
+	payload := studioUnitPayload{SectionID: u.SectionID, Topic: u.Topic, Objective: u.Objective, InputFingerprint: u.InputFingerprint, Slice: u.Slice, Body: u.Body, Slices: u.Slices, QuestionType: u.QuestionType, Difficulty: u.Difficulty}
 	raw, err := s.sealStudioJob(j, "unit", unitIdentity(j, u.ID), payload)
 	if err != nil {
 		return err
@@ -39,6 +39,7 @@ func (s *Store) StudioUnitTx(ctx context.Context, tx pgx.Tx, j StudioJob, id str
 		return u, err
 	}
 	u.SectionID, u.Topic, u.Objective, u.InputFingerprint, u.Slice, u.Body = payload.SectionID, payload.Topic, payload.Objective, payload.InputFingerprint, payload.Slice, payload.Body
+	u.Slices, u.QuestionType, u.Difficulty = payload.Slices, payload.QuestionType, payload.Difficulty
 	return u, nil
 }
 func (s *Store) StudioUnitsTx(ctx context.Context, tx pgx.Tx, j StudioJob, after, limit int) (StudioUnitPage, error) {

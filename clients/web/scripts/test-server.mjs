@@ -76,9 +76,28 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
           { id: 'examples', topic: '偶数的例子', objective: '辨认偶数', chapters: [1] },
         ],
       }
+      if (material.kind === 'quiz') {
+        result.title = '偶数题目规划'
+        result.sections = (material.current_plan?.sections ?? Array.from({ length: material.question_count }, (_, index) => ({ id: `q${index + 1}`, topic: `偶数知识点${index + 1}` }))).map(question => ({
+          id: question.id, topic: question.topic, objective: '用自己的话解释所选知识点', chapters: [1], question_type: 'explanation',
+          difficulty: instruction.includes('更难') ? 'hard' : material.difficulty || 'medium',
+        }))
+      }
       if (material.focus?.includes('分段验收')) result.sections = Array.from({length:8},(_,index)=>({id:`s${index+1}`,topic:`偶数学习第${index+1}部分`,objective:'根据所选资料整理',chapters:[1]}))
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 } }))
+      return
+    }
+    if (payload.messages?.[0]?.content?.startsWith('仅生成已确认题目规划的当前一道')) {
+      const input = JSON.parse(payload.messages[1].content)
+      await new Promise(resolve => setTimeout(resolve, 1800))
+      const result = { title: input.topic, coverage: 'partial', questions: [{
+        prompt: `${input.topic}：解释偶数并给出一个例子。`,
+        rubric: [{ id: 'definition', criterion: '说明偶数能被 2 整除并举例' }],
+        allowed_help: ['none', 'hint', 'scaffold', 'answer_revealed'], citations: [{ source: 1, fragment: 1 }],
+      }] }
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 } }))
       return
     }
     if (payload.messages?.[0]?.content?.startsWith('仅生成已确认大纲的当前部分')) {
@@ -90,9 +109,10 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       response.end(JSON.stringify({choices:[{message:{role:'assistant',content:JSON.stringify(result)},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:60,total_tokens:160}}))
       return
     }
-    if (payload.messages?.[0]?.content?.startsWith('所有已确认部分已完成')) {
+    if (payload.messages?.[0]?.content?.startsWith('所有已确认部分已完成') || payload.messages?.[0]?.content?.startsWith('所有已确认题目已完成')) {
       const input=JSON.parse(payload.messages[1].content)
       const result={overview:[input.allowed_claims[0].id],transitions:[],uncovered:[]}
+      if (payload.messages[0].content.startsWith('所有已确认题目已完成')) result.transitions = input.allowed_claims.map(claim => claim.id)
       response.setHeader('Content-Type','application/json')
       response.end(JSON.stringify({choices:[{message:{role:'assistant',content:JSON.stringify(result)},finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:30,total_tokens:130}}))
       return

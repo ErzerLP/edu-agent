@@ -1,5 +1,28 @@
 package learningcontent
 
+import (
+	"encoding/json"
+
+	"github.com/edu-agent/edu-agent/server/internal/knowledge"
+)
+
+func StudioQuestionSchema() json.RawMessage {
+	var schema map[string]any
+	_ = json.Unmarshal(StudioSchema("quiz"), &schema)
+	questions := schema["properties"].(map[string]any)["questions"].(map[string]any)
+	questions["maxItems"] = 1
+	raw, _ := json.Marshal(schema)
+	return raw
+}
+
+func DecodeStudioQuestion(raw []byte, manifest *knowledge.SourceManifest, sources []knowledge.SourceDetail) (StudioBody, error) {
+	body, err := DecodeStudioCandidate("quiz", raw, manifest, sources)
+	if err == nil && len(body.Quiz.Questions) != 1 {
+		err = ErrInvalid
+	}
+	return body, err
+}
+
 type StudioQuiz struct {
 	GoalVersion int64                `json:"goal_version"`
 	Questions   []StudioQuestion     `json:"questions"`

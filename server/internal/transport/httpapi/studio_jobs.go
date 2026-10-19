@@ -69,7 +69,7 @@ func (a *API) studioJobCreate(w http.ResponseWriter, r *http.Request) {
 	var input mentorrun.StudioJobCreate
 	if !decodeStudioJobRequest(w, r, &input,
 		[]string{"operation_id", "privacy_generation", "kind", "source_selection", "direction_version"},
-		[]string{"focus", "artifact_id", "expected_artifact_version"}) {
+		[]string{"focus", "question_count", "difficulty", "artifact_id", "expected_artifact_version"}) {
 		return
 	}
 	if input.Validate() != nil {

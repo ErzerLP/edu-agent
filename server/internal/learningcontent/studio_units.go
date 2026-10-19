@@ -24,22 +24,27 @@ type StudioSummary struct {
 	Uncovered   []string             `json:"uncovered"`
 }
 type StudioUnit struct {
-	ID               string                       `json:"id"`
-	SectionID        string                       `json:"section_id"`
-	Ordinal          int                          `json:"ordinal"`
-	Status           string                       `json:"status"`
-	Attempt          int                          `json:"attempt"`
-	RunID            string                       `json:"run_id,omitempty"`
-	Topic            string                       `json:"topic"`
-	Objective        string                       `json:"objective"`
-	Slice            knowledge.SourceSliceRequest `json:"-"`
-	InputFingerprint string                       `json:"input_fingerprint"`
-	Body             *StudioBody                  `json:"body,omitempty"`
+	ID               string                         `json:"id"`
+	SectionID        string                         `json:"section_id"`
+	Ordinal          int                            `json:"ordinal"`
+	Status           string                         `json:"status"`
+	Attempt          int                            `json:"attempt"`
+	RunID            string                         `json:"run_id,omitempty"`
+	Topic            string                         `json:"topic"`
+	Objective        string                         `json:"objective"`
+	Slice            knowledge.SourceSliceRequest   `json:"-"`
+	Slices           []knowledge.SourceSliceRequest `json:"-"`
+	QuestionType     string                         `json:"question_type,omitempty"`
+	Difficulty       string                         `json:"difficulty,omitempty"`
+	InputFingerprint string                         `json:"input_fingerprint"`
+	Body             *StudioBody                    `json:"body,omitempty"`
 }
 type studioUnitPayload struct {
 	SectionID, Topic, Objective, InputFingerprint string
 	Slice                                         knowledge.SourceSliceRequest
 	Body                                          *StudioBody
+	Slices                                        []knowledge.SourceSliceRequest
+	QuestionType, Difficulty                      string
 }
 type StudioUnitPage struct {
 	Items      []StudioUnit `json:"items"`

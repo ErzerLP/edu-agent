@@ -45,6 +45,11 @@ func (s *Service) StudioUnits(ctx context.Context, actor identity.Credential, id
 			if err = s.studio.VerifyStudioUnitTx(ctx, tx, actor.TokenID, *u); err != nil {
 				return learningcontent.StudioUnitPage{}, err
 			}
+			// Quiz candidates remain private until publication. Progress is metadata;
+			// the existing quiz/exercise readers own all subsequent question access.
+			if j.Kind == "quiz" {
+				u.Body = nil
+			}
 		}
 	}
 	return page, tx.Commit(ctx)

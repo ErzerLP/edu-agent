@@ -5371,7 +5371,7 @@ components:
       properties:
         operation_id: { type: string, format: uuid }
         privacy_generation: { type: integer, minimum: 1 }
-        kind: { type: string, enum: [guide, brief, note] }
+        kind: { type: string, enum: [guide, brief, note, quiz] }
         source_selection:
           type: object
           additionalProperties: false
@@ -5379,8 +5379,10 @@ components:
           properties:
             mode: { type: string, enum: [items] }
             items: { type: array, minItems: 1, maxItems: 100, items: { $ref: "#/components/schemas/SourceIdentity" } }
-        direction_version: { type: integer, minimum: 0, description: 当前方向版本，尚未设置方向时为 0 }
+        direction_version: { type: integer, minimum: 0, description: 当前方向版本；测验必须大于 0，其他类型尚未设置方向时为 0 }
         focus: { type: string, maxLength: 2000 }
+        question_count: { type: integer, minimum: 1, maximum: 8, description: 仅 quiz 使用，默认 3 题；修改规划后以确认题数为准 }
+        difficulty: { type: string, enum: [easy, medium, hard], description: 仅 quiz 使用；未指定时依据方向和学习记录安排 }
         artifact_id: { type: string, format: uuid }
         expected_artifact_version: { type: integer, minimum: 0 }
     StudioPlanMessageRequest:
@@ -5440,6 +5442,8 @@ components:
         id: { type: string, minLength: 1, description: 跨修订稳定的部分身份，用于删除和排序 }
         topic: { type: string }
         objective: { type: string }
+        question_type: { type: string, enum: [short_answer, explanation], description: quiz 规划及单元必有，两类均使用开放式文字作答 }
+        difficulty: { type: string, enum: [easy, medium, hard], description: quiz 规划及单元必有 }
         chapters: { type: array, items: { $ref: "#/components/schemas/StudioPlanChapter" } }
         unit_count: { type: integer, minimum: 1 }
     StudioPlan:
@@ -5468,7 +5472,7 @@ components:
       required: [id, kind, version, privacy_generation, status, active_plan_revision, confirmed_plan_revision, messages, suggested_focus, created_at, updated_at, completed_units, total_units]
       properties:
         id: { type: string, format: uuid }
-        kind: { type: string, enum: [guide, brief, note] }
+        kind: { type: string, enum: [guide, brief, note, quiz] }
         version: { type: integer, minimum: 1 }
         privacy_generation: { type: integer, minimum: 1 }
         status: { type: string, enum: [planning, awaiting_confirmation, queued, generating, summarizing, stopping, stopped, completed, failed, invalidated, deleted], description: 完成数来自已核验并保存的单元；全部完成并汇总成功才发布 }
@@ -5510,8 +5514,10 @@ components:
         run_id: { type: string, format: uuid }
         topic: { type: string }
         objective: { type: string }
+        question_type: { type: string, enum: [short_answer, explanation], description: quiz 规划及单元必有，两类均使用开放式文字作答 }
+        difficulty: { type: string, enum: [easy, medium, hard], description: quiz 规划及单元必有 }
         input_fingerprint: { type: string }
-        body: { $ref: "#/components/schemas/StudioBody" }
+        body: { $ref: "#/components/schemas/StudioBody", description: 仅文档单元返回正文；quiz 单元只返回进度元数据，正式题目从发布后的 quiz 读取 }
     StudioUnitPage:
       type: object
       required: [items]

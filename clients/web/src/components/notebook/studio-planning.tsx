@@ -6,7 +6,7 @@ import type { Space } from '@/api/runtime'
 import { settingsSchema } from '@/api/settings'
 import {
   studioJobsAPI,
-  studioJobStatus,
+  studioJobStatusText,
   type StudioJob,
   type StudioJobCreate,
   type StudioPlanOperation,
@@ -60,9 +60,10 @@ export function StudioJobs({ spaceId, onOpen }: { spaceId: string; onOpen: (id: 
                   <span className="studio-output-title">
                     {job.status === 'invalidated'
                       ? `${studioNames[job.kind]}任务`
-                      : job.plan?.title || `${studioNames[job.kind]}大纲`}
+                      : job.plan?.title ||
+                        `${studioNames[job.kind]}${job.kind === 'quiz' ? '题目规划' : '大纲'}`}
                   </span>
-                  <small>{studioJobStatus[job.status]}</small>
+                  <small>{studioJobStatusText(job)}</small>
                 </span>
               </Button>
             ))}
@@ -82,7 +83,12 @@ export function StudioJobs({ spaceId, onOpen }: { spaceId: string; onOpen: (id: 
   )
 }
 
-type CreationDraft = { focus: string; pending?: StudioJobCreate }
+type CreationDraft = {
+  focus: string
+  questionCount?: number
+  difficulty?: StudioJobCreate['difficulty']
+  pending?: StudioJobCreate
+}
 export function StudioPlanCreator({
   space,
   kind,
@@ -98,6 +104,8 @@ export function StudioPlanCreator({
 }) {
   const { session, prefix, drafts } = useIdentity()
   const { selection } = useSourceSelection()
+  const quiz = kind === 'quiz'
+  const planLabel = quiz ? '题目规划' : '大纲'
   const key = JSON.stringify([
     ...prefix,
     space.id,
@@ -138,7 +146,7 @@ export function StudioPlanCreator({
   }, [denied, drafts, key])
   const persist = (next: CreationDraft) => {
     setDraft(next)
-    if (next.focus || next.pending) drafts.set(key, next)
+    if (next.focus || next.pending || next.questionCount || next.difficulty) drafts.set(key, next)
     else drafts.delete(key)
   }
   const create = async () => {
@@ -150,6 +158,12 @@ export function StudioPlanCreator({
       source_selection: selection,
       direction_version: space.direction_version ?? 0,
       ...(draft.focus.trim() ? { focus: draft.focus.trim() } : {}),
+      ...(quiz
+        ? {
+            question_count: draft.questionCount ?? 3,
+            ...(draft.difficulty ? { difficulty: draft.difficulty } : {}),
+          }
+        : {}),
       ...(base ? { artifact_id: base.artifact_id, expected_artifact_version: base.version } : {}),
     }
     persist({ ...draft, pending: body })
@@ -164,7 +178,7 @@ export function StudioPlanCreator({
       if (!alive.current) return
       setError(e)
       if (e instanceof ApiError && e.status >= 400 && e.status < 500)
-        persist({ focus: draft.focus })
+        persist({ ...draft, pending: undefined })
     } finally {
       if (alive.current) setBusy(false)
     }
@@ -177,17 +191,57 @@ export function StudioPlanCreator({
       </section>
     )
   return (
-    <section className="studio-planning" aria-label="生成大纲设置">
+    <section className="studio-planning" aria-label={`生成${planLabel}设置`}>
       <Button variant="outline" onClick={onBack}>
         返回 Studio
       </Button>
-      <h3>{studioNames[kind]}大纲</h3>
-      <p>先查看并修改大纲，确认后保存为待生成。</p>
+      <h3>
+        {studioNames[kind]}
+        {planLabel}
+      </h3>
+      <p>
+        先查看并修改{planLabel}，确认后开始{quiz ? '逐题' : '逐段'}生成。
+      </p>
       <p className="hint">学习方向：{space.direction || '尚未设置，本次按所选资料规划'}</p>
       <p className="hint">
         使用当前勾选的 {selection?.items.length ?? 0}{' '}
-        个来源和本学习区的学习记录。任务保存后，后续勾选不会改变这份大纲。
+        个来源和本学习区的学习记录。任务保存后，后续勾选不会改变这份{planLabel}。
       </p>
+      {quiz && (
+        <>
+          <p className="hint">支持简答和解释两类文字开放题，全部生成完成后开始作答。</p>
+          <label>
+            题数
+            <select
+              value={draft.questionCount ?? 3}
+              disabled={busy || !!draft.pending}
+              onChange={(event) => persist({ ...draft, questionCount: Number(event.target.value) })}
+            >
+              {Array.from({ length: 8 }, (_, index) => (
+                <option key={index + 1} value={index + 1}>
+                  {index + 1} 题
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            难度（可选）
+            <select
+              value={draft.difficulty ?? ''}
+              disabled={busy || !!draft.pending}
+              onChange={(event) =>
+                persist({ ...draft, difficulty: event.target.value as CreationDraft['difficulty'] })
+              }
+            >
+              <option value="">根据学习方向和记录安排</option>
+              <option value="easy">基础</option>
+              <option value="medium">适中</option>
+              <option value="hard">较难</option>
+            </select>
+          </label>
+          {!space.direction_version && <p>请先设置学习方向，再规划测验。</p>}
+        </>
+      )}
       <label>
         侧重点（可选）
         <textarea
@@ -196,7 +250,7 @@ export function StudioPlanCreator({
           value={draft.focus}
           disabled={busy || !!draft.pending}
           placeholder="例如：先复习容易混淆的概念"
-          onChange={(event) => persist({ focus: event.target.value })}
+          onChange={(event) => persist({ ...draft, focus: event.target.value })}
         />
       </label>
       {!!suggested.data?.suggested_focus.length && (
@@ -207,7 +261,10 @@ export function StudioPlanCreator({
               variant="outline"
               disabled={busy || !!draft.pending}
               onClick={() =>
-                persist({ focus: draft.focus ? `${draft.focus}；${tag}`.slice(0, 2000) : tag })
+                persist({
+                  ...draft,
+                  focus: draft.focus ? `${draft.focus}；${tag}`.slice(0, 2000) : tag,
+                })
               }
             >
               {tag}
@@ -221,7 +278,7 @@ export function StudioPlanCreator({
       <p className="hint">未发送的文字只在本标签页保留，刷新会丢失。已发送的修改随任务保存。</p>
       {model?.configured && (
         <p className="hint">
-          大纲与修改将发送到已配置的模型：{model.model}（{model.endpoint}）。
+          {planLabel}与修改将发送到已配置的模型：{model.model}（{model.endpoint}）。
         </p>
       )}
       {!model?.enabled || !model.configured ? <p>请先在设置中启用并配置模型。</p> : null}
@@ -231,10 +288,16 @@ export function StudioPlanCreator({
       )}
       {!!error && <ErrorState error={error} />}
       <Button
-        disabled={busy || !model?.enabled || !model.configured || !selection?.items.length}
+        disabled={
+          busy ||
+          !model?.enabled ||
+          !model.configured ||
+          !selection?.items.length ||
+          (quiz && !space.direction_version)
+        }
         onClick={() => void create()}
       >
-        {busy ? '正在提交…' : draft.pending ? '核对并重试原请求' : '生成大纲'}
+        {busy ? '正在提交…' : draft.pending ? '核对并重试原请求' : `生成${planLabel}`}
       </Button>
     </section>
   )
@@ -298,6 +361,8 @@ export function StudioPlanning({
         : 5000,
   })
   const state = job.data
+  const quiz = state?.kind === 'quiz'
+  const planLabel = quiz ? '题目规划' : '大纲'
   const persist = (next: MessageDraft) => {
     setDraft(next)
     if (next.text || next.pending) drafts.set(key, next)
@@ -353,7 +418,9 @@ export function StudioPlanning({
         if (currentDraft?.pending) persist({ text: currentDraft.text })
       }
       if (e instanceof ApiError && e.status === 409) {
-        setNotice('大纲已在其他页面修改。你的输入已保留，正在读取最新内容，请核对后再操作。')
+        setNotice(
+          `${planLabel}已在其他页面修改。你的输入已保留，正在读取最新内容，请核对后再操作。`,
+        )
       }
       void job.refetch()
     } finally {
@@ -371,7 +438,7 @@ export function StudioPlanning({
     ids.splice(to, 0, ...ids.splice(from, 1))
     void mutate(
       () => api.patch(jobId, { ...operation('reorder', { ordered_ids: ids }), ordered_ids: ids }),
-      '大纲顺序已保存。',
+      `${planLabel}顺序已保存。`,
     )
   }
   const pointerTarget = (event: PointerEvent<HTMLButtonElement>) =>
@@ -401,18 +468,18 @@ export function StudioPlanning({
         <ErrorState error={job.error} retry={() => void job.refetch()} />
       </section>
     )
-  if (!state) return <p role="status">正在读取大纲…</p>
+  if (!state) return <p role="status">正在读取规划…</p>
   return (
-    <section className="studio-planning" aria-label="Studio 大纲">
+    <section className="studio-planning" aria-label={`Studio ${planLabel}`}>
       <Button variant="outline" onClick={onBack}>
         返回 Studio
       </Button>
       <h3>
         {unavailable
           ? `${studioNames[state.kind]}任务`
-          : state.plan?.title || `${studioNames[state.kind]}大纲`}
+          : state.plan?.title || `${studioNames[state.kind]}${planLabel}`}
       </h3>
-      <p role="status">{studioJobStatus[state.status]}</p>
+      <p role="status">{studioJobStatusText(state)}</p>
       {state.confirmed_plan_revision > 0 && !unavailable && (
         <StudioJobProgress
           spaceId={spaceId}
@@ -423,13 +490,13 @@ export function StudioPlanning({
           onCommand={(kind) => void mutate(() => api.command(jobId, { ...operation(kind), kind }))}
         />
       )}
-      {state.status === 'planning' && <p>正在依据所选资料整理大纲，离开后仍可重开查看。</p>}
+      {state.status === 'planning' && <p>正在依据所选资料整理{planLabel}，离开后仍可重开查看。</p>}
       {state.status === 'failed' && (
         <p>
           {failureReasons[state.reason ?? ''] ??
             (state.confirmed_plan_revision
               ? '本次生成未完成，已保留通过核验的部分。'
-              : '本次大纲修改未完成，已保留之前的大纲和已发送的修改。')}
+              : `本次${planLabel}修改未完成，已保留之前的规划和已发送的修改。`)}
         </p>
       )}
       {unavailable ? (
@@ -439,12 +506,13 @@ export function StudioPlanning({
           {state.plan && (
             <>
               <p className="hint">
-                共 {sections.length} 部分 · 预计{' '}
-                {sections.reduce((sum, section) => sum + section.unit_count, 0)}{' '}
-                小段。更改来源勾选或学习方向不会改变本次任务。
+                {quiz
+                  ? `共 ${sections.length} 题`
+                  : `共 ${sections.length} 部分 · 预计 ${sections.reduce((sum, section) => sum + section.unit_count, 0)} 小段`}
+                。更改来源勾选或学习方向不会改变本次任务。
               </p>
               {state.plan.coverage === 'partial' && (
-                <p className="studio-coverage-note">大纲仅覆盖所选资料的部分范围。</p>
+                <p className="studio-coverage-note">{planLabel}仅覆盖所选资料的部分范围。</p>
               )}
               {!!state.plan.uncovered.length && (
                 <details>
@@ -456,7 +524,7 @@ export function StudioPlanning({
                   </ul>
                 </details>
               )}
-              <ol className="studio-outline" aria-label="大纲部分">
+              <ol className="studio-outline" aria-label={quiz ? '题目规划' : '大纲部分'}>
                 {sections.map((section, index) => (
                   <li
                     key={section.id}
@@ -508,6 +576,16 @@ export function StudioPlanning({
                       <h4>{section.topic}</h4>
                     </div>
                     <p>{section.objective}</p>
+                    {quiz && (
+                      <p>
+                        {section.question_type === 'short_answer' ? '简答' : '解释'} ·{' '}
+                        {section.difficulty === 'easy'
+                          ? '基础'
+                          : section.difficulty === 'hard'
+                            ? '较难'
+                            : '适中'}
+                      </p>
+                    )}
                     <p className="hint">
                       章节：{section.chapters.map((chapter) => chapter.title).join('、')}
                     </p>
@@ -545,7 +623,7 @@ export function StudioPlanning({
                                   ...operation('delete-section', { delete_ids: [section.id] }),
                                   delete_ids: [section.id],
                                 }),
-                              '已删除该部分。',
+                              quiz ? '已删除该题。' : '已删除该部分。',
                             )
                           }
                         >
@@ -565,7 +643,7 @@ export function StudioPlanning({
             </>
           )}
           {!!state.messages.length && (
-            <section className="studio-plan-messages" aria-label="大纲修改记录">
+            <section className="studio-plan-messages" aria-label={`${planLabel}修改记录`}>
               <h4>修改记录</h4>
               {state.messages.map((message) => (
                 <article key={message.operation_id}>
@@ -587,7 +665,7 @@ export function StudioPlanning({
                 void mutate(() => api.command(jobId, { ...operation('retry'), kind: 'retry' }))
               }
             >
-              重试大纲
+              重试{planLabel}
             </Button>
           )}
           {!!error && <ErrorState error={error} />}
@@ -598,17 +676,23 @@ export function StudioPlanning({
               state.status === 'failed') && (
               <div className="studio-plan-composer">
                 <label>
-                  修改大纲
+                  修改{planLabel}
                   <textarea
                     rows={3}
                     maxLength={4000}
                     value={draft.text}
-                    placeholder="例如：先讲基础概念，把最后两节合并"
+                    placeholder={
+                      quiz
+                        ? '例如：更难一点，把最后一题改成简答'
+                        : '例如：先讲基础概念，把最后两节合并'
+                    }
                     disabled={!canWrite || busy || state.status === 'planning' || !!draft.pending}
                     onChange={(event) => persist({ text: event.target.value })}
                   />
                 </label>
-                <p className="hint">修改只用于这份大纲。未发送文字只保留在本标签页，刷新会丢失。</p>
+                <p className="hint">
+                  修改只用于这份{planLabel}。未发送文字只保留在本标签页，刷新会丢失。
+                </p>
                 <div className="studio-plan-buttons">
                   <Button
                     variant="outline"
@@ -626,11 +710,11 @@ export function StudioPlanning({
                     disabled={!editable || !sections.length || !!draft.text.trim()}
                     onClick={() => void mutate(() => api.confirm(jobId, operation('confirm')))}
                   >
-                    确认大纲
+                    确认{planLabel}
                   </Button>
                 </div>
                 {!!draft.text.trim() && !draft.pending && (
-                  <p className="hint">请先发送或清空修改，再确认大纲。</p>
+                  <p className="hint">请先发送或清空修改，再确认{planLabel}。</p>
                 )}
               </div>
             )}
@@ -639,7 +723,7 @@ export function StudioPlanning({
       {canWrite && state.status !== 'deleted' && (
         <details className="studio-job-delete">
           <summary>删除任务</summary>
-          <p>将删除这份大纲和已经发送的修改记录。</p>
+          <p>将删除这份{planLabel}和已经发送的修改记录。</p>
           <Button
             variant="destructive"
             disabled={busy}

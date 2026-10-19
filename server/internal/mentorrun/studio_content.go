@@ -27,6 +27,9 @@ func (s *Service) studioDestination() string {
 }
 
 func (s *Service) prepareStudioUnitsTx(ctx context.Context, tx pgx.Tx, j *learningcontent.StudioJob) error {
+	if j.Kind == "quiz" {
+		return s.prepareStudioQuestionsTx(ctx, tx, j)
+	}
 	store := knowledgepg.New(s.pool)
 	ordinal := 0
 	for _, section := range j.Plan.Sections {

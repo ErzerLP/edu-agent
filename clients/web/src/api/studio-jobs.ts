@@ -28,6 +28,8 @@ export const studioPlanSchema = z.object({
         }),
       ),
       unit_count: z.number().int().positive(),
+      question_type: z.enum(['short_answer', 'explanation']).optional(),
+      difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
     }),
   ),
   uncovered: z.array(z.string()),
@@ -35,7 +37,7 @@ export const studioPlanSchema = z.object({
 })
 export const studioJobSchema = z.object({
   id: z.uuid(),
-  kind: z.enum(['guide', 'brief', 'note']),
+  kind: z.enum(['guide', 'brief', 'note', 'quiz']),
   version: revision,
   privacy_generation: revision,
   status: z.enum([
@@ -85,6 +87,8 @@ export type StudioJobCreate = {
   source_selection: Extract<SourceSelection, { mode: 'items' }>
   direction_version: number
   focus?: string
+  question_count?: number
+  difficulty?: 'easy' | 'medium' | 'hard'
   artifact_id?: string
   expected_artifact_version?: number
 }
@@ -105,6 +109,15 @@ export const studioJobStatus: Record<StudioJob['status'], string> = {
   completed: '已完成',
   invalidated: '任务已不可用',
   deleted: '已删除',
+}
+
+export function studioJobStatusText(job: StudioJob) {
+  if (job.kind === 'quiz') {
+    if (job.status === 'planning') return '正在整理题目规划'
+    if (job.status === 'awaiting_confirmation') return '待确认题目规划'
+    if (job.status === 'generating') return '正在逐题生成'
+  }
+  return studioJobStatus[job.status]
 }
 
 export function studioJobsAPI(session: Session, spaceId: string) {

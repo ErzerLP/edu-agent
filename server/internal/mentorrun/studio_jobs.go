@@ -25,12 +25,21 @@ type StudioJobCreate struct {
 	SourceSelection         knowledge.SourceSelection `json:"source_selection"`
 	DirectionVersion        int64                     `json:"direction_version"`
 	Focus                   string                    `json:"focus,omitempty"`
+	QuestionCount           *int                      `json:"question_count,omitempty"`
+	Difficulty              string                    `json:"difficulty,omitempty"`
 	ArtifactID              string                    `json:"artifact_id,omitempty"`
 	ExpectedArtifactVersion int64                     `json:"expected_artifact_version,omitempty"`
 }
 
 func (c StudioJobCreate) Validate() error {
-	if !validID(c.OperationID) || c.Generation < 1 || (c.Kind != "guide" && c.Kind != "brief" && c.Kind != "note") || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || len(c.SourceSelection.Items) == 0 || c.DirectionVersion < 0 || c.Focus != "" && !validText(c.Focus, 2000) || c.ExpectedArtifactVersion < 0 || (c.ArtifactID == "") != (c.ExpectedArtifactVersion == 0) || c.ArtifactID != "" && !validID(c.ArtifactID) {
+	if !validID(c.OperationID) || c.Generation < 1 || (c.Kind != "guide" && c.Kind != "brief" && c.Kind != "note" && c.Kind != "quiz") || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || len(c.SourceSelection.Items) == 0 || c.DirectionVersion < 0 || c.Focus != "" && !validText(c.Focus, 2000) || c.ExpectedArtifactVersion < 0 || (c.ArtifactID == "") != (c.ExpectedArtifactVersion == 0) || c.ArtifactID != "" && !validID(c.ArtifactID) {
+		return ErrInvalid
+	}
+	if c.Kind == "quiz" {
+		if c.DirectionVersion < 1 || c.QuestionCount != nil && (*c.QuestionCount < 1 || *c.QuestionCount > 8) || c.Difficulty != "" && !studioQuizDifficulty(c.Difficulty) {
+			return ErrInvalid
+		}
+	} else if c.QuestionCount != nil || c.Difficulty != "" {
 		return ErrInvalid
 	}
 	return nil
@@ -84,6 +93,10 @@ type StudioFocus struct {
 }
 
 func (s *Service) studioJobBegin(ctx context.Context, actor identity.Credential, write bool) (pgx.Tx, int64, error) {
+	return s.beginStudioJob(ctx, actor, write, false)
+}
+
+func (s *Service) beginStudioJob(ctx context.Context, actor identity.Credential, write, creatingQuiz bool) (pgx.Tx, int64, error) {
 	if !s.CanSave() || !s.studio.Available() {
 		return nil, 0, ErrStorage
 	}
@@ -103,6 +116,11 @@ func (s *Service) studioJobBegin(ctx context.Context, actor identity.Credential,
 	}
 	if err == nil {
 		_, err = privacy.LockOwnerRead(ctx, tx, privacy.OwnerKnowledge)
+	}
+	if err == nil && creatingQuiz {
+		// EnsureTx needs this exclusive lock. Take it before goalGate's shared
+		// lock so concurrent creates cannot deadlock while upgrading their locks.
+		_, err = tx.Exec(ctx, `SELECT id FROM learning_spaces WHERE id=$1 FOR UPDATE`, learningspace.Scope(ctx))
 	}
 	if err == nil && write {
 		_, err = goalGate(ctx, tx, learningspace.Scope(ctx), uuid.Nil.String(), 1)
@@ -143,7 +161,7 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 	if c.Validate() != nil {
 		return learningcontent.StudioJob{}, ErrInvalid
 	}
-	tx, g, err := s.studioJobBegin(ctx, actor, true)
+	tx, g, err := s.beginStudioJob(ctx, actor, true, c.Kind == "quiz")
 	if err != nil {
 		return learningcontent.StudioJob{}, err
 	}
@@ -178,6 +196,26 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 		return learningcontent.StudioJob{}, err
 	}
 	j := learningcontent.StudioJob{ID: uuid.NewString(), SpaceID: learningspace.Scope(ctx), DeviceID: actor.Device.ID, Generation: g, Version: 1, Kind: c.Kind, Status: "planning", Messages: []learningcontent.StudioPlanMessage{}, SuggestedFocus: state.SuggestedFocus, Input: learningcontent.StudioJobInput{Manifest: *manifest, DirectionID: d.ID, DirectionVersion: d.Version, Direction: d.Text, LearningState: state, TutoringGeneration: tutoringGeneration, Focus: c.Focus, ArtifactID: c.ArtifactID, ExpectedArtifactVersion: c.ExpectedArtifactVersion}}
+	if c.Kind == "quiz" {
+		if !s.CanStart() {
+			return j, ErrStorage
+		}
+		d, err = s.directions.EnsureTx(ctx, tx, actor.Device.ID, j.SpaceID, g, c.DirectionVersion)
+		if err != nil {
+			return j, err
+		}
+		model, limits, configuration, e := s.settings.MentorClient()
+		if e != nil || model == nil {
+			return j, ErrModel
+		}
+		policy := automaticAssessmentPolicy(configuration, limits)
+		j.Input.QuestionCount, j.Input.Difficulty = 3, c.Difficulty
+		if c.QuestionCount != nil {
+			j.Input.QuestionCount = *c.QuestionCount
+		}
+		j.Input.QuizGoalID = d.GoalID
+		j.Input.Quiz = &learningcontent.StudioQuiz{GoalVersion: d.GoalVersion, Direction: &learningcontent.StudioQuizDirection{ID: d.ID, Version: d.Version, GoalRevisionID: d.GoalRevisionID}, Assessment: &policy}
+	}
 	if c.ArtifactID != "" {
 		var kind string
 		var version int64
@@ -190,6 +228,11 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 		}
 		if kind != c.Kind || version != c.ExpectedArtifactVersion {
 			return j, learningcontent.ErrConflict
+		}
+		if c.Kind == "quiz" {
+			if err = s.studio.StudioTargetTx(ctx, tx, actor, learningcontent.StudioTarget{ArtifactID: &c.ArtifactID, ExpectedVersion: c.ExpectedArtifactVersion, Generation: g, Kind: c.Kind, GoalID: &j.Input.QuizGoalID}); err != nil {
+				return j, err
+			}
 		}
 	}
 	input, _ := json.Marshal(j.Input)
@@ -245,6 +288,9 @@ func (s *Service) enqueueStudioStageTx(ctx context.Context, tx pgx.Tx, actor ide
 		item.body.StudioPlan = nil
 		item.body.StudioContent = content
 		item.Stage = "studio_section"
+		if j.Kind == "quiz" {
+			item.Stage = "studio_question"
+		}
 		if content.UnitID == "" {
 			item.Stage = "studio_summary"
 		}

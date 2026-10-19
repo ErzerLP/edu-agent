@@ -250,3 +250,25 @@ S-B 接续已确认的指南、简报和笔记大纲。确认事务固定 UTF-8 
 真实 PostgreSQL 与确定性 HTTP 模型桩覆盖总来源和单章超窗、provider 窗口拒绝后的收缩、3/8 停止与服务实例重建后继续、无效引用、汇总独立重试、停止／发布两种先后、目标版本冲突和另存、旧 schema 读取。同一流程验证分页、按段编辑、旧版本不变和转来源 Markdown 投影。Chromium 单用例覆盖确认到打开产物及按段编辑，并核对前三段的 run／attempt／正文不变及 schema 协商。最终检查结果以本次交付记录为准。
 
 本批采用保守的汇总与编辑策略：汇总复用已核验原文，不允许自由扩写；一段手工修改后整体标为用户笔记，不自动判断哪些改句仍可视为已核验。真实模型长输出质量、真实移动端及多浏览器仍留 Candidate。未引入任务预算、采用部分结果、题目规划或对话整理。
+
+## 13. S-C 实现覆盖
+
+S-C 将学习方向测验接入同一 job 流程：题目规划 → 对话修改／删除／排序 → 确认 → 逐题生成与引用核验 → 汇总 → 发布一个 quiz 版本。首版仍只有简答和解释两类文字开放题；默认 3 题，允许 1–8 题。难度可选基础、适中、较难，未指定时由规划结合学习方向与有界学习状态安排。
+
+| 范围 | 实际落点与边界 |
+| --- | --- |
+| 题目规划 | 复用 `StudioPlan.sections`，每项 `id` 是稳定题目 ID，`topic` 是考查知识点，`objective` 是练习目标，新增 `question_type`（`short_answer`／`explanation`）和 `difficulty`（`easy`／`medium`／`hard`）；`chapters` 保留确切来源身份、node revision 和范围。规划只含轻量元数据，不生成正式题干、rubric 或学习事实。初次题数和显式难度在模型输出边界核对，修改后按最新规划确认。 |
+| 输入与方向 | `StudioJobCreate` 新增 quiz kind、可选 `question_count` 和 `difficulty`。受理时通过现有 `learningdirection.EnsureTx` 冻结 managed goal ID、goal revision、方向 revision 及自动评估配置，保存在加密 job 输入中；不创建教学会话。后续方向或来源选择变化不改写此快照。创建 quiz 时在共享门禁前取得学习区排他锁，避免 managed goal 建立时的锁升级死锁，并发重复请求回放同一 job／run。 |
+| 单元与读取 | 每道题恰好一个 unit，unit ID 与规划 ID 相同，顺序按确认修订固定。每题在所选章节间分配原规划的切片额度，总计最多 4096 字节；长章节只取开头的有界真实范围，确认前在未覆盖范围中明确提示。UTF-8 范围由来源端口校准，不因长章节生成额外题目。 |
+| 生成与引用 | `studio_question_model.go` 和 `StudioQuestionSchema` 限定每次只返回一题的 prompt、rubric、allowed_help 与 request-local 引用；复用既有 quiz parser、确切来源版本／范围／hash 核验、一次结构或引用修复、窗口收缩及逐单元恢复。成功保存才计完成数，全部题目完成前不发布 quiz。 |
+| 汇总 | 汇总只接收最多 8 条题目规划的知识点／题型说明及已知缺口，不接收题干、rubric、答案或来源正文。模型只选择给定 ID，程序回填安全的规划说明；建议顺序必须完整保留已确认题序，遗漏或逆序按结构错误修复一次，仍无效则不发布。正文事实不能借汇总进入产物，既有帮助下限不变。 |
+| 发布映射 | `studio_quiz_publish.go` 在原发布事务中按 unit ordinal 合并题目，重新映射产物内的数字 citation ID，发布 **schema 1 quiz**；`quiz.questions` 的形状、顺序及原读取入口保持不变。复用 `learning_studio_section_revisions`：`(artifact_id, version, section_id=unitID)` 对应 `ordinal=正式题号`，由已有唯一约束和不可变触发器保护。映射及加密题目独立于生成 job 保留，重新生成的新版本不复用旧题活动或答案。 |
+| 单题学习 | 发布后的开始仍走 `learningcontent.StartStudioQuizTx` → `learningstart.StartStudioQuiz` → `PublishExerciseTx`，以 `(artifact_id, version, question)` 绑定独立 session、activity、content 与 exercise。前题完成门禁、开始回执、帮助下限、提交回执、Attempt → Assessment → Evidence 及复核门禁均沿用原内核。生成和开始不写 Attempt／Evidence。 |
+| Web | 测验入口与方向测验重新生成入口使用题目规划视图，提供题数、难度、对话修改、删除、拖动和键盘排序、确认及逐题进度。未发布单元 API 只返回题目元数据和核验状态，不暴露候选题目或 rubric；发布后显示练习覆盖与顺序，再进入原作答卡片。无 direction 绑定的旧 goal 测验仍保留 legacy 重新生成入口，旧题照常作答。 |
+| 生命周期与用量 | `000047_studio_staged_quiz.sql` 只扩展 job kind，复用原 job／plan／unit／section 的加密、轮换、删除、清除及权限检查。所有规划、修改、修复、`studio_question` 和汇总调用归同一 job 根任务；开始后的评估仍属于原学习评估任务。 |
+
+本批新增的 PostgreSQL 流程使用确定性 HTTP 模型响应，覆盖并发重复创建、规划修改与确认到发布、完整作答顺序、单题独立会话、原方向／来源快照、帮助下限、重复开始／提交、评估恢复及生成不写学习事实；另验证重新生成保留旧版本，删除 job 不删除已发布题号映射。旧测验兼容性由原 quiz、direction、exercise 测试继续验证。新增 Chromium 用例覆盖题目规划、修改、排序／删除、确认、逐题进度、发布、第 1 题提交及反馈；旧方向测验浏览器用例改用 legacy API 建立旧产物，保留其兼容性测试意图。
+
+实现复用 section revisions 保存题号映射，没有新建独立映射表。长章的未纳入范围明确保留为 coverage 缺口；真实出题质量、真实模型评估质量和多浏览器检查仍留 Candidate，本批不以确定性桩证明这些质量。
+
+本批验证结果：真实 PostgreSQL 下，`learningcontent`、`learningstart`、`mentorrun`、`transport/httpapi`、`migrations`、`api` 六个包的 `go test -p=1` 和 `go vet -p=1` 均通过，mentorrun 整包使用 `-timeout 40m`。汇总完整题序及并发创建修正另经定向回归，迁移清单断言更新后单独复跑通过。前端 `npm run check` 通过；Chromium 的 `studio-staged-quiz.spec.ts` 单用例通过（21.7 秒）。未运行全项目测试或三浏览器矩阵。

@@ -157,7 +157,8 @@ func studioPlanRequest(j learningcontent.StudioJob, nodes []knowledge.SourceDire
 	if len(j.Messages) > 0 {
 		current = j.Messages[len(j.Messages)-1].Text
 	}
-	data := map[string]any{"kind": j.Kind, "direction": j.Input.Direction, "focus": j.Input.Focus, "learning_state": j.Input.LearningState, "directory": nodes, "available_chapters": total, "current_plan": j.Plan, "recent_edits": history, "instruction": current}
+	data := map[string]any{"kind": j.Kind, "direction": j.Input.Direction, "focus": j.Input.Focus, "learning_state": j.Input.LearningState, "directory": nodes, "available_chapters": total, "current_plan": j.Plan, "recent_edits": history, "instruction": current, "excluded_content": j.Input.ExcludedContent}
+	instruction += `excluded_content 是用户直接删除的部分；未明确重新纳入时不得恢复或转移到其他部分。各部分按不同目标分工，避免主题、目标和标题重复。`
 	if j.Input.Conversation != nil {
 		data["conversation_topics"] = studioConversationTopics(j)
 		data["learning_state"] = studioConversationLearningState(j)

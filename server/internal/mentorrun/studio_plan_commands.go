@@ -119,6 +119,13 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 		if e != nil {
 			return j, e
 		}
+		for _, section := range j.Plan.Sections {
+			for _, id := range c.DeleteIDs {
+				if section.ID == id {
+					j.Input.ExcludedContent = append(j.Input.ExcludedContent, section.Topic+"："+section.Objective)
+				}
+			}
+		}
 		p.InputFingerprint = planFingerprint(j.Input.Fingerprint, p)
 		if err = s.studio.AppendStudioPlanTx(ctx, tx, &j, p); err != nil {
 			return j, err

@@ -30,6 +30,8 @@ export const mentorCitationSchema = z.object({
   slice_sha256: hash,
 })
 export type MentorCitation = z.infer<typeof mentorCitationSchema>
+// Staged Studio artifacts cite sections as `<unit>:<n>`; other fields stay identical.
+export const studioCitationSchema = mentorCitationSchema.extend({ id: z.string().regex(/^[A-Za-z0-9._-]{1,128}(:[1-9][0-9]{0,3})?$/) })
 export const sourceKey = (s: SourceIdentity) =>
   `${s.collection_id}:${s.revision_id}:${s.document_id}:${s.document_revision_id}`
 export function selectedSources(

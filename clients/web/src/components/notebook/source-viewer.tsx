@@ -11,7 +11,7 @@ import {
 import { useIdentity } from '@/lib/session'
 import { sourceSchema as researchSourceSchema, sourceStatus } from '@/api/research'
 import { Button } from '../ui/button'
-import { mentorCitationSchema } from '@/api/source-selection'
+import { mentorCitationSchema, studioCitationSchema } from '@/api/source-selection'
 import { citationExcerpt, exerciseCitationSchema } from '@/api/exercises'
 import { ErrorState } from '../common'
 import { PDFCoverage, PDFPageViewer } from '../pdf-source'
@@ -333,7 +333,7 @@ export function MentorCitationContent({
           },
           signal,
         }),
-        exerciseId ? exerciseCitationSchema : mentorCitationSchema,
+        exerciseId ? exerciseCitationSchema : artifactId ? studioCitationSchema : mentorCitationSchema,
       )
       if (value.id !== citationId) throw new ApiError(502, 'invalid_response')
       return value

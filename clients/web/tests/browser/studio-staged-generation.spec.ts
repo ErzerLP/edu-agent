@@ -139,8 +139,13 @@ test('Studio 确认后逐段生成、3/8 停止、刷新继续、完成并打开
   await expect(studio.getByRole('heading', { name: '偶数学习大纲', exact: true })).toBeVisible()
   const saved = studio.getByRole('region', { name: '已保存段落', exact: true })
   await expect(
-    saved.getByRole('heading', { name: '1. 偶数学习第1部分', exact: true }),
+    saved.getByRole('heading', { name: '1. 偶数学习第1部分（第1段）', exact: true }),
   ).toBeVisible()
+  await saved.getByRole('button', { name: /^查看引用 / }).first().click()
+  const viewer = page.getByRole('region', { name: '来源查看器', exact: true })
+  await expect(viewer.getByRole('button', { name: '关闭引用片段', exact: true })).toBeVisible()
+  await expect(viewer).toContainText('偶数')
+  await expect(viewer.getByText('服务器响应格式不受支持', { exact: false })).toHaveCount(0)
   await saved.getByRole('button', { name: '编辑本段', exact: true }).first().click()
   await saved.getByLabel('本段笔记').fill('我的整除复习笔记。')
   await saved.getByRole('button', { name: '保存本段为新版本', exact: true }).click()

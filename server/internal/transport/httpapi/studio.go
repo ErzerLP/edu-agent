@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -111,6 +112,15 @@ func (a *API) studioCitation(w http.ResponseWriter, r *http.Request) {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}
+	citationID := chi.URLParam(r, "citationID")
+	// chi routes on RawPath when present; URL.Path is already decoded.
+	if r.URL.RawPath != "" {
+		citationID, err = url.PathUnescape(citationID)
+		if err != nil {
+			mentorFailure(w, r, learningcontent.ErrInvalid)
+			return
+		}
+	}
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.learningContent.StudioGet(r.Context(), actor, chi.URLParam(r, "artifactID"), version)
 	if err != nil {
@@ -118,13 +128,13 @@ func (a *API) studioCitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, citation := range result.Body.Citations {
-		if citation.ID == chi.URLParam(r, "citationID") {
+		if citation.ID == citationID {
 			writeJSON(w, 200, citation)
 			return
 		}
 	}
 	if result.Body.Schema == 2 {
-		citation, e := a.learningContent.StudioSectionCitation(r.Context(), actor, result.ArtifactID, result.Version, chi.URLParam(r, "citationID"))
+		citation, e := a.learningContent.StudioSectionCitation(r.Context(), actor, result.ArtifactID, result.Version, citationID)
 		if e != nil {
 			mentorFailure(w, r, e)
 			return

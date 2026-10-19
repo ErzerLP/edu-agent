@@ -616,7 +616,7 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 		}
 		return tx.Commit(ctx)
 	}
-	rows, err := tx.Query(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE session_id=$1 ORDER BY id FOR UPDATE`, id)
+	rows, err := tx.Query(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE session_id=$1 OR studio_job_id IN (SELECT id FROM learning_studio_jobs WHERE conversation_id=$1) ORDER BY id FOR UPDATE`, id)
 	if err != nil {
 		return err
 	}
@@ -634,6 +634,9 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 		return err
 	}
 	for _, item := range items {
+		if item.SessionID != id {
+			continue
+		} // dependent Studio jobs are removed below
 		item.BodyAvailable = false
 		item.body = Body{}
 		item.Status = "cancelled"
@@ -649,6 +652,9 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 		if err = s.save(ctx, tx, &item, "conversation_deleted"); err != nil {
 			return err
 		}
+	}
+	if err = s.removeConversationStudioJobsTx(ctx, tx, id); err != nil {
+		return err
 	}
 	if _, err = tx.Exec(ctx, `DELETE FROM learning_tutor_turns WHERE conversation_id=$1`, id); err != nil {
 		return err

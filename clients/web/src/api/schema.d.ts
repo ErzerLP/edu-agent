@@ -1695,6 +1695,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/conversations/{conversationID}/studio-scope": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 读取当前资料和方向可支持的话题选择范围
+         * @description 只读，不调用模型、不读取原始消息。按确切来源和方向筛选话题并检查证据权限，每页最多50个；分页绑定 index_revision。partial 表示仍有内容未覆盖。无来源时也可读取提示状态，创建生成任务仍必须选择来源。
+         */
+        post: operations["readStudioConversationScope"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/exercises/{exerciseID}": {
         parameters: {
             query?: never;
@@ -4023,6 +4048,18 @@ export interface components {
             /** Format: uuid */
             artifact_id?: string;
             expected_artifact_version?: number;
+            conversation_scope?: components["schemas"]["StudioConversationScope"];
+        };
+        /** @description 仅 note/quiz 可用。受理事务冻结已选话题的安全投影，不读取原始消息或把话题作为引用。索引变化或有未覆盖内容但未明确接受时返回409；后续索引更新不会改写已受理任务。 */
+        StudioConversationScope: {
+            /** Format: uuid */
+            conversation_id: string;
+            topic_ids: string[];
+            index_revision: number;
+            /** Format: uuid */
+            through_message: string;
+            /** @description 默认为 false；用户明确选择按当前已整理范围继续时为 true，缺口随规划和产物保存 */
+            accept_partial?: boolean;
         };
         StudioPlanMessageRequest: {
             /** Format: uuid */
@@ -4078,6 +4115,8 @@ export interface components {
             id: string;
             topic: string;
             objective: string;
+            /** @description 对话整理规划绑定的已选话题，普通规划不包含此字段 */
+            topic_ids?: string[];
             /**
              * @description quiz 规划及单元必有，两类均使用开放式文字作答
              * @enum {string}
@@ -12317,6 +12356,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MentorReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readStudioConversationScope: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    source_selection: components["schemas"]["SourceSelection"];
+                    direction_version: number;
+                    /** Format: uuid */
+                    cursor?: string;
+                    /** @description 分页时必须与第一页一致 */
+                    index_revision?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description 可供勾选的话题；不自动扩大资料范围 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        conversation_id: string;
+                        privacy_generation: number;
+                        index_revision: number;
+                        /** Format: uuid */
+                        through_message?: string;
+                        /** @enum {string} */
+                        status: "not_started" | "queued" | "running" | "ready" | "failed";
+                        partial: boolean;
+                        items: components["schemas"]["ConversationTopic"][];
+                        /** Format: uuid */
+                        next_cursor?: string;
+                    };
                 };
             };
             default: components["responses"]["WebFailure"];

@@ -30,10 +30,12 @@ export function StudioPanel({
   space,
   onCitation,
   archived = false,
+  requestedJobId,
 }: {
   space: Space
   onCitation: (artifact: string, version: number, id: string) => void
   archived?: boolean
+  requestedJobId?: string
 }) {
   const spaceId = space.id
   const { session, prefix, drafts } = useIdentity()
@@ -46,6 +48,9 @@ export function StudioPanel({
   }>()
   const [runId, setRunId] = useState<string>()
   const [jobId, setJobId] = useState<string>()
+  useEffect(() => {
+    if (requestedJobId) { setDocument(undefined); setGeneration(undefined); setRunId(undefined); setSelected(undefined); setJobId(requestedJobId) }
+  }, [requestedJobId])
   const canRead = session.device.scopes.includes('learning:read')
   const canWrite = session.device.scopes.includes('learning:write') && !archived
   const canGenerate =

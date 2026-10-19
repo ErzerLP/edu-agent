@@ -29,7 +29,7 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 47 || latest.name != "000047_studio_staged_quiz.sql" || len(latest.checksum) != 64 {
+	if latest.version != 48 || latest.name != "000048_studio_conversation_scope.sql" || len(latest.checksum) != 64 {
 		t.Fatalf("Studio 题目规划迁移未正确嵌入: %s", latest.name)
 	}
 	study := items[39]

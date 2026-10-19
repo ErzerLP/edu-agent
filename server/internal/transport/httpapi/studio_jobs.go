@@ -12,9 +12,10 @@ import (
 )
 
 func (a *API) mountStudioJobs(r chi.Router) {
-	read := r.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge, privacy.OwnerTutoring))
-	write := r.With(a.requireScope("learning:read"), a.requireScope("learning:write"), a.requireScope("knowledge:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge, privacy.OwnerTutoring))
+	read := r.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge, privacy.OwnerTutoring, privacy.OwnerMemory))
+	write := r.With(a.requireScope("learning:read"), a.requireScope("learning:write"), a.requireScope("knowledge:read"), a.studioScope, a.responseReadPermit("content_redacted", privacy.OwnerLearning, privacy.OwnerKnowledge, privacy.OwnerTutoring, privacy.OwnerMemory))
 	read.Get("/v1/learning/studio/focus", a.studioFocus)
+	read.Post("/v1/learning/conversations/{conversationID}/studio-scope", a.studioConversationTopics)
 	read.Get("/v1/learning/studio/jobs", a.studioJobs)
 	read.Get("/v1/learning/studio/jobs/{jobID}", a.studioJob)
 	read.Get("/v1/learning/studio/jobs/{jobID}/units", a.studioUnits)
@@ -69,7 +70,7 @@ func (a *API) studioJobCreate(w http.ResponseWriter, r *http.Request) {
 	var input mentorrun.StudioJobCreate
 	if !decodeStudioJobRequest(w, r, &input,
 		[]string{"operation_id", "privacy_generation", "kind", "source_selection", "direction_version"},
-		[]string{"focus", "question_count", "difficulty", "artifact_id", "expected_artifact_version"}) {
+		[]string{"focus", "question_count", "difficulty", "artifact_id", "expected_artifact_version", "conversation_scope"}) {
 		return
 	}
 	if input.Validate() != nil {
@@ -88,6 +89,26 @@ func (a *API) studioJobCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", "/v1/learning/studio/jobs/"+job.ID)
 	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (a *API) studioConversationTopics(w http.ResponseWriter, r *http.Request) {
+	if _, ok := strictLearningQuery(w, r); !ok {
+		return
+	}
+	var input mentorrun.StudioTopicOptionsRequest
+	if !decodeStudioJobRequest(w, r, &input, []string{"source_selection", "direction_version"}, []string{"cursor", "index_revision"}) {
+		return
+	}
+	if a.mentorRuns == nil {
+		mentorFailure(w, r, mentorrun.ErrStorage)
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	started := false
+	err := a.mentorRuns.StudioConversationTopics(r.Context(), actor, chi.URLParam(r, "conversationID"), input, topicResponse[mentorrun.StudioTopicOptions](w, &started))
+	if err != nil && !started {
+		mentorFailure(w, r, err)
+	}
 }
 
 func (a *API) studioFocus(w http.ResponseWriter, r *http.Request) {

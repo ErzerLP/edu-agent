@@ -34,7 +34,7 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 	hash := studioJobHash(action, "", id, c)
 	if old, found, e := s.studio.StudioJobOperationTx(ctx, tx, actor.Device.ID, c.OperationID, hash, g); e != nil || found {
 		if e == nil {
-			e = s.studioJobSourcesTx(ctx, tx, old)
+			e = s.studioJobSourcesTx(ctx, tx, old, actor.TokenID)
 		}
 		return old, e
 	}
@@ -68,7 +68,7 @@ func (s *Service) ChangeStudioPlan(ctx context.Context, actor identity.Credentia
 	if action == "delete" {
 		return s.deleteStudioJobTx(ctx, tx, j)
 	}
-	if err = s.studioJobSourcesTx(ctx, tx, j); err != nil {
+	if err = s.studioJobSourcesTx(ctx, tx, j, actor.TokenID); err != nil {
 		return learningcontent.StudioJob{}, err
 	}
 	if action == "stop" || action == "resume" || action == "save_as_new" || action == "revise" || action == "retry" && j.ConfirmedPlanRevision > 0 {
@@ -234,18 +234,8 @@ func (s *Service) preflightStudioPlanTx(ctx context.Context, tx pgx.Tx, j learni
 	return errCitation
 }
 func (s *Service) deleteStudioJobTx(ctx context.Context, tx pgx.Tx, j learningcontent.StudioJob) (learningcontent.StudioJob, error) {
-	// Deleting a planning task removes its input, all revisions, sent messages,
-	// operation payloads and stage checkpoints. Published artifacts are separate.
-	for _, query := range []string{
-		`DELETE FROM learning_mentor_events WHERE run_id IN(SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1)`,
-		`DELETE FROM learning_mentor_operations WHERE run_id IN(SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1)`,
-		`DELETE FROM learning_mentor_runs WHERE studio_job_id=$1`,
-		`DELETE FROM learning_mentor_sessions WHERE studio_job_id=$1`,
-		`DELETE FROM learning_studio_jobs WHERE id=$1`,
-	} {
-		if _, err := tx.Exec(ctx, query, j.ID); err != nil {
-			return j, err
-		}
+	if err := removeStudioJobTx(ctx, tx, j.ID); err != nil {
+		return j, err
 	}
 	j.Status = "deleted"
 	j.Plan = nil
@@ -255,4 +245,20 @@ func (s *Service) deleteStudioJobTx(ctx context.Context, tx pgx.Tx, j learningco
 	j.RunID = ""
 	j.Version++
 	return j, tx.Commit(ctx)
+}
+func removeStudioJobTx(ctx context.Context, tx pgx.Tx, id string) error {
+	// Deleting a planning task removes its input, all revisions, sent messages,
+	// operation payloads and stage checkpoints. Published artifacts are separate.
+	for _, query := range []string{
+		`DELETE FROM learning_mentor_events WHERE run_id IN(SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1)`,
+		`DELETE FROM learning_mentor_operations WHERE run_id IN(SELECT id FROM learning_mentor_runs WHERE studio_job_id=$1)`,
+		`DELETE FROM learning_mentor_runs WHERE studio_job_id=$1`,
+		`DELETE FROM learning_mentor_sessions WHERE studio_job_id=$1`,
+		`DELETE FROM learning_studio_jobs WHERE id=$1`,
+	} {
+		if _, err := tx.Exec(ctx, query, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

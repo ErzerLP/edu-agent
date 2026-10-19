@@ -19,19 +19,23 @@ import (
 )
 
 type StudioJobCreate struct {
-	OperationID             string                    `json:"operation_id"`
-	Generation              int64                     `json:"privacy_generation"`
-	Kind                    string                    `json:"kind"`
-	SourceSelection         knowledge.SourceSelection `json:"source_selection"`
-	DirectionVersion        int64                     `json:"direction_version"`
-	Focus                   string                    `json:"focus,omitempty"`
-	QuestionCount           *int                      `json:"question_count,omitempty"`
-	Difficulty              string                    `json:"difficulty,omitempty"`
-	ArtifactID              string                    `json:"artifact_id,omitempty"`
-	ExpectedArtifactVersion int64                     `json:"expected_artifact_version,omitempty"`
+	ConversationScope       *learningcontent.StudioConversationScope `json:"conversation_scope,omitempty"`
+	OperationID             string                                   `json:"operation_id"`
+	Generation              int64                                    `json:"privacy_generation"`
+	Kind                    string                                   `json:"kind"`
+	SourceSelection         knowledge.SourceSelection                `json:"source_selection"`
+	DirectionVersion        int64                                    `json:"direction_version"`
+	Focus                   string                                   `json:"focus,omitempty"`
+	QuestionCount           *int                                     `json:"question_count,omitempty"`
+	Difficulty              string                                   `json:"difficulty,omitempty"`
+	ArtifactID              string                                   `json:"artifact_id,omitempty"`
+	ExpectedArtifactVersion int64                                    `json:"expected_artifact_version,omitempty"`
 }
 
 func (c StudioJobCreate) Validate() error {
+	if c.ConversationScope != nil && ((c.Kind != "note" && c.Kind != "quiz") || validateStudioConversationScope(*c.ConversationScope) != nil) {
+		return ErrInvalid
+	}
 	if !validID(c.OperationID) || c.Generation < 1 || (c.Kind != "guide" && c.Kind != "brief" && c.Kind != "note" && c.Kind != "quiz") || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || len(c.SourceSelection.Items) == 0 || c.DirectionVersion < 0 || c.Focus != "" && !validText(c.Focus, 2000) || c.ExpectedArtifactVersion < 0 || (c.ArtifactID == "") != (c.ExpectedArtifactVersion == 0) || c.ArtifactID != "" && !validID(c.ArtifactID) {
 		return ErrInvalid
 	}
@@ -131,7 +135,10 @@ func (s *Service) beginStudioJob(ctx context.Context, actor identity.Credential,
 	}
 	return tx, g, nil
 }
-func (s *Service) studioJobSourcesTx(ctx context.Context, tx pgx.Tx, j learningcontent.StudioJob) error {
+func (s *Service) studioJobSourcesTx(ctx context.Context, tx pgx.Tx, j learningcontent.StudioJob, token string) error {
+	if err := s.studioConversationGateTx(ctx, tx, j, token); err != nil {
+		return err
+	}
 	g, err := privacy.LockOwnerRead(ctx, tx, privacy.OwnerTutoring)
 	if err != nil {
 		return err
@@ -172,7 +179,7 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 	hash := studioJobHash("create", learningspace.Scope(ctx), "", c)
 	if old, found, e := s.studio.StudioJobOperationTx(ctx, tx, actor.Device.ID, c.OperationID, hash, g); e != nil || found {
 		if e == nil {
-			e = s.studioJobSourcesTx(ctx, tx, old)
+			e = s.studioJobSourcesTx(ctx, tx, old, actor.TokenID)
 		}
 		return old, e
 	}
@@ -196,6 +203,12 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 		return learningcontent.StudioJob{}, err
 	}
 	j := learningcontent.StudioJob{ID: uuid.NewString(), SpaceID: learningspace.Scope(ctx), DeviceID: actor.Device.ID, Generation: g, Version: 1, Kind: c.Kind, Status: "planning", Messages: []learningcontent.StudioPlanMessage{}, SuggestedFocus: state.SuggestedFocus, Input: learningcontent.StudioJobInput{Manifest: *manifest, DirectionID: d.ID, DirectionVersion: d.Version, Direction: d.Text, LearningState: state, TutoringGeneration: tutoringGeneration, Focus: c.Focus, ArtifactID: c.ArtifactID, ExpectedArtifactVersion: c.ExpectedArtifactVersion}}
+	if c.ConversationScope != nil {
+		j.Input.Conversation, err = s.freezeStudioConversationTx(ctx, tx, actor, j, *c.ConversationScope)
+		if err != nil {
+			return j, err
+		}
+	}
 	if c.Kind == "quiz" {
 		if !s.CanStart() {
 			return j, ErrStorage
@@ -242,6 +255,11 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 	}
 	if err = s.studio.InsertStudioJobTx(ctx, tx, &j); err != nil {
 		return j, err
+	}
+	if c.ConversationScope != nil {
+		if _, err = tx.Exec(ctx, `UPDATE learning_studio_jobs SET conversation_id=$2 WHERE id=$1`, j.ID, c.ConversationScope.ConversationID); err != nil {
+			return j, err
+		}
 	}
 	if err = s.enqueueStudioPlanTx(ctx, tx, actor, &j, c.OperationID); err != nil {
 		return j, err
@@ -330,7 +348,7 @@ func (s *Service) StudioJob(ctx context.Context, actor identity.Credential, id s
 	if err != nil {
 		return j, err
 	}
-	if err = s.studioJobSourcesTx(ctx, tx, j); err != nil {
+	if err = s.studioJobSourcesTx(ctx, tx, j, actor.TokenID); err != nil {
 		return learningcontent.StudioJob{}, err
 	}
 	// Lease expiry and process restart are observable even before the next worker
@@ -398,7 +416,7 @@ func (s *Service) StudioJobs(ctx context.Context, actor identity.Credential, cur
 		if e != nil {
 			return page, e
 		}
-		if e = s.studioJobSourcesTx(ctx, tx, j); e != nil {
+		if e = s.studioJobSourcesTx(ctx, tx, j, actor.TokenID); e != nil {
 			if !sourceUnavailable(e) && !errors.Is(e, ErrInactive) {
 				return page, e
 			}

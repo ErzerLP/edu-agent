@@ -46,6 +46,7 @@ type StudioJobInput struct {
 	LearningState           learning.StudioLearningState `json:"learning_state"`
 	TutoringGeneration      int64                        `json:"tutoring_generation"`
 	Focus                   string                       `json:"focus"`
+	ExcludedContent         []string                     `json:"excluded_content,omitempty"`
 	QuestionCount           int                          `json:"question_count,omitempty"`
 	Difficulty              string                       `json:"difficulty,omitempty"`
 	QuizGoalID              string                       `json:"quiz_goal_id,omitempty"`

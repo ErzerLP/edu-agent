@@ -89,6 +89,9 @@ func TestPostgreSQLStudioStagedQuizLearningPath(t *testing.T) {
 			result, _ := json.Marshal(map[string]any{"overview": ids, "transitions": order, "uncovered": []string{}})
 			studioReply(w, string(result), "stop")
 		} else {
+			if !strings.Contains(input.Messages[0].Content, "rubric 只考查题干问到的内容") {
+				t.Error("question request does not restrict rubric to explicit prompt questions")
+			}
 			var data struct {
 				Topic   string                   `json:"topic"`
 				Sources []knowledge.SourceDetail `json:"sources"`

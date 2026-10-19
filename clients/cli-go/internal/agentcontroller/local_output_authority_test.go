@@ -30,7 +30,6 @@ func TestLocalOutputNewGenerationNeverReusesOwner(t *testing.T) {
 	if current.localOwner == oldOwner || current.localOwner != current.record.SessionID {
 		t.Fatalf("new generation reused an old task owner: %q", current.localOwner)
 	}
-	setManualSessionTitle(t, current)
 	if _, err := current.Send(t.Context(), "emit"); err != nil {
 		t.Fatal(err)
 	}

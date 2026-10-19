@@ -46,7 +46,6 @@ func TestRecursiveCopyCurrentBudgetsAcrossResumeAndSwitch(t *testing.T) {
 			if _, err := c.NewSession(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			setManualSessionTitle(t, c)
 			check()
 			if _, err := c.CommitSwitch(t.Context(), c.PlanSwitch(leaseSummary(t, c, owner)), SwitchConfirmation{}); err != nil {
 				t.Fatal(err)

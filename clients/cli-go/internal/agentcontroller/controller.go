@@ -1425,11 +1425,13 @@ func (c *Controller) scheduleTitleLocked(checkpoint agentloop.SessionCheckpoint)
 	// turn every following conversation turn into an unbounded retry loop.
 	c.record.AutoTitleTurns = turns
 	c.record.LastTitleAt = c.now().UTC()
-	go c.generateTitle(ctx, job, generation, turns, baseRevision, input)
+	// Capture the model under c.mu: a later switch replaces c.model while this
+	// request is in flight, and the stale result is dropped by generation.
+	go c.generateTitle(ctx, c.model, job, generation, turns, baseRevision, input)
 }
 
-func (c *Controller) generateTitle(ctx context.Context, job, generation, turns, baseRevision uint64, input string) {
-	response, err := c.model.Complete(ctx, modelclient.Request{
+func (c *Controller) generateTitle(ctx context.Context, model agentloop.Model, job, generation, turns, baseRevision uint64, input string) {
+	response, err := model.Complete(ctx, modelclient.Request{
 		Messages: []modelclient.Message{
 			{Role: "system", Content: "为这段学习对话生成简洁自然的中文会话标题。只输出单行JSON：{\"title\":\"...\"}。不得包含换行、工具信息、路径、错误或推理。"},
 			{Role: "user", Content: input},

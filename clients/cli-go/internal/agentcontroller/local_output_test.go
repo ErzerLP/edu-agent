@@ -58,13 +58,22 @@ func outputFixture(t *testing.T, noSave bool) *leaseFixture {
 	}
 	t.Cleanup(f.controller.Close)
 	if !noSave {
-		summary := leaseSummary(t, f.controller, f.controller.SessionID())
-		if _, err = f.controller.RenameSession(t.Context(), summary.SessionID, "output test", summary.RecordRevision); err != nil {
-			t.Fatal(err)
-		}
+		setManualSessionTitle(t, f.controller)
 	}
 	return f
 }
+
+// These fixtures exercise storage and ownership independently of title jobs.
+// A new Session needs its own manual title before its first turn; otherwise an
+// automatic title save can contend for the fixture's short profile lock budget.
+func setManualSessionTitle(t *testing.T, c *Controller) {
+	t.Helper()
+	summary := leaseSummary(t, c, c.SessionID())
+	if _, err := c.RenameSession(t.Context(), summary.SessionID, "output test", summary.RecordRevision); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func outputRun(t *testing.T, f *leaseFixture) localexec.Snapshot {
 	t.Helper()
 	if _, err := f.controller.Send(t.Context(), "emit"); err != nil {

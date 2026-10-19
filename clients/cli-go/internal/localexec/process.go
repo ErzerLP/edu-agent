@@ -12,6 +12,7 @@ type exitResult struct {
 }
 
 var signalTaskGroup = signalProcessGroup
+var taskSessionHasMembers = sessionHasMembers
 
 // The leader is observed WITHOUT reaping (WNOWAIT). Until all group signals are
 // finished its PID therefore remains reserved, even if the shell has exited.
@@ -89,26 +90,26 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	closeTaskInput(t)
 
 	// An anchored, exited leader plus no LIVE group members needs no signal.
-	// Zombies are checked separately after reap, and are never called clean.
+	// Zombies are accounted for in the final cleanup checks, never called clean.
 	groupSettled := func() bool {
 		checkObserved()
 		if !observed || observationError != nil {
 			return false
 		}
 		if t.snapshot.PTY {
-			live, err := sessionHasMembers(pid, true)
+			live, err := taskSessionHasMembers(pid, true)
 			return err == nil && !live
 		}
 		live, err := groupHasLiveMembers(pid)
 		return err == nil && !live
 	}
-	awaitSettlement := func(budget time.Duration) bool {
+	awaitSettlement := func(budget time.Duration, isSettled func() bool) bool {
 		deadline := time.NewTimer(budget)
 		defer deadline.Stop()
 		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 		for {
-			if groupSettled() {
+			if isSettled() {
 				return true
 			}
 			if observationError != nil {
@@ -116,7 +117,9 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 			}
 			select {
 			case <-deadline.C:
-				return false
+				return isSettled()
+			case err := <-observations:
+				markObserved(err)
 			case <-ticker.C:
 			}
 		}
@@ -127,7 +130,7 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 		// Signal errors do not prove residual processes. Always verify the
 		// actual group/session state, including after a failed attempt.
 		_ = signalTaskGroup(pid, false)
-		settled = awaitSettlement(m.options.StopGrace)
+		settled = awaitSettlement(m.options.StopGrace, groupSettled)
 		if !settled && observationError == nil {
 			if t.snapshot.PTY {
 				// Last-master close invokes the kernel's terminal hangup, which
@@ -137,7 +140,7 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 				closeFile(pipes.stdoutReader)
 			}
 			_ = signalTaskGroup(pid, true)
-			settled = awaitSettlement(killSettleLimit)
+			settled = awaitSettlement(killSettleLimit, groupSettled)
 		}
 	}
 	// Query the whole terminal session (including zombies) BEFORE releasing
@@ -145,8 +148,13 @@ func (m *Manager) supervise(t *task, cmd *exec.Cmd, pipes *processPipes, timeout
 	// session is outside this contract; a remaining job-control pgrp is not.
 	sessionIncomplete := false
 	if t.snapshot.PTY {
-		exists, err := sessionHasMembers(pid, false)
-		sessionIncomplete = exists || err != nil
+		// No live members does not yet prove that reaping and the kernel's
+		// session scan have settled. Keep the leader pinned while waiting for
+		// a confirmed empty session; persistent uncertainty stays incomplete.
+		sessionIncomplete = !awaitSettlement(killSettleLimit, func() bool {
+			exists, err := taskSessionHasMembers(pid, false)
+			return err == nil && !exists
+		})
 	}
 	// Ownership of the leader ends here. Even if it is stuck in kernel I/O,
 	// retirement never signals a later incarnation of its numeric PID/PGID.

@@ -43,7 +43,9 @@ func (m *largeOutputControllerModel) Complete(_ context.Context, r modelclient.R
 func TestLargeOutputEncryptedSessionSaveResumeAndContinue(t *testing.T) {
 	root, workspaceRoot := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
-	text := " \n" + strings.Repeat("<\n", (1<<19)-1)
+	// Keep a full MiB (including whitespace, newlines and HTML escaping), with
+	// a long body line so repeated checkpoint encoding stays cheap under race.
+	text := " \n<" + strings.Repeat("x", (1<<20)-6) + "\n  "
 	model := &largeOutputControllerModel{text: text, title: make(chan int, 2)}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 3, MemoryGeneration: 4}}
 	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
@@ -113,8 +115,22 @@ func TestLargeOutputEncryptedSessionSaveResumeAndContinue(t *testing.T) {
 	if _, err := resumed.Send(t.Context(), "继续"); err != nil {
 		t.Fatal(err)
 	}
-	if state, _ := resumed.SessionPersistenceStatus(); state != "saved" {
-		t.Fatalf("save state=%s", state)
+	// Context events can trigger a separate bounded background save after
+	// Send's commit. Check the committed bytes, independently of that job's
+	// transient global persistence status or a later shutdown save.
+	continued, err := resumed.handle.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	continuedCheckpoint, err := agentloop.DecodeSessionCheckpoint(continued.Record.Checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if continued.Record.CommittedUserTurns != 2 || len(continuedCheckpoint.Messages) == 0 || continuedCheckpoint.Messages[len(continuedCheckpoint.Messages)-1].Content != "continue" {
+		t.Fatal("encrypted checkpoint lost the continued turn")
+	}
+	if err := resumed.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	continuedModel.mu.Lock()
 	requests := append([]modelclient.Request(nil), continuedModel.requests...)

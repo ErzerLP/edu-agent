@@ -328,14 +328,24 @@ export function PracticeController({
         </SubmissionNotice>
         {exercise.attempt_id && !exercise.feedback?.assessment && (
           <p role="status">
-            {state?.result_unknown
-              ? '评估结果待核对，未重复发送。'
-              : state?.can_resume
-                ? '评估已暂停，答案已保存。'
-                : state?.status === 'failed'
-                  ? '评估未完成，答案已保存。'
+            {state?.status === 'failed'
+              ? state.reason === 'assessment_commit_failed'
+                ? '评估结果保存失败，答案已保存。'
+                : '评估失败，答案已保存。'
+              : state?.result_unknown
+                ? '评估结果待核对，未重复发送。'
+                : state?.can_resume
+                  ? '评估已暂停，答案已保存。'
                   : '正在评估…'}
           </p>
+        )}
+        {state?.status === 'failed' && !state.can_resume && (
+          <>
+            {state.result_unknown && <p>本次调用结果尚未确认，请先核对评估状态。</p>}
+            <Button variant="ghost" disabled={busy} onClick={() => void refresh().catch(setError)}>
+              核对评估状态
+            </Button>
+          </>
         )}
         {state?.can_resume && (
           <details>

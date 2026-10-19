@@ -309,6 +309,19 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 		item.Status = "cancelled"
 		item.Reason = "user_stopped"
 	}
+	if item.Kind == "assessment" && item.body.Assessment != nil && !wasCancelling {
+		recovery, err := s.starter.Learning.InspectAssessmentTx(ctx, tx, *item.body.Assessment)
+		if err != nil {
+			return err
+		}
+		if recovery.ProposalStatus == "ready" && recovery.OperationStatus == "" {
+			item.callStarted = false
+			item.ResultUnknown = false
+			if item.Reason == "model_failed" {
+				item.Reason = "assessment_commit_failed"
+			}
+		}
+	}
 	item.ResultUnknown = item.ResultUnknown || item.callStarted
 	item.CostUnknown = item.CostUnknown || item.callStarted
 	item.Stage = item.Status

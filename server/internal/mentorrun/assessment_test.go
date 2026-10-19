@@ -662,11 +662,24 @@ func TestPostgreSQLExerciseSessionActionRechecksSubmitter(t *testing.T) {
 func TestPostgreSQLExerciseKnownRejectionIsNotUnknown(t *testing.T) {
 	f := newExerciseFixture(t)
 	ctx := context.Background()
-	_, attempt := f.submitted(t)
+	e, attempt := f.submitted(t)
 	f.modelOverride = func(w http.ResponseWriter, r *http.Request) { studioReply(w, `{"invalid":"assessment"}`, "stop") }
 	f.work(t)
 	state, err := f.service.AssessmentStatus(ctx, f.actor, attempt.ID)
 	if err != nil || state.Run == nil || state.Run.Status != "failed" || state.Run.ResultUnknown || state.Run.RequestsUsed != 2 {
 		t.Fatalf("known proposal failure mislabeled: %+v %v", state.Run, err)
+	}
+	policy, err := f.service.AssessmentPolicy(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.ResumeAssessment(ctx, f.actor, attempt.ID, AssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: state.Run.Version, Policy: policy}); err != nil {
+		t.Fatal("known rejected output cannot be retried", err)
+	}
+	assessmentReply(t, f, e, 1000)
+	f.work(t)
+	feedback, err := f.learn.Feedback(ctx, attempt.ID, false)
+	if err != nil || feedback.Assessment == nil || len(feedback.Evidence) != 1 || f.calls.Load() != 3 {
+		t.Fatal("retry did not assess the original answer once", err)
 	}
 }

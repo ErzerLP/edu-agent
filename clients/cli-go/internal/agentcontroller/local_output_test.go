@@ -65,6 +65,7 @@ func outputFixture(t *testing.T, noSave bool) *leaseFixture {
 	}
 	return f
 }
+
 func outputRun(t *testing.T, f *leaseFixture) localexec.Snapshot {
 	t.Helper()
 	if _, err := f.controller.Send(t.Context(), "emit"); err != nil {

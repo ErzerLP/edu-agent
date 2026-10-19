@@ -86,11 +86,17 @@ func newLeaseFixture(t *testing.T, noSave bool) *leaseFixture {
 
 func (f *leaseFixture) openStore(t *testing.T) *agentsession.Store {
 	t.Helper()
+	// Use the production default so ordinary background saves can finish.
+	return f.openStoreWithLockTimeout(t, 0)
+}
+
+func (f *leaseFixture) openStoreWithLockTimeout(t *testing.T, lockTimeout time.Duration) *agentsession.Store {
+	t.Helper()
 	profile, err := agentsession.ProfileFingerprint("https://server.example/api")
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := agentsession.Open(t.Context(), agentsession.Options{Root: f.root, ProfileFingerprint: profile, Secrets: f.secrets, LockTimeout: 20 * time.Millisecond})
+	store, err := agentsession.Open(t.Context(), agentsession.Options{Root: f.root, ProfileFingerprint: profile, Secrets: f.secrets, LockTimeout: lockTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +184,7 @@ func TestLocalSessionLeaseSwitchRoundTrip(t *testing.T) {
 	if summary.Locked {
 		t.Fatal("own parked Session is not selectable")
 	}
-	external := f.openStore(t)
+	external := f.openStoreWithLockTimeout(t, 20*time.Millisecond)
 	defer external.Close()
 	leaseAssertLocked(t, external, summary)
 	items, err := NewSelector(external, "", c.provider).ListSessions(t.Context(), SessionListRequest{All: true})
@@ -272,7 +278,7 @@ func TestLocalSessionLeaseFailedPreflightKeepsOwner(t *testing.T) {
 				t.Fatal("failed preflight replaced or blocked current Session")
 			}
 			leaseAssertRunning(t, f, a, task.TaskID)
-			external := f.openStore(t)
+			external := f.openStoreWithLockTimeout(t, 20*time.Millisecond)
 			defer external.Close()
 			leaseAssertLocked(t, external, summary)
 			c.mu.Lock()
@@ -474,7 +480,7 @@ func TestLocalSessionLeaseSaveDegradationKeepsRunningOwner(t *testing.T) {
 	if err != nil || !retained {
 		t.Fatalf("save degradation released running owner: %v", err)
 	}
-	external := f.openStore(t)
+	external := f.openStoreWithLockTimeout(t, 20*time.Millisecond)
 	defer external.Close()
 	leaseAssertLocked(t, external, summary)
 	if _, err := c.StopLocalTask(t.Context(), task.TaskID); err != nil {

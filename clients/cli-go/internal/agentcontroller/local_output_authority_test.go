@@ -3,6 +3,7 @@ package agentcontroller
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 )
@@ -31,6 +32,15 @@ func TestLocalOutputNewGenerationNeverReusesOwner(t *testing.T) {
 	}
 	if _, err := current.Send(t.Context(), "emit"); err != nil {
 		t.Fatal(err)
+	}
+	// A tool's wait budget can expire before its archive has finished writing.
+	// Retire the new owner's writer before checking the old authority's fence.
+	tasks, err := current.LocalTasks()
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("new owner tasks=%+v err=%v", tasks, err)
+	}
+	if task, err := f.manager.Wait(t.Context(), current.localOwner, tasks[0].TaskID, 10*time.Second); err != nil || localTaskUnsettled(task) {
+		t.Fatalf("new owner output not settled: %+v err=%v", task, err)
 	}
 	var unavailable *localexec.Error
 	if page, err := f.controller.ReadLocalTask(old.TaskID, "stdout", 0, 32); !errors.As(err, &unavailable) || unavailable.Code != "output_unavailable" || len(page.Data) != 0 {

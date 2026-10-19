@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -30,10 +31,27 @@ func TestDarwinSessionMembershipUnreapedLeader(t *testing.T) {
 	if err := observeExit(cmd.Process.Pid); err != nil {
 		t.Fatal(err)
 	}
+	// The leader is known exited, but unrelated processes can retire between
+	// the sysctl snapshot and getsid. Await a conclusive scan, just as cleanup
+	// does; a reported member in this childless session is still a failure.
+	deadline := time.NewTimer(4 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
 	for _, liveOnly := range []bool{true, false} {
-		members, err := sessionHasMembers(cmd.Process.Pid, liveOnly)
-		if err != nil || members {
-			t.Fatalf("empty anchored session (liveOnly=%v): members=%v err=%v", liveOnly, members, err)
+		for {
+			members, err := sessionHasMembers(cmd.Process.Pid, liveOnly)
+			if members {
+				t.Fatalf("empty anchored session (liveOnly=%v): members=%v err=%v", liveOnly, members, err)
+			}
+			if err == nil {
+				break
+			}
+			select {
+			case <-deadline.C:
+				t.Fatalf("session scan did not settle (liveOnly=%v): %v", liveOnly, err)
+			case <-ticker.C:
+			}
 		}
 	}
 }

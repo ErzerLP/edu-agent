@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	wire "github.com/edu-agent/edu-agent/packages/agentcore/companion"
 )
 
@@ -85,15 +86,25 @@ func TestOutboundBridgeRealProviderAndLostDelivery(t *testing.T) {
 	}
 	command("first", "actual")
 	deadline := time.Now().Add(5 * time.Second)
+	var first wire.Receipt
 	for {
 		r, _ := broker.Receipt("browser", pair.ID, pair.Secret, "first")
 		if r.State == "completed" {
+			first = r
 			break
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("主动通道未结算")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if first.Error != "" || first.Task == "" {
+		t.Fatalf("Shell 未启动真实任务: %+v", first)
+	}
+	// completed 结算的是 wait_ms: 0 的启动调用，不代表 Shell 已退出。
+	task, err := p.tasks.Wait(ctx, g.Conversation, first.Task, 30*time.Second)
+	if err != nil || task.State != localexec.StateExited || task.ExitCode == nil || *task.ExitCode != 0 {
+		t.Fatalf("真实任务未成功完成: %+v %v", task, err)
 	}
 	data, err := os.ReadFile(filepath.Join(p.device.Workspace, "actual"))
 	if err != nil || string(data) != "真实执行" {

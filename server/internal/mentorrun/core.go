@@ -354,7 +354,7 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			owners = append(owners, privacy.OwnerKnowledge)
 		}
 		if h.body.StudioPlan != nil || h.body.StudioContent != nil {
-			owners = append(owners, privacy.OwnerTutoring)
+			owners = append(owners, privacy.OwnerTutoring, privacy.OwnerMemory)
 		}
 		if len(h.modelMemorySources()) > 0 {
 			owners = append(owners, privacy.OwnerMemory)

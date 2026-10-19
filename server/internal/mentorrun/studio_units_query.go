@@ -26,7 +26,7 @@ func (s *Service) StudioUnits(ctx context.Context, actor identity.Credential, id
 	if err != nil {
 		return learningcontent.StudioUnitPage{}, err
 	}
-	if err = s.studioJobSourcesTx(ctx, tx, j); err != nil {
+	if err = s.studioJobSourcesTx(ctx, tx, j, actor.TokenID); err != nil {
 		return learningcontent.StudioUnitPage{}, err
 	}
 	if revision > 0 {

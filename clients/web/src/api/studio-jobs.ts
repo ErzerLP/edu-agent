@@ -14,6 +14,7 @@ export const studioPlanSchema = z.object({
       id: z.string().min(1),
       topic: z.string(),
       objective: z.string(),
+      topic_ids: z.array(z.uuid()).optional(),
       chapters: z.array(
         sourceIdentitySchema.extend({
           node_id: z.string().min(1),
@@ -81,6 +82,13 @@ export const studioJobSchema = z.object({
 export type StudioJob = z.infer<typeof studioJobSchema>
 export type StudioPlan = z.infer<typeof studioPlanSchema>
 export type StudioJobCreate = {
+  conversation_scope?: {
+    conversation_id: string
+    topic_ids: string[]
+    index_revision: number
+    through_message: string
+    accept_partial?: boolean
+  }
   operation_id: string
   privacy_generation: number
   kind: StudioJob['kind']

@@ -34,6 +34,7 @@ import { ConversationSwitcher } from './conversation-switcher'
 import { SubmissionNotice } from './submission-notice'
 import { RunResultNotice } from '../run-result-notice'
 import { ConversationTopics } from './conversation-topics'
+import { ConversationStudio } from './conversation-studio'
 import type { MessageAnchor } from '@/api/conversation-topics'
 
 type PendingTurn = { id: string; body: TurnSubmission }
@@ -43,12 +44,14 @@ export function ChatPanel({
   onConversation,
   onCitation,
   onSource,
+  onStudioJob,
 }: {
   space: Space
   conversationId?: string
   onConversation: (id?: string) => void
   onCitation: (run: string, id: string) => void
   onSource: () => void
+  onStudioJob: (id: string) => void
 }) {
   const { session, prefix, drafts } = useIdentity()
   const { menu } = useNotebookChrome()
@@ -467,6 +470,8 @@ export function ChatPanel({
           </Button>
         )}
         <span className="chat-saved">{conversation ? '已保存' : '学习助手'}</span>
+        {conversation?.saved && sourceReadable && <ConversationStudio key={`studio:${conversation.id}`} conversation={conversation} space={space} canWrite={canWrite && !busy && !active}
+          onSource={onSource} onCreated={onStudioJob} />}
         {conversation?.saved && sourceReadable && <ConversationTopics key={conversation.id} conversation={conversation} space={space} canWrite={canWrite}
           onLocate={locate} />}
       </header>

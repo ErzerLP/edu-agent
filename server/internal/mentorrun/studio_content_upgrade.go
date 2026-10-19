@@ -55,7 +55,7 @@ func (s *Service) scheduleConfirmedStudio(ctx context.Context) error {
 		err = sourceActor(ctx, tx, token)
 	}
 	if err == nil {
-		err = s.studioJobSourcesTx(ctx, tx, j)
+		err = s.studioJobSourcesTx(ctx, tx, j, actor.TokenID)
 	}
 	j.Input.Configuration = configuration
 	if err == nil {

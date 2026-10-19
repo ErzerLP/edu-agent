@@ -84,6 +84,7 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
         }))
       }
       if (material.focus?.includes('分段验收')) result.sections = Array.from({length:8},(_,index)=>({id:`s${index+1}`,topic:`偶数学习第${index+1}部分`,objective:'根据所选资料整理',chapters:[1]}))
+      if (material.conversation_topics) result.sections = material.conversation_topics.map((topic, index) => ({ id: `topic${index + 1}`, topic: topic.title, objective: '复习所选话题', chapters: [1], topic_ids: [topic.id] }))
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({ choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 80, total_tokens: 180 } }))
       return
@@ -125,9 +126,10 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
     if (payload.messages?.[0]?.content?.includes('整理对话的只读话题索引')) {
       const batch = JSON.parse(payload.messages[1].content)
       const anchor_ids = batch.messages.map(message => message.id)
-      const topics = ['TCP', '子网'].map(title => ({
+      const even = batch.messages.some(message => message.content?.includes('偶数'))
+      const topics = (even ? ['偶数的定义', '偶数的例子'] : ['TCP', '子网']).map(title => ({
         id: batch.candidates.find(topic => topic.title === title)?.id ?? '', title, anchor_ids,
-        points: [{ text: '比较连接与地址的作用', anchor_ids }],
+        points: [{ text: even ? title : '比较连接与地址的作用', anchor_ids }],
         observations: [{ state: 'question_open', text: '继续比较两个概念', evidence: 'tutor_explanation', anchor_ids }],
       }))
       response.setHeader('Content-Type', 'application/json')

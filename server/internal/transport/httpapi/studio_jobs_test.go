@@ -11,6 +11,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
 
 // Missing or ambiguous revisions must fail at the HTTP boundary, before a
@@ -18,7 +19,7 @@ import (
 func TestStudioJobsHTTPRequiresUnambiguousVersions(t *testing.T) {
 	store, _ := learningcontent.New(nil, nil, nil)
 	actor := &fakeIdentity{auth: identity.Credential{Device: identity.Device{ID: testAggregateID}, Scopes: []string{"learning:read", "learning:write", "knowledge:read"}}}
-	h, err := New(Options{Identity: actor, LearningSpaces: contentTestSpaces{}, LearningContent: store, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Readiness: fakeReadiness{}, PairLimiter: NewFixedWindowLimiter(100, time.Minute), AuthLimiter: NewFixedWindowLimiter(100, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute)})
+	h, err := New(Options{Identity: actor, LearningSpaces: contentTestSpaces{}, LearningContent: store, ReadPermits: privacy.NewReadPermitManager(), Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Readiness: fakeReadiness{}, PairLimiter: NewFixedWindowLimiter(100, time.Minute), AuthLimiter: NewFixedWindowLimiter(100, time.Minute), DeviceLimiter: NewFixedWindowLimiter(100, time.Minute)})
 	if err != nil {
 		t.Fatal(err)
 	}

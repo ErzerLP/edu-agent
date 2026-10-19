@@ -27,12 +27,13 @@ type studioPlanCandidate struct {
 	Title    string `json:"title"`
 	Coverage string `json:"coverage"`
 	Sections []struct {
-		ID           string `json:"id"`
-		Topic        string `json:"topic"`
-		Objective    string `json:"objective"`
-		Chapters     []int  `json:"chapters"`
-		QuestionType string `json:"question_type,omitempty"`
-		Difficulty   string `json:"difficulty,omitempty"`
+		TopicIDs     []string `json:"topic_ids,omitempty"`
+		ID           string   `json:"id"`
+		Topic        string   `json:"topic"`
+		Objective    string   `json:"objective"`
+		Chapters     []int    `json:"chapters"`
+		QuestionType string   `json:"question_type,omitempty"`
+		Difficulty   string   `json:"difficulty,omitempty"`
 	} `json:"sections"`
 	Uncovered   []string `json:"uncovered"`
 	Explanation string   `json:"explanation"`
@@ -53,7 +54,7 @@ func (s *Service) studioPlanGateTx(ctx context.Context, tx pgx.Tx, item row) err
 	if j.Version != stage.ExpectedVersion || j.RunID != item.RunID || j.Status != "planning" {
 		return ErrInactive
 	}
-	return s.studioJobSourcesTx(scoped, tx, j)
+	return s.studioJobSourcesTx(scoped, tx, j, item.token)
 }
 func (h *executionHost) studioPlanDirectory(ctx context.Context) (learningcontent.StudioJob, []knowledge.SourceDirectoryEntry, int, error) {
 	tx, err := h.service.pool.Begin(ctx)
@@ -78,10 +79,13 @@ func (h *executionHost) studioPlanDirectory(ctx context.Context) (learningconten
 	if err != nil {
 		return j, nil, 0, err
 	}
-	if err = h.service.studioJobSourcesTx(ctx, tx, j); err != nil {
+	if err = h.service.studioJobSourcesTx(ctx, tx, j, h.owned.token); err != nil {
 		return j, nil, 0, err
 	}
 	question := j.Input.Direction + " " + j.Input.Focus + " " + strings.Join(j.SuggestedFocus, " ")
+	if j.Input.Conversation != nil {
+		question = studioConversationQuery(j)
+	}
 	if len(j.Messages) > 0 {
 		question += " " + j.Messages[len(j.Messages)-1].Text
 	}
@@ -137,6 +141,10 @@ func studioPlanRequest(j learningcontent.StudioJob, nodes []knowledge.SourceDire
 		schema = studioQuestionPlanSchema()
 		instruction += `kind=quiz 时 sections 每项是一道题的轻量规划，topic 只写考查知识点，objective 只描述练习目标，不给出正式题干、答案或评分要点。题型只能是 short_answer（简答）或 explanation（解释），difficulty 只能是 easy、medium、hard。首次必须按 question_count 规划（默认3题）；后续按修改请求调整，始终1至8题。未指定难度时根据方向和学习状态选择。每题只用给定章节的有界片段，不声称覆盖全章。`
 	}
+	if j.Input.Conversation != nil {
+		schema = studioConversationPlanSchema(schema, j)
+		instruction += studioConversationInstruction
+	}
 	instruction += "只返回符合 schema 的 JSON：" + string(schema)
 	history := []map[string]string{}
 	start := max(0, len(j.Messages)-3)
@@ -150,6 +158,10 @@ func studioPlanRequest(j learningcontent.StudioJob, nodes []knowledge.SourceDire
 		current = j.Messages[len(j.Messages)-1].Text
 	}
 	data := map[string]any{"kind": j.Kind, "direction": j.Input.Direction, "focus": j.Input.Focus, "learning_state": j.Input.LearningState, "directory": nodes, "available_chapters": total, "current_plan": j.Plan, "recent_edits": history, "instruction": current}
+	if j.Input.Conversation != nil {
+		data["conversation_topics"] = studioConversationTopics(j)
+		data["learning_state"] = studioConversationLearningState(j)
+	}
 	if j.Kind == "quiz" {
 		data["question_count"], data["difficulty"] = j.Input.QuestionCount, j.Input.Difficulty
 	}
@@ -185,6 +197,24 @@ func decodeStudioPlan(raw []byte, j learningcontent.StudioJob, nodes []knowledge
 		}
 		seen[section.ID] = true
 		part := learningcontent.StudioPlanSection{ID: section.ID, Topic: section.Topic, Objective: section.Objective, Chapters: []knowledge.SourceDirectoryEntry{}}
+		if j.Input.Conversation != nil {
+			allowed := map[string]bool{}
+			for _, topic := range studioConversationTopics(j) {
+				allowed[topic.ID] = true
+			}
+			if len(section.TopicIDs) == 0 {
+				return p, "", schemaErr
+			}
+			for _, id := range section.TopicIDs {
+				if !allowed[id] {
+					return p, "", schemaErr
+				}
+				delete(allowed, id)
+			}
+			part.TopicIDs = section.TopicIDs
+		} else if len(section.TopicIDs) > 0 {
+			return p, "", schemaErr
+		}
 		if j.Kind == "quiz" {
 			if (section.QuestionType != "short_answer" && section.QuestionType != "explanation") || !studioQuizDifficulty(section.Difficulty) {
 				return p, "", schemaErr
@@ -229,6 +259,14 @@ func decodeStudioPlan(raw []byte, j learningcontent.StudioJob, nodes []knowledge
 		p.Uncovered = append(p.Uncovered, fmt.Sprintf("本次大纲选用 %d 个资料章节；另有 %d 个可用章节未纳入。", len(covered), total-len(covered)))
 	}
 	p.Uncovered = append(p.Uncovered, "当前仅依据可用目录规划，正文与资料解析缺口将在内容生成时逐段核验。")
+	if j.Input.Conversation != nil {
+		var projection TopicScopeProjection
+		_ = json.Unmarshal(j.Input.Conversation.Projection, &projection)
+		p.Uncovered = append(p.Uncovered, projection.Gaps...)
+		if len(projection.Gaps) > 0 {
+			p.Coverage = "partial"
+		}
+	}
 	p.InputFingerprint = planFingerprint(j.Input.Fingerprint, p)
 	return p, c.Explanation, nil
 }

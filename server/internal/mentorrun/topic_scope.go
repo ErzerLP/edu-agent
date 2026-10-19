@@ -50,33 +50,41 @@ func (s *Service) ReadTopicScope(ctx context.Context, actor identity.Credential,
 		seen[id] = true
 	}
 	return s.topicRead(ctx, actor, space, id, func(tx pgx.Tx, c Conversation) error {
-		var revision, through int64
-		if err := tx.QueryRow(ctx, `SELECT revision FROM learning_topic_index_heads WHERE conversation_id=$1`, id).Scan(&revision); err != nil {
-			return err
-		}
-		if revision != q.IndexRevision {
-			return ErrConflict
-		}
-		if err := tx.QueryRow(ctx, `SELECT ordinal FROM learning_conversation_messages WHERE conversation_id=$1 AND message_id=$2 AND privacy_generation=$3`, id, q.ThroughMessage, c.Generation).Scan(&through); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrInvalid
-			}
-			return err
-		}
-		body := scopeBody(q.CurrentManifest, q.DirectionRevision)
-		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM learning_conversation_topics WHERE conversation_id=$1 AND id=ANY($2::uuid[]) AND scope_fingerprint=$3 AND revision<=$4`, id, q.TopicIDs, topicScope(body), revision).Scan(&count); err != nil {
-			return err
-		}
-		if count != len(q.TopicIDs) {
-			return ErrInvalid
-		}
-		p, err := s.topicProjectionTx(ctx, tx, c, actor.TokenID, body, q.TopicIDs, revision, through, "", q.MaxTokens)
+		p, err := s.readTopicScopeTx(ctx, tx, c, actor.TokenID, q)
 		if err != nil {
 			return err
 		}
 		return send(p)
 	})
+}
+
+func (s *Service) readTopicScopeTx(ctx context.Context, tx pgx.Tx, c Conversation, token string, q TopicScopeRequest) (TopicScopeProjection, error) {
+	var revision, through int64
+	if err := tx.QueryRow(ctx, `SELECT revision FROM learning_topic_index_heads WHERE conversation_id=$1 FOR SHARE`, c.ID).Scan(&revision); err != nil {
+		return TopicScopeProjection{}, err
+	}
+	if revision != q.IndexRevision {
+		return TopicScopeProjection{}, ErrConflict
+	}
+	if err := tx.QueryRow(ctx, `SELECT ordinal FROM learning_conversation_messages WHERE conversation_id=$1 AND message_id=$2 AND privacy_generation=$3`, c.ID, q.ThroughMessage, c.Generation).Scan(&through); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return TopicScopeProjection{}, ErrInvalid
+		}
+		return TopicScopeProjection{}, err
+	}
+	body := scopeBody(q.CurrentManifest, q.DirectionRevision)
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM learning_conversation_topics WHERE conversation_id=$1 AND id=ANY($2::uuid[]) AND scope_fingerprint=$3 AND revision<=$4`, c.ID, q.TopicIDs, topicScope(body), revision).Scan(&count); err != nil {
+		return TopicScopeProjection{}, err
+	}
+	if count != len(q.TopicIDs) {
+		return TopicScopeProjection{}, ErrInvalid
+	}
+	p, err := s.topicProjectionTx(ctx, tx, c, token, body, q.TopicIDs, revision, through, "", q.MaxTokens)
+	if err != nil {
+		return TopicScopeProjection{}, err
+	}
+	return p, nil
 }
 
 func (s *Service) topicProjectionTx(ctx context.Context, tx pgx.Tx, c Conversation, token string, scope Body, ids []string, revision, through int64, question string, budget int) (TopicScopeProjection, error) {

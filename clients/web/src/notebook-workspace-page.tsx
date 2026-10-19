@@ -17,6 +17,7 @@ import { ChatPanel } from './components/notebook/chat-panel'
 
 export const notebookSearchSchema = z.object({
   conversation: z.uuid().optional(),
+  studio_job: z.uuid().optional(),
   add_sources: z.boolean().optional(),
   goal: z.uuid().optional(),
   panel: z.enum(['classroom', 'sources', 'studio']).optional(),
@@ -159,9 +160,10 @@ function NotebookWorkspace({
                   />
                 </> : <ChatPanel key={`${JSON.stringify(prefix)}:${spaceId}:${search.conversation ?? 'new'}`} space={space.data} conversationId={search.conversation}
                   onConversation={(conversation) => void navigate({ to: '/spaces/$spaceId', params: { spaceId }, search: { conversation, panel: 'classroom' }, replace: false })}
-                  onCitation={openCitation} onSource={() => changePanel('sources')} />
+                  onCitation={openCitation} onSource={() => changePanel('sources')}
+                  onStudioJob={studio_job => void navigate({ to: '/spaces/$spaceId', params: { spaceId }, search: { ...search, studio_job, panel: 'studio' } })} />
               }
-              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} space={space.data} onCitation={openStudioCitation} archived={space.data.status === 'archived'} />}
+              studio={<StudioPanel key={JSON.stringify([...prefix, spaceId])} space={space.data} requestedJobId={search.studio_job} onCitation={openStudioCitation} archived={space.data.status === 'archived'} />}
             />
           )}
         </WorkspacePanels>

@@ -1,6 +1,7 @@
 package learningcontent
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
@@ -8,6 +9,7 @@ import (
 )
 
 type StudioPlanSection struct {
+	TopicIDs     []string                         `json:"topic_ids,omitempty"`
 	ID           string                           `json:"id"`
 	Topic        string                           `json:"topic"`
 	Objective    string                           `json:"objective"`
@@ -36,6 +38,7 @@ type StudioPlanMessage struct {
 
 // StudioJobInput is a frozen encrypted snapshot, never a raw conversation.
 type StudioJobInput struct {
+	Conversation            *StudioConversationSnapshot  `json:"conversation_scope,omitempty"`
 	Manifest                knowledge.SourceManifest     `json:"manifest"`
 	DirectionID             string                       `json:"direction_id"`
 	DirectionVersion        int64                        `json:"direction_version"`
@@ -55,6 +58,19 @@ type StudioJobInput struct {
 	Destination             string                       `json:"destination,omitempty"`
 	Summary                 *StudioSummary               `json:"summary,omitempty"`
 	Result                  *StudioJobResult             `json:"result,omitempty"`
+}
+
+// Selection is an external request; Projection is only written by the topic owner.
+type StudioConversationScope struct {
+	ConversationID string   `json:"conversation_id"`
+	TopicIDs       []string `json:"topic_ids"`
+	IndexRevision  int64    `json:"index_revision"`
+	ThroughMessage string   `json:"through_message"`
+	AcceptPartial  bool     `json:"accept_partial,omitempty"`
+}
+type StudioConversationSnapshot struct {
+	StudioConversationScope
+	Projection json.RawMessage `json:"projection"`
 }
 type StudioJobResult struct {
 	ArtifactID string `json:"artifact_id"`

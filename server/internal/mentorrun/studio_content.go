@@ -93,7 +93,7 @@ func (s *Service) studioContentGateTx(ctx context.Context, tx pgx.Tx, item row) 
 	if j.RunID != item.RunID || j.ConfirmedPlanRevision != stage.PlanRevision || (j.Status != "queued" && j.Status != "generating" && j.Status != "summarizing") {
 		return ErrInactive
 	}
-	return s.studioJobSourcesTx(ctx, tx, j)
+	return s.studioJobSourcesTx(ctx, tx, j, item.token)
 }
 func (s *Service) changeStudioContentTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, j *learningcontent.StudioJob, action string) error {
 	switch action {

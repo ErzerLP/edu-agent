@@ -17,6 +17,46 @@ func stepCalls(names ...string) modelclient.Message {
 	return m
 }
 
+func TestToolStepsResumeRequestsExplainPause(t *testing.T) {
+	m := &fakeModel{responses: []modelclient.Response{
+		{Message: stepCalls("get_learning_progress", "get_learning_progress", "get_learning_progress")},
+		{Message: modelclient.Message{Role: "assistant", Content: "已完成前两次查询。"}},
+		{Message: toolMessage("after-resume", "get_learning_progress", `{}`)},
+		{Message: modelclient.Message{Role: "assistant", Content: "查询完成。"}},
+		{Message: modelclient.Message{Role: "assistant", Content: "下一轮回答。"}},
+	}}
+	s := newTestSession(t, m, &fakeServer{})
+	s.options.MaxToolSteps = 2
+	paused, err := s.Send(t.Context(), "分步查询")
+	if err != nil || !paused.PausedToolSteps {
+		t.Fatalf("pause: %+v %v", paused, err)
+	}
+	s.options.MaxToolSteps = 3
+	result, err := s.Send(t.Context(), "继续")
+	if err != nil || result.Text != "查询完成。" || s.toolSteps != 2 {
+		t.Fatalf("resume: %+v %v steps=%d", result, err, s.toolSteps)
+	}
+	for _, request := range m.requests[2:] {
+		found := false
+		for _, message := range request.Messages {
+			if message.Role == "system" && strings.Contains(message.Content, "本轮曾因达到每轮工具调用上限暂停，用户已选择继续") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("resume request lacks host pause notice: %+v", request.Messages)
+		}
+	}
+	if _, err := s.Send(t.Context(), "下一轮"); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range m.requests[len(m.requests)-1].Messages {
+		if message.Role == "system" && strings.Contains(message.Content, "用户已选择继续") {
+			t.Fatal("pause notice leaked into a new turn")
+		}
+	}
+}
+
 // A multi-call response must stop dispatching at three, even when the summary fails.
 func TestToolStepsMultipleCallsAndSummaryFailure(t *testing.T) {
 	for _, failSummary := range []bool{false, true} {

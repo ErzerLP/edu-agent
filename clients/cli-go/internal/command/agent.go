@@ -839,6 +839,10 @@ func (a *App) loadModelConfig() (config.Config, error) {
 		return config.Config{Timeout: "30s", Color: "never"}, nil
 	}
 	if err != nil {
+		var unknown *config.UnknownFieldError
+		if errors.As(err, &unknown) {
+			return config.Config{}, commandError("invalid_configuration", unknown.Error(), "", ExitInput)
+		}
 		return config.Config{}, commandError("configuration_unavailable", "本地配置无法读取", "检查配置文件权限后重试", ExitInternal)
 	}
 	if err := value.Validate(); err != nil {

@@ -54,6 +54,9 @@ func (s *Session) resumeToolSteps(ctx context.Context) (Result, error) {
 	pause := s.toolStepPause
 	s.toolStepPause = nil
 	turnID := s.activeTurnID
+	if turn := s.turns[turnID]; turn != nil {
+		turn.ToolStepsResumed = true
+	}
 	s.appendMu.Unlock()
 	s.toolSteps = 0
 	result, err := s.resumeAfterCalls(withActivityTurn(ctx, turnID), pause.calls, pause.next, pause.events)

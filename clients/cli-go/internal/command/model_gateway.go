@@ -23,6 +23,10 @@ type agentSettings struct {
 func (a *App) gatewayBinding() (config.Config, credentials.Record, error) {
 	value, err := a.loadMutableClientConfig()
 	if err != nil {
+		var commandErr *Error
+		if errors.As(err, &commandErr) && commandErr.Code == "invalid_configuration" {
+			return config.Config{}, credentials.Record{}, err
+		}
 		return config.Config{}, credentials.Record{}, commandError("not_paired", "设备尚未配对或本地绑定不可用", "请先运行 edu-agent pair 配对设备", ExitAuth)
 	}
 	record, err := a.Credentials.Load()

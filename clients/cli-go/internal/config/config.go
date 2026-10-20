@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,15 @@ var (
 	ErrNotFound        = errors.New("configuration was not found")
 	ErrJournalNotFound = errors.New("pairing journal was not found")
 )
+
+type UnknownFieldError struct {
+	ConfigPath string
+	FieldPath  string
+}
+
+func (e *UnknownFieldError) Error() string {
+	return fmt.Sprintf("配置文件 %q 包含未知字段 %q：该设置已移除，请从配置文件中删除这一项", e.ConfigPath, e.FieldPath)
+}
 
 type Config struct {
 	ServerURL         string          `json:"server_url"`
@@ -92,6 +102,11 @@ func (s Store) Load() (Config, error) {
 	}
 	var value Config
 	if err := decodeStrict(data, &value); err != nil {
+		if strings.HasPrefix(err.Error(), "json: unknown field ") {
+			if path := unknownFieldPath(data, reflect.TypeOf(value)); path != "" {
+				return Config{}, &UnknownFieldError{ConfigPath: s.Path, FieldPath: path}
+			}
+		}
 		return Config{}, fmt.Errorf("decode configuration: %w", err)
 	}
 	if err := value.Validate(); err != nil {
@@ -406,6 +421,48 @@ func InsecureWarning(value Config) string {
 }
 
 func validColor(value string) bool { return value == "never" || value == "auto" || value == "always" }
+
+// Recover the full path omitted by encoding/json's unknown-field diagnostic.
+// Walk object keys in file order using the same JSON tags and case folding.
+func unknownFieldPath(data []byte, schema reflect.Type) string {
+	for schema.Kind() == reflect.Pointer {
+		schema = schema.Elem()
+	}
+	if schema.Kind() != reflect.Struct {
+		return ""
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return ""
+	}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return ""
+		}
+		key := token.(string)
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return ""
+		}
+		var fieldType reflect.Type
+		for index := 0; index < schema.NumField(); index++ {
+			field := schema.Field(index)
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+			if strings.EqualFold(key, name) {
+				fieldType = field.Type
+				break
+			}
+		}
+		if fieldType == nil {
+			return key
+		}
+		if nested := unknownFieldPath(value, fieldType); nested != "" {
+			return key + "." + nested
+		}
+	}
+	return ""
+}
 
 func decodeStrict(data []byte, target any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))

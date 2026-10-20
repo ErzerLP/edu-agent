@@ -85,6 +85,7 @@ type Session struct {
 
 type sessionTurn struct {
 	ID                string
+	ToolStepsResumed  bool
 	Completed         bool
 	Protected         bool
 	OutcomeUnknown    bool
@@ -1504,6 +1505,9 @@ func (s *Session) contextPlanFor(toolSummary bool) (ContextPlan, error) {
 	messages := make([]modelclient.Message, len(s.messages))
 	for index, message := range s.messages {
 		messages[index] = cloneModelMessage(message)
+	}
+	if turn := s.turns[s.activeTurnID]; turn != nil && turn.ToolStepsResumed {
+		messages = append(messages, modelclient.Message{Role: "system", Content: "宿主状态：本轮曾因达到每轮工具调用上限暂停，用户已选择继续。请如实描述本轮过程。"})
 	}
 	history := make(map[string]string, len(s.toolHistory))
 	for callID, projection := range s.toolHistory {

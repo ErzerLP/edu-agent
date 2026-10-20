@@ -4,14 +4,11 @@ package workbench
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/id"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
 )
@@ -105,6 +102,9 @@ type Model struct {
 	states                map[string]*localState
 	width, height, cursor int
 	view                  viewport.Model
+	dialog, leafView      viewport.Model
+	styles                styles
+	colorEnabled          bool
 	input                 textarea.Model
 	editing               bool
 	action                Action
@@ -125,7 +125,10 @@ func New(ctx context.Context, service Service, space string) *Model {
 	in.CharLimit = 8000
 	in.ShowLineNumbers = false
 	in.SetHeight(4)
-	return &Model{ctx: ctx, service: service, space: space, page: "overview", states: map[string]*localState{}, sessions: map[string]string{}, scopes: map[string]string{}, leaves: map[string]Leaf{}, width: 80, height: 24, input: in, view: viewport.New(76, 10)}
+	m := &Model{ctx: ctx, service: service, space: space, page: "overview", states: map[string]*localState{}, sessions: map[string]string{}, scopes: map[string]string{}, leaves: map[string]Leaf{}, width: 80, height: 24, input: in, view: viewport.New(76, 10), dialog: viewport.New(76, 10), leafView: viewport.New(76, 10)}
+	m.SetColorMode("auto", nil)
+	m.layout()
+	return m
 }
 
 func (m *Model) Init() tea.Cmd { return m.refresh("") }
@@ -246,7 +249,7 @@ func (m *Model) refresh(action string) tea.Cmd {
 var navigation = []Entry{{"overview", "概览"}, {"materials", "资料"}, {"goals", "目标"}, {"learn", "学习"}, {"reviews", "复习"}, {"spaces", "切换学习区（全局）"}, {"help", "帮助"}, {"exit", "返回主菜单"}}
 
 func (m *Model) options() []Entry {
-	items := append([]Entry(nil), navigation...)
+	items := []Entry{}
 	for _, e := range m.data.Entries {
 		items = append(items, Entry{"select:" + e.ID, e.Label})
 	}
@@ -263,10 +266,11 @@ func (m *Model) options() []Entry {
 	if m.state().pageCursor != "" {
 		items = append(items, Entry{"first", "返回第一页"})
 	}
-	return items
+	return append(items, Entry{"exit", "返回主菜单"})
 }
 
 func (m *Model) begin(a Action) tea.Cmd {
+	defer m.layout()
 	m.action = a
 	m.field = 0
 	m.confirm = false
@@ -304,6 +308,7 @@ func (m *Model) begin(a Action) tea.Cmd {
 	}
 	if a.Confirmation != "" {
 		m.confirm = true
+		m.dialog.GotoTop()
 		return nil
 	}
 	return m.refresh(a.ID)
@@ -376,6 +381,7 @@ func (m *Model) choose(id string) tea.Cmd {
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	defer m.layout()
 	if wrapped, ok := message.(leafMessage); ok {
 		if wrapped.generation != m.generation || m.leaf == nil {
 			return m, nil
@@ -413,9 +419,17 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if size, ok := message.(tea.WindowSizeMsg); ok {
 			m.width, m.height = size.Width, size.Height
-			m.view.Width, m.view.Height = max(1, size.Width-4), max(1, size.Height-12)
-			m.input.SetWidth(max(1, size.Width-4))
-			message = tea.WindowSizeMsg{Width: size.Width, Height: max(1, size.Height-1)}
+			message = m.leafSize()
+		}
+		if key, ok := message.(tea.KeyMsg); ok && key.Alt {
+			switch key.Type {
+			case tea.KeyPgDown:
+				m.leafView.PageDown()
+				return m, nil
+			case tea.KeyPgUp:
+				m.leafView.PageUp()
+				return m, nil
+			}
 		}
 		_, cmd := m.leaf.Update(message)
 		return m, m.wrapLeaf(cmd)
@@ -423,9 +437,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.view.Width, m.view.Height = max(1, msg.Width-4), max(1, msg.Height-12)
-		m.input.SetWidth(max(1, msg.Width-4))
-		m.renderContent()
 	case response:
 		if msg.generation != m.generation {
 			return m, nil
@@ -476,7 +487,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else if rebind, ok := m.leaf.(interface{ Rebind(Leaf) }); ok {
 				rebind.Rebind(msg.page.Leaf)
 			}
-			_, _ = m.leaf.Update(tea.WindowSizeMsg{Width: m.width, Height: max(1, m.height-1)})
+			m.leafView.GotoTop()
+			_, _ = m.leaf.Update(m.leafSize())
 			return m, m.wrapLeaf(m.leaf.Resume(m.ctx))
 		}
 		if msg.page.ContextKnown {
@@ -549,6 +561,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if m.action.Confirmation != "" {
 					m.confirm = true
+					m.dialog.GotoTop()
 					return m, nil
 				}
 				return m, m.refresh(m.action.ID)
@@ -564,6 +577,14 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			case "y":
 				m.confirm = false
 				return m, m.refresh(m.action.ID)
+			case "pgdown":
+				m.dialog.PageDown()
+			case "pgup":
+				m.dialog.PageUp()
+			case "home":
+				m.dialog.GotoTop()
+			case "end":
+				m.dialog.GotoBottom()
 			}
 			return m, nil
 		}
@@ -594,6 +615,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case "1", "2", "3", "4", "5", "6", "7":
 			return m, m.choose(navigation[int(key[0]-'1')].ID)
 		case "r":
+			m.save()
 			return m, m.refresh("")
 		case "?":
 			return m, m.Open(m.ctx, "help")
@@ -614,63 +636,6 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
-}
-
-func (m *Model) renderContent() {
-	content := m.data.Content
-	if m.loadFailure != "" {
-		content = "加载失败\n" + m.loadFailure + "\n\n当前页数据尚未加载，不能判断是否为空。\n按 r 重新读取；1–7 切页；Esc 返回。"
-	}
-	lines := strings.Split(content, "\n")
-	for i := range lines {
-		lines[i] = safeLine(lines[i])
-	}
-	m.view.SetContent(lipgloss.NewStyle().Width(m.view.Width).Render(strings.Join(lines, "\n")))
-}
-
-func (m *Model) View() string {
-	if m.leaf != nil {
-		return "F10 返回学习工作台（保留导入草稿）\n" + m.leaf.View()
-	}
-	if m.width < 28 || m.height < 16 {
-		return "终端过小，请放大\nEsc 返回 · Ctrl+C 退出"
-	}
-	safe := safeLine
-	line := func(value string) string { return ansi.Truncate(safe(value), m.width, "…") }
-	name := m.spaceName
-	if name == "" {
-		name = m.space
-	}
-	text := line("学习工作台 · 当前区："+name) + "\n"
-	stage, goal := m.stage, m.goal
-	if stage == "" {
-		stage = "未选择教学会话"
-	}
-	if goal == "" {
-		goal = "未选择教学目标"
-	}
-	if m.loading || m.loadFailure != "" {
-		stage, goal = "未加载", "未加载"
-	}
-	text += line("教学阶段："+stage+" · 当前教学目标："+goal) + "\n"
-	text += line("1概览 2资料 3目标 4学习 5复习 6切区 7帮助") + "\n"
-	text += line(m.data.Title) + "\n" + m.view.View() + "\n"
-	if m.editing {
-		if len(m.action.Fields) > 0 {
-			text += line(fmt.Sprintf("字段 %d/%d：%s · Tab 切换", m.field+1, len(m.action.Fields), m.action.Fields[m.field].Label)) + "\n"
-		}
-		text += m.input.View() + "\nEnter 换行 · Ctrl+S 提交 · Esc 保留草稿返回"
-	} else if m.confirm {
-		text += safe(m.action.Confirmation) + "\ny 确认 · n/Esc 取消"
-	} else {
-		items := m.options()
-		text += line(fmt.Sprintf("操作 %d/%d：%s", m.cursor+1, len(items), items[m.cursor].Label)) + "\n"
-		text += "↑↓/Tab 选择 · Enter 执行 · PgUp/PgDn 滚动\nEsc 返回/取消 · r 刷新 · Ctrl+C 退出"
-	}
-	if m.status != "" {
-		text += "\n" + safe(m.status)
-	}
-	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(text)
 }
 
 func safeLine(value string) string {

@@ -59,6 +59,10 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		}
 	}
 	for path, want := range map[string]bool{
+		"/v1/learning/web-documents/a": true, "/v1/learning/web-documents/a/pages/2": true,
+		"/v1/learning/web-import-previews": true, "/v1/learning/web-imports": true,
+		"/v1/learning/usage/tasks/a/search-calls": true,
+		"/v1/learning/web-documents/a/delete":     false, "/v1/learning/web-imports/force": false,
 		"/v1/learning/studio/artifacts": true, "/v1/learning/studio/artifacts/a": true,
 		"/v1/learning/studio/artifacts/a/revisions": true, "/v1/learning/studio/artifacts/a/import-candidate": true,
 		"/v1/learning/studio/operations/a": true,

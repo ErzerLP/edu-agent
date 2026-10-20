@@ -7,7 +7,7 @@ import type { DraftStore } from '@/lib/drafts'
 import type { ScanItem } from '@/lib/reference-import'
 import {
   sourceManifestSchema,
-  mentorCitationSchema,
+  learningSourceCitationSchema,
   sourceSelectionSchema,
 } from './source-selection'
 
@@ -38,7 +38,7 @@ export const studioSectionBodySchema = z.object({
   schema: z.literal(2),
   title: z.string(),
   markdown: z.string(),
-  citations: z.array(mentorCitationSchema),
+  citations: z.array(learningSourceCitationSchema),
   source_manifest: sourceManifestSchema,
   claims: z.array(studioClaimSchema).optional(),
   user_authored: z.boolean().optional(),
@@ -190,7 +190,7 @@ export const studioRevisionSchema = z
       title: z.string(),
       markdown: z.string(),
       source_manifest: sourceManifestSchema.optional(),
-      citations: z.array(mentorCitationSchema),
+      citations: z.array(learningSourceCitationSchema),
       model: z.string().optional(),
       input_fingerprint: z.string().optional(),
       coverage: z.enum(['complete', 'partial']).optional(),

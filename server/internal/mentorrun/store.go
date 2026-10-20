@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,7 @@ import (
 )
 
 type Service struct {
+	webCancels          map[string]map[string]context.CancelFunc
 	usage               *modelusage.Store
 	directions          *learningdirection.Store
 	studio              *learningcontent.Store
@@ -59,7 +61,14 @@ type temporaryBody struct {
 	Body    Body
 }
 
-func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Service, error) {
+// NetworkOptions supplies trusted host adapters. It cannot be selected by a
+// model or an HTTP request; Fetcher retains all URL and DNS policy checks.
+type NetworkOptions struct {
+	Search  research.SearchClient
+	Fetcher *research.Fetcher
+}
+
+func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte, network ...NetworkOptions) (*Service, error) {
 	if pool == nil || configuration == nil {
 		return nil, ErrInvalid
 	}
@@ -71,7 +80,16 @@ func New(pool *pgxpool.Pool, configuration *settings.Service, key []byte) (*Serv
 	if err != nil {
 		return nil, err
 	}
-	return &Service{usage: modelusage.New(pool), directions: directions, pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}, nil
+	s := &Service{webCancels: map[string]map[string]context.CancelFunc{}, usage: modelusage.New(pool), directions: directions, pool: pool, settings: configuration, search: configuration.SearchClient, fetcher: research.NewFetcher(), aead: a, process: uuid.NewString(), temporary: map[string]temporaryBody{}, Lease: 15 * time.Second}
+	if len(network) > 0 {
+		if network[0].Search != nil {
+			s.search = network[0].Search
+		}
+		if network[0].Fetcher != nil {
+			s.fetcher = network[0].Fetcher
+		}
+	}
+	return s, nil
 }
 func (s *Service) CanSave() bool { return s.aead != nil }
 
@@ -230,6 +248,19 @@ func goalGate(ctx context.Context, tx pgx.Tx, space, goal string, version int64)
 }
 
 func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) error {
+	if !item.BodyAvailable {
+		if kind == "expired" {
+			if err := s.expireWebHistoryTx(ctx, tx, *item); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM learning_web_resources WHERE owner_id=$1`, item.RunID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM learning_web_operations WHERE run_id=$1`, item.RunID); err != nil {
+			return err
+		}
+	}
 	if item.body.StudioPlan != nil && (item.Status == "failed" || item.Status == "cancelled") {
 		if err := s.failStudioPlanTx(ctx, tx, *item); err != nil {
 			return err
@@ -240,7 +271,7 @@ func (s *Service) save(ctx context.Context, tx pgx.Tx, item *row, kind string) e
 			return err
 		}
 	}
-	if kind == "completed" && item.Kind == "mentor" && item.ConversationID != "" && item.Saved && item.Status == "succeeded" {
+	if kind == "completed" && item.Kind == "mentor" && item.ConversationID != "" && item.Saved && item.Status == "succeeded" && item.body.WebExpiresAt == nil {
 		item.TopicIndexPending = true
 	}
 	item.Version++
@@ -531,6 +562,18 @@ func (s *Service) Create(ctx context.Context, actor identity.Credential, space, 
 	}
 	item := row{Meta: Meta{RunID: uuid.NewString(), SessionID: sessionID, SpaceID: space, GoalID: goal, GoalVersion: c.ExpectedVersion, Generation: generation, Status: "queued", Stage: "queued", Saved: c.Save, BodyAvailable: true, ExpiresAt: time.Now().UTC().Add(7 * 24 * time.Hour), Configuration: fingerprint}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
 	item.ConversationID = c.ConversationID
+	if c.ConversationID != "" && kind == "mentor" {
+		var enabled bool
+		var epoch int64
+		if err = tx.QueryRow(ctx, `SELECT web_search_enabled,web_access_epoch FROM learning_tutor_conversations WHERE id=$1`, c.ConversationID).Scan(&enabled, &epoch); err != nil {
+			return Receipt{}, err
+		}
+		resourceKey := make([]byte, 32)
+		if _, err = rand.Read(resourceKey); err != nil {
+			return Receipt{}, err
+		}
+		item.body.Web = &WebState{ResourceKey: resourceKey, Input: c.Prompt, Epoch: epoch, Enabled: enabled, Supplied: map[string][]string{}}
+	}
 	item.body.SourceManifest = manifest
 	item.body.Study = c.study
 	if c.study != nil {
@@ -601,7 +644,7 @@ func (s *Service) quota(ctx context.Context, tx pgx.Tx, additional int64) error 
 		return err
 	}
 	var reserved int64
-	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_conversation_topics)+(SELECT count(*)*256 FROM learning_conversation_messages)+(SELECT count(*)*128 FROM learning_topic_anchors)+(SELECT count(*)*256 FROM learning_topic_index_heads)+(SELECT count(*)*256 FROM learning_topic_index_scopes)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_jobs)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_plans)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_plan_messages)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_job_operations))::bigint FROM learning_mentor_runs`).Scan(&reserved)
+	err := tx.QueryRow(ctx, `SELECT (COALESCE(sum(CASE WHEN (state->>'body_available')::boolean THEN 524288 ELSE 2048 END),0)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_web_resources)+(SELECT COALESCE(sum(octet_length(ciphertext)+COALESCE(octet_length(attachment),0)),0) FROM learning_web_document_payloads)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_web_import_previews)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_web_import_receipts)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_web_operations)+(SELECT count(*)*1024 FROM learning_mentor_operations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_tutor_turns)+(SELECT count(*)*2048 FROM learning_tutor_conversations)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_conversation_topics)+(SELECT count(*)*256 FROM learning_conversation_messages)+(SELECT count(*)*128 FROM learning_topic_anchors)+(SELECT count(*)*256 FROM learning_topic_index_heads)+(SELECT count(*)*256 FROM learning_topic_index_scopes)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_jobs)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_plans)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_plan_messages)+(SELECT COALESCE(sum(octet_length(ciphertext)),0) FROM learning_studio_job_operations))::bigint FROM learning_mentor_runs`).Scan(&reserved)
 	if err != nil {
 		return err
 	}

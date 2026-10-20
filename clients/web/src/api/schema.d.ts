@@ -138,6 +138,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/usage/tasks/{taskID}/search-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分页查看任务的搜索请求，独立于模型 Token */
+        get: operations["listSearchUsageCalls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/studio/exercises/{exerciseID}": {
         parameters: {
             query?: never;
@@ -3986,6 +4003,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/conversations/{conversationID}/web-search": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 设置对话联网偏好并撤销旧许可 */
+        patch: operations["changeConversationWebSearch"];
+        trace?: never;
+    };
+    "/v1/learning/web-documents/{documentID}": {
+        parameters: {
+            query?: {
+                cursor?: string;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                documentID: string;
+            };
+            cookie?: never;
+        };
+        /** 查看已读取的网络快照 */
+        get: operations["readWebDocument"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/web-documents/{documentID}/pages/{page}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                documentID: string;
+                page: number;
+            };
+            cookie?: never;
+        };
+        /** 查看网络 PDF 的安全页图 */
+        get: operations["readWebDocumentPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/web-import-previews": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预览网络快照加入来源 */
+        post: operations["previewWebImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/web-imports": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 确认将网络快照加入当前学习区 */
+        post: operations["confirmWebImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4113,6 +4239,9 @@ export interface components {
             unknown_calls: number;
         };
         ModelUsageTotals: {
+            search_requests: number;
+            search_pending: number;
+            search_outcome_unknown: number;
             /** Format: int64 */
             calls: number;
             /** Format: int64 */
@@ -4583,7 +4712,7 @@ export interface components {
             title: string;
             markdown: string;
             source_manifest?: components["schemas"]["SourceManifest"];
-            citations: components["schemas"]["MentorCitation"][];
+            citations: components["schemas"]["LearningSourceCitation"][];
             model?: string;
             input_fingerprint?: string;
             /** @enum {string} */
@@ -5252,6 +5381,10 @@ export interface components {
             confirmed: true;
         };
         TutorConversation: {
+            web_search_enabled: boolean;
+            web_search_version: number;
+            web_search_available: boolean;
+            web_search_reason: string;
             /**
              * @description 旧数据为 mentor
              * @enum {string}
@@ -5585,7 +5718,7 @@ export interface components {
                 sha256: string;
             }[];
         };
-        MentorCitation: {
+        LearningSourceCitation: {
             id: string;
             source: components["schemas"]["KnowledgeSourceItem"];
             document_sha256: string;
@@ -5603,6 +5736,170 @@ export interface components {
                 page?: number;
             };
         };
+        MentorCitation: components["schemas"]["LearningCitation"] | components["schemas"]["WebCitation"];
+        LearningCitation: components["schemas"]["LearningSourceCitation"] & {
+            /** @constant */
+            origin: "learning_source";
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            origin: "LearningCitation";
+        };
+        WebCitation: {
+            id: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            origin: "WebCitation";
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** Format: uuid */
+            fragment_id: string;
+            document_sha256: string;
+            slice_sha256: string;
+            quote: string;
+            /** @description 到期后只保留标识，quote 为空 */
+            expired?: boolean;
+            page?: number;
+        };
+        WebSearchCommand: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_web_search_version: number;
+            enabled: boolean;
+        };
+        WebSearchPreference: {
+            enabled: boolean;
+            web_search_version: number;
+        };
+        WebSearchProgress: {
+            queries?: string[];
+            stage: string;
+            query?: string;
+            title?: string;
+            notice?: string;
+            read_attempted: number;
+            read_succeeded: number;
+            read_failed: number;
+            fetch_http_requests: number;
+        };
+        WebFragment: {
+            /** Format: uuid */
+            id: string;
+            text: string;
+            start: number;
+            end: number;
+            page?: number;
+        };
+        WebDocument: {
+            resources?: {
+                /** Format: uuid */
+                resource_id: string;
+                title: string;
+                /** Format: uri */
+                url: string;
+                summary: string;
+                /** @constant */
+                summary_only: true;
+            }[];
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            resource_id: string;
+            /** Format: uuid */
+            revision_id: string;
+            /** Format: uri */
+            request_url: string;
+            /** Format: uri */
+            url: string;
+            title: string;
+            /** Format: date-time */
+            fetched_at: string;
+            /** @enum {string} */
+            media_type: "text/plain" | "text/markdown" | "text/html" | "application/pdf";
+            parser: string;
+            coverage: string;
+            fingerprint: string;
+            document_sha256: string;
+            storage_allowed: boolean;
+            fragments: components["schemas"]["WebFragment"][];
+            text: string;
+            next_cursor?: string;
+            pdf?: components["schemas"]["PDFReport"];
+        };
+        WebImportPreviewRequest: {
+            /** Format: uuid */
+            operation_id: string;
+            owner: {
+                /** @constant */
+                kind: "mentor_run";
+                /** Format: uuid */
+                id: string;
+            };
+            document_revision_ids: string[];
+        };
+        WebImportPreview: {
+            /** Format: uuid */
+            preview_id: string;
+            preview_version: number;
+            /** Format: date-time */
+            expires_at: string;
+            items: {
+                /** Format: uuid */
+                document_revision_id: string;
+                hash: string;
+                coverage: string;
+                requires_partial_accept: boolean;
+                document: components["schemas"]["WebDocument"];
+            }[];
+        };
+        WebImportRequest: {
+            /** Format: uuid */
+            operation_id: string;
+            /** Format: uuid */
+            preview_id: string;
+            expected_preview_version: number;
+            /** Format: uuid */
+            document_revision_id: string;
+            /** @constant */
+            storage_consent: true;
+            /** @default false */
+            accept_partial: boolean;
+        };
+        WebImportReceipt: {
+            /** Format: uuid */
+            operation_id: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: uuid */
+            document_id: string;
+            /** Format: uuid */
+            document_revision_id: string;
+            source: components["schemas"]["SourceIdentity"];
+        };
+        SearchUsageCalls: {
+            privacy_generation: number;
+            next_cursor?: string;
+            items: {
+                /** Format: uuid */
+                id: string;
+                stage: string;
+                attempt_no: number;
+                /** @enum {string} */
+                state: "prepared" | "not_dispatched" | "dispatching" | "received" | "failed" | "cancelled" | "outcome_unknown";
+                /** Format: date-time */
+                started_at: string;
+                /** Format: date-time */
+                finished_at: string | null;
+                provider: string;
+                configuration: string;
+            }[];
+        };
         SourceSliceProof: {
             /** @constant */
             schema: 2;
@@ -5611,6 +5908,7 @@ export interface components {
             sha256: string;
         };
         MentorSnapshot: {
+            web?: components["schemas"]["WebSearchProgress"];
             studio?: components["schemas"]["StudioState"];
             source_manifest?: components["schemas"]["SourceManifest"];
             citations?: components["schemas"]["MentorCitation"][];
@@ -5900,7 +6198,7 @@ export interface components {
         };
         SettingsPolicy: {
             /**
-             * @description 后续运行是否允许私人目标、正文、成绩进入外部查询；不影响固定公开探测
+             * @description 原有外发策略；网页导师搜索始终只使用用户本次主动输入，不据此加载私人目标、正文或成绩
              * @default false
              */
             private_queries: boolean;
@@ -9751,6 +10049,48 @@ export interface operations {
             default: components["responses"]["WebFailure"];
         };
     };
+    listSearchUsageCalls: {
+        parameters: {
+            query: {
+                from: components["parameters"]["UsageFrom"];
+                to: components["parameters"]["UsageTo"];
+                /** @description IANA 时区；客户端默认发送浏览器时区 */
+                timezone?: components["parameters"]["UsageTimezone"];
+                grain?: components["parameters"]["UsageGrain"];
+                model?: components["parameters"]["UsageModel"];
+                source?: components["parameters"]["UsageSource"];
+                actor_device_id?: components["parameters"]["UsageDevice"];
+                /** @description 同时指定 actor_device_id；只使用随机会话标识，不上传标题或工作目录 */
+                cli_session_id?: components["parameters"]["UsageCLISession"];
+                /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
+                space_id?: components["parameters"]["UsageSpace"];
+                /** @description 绑定身份、代次及全部筛选条件的不透明游标 */
+                cursor?: components["parameters"]["UsageCursor"];
+                limit?: components["parameters"]["UsageLimit"];
+            };
+            header?: {
+                /** @description 查询指定 space_id 时必须提供且一致；Header 和筛选同时省略时统计全局可见范围。 */
+                "X-Learning-Space-ID"?: components["parameters"]["UsageSpaceHeader"];
+            };
+            path: {
+                taskID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 同筛选的调用；缺失字段为 null；推理包含在输出中，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchUsageCalls"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
     readStudioExercise: {
         parameters: {
             query?: never;
@@ -10327,7 +10667,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MentorCitation"];
+                    "application/json": components["schemas"]["LearningSourceCitation"];
                 };
             };
             default: components["responses"]["WebFailure"];
@@ -12310,6 +12650,8 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @default true */
+                    web_search_enabled?: boolean;
                     /**
                      * @default mentor
                      * @enum {string}
@@ -12345,6 +12687,8 @@ export interface operations {
                     "application/json": {
                         /** Format: uuid */
                         id: string;
+                        web_search_enabled: boolean;
+                        web_search_version: number;
                     };
                 };
             };
@@ -12462,6 +12806,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    expected_web_search_version: number;
                     /** @description study 使用的当前方向版本；过期返回 409 */
                     direction_version?: number;
                     source_selection?: components["schemas"]["SourceSelection"];
@@ -13027,7 +13372,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MentorReceipt"];
+                    "application/json": components["schemas"]["MentorReceipt"] | components["schemas"]["WebImportReceipt"] | components["schemas"]["WebSearchPreference"] | components["schemas"]["WebImportPreview"];
                 };
             };
             default: components["responses"]["WebFailure"];
@@ -17739,6 +18084,147 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["DependencyUnavailable"];
+        };
+    };
+    changeConversationWebSearch: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                conversationID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebSearchCommand"];
+            };
+        };
+        responses: {
+            /** @description 当前身份、学习区和代次核验后的结果，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebSearchPreference"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readWebDocument: {
+        parameters: {
+            query?: {
+                cursor?: string;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                documentID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前身份、学习区和代次核验后的结果，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebDocument"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    readWebDocumentPage: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                documentID: string;
+                page: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前身份、学习区和代次核验后的结果，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    previewWebImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebImportPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description 当前身份、学习区和代次核验后的结果，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebImportPreview"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
+        };
+    };
+    confirmWebImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebImportRequest"];
+            };
+        };
+        responses: {
+            /** @description 当前身份、学习区和代次核验后的结果，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebImportReceipt"];
+                };
+            };
+            default: components["responses"]["WebFailure"];
         };
     };
 }

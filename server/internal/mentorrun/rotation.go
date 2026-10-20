@@ -9,6 +9,12 @@ import (
 // RotateKeyTx 由停机维护组合根在同一事务内调用，保留历史格式及运行状态。
 func RotateKeyTx(ctx context.Context, tx pgx.Tx, rewrap keyrotation.Rewrap) error {
 	for _, table := range []struct{ query, update string }{
+		{`SELECT id::text,'web:resource:'||id||':'||privacy_generation,ciphertext FROM learning_web_resources WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_resources SET ciphertext=$2 WHERE id=$1::uuid`},
+		{`SELECT id::text,'web:document:'||id||':'||privacy_generation,ciphertext FROM learning_web_document_payloads WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_document_payloads SET ciphertext=$2 WHERE id=$1::uuid`},
+		{`SELECT id::text,'web:attachment:'||id||':'||privacy_generation,attachment FROM learning_web_document_payloads WHERE attachment IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_document_payloads SET attachment=$2 WHERE id=$1::uuid`},
+		{`SELECT id::text,'web:preview:'||id||':'||privacy_generation,ciphertext FROM learning_web_import_previews WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_import_previews SET ciphertext=$2 WHERE id=$1::uuid`},
+		{`SELECT id::text,'web:receipt:'||id||':'||privacy_generation,ciphertext FROM learning_web_import_receipts WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_import_receipts SET ciphertext=$2 WHERE id=$1::uuid`},
+		{`SELECT id::text,'web:operation:'||id||':'||privacy_generation,ciphertext FROM learning_web_operations WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_operations SET ciphertext=$2 WHERE id=$1::uuid`},
 		{`SELECT id::text,'tutor:'||conversation_id||':'||privacy_generation||':topic:'||id,ciphertext FROM learning_conversation_topics WHERE id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_conversation_topics SET ciphertext=$2 WHERE id=$1::uuid`},
 		{`SELECT id::text,id::text,checkpoint FROM learning_mentor_runs WHERE checkpoint IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_mentor_runs SET checkpoint=$2 WHERE id=$1::uuid`},
 		{`SELECT id::text,'tutor:'||id||':'||privacy_generation||':title',title FROM learning_tutor_conversations WHERE title IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_tutor_conversations SET title=$2 WHERE id=$1::uuid`},

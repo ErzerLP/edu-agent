@@ -3,6 +3,7 @@ import { z } from 'zod'
 const counter = z.number().int().nonnegative()
 const metric = z.object({ known_sum: counter, unknown_calls: counter })
 export const usageTotals = z.object({
+  search_requests: counter, search_pending: counter, search_outcome_unknown: counter,
   calls: counter,
   pending_calls: counter,
   outcome_unknown_calls: counter,
@@ -66,6 +67,10 @@ export const usageCalls = z.object({
   items: z.array(usageCall),
   next_cursor: z.string().optional(),
   privacy_generation: counter,
+})
+export const searchUsageCalls = z.object({
+  privacy_generation: counter, next_cursor: z.string().optional(),
+  items: z.array(z.object({ id: z.uuid(), stage: z.string(), attempt_no: counter, state: z.enum(['prepared', 'not_dispatched', 'dispatching', 'received', 'failed', 'cancelled', 'outcome_unknown']), started_at: z.string(), finished_at: z.string().nullable(), provider: z.string(), configuration: z.string() })),
 })
 export type UsageTotals = z.infer<typeof usageTotals>
 export type UsageTask = z.infer<typeof usageTask>

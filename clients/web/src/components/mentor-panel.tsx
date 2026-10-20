@@ -14,6 +14,7 @@ import { CompanionPanel } from './companion-panel'
 import { MentorAnswer } from './mentor-answer'
 import { RunResultNotice } from './run-result-notice'
 import type { SourceSelection } from '@/api/source-selection'
+import { WebSearchControl } from './notebook/web-search-control'
 
 export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversation, onChange, notebook }: { notebook?: {selection?:SourceSelection; draftKey:string; ensureConversation:(saved:boolean)=>Promise<TutorConversation>; onCitation:(runId:string,id:string)=>void}; goal: { learning_space_id: string; goal_id: string; revision: number; management: { status: string } }; archivedSpace: boolean; teachingSessionId?: string; conversation?: TutorConversation; onChange?: () => void }) {
   const { session, prefix, drafts } = useIdentity()
@@ -96,7 +97,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
     const operation_id = drafts.operation(key + ':create', payload)
     try {
       const target = conversation ?? (notebook ? await notebook.ensureConversation(save) : undefined)
-      const turn = target ? { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), expected_version: target.version, prompt, ...(confirmedDestination ? { confirm_destination: confirmedDestination } : {}) } : undefined
+      const turn = target ? { ...(notebook?.selection ? {source_selection:notebook.selection}:{}), expected_version: target.version, expected_web_search_version: target.web_search_version, prompt, ...(confirmedDestination ? { confirm_destination: confirmedDestination } : {}) } : undefined
       const submission = turn ? (unconfirmed ?? { ...turn, operation_id: drafts.operation(key + ':turn', turn) }) : undefined
       if (submission) { drafts.set(key + ':unconfirmed', submission); setUnconfirmed(submission) }
       const receipt = target && turn
@@ -203,6 +204,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
         <Button type="submit" disabled={!prompt.trim() || !!unconfirmed}>{pending ? '正在受理…' : notebook ? '发送提问' : '发起导师交流'}</Button>
       </fieldset>
     </form>}
+    {conversation && !notebook && <WebSearchControl key={conversation.id} spaceId={goal.learning_space_id} conversation={conversation} />}
     {!!error && <ErrorState error={error} retry={() => { setError(undefined); void current.refetch() }} />}
   </section>
 }

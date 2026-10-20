@@ -17,7 +17,7 @@ func TestMentorRunContractMatchesSnapshotsAndRecoveryRoutes(t *testing.T) {
 	}
 	id := uuid.NewString()
 	for name, value := range map[string]any{
-		"TutorConversation": mentorrun.Conversation{ID: id, SpaceID: id, Generation: 1, Version: 1, GoalVersion: 1, Saved: true, Title: "历史", UpdatedAt: time.Now().UTC(), StorageState: "saved"},
+		"TutorConversation": mentorrun.Conversation{WebSearchEnabled: true, WebSearchVersion: 1, ID: id, SpaceID: id, Generation: 1, Version: 1, GoalVersion: 1, Saved: true, Title: "历史", UpdatedAt: time.Now().UTC(), StorageState: "saved"},
 		"MentorReceipt":     mentorrun.Receipt{OperationID: id, RunID: id, SessionID: id, Version: 1},
 		"MentorEvent":       mentorrun.Event{RunID: id, SessionID: id, SpaceID: id, GoalID: id, Generation: 1, Version: 1, Seq: 1, Type: "accepted"},
 		"MentorSnapshot":    mentorrun.Snapshot{Meta: mentorrun.Meta{RunID: id, SessionID: id, SpaceID: id, GoalID: id, GoalVersion: 1, Generation: 1, Version: 1, Watermark: 1, Status: "waiting_input", UpdatedAt: time.Now().UTC(), ExpiresAt: time.Now().UTC().Add(time.Hour)}, Interaction: &mentorrun.Interaction{ID: id, Question: "请澄清", Choices: []string{}, CallID: "call"}},

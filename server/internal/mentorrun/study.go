@@ -41,6 +41,7 @@ func (h *executionHost) generateStudy(ctx context.Context) error {
 只输出一个完整 JSON 对象，必须包含 answer（字符串）、citations（数组）和 exercise 三个字段；没有练习时 exercise 必须为 null，不省略字段。JSON 外不要输出解释或代码围栏。
 讲解后适合检验理解时可给一道文字开放题；用户要求出题且资料足够时必须给一道。exercise 包含 prompt、rubric（id/criterion）、allowed_help（none/hint/scaffold/answer_revealed 中允许的等级）与 citations。评分标准具体、只依赖来源；exercise.citations 必须至少引用一个本轮片段，即使 answer 的 citations 为空。answer 不泄露本题答案或评分标准，不声称已评分或掌握。
 引用对象直接复制 citation_support 中相关 candidate 的 citation，格式为 {"source":1,"fragment":1}：source 是本轮 sources 数组从 1 开始的序号，fragment 是该来源 fragments 数组从 1 开始的序号，不是 node_id、range 或 proof。answer 中的 [1]、[2] 按本次 citations 数组的顺序编号，每项都须在 answer 中出现；例如第一个引用即使指向 fragment=3，正文仍用 [1]。不得沿用历史引用编号或引用本轮未给出的片段。`
+	prompt += h.webAnswerRules()
 	h.schemaTokens = len(studyExerciseSchema()) + 512
 	h.sourceWindow(modelclient.Request{MaxTokens: h.limits.OutputTokens, Messages: []modelclient.Message{{Role: "system", Content: prompt}, {Role: "user", Content: h.body.Study.Text}}})
 	sources, err := h.selectedMaterial(ctx)

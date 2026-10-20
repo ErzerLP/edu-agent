@@ -24,6 +24,21 @@ func (a *API) mountUsage(r chi.Router) {
 	read.Get("/v1/learning/usage", a.usageSummary)
 	read.Get("/v1/learning/usage/tasks", a.usageTasks)
 	read.Get("/v1/learning/usage/tasks/{taskID}/calls", a.usageCalls)
+	read.Get("/v1/learning/usage/tasks/{taskID}/search-calls", a.usageSearchCalls)
+}
+
+func (a *API) usageSearchCalls(w http.ResponseWriter, r *http.Request) {
+	q, ok := usageQuery(w, r)
+	if !ok {
+		return
+	}
+	actor, _ := credentialFromContext(r.Context())
+	result, err := a.modelUsage.SearchCalls(r.Context(), actor, q, chi.URLParam(r, "taskID"))
+	if err != nil {
+		a.usageFailure(w, r, err)
+		return
+	}
+	writeJSON(w, 200, result)
 }
 func usageQuery(w http.ResponseWriter, r *http.Request) (modelusage.Query, bool) {
 	q := modelusage.Query{Timezone: "UTC", Grain: "day", Limit: 20}

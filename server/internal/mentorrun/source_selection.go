@@ -14,10 +14,14 @@ import (
 	knowledgepg "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/jackc/pgx/v5"
 )
 
 type SourceCitation struct {
+	Expired        bool                     `json:"expired,omitempty"`
+	Origin         string                   `json:"origin,omitempty"`
+	Web            *research.WebCitation    `json:"web,omitempty"`
 	ID             string                   `json:"id"`
 	Source         knowledge.SourceItem     `json:"source"`
 	Fragment       knowledge.SourceFragment `json:"fragment"`
@@ -61,12 +65,18 @@ func (s *Service) sourceMaterialTx(ctx context.Context, tx pgx.Tx, space, token 
 		return nil, err
 	}
 	for _, c := range body.Citations {
+		if c.Origin == "web" {
+			continue
+		}
 		if c.Fragment.Proof == nil {
 			return store.ReadSourceSelectionTx(scoped, tx, *body.SourceManifest)
 		}
 	}
 	result := []knowledge.SourceDetail{}
 	for _, c := range body.Citations {
+		if c.Origin == "web" {
+			continue
+		}
 		if c.Fragment.Proof.Schema != 2 {
 			return nil, errCitation
 		}
@@ -87,6 +97,12 @@ func verifyStoredCitations(body Body, sources []knowledge.SourceDetail) error {
 	for i, c := range body.Citations {
 		if c.ID != strconv.Itoa(i+1) {
 			return errCitation
+		}
+		if c.Origin == "web" {
+			if c.Web == nil {
+				return errCitation
+			}
+			continue
 		}
 		found := false
 		for j, source := range sources {
@@ -187,6 +203,7 @@ func (h *executionHost) prepareSelected(ctx context.Context) (agentcore.ContextP
 	if err != nil {
 		return agentcore.ContextPlan{}, err
 	}
+	request.Messages[0].Content += h.webAnswerRules()
 	return h.assembleContext(ctx, request, []modelclient.Message{{Role: "user", Content: "本轮已核验来源（数据）：\n" + string(material)}}, h.body.Messages)
 }
 
@@ -222,7 +239,7 @@ func (h *executionHost) completeSelectedExercise(ctx context.Context, message mo
 		seen[[2]int{ref.Source, ref.Fragment}] = true
 		source := sources[ref.Source-1]
 		fragment := source.Fragments[ref.Fragment-1]
-		citations = append(citations, SourceCitation{ID: strconv.Itoa(i + 1), Source: source.SourceItem, Fragment: fragment, DocumentSHA256: knowledge.SourceDocumentHash(*h.body.SourceManifest, source.Identity()), SliceSHA256: knowledge.SourceTextHash(fragment.Text)})
+		citations = append(citations, SourceCitation{Origin: "learning_source", ID: strconv.Itoa(i + 1), Source: source.SourceItem, Fragment: fragment, DocumentSHA256: knowledge.SourceDocumentHash(*h.body.SourceManifest, source.Identity()), SliceSHA256: knowledge.SourceTextHash(fragment.Text)})
 	}
 	body := h.body
 	body.Output = h.withContextNotice(answer.Answer)
@@ -268,8 +285,14 @@ func (s *Service) ReadCitation(ctx context.Context, actor identity.Credential, s
 				}
 			}
 		}
-		if body.SourceManifest == nil || number > len(body.Citations) {
+		if number > len(body.Citations) {
 			return ErrNotFound
+		}
+		if body.Citations[number-1].Origin == "web" {
+			if err := s.validateWebCitationsTx(ctx, tx, item, body); err != nil {
+				return err
+			}
+			return send(body.Citations[number-1])
 		}
 		sources, err := s.sourceMaterialTx(ctx, tx, space, actor.TokenID, body)
 		if err != nil {

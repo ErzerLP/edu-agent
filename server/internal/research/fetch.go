@@ -239,6 +239,7 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		title := ""
 		if media == "text/html" {
 			text, coverage, title = parseHTML(body)
+			source.Links = publicLinks(body, u)
 		}
 		if coverage == "storage_restricted" {
 			source.Status = "failed"
@@ -277,6 +278,42 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		return source, nil
 	}
 	return source, nil
+}
+
+// Links are only read hints; the host registers them and Fetch rechecks every
+// destination, DNS answer and redirect before any content can be trusted.
+func publicLinks(body []byte, base *url.URL) []string {
+	d := xml.NewDecoder(bytes.NewReader(body))
+	d.Strict = false
+	d.AutoClose = xml.HTMLAutoClose
+	d.Entity = xml.HTMLEntity
+	links := []string{}
+	seen := map[string]bool{}
+	for len(links) < 32 {
+		token, err := d.Token()
+		if err != nil {
+			break
+		}
+		tag, ok := token.(xml.StartElement)
+		if !ok || !strings.EqualFold(tag.Name.Local, "a") {
+			continue
+		}
+		for _, attr := range tag.Attr {
+			if !strings.EqualFold(attr.Name.Local, "href") {
+				continue
+			}
+			relative, err := url.Parse(attr.Value)
+			if err != nil {
+				continue
+			}
+			resolved, err := ValidateURL(base.ResolveReference(relative).String())
+			if err == nil && !seen[resolved.String()] {
+				seen[resolved.String()] = true
+				links = append(links, resolved.String())
+			}
+		}
+	}
+	return links
 }
 
 func parseHTML(body []byte) (string, string, string) {

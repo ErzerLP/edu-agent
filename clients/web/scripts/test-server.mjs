@@ -65,6 +65,29 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
+    if (process.env.WEB_SEARCH_BROWSER_FIXTURE === '1' && payload.messages?.[0]?.content?.includes('公开检索判断')) {
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ search_needed: true }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 40, completion_tokens: 10, total_tokens: 50 } }))
+      return
+    }
+    if (process.env.WEB_SEARCH_BROWSER_FIXTURE === '1' && payload.messages?.[0]?.content?.includes('公开资料检索阶段')) {
+      const last = payload.messages.at(-1)
+      const message = { role: 'assistant' }
+      if (last.role === 'user') message.tool_calls = [{ id: 'search-web', type: 'function', function: { name: 'search_web', arguments: JSON.stringify({ query: '公开网页新版本', count: 1 }) } }]
+      else if (last.tool_call_id === 'search-web') message.tool_calls = [{ id: 'read-web', type: 'function', function: { name: 'read_web', arguments: JSON.stringify({ resource_id: JSON.parse(last.content).items[0].resource_id }) } }]
+      else message.content = '公开网页已读取。'
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: 60, completion_tokens: 20, total_tokens: 80 } }))
+      return
+    }
+    if (process.env.WEB_SEARCH_BROWSER_FIXTURE === '1' && payload.messages?.[0]?.content?.includes('区分学习区资料与网络来源')) {
+      const material = JSON.parse(payload.messages.find(m => m.role === 'user' && m.content.includes('web_documents')).content)
+      const document = material.web_documents[0]
+      const result = { answer: '新版本支持公开网页检索。[1]', citations: [{ origin: 'web', document_id: document.document_id, revision_id: document.revision_id, fragment_id: document.fragments[0].id, quote: '新版本支持公开网页检索。' }] }
+      response.setHeader('Content-Type', 'application/json')
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(result) }, finish_reason: 'stop' }], usage: { prompt_tokens: 120, completion_tokens: 60, total_tokens: 180 } }))
+      return
+    }
     if (payload.messages?.[0]?.content?.includes('你在 Studio 规划学习大纲')) {
       const material = JSON.parse(payload.messages[1].content)
       if (!material.directory?.[0]?.node_revision_id) { response.writeHead(400); response.end(); return }
@@ -296,6 +319,7 @@ function start() {
     env: {
       PATH: process.env.PATH,
       DATABASE_URL: process.env.TEST_DATABASE_URL,
+      ...(process.env.WEB_SEARCH_BROWSER_FIXTURE === '1' ? { WEB_SEARCH_BROWSER_FIXTURE: '1' } : {}),
       LISTEN_ADDR: '127.0.0.1:32929',
       PUBLIC_BASE_URL: 'http://127.0.0.1:32929',
       MIGRATE_ON_START: 'true',

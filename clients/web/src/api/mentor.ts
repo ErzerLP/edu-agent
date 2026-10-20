@@ -5,10 +5,12 @@ import { researchStateSchema } from './research'
 import { startStateSchema } from './start'
 import { editStateSchema } from './content'
 import { mentorCitationSchema, sourceManifestSchema } from './source-selection'
+import { webProgressSchema } from './web-search'
 import { studioStateSchema } from './studio'
 
 const positive = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const mentorSnapshotSchema = z.object({
+  web: webProgressSchema.optional(),
   studio: studioStateSchema.optional(),
   source_manifest:sourceManifestSchema.optional(),citations:z.array(mentorCitationSchema).max(100).optional(),
   conversation_id: z.uuid().optional(),

@@ -316,7 +316,7 @@ func TestPostgreSQLMentorCookieHTTPAndSSERecovery(t *testing.T) {
 	if response.StatusCode != 404 {
 		t.Fatal("对话允许跨区重绑定")
 	}
-	response, data = request("POST", conversationPath+"/turns", space.ID, map[string]any{"operation_id": uuid.NewString(), "expected_version": 1, "prompt": "正式历史问题"}, nil)
+	response, data = request("POST", conversationPath+"/turns", space.ID, map[string]any{"operation_id": uuid.NewString(), "expected_version": 1, "prompt": "正式历史问题", "expected_web_search_version": 1}, nil)
 	if response.StatusCode != 202 {
 		t.Fatalf("新轮提交失败：%d %s", response.StatusCode, data)
 	}

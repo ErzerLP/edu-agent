@@ -29,7 +29,7 @@ func TestEmbeddedMigrationsAreOrderedAndUnique(t *testing.T) {
 		t.Fatal("migration checksum or body is empty")
 	}
 	latest := items[len(items)-1]
-	if latest.version != 50 || latest.name != "000050_remove_mentor_budget_hash_version.sql" || len(latest.checksum) != 64 {
+	if latest.version != 51 || latest.name != "000051_mentor_web_search.sql" || len(latest.checksum) != 64 {
 		t.Fatalf("导师预算清理迁移未正确嵌入: %s", latest.name)
 	}
 	study := items[39]

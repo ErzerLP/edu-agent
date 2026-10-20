@@ -34,7 +34,11 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 	if err != nil {
 		return knowledge.ImportResult{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_collections(id,name,source,shared,owner_space_id) VALUES($1,'目标研究参考',$2,FALSE,$3)`, c.SourceID, "goal_research:"+c.GoalID, learningspace.Scope(ctx)); err != nil {
+	name, provenance := "目标研究参考", "goal_research:"+c.GoalID
+	if c.Metadata.Purpose == "notebook_web" {
+		name, provenance = c.Title, "web_document:"+c.SourceRevisionID
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_collections(id,name,source,shared,owner_space_id) VALUES($1,$2,$3,FALSE,$4)`, c.SourceID, name, provenance, learningspace.Scope(ctx)); err != nil {
 		return knowledge.ImportResult{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_collection_links(space_id,collection_id) VALUES($1,$2)`, learningspace.Scope(ctx), c.SourceID); err != nil {
@@ -84,7 +88,7 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 	if document.PDF != nil {
 		start, end = 0, 0
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_source_revisions(source_id,source_revision_id,run_id,space_id,goal_id,knowledge_revision_id,document_revision_id,text_start,text_end,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, c.SourceID, c.SourceRevisionID, c.RunID, learningspace.Scope(ctx), c.GoalID, prepared.Revision.ID, document.ID, start, end, raw); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_source_revisions(source_id,source_revision_id,run_id,space_id,goal_id,knowledge_revision_id,document_revision_id,text_start,text_end,metadata) VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,$6,$7,$8,$9,$10)`, c.SourceID, c.SourceRevisionID, c.RunID, learningspace.Scope(ctx), c.GoalID, prepared.Revision.ID, document.ID, start, end, raw); err != nil {
 		return knowledge.ImportResult{}, err
 	}
 	return knowledge.ImportResult{Revision: prepared.Revision}, nil

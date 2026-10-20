@@ -157,6 +157,29 @@ paths:
       responses:
         '200': { description: 同筛选的调用；缺失字段为 null；推理包含在输出中，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/ModelUsageCalls' } } } }
         default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/usage/tasks/{taskID}/search-calls:
+    get:
+      operationId: listSearchUsageCalls
+      summary: 分页查看任务的搜索请求，独立于模型 Token
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      parameters:
+        - { name: taskID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/UsageFrom' }
+        - { $ref: '#/components/parameters/UsageTo' }
+        - { $ref: '#/components/parameters/UsageTimezone' }
+        - { $ref: '#/components/parameters/UsageGrain' }
+        - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSource' }
+        - { $ref: '#/components/parameters/UsageDevice' }
+        - { $ref: '#/components/parameters/UsageCLISession' }
+        - { $ref: '#/components/parameters/UsageSpace' }
+        - { $ref: '#/components/parameters/UsageSpaceHeader' }
+        - { $ref: '#/components/parameters/UsageCursor' }
+        - { $ref: '#/components/parameters/UsageLimit' }
+      responses:
+        '200': { description: 同筛选的调用；缺失字段为 null；推理包含在输出中，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/SearchUsageCalls' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
   /v1/learning/studio/exercises/{exerciseID}:
     parameters:
       - { $ref: "#/components/parameters/MentorSpaceID" }
@@ -449,7 +472,7 @@ paths:
         - { name: citationID, in: path, required: true, schema: { type: string } }
         - { name: version, in: query, required: true, schema: { type: integer, minimum: 1 } }
       responses:
-        "200": { description: Verified historical fragment; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/MentorCitation" } } } }
+        "200": { description: Verified historical fragment; no-store, content: { application/json: { schema: { $ref: "#/components/schemas/LearningSourceCitation" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/studio/artifacts:
     parameters:
@@ -1577,6 +1600,7 @@ paths:
                       - required: [goal_id]
                       - required: [teaching_session_id]
               properties:
+                web_search_enabled: { type: boolean, default: true }
                 mode: { type: string, enum: [mentor, study], default: mentor }
                 id: { type: string, format: uuid }
                 goal_id: { type: string, format: uuid }
@@ -1584,7 +1608,7 @@ paths:
                 saved: { type: boolean }
                 title: { type: string, maxLength: 240, description: 临时模式不得提供标题 }
       responses:
-        "201": { description: 正式确认已新建, content: { application/json: { schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } } } } }
+        "201": { description: 正式确认已新建, content: { application/json: { schema: { type: object, required: [id, web_search_enabled, web_search_version], properties: { id: { type: string, format: uuid }, web_search_enabled: { type: boolean }, web_search_version: { type: integer, minimum: 1 } } } } } }
         default: { $ref: "#/components/responses/WebFailure" }
   /v1/learning/conversations/{conversationID}:
     parameters:
@@ -1656,8 +1680,9 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [operation_id, expected_version, prompt]
+              required: [operation_id, expected_version, expected_web_search_version, prompt]
               properties:
+                expected_web_search_version: { type: integer, minimum: 1 }
                 direction_version: { type: integer, minimum: 1, description: study 使用的当前方向版本；过期返回 409 }
                 source_selection: { $ref: "#/components/schemas/SourceSelection" }
                 operation_id: { type: string, format: uuid }
@@ -1990,7 +2015,7 @@ paths:
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       responses:
-        "200": { description: 原运行和受理版本, content: { application/json: { schema: { $ref: "#/components/schemas/MentorReceipt" } } } }
+        "200": { description: 原运行和受理版本, content: { application/json: { schema: { oneOf: [{ $ref: "#/components/schemas/MentorReceipt" }, { $ref: "#/components/schemas/WebImportReceipt" }, { $ref: "#/components/schemas/WebSearchPreference" }, { $ref: "#/components/schemas/WebImportPreview" }] } } } }
         default: { $ref: "#/components/responses/WebFailure" }
   /v1/settings:
     get:
@@ -5006,6 +5031,81 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
+  /v1/learning/conversations/{conversationID}/web-search:
+    parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - { name: conversationID, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: changeConversationWebSearch
+      summary: 设置对话联网偏好并撤销旧许可
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebSearchCommand' }
+      responses:
+        '200': { description: 当前身份、学习区和代次核验后的结果，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/WebSearchPreference' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/web-documents/{documentID}:
+    parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - { name: documentID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: cursor, in: query, schema: { type: string, maxLength: 512 } }
+    get:
+      operationId: readWebDocument
+      summary: 查看已读取的网络快照
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        '200': { description: 当前身份、学习区和代次核验后的结果，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/WebDocument' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/web-documents/{documentID}/pages/{page}:
+    parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - { name: documentID, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: page, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 100 } }
+    get:
+      operationId: readWebDocumentPage
+      summary: 查看网络 PDF 的安全页图
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: learning:read
+      responses:
+        '200': { description: 当前身份、学习区和代次核验后的结果，no-store, content: { image/png: { schema: { type: string, format: binary } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/web-import-previews:
+    parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+    post:
+      operationId: previewWebImport
+      summary: 预览网络快照加入来源
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: research:adopt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebImportPreviewRequest' }
+      responses:
+        '200': { description: 当前身份、学习区和代次核验后的结果，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/WebImportPreview' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/web-imports:
+    parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+    post:
+      operationId: confirmWebImport
+      summary: 确认将网络快照加入当前学习区
+      security: [{ deviceBearer: [] }, { webCookie: [] }]
+      x-required-scope: research:adopt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebImportRequest' }
+      responses:
+        '200': { description: 当前身份、学习区和代次核验后的结果，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/WebImportReceipt' } } } }
+        default: { $ref: '#/components/responses/WebFailure' }
 components:
   parameters:
     ModelGatewayVersion:
@@ -5576,8 +5676,11 @@ components:
         unknown_calls: { type: integer, format: int64, minimum: 0 }
     ModelUsageTotals:
       type: object
-      required: [calls, pending_calls, outcome_unknown_calls, input, output, reasoning, total]
+      required: [calls, pending_calls, outcome_unknown_calls, search_requests, search_pending, search_outcome_unknown, input, output, reasoning, total]
       properties:
+        search_requests: { type: integer, minimum: 0 }
+        search_pending: { type: integer, minimum: 0 }
+        search_outcome_unknown: { type: integer, minimum: 0 }
         calls: { type: integer, format: int64, minimum: 0 }
         pending_calls: { type: integer, format: int64, minimum: 0 }
         outcome_unknown_calls: { type: integer, format: int64, minimum: 0 }
@@ -6026,7 +6129,7 @@ components:
         title: { type: string }
         markdown: { type: string }
         source_manifest: { $ref: "#/components/schemas/SourceManifest" }
-        citations: { type: array, items: { $ref: "#/components/schemas/MentorCitation" } }
+        citations: { type: array, items: { $ref: "#/components/schemas/LearningSourceCitation" } }
         model: { type: string }
         input_fingerprint: { type: string }
         coverage: { type: string, enum: [complete, partial] }
@@ -6952,8 +7055,12 @@ components:
         confirmed: { type: boolean, enum: [true] }
     TutorConversation:
       type: object
-      required: [id, space_id, privacy_generation, version, saved, title, provider, endpoint, updated_at, goal_version, writable, storage_state, destination, destination_provider, destination_endpoint, confirmation_required]
+      required: [id, space_id, privacy_generation, version, saved, title, provider, endpoint, updated_at, goal_version, writable, storage_state, destination, destination_provider, destination_endpoint, confirmation_required, web_search_enabled, web_search_version, web_search_available, web_search_reason]
       properties:
+        web_search_enabled: { type: boolean }
+        web_search_version: { type: integer, minimum: 1 }
+        web_search_available: { type: boolean }
+        web_search_reason: { type: string }
         mode: { type: string, enum: [mentor, study], description: 旧数据为 mentor }
         id: { type: string, format: uuid }
         space_id: { type: string, format: uuid }
@@ -7297,7 +7404,7 @@ components:
               document_id: { type: string, format: uuid }
               document_revision_id: { type: string, format: uuid }
               sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-    MentorCitation:
+    LearningSourceCitation:
       type: object
       required: [id, source, fragment, document_sha256, slice_sha256]
       properties:
@@ -7317,6 +7424,186 @@ components:
             truncated: { type: boolean }
             proof: { $ref: "#/components/schemas/SourceSliceProof" }
             page: { type: integer, minimum: 1 }
+    MentorCitation:
+      oneOf:
+        - $ref: '#/components/schemas/LearningCitation'
+        - $ref: '#/components/schemas/WebCitation'
+      discriminator: { propertyName: origin }
+    LearningCitation:
+      allOf:
+        - $ref: '#/components/schemas/LearningSourceCitation'
+        - type: object
+          required: [origin]
+          properties:
+            origin: { type: string, const: learning_source }
+    WebCitation:
+      type: object
+      additionalProperties: false
+      required: [id, origin, document_id, revision_id, fragment_id, document_sha256, slice_sha256, quote]
+      properties:
+        id: { type: string, pattern: '^[1-9][0-9]{0,2}$' }
+        origin: { type: string, const: web }
+        document_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        fragment_id: { type: string, format: uuid }
+        document_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        slice_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        quote: { type: string, maxLength: 1200 }
+        expired: { type: boolean, description: 到期后只保留标识，quote 为空 }
+        page: { type: integer, minimum: 1, maximum: 100 }
+    WebSearchCommand:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_web_search_version, enabled]
+      properties:
+        operation_id: { type: string, format: uuid }
+        expected_web_search_version: { type: integer, minimum: 1 }
+        enabled: { type: boolean }
+    WebSearchPreference:
+      type: object
+      additionalProperties: false
+      required: [enabled, web_search_version]
+      properties:
+        enabled: { type: boolean }
+        web_search_version: { type: integer, minimum: 1 }
+    WebSearchProgress:
+      type: object
+      additionalProperties: false
+      required: [stage, read_attempted, read_succeeded, read_failed, fetch_http_requests]
+      properties:
+        queries: { type: array, items: { type: string, maxLength: 1024 } }
+        stage: { type: string }
+        query: { type: string, maxLength: 1024 }
+        title: { type: string }
+        notice: { type: string }
+        read_attempted: { type: integer, minimum: 0 }
+        read_succeeded: { type: integer, minimum: 0 }
+        read_failed: { type: integer, minimum: 0 }
+        fetch_http_requests: { type: integer, minimum: 0 }
+    WebFragment:
+      type: object
+      additionalProperties: false
+      required: [id, text, start, end]
+      properties:
+        id: { type: string, format: uuid }
+        text: { type: string, maxLength: 1200 }
+        start: { type: integer, minimum: 0 }
+        end: { type: integer, minimum: 1 }
+        page: { type: integer, minimum: 1, maximum: 100 }
+    WebDocument:
+      type: object
+      additionalProperties: false
+      required: [document_id, resource_id, revision_id, request_url, url, title, fetched_at, media_type, parser, coverage, fingerprint, document_sha256, storage_allowed, fragments, text]
+      properties:
+        resources:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [resource_id, title, url, summary, summary_only]
+            properties:
+              resource_id: { type: string, format: uuid }
+              title: { type: string }
+              url: { type: string, format: uri }
+              summary: { type: string }
+              summary_only: { type: boolean, const: true }
+        document_id: { type: string, format: uuid }
+        resource_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        request_url: { type: string, format: uri }
+        url: { type: string, format: uri }
+        title: { type: string }
+        fetched_at: { type: string, format: date-time }
+        media_type: { type: string, enum: [text/plain, text/markdown, text/html, application/pdf] }
+        parser: { type: string }
+        coverage: { type: string }
+        fingerprint: { type: string }
+        document_sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        storage_allowed: { type: boolean }
+        fragments: { type: array, items: { $ref: '#/components/schemas/WebFragment' } }
+        text: { type: string, maxLength: 16000 }
+        next_cursor: { type: string, maxLength: 512 }
+        pdf: { $ref: '#/components/schemas/PDFReport' }
+    WebImportPreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, owner, document_revision_ids]
+      properties:
+        operation_id: { type: string, format: uuid }
+        owner:
+          type: object
+          additionalProperties: false
+          required: [kind, id]
+          properties:
+            kind: { type: string, const: mentor_run }
+            id: { type: string, format: uuid }
+        document_revision_ids: { type: array, minItems: 1, maxItems: 1, items: { type: string, format: uuid } }
+    WebImportPreview:
+      type: object
+      additionalProperties: false
+      required: [preview_id, preview_version, items, expires_at]
+      properties:
+        preview_id: { type: string, format: uuid }
+        preview_version: { type: integer, minimum: 1 }
+        expires_at: { type: string, format: date-time }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [document_revision_id, hash, coverage, requires_partial_accept, document]
+            properties:
+              document_revision_id: { type: string, format: uuid }
+              hash: { type: string }
+              coverage: { type: string }
+              requires_partial_accept: { type: boolean }
+              document: { $ref: '#/components/schemas/WebDocument' }
+    WebImportRequest:
+      type: object
+      additionalProperties: false
+      required: [operation_id, preview_id, expected_preview_version, document_revision_id, storage_consent, accept_partial]
+      properties:
+        operation_id: { type: string, format: uuid }
+        preview_id: { type: string, format: uuid }
+        expected_preview_version: { type: integer, minimum: 1 }
+        document_revision_id: { type: string, format: uuid }
+        storage_consent: { type: boolean, const: true }
+        accept_partial: { type: boolean, default: false }
+    WebImportReceipt:
+      type: object
+      additionalProperties: false
+      required: [operation_id, run_id, document_id, document_revision_id, source]
+      properties:
+        operation_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        document_id: { type: string, format: uuid }
+        document_revision_id: { type: string, format: uuid }
+        source: { $ref: '#/components/schemas/SourceIdentity' }
+    SearchUsageCalls:
+      type: object
+      additionalProperties: false
+      required: [items, privacy_generation]
+      properties:
+        privacy_generation: { type: integer, minimum: 1 }
+        next_cursor: { type: string }
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, stage, attempt_no, state, started_at, finished_at, provider, configuration]
+            properties:
+              id: { type: string, format: uuid }
+              stage: { type: string }
+              attempt_no: { type: integer, minimum: 1 }
+              state: { type: string, enum: [prepared, not_dispatched, dispatching, received, failed, cancelled, outcome_unknown] }
+              started_at: { type: string, format: date-time }
+              finished_at: { type: [string, 'null'], format: date-time }
+              provider: { type: string }
+              configuration: { type: string }
     SourceSliceProof:
       type: object
       required: [schema, original_range, range, sha256]
@@ -7329,6 +7616,7 @@ components:
       type: object
       required: [run_id, session_id, space_id, goal_id, goal_version, privacy_generation, version, watermark, status, stage, reason, saved, body_available, requests_used, result_unknown, cost_unknown, updated_at, expires_at, configuration, output]
       properties:
+        web: { $ref: "#/components/schemas/WebSearchProgress" }
         studio: { $ref: "#/components/schemas/StudioState" }
         source_manifest: { $ref: "#/components/schemas/SourceManifest" }
         citations: { type: array, maxItems: 100, items: { $ref: "#/components/schemas/MentorCitation" } }
@@ -7572,7 +7860,7 @@ components:
       additionalProperties: false
       required: [private_queries]
       properties:
-        private_queries: { type: boolean, default: false, description: 后续运行是否允许私人目标、正文、成绩进入外部查询；不影响固定公开探测 }
+        private_queries: { type: boolean, default: false, description: 原有外发策略；网页导师搜索始终只使用用户本次主动输入，不据此加载私人目标、正文或成绩 }
     LearningSettingsUpdate:
       type: object
       additionalProperties: false

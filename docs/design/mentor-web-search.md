@@ -1,6 +1,6 @@
 # 网页导师联网搜索：设计
 
-状态：Shape 文档定稿（2026-10-20），未实施。对应 [brief](../comet/specs/mentor-web-search/brief.md)、[spec](../comet/specs/mentor-web-search/spec.md)；拆分见 [Supervisor](search-shape.md)。下文新增字段、表及接口均为草案，Build 时再写代码和 OpenAPI。
+状态：Shape 文档定稿（2026-10-20）；M-A 已实现，局部验收与验证范围见 §13。对应 [brief](../comet/specs/mentor-web-search/brief.md)、[spec](../comet/specs/mentor-web-search/spec.md)；拆分见 [Supervisor](search-shape.md)。§1–12 保留已确认设计，具体文件及协议以 §13 和 OpenAPI 为准。
 
 ## 1. 现状与文件边界
 
@@ -194,3 +194,155 @@ OpenAPI 为上述字段定义严格对象、联合类型、状态枚举与分页
 1. 选中来源问答和普通导师使用不同上下文／引用链，单改工具列表可能无效，或误给练习与 Studio 放宽事实来源；按入口验收。
 2. 公开检索与私人上下文必须真实隔离；页面 prompt 规则不能替代工具权限、关闭 epoch 和 SSRF 门禁。
 3. PDF 附件与历史引用的保存、导入、到期和清除跨 learning／knowledge；不能为支持更多页面直接放大旧单体 checkpoint 或丢失同一版本证据。
+
+## 13. M-A 实现覆盖
+
+### 实现边界
+
+M-A 使用同一运行内的公开检索阶段。路由仅接收当前输入并返回 `search_needed`；公开模型使用现有 Chat Completions／Responses Gateway，只有 `search_web`、`read_web`。其请求从当前输入及公开工具结果构造，不调用私人历史、记忆或来源上下文装配。合并回答才读取授权的学习区片段，并关闭网络工具。没有选中来源的 notebook 答疑与普通导师、有所选来源的混合引用均接通。练习与 Studio 仍使用原来的学习区引用合同。
+
+| 验收 | 实现位置与行为 | 定向证据 |
+| --- | --- | --- |
+| 1–4 开关 | `mentorrun/web_access.go`、`conversation.go`；独立偏好版本与 epoch，默认开启；本进程取消及数据库状态监视；搜索、每次 GET、跳转和提交复核 | `TestWebSearchPreferenceVersionAndReplay`、`TestWebDisableCancelsInFlightAndRejectsLateContent`、`TestWebDisableDuringRoutingStillAllowsTheAnswer`、Chromium 刷新后保持关闭 |
+| 5–7 隔离与真实性 | `web_search.go`、`web_citations.go`；当前输入路由、公开模型独立消息列表、不可保存或失败正文无引用；摘要仅筛选 | `TestWebMentorSearchReadAndVerifiedAnswer` 检查私人目标和私人教材不进入检索请求；`TestWebDocumentEvidenceBoundary` |
+| 8 工具限制 | `tool_steps.go`；两种网络工具和原导师工具使用同一 `Body.ToolSteps`；暂停说明使用真实读取进度；继续保留网络快照与原台账归属 | 混合引用场景设置两步上限，搜索、读取后暂停，继续不重新搜索 |
+| 9–10 抓取与不可信内容 | 复用 `research.Fetcher`；解析页面的公开链接只成为待登记线索；服务端仅执行两个允许的工具，拒绝 provider、任意 URL 及写入工具参数 | 原 research 安全抓取回归；网络工具注入参数、重复 call ID 和未知工具断言；DNS 拒绝不计为已发送 GET |
+| 11–13 引用 | `research/web_documents.go`、`mentorrun/web_citations.go`；公开响应采用 `origin` 联合类型；模型只能选择已发送片段和逐字 quote；hash、页码与所属快照由服务端填充 | 同一回答包含 `web`、`learning_source`；拒绝摘要、伪造范围和未发送片段 |
+| 14–16 预览与保存 | `web_imports.go`；十五分钟预览，只存版本/hash，响应从原快照恢复；确认再次核验权限；私有来源与回执同事务；同快照幂等，同网址改版新建 | `TestWebSnapshotImportIsPrivateImmutableAndIdempotent`；Chromium 来源列表出现且没有自动选中 |
+| PDF | `web_documents.go` 的独立加密附件、受限 PNG 页图；确认导入时重新使用既有 PDF 解析器；部分 PDF 默认不接受 | `TestWebPDFPartialPreviewAndAttachmentRemoval`；大于原运行正文上限的原件、物理页、显式接受及删除后附件清除 |
+| 17、20、21 生命周期 | learning 表的代次写屏障；运行/对话删除、Sweep、全局 scrub/verify、临时进程归属及密钥轮换；导入由 knowledge 独立保留 | 跨区读取、关闭后的迟到提交、全局隐私屏障、到期后的引用副本清除与密钥轮换测试 |
+| 18–19 用量 | 路由、公开工具规划、合并回答、修复和进展说明都经过现有模型台账；`modelusage/search.go` 在共享 HTTP 出口登记搜索；模型过滤排除搜索，读取页面与 GET 次数分开 | `TestSearchHTTPAccountingDoesNotCreateModelTokens`；搜索失败计数、未派发不计、搜索任务可查、模型过滤不混入搜索 |
+| 22 Web | `web-search-control.tsx`、`web-citation.tsx`、原引用查看器和用量页；文字标签、原生 checkbox/button、状态与错误播报；PDF 原页只走服务器 PNG | Chromium 覆盖完整生产 API 交互；移动端和完整键盘体验仍按 §11 留待 Candidate |
+
+### 共享基础与文件
+
+- 网络合同：`server/internal/research/web_documents.go`；抓取器原有标准端口、全部 DNS 地址检查、固定数字地址拨号、禁代理/凭据、跳转、传输/解码限制保持原值。页面公开链接不进入 #22 的公开 Source DTO。
+- learning 存储：`000051_mentor_web_search.sql`，新增资源、文档、独立载荷/附件、预览、导入回执及通用网络操作回执表。`owner_kind` 首批仅接受 `mentor_run`，R-A 可在自己的 migration 中扩展。URL 去重使用每个运行独立的加密密钥计算摘要，服务器正文密钥轮换不会改变资源身份。
+- 引用：`SourceCitation` 对普通导师序列化为判别联合类型；Web 的 Zod 与 OpenAPI 将原学习区引用拆为基础类型，练习、Studio 不接受网络引用。到期历史保留回答与失效引用标识，移除 quote 和检索载荷，旧链接不重抓网页。网络回答不新增永久话题索引副本。
+- 知识保存：`knowledge/research.go` 与 `knowledge/postgresstore/research.go` 新增明确的 `notebook_web` 用途，允许无 goal；既有目标研究路径继续保留目标要求与原产品行为。
+- 搜索用量：`modelusage/search.go`、`search_query.go`；`settings.SearchClient` 和设置探测共享计账；现有发现与 #22 绑定自己的根任务。搜索明细不存 query、URL 或凭据，不增加模型 Token 的未知次数。
+- 部署与协议：`transport/httpapi/mentor_web_search.go`、`api/openapi.yaml`、生成的 Web schema、`deploy/web/nginx.conf`，以及 API／deploy 的路径边界断言。
+- 浏览器假服务：`internal/app/mentor_web_browser_test.go` 中的 `httptest` 搜索和网页，通过可信宿主依赖注入连接现有抓取器；仅测试二进制包含假服务。生产 `edu-agentd` 没有测试环境变量网络旁路。
+
+浏览器复现：先在 `clients/web` 执行 `npm run build`，在 `server` 执行 `go build -p=1 -tags web_release -o edu-agentd ./cmd/edu-agentd`；设置 `TEST_DATABASE_URL` 和 `WEB_CHROMIUM_PATH` 后，回到 `clients/web` 执行 `npm run test:mentor-web-search`。该脚本自动构建测试服务、启用确定性模型桩，并且只运行新增 Chromium 场景；配对命令仍使用正式 `edu-agentd`。
+
+### 检查记录
+
+检查只覆盖受影响包和新增 Chromium 场景，不运行全项目测试或多浏览器矩阵。所有 Go 数据库测试使用任务指定数据库、`umask 022` 和 `-p=1`；Go 构建缓存位于可写的 `/tmp/mentor-search-go-cache`。
+
+- 已通过：Web 类型检查、前端生产构建、`web_release` 服务端构建；Chromium 自动搜索 → 读取 → 网络引用 → 预览确认 → 来源列表，以及关闭偏好持久化。
+- 已通过：research、pdfsource、knowledge、knowledge/postgresstore、modelusage、settings、learning/postgresstore、transport/httpapi、migrations、api、deploy、app 的包测试；受影响包 `go vet -p=1`。
+- 已通过：mentorrun 整包（1116.539 秒）；后续“路由期间关闭联网”修复完成后，联网专项回归再次通过（34.602 秒），未重复整包。最终 HTTP／API／app 检查分别通过；前端和 Go 资产构建完成后，测试脚本的 Chromium 用例为 1 passed（场景 8.6 秒）。
+- 浏览器夹具修正记录：首次使用的 `user` 身份无 `research:adopt`，按钮正确禁用，已改用 `learner`；开关等待服务器确认后才改变状态，验收改用点击后等待断言。
+- 既有轮换测试显式关闭联网，继续验证原有历史轮换；网络资源、附件及回执的轮换另有独立覆盖。一次 app 构建遇到前端重建更换资源文件名，固定构建产物后完整复验通过。
+- 数据库测试采用串行执行：各临时 schema 仍共享 PostgreSQL advisory lock，分开启动的测试进程也会互相干扰；被中断的并行尝试不算通过证据。
+
+### 与设计的实现细化及剩余验证
+
+- 增加 `learning_web_operations` 统一保存加密命令回执；网络正文和 PDF 仍只保存在独立文档载荷中，预览不复制原件。
+- 七天到期保留历史回答及带 `expired` 的引用身份，quote 清空，引用查看返回不可用；不自动重新联网。明确导入的知识来源继续由 knowledge 管理。
+- 不扩展 R-A/R-B、CLI、#22 产品流程、OCR 或累计预算。跨进程停止/清除高并发竞态、真实带推理 Responses 模型与搜索服务抽查、移动端完整体验继续属于 §11 Candidate 证据；本次不宣称已经完成这些检查。
+
+### 改动文件（按模块）
+
+**导师运行、引用与生命周期**
+
+- [server/internal/learning/postgresstore/privacy.go](../../server/internal/learning/postgresstore/privacy.go)
+- [server/internal/mentorrun/command.go](../../server/internal/mentorrun/command.go)
+- [server/internal/mentorrun/conversation.go](../../server/internal/mentorrun/conversation.go)
+- [server/internal/mentorrun/core.go](../../server/internal/mentorrun/core.go)
+- [server/internal/mentorrun/query.go](../../server/internal/mentorrun/query.go)
+- [server/internal/mentorrun/research.go](../../server/internal/mentorrun/research.go)
+- [server/internal/mentorrun/rotation.go](../../server/internal/mentorrun/rotation.go)
+- [server/internal/mentorrun/rotation_test.go](../../server/internal/mentorrun/rotation_test.go)
+- [server/internal/mentorrun/source_selection.go](../../server/internal/mentorrun/source_selection.go)
+- [server/internal/mentorrun/store.go](../../server/internal/mentorrun/store.go)
+- [server/internal/mentorrun/structured.go](../../server/internal/mentorrun/structured.go)
+- [server/internal/mentorrun/study.go](../../server/internal/mentorrun/study.go)
+- [server/internal/mentorrun/tool_steps.go](../../server/internal/mentorrun/tool_steps.go)
+- [server/internal/mentorrun/types.go](../../server/internal/mentorrun/types.go)
+- [server/internal/mentorrun/web_access.go](../../server/internal/mentorrun/web_access.go)
+- [server/internal/mentorrun/web_cancellation_test.go](../../server/internal/mentorrun/web_cancellation_test.go)
+- [server/internal/mentorrun/web_citations.go](../../server/internal/mentorrun/web_citations.go)
+- [server/internal/mentorrun/web_documents.go](../../server/internal/mentorrun/web_documents.go)
+- [server/internal/mentorrun/web_expiry_test.go](../../server/internal/mentorrun/web_expiry_test.go)
+- [server/internal/mentorrun/web_imports.go](../../server/internal/mentorrun/web_imports.go)
+- [server/internal/mentorrun/web_lifecycle.go](../../server/internal/mentorrun/web_lifecycle.go)
+- [server/internal/mentorrun/web_operations.go](../../server/internal/mentorrun/web_operations.go)
+- [server/internal/mentorrun/web_privacy_test.go](../../server/internal/mentorrun/web_privacy_test.go)
+- [server/internal/mentorrun/web_protocol_test.go](../../server/internal/mentorrun/web_protocol_test.go)
+- [server/internal/mentorrun/web_rotation_test.go](../../server/internal/mentorrun/web_rotation_test.go)
+- [server/internal/mentorrun/web_search.go](../../server/internal/mentorrun/web_search.go)
+- [server/internal/mentorrun/web_search_test.go](../../server/internal/mentorrun/web_search_test.go)
+- [server/internal/mentorrun/worker.go](../../server/internal/mentorrun/worker.go)
+
+**安全抓取与网络资料合同**
+
+- [server/internal/research/fetch.go](../../server/internal/research/fetch.go)
+- [server/internal/research/types.go](../../server/internal/research/types.go)
+- [server/internal/research/web_documents.go](../../server/internal/research/web_documents.go)
+- [server/internal/research/web_documents_test.go](../../server/internal/research/web_documents_test.go)
+
+**知识来源保存**
+
+- [server/internal/knowledge/postgresstore/research.go](../../server/internal/knowledge/postgresstore/research.go)
+- [server/internal/knowledge/research.go](../../server/internal/knowledge/research.go)
+
+**搜索计账与设置**
+
+- [server/internal/modelusage/query.go](../../server/internal/modelusage/query.go)
+- [server/internal/modelusage/search.go](../../server/internal/modelusage/search.go)
+- [server/internal/modelusage/search_query.go](../../server/internal/modelusage/search_query.go)
+- [server/internal/modelusage/store.go](../../server/internal/modelusage/store.go)
+- [server/internal/modelusage/types.go](../../server/internal/modelusage/types.go)
+- [server/internal/settings/probe.go](../../server/internal/settings/probe.go)
+- [server/internal/settings/search.go](../../server/internal/settings/search.go)
+
+**HTTP、OpenAPI、部署和组合根**
+
+- [deploy/web/nginx.conf](../../deploy/web/nginx.conf)
+- [server/api/openapi.yaml](../../server/api/openapi.yaml)
+- [server/api/openapi_learning_content_test.go](../../server/api/openapi_learning_content_test.go)
+- [server/api/openapi_mentor_test.go](../../server/api/openapi_mentor_test.go)
+- [server/internal/app/app.go](../../server/internal/app/app.go)
+- [server/internal/app/mentor_rotation.go](../../server/internal/app/mentor_rotation.go)
+- [server/internal/app/mentor_web_browser_test.go](../../server/internal/app/mentor_web_browser_test.go)
+- [server/internal/deploy/nginx_test.go](../../server/internal/deploy/nginx_test.go)
+- [server/internal/transport/httpapi/mentor_runs.go](../../server/internal/transport/httpapi/mentor_runs.go)
+- [server/internal/transport/httpapi/mentor_runs_test.go](../../server/internal/transport/httpapi/mentor_runs_test.go)
+- [server/internal/transport/httpapi/mentor_web_search.go](../../server/internal/transport/httpapi/mentor_web_search.go)
+- [server/internal/transport/httpapi/model_usage.go](../../server/internal/transport/httpapi/model_usage.go)
+- [server/internal/transport/httpapi/source_discovery.go](../../server/internal/transport/httpapi/source_discovery.go)
+- [server/internal/transport/httpapi/tutor_history.go](../../server/internal/transport/httpapi/tutor_history.go)
+- [server/migrations/000051_mentor_web_search.sql](../../server/migrations/000051_mentor_web_search.sql)
+- [server/migrations/migrations_test.go](../../server/migrations/migrations_test.go)
+
+**Web 界面与浏览器夹具**
+
+- [clients/web/package.json](../../clients/web/package.json)
+- [clients/web/scripts/test-mentor-web-search.mjs](../../clients/web/scripts/test-mentor-web-search.mjs)
+- [clients/web/scripts/test-server.mjs](../../clients/web/scripts/test-server.mjs)
+- [clients/web/src/api/conversations.ts](../../clients/web/src/api/conversations.ts)
+- [clients/web/src/api/exercises.ts](../../clients/web/src/api/exercises.ts)
+- [clients/web/src/api/mentor.ts](../../clients/web/src/api/mentor.ts)
+- [clients/web/src/api/schema.d.ts](../../clients/web/src/api/schema.d.ts)
+- [clients/web/src/api/source-selection.ts](../../clients/web/src/api/source-selection.ts)
+- [clients/web/src/api/studio.ts](../../clients/web/src/api/studio.ts)
+- [clients/web/src/api/usage.ts](../../clients/web/src/api/usage.ts)
+- [clients/web/src/api/web-search.ts](../../clients/web/src/api/web-search.ts)
+- [clients/web/src/components/mentor-answer.tsx](../../clients/web/src/components/mentor-answer.tsx)
+- [clients/web/src/components/mentor-panel.tsx](../../clients/web/src/components/mentor-panel.tsx)
+- [clients/web/src/components/notebook/chat-panel.tsx](../../clients/web/src/components/notebook/chat-panel.tsx)
+- [clients/web/src/components/notebook/mentor-composer.tsx](../../clients/web/src/components/notebook/mentor-composer.tsx)
+- [clients/web/src/components/notebook/source-viewer.tsx](../../clients/web/src/components/notebook/source-viewer.tsx)
+- [clients/web/src/components/notebook/web-citation.tsx](../../clients/web/src/components/notebook/web-citation.tsx)
+- [clients/web/src/components/notebook/web-search-control.tsx](../../clients/web/src/components/notebook/web-search-control.tsx)
+- [clients/web/src/components/pdf-source.tsx](../../clients/web/src/components/pdf-source.tsx)
+- [clients/web/src/settings-page.tsx](../../clients/web/src/settings-page.tsx)
+- [clients/web/src/usage-page.tsx](../../clients/web/src/usage-page.tsx)
+- [clients/web/tests/browser/mentor-web-search.spec.ts](../../clients/web/tests/browser/mentor-web-search.spec.ts)
+
+**设计与实施计划**
+
+- [docs/design/mentor-web-search.md](../../docs/design/mentor-web-search.md)
+- [docs/superpowers/plans/2026-10-20-mentor-web-search.md](../../docs/superpowers/plans/2026-10-20-mentor-web-search.md)

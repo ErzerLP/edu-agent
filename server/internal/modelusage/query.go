@@ -84,20 +84,23 @@ func (s *Store) read(ctx context.Context, actor identity.Credential) (pgx.Tx, in
 	return tx, generation, nil
 }
 
-const selected = ` FROM learning_model_calls c JOIN learning_model_tasks t ON t.id=c.task_id AND t.privacy_generation=c.privacy_generation
+const callRows = `(SELECT id,task_id,privacy_generation,stage,attempt_no,dispatch_state,started_at,finished_at,provider,model,api_style,destination,configuration,input_tokens,output_tokens,reasoning_tokens,provider_total_tokens,total_tokens,usage_inconsistent,FALSE AS is_search FROM learning_model_calls
+ UNION ALL SELECT id,task_id,privacy_generation,stage,attempt_no,state,started_at,finished_at,provider,'' AS model,'' AS api_style,'' AS destination,configuration,NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint,NULL::bigint,FALSE,TRUE FROM learning_search_calls)`
+const selected = ` FROM ` + callRows + ` c JOIN learning_model_tasks t ON t.id=c.task_id AND t.privacy_generation=c.privacy_generation
  LEFT JOIN learning_cli_model_turns cli ON cli.task_id=t.id AND cli.privacy_generation=t.privacy_generation
  WHERE c.privacy_generation=$1 AND ($2='' OR t.space_id::text=$2)
  AND (t.space_id IS NULL OR EXISTS(SELECT 1 FROM learning_spaces sp WHERE sp.id=t.space_id))
  AND c.started_at >= $3 AND c.started_at < $4 AND ($5='' OR c.model=$5)
  AND ($6='' OR t.source=$6) AND ($7='' OR t.actor_device_id::text=$7) AND ($8='' OR cli.session_id::text=$8) `
-const sums = `count(*),count(*) FILTER(WHERE c.dispatch_state='dispatching'),count(*) FILTER(WHERE c.dispatch_state='outcome_unknown'),
- COALESCE(sum(c.input_tokens),0)::bigint,count(*) FILTER(WHERE c.input_tokens IS NULL),
- COALESCE(sum(c.output_tokens),0)::bigint,count(*) FILTER(WHERE c.output_tokens IS NULL),
- COALESCE(sum(c.reasoning_tokens),0)::bigint,count(*) FILTER(WHERE c.reasoning_tokens IS NULL),
- COALESCE(sum(c.total_tokens),0)::bigint,count(*) FILTER(WHERE c.total_tokens IS NULL)`
+const sums = `count(*) FILTER(WHERE NOT c.is_search),count(*) FILTER(WHERE NOT c.is_search AND c.dispatch_state='dispatching'),count(*) FILTER(WHERE NOT c.is_search AND c.dispatch_state='outcome_unknown'),
+ COALESCE(sum(c.input_tokens),0)::bigint,count(*) FILTER(WHERE NOT c.is_search AND c.input_tokens IS NULL),
+ COALESCE(sum(c.output_tokens),0)::bigint,count(*) FILTER(WHERE NOT c.is_search AND c.output_tokens IS NULL),
+ COALESCE(sum(c.reasoning_tokens),0)::bigint,count(*) FILTER(WHERE NOT c.is_search AND c.reasoning_tokens IS NULL),
+ COALESCE(sum(c.total_tokens),0)::bigint,count(*) FILTER(WHERE NOT c.is_search AND c.total_tokens IS NULL),
+ count(*) FILTER(WHERE c.is_search),count(*) FILTER(WHERE c.is_search AND c.dispatch_state='dispatching'),count(*) FILTER(WHERE c.is_search AND c.dispatch_state='outcome_unknown')`
 
 func targets(t *Totals) []any {
-	return []any{&t.Calls, &t.PendingCalls, &t.OutcomeUnknownCalls, &t.Input.KnownSum, &t.Input.UnknownCalls, &t.Output.KnownSum, &t.Output.UnknownCalls, &t.Reasoning.KnownSum, &t.Reasoning.UnknownCalls, &t.Total.KnownSum, &t.Total.UnknownCalls}
+	return []any{&t.Calls, &t.PendingCalls, &t.OutcomeUnknownCalls, &t.Input.KnownSum, &t.Input.UnknownCalls, &t.Output.KnownSum, &t.Output.UnknownCalls, &t.Reasoning.KnownSum, &t.Reasoning.UnknownCalls, &t.Total.KnownSum, &t.Total.UnknownCalls, &t.SearchRequests, &t.SearchPending, &t.SearchOutcomeUnknown}
 }
 func args(g int64, q Query) []any {
 	return []any{g, q.SpaceID, q.From, q.To, q.Model, q.Source, q.ActorDeviceID, q.CLISessionID}
@@ -141,7 +144,7 @@ func (s *Store) Summary(ctx context.Context, actor identity.Credential, q Query)
 	}
 	modelsQuery := q
 	modelsQuery.Model = ""
-	rows, err = tx.Query(ctx, `SELECT DISTINCT c.provider,c.model,c.api_style,c.destination`+selected+` ORDER BY c.model,c.provider,c.api_style,c.destination`, args(g, modelsQuery)...)
+	rows, err = tx.Query(ctx, `SELECT DISTINCT c.provider,c.model,c.api_style,c.destination`+selected+` AND NOT c.is_search ORDER BY c.model,c.provider,c.api_style,c.destination`, args(g, modelsQuery)...)
 	if err != nil {
 		return result, err
 	}
@@ -261,7 +264,7 @@ func (s *Store) Calls(ctx context.Context, actor identity.Credential, q Query, t
 		return p, err
 	}
 	rows, err := tx.Query(ctx, `SELECT c.id::text,c.stage,c.attempt_no,c.dispatch_state,c.started_at,c.finished_at,c.provider,c.model,c.api_style,c.destination,c.input_tokens,c.output_tokens,c.reasoning_tokens,c.provider_total_tokens,c.usage_inconsistent,c.total_tokens`+selected+`
-	 AND c.task_id=$9 AND (c.started_at,c.id)<($10,$11::uuid) ORDER BY c.started_at DESC,c.id DESC LIMIT $12`, append(args(g, q), task, after.At, after.ID, q.Limit+1)...)
+	 AND NOT c.is_search AND c.task_id=$9 AND (c.started_at,c.id)<($10,$11::uuid) ORDER BY c.started_at DESC,c.id DESC LIMIT $12`, append(args(g, q), task, after.At, after.ID, q.Limit+1)...)
 	if err != nil {
 		return p, err
 	}

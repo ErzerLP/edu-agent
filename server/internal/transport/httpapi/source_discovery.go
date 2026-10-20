@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"errors"
+	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
+	"github.com/google/uuid"
 	"net/http"
 	"slices"
 
@@ -56,7 +59,8 @@ func (a *API) mountSourceDiscovery(r chi.Router) {
 		if factory == nil {
 			factory = a.settings.SearchClient
 		}
-		result, err := research.Discover(r.Context(), input, factory, 0)
+		ctx := modelusage.WithTask(r.Context(), modelusage.TaskContext{Kind: "source_discovery", OriginID: uuid.NewString(), Stage: "search_web", SpaceID: learningspace.Scope(r.Context())})
+		result, err := research.Discover(ctx, input, factory, 0)
 		if err != nil {
 			status, code := 502, "source_discovery_unavailable"
 			var failure *research.DiscoveryError

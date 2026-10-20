@@ -74,7 +74,7 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 	for _, message := range request.Messages {
 		chat.Messages = append(chat.Messages, llm.Message{Role: llm.Role(message.Role), Content: message.Content})
 	}
-	if stage != "topic_index" {
+	if stage != "topic_index" && stage != "web_route" && stage != "web_answer" {
 		chat.Messages[0].Content += " 直接复制 citation_support 中相关 candidate 的 citation 对象，不计算范围或 hash。只需简短完成当前任务。资料不足如实说明，候选并不证明结论。"
 	}
 	if stage == "checking_synthesis" && h.body.StartLearning != nil {

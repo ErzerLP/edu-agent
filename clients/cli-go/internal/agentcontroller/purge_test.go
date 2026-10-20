@@ -194,14 +194,14 @@ func TestArchivePurgeEncryptedRecoveryAndNoSave(t *testing.T) {
 				return
 			}
 			fresh := &purgeControllerModel{}
-			deps := controllerDependencies(f.openStore(t), fresh, f.server, f.workspace, Provider{Name: "changed", Endpoint: "https://different.example/v1", Model: "test"})
+			deps := controllerDependencies(f.openStore(t), fresh, f.server, f.workspace, GatewayBinding{Target: "changed", ServerURL: "https://different.example/v1", ModelName: "test"})
 			deps.LoopOptions.ContextWindow = 32768
 			restored, err := Resume(t.Context(), deps, ResumeOptions{SessionID: owner, CurrentWorkspace: f.workspace})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer restored.Close()
-			if !restored.Status().ProviderConfirmationRequired || fresh.calls != 0 || !bytes.Equal(full, readRecursiveCopyLog(t, restored, model.batchID)) {
+			if !restored.Status().GatewayConfirmationRequired || fresh.calls != 0 || !bytes.Equal(full, readRecursiveCopyLog(t, restored, model.batchID)) {
 				t.Fatal("restore/provider/bytes changed")
 			}
 			if err := restored.fileBatches.Pending(t.Context(), restored.artifactOwner, model.batchID, 0); err == nil {

@@ -48,7 +48,7 @@ func TestLargeOutputEncryptedSessionSaveResumeAndContinue(t *testing.T) {
 	text := " \n<" + strings.Repeat("x", (1<<20)-6) + "\n  "
 	model := &largeOutputControllerModel{text: text, title: make(chan int, 2)}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 3, MemoryGeneration: 4}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	dependencies := controllerDependencies(controllerStore(t, root, secrets), model, server, workspaceRoot, provider)
 	dependencies.LoopOptions.ContextWindow = 272000
 	dependencies.LoopOptions.MaxTokens = 128000
@@ -156,7 +156,7 @@ func TestLargeOutputSessionQuotaFailureIsExplicit(t *testing.T) {
 	root, workspaceRoot := t.TempDir(), t.TempDir()
 	model := &largeOutputControllerModel{text: strings.Repeat("long line\n", 9000)}
 	store := controllerStoreWithLimits(t, root, &controllerSecretBackend{}, agentsession.Limits{TranscriptBytes: 4096})
-	dependencies := controllerDependencies(store, model, &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot, Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"})
+	dependencies := controllerDependencies(store, model, &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot, GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"})
 	dependencies.LoopOptions.ContextWindow = 272000
 	controller, err := Start(t.Context(), dependencies, false)
 	if err != nil {

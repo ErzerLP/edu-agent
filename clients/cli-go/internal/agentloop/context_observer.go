@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 )
 
 const (
@@ -65,7 +66,7 @@ func runObserver(ctx context.Context, model Model, estimator TokenEstimator, con
 		Tools:     []modelclient.Tool{observerRecordTool()},
 		MaxTokens: min(2048, max(1, contextWindow/4)),
 	}
-	response, err := model.Complete(ctx, request)
+	response, err := model.Complete(modelgateway.WithStage(ctx, "context_observer"), request)
 	if err != nil {
 		return observerResult{}, fmt.Errorf("context observer model request: %w", err)
 	}

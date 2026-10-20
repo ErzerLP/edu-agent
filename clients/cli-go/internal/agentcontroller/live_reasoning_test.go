@@ -30,7 +30,7 @@ func TestLiveReasoningEncryptedRecoveryAndNoSaveIsolation(t *testing.T) {
 		root, workspaceRoot := t.TempDir(), t.TempDir()
 		secrets := &controllerSecretBackend{}
 		server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-		provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+		provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 		model := &liveReasoningControllerModel{}
 		c, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), model, server, workspaceRoot, provider), noSave)
 		if err != nil {

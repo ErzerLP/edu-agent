@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
@@ -48,7 +47,7 @@ func assertLargeContextBudget(t *testing.T, plan ContextPlan, window int) {
 	}
 }
 
-type largeContextCompleteOnly struct{ client *modelclient.Client }
+type largeContextCompleteOnly struct{ client Model }
 
 func (m largeContextCompleteOnly) Complete(ctx context.Context, r modelclient.Request) (modelclient.Response, error) {
 	return m.client.Complete(ctx, r)
@@ -59,6 +58,9 @@ func TestLargeContextDefaultRequestsAndLongResponses(t *testing.T) {
 		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
 			text := strings.Repeat("answer-line-data\n", 8193)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if gatewayFixtureConfig(t, w, r) {
+					return
+				}
 				var wire struct {
 					MaxTokens int  `json:"max_tokens"`
 					Stream    bool `json:"stream"`
@@ -82,10 +84,7 @@ func TestLargeContextDefaultRequestsAndLongResponses(t *testing.T) {
 				_, _ = io.WriteString(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 			}))
 			defer server.Close()
-			client, err := modelclient.New(server.URL, "fake", "", 10*time.Second, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			client := newGatewayFixtureModel(t, server)
 			var model Model = client
 			if !streaming {
 				model = largeContextCompleteOnly{client}

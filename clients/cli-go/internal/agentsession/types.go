@@ -102,21 +102,24 @@ type Options struct {
 }
 
 type CreateInput struct {
-	LearningBinding           agentcontext.Binding
-	Title                     string
-	WorkspaceID               string
-	WorkspaceRoot             string
-	WorkspaceLabel            string
-	WorkspacePathHash         string
-	WorkspaceRootIdentityHash string
-	ProviderName              string
-	ProviderEndpoint          string
-	ProviderModel             string
-	PrivacyLearnerGeneration  int64
-	PrivacyMemoryGeneration   int64
-	PrivacyVerified           bool
-	Checkpoint                json.RawMessage
-	Transcript                json.RawMessage
+	LearningBinding            agentcontext.Binding
+	Title                      string
+	WorkspaceID                string
+	WorkspaceRoot              string
+	WorkspaceLabel             string
+	WorkspacePathHash          string
+	WorkspaceRootIdentityHash  string
+	GatewayTarget              string
+	GatewayServerURL           string
+	GatewayModelName           string
+	GatewayDeviceID            string `json:"gateway_device_id,omitempty"`
+	GatewayDestinationRevision string `json:"gateway_destination_revision,omitempty"`
+	GatewaySessionID           string `json:"gateway_session_id,omitempty"`
+	PrivacyLearnerGeneration   int64
+	PrivacyMemoryGeneration    int64
+	PrivacyVerified            bool
+	Checkpoint                 json.RawMessage
+	Transcript                 json.RawMessage
 }
 
 const (
@@ -213,39 +216,42 @@ type SessionRecord struct {
 	PrivacyGeneration uint64               `json:"privacy_generation"`
 	RecordRevision    uint64               `json:"record_revision"`
 	// CommitID distinguishes an exact publication from a stale revision.
-	CommitID                  string              `json:"commit_id"`
-	CreatedAt                 time.Time           `json:"created_at"`
-	UpdatedAt                 time.Time           `json:"updated_at"`
-	LastOpenedAt              time.Time           `json:"last_opened_at"`
-	CheckpointRevision        uint64              `json:"checkpoint_revision"`
-	ServerProfileFingerprint  string              `json:"server_profile_fingerprint"`
-	Lifecycle                 string              `json:"lifecycle"`
-	Title                     string              `json:"title"`
-	TitleSource               string              `json:"title_source,omitempty"`
-	FirstUserSummary          string              `json:"first_user_summary,omitempty"`
-	RecentUserSummary         string              `json:"recent_user_summary,omitempty"`
-	AutoTitleTurns            uint64              `json:"auto_title_turns,omitempty"`
-	TitleRevision             uint64              `json:"title_revision,omitempty"`
-	LastTitleAt               time.Time           `json:"last_title_at,omitempty"`
-	WorkspaceID               string              `json:"workspace_id"`
-	WorkspaceRoot             string              `json:"workspace_root,omitempty"`
-	WorkspaceLabel            string              `json:"workspace_label,omitempty"`
-	WorkspacePathHash         string              `json:"workspace_path_hash,omitempty"`
-	WorkspaceRootIdentityHash string              `json:"workspace_root_identity_hash,omitempty"`
-	ProviderName              string              `json:"provider_name,omitempty"`
-	ProviderEndpoint          string              `json:"provider_endpoint"`
-	ProviderModel             string              `json:"provider_model,omitempty"`
-	PrivacyLearnerGeneration  int64               `json:"privacy_learner_generation,omitempty"`
-	PrivacyMemoryGeneration   int64               `json:"privacy_memory_generation,omitempty"`
-	PrivacyVerified           bool                `json:"privacy_verified"`
-	CommittedUserTurns        uint64              `json:"committed_user_turns"`
-	TranscriptCount           uint64              `json:"transcript_count"`
-	PreferenceReceipts        []PreferenceReceipt `json:"preference_receipts,omitempty"`
-	FileReceipts              []FileReceipt       `json:"file_receipts,omitempty"`
-	Checkpoint                json.RawMessage     `json:"checkpoint"`
-	QuarantinedCheckpoint     json.RawMessage     `json:"quarantined_checkpoint,omitempty"`
-	Transcript                json.RawMessage     `json:"transcript"`
-	LastConsumedDirtyID       string              `json:"last_consumed_dirty_id,omitempty"`
+	CommitID                   string              `json:"commit_id"`
+	CreatedAt                  time.Time           `json:"created_at"`
+	UpdatedAt                  time.Time           `json:"updated_at"`
+	LastOpenedAt               time.Time           `json:"last_opened_at"`
+	CheckpointRevision         uint64              `json:"checkpoint_revision"`
+	ServerProfileFingerprint   string              `json:"server_profile_fingerprint"`
+	Lifecycle                  string              `json:"lifecycle"`
+	Title                      string              `json:"title"`
+	TitleSource                string              `json:"title_source,omitempty"`
+	FirstUserSummary           string              `json:"first_user_summary,omitempty"`
+	RecentUserSummary          string              `json:"recent_user_summary,omitempty"`
+	AutoTitleTurns             uint64              `json:"auto_title_turns,omitempty"`
+	TitleRevision              uint64              `json:"title_revision,omitempty"`
+	LastTitleAt                time.Time           `json:"last_title_at,omitempty"`
+	WorkspaceID                string              `json:"workspace_id"`
+	WorkspaceRoot              string              `json:"workspace_root,omitempty"`
+	WorkspaceLabel             string              `json:"workspace_label,omitempty"`
+	WorkspacePathHash          string              `json:"workspace_path_hash,omitempty"`
+	WorkspaceRootIdentityHash  string              `json:"workspace_root_identity_hash,omitempty"`
+	GatewayTarget              string              `json:"gateway_target,omitempty"`
+	GatewayServerURL           string              `json:"gateway_server_url"`
+	GatewayModelName           string              `json:"gateway_model_name,omitempty"`
+	GatewayDeviceID            string              `json:"gateway_device_id,omitempty"`
+	GatewayDestinationRevision string              `json:"gateway_destination_revision,omitempty"`
+	GatewaySessionID           string              `json:"gateway_session_id,omitempty"`
+	PrivacyLearnerGeneration   int64               `json:"privacy_learner_generation,omitempty"`
+	PrivacyMemoryGeneration    int64               `json:"privacy_memory_generation,omitempty"`
+	PrivacyVerified            bool                `json:"privacy_verified"`
+	CommittedUserTurns         uint64              `json:"committed_user_turns"`
+	TranscriptCount            uint64              `json:"transcript_count"`
+	PreferenceReceipts         []PreferenceReceipt `json:"preference_receipts,omitempty"`
+	FileReceipts               []FileReceipt       `json:"file_receipts,omitempty"`
+	Checkpoint                 json.RawMessage     `json:"checkpoint"`
+	QuarantinedCheckpoint      json.RawMessage     `json:"quarantined_checkpoint,omitempty"`
+	Transcript                 json.RawMessage     `json:"transcript"`
+	LastConsumedDirtyID        string              `json:"last_consumed_dirty_id,omitempty"`
 }
 
 // fileReceiptV1 is the frozen file-effect contract shared by record v1/v2.
@@ -277,44 +283,47 @@ type fileWriteAheadV1 struct {
 // fields when SessionRecord evolves; migrations decode this DTO before
 // producing the current payload.
 type recordPayloadV1 struct {
-	SchemaVersion             int                 `json:"schema_version"`
-	SessionID                 string              `json:"session_id"`
-	StorageID                 string              `json:"storage_id"`
-	PrivacyGeneration         uint64              `json:"privacy_generation"`
-	RecordRevision            uint64              `json:"record_revision"`
-	CommitID                  string              `json:"commit_id"`
-	CreatedAt                 time.Time           `json:"created_at"`
-	UpdatedAt                 time.Time           `json:"updated_at"`
-	LastOpenedAt              time.Time           `json:"last_opened_at"`
-	CheckpointRevision        uint64              `json:"checkpoint_revision"`
-	ServerProfileFingerprint  string              `json:"server_profile_fingerprint"`
-	Lifecycle                 string              `json:"lifecycle"`
-	Title                     string              `json:"title"`
-	TitleSource               string              `json:"title_source,omitempty"`
-	FirstUserSummary          string              `json:"first_user_summary,omitempty"`
-	RecentUserSummary         string              `json:"recent_user_summary,omitempty"`
-	AutoTitleTurns            uint64              `json:"auto_title_turns,omitempty"`
-	TitleRevision             uint64              `json:"title_revision,omitempty"`
-	LastTitleAt               time.Time           `json:"last_title_at,omitempty"`
-	WorkspaceID               string              `json:"workspace_id"`
-	WorkspaceRoot             string              `json:"workspace_root,omitempty"`
-	WorkspaceLabel            string              `json:"workspace_label,omitempty"`
-	WorkspacePathHash         string              `json:"workspace_path_hash,omitempty"`
-	WorkspaceRootIdentityHash string              `json:"workspace_root_identity_hash,omitempty"`
-	ProviderName              string              `json:"provider_name,omitempty"`
-	ProviderEndpoint          string              `json:"provider_endpoint"`
-	ProviderModel             string              `json:"provider_model,omitempty"`
-	PrivacyLearnerGeneration  int64               `json:"privacy_learner_generation,omitempty"`
-	PrivacyMemoryGeneration   int64               `json:"privacy_memory_generation,omitempty"`
-	PrivacyVerified           bool                `json:"privacy_verified"`
-	CommittedUserTurns        uint64              `json:"committed_user_turns"`
-	TranscriptCount           uint64              `json:"transcript_count"`
-	PreferenceReceipts        []PreferenceReceipt `json:"preference_receipts,omitempty"`
-	FileReceipts              []fileReceiptV1     `json:"file_receipts,omitempty"`
-	Checkpoint                json.RawMessage     `json:"checkpoint"`
-	QuarantinedCheckpoint     json.RawMessage     `json:"quarantined_checkpoint,omitempty"`
-	Transcript                json.RawMessage     `json:"transcript"`
-	LastConsumedDirtyID       string              `json:"last_consumed_dirty_id,omitempty"`
+	SchemaVersion              int                 `json:"schema_version"`
+	SessionID                  string              `json:"session_id"`
+	StorageID                  string              `json:"storage_id"`
+	PrivacyGeneration          uint64              `json:"privacy_generation"`
+	RecordRevision             uint64              `json:"record_revision"`
+	CommitID                   string              `json:"commit_id"`
+	CreatedAt                  time.Time           `json:"created_at"`
+	UpdatedAt                  time.Time           `json:"updated_at"`
+	LastOpenedAt               time.Time           `json:"last_opened_at"`
+	CheckpointRevision         uint64              `json:"checkpoint_revision"`
+	ServerProfileFingerprint   string              `json:"server_profile_fingerprint"`
+	Lifecycle                  string              `json:"lifecycle"`
+	Title                      string              `json:"title"`
+	TitleSource                string              `json:"title_source,omitempty"`
+	FirstUserSummary           string              `json:"first_user_summary,omitempty"`
+	RecentUserSummary          string              `json:"recent_user_summary,omitempty"`
+	AutoTitleTurns             uint64              `json:"auto_title_turns,omitempty"`
+	TitleRevision              uint64              `json:"title_revision,omitempty"`
+	LastTitleAt                time.Time           `json:"last_title_at,omitempty"`
+	WorkspaceID                string              `json:"workspace_id"`
+	WorkspaceRoot              string              `json:"workspace_root,omitempty"`
+	WorkspaceLabel             string              `json:"workspace_label,omitempty"`
+	WorkspacePathHash          string              `json:"workspace_path_hash,omitempty"`
+	WorkspaceRootIdentityHash  string              `json:"workspace_root_identity_hash,omitempty"`
+	GatewayTarget              string              `json:"gateway_target,omitempty"`
+	GatewayServerURL           string              `json:"gateway_server_url"`
+	GatewayModelName           string              `json:"gateway_model_name,omitempty"`
+	GatewayDeviceID            string              `json:"gateway_device_id,omitempty"`
+	GatewayDestinationRevision string              `json:"gateway_destination_revision,omitempty"`
+	GatewaySessionID           string              `json:"gateway_session_id,omitempty"`
+	PrivacyLearnerGeneration   int64               `json:"privacy_learner_generation,omitempty"`
+	PrivacyMemoryGeneration    int64               `json:"privacy_memory_generation,omitempty"`
+	PrivacyVerified            bool                `json:"privacy_verified"`
+	CommittedUserTurns         uint64              `json:"committed_user_turns"`
+	TranscriptCount            uint64              `json:"transcript_count"`
+	PreferenceReceipts         []PreferenceReceipt `json:"preference_receipts,omitempty"`
+	FileReceipts               []fileReceiptV1     `json:"file_receipts,omitempty"`
+	Checkpoint                 json.RawMessage     `json:"checkpoint"`
+	QuarantinedCheckpoint      json.RawMessage     `json:"quarantined_checkpoint,omitempty"`
+	Transcript                 json.RawMessage     `json:"transcript"`
+	LastConsumedDirtyID        string              `json:"last_consumed_dirty_id,omitempty"`
 }
 
 // v2 changed the payload version but not its fields. Both legacy DTOs are
@@ -391,33 +400,36 @@ type DeleteTarget struct {
 }
 
 type Summary struct {
-	LearningBinding          agentcontext.Binding
-	SessionID                string
-	StorageID                string
-	RecordRevision           uint64
-	CheckpointRevision       uint64
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	LastOpenedAt             time.Time
-	Title                    string
-	TitleSource              string
-	FirstUserSummary         string
-	RecentUserSummary        string
-	TitleRevision            uint64
-	CommittedUserTurns       uint64
-	TranscriptCount          uint64
-	ServerProfileFingerprint string
-	WorkspaceID              string
-	WorkspaceLabel           string
-	ProviderName             string
-	ProviderEndpoint         string
-	ProviderModel            string
-	Lifecycle                string
-	Corrupt                  bool
-	Locked                   bool
-	Unavailable              bool
-	LocatorOnly              bool
-	VersionUnsupported       bool
+	LearningBinding            agentcontext.Binding
+	SessionID                  string
+	StorageID                  string
+	RecordRevision             uint64
+	CheckpointRevision         uint64
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
+	LastOpenedAt               time.Time
+	Title                      string
+	TitleSource                string
+	FirstUserSummary           string
+	RecentUserSummary          string
+	TitleRevision              uint64
+	CommittedUserTurns         uint64
+	TranscriptCount            uint64
+	ServerProfileFingerprint   string
+	WorkspaceID                string
+	WorkspaceLabel             string
+	GatewayTarget              string
+	GatewayServerURL           string
+	GatewayModelName           string
+	GatewayDeviceID            string `json:"gateway_device_id,omitempty"`
+	GatewayDestinationRevision string `json:"gateway_destination_revision,omitempty"`
+	GatewaySessionID           string `json:"gateway_session_id,omitempty"`
+	Lifecycle                  string
+	Corrupt                    bool
+	Locked                     bool
+	Unavailable                bool
+	LocatorOnly                bool
+	VersionUnsupported         bool
 }
 
 type indexFile struct {
@@ -433,31 +445,34 @@ type indexLocator struct {
 }
 
 type indexProjection struct {
-	LearningBinding          agentcontext.Binding `json:"learning_binding,omitempty"`
-	SchemaVersion            int                  `json:"schema_version"`
-	SessionID                string               `json:"session_id"`
-	StorageID                string               `json:"storage_id"`
-	PrivacyGeneration        uint64               `json:"privacy_generation"`
-	RecordRevision           uint64               `json:"record_revision"`
-	RecordCommitID           string               `json:"record_commit_id"`
-	CheckpointRevision       uint64               `json:"checkpoint_revision"`
-	CreatedAt                time.Time            `json:"created_at"`
-	UpdatedAt                time.Time            `json:"updated_at"`
-	LastOpenedAt             time.Time            `json:"last_opened_at"`
-	Title                    string               `json:"title"`
-	TitleSource              string               `json:"title_source"`
-	FirstUserSummary         string               `json:"first_user_summary,omitempty"`
-	RecentUserSummary        string               `json:"recent_user_summary,omitempty"`
-	TitleRevision            uint64               `json:"title_revision"`
-	CommittedUserTurns       uint64               `json:"committed_user_turns"`
-	TranscriptCount          uint64               `json:"transcript_count"`
-	ServerProfileFingerprint string               `json:"server_profile_fingerprint"`
-	WorkspaceID              string               `json:"workspace_id"`
-	WorkspaceLabel           string               `json:"workspace_label,omitempty"`
-	ProviderName             string               `json:"provider_name,omitempty"`
-	ProviderEndpoint         string               `json:"provider_endpoint"`
-	ProviderModel            string               `json:"provider_model,omitempty"`
-	Lifecycle                string               `json:"lifecycle"`
+	LearningBinding            agentcontext.Binding `json:"learning_binding,omitempty"`
+	SchemaVersion              int                  `json:"schema_version"`
+	SessionID                  string               `json:"session_id"`
+	StorageID                  string               `json:"storage_id"`
+	PrivacyGeneration          uint64               `json:"privacy_generation"`
+	RecordRevision             uint64               `json:"record_revision"`
+	RecordCommitID             string               `json:"record_commit_id"`
+	CheckpointRevision         uint64               `json:"checkpoint_revision"`
+	CreatedAt                  time.Time            `json:"created_at"`
+	UpdatedAt                  time.Time            `json:"updated_at"`
+	LastOpenedAt               time.Time            `json:"last_opened_at"`
+	Title                      string               `json:"title"`
+	TitleSource                string               `json:"title_source"`
+	FirstUserSummary           string               `json:"first_user_summary,omitempty"`
+	RecentUserSummary          string               `json:"recent_user_summary,omitempty"`
+	TitleRevision              uint64               `json:"title_revision"`
+	CommittedUserTurns         uint64               `json:"committed_user_turns"`
+	TranscriptCount            uint64               `json:"transcript_count"`
+	ServerProfileFingerprint   string               `json:"server_profile_fingerprint"`
+	WorkspaceID                string               `json:"workspace_id"`
+	WorkspaceLabel             string               `json:"workspace_label,omitempty"`
+	GatewayTarget              string               `json:"gateway_target,omitempty"`
+	GatewayServerURL           string               `json:"gateway_server_url"`
+	GatewayModelName           string               `json:"gateway_model_name,omitempty"`
+	GatewayDeviceID            string               `json:"gateway_device_id,omitempty"`
+	GatewayDestinationRevision string               `json:"gateway_destination_revision,omitempty"`
+	GatewaySessionID           string               `json:"gateway_session_id,omitempty"`
+	Lifecycle                  string               `json:"lifecycle"`
 
 	Corrupt            bool `json:"-"`
 	LocatorOnly        bool `json:"-"`

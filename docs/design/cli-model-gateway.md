@@ -475,3 +475,30 @@ Candidate 核对全部 27 条合同，集中验证真实 CLI 的两个上游协�
 检查结果（2026-10-20）：先 `umask 022`，受影响 Go 包的 `go test -p=1` 和 `go vet -p=1` 均通过；mentorrun 使用 `-timeout 40m`，整包复验耗时 1085.858 秒。llm 与 modelgateway 另通过包级 `-race` 检查。网页 `npm run generate` 和 `npm run check` 通过；未运行全项目测试或三浏览器矩阵。
 
 当前环境没有 nginx 可执行文件，因此这里只完成部署配置编辑与人工核对，未声称通过实际 nginx smoke。真实 CLI 二进制联调、实际部署代理、独立进程故障注入和真实供应商验证留给并行 CLI 任务及 Candidate；假上游不代表演示站或供应商验证。
+
+## 14. G-A CLI 实现覆盖
+
+本节记录 `feat/gateway-cli` 的 CLI 实现边界；服务端、agentcore、OpenAPI 与部署由独立任务交付，不能以 CLI 假网关测试代替服务端或部署验收。
+
+| 落点 | CLI 行为与验证 |
+| --- | --- |
+| `internal/modelgateway` | GET 安全配置、Chat Completions 适配器、Authorization 设备鉴权、禁止跳转、§3.2 请求头与随机 request ID。模型体的 model 为 target，共享客户端 Base URL 为 `<server>/v1/model-gateway`。假网关验证文字／工具两次调用、错误不重发、HTML 404／502、流内错误、重定向、取消和串行。 |
+| `internal/config`、`command/model_gateway.go` | 保存 server/device 绑定的 selected_target、destination_revision、notice_version；只保留客户端偏好，无本地连接／容量／模型秘密。list/select/show/test 使用在线配置，选择失效保持原选择并停止；配置版本变化刷新，目的地变化须确认。首次告知使用 brief 原文，确认前连配置 GET 也不发出；非交互入口提示先在终端确认。解绑清除选择与告知。 |
+| `internal/dashboard` | 从相同安全配置投影显示 teaching／mentor，不提供供应商、地址、任意模型名或密钥表单；保留压缩、推理及历史偏好。为遵守本任务“确认前无任何请求”，告知确认在在线列表读取之前。 |
+| `internal/agentcontroller`、`agentsession` | 将 Provider 元数据替换为网关 server/device/target/destination/model 显示信息，另持久化随机 gateway_session_id。同一绑定恢复复用该 ID；拒绝设备变更不改写原归属，确认改变绑定后生成新 ID。恢复不发模型请求、不重做工具。 |
+| `internal/agentloop`、自动标题 | 每次用户输入前刷新配置并采用在线窗口／输出上限；标题、observer、reflector 捕获触发轮次及连接，使用明确 stage，内部输出不超过所选上限。每个 server/device 在本进程共用可取消调度器；新轮次取消旧内部任务。工具审批／问询的继续沿用该轮快照和 turn ID。 |
+| 超时、错误与用量 | 流式空闲等待为下发值 +5 秒，整次期限采用 request_timeout_seconds；非流式遵循整体期限，不套用普通 API 30 秒总超时。Ctrl-C 取消 HTTP context 后，在 5 秒收尾期限内补发一次 cancel；失败请求保留 request ID。稳定错误映射为中文，不展示服务端原始错误正文。部分 usage 不交给共享核心当完整计量校准。 |
+| 直连移除与独立命令 | 删除 modelsecret 包、preset/key 命令、本地连接字段及密钥注入。HTTP 模型测试夹具改为假网关；纯工具测试保留模型 fake。设备凭据、本机加密、离线学习和本机会话删除保留。 |
+
+与服务端对齐的接口假设：
+
+- 协议版本为 1，privacy_generation 为 JSON 整数；target 仅 teaching／mentor。配置刷新携带已知协议和隐私代次；代次冲突停止本次操作，下一次用户主动操作重新读取代次。配置响应保留 limits，包括不可用时的安全投影；版本标识为不透明字符串，不含凭据。
+- 成功 SSE 使用 §3.4 的标准 Chat 帧和 `[DONE]`；流内错误使用 `event: error` 与同形 error envelope。上游兼容回退由服务端完成，CLI 不根据上游错误重新提交。
+- cancel 使用 `POST /v1/model-gateway/requests/{request_id}/cancel`、空 JSON `{}`，带原请求的版本和隐私代次；不自动重试取消，也不自动重发正文。
+- 现有配对兑换合同仍只有 `code/display_name`；`cli` profile 由网页／服务端生成配对码时确定。CLI 配对入口明确提示使用 cli 配对码，网关以 invoke_allowed 判定模型权限；CLI 不向兑换请求添加未约定字段。
+
+本次任务明确将 MaxToolRounds、共享 MaxToolSteps 和累计预算清理留给 G-B，因此保留已有 MaxToolRounds 偏好及执行行为；这覆盖了本任务的范围约束，区别于 §11.1／§12 原先拟定的首批停用安排。现有问询／工具审批恢复沿用本轮归属；新的共享工具上限“继续”入口在 G-B 实现时须调用相同的配置刷新及轮次绑定逻辑。
+
+验证使用 `httptest` 假网关，不使用供应商密钥或付费调用。受影响包的 race／vet 以及 CLI 模块全量测试结果由本次实现报告列出；真实服务端、nginx、PostgreSQL、多实例和跨平台验收仍由对应任务／Candidate 承担。
+
+本工作树检查结果：`internal/config`、`modelgateway`、`command`、`dashboard`、`agentloop`、`agentcontroller`、`agentsession`、`agentui` 的 `go test -race`、`go vet` 均通过；最终 `go test ./...` 通过。Go 构建缓存使用 `/tmp/ga-cli-go-build`，未改动系统配置。`git diff --check` 通过；`server/`、`packages/agentcore` 和暂存区均无改动。

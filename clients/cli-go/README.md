@@ -98,7 +98,15 @@ make cli-build
 
 在支持全屏控制的交互终端中直接运行 `edu-agent`，即可打开中文主控制台。方向键或 `j/k` 移动，Enter 选择，界面显示的字母可直接打开 AI 学习助手、结构化学习、知识导入、目标、进度、复习、配对和设置等常用流程。
 
-设置页可在配对前管理客户端请求超时、输出颜色和本地 AI 模型。模型配置支持 OpenAI、DeepSeek、OpenRouter、Ollama 及自定义 OpenAI 兼容端点；可调整 Base URL、模型名称、上下文窗口、最大输出 tokens、无响应超时和可选工具轮数保护值。新模型配置默认总窗口 `272000`、最大输出 `128000` tokens；这些默认值不是上限。窗口至少 `4096`，最大输出接受任意可表示的正整数，模型无响应超时接受任意可表示的正时长（例如 `10m`、`30m`），不再固定封顶；保留类型和溢出校验，已有显式配置不自动覆盖。每次请求保留 5% 安全余量，必要时收缩当次输出额度；默认不代表所有 provider/model 支持该容量。工具轮数默认不限制，配置 `0` 表示持续运行到模型给出最终回答、需要用户交互、用户取消、超时或上下文管理无法继续；正整数只作为用户自选保护值，客户端不设置固定最大值。流式请求的无响应超时从请求发出后开始计算，并在收到任意 SSE 响应字节（包括心跳、隐藏推理、工具增量和跨分片内容）时重置；持续活跃的 SSE 不受固定总时长限制。非流式请求仍以该值限制整次等待。API Key 使用隐藏输入并按“提供商 + Base URL”绑定到独立的系统凭据槽，不会写入 `config.json`、命令输出或日志，也不会在切换端点时发送给另一个服务。Ollama 和无鉴权的自定义 loopback 端点可不配置 API Key；云端预设和远程自定义端点必须读取当前端点绑定的 Key，系统凭据后端不可用时会失败关闭。服务器地址和设备凭据仍通过配对流程变更。
+CLI 只通过已配对服务端的模型网关调用模型。请在网页生成 `cli` 类型的配对码，完成配对后运行 `edu-agent model list`。首次读取网关配置前会显示以下告知，确认前不发送网关请求：
+
+> 问题、相关对话和工具返回的本地内容会经过此服务端，再发送给你选择的模型服务。服务端不保存这些正文，只记录用量和设备归属。
+
+运行 `edu-agent model select teaching` 或 `edu-agent model select mentor`，只能选择网页已配置并启用的连接；设置页“AI 助手与模型”使用同一列表。只有一个候选且尚未选择时，可在告知确认后自动选定。选择和已确认的目的地版本按服务端与设备保存；失效选择不会被其他连接替代。目的地改变需重新选择并确认。`model show` 显示当前连接、模型名称和服务端限制；`model test` 明确发送一次连接测试并产生用量。未配对或服务不可用时停止模型调用。
+
+上下文窗口、输出上限和模型超时在线读取。流式连接按下发空闲超时加 5 秒等待，并受下发整体请求期限约束，不使用普通 API 的 30 秒总超时。前台、observer、reflector、自动标题和连接测试在本机串行发送；取消先关闭本地请求，再补发一次幂等取消，失败或中断不会自动重发或重做本机工具。HTML 代理错误会提示检查部署。
+
+`model set` 仅调整上下文整理、推理强度、会话历史等客户端偏好。MaxToolRounds 暂保留原行为，工具上限统一交由 G-B；本批不提供共享工具次数限制。
 
 已配对客户端更换服务器时有两条明确路径：旧服务器可用时先安全注销并撤销远端设备；旧服务器不可用时可选择“仅清除本地配对”，保留客户端和模型设置，同时明确警告远端设备可能仍有效。损坏或不一致的本地配对状态只显示修复、设置和退出入口；Enter 本身不会确认撤销、删除凭据或保存长期偏好。
 
@@ -144,17 +152,17 @@ Agent 会话绑定学习区、可选目标和教学会话：`edu-agent --space S
 
 旧历史统一映射固定默认区，不按标题猜测归属；旧历史可能包含过去的全局资料，此兼容映射不宣称旧内容已隔离。新绑定进入加密 SessionRecord v10、checkpoint v2 和服务端来源引用；不能把其他绑定的 checkpoint 安装到当前聊天。隐私代次变化会阻止旧正文继续送给回答、标题或压缩模型；恢复仍执行原正文隔离和授权重置。归档只读与失效写入由正式服务再次裁决。长期偏好继续使用现有全局合同，方向特定约束留在对应聊天，普通回答不是长期保存批准；不新增 Nocturne 分域存储。学习区不是 OS 沙箱，Shell 权限不变。Agent 导入入口使用 #6 预览／确认，本轮不接入可选 #7 后台任务恢复。
 
-“AI 学习助手”使用客户端本地配置的 OpenAI 兼容模型，不读取或修改服务端教学模型配置。模型自身不持久化学习状态；Agent Loop 通过受限工具从服务端读取知识目录、学习进度、路线、复习和已接纳的长期偏好。Agent Loop 不再对模型工具轮数、单响应工具调用数量、单 turn 总工具调用数或用户问询次数设置固定上限，而是像 Codex 一样持续执行“模型推理 → 工具结果 → 再推理”，直到模型给出最终回答、需要用户交互、用户取消、超时或上下文管理无法继续。用户输入、模型回答、工具参数、工具结果投影、模型响应体及每次发给模型的上下文仍有独立资源和协议边界；越界响应会失败关闭，不会放大为无界内存、服务端读取或模型流量。所有模型、工具、错误和确认文本在渲染前都会移除终端及双向文本控制字符。
+“AI 学习助手”通过服务端网关使用所选 teaching／mentor 连接，CLI 保留本机 Agent Loop 和工具授权。模型自身不持久化学习状态；Agent Loop 通过受限工具从服务端读取知识目录、学习进度、路线、复习和已接纳的长期偏好。Agent Loop 不再对模型工具轮数、单响应工具调用数量、单 turn 总工具调用数或用户问询次数设置固定上限，而是像 Codex 一样持续执行“模型推理 → 工具结果 → 再推理”，直到模型给出最终回答、需要用户交互、用户取消、超时或上下文管理无法继续。用户输入、模型回答、工具参数、工具结果投影、模型响应体及每次发给模型的上下文仍有独立资源和协议边界；越界响应会失败关闭，不会放大为无界内存、服务端读取或模型流量。所有模型、工具、错误和确认文本在渲染前都会移除终端及双向文本控制字符。
 
 在 Agent 对话中按 `Ctrl+O` 展开/收起执行详情和模型接口实际返回的推理文本或摘要，默认折叠，展开后随 SSE 更新。没有可读推理时明确提示未提供，并显示阶段、耗时和最近收到响应正文数据的时间（包括心跳）；客户端不会推测或补写思考链。推理与最终回答分开，仅在当前 TUI 内存中保留，不进入加密会话历史、checkpoint、Source、自动标题、日志、长期记忆或后续模型请求；切换 Session、重启和退出后不可恢复。显示缓存总正文预算为 1 MiB，优先回收旧请求正文，当前请求超限明确标注截断但不中断模型执行；这不是模型 token 或超时配置上限。取消或失败后仍可查看尚保留的部分，并保留请求真实终态。已经显示的内容可能被外部录屏或终端记录捕获。
 
-新 Agent Session 默认在稳定轮次后使用系统钥匙串保护的本地密钥自动加密保存；当前支持平台为 Linux 与 macOS，Windows Session 恢复不属于本版本的支持或验收范围。可通过 `edu-agent agent resume` 打开共享 picker，或用 `resume --last`、`resume <UUID|标题>` 恢复；运行中的 TUI 空闲时按 `F2` 可打开同一套 picker，并支持当前/全部工作区范围、搜索、恢复、重命名、二次确认删除和新建 Session。provider endpoint 变化时，确认面板中 `Enter` 允许向新 provider 发送历史上下文，`L` 只在本地打开并继续阻止模型请求和自动标题，`Esc` 取消切换；仅本地打开后仍可查看 transcript、重命名或删除。工作台“AI助手与模型”设置以及 `edu-agent model set --session-history auto|off`/`config set --session-history auto|off` 只控制后续新 Session；`off` 会跳过存储打开，但不影响恢复和删除已有历史。`--no-save` 仅让当前新 Session 不落盘且不修改配置；历史不会按时间自动删除，达到硬上限也不会自动淘汰，可用 `agent sessions delete <UUID> --confirmed` 删除普通或可定位的损坏 Session；极端损坏且无可信 UUID 时，只能在明确选择后使用 UI 显示的 `storage:<id>` locator。已认证的未来版本必须升级客户端处理，当前版本不会恢复、修改或删除。`agent sessions clear --confirmed` 可清理全部本地 Session。自动标题会额外向当前模型提供商发送有界、清理后的已提交用户文本和安全最终回答，不包含工具调用或结果、工具参数、workspace/server 来源、回执、错误原文或推理；恢复后的下一模型请求会把历史上下文发送到当前 provider，端点身份变化时必须先明确确认。恢复继续绑定保存的工作区；旧 root 不可用或不安全时只恢复本地对话并禁用全部文件工具，绝不回退到当前目录，历史文件正文也不代表磁盘当前内容。跨进程恢复和 TUI 切换都会把 YOLO、旧文件授权与未完成交互重置为安全默认。平台钥匙服务不可用时不会回退到明文，而是明确降级为不可恢复的未保存会话。`agent sessions clear` 只清除本地 Agent Session store，不清除服务端事件、Nocturne、终端 scrollback、Shell history、provider retention 或 OS backup。
+新 Agent Session 默认在稳定轮次后使用系统钥匙串保护的本地密钥自动加密保存；当前支持平台为 Linux 与 macOS，Windows Session 恢复不属于本版本的支持或验收范围。可通过 `edu-agent agent resume` 打开共享 picker，或用 `resume --last`、`resume <UUID|标题>` 恢复；运行中的 TUI 空闲时按 `F2` 可打开同一套 picker，并支持当前/全部工作区范围、搜索、恢复、重命名、二次确认删除和新建 Session。模型目的地变化时，确认面板中 `Enter` 允许向新模型服务 发送历史上下文，`L` 只在本地打开并继续阻止模型请求和自动标题，`Esc` 取消切换；仅本地打开后仍可查看 transcript、重命名或删除。工作台“AI助手与模型”设置以及 `edu-agent model set --session-history auto|off`/`config set --session-history auto|off` 只控制后续新 Session；`off` 会跳过存储打开，但不影响恢复和删除已有历史。`--no-save` 仅让当前新 Session 不落盘且不修改配置；历史不会按时间自动删除，达到硬上限也不会自动淘汰，可用 `agent sessions delete <UUID> --confirmed` 删除普通或可定位的损坏 Session；极端损坏且无可信 UUID 时，只能在明确选择后使用 UI 显示的 `storage:<id>` locator。已认证的未来版本必须升级客户端处理，当前版本不会恢复、修改或删除。`agent sessions clear --confirmed` 可清理全部本地 Session。自动标题会额外向所选服务端模型发送有界、清理后的已提交用户文本和安全最终回答，不包含工具调用或结果、工具参数、workspace/server 来源、回执、错误原文或推理；恢复后的下一模型请求会把历史上下文发送到所选服务端模型，模型目的地变化时必须先明确确认。恢复继续绑定保存的工作区；旧 root 不可用或不安全时只恢复本地对话并禁用全部文件工具，绝不回退到当前目录，历史文件正文也不代表磁盘当前内容。跨进程恢复和 TUI 切换都会把 YOLO、旧文件授权与未完成交互重置为安全默认。平台钥匙服务不可用时不会回退到明文，而是明确降级为不可恢复的未保存会话。`agent sessions clear` 只清除本地 Agent Session store，不清除服务端事件、Nocturne、终端 scrollback、Shell history、模型服务保留的副本 或 OS backup。
 
 Agent TUI 不再设置独立顶部状态栏或全宽分隔线，transcript 直接使用页面顶部空间；产品标识在宽终端合并到右侧概览标题，在窄终端进入消息输入区下方的状态区。输入区是按内容增长的有界多行 composer：`Enter` 发送，`Ctrl+J` 或 `Alt+Enter` 换行，字符计数显示 `8000` 上限。普通对话状态下，鼠标滚轮、`↑/↓` 与 `PgUp/PgDn` 均可滚动 transcript；向上离开底部后暂停自动跟随并提示有新消息，滚回底部后恢复跟随。选择面板激活时 `↑/↓` 仍用于移动选项焦点，`PgUp/PgDn` 和鼠标滚轮继续查看 transcript。宽终端右侧概览显示当前 Agent 状态、服务端权威学习目标、会话状态、路线进度、当前 Activity 与估算活跃时间；它在启动、完整 turn 结束或 `Ctrl+R` 时刷新，读取失败不阻断对话，窄终端会完全折叠侧栏。侧栏不显示任何 opaque ID、凭据、隐藏推理或原始工具参数，也不持久化学习状态副本。
 
 ### 大窗口与长回答
 
-主请求默认采用 272k 总窗口和 128k 最大输出；预留完整输出与 5% 安全余量时，输入总预算为 130400 tokens，包含系统规则、工具定义、记忆和消息。普通及流式助手正文上限为 1 MiB（字节不是 token），合法长文本可在有界 Session 配额内完整保存和恢复。长历史优先保留原文，必要时仅对较早助手正文作带来源、哈希和可见降级标记的请求投影，不改写保存原文或拆开工具调用组；`context_compaction=off` 不静默裁剪。标题与后台记忆整理继续使用独立小输出预算。具体资源边界及未验证范围见 [大窗口设计](../../docs/design/client-agent-large-context.md)。
+主请求使用服务端下发的上下文窗口和输出上限；预留输出与 5% 安全余量后，剩余输入容量包含系统规则、工具定义、记忆和消息。普通及流式助手正文上限为 1 MiB（字节不是 token），合法长文本可在有界 Session 配额内完整保存和恢复。长历史优先保留原文，必要时仅对较早助手正文作带来源、哈希和可见降级标记的请求投影，不改写保存原文或拆开工具调用组；`context_compaction=off` 不静默裁剪。标题与后台记忆整理继续使用独立小输出预算。具体资源边界及未验证范围见 [大窗口设计](../../docs/design/client-agent-large-context.md)。
 
 ### 本地 Shell 与受管任务
 
@@ -176,7 +184,7 @@ pipe输出 stdout/stderr 各自有序，PTY为单一合并流；内存预算保�
 
 ### 本地工作区与文件工具
 
-Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制及目录递归复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档、`restore_archive` 显式恢复和 `purge_archive` 永久归档清理工具；不提供归档外通用永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给当前配置的本地或远端模型 provider。
+Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` 默认使用 Agent 启动目录，也可通过 `edu-agent agent --workspace PATH` 显式指定。模型获得相对路径上的 `stat` 元数据检查、`find` 路径发现、`list`、`read`、`search`、`write`、`edit` 文本工具、`apply_patch` 多文件文本补丁、`mkdir` 目录创建、`copy` 普通文件流式复制及目录递归复制、`move` 文件或目录安全移动，以及 `archive` 文件/目录归档、`restore_archive` 显式恢复和 `purge_archive` 永久归档清理工具；不提供归档外通用永久 delete。Shell/task 是上述独立本地执行通道，不继承以下结构化文件工具限制。内容访问和修改拒绝源链接、junction、reparse point、绝对路径及工作区逃逸；`stat`可以仅报告末端链接类型，但不跟随它。除专用归档目录禁止普通写入外，隐藏文件、`.git`、`.comet`、`.env` 遵循普通文件规则，读取到的内容可能发送给经服务端选择的模型服务。
 
 `stat` 默认只读元数据，入口版本不代表文件内容或整个目录快照；可选 `hash=true` 只在1MiB内计算普通文件原始SHA256，不返回正文。`find` 支持basename或工作区相对路径glob，独立`**`跨零或多层；默认保留隐藏文件、跳过归档树、不读正文，并明确标记扫描/结果截断。详见 [stat](../../docs/design/client-file-stat.md) 和 [find](../../docs/design/client-file-find.md)。
 
@@ -204,7 +212,7 @@ Agent 会在 Session 启动时固定一个本地工作区：`edu-agent agent` �
 
 **F6** 打开完整diff/receipt浏览器，待授权时优先选当前diff；`↑/↓`选产物，`PgUp/PgDn`按4096原始字节翻页，`Home`回首部，`/`检索、`n`续扫、`r`刷新，`Esc/F6`返回原对话/授权状态。人工查看不调用模型，不新增末页审批；原mkdir/copy/move门槛保持。模型用`artifact list/read/search`独立访问，读取/检索游标对应实际返回的原始字节；差异数据本身不证明已执行。
 
-持久Session使用与任务输出相同的Session-owned认证加密blob，diff/receipt有独立版本化目录；raw diff/patch参数不进入稳定聊天或自动标题。重启只读恢复、provider发送门禁及delete/clear密钥撤销不变。仅有孤儿片段不能冒认为完整结果，也不会作为空Session自动删除。`--no-save`只保留有界内存，退出不可恢复，不创建临时历史文件。任务与文件产物共享底层Session/profile密文配额，满额不自动淘汰。
+持久Session使用与任务输出相同的Session-owned认证加密blob，diff/receipt有独立版本化目录；raw diff/patch参数不进入稳定聊天或自动标题。重启只读恢复、网关发送门禁及delete/clear密钥撤销不变。仅有孤儿片段不能冒认为完整结果，也不会作为空Session自动删除。`--no-save`只保留有界内存，退出不可恢复，不创建临时历史文件。任务与文件产物共享底层Session/profile密文配额，满额不自动淘汰。
 
 新建/resume/F2使用当前客户端资源设置：`--file-diff-limit`默认128MiB（同时为单产物上限）、`--file-patch-limit`默认64MiB（原文总量与候选总量分别约束）、`--artifact-memory-limit`默认256MiB、`--artifact-max-records`默认256条/Session。diff与内存预算最高1GiB、记录最高8192；单项新增仍受write预算，更新仍受edit预算。保存失败明确可见，不能用退出码、文件修改成功或短预览代表完整产物已保存。详见 [C6合同](../../docs/comet/specs/client-file-patch/spec.md)。
 
@@ -310,10 +318,10 @@ edu-agent reviews [--due-before RFC3339] [--limit N] [--cursor CURSOR]
 edu-agent config show
 edu-agent config set [--timeout DURATION] [--color never|auto|always] [--session-history auto|off]
 edu-agent model show
-edu-agent model preset openai|deepseek|openrouter|ollama|custom
-edu-agent model set [--base-url URL] [--model NAME] [--context-window N] [--max-tokens N] [--context-compaction auto|recent-only|off] [--reasoning-effort auto|none|minimal|low|medium|high|xhigh|max] [--session-history auto|off] [--timeout DURATION] [--max-tool-rounds N]  # 0=unlimited
+edu-agent model list
+edu-agent model select teaching|mentor
+edu-agent model set [--context-compaction auto|recent-only|off] [--reasoning-effort auto|none|minimal|low|medium|high|xhigh|max] [--session-history auto|off] [--max-tool-rounds N]
 edu-agent model test
-edu-agent model key delete --confirmed
 edu-agent agent [--workspace PATH] [--no-save]
 edu-agent agent resume [SESSION] [--last] [--all]
 edu-agent agent sessions delete SESSION --confirmed
@@ -332,9 +340,9 @@ Free answers are explicitly non-scoring. Enter on a free answer calls `resume_fo
 
 ## Local State
 
-普通配置保存在 `os.UserConfigDir()/edu-agent/config.json`。其中包括全有或全无的配对字段（服务器 URL、设备 ID、显示名称），以及可独立存在的客户端请求超时、颜色和非敏感 AI 模型设置。它不包含设备 token、模型 API Key 或学习内容。未配对客户端也可保存客户端与模型偏好。
+普通配置保存在 `os.UserConfigDir()/edu-agent/config.json`。其中包括全有或全无的配对字段（服务器 URL、设备 ID、显示名称），以及客户端请求超时、颜色、上下文整理偏好、网关选择和告知版本。它不包含设备 token、模型 API Key 或学习内容。未配对客户端也可保存客户端与模型偏好。
 
-模型 API Key 通过平台凭据后端按“提供商 + 规范化 Base URL”的不可逆指纹分槽保存：Linux 使用 Secret Service，macOS 使用 Keychain。切换模型名称可继续使用同一端点凭据；切换提供商或 Base URL 只会读取新端点自己的凭据，绝不会把旧 Key 发送给新端点。系统凭据服务不可用时，模型密钥操作会失败关闭，不会降级为明文配置文件。Ollama 与无鉴权的自定义 loopback 端点不要求 Key；远程自定义端点与云端预设一样必须使用端点绑定的 Key。Windows 凭据与 Session 后端不属于当前版本的支持范围。
+CLI 已删除模型密钥存储、供应商预设和模型直连装配；旧模型配置直接拒绝读取，不兼容或迁移。模型凭据只由服务端持有。本机仍保留设备令牌及会话／离线数据加密所需的平台密钥设施。服务器地址和设备身份仍通过配对流程变更；解绑会清除绑定的模型选择与告知。
 
 On Linux and macOS, the credential is protected by the platform key service, while local security-sensitive files use `0600` under `0700` directories. No-follow reads reject symlinks, non-regular files, and broad permissions. Markdown directory imports hold an open root handle and resolve every relative component with `openat` plus `O_NOFOLLOW`. Windows behavior is not part of the current support contract.
 

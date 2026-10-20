@@ -366,10 +366,10 @@ func controllerStoreWithLimits(t *testing.T, root string, secrets agentsession.S
 	return store
 }
 
-func controllerDependencies(store *agentsession.Store, model agentloop.Model, server agentloop.Server, workspaceRoot string, provider Provider) Dependencies {
+func controllerDependencies(store *agentsession.Store, model agentloop.Model, server agentloop.Server, workspaceRoot string, provider GatewayBinding) Dependencies {
 	sequence := 0
 	return Dependencies{
-		Store: store, Model: model, Server: server, Provider: provider, WorkspaceRoot: workspaceRoot,
+		Store: store, Model: model, Server: server, Gateway: provider, WorkspaceRoot: workspaceRoot,
 		LoopOptions: agentloop.Options{
 			ContextWindow: 8192, MaxToolRounds: 4, ContextCompaction: agentloop.ContextCompactionAuto,
 			ReasoningEffort: modelclient.ReasoningEffortAuto, ModelTimeout: time.Second, ToolTimeout: time.Second,
@@ -386,7 +386,7 @@ func TestControllerRemovesEmptyPersistentSessionOnNormalClose(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
@@ -420,7 +420,7 @@ func TestControllerShutdownRetriesFailedPublicationWithCommittedTranscript(t *te
 		return store
 	}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	seed, err := Start(t.Context(), controllerDependencies(openStore(), &controllerModel{}, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatal(err)
@@ -484,7 +484,7 @@ func TestControllerShutdownRetriesStableSaveBeforeClearingLoop(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
 	if err != nil {
@@ -539,7 +539,7 @@ func TestControllerShutdownReportsUnstableCheckpointWithoutClearingReceipt(t *te
 	}
 	modelWithPending := &scriptedControllerModel{responses: []modelclient.Response{modelResponse}}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, modelWithPending, server, workspaceRoot, provider), false)
 	if err != nil {
@@ -582,7 +582,7 @@ func TestFinishOperationReturnsCheckpointExportFailureAndPreservesResult(t *test
 		},
 	}}}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
 	if err != nil {
@@ -636,7 +636,7 @@ func TestControllerSavePublicationFullDegradesNewSessionAndPreservesResult(t *te
 		{Message: modelclient.Message{Role: "assistant", Content: "未保存模式仍可继续"}},
 	}}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatal(err)
@@ -698,7 +698,7 @@ func TestControllerCreateStoreFullDegradesToVisibleUnsavedConversation(t *testin
 	_ = handle.Close()
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatalf("store-full new session should degrade, got %v", err)
@@ -727,7 +727,7 @@ func TestAutomaticTitleSchedulingRequiresTurnAndTimeThresholdsAndSingleConcurren
 	dependencies := controllerDependencies(
 		controllerStoreWithLimits(t, root, secrets, limits), model,
 		&controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot,
-		Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"},
+		GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"},
 	)
 	dependencies.Now = func() time.Time { return now }
 	controller, err := Start(t.Context(), dependencies, false)
@@ -807,7 +807,7 @@ func TestAutomaticTitleRequestTimeoutPublishesFailureAndCanRecoverAfterThreshold
 	dependencies := controllerDependencies(
 		controllerStoreWithLimits(t, root, secrets, limits), model,
 		&controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot,
-		Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"},
+		GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"},
 	)
 	dependencies.Now = func() time.Time { return now }
 	controller, err := Start(t.Context(), dependencies, false)
@@ -886,7 +886,7 @@ func TestAutomaticTitleFailureMatrixRetainsFallbackAndBoundedStatus(t *testing.T
 			controller, err := Start(t.Context(), controllerDependencies(
 				controllerStore(t, root, &controllerSecretBackend{}), failingTitleModel{titleContent: test.content, titleErr: test.err},
 				&controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot,
-				Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"},
+				GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"},
 			), false)
 			if err != nil {
 				t.Fatal(err)
@@ -920,7 +920,7 @@ func TestPendingAutomaticTitleCannotOverrideManualRenameOrScheduleAgain(t *testi
 	controller, err := Start(t.Context(), controllerDependencies(
 		controllerStoreWithLimits(t, root, secrets, limits), model,
 		&controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot,
-		Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"},
+		GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"},
 	), false)
 	if err != nil {
 		t.Fatal(err)
@@ -987,7 +987,7 @@ func TestControllerGeneratesBoundedToolFreeAutomaticTitle(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
@@ -1036,7 +1036,7 @@ func TestControllerSwitchSaveFailureAfterTargetPreflightPreservesCurrent(t *test
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &switchLockServer{controllerServer: controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, root: root}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	current, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), model, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatal(err)
@@ -1084,7 +1084,7 @@ func TestControllerLateAutomaticTitleCannotCrossSwitchGeneration(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	titleModel := &generationTitleModel{titleStarted: make(chan struct{}, 1), releaseTitle: make(chan struct{})}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	target, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), &controllerModel{}, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatal(err)
@@ -1134,7 +1134,7 @@ func TestControllerSafeSwitchNewRenameDeleteAndSameTargetNoop(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	current, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), model, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatal(err)
@@ -1247,7 +1247,7 @@ func TestControllerTargetLockFailurePreservesCurrentGenerationAndTranscript(t *t
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	current, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), model, server, workspaceRoot, provider), false)
 	if err != nil {
 		t.Fatal(err)
@@ -1293,7 +1293,7 @@ func TestControllerPersistsAndResumesStableConversation(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 3, MemoryGeneration: 4}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
@@ -1398,7 +1398,7 @@ func TestControllerFileReceiptsFollowStableCheckpointAndEvents(t *testing.T) {
 				commitResults: []workspace.Result{test.result},
 			}
 			server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-			provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+			provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 			store := controllerStore(t, root, secrets)
 			dependencies := controllerDependencies(store, model, server, workspaceRoot, provider)
 			dependencies.LoopOptions.Workspace = executor
@@ -1469,7 +1469,7 @@ func TestControllerCrashRecoveryInvalidatesSamePathAndPersistsUnknownReceipt(t *
 		},
 	}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	store := controllerStore(t, root, secrets)
 	dependencies := controllerDependencies(store, model, server, workspaceRoot, provider)
 	dependencies.LoopOptions.Workspace = executor
@@ -1568,7 +1568,7 @@ func TestControllerPersistsDirtyWriteAheadAndConsumesItOnResume(t *testing.T) {
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
@@ -1644,7 +1644,7 @@ func TestControllerNormalPreferenceSaveCommitsCompletedTypedReceipt(t *testing.T
 		{Message: modelclient.Message{Role: "assistant", Content: "已保存偏好"}},
 	}}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
 	if err != nil {
@@ -1677,7 +1677,7 @@ func TestControllerRetriesPersistedPreferenceReceiptWithExactTypedState(t *testi
 		generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1},
 		candidate:  api.MemoryCandidate{ID: "candidate-1", Status: "pending_review", Revision: 1},
 	}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	validUntil := time.Date(2036, 1, 1, 0, 0, 0, 0, time.UTC)
 	writeAhead := agentloop.PreferenceWriteAhead{
 		ToolCallID: "call-pref", CreateOperationID: "10000000-0000-4000-8000-000000000001",
@@ -1762,7 +1762,7 @@ func TestControllerRetryPreferenceRejectUsesOriginalRejectOperationID(t *testing
 		generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1},
 		candidate:  api.MemoryCandidate{ID: "candidate-reject", Status: "pending_review", Revision: 5},
 	}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	writeAhead := agentloop.PreferenceWriteAhead{
 		ToolCallID: "call-reject", CreateOperationID: "20000000-0000-4000-8000-000000000001",
 		AdmitOperationID: "20000000-0000-4000-8000-000000000002", RejectOperationID: "20000000-0000-4000-8000-000000000003",
@@ -1809,7 +1809,7 @@ func TestControllerPrivacyFailureQuarantinesAndLaterRevalidates(t *testing.T) {
 	root, workspaceRoot := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 7, MemoryGeneration: 9}}
 
 	store := controllerStore(t, root, secrets)
@@ -1870,7 +1870,7 @@ func TestControllerProviderChangeBlocksHistoricalTransmissionUntilConfirmed(t *t
 	secrets := &controllerSecretBackend{}
 	model := &controllerModel{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	original := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	original := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, original), false)
@@ -1883,20 +1883,20 @@ func TestControllerProviderChangeBlocksHistoricalTransmissionUntilConfirmed(t *t
 	sessionID := controller.SessionID()
 	controller.Close()
 
-	changed := Provider{Name: "custom", Endpoint: "https://gateway.example/v1", Model: "new"}
+	changed := GatewayBinding{Target: "teaching", ServerURL: "https://gateway.example/v1", ModelName: "new"}
 	store = controllerStore(t, root, secrets)
 	resumed, err := Resume(t.Context(), controllerDependencies(store, model, server, workspaceRoot, changed), ResumeOptions{SessionID: sessionID, CurrentWorkspace: workspaceRoot})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resumed.Close()
-	if !resumed.Status().ProviderConfirmationRequired {
+	if !resumed.Status().GatewayConfirmationRequired {
 		t.Fatal("provider gate was not raised")
 	}
-	if _, err := resumed.Send(t.Context(), "不得发送"); !errors.Is(err, ErrProviderConfirmationRequired) {
+	if _, err := resumed.Send(t.Context(), "不得发送"); !errors.Is(err, ErrGatewayConfirmationRequired) {
 		t.Fatalf("send error=%v, want provider gate", err)
 	}
-	if err := resumed.ConfirmProvider(t.Context()); err != nil {
+	if err := resumed.ConfirmGateway(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resumed.Send(t.Context(), "确认后发送"); err != nil {
@@ -1909,7 +1909,7 @@ func TestControllerSwitchProviderChangeCanInstallLocallyWithoutTransmission(t *t
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
 	originalModel := &controllerModel{}
-	original := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	original := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	target, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), originalModel, server, workspaceRoot, original), false)
 	if err != nil {
@@ -1935,7 +1935,7 @@ func TestControllerSwitchProviderChangeCanInstallLocallyWithoutTransmission(t *t
 	}
 
 	changedModel := &controllerModel{}
-	changed := Provider{Name: "custom", Endpoint: "https://gateway.example/v1", Model: "new"}
+	changed := GatewayBinding{Target: "teaching", ServerURL: "https://gateway.example/v1", ModelName: "new"}
 	current, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), changedModel, server, workspaceRoot, changed), false)
 	if err != nil {
 		t.Fatal(err)
@@ -1952,14 +1952,14 @@ func TestControllerSwitchProviderChangeCanInstallLocallyWithoutTransmission(t *t
 		}
 	}
 	plan := current.PlanSwitch(summary)
-	if !plan.NeedProviderConfirm || plan.NeedWorkspaceConfirm {
+	if !plan.NeedGatewayConfirm || plan.NeedWorkspaceConfirm {
 		t.Fatalf("unexpected switch plan: %+v", plan)
 	}
-	generation, err := current.CommitSwitch(t.Context(), plan, SwitchConfirmation{Provider: false})
+	generation, err := current.CommitSwitch(t.Context(), plan, SwitchConfirmation{Gateway: false})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generation != 2 || current.SessionID() != targetID || !current.Status().ProviderConfirmationRequired {
+	if generation != 2 || current.SessionID() != targetID || !current.Status().GatewayConfirmationRequired {
 		t.Fatalf("generation=%d session=%s status=%+v", generation, current.SessionID(), current.Status())
 	}
 	foundHistoricalText := false
@@ -2000,7 +2000,7 @@ func TestControllerSwitchProviderChangeCanInstallLocallyWithoutTransmission(t *t
 	if err := current.DeleteSession(t.Context(), agentsession.DeleteTarget{SessionID: deleteSummary.SessionID, StorageID: deleteSummary.StorageID, ExpectedRecordRevision: deleteSummary.RecordRevision}); err != nil {
 		t.Fatalf("delete while provider-blocked: %v", err)
 	}
-	if _, err := current.Send(t.Context(), "确认前不得发送"); !errors.Is(err, ErrProviderConfirmationRequired) {
+	if _, err := current.Send(t.Context(), "确认前不得发送"); !errors.Is(err, ErrGatewayConfirmationRequired) {
 		t.Fatalf("send error=%v, want provider gate", err)
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -2011,10 +2011,10 @@ func TestControllerSwitchProviderChangeCanInstallLocallyWithoutTransmission(t *t
 		t.Fatalf("new provider received %d model/title requests before confirmation", requestsBeforeConfirmation)
 	}
 
-	if err := current.ConfirmProvider(t.Context()); err != nil {
+	if err := current.ConfirmGateway(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if current.Status().ProviderConfirmationRequired {
+	if current.Status().GatewayConfirmationRequired {
 		t.Fatal("provider gate remained after explicit confirmation")
 	}
 	if _, err := current.Send(t.Context(), "确认后允许发送"); err != nil {
@@ -2052,7 +2052,7 @@ func TestControllerSwitchLocalProviderViewDoesNotBypassWorkspaceConfirmation(t *
 	root, currentWorkspace, targetWorkspace := t.TempDir(), t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	original := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	original := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	target, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), &controllerModel{}, server, targetWorkspace, original), false)
 	if err != nil {
 		t.Fatal(err)
@@ -2066,7 +2066,7 @@ func TestControllerSwitchLocalProviderViewDoesNotBypassWorkspaceConfirmation(t *
 	}
 
 	changedModel := &controllerModel{}
-	changed := Provider{Name: "custom", Endpoint: "https://gateway.example/v1", Model: "new"}
+	changed := GatewayBinding{Target: "teaching", ServerURL: "https://gateway.example/v1", ModelName: "new"}
 	current, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), changedModel, server, currentWorkspace, changed), false)
 	if err != nil {
 		t.Fatal(err)
@@ -2083,20 +2083,20 @@ func TestControllerSwitchLocalProviderViewDoesNotBypassWorkspaceConfirmation(t *
 		}
 	}
 	plan := current.PlanSwitch(summary)
-	if !plan.NeedProviderConfirm || !plan.NeedWorkspaceConfirm {
+	if !plan.NeedGatewayConfirm || !plan.NeedWorkspaceConfirm {
 		t.Fatalf("unexpected switch plan: %+v", plan)
 	}
 	currentID, generation := current.SessionID(), current.Generation()
-	if _, err := current.CommitSwitch(t.Context(), plan, SwitchConfirmation{Provider: false, Workspace: false}); !errors.Is(err, ErrWorkspaceConfirmationRequired) {
+	if _, err := current.CommitSwitch(t.Context(), plan, SwitchConfirmation{Gateway: false, Workspace: false}); !errors.Is(err, ErrWorkspaceConfirmationRequired) {
 		t.Fatalf("workspace refusal error=%v", err)
 	}
 	if current.SessionID() != currentID || current.Generation() != generation {
 		t.Fatal("workspace refusal changed the active Session")
 	}
-	if _, err := current.CommitSwitch(t.Context(), plan, SwitchConfirmation{Provider: false, Workspace: true}); err != nil {
+	if _, err := current.CommitSwitch(t.Context(), plan, SwitchConfirmation{Gateway: false, Workspace: true}); err != nil {
 		t.Fatal(err)
 	}
-	if current.SessionID() != targetID || !current.Status().ProviderConfirmationRequired {
+	if current.SessionID() != targetID || !current.Status().GatewayConfirmationRequired {
 		t.Fatalf("local cross-workspace target not installed safely: session=%s status=%+v", current.SessionID(), current.Status())
 	}
 	changedModel.mu.Lock()
@@ -2111,7 +2111,7 @@ func TestControllerSwitchProviderConfirmationStillEnablesTransmission(t *testing
 	root, workspaceRoot := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	original := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	original := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	target, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), &controllerModel{}, server, workspaceRoot, original), false)
 	if err != nil {
 		t.Fatal(err)
@@ -2125,7 +2125,7 @@ func TestControllerSwitchProviderConfirmationStillEnablesTransmission(t *testing
 	}
 
 	changedModel := &controllerModel{}
-	changed := Provider{Name: "custom", Endpoint: "https://gateway.example/v1", Model: "new"}
+	changed := GatewayBinding{Target: "teaching", ServerURL: "https://gateway.example/v1", ModelName: "new"}
 	current, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), changedModel, server, workspaceRoot, changed), false)
 	if err != nil {
 		t.Fatal(err)
@@ -2141,10 +2141,10 @@ func TestControllerSwitchProviderConfirmationStillEnablesTransmission(t *testing
 			summary = item.Summary
 		}
 	}
-	if _, err := current.CommitSwitch(t.Context(), current.PlanSwitch(summary), SwitchConfirmation{Provider: true}); err != nil {
+	if _, err := current.CommitSwitch(t.Context(), current.PlanSwitch(summary), SwitchConfirmation{Gateway: true}); err != nil {
 		t.Fatal(err)
 	}
-	if current.Status().ProviderConfirmationRequired {
+	if current.Status().GatewayConfirmationRequired {
 		t.Fatal("provider-confirmed switch remained blocked")
 	}
 	if _, err := current.Send(t.Context(), "切换时已确认"); err != nil {
@@ -2189,7 +2189,7 @@ func TestControllerClassifiesCheckpointVersionAndBrokenReferences(t *testing.T) 
 			secrets := &controllerSecretBackend{}
 			model := &controllerModel{}
 			server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-			provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+			provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 			controller, err := Start(t.Context(), controllerDependencies(controllerStore(t, root, secrets), model, server, workspaceRoot, provider), false)
 			if err != nil {
@@ -2253,7 +2253,7 @@ func TestControllerGeneratesToolFreeAutomaticTitleAfterToolTurn(t *testing.T) {
 			Hits: []api.RetrievalHit{{CanonicalSlice: "服务端工具结果正文"}},
 		},
 	}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 
 	store := controllerStore(t, root, secrets)
 	controller, err := Start(t.Context(), controllerDependencies(store, model, server, workspaceRoot, provider), false)
@@ -2400,7 +2400,7 @@ func TestSelectorCapsPickerResultsWithStoreLimitsAndRequestLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	selector := NewSelector(store, "", Provider{})
+	selector := NewSelector(store, "", GatewayBinding{})
 	items, err := selector.ListSessions(t.Context(), SessionListRequest{All: true})
 	if err != nil || len(items) != 2 {
 		t.Fatalf("items=%+v err=%v", items, err)
@@ -2423,7 +2423,7 @@ func TestControllerUsesStoreLimitsForAutomaticTitleRequest(t *testing.T) {
 	controller, err := Start(t.Context(), controllerDependencies(
 		controllerStoreWithLimits(t, root, secrets, limits), model,
 		&controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot,
-		Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"},
+		GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"},
 	), false)
 	if err != nil {
 		t.Fatal(err)
@@ -2461,7 +2461,7 @@ func TestAutomaticTitleSaveUsesInjectedTimeoutAndPublishesFailure(t *testing.T) 
 	controller, err := Start(t.Context(), controllerDependencies(
 		controllerStoreWithLimits(t, root, secrets, limits), model,
 		&controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}, workspaceRoot,
-		Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"},
+		GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"},
 	), false)
 	if err != nil {
 		t.Fatal(err)

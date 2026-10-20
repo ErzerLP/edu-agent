@@ -20,10 +20,8 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentui"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelsecret"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
@@ -114,7 +112,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	if !a.interactiveTerminalAvailable() || a.AgentUI == nil {
 		return commandError("not_a_terminal", "AI学习助手需要交互终端", "请在TTY终端运行 edu-agent agent", ExitInput)
 	}
-	value, record, model, err := a.agentDependencies()
+	value, record, model, err := a.agentDependencies(ctx)
 	if err != nil {
 		return err
 	}
@@ -151,11 +149,11 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	}
 	controller, err := agentcontroller.Start(ctx, agentcontroller.Dependencies{
 		Store: store, Model: model, Server: server,
-		Provider:      agentcontroller.Provider{Name: value.Agent.Provider, Endpoint: value.Agent.BaseURL, Model: value.Agent.Model},
+		Gateway:       agentcontroller.GatewayBinding{Target: value.Connection.Target, ServerURL: value.ServerURL, DeviceID: value.DeviceID, DestinationRevision: value.Connection.DestinationRevision, ModelName: value.Connection.ModelName},
 		WorkspaceRoot: workspacePath,
 		LoopOptions: agentloop.Options{
 			LearningBinding: learningBinding,
-			ContextWindow:   value.Agent.ContextWindow, MaxTokens: value.Agent.MaxTokens, MaxToolRounds: value.Agent.MaxToolRounds,
+			ContextWindow:   value.Connection.ContextTokens, MaxTokens: value.Connection.OutputTokens, MaxToolRounds: value.Agent.MaxToolRounds,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -181,7 +179,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	}
 	status := controller.Status()
 	if status.Persistent {
-		_, _ = fmt.Fprintf(a.Err, "会话已启用自动加密保存：%s。自动标题会向当前模型提供商发送有界的对话摘要。\n", safeText(controller.SessionID()))
+		_, _ = fmt.Fprintf(a.Err, "会话已启用自动加密保存：%s。自动标题会向所选服务端模型发送有界的对话摘要。\n", safeText(controller.SessionID()))
 	} else if noSave {
 		_, _ = fmt.Fprintln(a.Err, "当前新会话为不保存模式（--no-save），退出后不可恢复。")
 	} else if value.Agent.SessionHistory == "off" {
@@ -189,7 +187,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 	} else if status.DegradedReason != "" {
 		_, _ = fmt.Fprintln(a.Err, safeText(status.DegradedReason))
 	}
-	return a.runAgentController(ctx, controller, value.Agent.Model)
+	return a.runAgentController(ctx, controller, value.Connection.ModelName)
 }
 
 func (a *App) runAgentResume(ctx context.Context, args []string) error {
@@ -234,7 +232,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 			return commandError("workspace_unavailable", "当前工作区不可用", "切换到可用工作区后重试，或使用 --all 搜索全部工作区", ExitUnavailable)
 		}
 	}
-	value, record, model, err := a.agentDependencies()
+	value, record, model, err := a.agentDependencies(ctx)
 	if err != nil {
 		return err
 	}
@@ -263,7 +261,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	}
 	workspaceBinding, _ := agentcontroller.BindWorkspace(workspacePath)
 	workspaceID := agentcontroller.WorkspaceScopeID(workspaceBinding)
-	provider := agentcontroller.Provider{Name: value.Agent.Provider, Endpoint: value.Agent.BaseURL, Model: value.Agent.Model}
+	provider := agentcontroller.GatewayBinding{Target: value.Connection.Target, ServerURL: value.ServerURL, DeviceID: value.DeviceID, DestinationRevision: value.Connection.DestinationRevision, ModelName: value.Connection.ModelName}
 	var selected agentsession.Summary
 	var pickerChoice agentui.PickerChoice
 	if target == "" && !last {
@@ -301,9 +299,9 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	server := a.scopedClient(value.ServerURL, record.Token, requestTimeout)
 	controller, err := agentcontroller.Resume(ctx, agentcontroller.Dependencies{
 		Store: store, Model: model, Server: server,
-		Provider: provider,
+		Gateway: provider,
 		LoopOptions: agentloop.Options{
-			ContextWindow: value.Agent.ContextWindow, MaxTokens: value.Agent.MaxTokens, MaxToolRounds: value.Agent.MaxToolRounds,
+			ContextWindow: value.Connection.ContextTokens, MaxTokens: value.Connection.OutputTokens, MaxToolRounds: value.Agent.MaxToolRounds,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -336,24 +334,24 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 	for _, notice := range status.Notices {
 		_, _ = fmt.Fprintln(a.Err, safeText("提示："+notice))
 	}
-	if status.ProviderConfirmationRequired {
-		confirmed := pickerChoice.Provider
+	if status.GatewayConfirmationRequired {
+		confirmed := pickerChoice.Gateway
 		var confirmErr error
 		if !confirmed {
-			confirmed, confirmErr = a.Terminal.Confirm("模型提供商端点已变更。确认向当前端点发送历史会话文本？")
+			confirmed, confirmErr = a.Terminal.Confirm("所选模型服务已更改。确认经服务端向所选模型发送历史会话文本？")
 		}
 		if confirmErr != nil {
 			_ = controller.Shutdown(context.Background())
-			return commandError("terminal_error", "无法读取提供商确认", "重试恢复命令", ExitInternal)
+			return commandError("terminal_error", "无法读取模型目的地确认", "重试恢复命令", ExitInternal)
 		}
 		if confirmed {
-			if err := controller.ConfirmProvider(ctx); err != nil {
+			if err := controller.ConfirmGateway(ctx); err != nil {
 				_ = controller.Shutdown(context.Background())
 				return sessionCommandError(err)
 			}
 		}
 	}
-	return a.runAgentController(ctx, controller, value.Agent.Model)
+	return a.runAgentController(ctx, controller, value.Connection.ModelName)
 }
 
 func (a *App) runAgentController(ctx context.Context, controller *agentcontroller.Controller, modelName string) error {
@@ -494,15 +492,12 @@ func (a *App) enterAgentBinding(ctx context.Context, b agentcontext.Binding, noS
 	return local.runNewAgent(ctx, args)
 }
 
-func agentTimeouts(value config.Config) (requestTimeout, modelTimeout time.Duration, err error) {
+func agentTimeouts(value agentSettings) (requestTimeout, modelTimeout time.Duration, err error) {
 	requestTimeout, err = config.ParseTimeout(value.Timeout)
 	if err != nil {
 		return 0, 0, commandError("invalid_configuration", "客户端请求超时配置无效", "在设置中修复客户端配置", ExitInput)
 	}
-	modelTimeout, err = config.ParseTimeout(value.Agent.Timeout)
-	if err != nil {
-		return 0, 0, commandError("invalid_configuration", "模型无响应超时配置无效", "在设置中修复模型配置", ExitInput)
-	}
+	modelTimeout = time.Duration(value.Capabilities.Limits.IdleTimeoutSeconds+5) * time.Second
 	return requestTimeout, modelTimeout, nil
 }
 
@@ -720,8 +715,8 @@ func sessionCommandErrorForCode(code string) *Error {
 		return commandError("session_interrupted", "Agent Session上次运行在稳定检查点之后中断", "继续前检查上次未完成操作；客户端不会自动重放", ExitConflict)
 	case "session_workspace_unavailable":
 		return commandError("session_workspace_unavailable", "历史工作区无法安全恢复；文件工具已禁用", "修复原工作区后重试，或启动新会话", ExitUnavailable)
-	case "session_provider_confirmation_required":
-		return commandError("session_provider_confirmation_required", "模型提供商端点变更尚未确认", "确认当前端点后再发送历史文本", ExitConflict)
+	case "session_gateway_confirmation_required":
+		return commandError("session_gateway_confirmation_required", "模型目的地变更尚未确认", "确认所选模型服务后再发送历史文本", ExitConflict)
 	case "session_privacy_revalidation_pending":
 		return commandError("session_privacy_revalidation_pending", "Agent Session历史隐私代际尚未核对", "等待服务端隐私代际核对后重试", ExitUnavailable)
 	case "session_delete_failed":
@@ -778,8 +773,8 @@ func sessionCommandError(err error) error {
 		return sessionCommandErrorForCode("session_privacy_invalidated")
 	case errors.Is(err, agentcontroller.ErrWorkspaceConfirmationRequired):
 		return sessionCommandErrorForCode("workspace_confirmation_required")
-	case errors.Is(err, agentcontroller.ErrProviderConfirmationRequired):
-		return sessionCommandErrorForCode("session_provider_confirmation_required")
+	case errors.Is(err, agentcontroller.ErrGatewayConfirmationRequired):
+		return sessionCommandErrorForCode("session_gateway_confirmation_required")
 	default:
 		return commandError("session_store_unavailable", "Agent Session操作无法完成", "检查本地加密存储和系统钥匙串后重试", ExitUnavailable)
 	}
@@ -823,7 +818,7 @@ const agentHelpText = `用法：
   --task-saved-output-limit B  每任务加密输出保留上限，默认134217728；仅持久Session
   -h, --help        显示此帮助
 
-Session picker：空闲时 F2 打开；Tab 切换当前/全部学习区及工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向当前 provider 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，provider 端点变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、provider 或 OS 备份中的副本。
+Session picker：空闲时 F2 打开；Tab 切换当前/全部学习区及工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向所选服务端模型 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，模型目的地变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、模型服务或 OS 备份中的副本。
 
 文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive、restore_archive、purge_archive。copy支持普通文件（含二进制）和完整递归目录；复制按总文件字节、完整计划入口和追加日志预算限制。目标根须不存在，不覆盖或合并；一次授权完整计划，失败/取消停止余项，已完成项保留。--no-save只在有界内存保留复制追加日志。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。
@@ -835,266 +830,6 @@ restore_archive要求确切归档source、显式destination和当前stat的expec
 purge_archive要求确切归档path及当前stat的expected_version，容器/文件/子目录均可，但不能选归档根、工作区根、归档外或通配全部。每次永久清理不可撤销，YOLO仍须明确批准；授权前完整冻结并保留清单，可F6/artifact独立续览而无需末页。按同挂载边界后序逐项意图/删除/结算，链接仅删入口不跟随，遇变化/失败/取消/保存失败即停余项；已删除项不回滚，不顺带清理父容器。logical_bytes_removed仅为普通文件逻辑字节，物理释放量未知；硬链接、稀疏、打开文件和快照影响实际释放。历史名称file-copy的计划/入口/日志/记录预算同时适用于purge，--file-copy-limit不限制清理大文件；--no-save清理历史仅内存，重启只读恢复日志与防重放身份，不恢复批准或自动续执行。
 本地 Shell：正常 OS 用户权限，可访问工作区外路径和网络，不受文件确认模式限制。shell/task 支持长任务、stdin 和停止；默认不设置执行总超时。F5 查看内存输出、切换 stdout/stderr、翻页和停止，退出客户端会收尾受管任务。
 持久Session的输出独立加密保存，可用task search或F5的/检索、n继续，并在重启后读取已保存范围；恢复不重跑旧命令、不恢复进程控制。--no-save输出仅内存保留，退出不可恢复；配额/保存失败和缺口明确显示。PTY交互：shell指定pty=true（默认24行80列，可用rows/cols设置1..4096）；合并流为stdout。task interrupt/eof发送终端控制字节，resize调整尺寸，close_input仍仅用于pipe。F5按i进入不回显草稿的行式输入，Enter送行，Ctrl+C中断，Ctrl+D终端EOF，Ctrl+Q退出；程序回显可能作为输出保存，不是全屏终端模拟器。上述任务资源参数同时适用于新建和 resume，不改变命令权限。`
-
-func (a *App) runModel(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return modelUsage("模型配置需要 show、preset、set、test 或 key")
-	}
-	switch args[0] {
-	case "show":
-		if len(args) != 1 {
-			return modelUsage("model show 不接受额外参数")
-		}
-		value, err := a.loadModelConfig()
-		if err != nil {
-			return err
-		}
-		if value.Agent == nil {
-			_, err = fmt.Fprintln(a.Out, "AI模型：未配置")
-			return err
-		}
-		keyStatus := "未配置"
-		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
-		if _, keyErr := a.ModelSecrets.Load(binding); keyErr == nil {
-			keyStatus = "已存入系统钥匙串"
-		}
-		toolRounds := "不限制"
-		if value.Agent.MaxToolRounds > 0 {
-			toolRounds = strconv.Itoa(value.Agent.MaxToolRounds)
-		}
-		_, err = fmt.Fprintf(a.Out, "提供商：%s\nBase URL：%s\n模型：%s\n上下文窗口：%d\n最大输出 tokens：%d\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n最大工具轮数：%s\nAPI Key：%s\n",
-			safeText(value.Agent.Provider), safeText(value.Agent.BaseURL), safeText(value.Agent.Model), value.Agent.ContextWindow, value.Agent.MaxTokens,
-			safeText(value.Agent.ContextCompaction), safeText(value.Agent.ReasoningEffort), safeText(value.Agent.SessionHistory), safeText(value.Agent.Timeout), toolRounds, keyStatus)
-		return err
-	case "preset":
-		if len(args) != 2 {
-			return modelUsage("model preset 需要一个提供商")
-		}
-		value, err := a.loadModelConfig()
-		if err != nil {
-			return err
-		}
-		preset := config.DefaultAgentConfig(args[1])
-		if value.Agent != nil && value.Agent.SessionHistory != "" {
-			preset.SessionHistory = value.Agent.SessionHistory
-		}
-		if !strings.EqualFold(strings.TrimSpace(args[1]), preset.Provider) {
-			return modelUsage("未知模型提供商")
-		}
-		value.Agent = &preset
-		if err := a.Config.Save(value); err != nil {
-			return commandError("configuration_write_failed", "AI模型预设无法保存", "检查配置目录权限后重试", ExitInternal)
-		}
-		_, err = fmt.Fprintf(a.Out, "已选择%s预设。请核对模型名称并配置API Key。\n", providerName(preset.Provider))
-		return err
-	case "set":
-		return a.runModelSet(args[1:])
-	case "test":
-		if len(args) != 1 {
-			return modelUsage("model test 不接受额外参数")
-		}
-		value, model, err := a.modelDependencies()
-		if err != nil {
-			return err
-		}
-		response, err := model.Complete(ctx, modelclient.Request{
-			Messages: []modelclient.Message{
-				{Role: "system", Content: "你正在执行连接检查。"},
-				{Role: "user", Content: "仅回复：连接正常"},
-			},
-			ReasoningEffort: modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
-		})
-		if err != nil {
-			if modelclient.StableErrorCode(err) == modelclient.ErrorCodeReasoningEffortUnsupported {
-				return commandError(string(modelclient.ErrorCodeReasoningEffortUnsupported), "模型不支持当前推理强度", "将--reasoning-effort改为auto或none，或选择兼容模型", ExitUnavailable)
-			}
-			return commandError("model_unavailable", "模型连接测试失败", "检查Base URL、模型名称、API Key和网络", ExitUnavailable)
-		}
-		if strings.TrimSpace(response.Message.Content) == "" {
-			return commandError("model_protocol_error", "模型没有返回文本", "检查OpenAI兼容协议实现", ExitUnavailable)
-		}
-		_, err = fmt.Fprintf(a.Out, "模型连接正常：%s / %s\n", providerName(value.Agent.Provider), safeText(value.Agent.Model))
-		return err
-	case "key":
-		if len(args) != 3 || args[1] != "delete" || args[2] != "--confirmed" {
-			return modelUsage("请从TUI确认删除API Key")
-		}
-		value, err := a.loadModelConfig()
-		if err != nil {
-			return err
-		}
-		if value.Agent == nil {
-			return commandError("agent_not_configured", "AI模型尚未配置", "在设置中选择提供商后重试", ExitInput)
-		}
-		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
-		if err := a.ModelSecrets.Delete(binding); err != nil {
-			return commandError("credential_delete_failed", "API Key无法从系统钥匙串删除", "检查系统钥匙串后重试", ExitInternal)
-		}
-		_, err = fmt.Fprintln(a.Out, "API Key已从系统钥匙串删除。")
-		return err
-	default:
-		return modelUsage("未知模型配置命令")
-	}
-}
-
-func (a *App) runModelSet(args []string) error {
-	set := newFlagSet("model set")
-	var provider, baseURL, modelName, timeout, contextCompaction, reasoningEffort, sessionHistory string
-	var contextWindow, maxToolRounds, maxTokens int
-	set.StringVar(&provider, "provider", "", "model provider")
-	set.StringVar(&baseURL, "base-url", "", "OpenAI-compatible base URL")
-	set.StringVar(&modelName, "model", "", "model name")
-	set.IntVar(&contextWindow, "context-window", 0, "total context window (default 272000)")
-	set.IntVar(&maxTokens, "max-tokens", 0, "maximum output tokens (positive integer; default 128000)")
-	set.StringVar(&contextCompaction, "context-compaction", "", "auto, recent-only, or off")
-	set.StringVar(&reasoningEffort, "reasoning-effort", "", "auto, none, minimal, low, medium, high, xhigh, or max")
-	set.StringVar(&sessionHistory, "session-history", "", "auto or off")
-	set.StringVar(&timeout, "timeout", "", "model inactivity timeout")
-	set.IntVar(&maxToolRounds, "max-tool-rounds", 0, "maximum tool rounds (0 means unlimited; positive values set an optional guard)")
-	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
-		return modelUsage("模型参数格式无效")
-	}
-	maxToolRoundsSet, maxTokensSet, contextWindowSet := false, false, false
-	set.Visit(func(current *flag.Flag) {
-		if current.Name == "context-window" {
-			contextWindowSet = true
-		}
-		if current.Name == "max-tokens" {
-			maxTokensSet = true
-		}
-		if current.Name == "max-tool-rounds" {
-			maxToolRoundsSet = true
-		}
-	})
-	if contextWindowSet && contextWindow < 4096 {
-		return commandError("invalid_configuration", "上下文窗口无效", "请输入至少4096的整数", ExitInput)
-	}
-	if maxTokensSet && maxTokens <= 0 {
-		return commandError("invalid_configuration", "最大输出 tokens 无效", "请输入正整数", ExitInput)
-	}
-	if maxToolRoundsSet && maxToolRounds < config.MinAgentMaxToolRounds {
-		return commandError("invalid_configuration", "最大工具轮数无效", "请输入0或正整数；0表示不限制", ExitInput)
-	}
-	value, err := a.loadModelConfig()
-	if err != nil {
-		return err
-	}
-	if value.Agent == nil {
-		preset := config.DefaultAgentConfig(config.DefaultAgentProvider)
-		value.Agent = &preset
-	}
-	candidate := *value.Agent
-	if strings.TrimSpace(provider) != "" {
-		preservedHistory := candidate.SessionHistory
-		candidate = config.DefaultAgentConfig(provider)
-		if preservedHistory != "" {
-			candidate.SessionHistory = preservedHistory
-		}
-		if !strings.EqualFold(strings.TrimSpace(provider), candidate.Provider) {
-			return modelUsage("未知模型提供商")
-		}
-	}
-	if strings.TrimSpace(baseURL) != "" {
-		candidate.BaseURL = strings.TrimSpace(baseURL)
-	}
-	if strings.TrimSpace(modelName) != "" {
-		candidate.Model = strings.TrimSpace(modelName)
-	}
-	if maxTokensSet {
-		candidate.MaxTokens = maxTokens
-	}
-	if contextWindowSet {
-		candidate.ContextWindow = contextWindow
-	}
-	if strings.TrimSpace(contextCompaction) != "" {
-		candidate.ContextCompaction = strings.TrimSpace(contextCompaction)
-	}
-	if strings.TrimSpace(reasoningEffort) != "" {
-		candidate.ReasoningEffort = strings.TrimSpace(reasoningEffort)
-	}
-	if strings.TrimSpace(sessionHistory) != "" {
-		candidate.SessionHistory = strings.TrimSpace(sessionHistory)
-	}
-	if strings.TrimSpace(timeout) != "" {
-		candidate.Timeout = strings.TrimSpace(timeout)
-	}
-	if maxToolRoundsSet {
-		candidate.MaxToolRounds = maxToolRounds
-	}
-	if err := candidate.Validate(); err != nil {
-		return commandError("invalid_configuration", "AI模型参数无效", "检查地址、模型、上下文窗口、压缩模式、推理强度、会话历史、超时和工具轮数", ExitInput)
-	}
-	value.Agent = &candidate
-	if err := a.Config.Save(value); err != nil {
-		return commandError("configuration_write_failed", "AI模型配置无法保存", "检查配置目录权限后重试", ExitInternal)
-	}
-	_, err = fmt.Fprintln(a.Out, "AI模型配置已更新。API Key仍由系统钥匙串独立管理。")
-	return err
-}
-
-func (a *App) saveDashboardAgentKey(value string) error {
-	if strings.TrimSpace(value) == "" {
-		return modelUsage("API Key不能为空")
-	}
-	configValue, err := a.loadModelConfig()
-	if err != nil {
-		return err
-	}
-	if configValue.Agent == nil {
-		return commandError("agent_not_configured", "请先选择模型提供商", "在设置中选择提供商预设", ExitInput)
-	}
-	binding := modelsecret.Binding(configValue.Agent.Provider, configValue.Agent.BaseURL)
-	if err := a.ModelSecrets.Save(binding, value); err != nil {
-		return commandError("credential_write_failed", "API Key无法写入系统钥匙串", "确认系统钥匙串可用后重试", ExitInternal)
-	}
-	_, err = fmt.Fprintln(a.Out, "API Key已安全保存到系统钥匙串。")
-	return err
-}
-
-func (a *App) modelDependencies() (config.Config, agentloop.Model, error) {
-	value, err := a.loadModelConfig()
-	if err != nil {
-		return config.Config{}, nil, err
-	}
-	if value.Agent == nil {
-		return config.Config{}, nil, commandError("agent_not_configured", "AI模型尚未配置", "在设置中选择提供商并填写模型参数", ExitInput)
-	}
-	apiKey := ""
-	if !value.Agent.APIKeyOptional() {
-		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
-		apiKey, err = a.ModelSecrets.Load(binding)
-		if err != nil {
-			return config.Config{}, nil, commandError("model_key_unavailable", "模型API Key不可用", "在设置中将当前端点的API Key保存到系统钥匙串", ExitAuth)
-		}
-	} else if value.Agent.Provider == "custom" {
-		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
-		apiKey, err = a.ModelSecrets.Load(binding)
-		if err != nil {
-			apiKey = ""
-		}
-	}
-	model, err := a.NewModel(*value.Agent, apiKey)
-	if err != nil {
-		return config.Config{}, nil, commandError("agent_configuration_invalid", "AI模型配置无法使用", "检查模型设置后重试", ExitInput)
-	}
-	return value, model, nil
-}
-
-func (a *App) agentDependencies() (config.Config, credentials.Record, agentloop.Model, error) {
-	value, err := a.loadMutableClientConfig()
-	if err != nil {
-		return config.Config{}, credentials.Record{}, nil, err
-	}
-	record, err := a.Credentials.Load()
-	if err != nil {
-		return config.Config{}, credentials.Record{}, nil, commandError("authentication_failed", "设备凭据不可用", "重新配对设备", ExitAuth)
-	}
-	_, model, err := a.modelDependencies()
-	if err != nil {
-		return config.Config{}, credentials.Record{}, nil, err
-	}
-	return value, record, model, nil
-}
 
 func (a *App) loadModelConfig() (config.Config, error) {
 	value, err := a.Config.Load()
@@ -1112,21 +847,4 @@ func (a *App) loadModelConfig() (config.Config, error) {
 
 func modelUsage(message string) error {
 	return commandError("usage", message, "请使用TUI中的设置 > AI助手与模型", ExitInput)
-}
-
-func providerName(provider string) string {
-	switch provider {
-	case "openai":
-		return "OpenAI"
-	case "deepseek":
-		return "DeepSeek"
-	case "openrouter":
-		return "OpenRouter"
-	case "ollama":
-		return "Ollama"
-	case "custom":
-		return "自定义OpenAI兼容服务"
-	default:
-		return strconv.Quote(provider)
-	}
 }

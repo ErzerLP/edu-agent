@@ -154,18 +154,18 @@ func (p *sessionPickerModel) handleKey(msg tea.KeyMsg, source SessionPickerSourc
 			p.mode = pickerList
 			return pickerIntent{}
 		}
-		if key == "l" && p.plan.NeedProviderConfirm {
+		if key == "l" && p.plan.NeedGatewayConfirm {
 			return pickerIntent{
 				kind: pickerIntentSwitch,
 				plan: p.plan,
 				confirmation: agentcontroller.SwitchConfirmation{
 					Workspace: p.plan.NeedWorkspaceConfirm,
-					Provider:  false,
+					Gateway:  false,
 				},
 			}
 		}
 		if key == "enter" {
-			return pickerIntent{kind: pickerIntentSwitch, plan: p.plan, confirmation: agentcontroller.SwitchConfirmation{Workspace: true, Provider: true}}
+			return pickerIntent{kind: pickerIntentSwitch, plan: p.plan, confirmation: agentcontroller.SwitchConfirmation{Workspace: true, Gateway: true}}
 		}
 		return pickerIntent{}
 	}
@@ -223,7 +223,7 @@ func (p *sessionPickerModel) handleKey(msg tea.KeyMsg, source SessionPickerSourc
 		if plan.SameTarget {
 			return pickerIntent{kind: pickerIntentCancel}
 		}
-		if plan.NeedProviderConfirm || plan.NeedWorkspaceConfirm {
+		if plan.NeedGatewayConfirm || plan.NeedWorkspaceConfirm {
 			p.mode, p.plan = pickerSwitchConfirm, plan
 			return pickerIntent{}
 		}
@@ -286,8 +286,8 @@ func pickerErrorText(err error) string {
 		code, reason, next = "session_store_full", "加密 Session 存储已达到硬上限", "手动删除不再需要的 Session"
 	case errors.Is(err, agentsession.ErrKeyUnavailable):
 		code, reason, next = "session_store_unavailable", "系统钥匙串或加密存储不可用", "检查平台密钥服务后重试"
-	case errors.Is(err, agentcontroller.ErrProviderConfirmationRequired):
-		code, reason, next = "session_provider_confirmation_required", "需要确认新的模型 provider 端点", "返回确认面板后再继续"
+	case errors.Is(err, agentcontroller.ErrGatewayConfirmationRequired):
+		code, reason, next = "session_gateway_confirmation_required", "需要确认更改后的模型服务", "返回确认面板后再继续"
 	case errors.Is(err, agentcontroller.ErrWorkspaceConfirmationRequired):
 		code, reason, next = "session_workspace_confirmation_required", "需要确认历史工作区", "返回确认面板后再继续"
 	case errors.Is(err, agentcontroller.ErrCurrentSession):
@@ -333,16 +333,16 @@ func (p *sessionPickerModel) render(width, height int) string {
 		if p.plan.NeedWorkspaceConfirm {
 			lines = append(lines, "工作区："+truncateDisplayWidth(safeWorkspaceLabel(p.plan.WorkspaceLabel), inner-8), "将重新打开原工作区；失败时文件工具保持禁用。")
 		}
-		if p.plan.NeedProviderConfirm {
-			lines = append(lines, "当前 provider 端点与历史不同。", "确认前不会发送任何历史正文或标题输入。")
+		if p.plan.NeedGatewayConfirm {
+			lines = append(lines, "所选模型服务与历史不同。", "确认前不会发送任何历史正文或标题输入。")
 			if p.plan.NeedWorkspaceConfirm {
-				lines = append(lines, "", "L 确认原工作区并仅本地打开（拒绝向新 provider 发送）")
+				lines = append(lines, "", "L 确认原工作区并仅本地打开（拒绝向新模型服务发送）")
 			} else {
-				lines = append(lines, "", "L 仅本地打开（拒绝向新 provider 发送）")
+				lines = append(lines, "", "L 仅本地打开（拒绝向新模型服务发送）")
 			}
 		}
 		confirmText := "Enter 明确确认"
-		if p.plan.NeedProviderConfirm {
+		if p.plan.NeedGatewayConfirm {
 			confirmText = "Enter 确认并允许发送"
 		}
 		lines = append(lines, "", confirmText+" · Esc 取消切换")
@@ -476,7 +476,7 @@ type PickerChoice struct {
 	New       bool
 	SessionID string
 	Workspace bool
-	Provider  bool
+	Gateway  bool
 }
 
 type standalonePicker struct {
@@ -543,7 +543,7 @@ func (m standalonePicker) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case pickerIntentSwitch:
 			m.choice.SessionID = intent.plan.SessionID
 			m.choice.Workspace = intent.confirmation.Workspace
-			m.choice.Provider = intent.confirmation.Provider
+			m.choice.Gateway = intent.confirmation.Gateway
 			return m, tea.Quit
 		case pickerIntentRename, pickerIntentDelete:
 			m.picker.loading = true

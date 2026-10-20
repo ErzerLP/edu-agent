@@ -45,7 +45,8 @@ func (a *App) runClientConfig(args []string) error {
 		}
 		if strings.TrimSpace(sessionHistory) != "" {
 			if value.Agent == nil {
-				return commandError("agent_not_configured", "AI模型尚未配置，无法保存会话历史设置", "先选择模型提供商，再设置 --session-history", ExitInput)
+				defaults := config.DefaultAgentConfig()
+				value.Agent = &defaults
 			}
 			value.Agent.SessionHistory = strings.ToLower(strings.TrimSpace(sessionHistory))
 		}

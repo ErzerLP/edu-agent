@@ -110,6 +110,13 @@ func localizeDashboardLine(line string) string {
 }
 
 func formatDashboardError(err *Error) string {
+	if err.Code == "privacy_confirmation_required" || err.Code == "destination_confirmation_required" || strings.HasPrefix(err.Code, "gateway_") || strings.HasPrefix(err.Code, "model_") || err.Code == "device_unauthorized" || err.Code == "configuration_changed" || err.Code == "privacy_generation_changed" {
+		detail := err.Detail
+		if err.RequestID != "" {
+			detail += "（请求标识：" + err.RequestID + "）"
+		}
+		return "错误[" + err.Code + "]：" + detail + "；下一步：" + err.Next
+	}
 	detail, next := dashboardErrorMessage(err.Code)
 	text := "错误[" + err.Code + "]"
 	if err.RequestID != "" {
@@ -133,7 +140,7 @@ func dashboardErrorMessage(code string) (string, string) {
 	case "forbidden":
 		return "当前设备没有执行此操作所需的权限", "使用具备相应权限的用户设备"
 	case "model_unavailable", "model_configuration_missing", "model_credential_missing":
-		return "AI模型尚未配置或暂时不可用", "在AI助手设置中检查模型与API Key"
+		return "AI模型尚未配置或暂时不可用", "在网页配置模型后，在 CLI 重新选择"
 	case "service_unavailable", "dependency_unavailable", "temporarily_unavailable", "upstream_unavailable", "projection_unavailable":
 		return "服务或依赖暂时不可用", "稍后重试并检查管理WebUI中的服务状态"
 	case "invalid_goal", "invalid_input", "invalid_configuration", "invalid_markdown_input", "invalid_request", "usage":

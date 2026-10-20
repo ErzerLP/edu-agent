@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -82,13 +83,13 @@ func TestLargeFileReadLaunchPassesBudgetToRealTool(t *testing.T) {
 	for _, limit := range []int64{128, 2 << 20} {
 		t.Run(strconv.FormatInt(limit, 10), func(t *testing.T) {
 			cs, credentials := pairedStores(config.DefaultServerURL, "server-token")
-			preset := config.DefaultAgentConfig("ollama")
+			preset := config.DefaultAgentConfig()
 			cs.value.Agent = &preset
 			app, _, errOut := newTestApp(cs, credentials, &fakeTerminal{})
-			app.ModelSecrets = &memoryModelSecretStore{}
+
 			app.AgentUI = fileReadBudgetUI{}
 			model := &fileReadBudgetModel{}
-			app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+			app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 			app.InputIsTTY = func() bool { return true }
 			app.OutputIsTTY = func() bool { return true }
 			app.Getenv = func(string) string { return "xterm" }

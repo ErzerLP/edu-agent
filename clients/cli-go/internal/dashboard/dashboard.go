@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workbench"
 )
@@ -25,31 +26,28 @@ const (
 
 // Snapshot contains only non-secret local state that is safe to render.
 type Snapshot struct {
-	LearningSpaceName string
-	ServerURL         string
-	Timeout           string
-	Color             string
-	DeviceName        string
-	LocalState        LocalState
-
-	AgentProvider              string
-	AgentBaseURL               string
-	AgentModel                 string
-	AgentContextWindow         int
-	AgentMaxTokens             int
-	AgentContextCompaction     string
-	AgentReasoningEffort       string
-	AgentSessionHistory        string
-	AgentTimeout               string
-	AgentMaxToolRounds         int
-	AgentKeyConfigured         bool
-	AgentKeyBackendUnavailable bool
+	LearningSpaceName      string
+	ServerURL              string
+	Timeout                string
+	Color                  string
+	DeviceName             string
+	LocalState             LocalState
+	Models                 []modelgateway.Connection
+	SelectedTarget         string
+	PrivacyConfirmed       bool
+	GatewayError           string
+	AgentModel             string
+	AgentContextWindow     int
+	AgentMaxTokens         int
+	AgentContextCompaction string
+	AgentReasoningEffort   string
+	AgentSessionHistory    string
+	AgentMaxToolRounds     int
 }
 
 type Runner struct {
 	In              io.Reader
 	Out             io.Writer
-	modelKey        string
 	Workbench       workbench.Service
 	LearningSpaceID string
 	workspace       *workbench.Model
@@ -57,7 +55,6 @@ type Runner struct {
 }
 
 func (r *Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, error) {
-	r.modelKey = ""
 	initial := newModel(snapshot)
 	if r.Workbench != nil {
 		if r.workspaceServer != snapshot.ServerURL {
@@ -86,22 +83,7 @@ func (r *Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, er
 	if !ok {
 		return nil, false, fmt.Errorf("unexpected dashboard model %T", result)
 	}
-	if final.modelKey != "" {
-		r.modelKey = final.modelKey
-		return nil, false, nil
-	}
 	return append([]string(nil), final.command...), final.quit, nil
-}
-
-// TakeModelKey transfers a form secret directly to the command layer without
-// representing it as a CLI command or process argument.
-func (r *Runner) TakeModelKey() (string, bool) {
-	if r.modelKey == "" {
-		return "", false
-	}
-	value := r.modelKey
-	r.modelKey = ""
-	return value, true
 }
 
 func (r *Runner) SelectedLearningSpace() (string, string) {
@@ -123,12 +105,10 @@ const (
 	screenColor
 	screenRePair
 	screenAgentSettings
-	screenAgentProvider
+	screenGatewayModels
 	screenAgentReasoning
 	screenAgentPrivacy
 	screenAgentConfig
-	screenAgentKey
-	screenAgentKeyDelete
 
 	minimumWidth  = 28
 	minimumHeight = 18
@@ -139,26 +119,23 @@ type menuItem struct {
 	title       string
 	description string
 	command     []string
-	provider    string
 	next        screen
 }
 
 type model struct {
-	ctx                context.Context
-	workspace          *workbench.Model
-	workspaceActive    bool
-	snapshot           Snapshot
-	agentProviderDraft string
-	screen             screen
-	cursor             int
-	width              int
-	height             int
-	inputs             []textinput.Model
-	inputLabels        []string
-	focus              int
-	command            []string
-	modelKey           string
-	quit               bool
+	ctx             context.Context
+	workspace       *workbench.Model
+	workspaceActive bool
+	snapshot        Snapshot
+	screen          screen
+	cursor          int
+	width           int
+	height          int
+	inputs          []textinput.Model
+	inputLabels     []string
+	focus           int
+	command         []string
+	quit            bool
 }
 
 func newModel(snapshot Snapshot) model {
@@ -224,7 +201,7 @@ func (m model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) isForm() bool {
 	switch m.screen {
-	case screenGoal, screenImport, screenConnection, screenTimeout, screenAgentConfig, screenAgentKey:
+	case screenGoal, screenImport, screenConnection, screenTimeout, screenAgentConfig:
 		return true
 	default:
 		return false
@@ -245,26 +222,16 @@ func (m model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if m.screen == screenRePair || m.screen == screenAgentKeyDelete {
+	if m.screen == screenRePair {
 		switch key {
 		case "y", "Y":
-			if m.screen == screenRePair {
-				m.command = []string{"logout"}
-			} else {
-				m.command = []string{"model", "key", "delete", "--confirmed"}
-			}
+			m.command = []string{"logout"}
 			return m, tea.Quit
 		case "f", "F":
-			if m.screen == screenRePair {
-				m.command = []string{"device", "forget-local"}
-				return m, tea.Quit
-			}
+			m.command = []string{"device", "forget-local"}
+			return m, tea.Quit
 		case "n", "N", "esc", "backspace":
-			if m.screen == screenRePair {
-				m.screen = screenSettings
-			} else {
-				m.screen = screenAgentSettings
-			}
+			m.screen = screenSettings
 			m.cursor = 0
 		}
 		return m, nil
@@ -300,7 +267,7 @@ func (m *model) goBack() {
 		m.screen = screenSettings
 	case screenAgentSettings:
 		m.screen = screenSettings
-	case screenAgentProvider, screenAgentReasoning, screenAgentPrivacy:
+	case screenGatewayModels, screenAgentReasoning, screenAgentPrivacy:
 		m.screen = screenAgentSettings
 	}
 	m.cursor = 0
@@ -317,11 +284,6 @@ func (m model) activate(item menuItem) (tea.Model, tea.Cmd) {
 	}
 	if item.key == "b" {
 		m.goBack()
-		return m, nil
-	}
-	if item.provider != "" {
-		m.agentProviderDraft = item.provider
-		m.open(screenAgentConfig)
 		return m, nil
 	}
 	if item.next != screenMain {
@@ -358,45 +320,9 @@ func (m *model) open(next screen) {
 		m.inputs = []textinput.Model{newInput("30s", display(m.snapshot.Timeout, "30s"))}
 		m.inputLabels = []string{"请求超时"}
 	case screenAgentConfig:
-		agentConfig := m.snapshot
-		if m.agentProviderDraft != "" {
-			preset := config.DefaultAgentConfig(m.agentProviderDraft)
-			agentConfig.AgentBaseURL = preset.BaseURL
-			agentConfig.AgentModel = preset.Model
-			agentConfig.AgentContextWindow = preset.ContextWindow
-			agentConfig.AgentMaxTokens = preset.MaxTokens
-			agentConfig.AgentContextCompaction = preset.ContextCompaction
-			agentConfig.AgentTimeout = preset.Timeout
-			agentConfig.AgentMaxToolRounds = preset.MaxToolRounds
-		}
-		contextWindow := strconv.Itoa(config.DefaultAgentContextWindow)
-		if agentConfig.AgentContextWindow > 0 {
-			contextWindow = strconv.Itoa(agentConfig.AgentContextWindow)
-		}
-		maxTokens := config.DefaultAgentMaxTokens
-		if agentConfig.AgentMaxTokens > 0 {
-			maxTokens = agentConfig.AgentMaxTokens
-		}
-		toolRounds := strconv.Itoa(config.DefaultAgentMaxToolRounds)
-		if agentConfig.AgentMaxToolRounds > 0 {
-			toolRounds = strconv.Itoa(agentConfig.AgentMaxToolRounds)
-		}
-		m.inputs = []textinput.Model{
-			newInput("https://api.openai.com/v1", agentConfig.AgentBaseURL),
-			newInput("模型名称", agentConfig.AgentModel),
-			newInput(strconv.Itoa(config.DefaultAgentContextWindow), contextWindow),
-			newInput("auto", display(agentConfig.AgentContextCompaction, config.DefaultAgentContextCompaction)),
-			newInput(config.DefaultAgentTimeout.String(), display(agentConfig.AgentTimeout, config.DefaultAgentTimeout.String())),
-			newInput("0", toolRounds),
-			newInput(strconv.Itoa(config.DefaultAgentMaxTokens), strconv.Itoa(maxTokens)),
-		}
-		m.inputLabels = []string{"OpenAI兼容Base URL", "模型名称", "上下文窗口", "上下文压缩（auto/recent-only/off）", "模型无响应超时", "最大工具轮数（0=不限制，无固定上界）", "最大输出 tokens（正整数，无固定上界）"}
-	case screenAgentKey:
-		input := newInput("输入不会显示", "")
-		input.EchoMode = textinput.EchoPassword
-		input.EchoCharacter = '•'
-		m.inputs = []textinput.Model{input}
-		m.inputLabels = []string{"API Key（保存到系统钥匙串）"}
+		m.inputs = []textinput.Model{newInput("auto", display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction))}
+		m.inputLabels = []string{"上下文压缩（auto / recent-only / off）"}
+
 	}
 	if len(m.inputs) > 0 {
 		m.resizeInputs()
@@ -428,13 +354,10 @@ func (m model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		previous := m.screen
 		m.screen, m.cursor, m.inputs, m.inputLabels = screenMain, 0, nil, nil
-		if previous == screenAgentConfig {
-			m.agentProviderDraft = ""
-		}
 		switch previous {
 		case screenConnection, screenTimeout:
 			m.screen = screenSettings
-		case screenAgentConfig, screenAgentKey:
+		case screenAgentConfig:
 			m.screen = screenAgentSettings
 		}
 		return m, nil
@@ -476,24 +399,10 @@ func (m model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case screenAgentConfig:
 			if allPresent(values) {
-				m.command = []string{"model", "set"}
-				provider := m.snapshot.AgentProvider
-				reasoningEffort := display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort)
-				if m.agentProviderDraft != "" {
-					provider = m.agentProviderDraft
-					reasoningEffort = config.DefaultAgentConfig(provider).ReasoningEffort
-				}
-				if provider != "" {
-					m.command = append(m.command, "--provider", provider)
-				}
-				m.command = append(m.command, "--base-url", values[0], "--model", values[1], "--context-window", values[2], "--context-compaction", values[3], "--reasoning-effort", reasoningEffort, "--timeout", values[4], "--max-tool-rounds", values[5], "--max-tokens", values[6])
+				m.command = []string{"model", "set", "--context-compaction", values[0]}
 				return m, tea.Quit
 			}
-		case screenAgentKey:
-			if values[0] != "" {
-				m.modelKey = values[0]
-				return m, tea.Quit
-			}
+
 		}
 	}
 	var command tea.Cmd
@@ -519,15 +428,13 @@ func (m model) items() []menuItem {
 			{key: "w", title: "始终启用", description: "所有命令输出都使用颜色", command: []string{"config", "set", "--color", "always"}},
 			{key: "b", title: "返回", description: "返回设置", next: screenMain},
 		}
-	case screenAgentProvider:
-		return []menuItem{
-			{key: "o", title: "OpenAI", description: "官方OpenAI API", provider: "openai"},
-			{key: "d", title: "DeepSeek", description: "DeepSeek官方OpenAI兼容API", provider: "deepseek"},
-			{key: "r", title: "OpenRouter", description: "OpenRouter多模型网关", provider: "openrouter"},
-			{key: "l", title: "Ollama", description: "本机Ollama服务，可不配置API Key", provider: "ollama"},
-			{key: "c", title: "自定义兼容服务", description: "任意OpenAI Chat Completions兼容端点", provider: "custom"},
-			{key: "b", title: "返回", description: "返回AI助手设置", next: screenMain},
+	case screenGatewayModels:
+		items := []menuItem{}
+		for i, connection := range m.snapshot.Models {
+			items = append(items, menuItem{key: strconv.Itoa(i + 1), title: terminal.EscapeText(connection.DisplayName), description: fmt.Sprintf("%s · 上下文 %d / 输出 %d", terminal.EscapeText(connection.ModelName), connection.ContextTokens, connection.OutputTokens), command: []string{"model", "select", connection.Target}})
 		}
+		items = append(items, menuItem{key: "r", title: "读取模型列表与隐私告知", description: "从配对服务端刷新可选连接", command: []string{"model", "list"}}, menuItem{key: "b", title: "返回", next: screenMain})
+		return items
 	case screenAgentReasoning:
 		return []menuItem{
 			{key: "a", title: "自动（推荐）", description: "由兼容端点决定；请求中省略推理强度字段", command: []string{"model", "set", "--reasoning-effort", "auto"}},
@@ -542,21 +449,15 @@ func (m model) items() []menuItem {
 		}
 	case screenAgentSettings:
 		items := []menuItem{
-			{key: "p", title: "选择提供商预设", description: "OpenAI、DeepSeek、OpenRouter、Ollama或自定义服务", next: screenAgentProvider},
-			{key: "m", title: "编辑模型参数", description: "Base URL、模型、上下文窗口、压缩模式、超时和工具轮数", next: screenAgentConfig},
+			{key: "p", title: "选择服务端模型", description: "仅限网页启用的 teaching / mentor", next: screenGatewayModels},
+			{key: "m", title: "上下文压缩偏好", description: "容量由服务端下发", next: screenAgentConfig},
 			{key: "r", title: "默认推理强度", description: "为新AI助手会话选择auto到max的默认档位", next: screenAgentReasoning},
-			{key: "v", title: "Session历史与隐私", description: "查看保存、provider发送、恢复和清除边界", next: screenAgentPrivacy},
+			{key: "v", title: "Session历史与隐私", description: "查看保存、服务端转发、恢复和清除边界", next: screenAgentPrivacy},
 		}
 		if display(m.snapshot.AgentSessionHistory, config.DefaultAgentSessionHistory) == "off" {
 			items = append(items, menuItem{key: "s", title: "开启会话历史", description: "后续新Session默认本机加密保存；自动标题会发送有界对话片段", command: []string{"model", "set", "--session-history", "auto"}})
 		} else {
 			items = append(items, menuItem{key: "s", title: "关闭会话历史", description: "后续新Session仅在当前进程有效；已有历史仍可恢复和删除", command: []string{"model", "set", "--session-history", "off"}})
-		}
-		items = append(items,
-			menuItem{key: "u", title: "更新API Key", description: "通过隐藏输入写入系统钥匙串", next: screenAgentKey},
-		)
-		if m.snapshot.AgentKeyConfigured {
-			items = append(items, menuItem{key: "x", title: "删除API Key", description: "从系统钥匙串删除模型凭据", next: screenAgentKeyDelete})
 		}
 		items = append(items,
 			menuItem{key: "t", title: "测试模型连接", description: "发送最小请求验证当前模型配置", command: []string{"model", "test"}},
@@ -567,7 +468,7 @@ func (m model) items() []menuItem {
 		if m.snapshot.LocalState == LocalStateIncomplete {
 			return []menuItem{
 				{key: "f", title: "修复本地配对状态", description: "确认后删除不完整的本地状态", command: []string{"device", "forget-local"}},
-				{key: "a", title: "AI助手与模型", description: "管理本地模型、API Key和Agent参数", next: screenAgentSettings},
+				{key: "a", title: "AI助手与模型", description: "选择服务端模型与客户端偏好", next: screenAgentSettings},
 				{key: "b", title: "返回", description: "返回主控制台", next: screenMain},
 			}
 		}
@@ -576,7 +477,7 @@ func (m model) items() []menuItem {
 			pairTitle = "重新配对或更换服务器"
 		}
 		items := []menuItem{
-			{key: "a", title: "AI助手与模型", description: "管理本地模型、API Key和Agent参数", next: screenAgentSettings},
+			{key: "a", title: "AI助手与模型", description: "选择服务端模型与客户端偏好", next: screenAgentSettings},
 			{key: "t", title: "客户端请求超时", description: "调整访问edu-agent服务的HTTP超时", next: screenTimeout},
 			{key: "c", title: "命令输出颜色", description: "选择关闭、自动或始终启用", next: screenColor},
 		}
@@ -590,30 +491,21 @@ func (m model) items() []menuItem {
 	if m.snapshot.LocalState == LocalStateIncomplete {
 		return []menuItem{
 			{key: "p", title: "修复本地配对状态", description: "确认后删除不完整的本地状态", command: []string{"device", "forget-local"}},
-			{key: "a", title: "配置AI助手", description: "管理本地模型和系统钥匙串中的API Key", next: screenAgentSettings},
+			{key: "a", title: "配置AI助手", description: "配对后选择服务端模型", next: screenAgentSettings},
 			{key: "q", title: "退出", description: "返回Shell"},
 		}
 	}
 	if m.snapshot.LocalState == LocalStateUnpaired {
 		return []menuItem{
 			{key: "p", title: "配对设备", description: "连接到edu-agent服务", next: screenConnection},
-			{key: "a", title: "配置AI助手", description: "先配置模型，也可在配对后使用", next: screenAgentSettings},
+			{key: "a", title: "配置AI助手", description: "先配对，再选择服务端模型并确认隐私告知", next: screenAgentSettings},
 			{key: "s", title: "设置", description: "连接、客户端和模型设置", next: screenSettings},
 			{key: "q", title: "退出", description: "返回Shell"},
 		}
 	}
 	agentItem := menuItem{key: "a", title: "AI学习助手", description: "通过Agent Loop结合知识库、进度和长期偏好辅助学习", command: []string{"agent"}}
-	if strings.TrimSpace(m.snapshot.AgentProvider) == "" {
-		agentItem = menuItem{key: "a", title: "配置AI助手", description: "先选择模型提供商，再确认参数并保存", next: screenAgentProvider}
-	} else {
-		agentConfig := config.AgentConfig{Provider: m.snapshot.AgentProvider, BaseURL: m.snapshot.AgentBaseURL}
-		if !agentConfig.APIKeyOptional() && !m.snapshot.AgentKeyConfigured {
-			if m.snapshot.AgentKeyBackendUnavailable {
-				agentItem = menuItem{key: "a", title: "修复AI助手配置", description: "系统钥匙串不可用；请启用系统凭据服务或改用本地模型", next: screenAgentSettings}
-			} else {
-				agentItem = menuItem{key: "a", title: "补全AI助手配置", description: "当前模型需要API Key，保存后才能启动", next: screenAgentKey}
-			}
-		}
+	if m.snapshot.SelectedTarget == "" || !m.snapshot.PrivacyConfirmed {
+		agentItem = menuItem{key: "a", title: "选择模型与隐私告知", description: "配对 → 选择服务端模型 → 确认告知", next: screenGatewayModels}
 	}
 	items := []menuItem{agentItem}
 	if m.workspace != nil {
@@ -688,21 +580,11 @@ func (m model) View() string {
 		body.WriteString(labelStyle.Render("AI模型参数"))
 		m.renderInputs(&body)
 		body.WriteString("\n" + mutedStyle.Render("Tab切换字段  Enter保存  Esc取消"))
-	case screenAgentKey:
-		body.WriteString(labelStyle.Render("更新模型API Key"))
-		body.WriteString("\n" + mutedStyle.Render("密钥只写入操作系统钥匙串，不进入config.json或日志。"))
-		m.renderInputs(&body)
-		body.WriteString("\n" + mutedStyle.Render("Enter保存  Esc取消"))
 	case screenAgentPrivacy:
 		m.renderSessionPrivacy(&body)
 	case screenRePair:
 		body.WriteString(labelStyle.Render("重新配对设备"))
 		body.WriteString("\n\n[Y] 安全注销旧设备\n需要旧服务器在线，会先撤销远端设备。\n\n[F] 仅清除本地配对\n旧服务器不可用时用于恢复；远端设备可能仍有效。\n\n[N] 取消")
-	case screenAgentKeyDelete:
-		body.WriteString(labelStyle.Render("删除模型API Key"))
-		body.WriteString("\n\n这会从操作系统钥匙串中删除当前模型凭据。\n普通模型设置不会被删除。\n\n")
-		body.WriteString(selectedStyle.Render("Y 确认删除"))
-		body.WriteString("   " + mutedStyle.Render("N 取消"))
 	default:
 		m.renderMenuHeader(&body)
 		items := m.items()
@@ -756,14 +638,16 @@ func (m model) renderMenuHeader(body *strings.Builder) {
 	case screenAgentSettings:
 		body.WriteString(labelStyle.Render("AI助手与模型"))
 		body.WriteString("\n")
-		body.WriteString(fmt.Sprintf("提供商：%s\n模型：%s\nBase URL：%s\n上下文窗口：%s\n最大输出 tokens：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n无响应超时：%s\n工具轮数：%s\nAPI Key：%s\n\n",
-			providerDisplay(m.snapshot.AgentProvider), display(m.snapshot.AgentModel, "未配置"), display(m.snapshot.AgentBaseURL, "未配置"),
-			positiveNumber(m.snapshot.AgentContextWindow), positiveNumber(m.snapshot.AgentMaxTokens), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory), display(m.snapshot.AgentTimeout, config.DefaultAgentTimeout.String()), toolRoundLimit(m.snapshot.AgentMaxToolRounds), keyStatus(m.snapshot.AgentKeyConfigured, m.snapshot.AgentKeyBackendUnavailable)))
-	case screenAgentProvider:
-		body.WriteString(labelStyle.Render("选择模型提供商"))
-		body.WriteString("\n")
-		body.WriteString(mutedStyle.Render("选择后会进入参数表单；只有在表单中按Enter保存，配置才会生效。"))
-		body.WriteString("\n\n")
+		body.WriteString(fmt.Sprintf("所选连接：%s\n模型：%s\n上下文窗口：%s\n最大输出 tokens：%s\n上下文压缩：%s\n默认推理强度：%s\n会话历史：%s\n\n", display(m.snapshot.SelectedTarget, "未选择"), display(m.snapshot.AgentModel, "请刷新服务端配置"), positiveNumber(m.snapshot.AgentContextWindow), positiveNumber(m.snapshot.AgentMaxTokens), display(m.snapshot.AgentContextCompaction, config.DefaultAgentContextCompaction), display(m.snapshot.AgentReasoningEffort, config.DefaultAgentReasoningEffort), sessionHistoryName(m.snapshot.AgentSessionHistory)))
+	case screenGatewayModels:
+		body.WriteString(labelStyle.Render("选择服务端模型"))
+		body.WriteString("\n仅显示网页启用的教学 / AI 助手连接。\n")
+		if m.snapshot.GatewayError != "" {
+			body.WriteString(terminal.EscapeText(m.snapshot.GatewayError) + "\n")
+		}
+		if !m.snapshot.PrivacyConfirmed {
+			body.WriteString("首次读取前将显示隐私告知并等待确认。\n")
+		}
 	case screenAgentReasoning:
 		body.WriteString(labelStyle.Render("默认推理强度"))
 		body.WriteString("\n")
@@ -797,9 +681,9 @@ func sessionPrivacyPages() []privacyPage {
 			title: "发送与恢复",
 			lines: []string{
 				"• 自动标题会把有界近期片段发送",
-				"  到当前 provider。",
+				"  到所选服务端模型。",
 				"• 恢复后下一请求会把历史发送到",
-				"  当前 provider；endpoint 变化先确认。",
+				"  所选服务端模型；目的地变化先确认。",
 				"• workspace 正文可能在加密历史中；",
 				"  恢复不代表当前磁盘内容。",
 			},
@@ -811,7 +695,7 @@ func sessionPrivacyPages() []privacyPage {
 				"  Session 仅当前进程有效。",
 				"• clear 只清本地 Agent Session store。",
 				"• 不清 server/Nocturne/terminal、",
-				"  Shell/provider retention/OS backup。",
+				"  Shell/模型服务/OS 备份。",
 				"• YOLO、旧文件授权和 pending 交互",
 				"  均不恢复。",
 			},
@@ -873,23 +757,6 @@ func toolRoundLimit(value int) string {
 	return strconv.Itoa(value)
 }
 
-func providerDisplay(value string) string {
-	switch value {
-	case "openai":
-		return "OpenAI"
-	case "deepseek":
-		return "DeepSeek"
-	case "openrouter":
-		return "OpenRouter"
-	case "ollama":
-		return "Ollama"
-	case "custom":
-		return "自定义OpenAI兼容服务"
-	default:
-		return display(value, "未配置")
-	}
-}
-
 func localStateName(value LocalState) string {
 	switch value {
 	case LocalStatePaired:
@@ -917,14 +784,4 @@ func sessionHistoryName(value string) string {
 		return "关闭（后续新Session不保存）"
 	}
 	return "自动（本机加密保存）"
-}
-
-func keyStatus(configured, backendUnavailable bool) string {
-	if configured {
-		return "已存入系统钥匙串"
-	}
-	if backendUnavailable {
-		return "系统钥匙串不可用（请启用系统凭据服务或改用本地模型）"
-	}
-	return "未配置"
 }

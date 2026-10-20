@@ -30,7 +30,7 @@ func TestControllerMkdirCompletedAndPartialSurviveResume(t *testing.T) {
 				{Message: modelclient.Message{Role: "assistant", Content: "已创建目录"}},
 			}}
 			server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-			provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+			provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 			executor, err := workspace.Open(root)
 			if err != nil {
 				t.Fatal(err)
@@ -92,7 +92,7 @@ func TestControllerMkdirWALCrashOnlyDescribesPossiblePaths(t *testing.T) {
 	storeRoot, root := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	c, err := Start(t.Context(), controllerDependencies(controllerStore(t, storeRoot, secrets), &controllerModel{}, server, root, provider), false)
 	if err != nil {
 		t.Fatal(err)

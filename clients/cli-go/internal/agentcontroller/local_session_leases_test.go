@@ -72,7 +72,7 @@ func newLeaseFixture(t *testing.T, noSave bool) *leaseFixture {
 	if !noSave {
 		store = f.openStore(t)
 	}
-	dependencies := controllerDependencies(store, &leaseTestModel{}, f.server, f.workspace, Provider{Name: "local", Endpoint: "http://localhost:11434/v1", Model: "test"})
+	dependencies := controllerDependencies(store, &leaseTestModel{}, f.server, f.workspace, GatewayBinding{Target: "teaching", ServerURL: "http://localhost:11434/v1", ModelName: "test"})
 	dependencies.LoopOptions.ContextWindow = 32768
 	dependencies.LoopOptions.LocalExec = f.manager
 	var err error
@@ -203,10 +203,10 @@ func TestLocalSessionLeaseSwitchRoundTrip(t *testing.T) {
 	}
 	// Changing provider must still install only a local view until confirmation.
 	c.mu.Lock()
-	c.provider.Endpoint = "https://different.example/v1"
+	c.provider.ServerURL = "https://different.example/v1"
 	c.mu.Unlock()
 	plan := c.PlanSwitch(summary)
-	if !plan.NeedProviderConfirm {
+	if !plan.NeedGatewayConfirm {
 		t.Fatal("missing provider confirmation plan")
 	}
 	if _, err := c.CommitSwitch(t.Context(), plan, SwitchConfirmation{}); err != nil {
@@ -217,10 +217,10 @@ func TestLocalSessionLeaseSwitchRoundTrip(t *testing.T) {
 		t.Error("switch did not transfer the same handle lease")
 	}
 	c.mu.Unlock()
-	if c.SessionID() != a || !c.Status().ProviderConfirmationRequired || c.FileAuthorizationMode() != agentloop.FileAuthorizationConfirm {
+	if c.SessionID() != a || !c.Status().GatewayConfirmationRequired || c.FileAuthorizationMode() != agentloop.FileAuthorizationConfirm {
 		t.Fatal("restore gates changed")
 	}
-	if _, err := c.Send(t.Context(), "must not transmit"); !errors.Is(err, ErrProviderConfirmationRequired) {
+	if _, err := c.Send(t.Context(), "must not transmit"); !errors.Is(err, ErrGatewayConfirmationRequired) {
 		t.Fatalf("provider gate bypass: %v", err)
 	}
 	tasks, err := c.LocalTasks()
@@ -236,7 +236,7 @@ func TestLocalSessionLeaseSwitchRoundTrip(t *testing.T) {
 		t.Fatalf("stop after restore: %+v err=%v", stopped, err)
 	}
 	leaseAssertLocked(t, external, leaseSummary(t, c, a))
-	if err := c.ConfirmProvider(t.Context()); err != nil {
+	if err := c.ConfirmGateway(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }

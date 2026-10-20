@@ -69,7 +69,7 @@ func TestWorkbenchPTYKeepsAlternateScreenAcrossSubmit(t *testing.T) {
 	wait("overview")
 	send("3")
 	wait("goals")
-	send(strings.Repeat("\x1b[B", 8) + "\r")
+	send("\r")
 	wait("目标草稿")
 	send("\x1b[200~中文目标\n第二行\x1b[201~")
 	wait("第二行")

@@ -68,7 +68,7 @@ func (a *App) workbenchProgress(ctx context.Context, client APIClient, req workb
 	if !q.Global {
 		p.Entries = append(p.Entries, workbench.Entry{ID: "agent:" + req.Resource + "/", Label: "打开本区 AI 聊天（不自动选择目标）"})
 	}
-	p.Content = safeText(p.Content)
+	// workbench 按行转义外部文本；整段转义会把结构化换行显示为字面量 \n。
 	return p, nil
 }
 func progressWarnings(m api.ProjectionMetadata) string {

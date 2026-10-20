@@ -70,6 +70,7 @@ func (r *Runner) Run(ctx context.Context, snapshot Snapshot) ([]string, bool, er
 			}
 			r.workspace = workbench.New(ctx, r.Workbench, space)
 		}
+		r.workspace.SetColorMode(snapshot.Color, r.Out)
 		initial.workspace, initial.ctx = r.workspace, ctx
 		defer r.workspace.Suspend()
 	}

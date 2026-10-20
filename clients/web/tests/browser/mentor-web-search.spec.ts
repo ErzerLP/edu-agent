@@ -1,0 +1,37 @@
+import { test, expect } from '@playwright/test'
+import { configureNotebookModel, pairNotebook, webAPI } from './notebook-fixture'
+import { randomUUID } from 'node:crypto'
+
+test.skip(process.env.WEB_SEARCH_BROWSER_FIXTURE !== '1', '使用 npm run test:mentor-web-search 启动受控网络夹具')
+
+test('导师自动搜索读取、核对网络引用并确认加入来源', async ({ page }) => {
+  test.setTimeout(120000)
+  await configureNotebookModel(page)
+  await pairNotebook(page, 'learner')
+  const space = await webAPI(page, 'POST', '/v1/learning-spaces', { operation_id: randomUUID(), expected_version: 0, name: '网页导师联网验收', description: '', status: 'active', direction: '核实公开网页资料' })
+  await page.goto(`/app/spaces/${space.id}`)
+  const toggle = page.getByRole('checkbox', { name: '联网搜索', exact: true })
+  await expect(toggle).toBeChecked()
+  await expect(page.getByText(/问题中的检索词会发送给搜索服务/)).toBeVisible()
+  await page.getByLabel('向导师提问', { exact: true }).fill('联网验收：请核实公开网页最新版本')
+  await page.getByRole('button', { name: '发送提问', exact: true }).click()
+  const citation = page.getByRole('button', { name: '[1] 网络来源', exact: true })
+  await expect(citation).toBeVisible({ timeout: 60000 })
+  await citation.click()
+  await expect(page.getByRole('heading', { name: '联网验收版本说明', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '加入来源', exact: true }).click()
+  await expect(page.getByRole('region', { name: '加入来源预览' })).toBeVisible()
+  await page.getByRole('button', { name: '确认加入来源', exact: true }).click()
+  await expect(page.getByText('已加入来源', { exact: true })).toBeVisible()
+  await expect(page.locator('.notebook-sources-list')).toContainText('联网验收版本说明')
+  await expect(page.getByRole('checkbox', { name: /^选择来源：联网验收版本说明/ })).not.toBeChecked()
+  await toggle.click()
+  await expect(page.getByText('已关闭联网搜索', { exact: true })).toBeVisible()
+  await expect(toggle).not.toBeChecked()
+  await page.reload()
+  await expect(toggle).not.toBeChecked()
+  await expect(page.locator('.notebook-sources-list')).toContainText('联网验收版本说明')
+  const next = await webAPI(page, 'POST', '/v1/learning/conversations', { id: randomUUID(), mode: 'mentor', saved: true, title: '普通导师联网偏好' }, space.id)
+  await page.goto(`/app/spaces/${space.id}/chat/${next.id}`)
+  await expect(page.getByRole('checkbox', { name: '联网搜索', exact: true })).toBeChecked()
+})

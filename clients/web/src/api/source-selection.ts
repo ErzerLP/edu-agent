@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { sourceItemSchema, sourceDetailSchema } from './notebook-sources'
+import { webCitationSchema } from './web-search'
 import type { components } from './schema'
 
 export const sourceIdentitySchema = z.object({
@@ -22,16 +23,17 @@ export const sourceManifestSchema = z.object({
   sha256: hash,
   entries: z.array(sourceIdentitySchema.extend({ sha256: hash })).max(100),
 })
-export const mentorCitationSchema = z.object({
+export const learningSourceCitationSchema = z.object({
   id: z.string().regex(/^[1-9][0-9]{0,2}$/),
   source: sourceItemSchema,
   fragment: sourceDetailSchema.shape.fragments.element,
   document_sha256: hash,
   slice_sha256: hash,
 })
+export const mentorCitationSchema = z.discriminatedUnion('origin', [learningSourceCitationSchema.extend({ origin: z.literal('learning_source') }), webCitationSchema])
 export type MentorCitation = z.infer<typeof mentorCitationSchema>
 // Staged Studio artifacts cite sections as `<unit>:<n>`; other fields stay identical.
-export const studioCitationSchema = mentorCitationSchema.extend({ id: z.string().regex(/^[A-Za-z0-9._-]{1,128}(:[1-9][0-9]{0,3})?$/) })
+export const studioCitationSchema = learningSourceCitationSchema.extend({ id: z.string().regex(/^[A-Za-z0-9._-]{1,128}(:[1-9][0-9]{0,3})?$/) })
 export const sourceKey = (s: SourceIdentity) =>
   `${s.collection_id}:${s.revision_id}:${s.document_id}:${s.document_revision_id}`
 export function selectedSources(

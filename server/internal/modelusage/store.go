@@ -127,6 +127,9 @@ func (s *Store) Finish(ctx context.Context, ref CallRef, state string, u Usage) 
 // Assessment task origins refer to attempts, which retain their run binding.
 // It never replays an outbound HTTP request to repair statistics.
 func (s *Store) RecoverTx(ctx context.Context, tx pgx.Tx, generation int64) error {
+	if err := s.RecoverSearchTx(ctx, tx, generation); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE learning_model_calls c SET dispatch_state=CASE WHEN c.dispatch_state='prepared' THEN 'not_dispatched' ELSE 'outcome_unknown' END,finished_at=clock_timestamp()
 	 FROM learning_model_tasks t WHERE c.task_id=t.id AND c.privacy_generation=$1 AND c.dispatch_state IN ('prepared','dispatching') AND (
 	 c.lease_until<clock_timestamp() OR c.lease_until IS NULL AND NOT EXISTS (

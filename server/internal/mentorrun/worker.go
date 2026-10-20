@@ -471,7 +471,17 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	host.model, _, _, err = s.settings.MentorUsageClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
 		return budgetTransport{host: host, next: next, connection: connection}
 	})
-	if host.body.TopicIndex != nil {
+	webAnswered := false
+	if host.body.Web != nil {
+		err = host.prepareWebSearch(execution)
+		if err == nil && len(host.body.Web.Documents) > 0 {
+			webAnswered = true
+			err = host.generateWebAnswer(execution)
+		}
+	}
+	if err != nil || webAnswered {
+		// The isolated public stage either paused/failed, or published its verified answer.
+	} else if host.body.TopicIndex != nil {
 		err = host.generateTopics(execution)
 	} else if host.body.StudioPlan != nil {
 		err = host.generateStudioPlan(execution)
@@ -490,7 +500,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 	} else if len(host.body.Pending) > 0 {
 		_, err = host.Execute(execution, host.body.Pending)
 	}
-	if err == nil && host.body.StudioContent == nil && host.body.StudioPlan == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
+	if err == nil && !webAnswered && host.body.StudioContent == nil && host.body.StudioPlan == nil && host.body.TopicIndex == nil && host.body.Assessment == nil && host.body.Study == nil && host.body.Interaction == nil && host.body.Research == nil && host.body.ContentEdit == nil && host.body.Studio == nil {
 		_, err = (agentcore.Runner[struct{}]{Model: callModel{host}, Context: host, History: host, Tools: host, Events: host}).Run(execution)
 	}
 	if execution.Err() != nil {

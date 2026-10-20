@@ -16,7 +16,9 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	knowledgepostgres "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
+	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/research"
+	"github.com/edu-agent/edu-agent/server/internal/transport/access"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -64,6 +66,8 @@ func (t researchTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func (h *executionHost) runResearch(ctx context.Context) error {
+	ctx = access.WithCredential(ctx, identity.Credential{Device: identity.Device{ID: h.owned.device}, TokenID: h.owned.token})
+	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "research", OriginID: h.owned.RunID, Stage: "search_web", SpaceID: h.owned.SpaceID, Generation: h.owned.Generation})
 	state := h.body.Research
 	if !state.Discovered && h.body.StartLearning != nil && h.body.StartLearning.Request.ReferenceContextID != "" {
 		scoped, err := learningspace.WithScope(ctx, h.owned.SpaceID)

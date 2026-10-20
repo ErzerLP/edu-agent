@@ -11,6 +11,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/platform/keyrotation"
+	"github.com/google/uuid"
 )
 
 func TestPostgreSQLTutorHistoryKeyRotationIncludesSharedOwners(t *testing.T) {
@@ -22,6 +23,9 @@ func TestPostgreSQLTutorHistoryKeyRotationIncludesSharedOwners(t *testing.T) {
 		stream(w, modelclient.Message{Role: "assistant", Content: "轮换后仍能读取"})
 	}
 	id := newHistory(t, f.runtimeFixture, true, f.goal)
+	if _, err := f.service.ChangeWebSearch(ctx, f.actor, learningspace.DefaultID, id, WebSearchCommand{OperationID: uuid.NewString(), ExpectedVersion: 1, Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
 	receipt := sendHistory(t, f.runtimeFixture, id, "轮换测试问题")
 	f.work(t)
 	oldKey := bytes.Repeat([]byte{42}, 32)

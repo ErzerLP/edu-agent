@@ -36,6 +36,7 @@ import { RunResultNotice } from '../run-result-notice'
 import { ConversationTopics } from './conversation-topics'
 import { ConversationStudio } from './conversation-studio'
 import type { MessageAnchor } from '@/api/conversation-topics'
+import { WebSearchControl } from './web-search-control'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -59,6 +60,7 @@ export function ChatPanel({
   const { selection } = useSourceSelection()
   const key = JSON.stringify([...prefix, space.id, 'study-draft', conversationId ?? 'new'])
   const [prompt, setPrompt] = useState(() => drafts.get<string>(key) ?? '')
+  const [newWebEnabled, setNewWebEnabled] = useState(true)
   const [pendingTurn, setPendingTurn] = useState(() => drafts.get<PendingTurn>(key + ':pending'))
   const [recovering, setRecovering] = useState(!!pendingTurn)
   const recoveryStarted = useRef(false)
@@ -255,7 +257,7 @@ export function ChatPanel({
     try {
       let target = conversation
       if (!target && !pendingTurn) {
-        const body = { mode: 'study' as const, saved: true }
+        const body = { mode: 'study' as const, saved: true, web_search_enabled: newWebEnabled }
         const created = await unwrap(
           api().POST('/v1/learning/conversations', {
             params: { header },
@@ -275,6 +277,7 @@ export function ChatPanel({
       if (!live.current || !contentAllowed.current) return
       const payload = {
         expected_version: target?.version ?? 1,
+        expected_web_search_version: target?.web_search_version ?? 1,
         direction_version: space.direction_version!,
         source_selection: selection!,
         prompt: text,
@@ -394,7 +397,7 @@ export function ChatPanel({
         ? '\n\n' +
           turn.citations
             .map(
-              (c) => `[${c.id}] ${c.source.path}\n\n> ${c.fragment.text.replaceAll('\n', '\n> ')}`,
+              (c) => c.origin === 'web' ? `[${c.id}] 网络来源\n\n> ${c.quote.replaceAll('\n', '\n> ')}` : `[${c.id}] ${c.source.path}\n\n> ${c.fragment.text.replaceAll('\n', '\n> ')}`,
             )
             .join('\n\n')
         : '')
@@ -655,6 +658,9 @@ export function ChatPanel({
             <FileText size={12} aria-hidden="true" />
             <span>基于 {selection?.items.length ?? '…'} 个来源</span>
           </div>
+          <WebSearchControl key={conversationId ?? 'new'} spaceId={space.id} conversation={conversation} enabled={newWebEnabled} onNewChange={setNewWebEnabled} />
+          {run?.web && <p role="status">{run.web.stage === 'searching' ? `正在搜索：${run.web.query ?? ''}` : run.web.stage === 'reading' ? `正在阅读：${run.web.title ?? ''}` : run.web.notice ?? ''} · 已读取 {run.web.read_succeeded} 个页面</p>}
+          {!!run?.web?.queries?.length && <details><summary>本轮检索记录</summary><ul>{run.web.queries.map((text, index) => <li key={index}>{text}</li>)}</ul><p>已发起的搜索请求数和未知结果可在用量页查看。</p></details>}
         </form>
         {menu &&
           createPortal(

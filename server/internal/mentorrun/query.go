@@ -169,7 +169,12 @@ func (s *Service) ReadSnapshot(ctx context.Context, actor identity.Credential, s
 		if err = verifyStoredCitations(item.body, sources); err != nil {
 			return err
 		}
-		return send(Snapshot{ContextNotice: item.body.ContextNotice, Studio: item.body.Studio, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations, Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
+		var progress *WebProgress
+		if item.body.Web != nil {
+			copy := item.body.Web.Progress
+			progress = &copy
+		}
+		return send(Snapshot{Web: progress, ContextNotice: item.body.ContextNotice, Studio: item.body.Studio, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations, Meta: item.Meta, Output: item.body.Output, Interaction: item.body.Interaction, Research: item.body.Research, StartLearning: item.body.StartLearning, ContentEdit: item.body.ContentEdit, MemorySources: item.body.MemorySources, MemoryStatus: item.body.MemoryStatus})
 	})
 }
 

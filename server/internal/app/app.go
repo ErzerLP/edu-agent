@@ -58,6 +58,10 @@ func verifyNocturneStartupPreflightForRuntime(ctx context.Context, pool *pgxpool
 }
 
 func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	return run(ctx, cfg, logger, mentorrun.NetworkOptions{})
+}
+
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger, network mentorrun.NetworkOptions) error {
 	if err := pdfsource.Prepare(ctx); err != nil {
 		return fmt.Errorf("初始化 PDF 解析器失败: %w", err)
 	}
@@ -102,7 +106,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("读取导师正文密钥失败: %w", err)
 	}
-	mentorRuns, err := mentorrun.New(pool, settingsService, mentorKey)
+	mentorRuns, err := mentorrun.New(pool, settingsService, mentorKey, network)
 	if err != nil {
 		return err
 	}

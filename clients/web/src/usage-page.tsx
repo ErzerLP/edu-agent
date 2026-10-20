@@ -8,6 +8,7 @@ import {
   usageSummary,
   usageTasks,
   usageCalls,
+  searchUsageCalls,
   type UsageTotals,
   type UsageTask,
   type UsageFilter,
@@ -80,6 +81,7 @@ function Totals({ value }: { value: UsageTotals }) {
         {count(value.outcome_unknown_calls)} 次
       </p>
       <dl className="usage-totals">
+        <div><dt>搜索请求</dt><dd>{count(value.search_requests)} 次 · 处理中 {count(value.search_pending)} 次 · 已发起，结果未知 {count(value.search_outcome_unknown)} 次</dd></div>
         {(
           [
             ['total', '合计'],
@@ -132,6 +134,7 @@ function Calls({
         </Button>
       </div>
       <p>{taskLabel(task.kind)} · {when(task.started_at)}</p>
+      {!filter.model && <SearchCalls task={task} filter={filter} />}
       {result.isPending && <p role="status">正在读取调用明细…</p>}
       {result.error ? (
         <ErrorState error={result.error} retry={() => void result.refetch()} />
@@ -192,6 +195,20 @@ function Calls({
       )}
     </section>
   )
+}
+
+function SearchCalls({ task, filter }: { task: UsageTask; filter: UsageFilter }) {
+  const { session, prefix } = useIdentity()
+  const [cursors, setCursors] = useState([''])
+  const result = useQuery({ queryKey: [...prefix, 'usage-search', filter, task.id, cursors.at(-1)], gcTime: 0,
+    queryFn: ({ signal }) => unwrap(learningClient(session, filter.space_id).GET('/v1/learning/usage/tasks/{taskID}/search-calls', { params: { path: { taskID: task.id }, query: { ...filter, cursor: cursors.at(-1), limit: 20 } }, signal }), searchUsageCalls),
+  })
+  return <section aria-label="搜索请求明细"><h3>搜索请求</h3>
+    {result.isPending && <p role="status">正在读取搜索用量…</p>}
+    {result.error && <ErrorState error={result.error} />}
+    {result.data?.items.map(call => <p key={call.id}>{when(call.started_at)} · {call.provider} · {{ prepared: '等待派发', not_dispatched: '未派发', dispatching: '处理中', received: '已收到响应', failed: '请求失败', cancelled: '已停止', outcome_unknown: '已发起，结果未知' }[call.state]}</p>)}
+    {result.data && <Pagination page={cursors.length} previous={cursors.length > 1 ? () => setCursors(cursors.slice(0, -1)) : undefined} next={result.data.next_cursor ? () => setCursors([...cursors, result.data!.next_cursor!]) : undefined} />}
+  </section>
 }
 function Tasks({ filter, deviceNames }: { filter: UsageFilter; deviceNames: Map<string, string> }) {
   const { session, prefix } = useIdentity()

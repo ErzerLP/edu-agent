@@ -117,6 +117,7 @@ func (h *executionHost) Prepare(ctx context.Context) (agentcore.ContextPlan, err
 		request.Tools = append(append([]modelclient.Tool{}, request.Tools...), companionTool)
 		request.Messages[0].Content += " 当前已显式连接本机 companion，可用 local_operation；执行只发生在授权设备。文件写入需面板确认；命令/input 不保留可重放历史。"
 	}
+	request.Messages[0].Content += h.webAnswerRules()
 	return h.assembleContext(ctx, request, nil, h.body.Messages)
 }
 
@@ -376,6 +377,11 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 	}
 	var usageCall modelusage.CallRef
 	err := h.service.mutateTx(request.Context(), &h.owned, "model_started", func(tx pgx.Tx, item *row) error {
+		if t.stage == "web_retrieval" {
+			if err := h.webGateTx(request.Context(), tx); err != nil {
+				return err
+			}
+		}
 		if len(h.modelMemorySources()) > 0 {
 			if err := h.validateMemorySources(request.Context(), tx); err != nil {
 				return err

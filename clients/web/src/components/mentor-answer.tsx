@@ -180,6 +180,7 @@ export function MentorAnswer({
       <AnswerContext.Provider value={{ spaceId, runId, formulas, onCitation }}>
         <SafeMarkdown text={prepared} remarkPlugins={[plugin]} components={answerComponents} />
       </AnswerContext.Provider>
+      {citations.length > 0 && <div className="actions" aria-label="回答来源">{citations.map(c => onCitation ? <Button key={c.id} variant="outline" onClick={() => onCitation(runId, c.id)}>[{c.id}] {c.origin === 'web' ? '网络来源' : '学习区来源'}</Button> : <SourceDialog key={c.id} label={`[${c.id}] ${c.origin === 'web' ? '网络来源' : '学习区来源'}`} title={`核验引用 ${c.id}`}><MentorCitationContent spaceId={spaceId} runId={runId} citationId={c.id} /></SourceDialog>)}</div>}
     </div>
   )
 }

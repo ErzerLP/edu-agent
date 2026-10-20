@@ -258,3 +258,19 @@ func TestCLINginxAllowlist(t *testing.T) {
 		})
 	}
 }
+
+func TestMentorWebSearchNginxPaths(t *testing.T) {
+	locations := nginxLocations(t, readNginx(t))
+	for _, path := range []string{"/v1/learning/web-documents/a", "/v1/learning/web-documents/a/pages/2", "/v1/learning/web-import-previews", "/v1/learning/web-imports", "/v1/learning/usage/tasks/a/search-calls", "/v1/learning/conversations/a/web-search"} {
+		location := selectedLocation(locations, path)
+		if location == nil || location.path == "/" {
+			t.Errorf("网页搜索路径未转发: %s", path)
+		}
+	}
+	for _, path := range []string{"/v1/learning/web-documents/a/delete", "/v1/learning/web-imports/force", "/v1/learning/usage/tasks/a/search-calls/force"} {
+		location := selectedLocation(locations, path)
+		if location == nil || location.path != "/" {
+			t.Errorf("未知路径被放行: %s", path)
+		}
+	}
+}

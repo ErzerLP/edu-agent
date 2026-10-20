@@ -29,6 +29,11 @@ var (
 )
 
 type Conversation struct {
+	WebSearchEnabled     bool   `json:"web_search_enabled"`
+	WebSearchVersion     int64  `json:"web_search_version"`
+	WebSearchAvailable   bool   `json:"web_search_available"`
+	WebSearchReason      string `json:"web_search_reason"`
+	webAccessEpoch       int64
 	Mode                 string    `json:"mode,omitempty"`
 	ID                   string    `json:"id"`
 	SpaceID              string    `json:"space_id"`
@@ -55,6 +60,7 @@ type Conversation struct {
 }
 
 type NewConversation struct {
+	WebSearchEnabled  *bool  `json:"web_search_enabled,omitempty"`
 	Mode              string `json:"mode,omitempty"`
 	ID                string `json:"id"`
 	GoalID            string `json:"goal_id,omitempty"`
@@ -64,12 +70,13 @@ type NewConversation struct {
 }
 
 type SubmitTurn struct {
-	DirectionVersion   int64                      `json:"direction_version,omitempty"`
-	SourceSelection    *knowledge.SourceSelection `json:"source_selection,omitempty"`
-	OperationID        string                     `json:"operation_id"`
-	ExpectedVersion    int64                      `json:"expected_version"`
-	Prompt             string                     `json:"prompt"`
-	ConfirmDestination string                     `json:"confirm_destination,omitempty"`
+	ExpectedWebSearchVersion *int64                     `json:"expected_web_search_version,omitempty"`
+	DirectionVersion         int64                      `json:"direction_version,omitempty"`
+	SourceSelection          *knowledge.SourceSelection `json:"source_selection,omitempty"`
+	OperationID              string                     `json:"operation_id"`
+	ExpectedVersion          int64                      `json:"expected_version"`
+	Prompt                   string                     `json:"prompt"`
+	ConfirmDestination       string                     `json:"confirm_destination,omitempty"`
 }
 
 // Submit 使用调用者原始载荷查回执，不能因受理后目标版本变化把重试解释为新操作。
@@ -102,7 +109,7 @@ func (s *Service) Submit(ctx context.Context, actor identity.Credential, space, 
 	if c.Mode == "study" && (request.DirectionVersion < 1 || request.SourceSelection == nil) || c.Mode != "study" && request.DirectionVersion != 0 {
 		return Receipt{}, ErrInvalid
 	}
-	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{studyVersion: request.DirectionVersion, SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved})
+	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{ExpectedWebSearchVersion: request.ExpectedWebSearchVersion, studyVersion: request.DirectionVersion, SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved})
 }
 
 type ConversationQuery struct {
@@ -189,6 +196,9 @@ func openHistory(a cipher.AEAD, aad string, raw []byte, value any) error {
 	if decoder.Decode(value) != nil {
 		return ErrStorage
 	}
+	if body, ok := value.(*Body); ok {
+		expireWebEvidence(body)
+	}
 	return nil
 }
 
@@ -201,11 +211,11 @@ func destination(provider, endpoint string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-const conversationColumns = `c.id::text,c.space_id::text,COALESCE(c.goal_id::text,''),COALESCE(c.teaching_session_id::text,''),c.privacy_generation,c.version,c.saved,c.provider,c.endpoint,c.title,c.updated_at,COALESCE(s.current_run_id::text,''),c.deleted,c.request_hash,c.mode`
+const conversationColumns = `c.id::text,c.space_id::text,COALESCE(c.goal_id::text,''),COALESCE(c.teaching_session_id::text,''),c.privacy_generation,c.version,c.saved,c.provider,c.endpoint,c.title,c.updated_at,COALESCE(s.current_run_id::text,''),c.deleted,c.request_hash,c.mode,c.web_search_enabled,c.web_search_version,c.web_access_epoch`
 
 func scanConversation(r pgx.Row) (Conversation, error) {
 	var c Conversation
-	err := r.Scan(&c.ID, &c.SpaceID, &c.GoalID, &c.TeachingSessionID, &c.Generation, &c.Version, &c.Saved, &c.Provider, &c.Endpoint, &c.titleCipher, &c.UpdatedAt, &c.CurrentRunID, &c.deleted, &c.requestHash, &c.Mode)
+	err := r.Scan(&c.ID, &c.SpaceID, &c.GoalID, &c.TeachingSessionID, &c.Generation, &c.Version, &c.Saved, &c.Provider, &c.Endpoint, &c.titleCipher, &c.UpdatedAt, &c.CurrentRunID, &c.deleted, &c.requestHash, &c.Mode, &c.WebSearchEnabled, &c.WebSearchVersion, &c.webAccessEpoch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -221,6 +231,10 @@ func conversationRow(ctx context.Context, tx pgx.Tx, actor identity.Credential, 
 }
 
 func (s *Service) describeConversation(ctx context.Context, tx pgx.Tx, c *Conversation) error {
+	c.WebSearchAvailable = s.settings.View().Search.Enabled && s.settings.View().Search.Configured && s.CanSave()
+	if !c.WebSearchAvailable {
+		c.WebSearchReason = "搜索服务未配置或不可用"
+	}
 	c.GoalVersion = 1
 	c.Title = "临时对话"
 	c.StorageState = "temporary"
@@ -355,6 +369,11 @@ func (s *Service) NewConversation(ctx context.Context, actor identity.Credential
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_tutor_conversations(id,device_id,space_id,goal_id,teaching_session_id,privacy_generation,saved,provider,endpoint,title,request_hash,mode) VALUES($1,$2,$3,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,$9,$10,$11,$12)`, request.ID, actor.Device.ID, space, request.GoalID, request.TeachingSessionID, generation, request.Saved, view.Provider, view.Endpoint, ciphertext, hash[:], mode); err != nil {
 		return "", err
+	}
+	if request.WebSearchEnabled != nil {
+		if _, err = tx.Exec(ctx, `UPDATE learning_tutor_conversations SET web_search_enabled=$2 WHERE id=$1`, request.ID, *request.WebSearchEnabled); err != nil {
+			return "", err
+		}
 	}
 	return request.ID, tx.Commit(ctx)
 }
@@ -657,6 +676,9 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 	if _, err = tx.Exec(ctx, `DELETE FROM learning_tutor_turns WHERE conversation_id=$1`, id); err != nil {
 		return err
 	}
+	if _, err = tx.Exec(ctx, `DELETE FROM learning_web_operations WHERE conversation_id=$1`, id); err != nil {
+		return err
+	}
 	for _, table := range []string{"learning_conversation_topics", "learning_topic_index_scopes", "learning_topic_index_heads"} {
 		if _, err = tx.Exec(ctx, `DELETE FROM `+table+` WHERE conversation_id=$1`, id); err != nil {
 			return err
@@ -674,6 +696,11 @@ func (s *Service) ChangeConversation(ctx context.Context, actor identity.Credent
 	for _, item := range items {
 		s.drop(item.RunID)
 	}
+	s.mu.Lock()
+	for _, cancel := range s.webCancels[id] {
+		cancel()
+	}
+	s.mu.Unlock()
 	return nil
 }
 
@@ -689,7 +716,7 @@ func turnBody(item row) Body {
 	if item.body.TurnMessages != nil {
 		messages = item.body.TurnMessages
 	}
-	return Body{ContextNotice: item.body.ContextNotice, TopicProvenance: true, Study: item.body.Study, StudyExercise: item.body.StudyExercise, MemorySources: (&executionHost{body: item.body}).modelMemorySources(), Messages: messages, Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
+	return Body{WebExpiresAt: item.body.WebExpiresAt, ContextNotice: item.body.ContextNotice, TopicProvenance: true, Study: item.body.Study, StudyExercise: item.body.StudyExercise, MemorySources: (&executionHost{body: item.body}).modelMemorySources(), Messages: messages, Output: item.body.Output, SourceManifest: item.body.SourceManifest, Citations: item.body.Citations}
 }
 
 func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
@@ -709,7 +736,7 @@ func (s *Service) saveTurn(ctx context.Context, tx pgx.Tx, item *row) error {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE learning_tutor_turns SET ciphertext=$2 WHERE run_id=$1`, item.RunID, raw)
-	if err == nil && terminal(item.Status) {
+	if err == nil && terminal(item.Status) && item.body.WebExpiresAt == nil {
 		var ordinal int64
 		if err = tx.QueryRow(ctx, `SELECT ordinal FROM learning_tutor_turns WHERE run_id=$1`, item.RunID).Scan(&ordinal); err == nil {
 			err = s.mapTopicMessages(ctx, tx, item.ConversationID, item.RunID, item.Generation, ordinal, body)
@@ -759,6 +786,9 @@ func (s *Service) prepareConversation(ctx context.Context, tx pgx.Tx, actor iden
 		return nil, ErrNotFound
 	}
 	if c.Version != request.ConversationVersion {
+		return nil, ErrConflict
+	}
+	if request.ExpectedWebSearchVersion != nil && c.WebSearchVersion != *request.ExpectedWebSearchVersion {
 		return nil, ErrConflict
 	}
 	if (c.Mode == "study") != (request.studyVersion > 0) {

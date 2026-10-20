@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { ApiError } from './client'
 import { feedbackSchema } from './feedback'
-import { mentorCitationSchema } from './source-selection'
+import { learningSourceCitationSchema } from './source-selection'
 
 const id = z.uuid(),
   version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
@@ -54,7 +54,7 @@ export const exerciseSchema = practiceExerciseSchema.safeExtend({ conversation_i
 export type PracticeExercise = z.infer<typeof practiceExerciseSchema>
 export type Exercise = z.infer<typeof exerciseSchema>
 export const exerciseHelpSchema = z.object({ operation_id: id, level: helpLevel, text: z.string() })
-export const exerciseCitationSchema = mentorCitationSchema.extend({ id })
+export const exerciseCitationSchema = learningSourceCitationSchema.extend({ id })
 export function checkExercise(
   v: Exercise,
   exercise: string,

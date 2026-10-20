@@ -5,6 +5,7 @@ import { mentorCitationSchema, sourceManifestSchema, type SourceSelection } from
 
 const version = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 export const conversationSchema = z.object({
+  web_search_enabled: z.boolean(), web_search_version: version, web_search_available: z.boolean(), web_search_reason: z.string(),
   mode: z.enum(['mentor', 'study']).optional(),
   id: z.uuid(), space_id: z.uuid(), goal_id: z.uuid().optional(), teaching_session_id: z.uuid().optional(),
   privacy_generation: version, version, saved: z.boolean(), title: z.string(),
@@ -15,7 +16,7 @@ export const conversationSchema = z.object({
 })
 export type TutorConversation = z.infer<typeof conversationSchema>
 export const conversationsSchema = z.object({ items: z.array(conversationSchema).max(50), next_cursor: z.string().optional(), save_available: z.boolean() })
-export const conversationCreated = z.object({ id: z.uuid() })
+export const conversationCreated = z.object({ id: z.uuid(), web_search_enabled: z.boolean(), web_search_version: version })
 export const conversationConfirmed = z.object({ confirmed: z.literal(true) })
 export const tutorMessage = z.object({
   role: z.enum(['user', 'assistant', 'tool']), content: z.string().optional(), tool_call_id: z.string().optional(),
@@ -35,7 +36,7 @@ export function checkConversation(c: TutorConversation, space: string, generatio
 export const conversationDraftKey = (prefix: readonly unknown[], id: string) => JSON.stringify([...prefix, 'tutor-conversation', id])
 export const conversationSelectionKey = (prefix: readonly unknown[], space: string, goal?: string, teaching?: string) => JSON.stringify([...prefix, 'tutor-selection', space, goal, teaching])
 
-export type TurnSubmission = { direction_version?: number; operation_id: string; expected_version: number; prompt: string; confirm_destination?: string;source_selection?:SourceSelection }
+export type TurnSubmission = { expected_web_search_version: number; direction_version?: number; operation_id: string; expected_version: number; prompt: string; confirm_destination?: string;source_selection?:SourceSelection }
 type Result<T, Code extends number = 200> = { responses: { [K in Code]: { content: { 'application/json': T } } } }
 type Body<T> = { requestBody: { content: { 'application/json': T } } }
 type Scope = { header: { 'X-Learning-Space-ID': string } }
@@ -43,7 +44,7 @@ type Target = Scope & { path: { conversationID: string } }
 export interface ConversationPaths {
   '/v1/learning/conversations': {
     get: Result<z.infer<typeof conversationsSchema>> & { parameters: Scope & { query?: { mode?: 'mentor' | 'study'; goal_id?: string; teaching_session_id?: string; all_contexts?: boolean; search?: string; cursor?: string; limit?: number } } }
-    post: Result<{ id: string }, 201> & { parameters: Scope } & Body<{ mode?: 'mentor' | 'study'; id: string; goal_id?: string; teaching_session_id?: string; saved?: boolean; title?: string }>
+    post: Result<{ id: string; web_search_enabled: boolean; web_search_version: number }, 201> & { parameters: Scope } & Body<{ mode?: 'mentor' | 'study'; id: string; goal_id?: string; teaching_session_id?: string; saved?: boolean; title?: string; web_search_enabled?: boolean }>
   }
   '/v1/learning/conversations/{conversationID}': {
     get: Result<z.infer<typeof turnsSchema>> & { parameters: Target & { query?: { after?: number; limit?: number } } }

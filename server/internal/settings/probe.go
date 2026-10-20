@@ -25,7 +25,13 @@ func (t *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 func (s *Service) probeConnection(ctx context.Context, target Target, slot secretSlot, limits Limits) Probe {
 	result := Probe{Status: "failed", CostEstimate: "unknown"}
 	if target == Search {
-		transport := &countingTransport{base: searchTransport()}
+		ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "search_probe", OriginID: uuid.NewString(), Stage: "search_probe"})
+		var base http.RoundTripper = searchTransport()
+		if s.usage != nil {
+			_, configuration := connectionIdentity(slot, limits)
+			base = s.usage.SearchTransport(base, slot.Provider, configuration)
+		}
+		transport := &countingTransport{base: base}
 		var adapter websearch.Adapter = websearch.NewBrave(slot.Endpoint, slot.Key, &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: rejectRedirect})
 		_, err := adapter.Search(ctx, websearch.Request{Query: "education", Limit: 1})
 		result.Requests = int(transport.count.Load())

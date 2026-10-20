@@ -21,7 +21,10 @@ type SourceImport struct {
 }
 
 func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
-	for _, id := range []string{c.RunID, c.OperationID, c.SourceID, c.SourceRevisionID, c.GoalID, c.ActorDeviceID} {
+	if c.GoalID == "" && c.Metadata.Purpose != "notebook_web" || c.GoalID != "" && !validUUID(c.GoalID) {
+		return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
+	}
+	for _, id := range []string{c.RunID, c.OperationID, c.SourceID, c.SourceRevisionID, c.ActorDeviceID} {
 		if !validUUID(id) {
 			return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
 		}
@@ -62,6 +65,9 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 		status = "partial"
 	}
 	document.SourceMetadata = &SourceMetadata{Kind: "url", Locator: c.Locator, FinalURL: c.Metadata.FinalURL, MediaType: c.Metadata.Kind, Parser: c.Metadata.Parser, Coverage: c.Coverage, Fingerprint: c.Fingerprint, Status: status}
+	if c.Metadata.Purpose == "notebook_web" {
+		document.SourceMetadata.Title = c.Title
+	}
 	if pdfMetadata != nil {
 		document.SourceMetadata = PDFSourceMetadata(pdfMetadata)
 	}

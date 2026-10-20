@@ -15,6 +15,9 @@ import { mentorCitationSchema, studioCitationSchema } from '@/api/source-selecti
 import { citationExcerpt, exerciseCitationSchema } from '@/api/exercises'
 import { ErrorState } from '../common'
 import { PDFCoverage, PDFPageViewer } from '../pdf-source'
+import { WebCitationContent } from './web-citation'
+import type { MentorCitation } from '@/api/source-selection'
+import type { z } from 'zod'
 
 // Every entry point keeps its own authoritative resolver. This shell never widens a citation scope.
 export function SourceDialog({
@@ -325,7 +328,7 @@ export function MentorCitationContent({
     retry: false,
     refetchInterval: 5000,
     queryFn: async ({ signal }) => {
-      const value = await unwrap(
+      const value = await unwrap<MentorCitation | z.infer<typeof studioCitationSchema>>(
         exerciseId ? learningClient(session,spaceId).GET('/v1/learning/exercises/{exerciseID}/citations/{referenceID}',{params:{header:{'X-Learning-Space-ID':spaceId},path:{exerciseID:exerciseId,referenceID:citationId}},signal}) : artifactId ? learningClient(session, spaceId).GET('/v1/learning/studio/artifacts/{artifactID}/sources/{citationID}', { params: { header: { 'X-Learning-Space-ID': spaceId }, path: { artifactID: artifactId, citationID: citationId }, query: { version: version! } }, signal }) : learningClient(session, spaceId).GET('/v1/learning/runs/{runID}/citations/{citationID}', {
           params: {
             path: { runID: runId!, citationID: citationId },
@@ -347,12 +350,14 @@ export function MentorCitationContent({
   }, [detail.data, detail.error])
   if (detail.error) return <ErrorState error={detail.error} />
   if (!detail.data) return <p role="status">正在核对本轮来源版本、片段与访问权限…</p>
+  if ('origin' in detail.data && detail.data.origin === 'web') return <WebCitationContent spaceId={spaceId} runId={runId!} citation={detail.data} />
   const { source, fragment } = detail.data
   return (
     <section ref={fragmentView} tabIndex={-1} aria-label={`引用 ${citationId} 核验片段`}>
       <h3>
         {exerciseId ? '' : `[${citationId}] `}{sourceTitle(source)}
       </h3>
+      <p>学习区来源</p>
       <p>
         {source.collection_name} · {source.collection_id.slice(0, 8)}
       </p>

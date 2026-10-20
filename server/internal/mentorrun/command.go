@@ -154,6 +154,11 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 			item.ResultUnknown = false
 		}
 		item.body.ToolSteps = 0
+		if web := item.body.Web; c.Kind == "resume" && web != nil && !web.Done {
+			if err = tx.QueryRow(ctx, `SELECT web_search_enabled,web_access_epoch FROM learning_tutor_conversations WHERE id=$1 AND NOT deleted`, item.ConversationID).Scan(&web.Enabled, &web.Epoch); err != nil {
+				return Receipt{}, ErrInactive
+			}
+		}
 		item.Status = "queued"
 		if pending := item.body.Interaction; pending != nil {
 			item.Status = "waiting_input"

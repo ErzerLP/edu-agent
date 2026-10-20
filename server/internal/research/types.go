@@ -104,6 +104,7 @@ type Fragment struct {
 }
 
 type Source struct {
+	Links               []string          `json:"-"`
 	DocumentRevisionID  string            `json:"document_revision_id,omitempty"`
 	PDF                 *pdfsource.Report `json:"pdf,omitempty"`
 	PDFOriginal         []byte            `json:"-"`

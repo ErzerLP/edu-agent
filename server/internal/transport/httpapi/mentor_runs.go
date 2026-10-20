@@ -17,6 +17,9 @@ import (
 )
 
 func mentorPath(path string) bool {
+	if path == "/v1/learning/web-import-previews" || path == "/v1/learning/web-imports" || strings.HasPrefix(path, "/v1/learning/web-documents/") {
+		return true
+	}
 	if strings.HasPrefix(path, "/v1/learning/exercises/") {
 		return true
 	}
@@ -35,12 +38,13 @@ func (a *API) mountMentorRuns(router chi.Router) {
 		return
 	}
 	a.mountConversations(router)
+	a.mountMentorWeb(router)
 	a.mountStudyExercises(router)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs", a.mentorList)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/goals/{goalID}/runs", a.mentorCreate)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/goals/{goalID}/runs", a.mentorCurrent)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}", a.mentorSnapshot)
-	router.With(a.requireScope("learning:read"), a.requireScope("knowledge:read"), a.mentorScope, a.responseReadPermit("content_redacted", privacy.OwnerIdentity, privacy.OwnerLearning, privacy.OwnerKnowledge)).Get("/v1/learning/runs/{runID}/citations/{citationID}", a.mentorCitation)
+	router.With(a.requireScope("learning:read"), a.mentorScope, a.responseReadPermit("content_redacted", privacy.OwnerIdentity, privacy.OwnerLearning, privacy.OwnerKnowledge)).Get("/v1/learning/runs/{runID}/citations/{citationID}", a.mentorCitation)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs/{runID}/events", a.mentorEvents)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/runs/{runID}/commands", a.mentorCommand)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/operations/{operationID}", a.mentorOperation)
@@ -274,6 +278,12 @@ func (a *API) mentorCommand(w http.ResponseWriter, r *http.Request) {
 func (a *API) mentorOperation(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	receipt, err := a.mentorRuns.Operation(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "operationID"))
+	if errors.Is(err, mentorrun.ErrNotFound) {
+		err = a.mentorRuns.ReadWebOperation(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "operationID"), func(raw json.RawMessage) error { writeJSON(w, 200, raw); return nil })
+		if err == nil {
+			return
+		}
+	}
 	if err != nil {
 		mentorFailure(w, r, err)
 		return

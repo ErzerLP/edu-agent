@@ -7,6 +7,7 @@ import { checkConversation, conversationCreated, turnsSchema } from '@/api/conve
 import { MentorPanel } from '../mentor-panel'
 import { ErrorState } from '../common'
 import { useSourceSelection } from './source-selection'
+import { WebSearchControl } from './web-search-control'
 
 export function MentorComposer({
   spaceId,
@@ -24,6 +25,7 @@ export function MentorComposer({
   const { selection } = useSourceSelection()
   const key = JSON.stringify([...prefix, spaceId, goalId, 'notebook-mentor'])
   const [id, setId] = useState(() => drafts.get<string>(key + ':conversation'))
+  const [webEnabled, setWebEnabled] = useState(true)
   const header = { 'X-Learning-Space-ID': spaceId }
   const read = async (conversationId: string, signal?: AbortSignal) => {
     const page = await unwrap(
@@ -51,7 +53,7 @@ export function MentorComposer({
   if (id && !detail.data) return <p role="status">正在核对来源问答会话…</p>
   const ensureConversation = async (saved: boolean) => {
     if (id) return read(id)
-    const payload = { goal_id: goalId, saved }
+    const payload = { goal_id: goalId, saved, web_search_enabled: webEnabled }
     const result = await unwrap(
       learningClient(session, spaceId).POST('/v1/learning/conversations', {
         params: { header },
@@ -71,6 +73,7 @@ export function MentorComposer({
   }
   return (
     <>
+      <WebSearchControl key={id ?? 'new'} spaceId={spaceId} conversation={detail.data} enabled={webEnabled} onNewChange={setWebEnabled} />
       <MentorPanel
         goal={{
           learning_space_id: spaceId,

@@ -57,6 +57,7 @@ func (a *API) tutorList(w http.ResponseWriter, r *http.Request) {
 func (a *API) tutorCreate(w http.ResponseWriter, r *http.Request) {
 	// Legacy callers still choose storage explicitly; study has its own saved default.
 	var request struct {
+		WebSearchEnabled  *bool  `json:"web_search_enabled,omitempty"`
 		Mode              string `json:"mode,omitempty"`
 		ID                string `json:"id"`
 		GoalID            string `json:"goal_id,omitempty"`
@@ -75,12 +76,17 @@ func (a *API) tutorCreate(w http.ResponseWriter, r *http.Request) {
 	if request.Saved != nil {
 		saved = *request.Saved
 	}
-	id, err := a.mentorRuns.NewConversation(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.NewConversation{Mode: request.Mode, ID: request.ID, GoalID: request.GoalID, TeachingSessionID: request.TeachingSessionID, Saved: saved, Title: request.Title})
+	id, err := a.mentorRuns.NewConversation(r.Context(), actor, learningspace.Scope(r.Context()), mentorrun.NewConversation{WebSearchEnabled: request.WebSearchEnabled, Mode: request.Mode, ID: request.ID, GoalID: request.GoalID, TeachingSessionID: request.TeachingSessionID, Saved: saved, Title: request.Title})
 	if err != nil {
 		mentorFailure(w, r, err)
 		return
 	}
-	writeJSON(w, 201, map[string]string{"id": id})
+	preference, err := a.mentorRuns.ConversationWebPreference(r.Context(), actor, learningspace.Scope(r.Context()), id)
+	if err != nil {
+		mentorFailure(w, r, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"id": id, "web_search_enabled": preference.Enabled, "web_search_version": preference.Version})
 }
 
 func (a *API) tutorRead(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +143,7 @@ func (a *API) tutorTurn(w http.ResponseWriter, r *http.Request) {
 	var request mentorrun.SubmitTurn
 	raw, err := readJSONBody(w, r, 64<<10)
 	var fields map[string]json.RawMessage
-	if err != nil || decodeJSONData(raw, &request) != nil || json.Unmarshal(raw, &fields) != nil || fields["source_selection"] != nil && request.SourceSelection == nil || string(fields["direction_version"]) == "null" {
+	if err != nil || decodeJSONData(raw, &request) != nil || request.ExpectedWebSearchVersion == nil || *request.ExpectedWebSearchVersion < 1 || json.Unmarshal(raw, &fields) != nil || fields["source_selection"] != nil && request.SourceSelection == nil || string(fields["direction_version"]) == "null" {
 		mentorFailure(w, r, mentorrun.ErrInvalid)
 		return
 	}

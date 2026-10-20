@@ -37,23 +37,24 @@ const MaxOutput = 64 << 10
 const EventWindow = 128
 
 type Create struct {
-	studyVersion        int64
-	study               *learningdirection.Revision
-	Studio              *StudioGenerate            `json:"-"`
-	SourceSelection     *knowledge.SourceSelection `json:"source_selection,omitempty"`
-	operationHash       *[32]byte
-	ConversationID      string                       `json:"conversation_id,omitempty"`
-	ConversationVersion int64                        `json:"conversation_version,omitempty"`
-	ConfirmDestination  string                       `json:"confirm_destination,omitempty"`
-	TeachingSessionID   string                       `json:"teaching_session_id,omitempty"`
-	ContentEdit         *learningcontent.EditRequest `json:"content_edit,omitempty"`
-	StartLearning       *learningstart.Request       `json:"start_learning,omitempty"`
-	Research            *research.Request            `json:"research,omitempty"`
-	OperationID         string                       `json:"operation_id"`
-	SessionID           string                       `json:"session_id"`
-	ExpectedVersion     int64                        `json:"expected_version"`
-	Prompt              string                       `json:"prompt"`
-	Save                bool                         `json:"save"`
+	ExpectedWebSearchVersion *int64 `json:"-"`
+	studyVersion             int64
+	study                    *learningdirection.Revision
+	Studio                   *StudioGenerate            `json:"-"`
+	SourceSelection          *knowledge.SourceSelection `json:"source_selection,omitempty"`
+	operationHash            *[32]byte
+	ConversationID           string                       `json:"conversation_id,omitempty"`
+	ConversationVersion      int64                        `json:"conversation_version,omitempty"`
+	ConfirmDestination       string                       `json:"confirm_destination,omitempty"`
+	TeachingSessionID        string                       `json:"teaching_session_id,omitempty"`
+	ContentEdit              *learningcontent.EditRequest `json:"content_edit,omitempty"`
+	StartLearning            *learningstart.Request       `json:"start_learning,omitempty"`
+	Research                 *research.Request            `json:"research,omitempty"`
+	OperationID              string                       `json:"operation_id"`
+	SessionID                string                       `json:"session_id"`
+	ExpectedVersion          int64                        `json:"expected_version"`
+	Prompt                   string                       `json:"prompt"`
+	Save                     bool                         `json:"save"`
 }
 
 type Command struct {
@@ -108,6 +109,8 @@ type Interaction struct {
 }
 
 type Body struct {
+	WebExpiresAt    *time.Time                  `json:"web_expires_at,omitempty"`
+	Web             *WebState                   `json:"web,omitempty"`
 	StudioPlan      *StudioPlanStage            `json:"studio_plan,omitempty"`
 	StudioContent   *StudioContentStage         `json:"studio_content,omitempty"`
 	TurnMessages    []modelclient.Message       `json:"turn_messages,omitempty"`
@@ -138,6 +141,7 @@ type Body struct {
 }
 
 type Snapshot struct {
+	Web            *WebProgress              `json:"web,omitempty"`
 	ContextNotice  string                    `json:"context_notice,omitempty"`
 	Studio         *StudioState              `json:"studio,omitempty"`
 	SourceManifest *knowledge.SourceManifest `json:"source_manifest,omitempty"`

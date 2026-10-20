@@ -57,13 +57,16 @@ type Metric struct {
 	UnknownCalls int64 `json:"unknown_calls"`
 }
 type Totals struct {
-	Calls               int64  `json:"calls"`
-	PendingCalls        int64  `json:"pending_calls"`
-	OutcomeUnknownCalls int64  `json:"outcome_unknown_calls"`
-	Input               Metric `json:"input"`
-	Output              Metric `json:"output"`
-	Reasoning           Metric `json:"reasoning"`
-	Total               Metric `json:"total"`
+	SearchRequests       int64  `json:"search_requests"`
+	SearchPending        int64  `json:"search_pending"`
+	SearchOutcomeUnknown int64  `json:"search_outcome_unknown"`
+	Calls                int64  `json:"calls"`
+	PendingCalls         int64  `json:"pending_calls"`
+	OutcomeUnknownCalls  int64  `json:"outcome_unknown_calls"`
+	Input                Metric `json:"input"`
+	Output               Metric `json:"output"`
+	Reasoning            Metric `json:"reasoning"`
+	Total                Metric `json:"total"`
 }
 type Bucket struct {
 	Start time.Time `json:"start"`

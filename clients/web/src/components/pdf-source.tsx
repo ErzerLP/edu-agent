@@ -46,6 +46,7 @@ export function PDFPageViewer({
   collectionId,
   pages,
   selectedText,
+  webDocumentId,
 }: {
   spaceId: string
   revisionId: string
@@ -53,6 +54,7 @@ export function PDFPageViewer({
   collectionId?: string
   pages: number[]
   selectedText?: string
+  webDocumentId?: string
 }) {
   const { session, prefix } = useIdentity()
   const [open, setOpen] = useState(false),
@@ -65,7 +67,7 @@ export function PDFPageViewer({
     retry: false,
     queryFn: ({ signal }) =>
       unwrap(
-        learningClient(session, spaceId).GET(
+        webDocumentId ? learningClient(session, spaceId).GET('/v1/learning/web-documents/{documentID}/pages/{page}', { params: { header: { 'X-Learning-Space-ID': spaceId }, path: { documentID: webDocumentId, page: number } }, parseAs: 'blob', signal }) : learningClient(session, spaceId).GET(
           '/v1/knowledge/revisions/{revisionID}/documents/{documentID}/pages/{page}',
           {
             params: {

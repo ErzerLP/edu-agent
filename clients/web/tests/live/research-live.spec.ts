@@ -126,6 +126,9 @@ test('真实 Brave：空资料目标的候选、正文、归纳、采纳与可�
     expect(probeResult.status, probeResult.reason).toBe('ready')
     expect(probeResult.requests).toBe(1)
     await expect(search).toContainText('最近测试通过')
+    await settingsPage.getByLabel('每轮工具调用上限（留空为不限）').fill('1')
+    await settingsPage.getByRole('button', { name: '保存调用限制与外发策略' }).click()
+    await expect(settingsPage.getByText('配置已保存。', { exact: true })).toBeVisible()
 
     await pair(page, 'research')
     const identity = await (await page.request.get('/v1/web/session')).json()
@@ -147,7 +150,6 @@ test('真实 Brave：空资料目标的候选、正文、归纳、采纳与可�
     await page.getByLabel('网站域名（最多 5 个，用逗号分隔）').fill('www.rfc-editor.org')
     await page.getByLabel('确认以上主题可外发', { exact: false }).check()
     await page.getByLabel('加密保存运行七天', { exact: false }).check()
-    await page.getByLabel('外部请求预算', { exact: true }).fill('1')
     const acceptedResponse = page.waitForResponse(
       (response) =>
         /\/v1\/learning\/goals\/[^/]+\/runs$/.test(new URL(response.url()).pathname) &&
@@ -178,9 +180,9 @@ test('真实 Brave：空资料目标的候选、正文、归纳、采纳与可�
       .toBe(false)
     const discovered = await snapshot()
     evidence.search_duration_ms = Date.now() - searchStarted
-    expect(discovered.status, discovered.reason).toBe('paused_budget')
-    await expect(page.getByRole('button', { name: '按以上预算继续' })).toBeVisible()
-    expect(discovered.requests_used).toBe(1)
+    expect(discovered.status, discovered.reason).toBe('paused_tool_steps')
+    await expect(page.getByRole('button', { name: '继续', exact: true })).toBeVisible()
+    expect(discovered.requests_used).toBe(2) // 一次搜索与一次进展说明。
     expect(discovered.research!.discovered).toBe(true)
     expect(discovered.research!.sources.length).toBeGreaterThan(0)
     evidence.candidates = discovered.research!.sources.map((source) => ({
@@ -198,14 +200,16 @@ test('真实 Brave：空资料目标的候选、正文、归纳、采纳与可�
       await expect(card.locator('blockquote')).toHaveCount(0)
     }
 
-    await page.getByLabel('外部请求预算', { exact: true }).fill('9')
+    await settingsPage.getByLabel('每轮工具调用上限（留空为不限）').fill('')
+    await settingsPage.getByRole('button', { name: '保存调用限制与外发策略' }).click()
+    await expect(settingsPage.getByText('配置已保存。', { exact: true })).toBeVisible()
     const readStarted = Date.now()
     const continuedResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === `/v1/learning/runs/${runID}/commands` &&
         response.request().method() === 'POST',
     )
-    await page.getByRole('button', { name: '按以上预算继续' }).click()
+    await page.getByRole('button', { name: '继续', exact: true }).click()
     const continued = await continuedResponse
     expect(continued.ok()).toBe(true)
     const continuedVersion = (await continued.json()).version

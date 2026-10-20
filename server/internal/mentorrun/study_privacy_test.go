@@ -51,7 +51,7 @@ func TestPostgreSQLStudyDirectionErasureCannotRevive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "清除选中资料", RequestBudget: 2, TokenBudget: 30000, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{a}}}
+	req := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "清除选中资料", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{a}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, req)

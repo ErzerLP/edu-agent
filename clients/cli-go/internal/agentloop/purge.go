@@ -107,6 +107,7 @@ func (s *Session) commitPurgeMutation(ctx context.Context, call modelclient.Tool
 				return errors.Join(journalErr, invalidationErr)
 			},
 		}
+		s.recordToolExecution()
 		result, _ = executor.CommitPurge(toolCtx, p, observer)
 		if journalErr == nil {
 			finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

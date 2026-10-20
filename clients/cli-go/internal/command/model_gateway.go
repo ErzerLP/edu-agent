@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"strings"
 
@@ -230,11 +229,9 @@ func (a *App) runModel(ctx context.Context, args []string) error {
 func (a *App) runModelSet(args []string) error {
 	set := newFlagSet("model set")
 	var compaction, effort, history string
-	var rounds int
 	set.StringVar(&compaction, "context-compaction", "", "auto、recent-only 或 off")
 	set.StringVar(&effort, "reasoning-effort", "", "默认推理强度")
 	set.StringVar(&history, "session-history", "", "auto 或 off")
-	set.IntVar(&rounds, "max-tool-rounds", -1, "最大工具轮数；0 表示不限制")
 	if err := set.Parse(args); err != nil || len(set.Args()) != 0 {
 		return modelUsage("模型参数格式无效；连接和容量由网页配置")
 	}
@@ -254,18 +251,6 @@ func (a *App) runModelSet(args []string) error {
 	}
 	if history != "" {
 		candidate.SessionHistory = history
-	}
-	roundsSet := false
-	set.Visit(func(f *flag.Flag) {
-		if f.Name == "max-tool-rounds" {
-			roundsSet = true
-		}
-	})
-	if roundsSet {
-		if rounds < 0 {
-			return commandError("invalid_configuration", "最大工具轮数无效", "请输入0或正整数；0表示不限制", ExitInput)
-		}
-		candidate.MaxToolRounds = rounds
 	}
 	if err = candidate.Validate(); err != nil {
 		return commandError("invalid_configuration", "客户端模型偏好无效", "检查上下文压缩、推理强度和会话历史选项", ExitInput)

@@ -16,14 +16,12 @@ func TestThinkingLifecycleAfterTools(t *testing.T) {
 		name            string
 		rounds          int
 		modelErr        error
-		limit           int
 		cancelAfterTool bool
 	}{
 		{name: "final answer", rounds: 1},
 		{name: "multiple tool rounds", rounds: 3},
 		{name: "model failure", rounds: 1, modelErr: errors.New("provider unavailable")},
 		{name: "model timeout", rounds: 1, modelErr: context.DeadlineExceeded},
-		{name: "round limit", rounds: 1, limit: 1},
 		{name: "cancel before next request", rounds: 1, cancelAfterTool: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,9 +43,6 @@ func TestThinkingLifecycleAfterTools(t *testing.T) {
 			})
 			server := &fakeServer{}
 			session := newTestSession(t, model, server)
-			if tc.limit > 0 {
-				session.options.MaxToolRounds = tc.limit
-			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var activities []Activity
@@ -58,7 +53,7 @@ func TestThinkingLifecycleAfterTools(t *testing.T) {
 				}
 			})
 			result, err := session.Send(ctx, "解释图论")
-			wantError := tc.modelErr != nil || tc.limit > 0 || tc.cancelAfterTool
+			wantError := tc.modelErr != nil || tc.cancelAfterTool
 			if (err != nil) != wantError {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
@@ -72,7 +67,7 @@ func TestThinkingLifecycleAfterTools(t *testing.T) {
 				t.Fatalf("result=%+v", result)
 			}
 			wantRequests := tc.rounds + 1
-			if tc.limit > 0 || tc.cancelAfterTool {
+			if tc.cancelAfterTool {
 				wantRequests = tc.rounds
 			}
 			if len(model.snapshotRequests()) != wantRequests || server.retrieveCalls != tc.rounds {

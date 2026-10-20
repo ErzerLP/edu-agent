@@ -8,7 +8,7 @@ describe('导师流恢复', () => {
   const snapshot = mentorSnapshotSchema.parse({
     run_id: id, session_id: id, goal_id: id, space_id: id, goal_version: 1, privacy_generation: 1,
     version: 10, watermark: 10, status: 'running', stage: 'answering', reason: '',
-    saved: true, body_available: true, requests_left: 1, tokens_left: 5000, requests_used: 1,
+    saved: true, body_available: true, requests_used: 1,
     result_unknown: false, cost_unknown: true, updated_at: '2026-09-15T00:00:00Z',
     expires_at: '2026-09-22T00:00:00Z', configuration: '', output: '已完成的增量',
   })

@@ -57,7 +57,7 @@ func TestStudioDirectionRequestContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := "10000000-0000-4000-8000-000000000001"
-	v := map[string]any{"operation_id": id, "privacy_generation": 1, "kind": "quiz", "goal_id": nil, "goal_version": 0, "mode": "direction", "direction_version": 1, "artifact_id": nil, "expected_version": 0, "source_selection": map[string]any{"mode": "items", "items": []any{map[string]any{"collection_id": id, "revision_id": id, "document_id": id, "document_revision_id": id}}}, "request_budget": 1, "token_budget": 50000}
+	v := map[string]any{"operation_id": id, "privacy_generation": 1, "kind": "quiz", "goal_id": nil, "goal_version": 0, "mode": "direction", "direction_version": 1, "artifact_id": nil, "expected_version": 0, "source_selection": map[string]any{"mode": "items", "items": []any{map[string]any{"collection_id": id, "revision_id": id, "document_id": id, "document_revision_id": id}}}}
 	schema := doc.Components.Schemas["StudioGenerate"].Value
 	visit := func(v map[string]any) error {
 		raw, _ := json.Marshal(v)

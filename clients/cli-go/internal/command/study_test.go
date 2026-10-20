@@ -40,7 +40,7 @@ func TestStudyResearchAliasAndStableJSON(t *testing.T) {
 	cfg, creds := pairedStores(s.URL, "fixture")
 	a, out, errOut := newTestApp(cfg, creds, nil)
 	file := filepath.Join(t.TempDir(), "研究.json")
-	body := studyJSON(map[string]any{"operation_id": op, "session_id": session, "expected_version": 1, "save": true, "prompt": "Go", "request_budget": 10, "token_budget": 20000, "research": map[string]any{"topic": "Go", "external_consent": true, "auto_adopt": false, "policy": map[string]any{"mode": "supplement", "domains": []string{}}}})
+	body := studyJSON(map[string]any{"operation_id": op, "session_id": session, "expected_version": 1, "save": true, "prompt": "Go", "research": map[string]any{"topic": "Go", "external_consent": true, "auto_adopt": false, "policy": map[string]any{"mode": "supplement", "domains": []string{}}}})
 	if err := os.WriteFile(file, body, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +151,9 @@ func TestWorkbenchStudyReusesDisplayedRunSession(t *testing.T) {
 		if body.String("session_id") != "start_learning原会话" || body.String("operation_id") != "原操作" || body.Number("expected_version") != 1 {
 			t.Fatal("未复用展示时的运行归属", string(raw))
 		}
+		if body["request_budget"] != nil || body["token_budget"] != nil {
+			t.Fatal("开学请求不应附加累计预算", string(raw))
+		}
 		writes++
 		_ = json.Unmarshal([]byte(`{"run_id":"新运行"}`), &d)
 		return d, nil
@@ -160,7 +163,7 @@ func TestWorkbenchStudyReusesDisplayedRunSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := workbench.Request{Page: "study-goal", Resource: "明确目标", Action: "start", Basis: p.Basis, Version: p.Version, Operation: "原操作", Entity: "不应创建的运行会话", Values: map[string]string{"requests": "10", "tokens": "20000", "prompt": "Go"}}
+	request := workbench.Request{Page: "study-goal", Resource: "明确目标", Action: "start", Basis: p.Basis, Version: p.Version, Operation: "原操作", Entity: "不应创建的运行会话", Values: map[string]string{"prompt": "Go"}}
 	for range 2 {
 		next, err := a.workbenchStudy(t.Context(), c, request, workbench.Page{})
 		if err != nil || next.Redirect != "study-run/新运行" {
@@ -169,5 +172,60 @@ func TestWorkbenchStudyReusesDisplayedRunSession(t *testing.T) {
 	}
 	if writes != 2 {
 		t.Fatal(writes)
+	}
+}
+
+func TestWorkbenchStudyRunContinuesAndRetriesWithoutBudget(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		action string
+	}{
+		{status: "paused_tool_steps", action: "resume"},
+		{status: "failed", action: "retry_start"},
+	} {
+		t.Run(test.status, func(t *testing.T) {
+			writes := 0
+			c := studyWorkbenchClient{request: func(action string, q api.StudyQuery, raw json.RawMessage) (api.StudyDocument, error) {
+				if q.Run != "原运行" {
+					t.Fatal("改变了运行归属", q)
+				}
+				if action == "run" {
+					var d api.StudyDocument
+					_ = json.Unmarshal(studyJSON(map[string]any{"kind": "start_learning", "status": test.status, "version": 4, "body_available": true, "goal_id": "原目标"}), &d)
+					return d, nil
+				}
+				var body api.StudyDocument
+				_ = json.Unmarshal(raw, &body)
+				if action != "run-command" || body.String("kind") != test.action || body.String("operation_id") != "原操作" || body.Number("expected_version") != 4 {
+					t.Fatal("续行请求未保留操作身份", action, string(raw))
+				}
+				if body["request_budget"] != nil || body["token_budget"] != nil {
+					t.Fatal("继续或失败重试不应附加累计预算", string(raw))
+				}
+				writes++
+				return api.StudyDocument{}, nil
+			}}
+			a := &App{}
+			page, err := a.workbenchStudy(t.Context(), c, workbench.Request{Page: "study-run", Resource: "原运行"}, workbench.Page{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, action := range page.Actions {
+				if action.ID == test.action {
+					found = true
+					if len(action.Fields) != 0 {
+						t.Fatal("续行不应要求增额输入", action)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("没有可用的 %s 动作：%+v", test.action, page.Actions)
+			}
+			next, err := a.workbenchStudy(t.Context(), c, workbench.Request{Page: "study-run", Resource: "原运行", Action: test.action, Operation: "原操作", Version: page.Version}, workbench.Page{})
+			if err != nil || writes != 1 || next.Redirect != "study-run/原运行" {
+				t.Fatal(next, err, writes)
+			}
+		})
 	}
 }

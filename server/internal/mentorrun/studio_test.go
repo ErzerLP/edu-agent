@@ -34,7 +34,7 @@ func studioFixture(t *testing.T, handler func(http.ResponseWriter, *http.Request
 	}
 	content.ConfigureStudioSources(knowledgepg.New(f.pool))
 	f.service.ConfigureStudio(content)
-	return f, StudioGenerate{OperationID: uuid.NewString(), StudioTarget: learningcontent.StudioTarget{Generation: 1, Kind: "guide"}, SourceSelection: knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{selected}}, RequestBudget: 1, TokenBudget: 50000}
+	return f, StudioGenerate{OperationID: uuid.NewString(), StudioTarget: learningcontent.StudioTarget{Generation: 1, Kind: "guide"}, SourceSelection: knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{selected}}}
 }
 func TestPostgreSQLStudioGenerationPublishesAndRecovers(t *testing.T) {
 	kind := "guide"
@@ -82,7 +82,7 @@ func TestPostgreSQLStudioGenerationPublishesAndRecovers(t *testing.T) {
 
 func TestStudioGenerateRequiresSourcesAndExplicitVersions(t *testing.T) {
 	id := uuid.NewString()
-	c := StudioGenerate{StudioTarget: learningcontent.StudioTarget{Kind: "brief", Generation: 1}, OperationID: uuid.NewString(), SourceSelection: knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{{CollectionID: id, RevisionID: id, DocumentID: id, DocumentRevisionID: id}}}, RequestBudget: 1, TokenBudget: 8192}
+	c := StudioGenerate{StudioTarget: learningcontent.StudioTarget{Kind: "brief", Generation: 1}, OperationID: uuid.NewString(), SourceSelection: knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{{CollectionID: id, RevisionID: id, DocumentID: id, DocumentRevisionID: id}}}}
 	if c.Validate() != nil {
 		t.Fatal("goal-less generation rejected")
 	}

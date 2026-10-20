@@ -17,8 +17,6 @@ import (
 
 type AssessmentPolicy struct {
 	Configuration string `json:"configuration"`
-	Requests      int    `json:"requests"`
-	Tokens        int    `json:"tokens"`
 }
 type ExerciseBody struct {
 	Manifest   knowledge.SourceManifest `json:"manifest"`

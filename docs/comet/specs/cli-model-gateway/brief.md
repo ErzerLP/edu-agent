@@ -1,6 +1,6 @@
 # Shape：CLI 经服务端模型网关调用模型
 
-状态：Shape 已确认（2026-10-20），Ready，可进入 Build，尚未实施。依据 [#122](https://github.com/ErzerLP/edu-agent/issues/122) 及用户于 2026-10-20 确认的 U1–U4；依赖 [model-usage](../model-usage/brief.md) 已有台账和设置。
+状态：G-A 已交付；G-B 实现与验证记录见[设计 §17](../../../design/cli-model-gateway.md#17-g-b-实现覆盖160)。依据 [#122](https://github.com/ErzerLP/edu-agent/issues/122) 及用户于 2026-10-20 确认的 U1–U4；依赖 [model-usage](../model-usage/brief.md) 已有台账和设置。
 
 ## 结果
 
@@ -46,7 +46,7 @@
 - **G-A：仅网关的完整模型调用链。**合并原 G-A／G-B，同时交付 Chat Completions 和 Responses、模型选择、鉴权、用量、并发与直连移除。演示站使用 Responses，不能先移除直连、后补协议支持。
 - **G-B：共享工具上限与预算残留清理。**承接原 G-C 的剩余工作，完成实际工具计数、继续行为及无累计预算的交互和接口。
 
-U1–U4 已决定，无阻塞问题；数据 owner、公共接口、数据库变更、文件边界及首批退出标准已明确，满足 Ready。工作区为 `docs/shape-122`，本次仅修改这三个文档；Build 开始时核对当时的数据库 migration 序号，测试与 Candidate 验证留待实现后进行。
+U1–U4 已决定，无阻塞问题；数据 owner、公共接口、数据库变更、文件边界及首批退出标准已明确，满足 Ready。Shape 工作区为 `docs/shape-122`；G-A 增加 migration 000049，G-B 在 `feat/gateway-gb` 增加 000050。Build 验证范围与配置影响见设计 §14–§17，完整 Candidate 验证仍独立进行。
 
 ## 端到端验收示例
 

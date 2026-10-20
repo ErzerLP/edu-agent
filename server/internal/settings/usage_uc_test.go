@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestToolStepSettingsAndDeprecatedBudgets(t *testing.T) {
+func TestToolStepSettings(t *testing.T) {
 	s, _ := testService(t)
 	for _, value := range []string{"0", "-1", "1.5", `"2"`, "9223372036854775808"} {
 		var u Update
@@ -18,7 +18,7 @@ func TestToolStepSettingsAndDeprecatedBudgets(t *testing.T) {
 			t.Errorf("accepted invalid max_tool_steps %s", value)
 		}
 	}
-	for _, limits := range []string{`{"max_tool_steps":2}`, `{"output_tokens":4096,"research_tokens":1024}`, `{"max_tool_steps":null}`} {
+	for _, limits := range []string{`{"max_tool_steps":2}`, `{"output_tokens":4096}`, `{"max_tool_steps":null}`} {
 		var u Update
 		if err := json.Unmarshal([]byte(fmt.Sprintf(`{"expected_revision":%d,"limits":%s}`, s.View().Revision, limits)), &u); err != nil {
 			t.Fatal(err)
@@ -39,11 +39,13 @@ func TestToolStepSettingsAndDeprecatedBudgets(t *testing.T) {
 	}
 }
 
-func TestDeprecatedLimitFieldsRejectNull(t *testing.T) {
+func TestRemovedLimitFieldsAreUnknown(t *testing.T) {
 	for _, name := range []string{"research_requests", "research_tokens"} {
-		var update Update
-		if json.Unmarshal([]byte(fmt.Sprintf(`{"limits":{%q:null}}`, name)), &update) == nil {
-			t.Errorf("accepted non-integer %s", name)
+		for _, value := range []string{"null", "20", "100000"} {
+			var update Update
+			if json.Unmarshal([]byte(fmt.Sprintf(`{"limits":{%q:%s}}`, name, value)), &update) == nil {
+				t.Errorf("accepted removed field %s=%s", name, value)
+			}
 		}
 	}
 }

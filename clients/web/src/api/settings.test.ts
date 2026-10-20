@@ -2,8 +2,6 @@ import { describe, expect, it } from 'vitest'
 import { limitsSchema, settingsReason, settingsSchema } from './settings'
 
 const defaults = {
-  research_requests: 20,
-  research_tokens: 100000,
   output_tokens: 2048,
   context_tokens: 32768,
   idle_timeout_seconds: 60,
@@ -40,7 +38,6 @@ describe('设置限额与状态', () => {
       }
     }
     expect(limitsSchema.safeParse({ ...defaults, output_tokens: 32768 }).success).toBe(false)
-    expect(limitsSchema.safeParse({ ...defaults, research_tokens: 1024 }).success).toBe(true)
   })
   it('区分不可用类别，不将未知类别误报就绪', () => {
     const codes = [

@@ -69,8 +69,6 @@ type SubmitTurn struct {
 	OperationID        string                     `json:"operation_id"`
 	ExpectedVersion    int64                      `json:"expected_version"`
 	Prompt             string                     `json:"prompt"`
-	RequestBudget      int                        `json:"request_budget"`
-	TokenBudget        int                        `json:"token_budget"`
 	ConfirmDestination string                     `json:"confirm_destination,omitempty"`
 }
 
@@ -104,7 +102,7 @@ func (s *Service) Submit(ctx context.Context, actor identity.Credential, space, 
 	if c.Mode == "study" && (request.DirectionVersion < 1 || request.SourceSelection == nil) || c.Mode != "study" && request.DirectionVersion != 0 {
 		return Receipt{}, ErrInvalid
 	}
-	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{studyVersion: request.DirectionVersion, SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved, RequestBudget: request.RequestBudget, TokenBudget: request.TokenBudget})
+	return s.Create(ctx, actor, space, runtimeGoal(c.GoalID), Create{studyVersion: request.DirectionVersion, SourceSelection: request.SourceSelection, operationHash: &hash, ConversationID: id, SessionID: id, ConversationVersion: request.ExpectedVersion, ConfirmDestination: request.ConfirmDestination, OperationID: request.OperationID, ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: request.Prompt, Save: c.Saved})
 }
 
 type ConversationQuery struct {

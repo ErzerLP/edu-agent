@@ -57,7 +57,6 @@ func TestSourceDiscoveryConcurrentAndDeviceLimits(t *testing.T) {
 		t.Run(state, func(t *testing.T) {
 			limits := settings.DefaultLimits()
 			limits.Concurrency = 1
-			limits.ResearchRequests = 1
 			s, err := settings.Open(settings.Options{Limits: &limits})
 			if err != nil {
 				t.Fatal(err)

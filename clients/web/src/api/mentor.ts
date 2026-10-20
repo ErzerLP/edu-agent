@@ -18,9 +18,8 @@ export const mentorSnapshotSchema = z.object({
   start_learning: startStateSchema.optional(),
   run_id: z.uuid(), session_id: z.uuid(), space_id: z.uuid(), goal_id: z.uuid(),
   goal_version: positive, privacy_generation: positive, version: positive, watermark: positive,
-  status: z.enum(['queued', 'running', 'waiting_input', 'waiting_approval', 'paused_budget', 'paused_tool_steps', 'succeeded', 'partial', 'failed', 'cancelling', 'cancelled']),
+  status: z.enum(['queued', 'running', 'waiting_input', 'waiting_approval', 'paused_tool_steps', 'succeeded', 'partial', 'failed', 'cancelling', 'cancelled']),
   stage: z.string(), reason: z.string(), saved: z.boolean(), body_available: z.boolean(),
-  requests_left: z.number().int().nonnegative(), tokens_left: z.number().int().nonnegative(),
   requests_used: z.number().int().nonnegative(), result_unknown: z.boolean(), cost_unknown: z.boolean(),
   updated_at: z.iso.datetime({ offset: true }), expires_at: z.iso.datetime({ offset: true }),
   context_notice: z.string().optional(),
@@ -127,7 +126,7 @@ async function watch(session: Session, sub: Subscription) {
 
 export const mentorStatus: Record<MentorSnapshot['status'], string> = {
   queued: '排队中', running: '导师正在回答', waiting_input: '等待你的回答', waiting_approval: '等待你确认',
-  paused_budget: '已暂停，可继续', paused_tool_steps: '本轮工具调用已达上限，可继续', succeeded: '已完成', partial: '仅保留部分结果', failed: '运行失败', cancelling: '正在停止', cancelled: '已停止',
+  paused_tool_steps: '本轮工具调用已达上限，可继续', succeeded: '已完成', partial: '仅保留部分结果', failed: '运行失败', cancelling: '正在停止', cancelled: '已停止',
 }
 export const isMentorTerminal = (status: MentorSnapshot['status']) => ['succeeded', 'partial', 'failed', 'cancelled'].includes(status)
 

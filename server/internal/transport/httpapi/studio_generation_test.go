@@ -11,7 +11,7 @@ import (
 
 func TestStudioDirectionHTTPRejectsNullAndMixedMode(t *testing.T) {
 	const id = "00000000-0000-4000-8000-000000000001"
-	base := map[string]any{"operation_id": id, "privacy_generation": 1, "kind": "guide", "goal_id": nil, "goal_version": 0, "artifact_id": nil, "expected_version": 0, "source_selection": map[string]any{"mode": "items", "items": []any{map[string]string{"collection_id": id, "revision_id": id, "document_id": id, "document_revision_id": id}}}, "request_budget": 1, "token_budget": 50000}
+	base := map[string]any{"operation_id": id, "privacy_generation": 1, "kind": "guide", "goal_id": nil, "goal_version": 0, "artifact_id": nil, "expected_version": 0, "source_selection": map[string]any{"mode": "items", "items": []any{map[string]string{"collection_id": id, "revision_id": id, "document_id": id, "document_revision_id": id}}}}
 	for _, change := range []map[string]any{{"mode": nil}, {"mode": ""}, {"direction_version": nil}, {"direction_version": 0}, {"kind": "quiz", "mode": "direction", "direction_version": nil}, {"kind": "quiz", "mode": "direction", "direction_version": 1, "goal_id": id, "goal_version": 1}} {
 		input := map[string]any{}
 		for k, v := range base {

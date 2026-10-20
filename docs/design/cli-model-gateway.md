@@ -1,6 +1,6 @@
 # CLI 服务端模型网关：设计
 
-状态：Shape 已确认（2026-10-20），G-A 服务端实现覆盖见 §14；CLI 与 G-B 独立交付。对应 [brief](../comet/specs/cli-model-gateway/brief.md)、[spec](../comet/specs/cli-model-gateway/spec.md)，遵循[开发工作流](../development/development-workflow.md)。按用户已确认的 U1–U4 定稿：直接替换行为与接口、仅网关、可选 teaching／mentor、并发默认 10。
+状态：Shape 已确认（2026-10-20），G-A 实现与联调覆盖见 §14–§16，G-B 实现覆盖见 §17。对应 [brief](../comet/specs/cli-model-gateway/brief.md)、[spec](../comet/specs/cli-model-gateway/spec.md)，遵循[开发工作流](../development/development-workflow.md)。按用户已确认的 U1–U4 定稿：直接替换行为与接口、仅网关、可选 teaching／mentor、并发默认 10。
 
 ## 1. 现状与复用边界
 
@@ -536,3 +536,43 @@ export EDU_AGENT_INTEGRATION_CLI=/tmp/ga122-edu-agent
 可选代理检查先执行 `docker pull nginx:alpine`，再设置 `EDU_AGENT_INTEGRATION_NGINX=1` 运行同一测试。它直接抽取 `deploy/web/nginx.conf` 的两个网关 location，只替换测试监听和上游地址，使用临时容器及 host 网络；完成后清理容器。此次首帧 175 ms，配置、模型流、cancel、状态、未知路径拒绝和取消后不重发均通过。这不替代正式 TLS 部署、多实例故障注入或真实供应商实测。
 
 此次真实进程集成及所有补充场景通过（53.54 秒）。局部检查包括服务端 `internal/modelgateway` 的 `go test -p=1`、`go vet -p=1`，CLI `agentcontroller`、`agentloop`、`agentui` 的 `go test -race`、`go vet -race`，未运行全项目测试。G-B、agentcore 协议及 Git 暂存／提交均不在此次改动中。
+
+
+## 17. G-B 实现覆盖（#160）
+
+本节记录 `feat/gateway-gb` 的共享工具上限与累计预算清理。执行依据为 §10、§12 G-B 及 spec 22–25；不修改 `packages/agentcore`，不引入旧字段别名或预算迁移。
+
+| 模块 | 实际落点与行为 |
+| --- | --- |
+| CLI 执行 | `internal/agentloop/{execution,session,tool_steps}.go`：CLI 不再传有限 `RoundBudget`，改按实际工具调用计数。一次回复逐项执行，失败调用计数，未批准及防重放拦截未执行的调用不计。工具目录中的普通问询保留本轮计数，observer／reflector 与自动标题不经过业务工具计数。 |
+| CLI 暂停与继续 | 到限保存原调用列表、下一项位置和已发生事件，按批次剔除进展请求中尚未执行的调用；使用 `tool_limit_summary` stage 经网关发一次无 tools 请求。摘要失败仍返回暂停及已有进展。输入“继续”重置计数，从保存位置续接；已完成操作不重跑。暂停沿用现有未完成轮次与副作用恢复保护，不持久化离线工具上限。 |
+| CLI 配置与归属 | `internal/modelgateway/gateway.go` 读取并校验 `limits.max_tool_steps`；`agentloop/gateway.go` 将值复制到本轮内存快照。`agentcontroller/{controller,gateway}.go` 在新用户轮次或明确继续时在线刷新，失败提示重试，不调用执行循环。继续保留原 `TurnID`，新输入产生新轮次；普通问询及工具审批不刷新或重置。 |
+| CLI 工作台与帮助 | `internal/command/{workbench_study,study,model_gateway,agent,app}.go`、`config`、`dashboard` 与 README：移除预算输入、余额、增额动作及本地 `MaxToolRounds`／`--max-tool-rounds`，工具暂停只用 `paused_tool_steps`／`resume`，`retry_start` 为无增额的失败重试。`agentui` 显示中文暂停与继续提示。 |
+| 服务端 | `mentorrun` 删除累计预算字段、余额、`paused_budget`、`continue_budget` 及 `compat.go` 特殊解码。`learningcontent.AssessmentPolicy` 删除同一合同中的 `requests/tokens`。HTTP 使用原有严格请求解码，旧字段按未知字段拒绝。`settings.Limits` 删除 `ResearchRequests/ResearchTokens` 的默认值、校验及能力投影。 |
+| 幂等数据 | 新增 `000050_remove_mentor_budget_hash_version.sql`，删除 `learning_mentor_operations.hash_version` 及只用于预算兼容的 v1/v2 分支，按当前请求合同计算幂等哈希。`learning_studio_jobs.hash_version=1` 属于独立 Studio 幂等协议，保留。历史 migration 不改写，不迁移旧请求 payload 或回执。 |
+| 网页与接口 | `clients/web/src/api`、导师/研究/任务/Notebook 页面、设置帮助、OpenAPI 与生成 schema 同步去累计预算。保留 source discovery 的 `request_budget: 1`：其含义是无状态单次搜索最多一次外部请求，属于单次 I/O 边界，不是累计模型预算。 |
+
+确定性测试使用上限 3，覆盖多工具、未批准不扣次、执行失败扣次、普通等待不重置、摘要失败仍暂停、继续不重复文件副作用、下一轮/继续读取新设置、读取失败不使用缓存，以及继续的用量轮次归属。额外核对跨批次重复 call ID 不会把未执行调用放进摘要。CLI 长轮次完成 62 次模型请求，工具响应累计已报告 usage 为 128100 Token；服务端长轮次完成 26 次请求、累计 104520 Token。单次窗口、输出、权限、文件、存储与超时边界保持原用途。
+
+### 配置与部署影响
+
+服务端 settings 文件使用严格解码，残留 `research_requests`／`research_tokens` 将作为未知字段使加载失败，可能导致演示站不能启动；由操作者删除旧字段后再启动，没有迁移或兼容代码。CLI 本地配置同样严格解码，旧 `agent.max_tool_rounds` 需手动移除。数据库需应用 migration 000050；旧预算合同回执不承诺可继续重放。
+
+### 验证记录
+
+验证使用 `umask 022`、`GOCACHE=/tmp/gb-go-build`、指定 PostgreSQL 测试库和 Go `-p=1`，不运行服务端全量测试或三浏览器矩阵。
+
+| 检查 | 结果 |
+| --- | --- |
+| CLI `agentlimits`、`modelgateway`、`agentloop`、`agentcontroller`、`agentui`、`command`、`config`、`dashboard` | `go test -race -p=1`、`go vet -p=1` 均通过（agentlimits 无测试文件）。 |
+| CLI 模块最终检查 | `go test -p=1 ./...` 通过。 |
+| 服务端 `mentorrun` | `go test -p=1 -timeout 40m` 通过，1070.078 秒；最终加强的 26 次请求／104520 Token 用例补验通过，7.933 秒。 |
+| 服务端 `settings`、`learningcontent`、`httpapi`、`migrations` | 包级 `go test -p=1`、`go vet -p=1` 均通过；测试耗时分别为 23.093、0.006、44.307、25.949 秒。`mentorrun` 的 vet 也通过。 |
+| 服务端 `modelgateway` | 整包 `go test -p=1 -count=1 -v -timeout 10m` 通过，97.496 秒；`go vet -p=1` 通过。其中 `TestRealCLIModelGatewayIntegration` 实际运行一次，通过，57.60 秒。 |
+| 网页 | `npm ci`、`npm run generate`、`npm run check`、`npm run build` 通过；4 个相关 Vitest 文件共 24 项通过。 |
+| Chromium | 3 项通过，35.4 秒：导师/任务页工具暂停继续与恢复、Notebook 无预算提交、设置保存与恢复。使用真实服务端和确定性本地模型，未访问付费上游。默认浏览器版本缓存缺失，使用现有 `WEB_CHROMIUM_PATH` 指向缓存 1247，未安装浏览器。 |
+| 文档与工作树 | 三份设计/需求文档的本地链接检查、`git diff --check` 通过；无 agentcore 改动，无暂存或提交。 |
+
+`server/api` 的 G-B 相关合同子集及 `go vet -p=1` 通过。整包 `go test -p=1 ./api` 存在一项基线失败：`TestWorkspaceProxyAllowlist` 在 `server/api/openapi_learning_content_test.go:99` 断言 `/v1/knowledge/imports` 应被拒绝，但 `deploy/web/nginx.conf:70` 的既有正则允许该路径。这两个文件均无本次改动；未修改部署权限来消除无关失败。
+
+未执行可选 nginx proxy smoke、三浏览器矩阵或真实 Brave 研究 live 测试。`research-live.spec.ts` 已同步工具上限及继续入口，未把其真实外部流程记作通过；`review.spec.ts` 的两个复习用例仅同步创建请求夹具，未运行。Build 的本地证据不代表演示站配置或真实供应商已验收。

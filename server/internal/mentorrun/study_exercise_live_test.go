@@ -30,8 +30,7 @@ func TestPostgreSQLStudyExerciseLiveResponses(t *testing.T) {
 	f := newExerciseFixture(t)
 	limits := settings.DefaultLimits()
 	limits.OutputTokens = 8192
-	limits.ResearchRequests = 2
-	limits.ResearchTokens = 50000
+
 	limits.IdleTimeoutSeconds = 180
 	configuration, err := settings.Open(settings.Options{Path: filepath.Join(t.TempDir(), "private", "settings.json"), Teaching: settings.Connection{Enabled: true, Provider: "openai_compatible", Endpoint: endpoint, Model: "deepseek-v4-flash", AuthMode: "bearer", APIStyle: "responses"}, TeachingKey: key, Limits: &limits})
 	if err != nil {
@@ -52,7 +51,7 @@ func TestPostgreSQLStudyExerciseLiveResponses(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	started := time.Now()
-	r, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "出一道题：只问偶数的定义，并请我举一个例子。不要在讲解中给出答案。", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}, RequestBudget: 2, TokenBudget: 50000})
+	r, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "出一道题：只问偶数的定义，并请我举一个例子。不要在讲解中给出答案。", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
 	if err != nil {
 		t.Fatal("live question submission failed")
 	}

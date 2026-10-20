@@ -38,22 +38,19 @@ type Connection struct {
 }
 
 type Limits struct {
-	MaxToolSteps *int `json:"max_tool_steps"`
-	// Deprecated: retained for old settings files; neither field limits execution.
-	ResearchRequests   int `json:"research_requests"`
-	ResearchTokens     int `json:"research_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	ContextTokens      int `json:"context_tokens"`
-	IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
-	Concurrency        int `json:"concurrency"`
-	StorageMiB         int `json:"storage_mib"`
+	MaxToolSteps       *int `json:"max_tool_steps"`
+	OutputTokens       int  `json:"output_tokens"`
+	ContextTokens      int  `json:"context_tokens"`
+	IdleTimeoutSeconds int  `json:"idle_timeout_seconds"`
+	Concurrency        int  `json:"concurrency"`
+	StorageMiB         int  `json:"storage_mib"`
 }
 
 func DefaultLimits() Limits {
-	return Limits{ResearchRequests: 20, ResearchTokens: 100000, OutputTokens: 2048, ContextTokens: 32768, IdleTimeoutSeconds: 60, Concurrency: 10, StorageMiB: 512}
+	return Limits{OutputTokens: 2048, ContextTokens: 32768, IdleTimeoutSeconds: 60, Concurrency: 10, StorageMiB: 512}
 }
 func (l Limits) Validate() error {
-	for _, v := range [][3]int{{l.ResearchRequests, 1, 1000}, {l.ResearchTokens, 1024, 10000000}, {l.OutputTokens, 64, 32768}, {l.ContextTokens, 4096, 2000000}, {l.IdleTimeoutSeconds, 5, 600}, {l.Concurrency, 1, 16}, {l.StorageMiB, 16, 1048576}} {
+	for _, v := range [][3]int{{l.OutputTokens, 64, 32768}, {l.ContextTokens, 4096, 2000000}, {l.IdleTimeoutSeconds, 5, 600}, {l.Concurrency, 1, 16}, {l.StorageMiB, 16, 1048576}} {
 		if v[0] < v[1] || v[0] > v[2] {
 			return ErrInvalid
 		}

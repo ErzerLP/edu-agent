@@ -175,7 +175,7 @@ func fixture(t *testing.T, handler func(http.ResponseWriter, *http.Request, int)
 	if _, err = f.pool.Exec(ctx, `INSERT INTO learning_goal_revisions(id,goal_id,revision,goal_text,source,actor_device_id,created_at) VALUES($1,$2,1,'真实绑定目标：学习概率','导师夹具',$3,now())`, uuid.NewString(), f.goal, f.actor.Device.ID); err != nil {
 		t.Fatal(err)
 	}
-	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "请解释目标", Save: true, RequestBudget: 4, TokenBudget: 50000}
+	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "请解释目标", Save: true}
 	return f
 }
 
@@ -341,7 +341,7 @@ func TestPostgreSQLMentorLeaseCompetitionAndUnknownResult(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLMentorInteractionIgnoresBudgetAndRejectsStaleApproval(t *testing.T) {
+func TestPostgreSQLMentorInteractionRejectsStaleApproval(t *testing.T) {
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
 		if n < 3 {
 			stream(w, modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{ID: fmt.Sprint("confirm-", n), Type: "function", Function: modelclient.ToolFunction{Name: "confirm_focus", Arguments: `{"focus":"先讨论概率直觉？"}`}}}})
@@ -349,7 +349,7 @@ func TestPostgreSQLMentorInteractionIgnoresBudgetAndRejectsStaleApproval(t *test
 		}
 		stream(w, modelclient.Message{Role: "assistant", Content: "已按确认的方向回答"})
 	})
-	f.create.RequestBudget = 1
+
 	r := f.accept(t)
 	f.work(t)
 	first := f.snapshot(t, r.RunID)
@@ -380,13 +380,13 @@ func TestPostgreSQLMentorInteractionIgnoresBudgetAndRejectsStaleApproval(t *test
 	}
 }
 
-func TestPostgreSQLMentorCompatibilityFallbackIgnoresLegacyBudget(t *testing.T) {
+func TestPostgreSQLMentorCompatibilityFallbackHasFiniteRetries(t *testing.T) {
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(400)
 		io.WriteString(w, `{"error":{"code":"unsupported_parameter","param":"stream_options","message":"unsupported"}}`)
 	})
-	f.create.RequestBudget = 1
+
 	r := f.accept(t)
 	f.work(t)
 	if snapshot := f.snapshot(t, r.RunID); snapshot.Status != "failed" || snapshot.RequestsUsed != 2 || f.calls.Load() != 2 {

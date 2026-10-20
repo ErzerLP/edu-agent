@@ -1,6 +1,6 @@
 # Capability：CLI 服务端模型网关
 
-状态：Shape 已确认（2026-10-20），Ready，可进入 Build，尚未实施。结果和边界见 [brief](brief.md)，协议与分批见[设计](../../../design/cli-model-gateway.md)。以下为 U1–U4 决定后的完整合同。
+状态：G-A 已交付；G-B 实现与验证记录见[设计 §17](../../../design/cli-model-gateway.md#17-g-b-实现覆盖160)。结果和边界见 [brief](brief.md)，协议与分批见[设计](../../../design/cli-model-gateway.md)。以下为 U1–U4 决定后的完整合同。
 
 ## 合同与验收
 
@@ -34,4 +34,4 @@
 
 ## 交付与证据
 
-保持单 change，按新的 G-A、G-B 顺序实施。G-A 合并原网关与 Responses 批次，并交付模型选择及直连移除；G-B 完成共享工具上限和预算残留清理。U1–U4 已确认，Ready 条件满足；Build 起点核对数据库 migration 序号，各批相关测试和 Candidate 验收在实现后执行。本次仅检查文档引用和一致性，不代表实现或测试通过，verification 由 Runtime 生成。
+保持单 change，按新的 G-A、G-B 顺序实施。G-A 合并原网关与 Responses 批次，并交付模型选择及直连移除；G-B 完成共享工具上限和预算残留清理。U1–U4 已确认。G-A 实现及联调见设计 §14–§16；G-B 的工具计数、暂停续接、无预算合同、migration 000050、检查结果和旧配置影响见 §17。Build 的局部证据不替代完整 Candidate 验证。

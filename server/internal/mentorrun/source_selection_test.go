@@ -135,7 +135,7 @@ func TestPostgreSQLSourceSelectionForgeryRevocationAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.service.Submit(ctx, f.actor, other, conversation, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "forged cross space", RequestBudget: 3, TokenBudget: 30000, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{a}}}); knowledge.ErrorCode(err) != knowledge.CodeNotFound {
+	if _, err = f.service.Submit(ctx, f.actor, other, conversation, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "forged cross space", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{a}}}); knowledge.ErrorCode(err) != knowledge.CodeNotFound {
 		t.Fatal("cross space selection accepted", err)
 	}
 	id := newHistory(t, f, true, "")
@@ -233,16 +233,18 @@ func TestPostgreSQLSourceSelectionPausedRunPinsHistoricalVersion(t *testing.T) {
 	a := selectedDocument(t, f, "HISTORY_OLD_BODY")
 	id := newHistory(t, f, true, "")
 	req := historyRequest(t, f, id, "保存当时的版本")
-	req.TokenBudget = 1
+
 	req.SourceSelection = &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{a}}
 	receipt, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, uuid.Nil.String(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	legacyPause(t, f, receipt.RunID)
+	if _, err := f.pool.Exec(ctx, `UPDATE learning_mentor_runs SET state=state || '{"status":"paused_tool_steps","stage":"paused_tool_steps","reason":"tool_steps_exhausted"}'::jsonb WHERE id=$1`, receipt.RunID); err != nil {
+		t.Fatal(err)
+	}
 	f.work(t)
 	before := f.snapshot(t, receipt.RunID)
-	if before.Status != "paused_budget" || f.calls.Load() != 0 {
+	if before.Status != "paused_tool_steps" || f.calls.Load() != 0 {
 		t.Fatal("did not pause before request")
 	}
 	ks, err := knowledge.NewService(knowledgepg.New(f.pool), knowledge.NewCanonicalizer(), knowledge.ServiceOptions{})
@@ -278,7 +280,7 @@ func TestPostgreSQLSourceSelectionPausedRunPinsHistoricalVersion(t *testing.T) {
 	if replay, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, uuid.Nil.String(), req); err != nil || replay != receipt {
 		t.Fatal("changed head broke original replay", err)
 	}
-	if _, err = f.service.Command(ctx, f.actor, learningspace.DefaultID, receipt.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: before.Version, Kind: "continue_budget", RequestBudget: 3, TokenBudget: 30000}); err != nil {
+	if _, err = f.service.Command(ctx, f.actor, learningspace.DefaultID, receipt.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: before.Version, Kind: "resume"}); err != nil {
 		t.Fatal(err)
 	}
 	f.work(t)
@@ -306,7 +308,7 @@ func TestPostgreSQLSourceSelectionDoesNotChangeFrozenClassroom(t *testing.T) {
 		}
 		stream(w, modelclient.Message{Role: "assistant", Content: `{"answer":"本轮参考 [1]","citations":[{"source":1,"fragment":1}]}`})
 	}
-	request := Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: old.Base.GoalVersion, TeachingSessionID: f.session, Prompt: "只问所选来源", Save: true, RequestBudget: 3, TokenBudget: 50000, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{{CollectionID: source.CollectionID, RevisionID: source.RevisionID, DocumentID: source.DocumentID, DocumentRevisionID: source.DocumentRevisionID}}}}
+	request := Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: old.Base.GoalVersion, TeachingSessionID: f.session, Prompt: "只问所选来源", Save: true, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{{CollectionID: source.CollectionID, RevisionID: source.RevisionID, DocumentID: source.DocumentID, DocumentRevisionID: source.DocumentRevisionID}}}}
 	receipt, err := f.service.Create(context.Background(), f.actor, learningspace.DefaultID, f.goal, request)
 	if err != nil {
 		t.Fatal(err)
@@ -340,7 +342,7 @@ func TestPostgreSQLSourceSelectionLegacyHistoryAndInvalidCitations(t *testing.T)
 	sendHistory(t, f, id, "LEGACY_UNSELECTED_QUESTION")
 	f.work(t)
 	c := historyPage(t, f, id, 0, 20).Conversation
-	receipt, err := f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, Prompt: "新问题", RequestBudget: 3, TokenBudget: 30000, SourceSelection: &knowledge.SourceSelection{Mode: "none", Items: []knowledge.SourceIdentity{}}})
+	receipt, err := f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, Prompt: "新问题", SourceSelection: &knowledge.SourceSelection{Mode: "none", Items: []knowledge.SourceIdentity{}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package mentorrun
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,31 +14,25 @@ import (
 	"github.com/google/uuid"
 )
 
-func legacyPause(t *testing.T, f *runtimeFixture, id string) {
-	t.Helper()
-	if _, err := f.pool.Exec(context.Background(), `UPDATE learning_mentor_runs SET state=state || '{"status":"paused_budget","stage":"paused_budget","reason":"budget_exhausted"}'::jsonb WHERE id=$1`, id); err != nil {
-		t.Fatal(err)
+func TestPostgreSQLUsageHasNoCumulativeLimits(t *testing.T) {
+	f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n <= 25 {
+			fmt.Fprintf(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"goal-%d\",\"type\":\"function\",\"function\":{\"name\":\"read_goal\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n", n)
+		} else {
+			fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"已完成\"},\"finish_reason\":\"stop\"}]}\n\n")
+		}
+		fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4000,\"completion_tokens\":20,\"total_tokens\":4020}}\n\ndata: [DONE]\n\n")
+	})
+	r := f.accept(t)
+	f.work(t)
+	s := f.snapshot(t, r.RunID)
+	if s.Status != "succeeded" || s.RequestsUsed != 26 || f.calls.Load() != 26 {
+		t.Fatalf("cumulative requests blocked execution: %+v calls=%d", s, f.calls.Load())
 	}
-}
-
-func TestPostgreSQLUsageLegacyBudgetDoesNotLimit(t *testing.T) {
-	for _, budget := range []int{0, 1} {
-		t.Run(fmt.Sprint(budget), func(t *testing.T) {
-			f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
-				if n <= 3 {
-					stream(w, modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{ID: fmt.Sprint("goal-", n), Type: "function", Function: modelclient.ToolFunction{Name: "read_goal", Arguments: `{}`}}}})
-					return
-				}
-				stream(w, modelclient.Message{Role: "assistant", Content: "已完成"})
-			})
-			f.create.RequestBudget, f.create.TokenBudget = budget, budget
-			r := f.accept(t)
-			f.work(t)
-			s := f.snapshot(t, r.RunID)
-			if s.Status != "succeeded" || s.RequestsLeft != 0 || s.TokensLeft != 0 || f.calls.Load() != 4 {
-				t.Fatalf("legacy allowance blocked execution: %+v calls=%d", s, f.calls.Load())
-			}
-		})
+	var total int64
+	if err := f.pool.QueryRow(context.Background(), `SELECT sum(c.total_tokens) FROM learning_model_calls c JOIN learning_model_tasks t ON t.id=c.task_id WHERE t.origin_id=$1`, r.RunID).Scan(&total); err != nil || total != 104520 {
+		t.Fatalf("cumulative token usage missing: %d %v", total, err)
 	}
 }
 
@@ -89,49 +82,23 @@ func TestPostgreSQLUsageToolStepsResume(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLUsageLegacyReceiptAndPause(t *testing.T) {
+func TestPostgreSQLUsageReceiptUsesCurrentPayload(t *testing.T) {
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, _ int) {
-		stream(w, modelclient.Message{Role: "assistant", Content: "继续完成"})
+		stream(w, modelclient.Message{Role: "assistant", Content: "完成"})
 	})
 	r := f.accept(t)
 	ctx := context.Background()
-	var version int
-	if err := f.pool.QueryRow(ctx, `SELECT hash_version FROM learning_mentor_operations WHERE operation_id=$1`, r.OperationID).Scan(&version); err != nil || version != 2 {
-		t.Fatalf("new receipt version: %d %v", version, err)
+	if replay, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, f.goal, f.create); err != nil || replay != r {
+		t.Fatalf("receipt replay: %+v %v", replay, err)
 	}
 	changed := f.create
-	changed.TokenBudget++
+	changed.Prompt = "不同的问题"
 	if _, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, f.goal, changed); !errors.Is(err, ErrOperation) {
-		t.Fatalf("v2 lost submitted budgets: %v", err)
+		t.Fatalf("changed payload accepted: %v", err)
 	}
-	// Reproduce an operation and paused checkpoint from the previous release.
-	legacyJSON := fmt.Sprintf(`{"Kind":"create","Space":%q,"Target":%q,"Value":{"operation_id":%q,"session_id":%q,"expected_version":1,"prompt":"请解释目标","save":true,"request_budget":4,"token_budget":50000}}`, learningspace.DefaultID, f.goal, f.create.OperationID, f.create.SessionID)
-	hash := sha256.Sum256([]byte(legacyJSON))
-	legacyConfiguration := fmt.Sprintf(`{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":%q,"model":"mentor-fixture","auth_mode":"none"},"Key":"","Limits":{"research_requests":20,"research_tokens":100000,"output_tokens":64,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":10,"storage_mib":512}}`, f.settings.View().EffectiveMentor.Endpoint)
-	configuration := fmt.Sprintf("%x", sha256.Sum256([]byte(legacyConfiguration)))
-	if _, err := f.pool.Exec(ctx, `UPDATE learning_mentor_operations SET request_hash=$1,hash_version=1 WHERE operation_id=$2`, hash[:], r.OperationID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.pool.Exec(ctx, `UPDATE learning_mentor_runs SET state=state || '{"status":"paused_budget","stage":"paused_budget","requests_left":7,"tokens_left":9000}'::jsonb || jsonb_build_object('configuration',$2::text) WHERE id=$1`, r.RunID, configuration); err != nil {
-		t.Fatal(err)
-	}
-	if replay, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, f.goal, f.create); err != nil || replay != r {
-		t.Fatalf("legacy receipt: %+v %v", replay, err)
-	}
-	if _, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, f.goal, changed); !errors.Is(err, ErrOperation) {
-		t.Fatalf("payload change accepted: %v", err)
-	}
-	f.work(t)
-	s := f.snapshot(t, r.RunID)
-	if s.Status != "paused_budget" || f.calls.Load() != 0 || s.RequestsLeft != 0 || s.TokensLeft != 0 {
-		t.Fatalf("legacy pause changed: %+v", s)
-	}
-	if _, err := f.service.Command(ctx, f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: s.Version, Kind: "continue_budget", RequestBudget: 1, TokenBudget: 1}); err != nil {
-		t.Fatal(err)
-	}
-	f.work(t)
-	if s = f.snapshot(t, r.RunID); s.Status != "succeeded" {
-		t.Fatal(s)
+	var obsoleteColumn bool
+	if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='learning_mentor_operations' AND column_name='hash_version')`).Scan(&obsoleteColumn); err != nil || obsoleteColumn {
+		t.Fatalf("budget-only hash version remains: %v %v", obsoleteColumn, err)
 	}
 }
 
@@ -230,34 +197,6 @@ func TestPostgreSQLUsageResearchToolSteps(t *testing.T) {
 	f.work(t)
 	if f.calls.Load() != 2 {
 		t.Fatal("stopped research dispatched another request")
-	}
-}
-
-func TestPostgreSQLUsageOldCLIRequestAndInputTypes(t *testing.T) {
-	f := fixture(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
-		stream(w, modelclient.Message{Role: "assistant", Content: "完成"})
-	})
-	// workbench_study sends this exact legacy envelope to the mentor endpoint.
-	raw := fmt.Sprintf(`{"operation_id":%q,"session_id":%q,"expected_version":1,"prompt":"讲解目标","save":true,"request_budget":1,"token_budget":1}`, uuid.NewString(), uuid.NewString())
-	var c Create
-	if err := json.Unmarshal([]byte(raw), &c); err != nil {
-		t.Fatal(err)
-	}
-	r, err := f.service.Create(context.Background(), f.actor, learningspace.DefaultID, f.goal, c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.work(t)
-	if s := f.snapshot(t, r.RunID); s.Status != "succeeded" {
-		t.Fatal(s)
-	}
-	for _, value := range []string{"-1", "1.5", `"1"`, "null", "9223372036854775808"} {
-		for _, name := range []string{"request_budget", "token_budget"} {
-			var c Create
-			if json.Unmarshal([]byte(fmt.Sprintf(`{%q:%s}`, name, value)), &c) == nil {
-				t.Errorf("accepted %s=%s", name, value)
-			}
-		}
 	}
 }
 

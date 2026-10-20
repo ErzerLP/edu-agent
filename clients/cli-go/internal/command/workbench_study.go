@@ -45,15 +45,7 @@ func (a *App) workbenchStudy(ctx context.Context, client APIClient, req workbenc
 		p.Goal, p.Version = g.GoalManagement().Details.Name, g.Revision
 		p.Content += goalContent(g)
 		if req.Action != "" {
-			requests, e := strconv.Atoi(req.Values["requests"])
-			if e != nil {
-				return p, fmt.Errorf("请求预算须为正整数")
-			}
-			tokens, e := strconv.Atoi(req.Values["tokens"])
-			if e != nil {
-				return p, fmt.Errorf("Token 预算须为正整数")
-			}
-			body := map[string]any{"operation_id": req.Operation, "session_id": req.Entity, "expected_version": req.Version, "prompt": req.Values["prompt"], "save": true, "request_budget": requests, "token_budget": tokens}
+			body := map[string]any{"operation_id": req.Operation, "session_id": req.Entity, "expected_version": req.Version, "prompt": req.Values["prompt"], "save": true}
 			var sessions map[string]string
 			if json.Unmarshal([]byte(req.Basis), &sessions) != nil {
 				return p, fmt.Errorf("运行恢复依据缺失，请刷新目标页面后重试")
@@ -83,7 +75,7 @@ func (a *App) workbenchStudy(ctx context.Context, client APIClient, req workbenc
 			p.Redirect = "study-run/" + result.String("run_id")
 			return p, nil
 		}
-		fields := []workbench.Field{{ID: "prompt", Label: "确认可外发的公开研究主题（不超过 300 字节）"}, {ID: "requests", Label: "本次请求预算", Value: "10"}, {ID: "tokens", Label: "本次 Token 预算", Value: "20000"}}
+		fields := []workbench.Field{{ID: "prompt", Label: "确认可外发的公开研究主题（不超过 300 字节）"}}
 		if req.Page == "study-adjust" {
 			fields[0].Label = "向服务端导师请求本会话的路径调整"
 			p.Actions = []workbench.Action{{ID: "mentor", Label: "请求教学调整", Fields: fields, Confirmation: "允许服务端模型读取此目标与明确选择的教学会话并提出变更？具体差异随后在变更页审阅。"}}
@@ -141,17 +133,6 @@ func (a *App) workbenchStudy(ctx context.Context, client APIClient, req workbenc
 				body["interaction_id"] = req.Basis
 				body["answer"] = req.Text
 			}
-			if req.Action == "continue_budget" || req.Action == "retry_start" {
-				requests, e := strconv.Atoi(req.Values["requests"])
-				if e != nil {
-					return p, fmt.Errorf("请求预算须为正整数")
-				}
-				tokens, e := strconv.Atoi(req.Values["tokens"])
-				if e != nil {
-					return p, fmt.Errorf("Token 预算须为正整数")
-				}
-				body["request_budget"], body["token_budget"] = requests, tokens
-			}
 			if _, err = call("run-command", api.StudyQuery{Run: first}, body); err != nil {
 				return p, err
 			}
@@ -159,7 +140,7 @@ func (a *App) workbenchStudy(ctx context.Context, client APIClient, req workbenc
 			return p, nil
 		}
 		p.Version, p.Basis = d.Number("version"), d.Object("interaction").String("id")
-		p.Content += studyText("run", d) + fmt.Sprintf("\n剩余请求 %d · 剩余 Token %d · 结果未知=%t\n", d.Number("requests_left"), d.Number("tokens_left"), d.Bool("result_unknown"))
+		p.Content += studyText("run", d) + fmt.Sprintf("\n结果未知=%t\n", d.Bool("result_unknown"))
 		if i := d.Object("interaction"); i != nil {
 			p.Content += "\n" + i.String("question") + "\n可选回答：" + string(i["choices"])
 			if !i.Bool("reference_selection") && i.String("memory_candidate_id") == "" {
@@ -171,18 +152,18 @@ func (a *App) workbenchStudy(ctx context.Context, client APIClient, req workbenc
 		if d.Bool("body_available") {
 			p.Actions = append(p.Actions, workbench.Action{ID: "clear", Label: "清除此运行保存的正文", Confirmation: "清除原运行正文并停止运行？已发布的知识、课堂和答案仍按原规则保留。"})
 		}
-		if studyRunWaiting(d.String("status")) || d.String("status") == "waiting_input" || d.String("status") == "waiting_approval" || d.String("status") == "paused_budget" {
+		if studyRunWaiting(d.String("status")) || d.String("status") == "waiting_input" || d.String("status") == "waiting_approval" || d.String("status") == "paused_tool_steps" {
 			p.Actions = append(p.Actions, workbench.Action{ID: "stop", Label: "停止此运行", Confirmation: "请求服务端停止此运行？已完成结果仍保留。"})
 		}
-		budget := []workbench.Field{{ID: "requests", Label: "新增请求预算", Value: "10"}, {ID: "tokens", Label: "新增 Token 预算", Value: "20000"}}
-		if d.String("status") == "paused_budget" {
-			p.Actions = append(p.Actions, workbench.Action{ID: "continue_budget", Label: "明确增加预算继续", Fields: budget, Confirmation: "允许原运行使用新增预算继续模型请求？"})
+		if d.String("status") == "paused_tool_steps" {
+			p.Content += "\n已达到本轮工具调用上限，继续后重新计数。"
+			p.Actions = append(p.Actions, workbench.Action{ID: "resume", Label: "继续此运行", Confirmation: "允许原运行按当前每轮工具调用上限继续？已完成的工具不会重跑。"})
 		}
 		start := d.Object("start_learning")
 		if result := start.Object("result"); result != nil {
 			p.Entries = append(p.Entries, workbench.Entry{ID: "page:session/" + result.String("session_id"), Label: "继续此运行创建的正式课堂"}, workbench.Entry{ID: "page:study-content/" + result.String("artifact_id"), Label: "阅读本课堂正式内容"})
 		} else if d.String("kind") == "start_learning" && (d.String("status") == "partial" || d.String("status") == "failed") && d.Bool("body_available") {
-			p.Actions = append(p.Actions, workbench.Action{ID: "retry_start", Label: "按新预算恢复开学", Fields: budget, Confirmation: "授权恢复原开学运行？复用已有来源，失败步骤可能重新请求。"})
+			p.Actions = append(p.Actions, workbench.Action{ID: "retry_start", Label: "重试失败的开学步骤", Confirmation: "授权恢复原开学运行？复用已有来源，失败步骤可能重新请求。"})
 		}
 		if d.String("kind") == "research" || d.String("kind") == "start_learning" {
 			p.Entries = append(p.Entries, workbench.Entry{ID: "page:study-sources/" + first, Label: "查看研究来源及采用状态"})

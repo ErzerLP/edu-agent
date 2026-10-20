@@ -91,7 +91,7 @@ func newExerciseFixture(t *testing.T, modelAddress ...string) *exerciseFixture {
 	question.AllowedHelp = []string{"none", "hint", "scaffold", "answer_revealed"}
 	return &exerciseFixture{runtimeFixture: f, start: start, learn: learn, request: learningstart.ExerciseRequest{
 		Question:   learningstart.SingleQuestion{OperationID: uuid.NewString(), GoalRevisionID: goal.ID, Generation: 1, Label: "单题 A", Model: "fixture", Manifest: *manifest, Question: question, Citations: body.Citations},
-		Assessment: learningcontent.AssessmentPolicy{Configuration: configuration, Requests: 2, Tokens: 50000},
+		Assessment: learningcontent.AssessmentPolicy{Configuration: configuration},
 	}}
 }
 
@@ -669,7 +669,7 @@ func TestPostgreSQLExerciseKnownRejectionIsNotUnknown(t *testing.T) {
 	if err != nil || state.Run == nil || state.Run.Status != "failed" || state.Run.ResultUnknown || state.Run.RequestsUsed != 2 {
 		t.Fatalf("known proposal failure mislabeled: %+v %v", state.Run, err)
 	}
-	policy, err := f.service.AssessmentPolicy(0, 0)
+	policy, err := f.service.AssessmentPolicy()
 	if err != nil {
 		t.Fatal(err)
 	}

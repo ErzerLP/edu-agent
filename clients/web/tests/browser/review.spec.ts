@@ -146,8 +146,6 @@ async function dynamicSession(client: API, spaceId: string, name: string) {
     expected_version: source.goal.revision,
     prompt: '偶数',
     save: true,
-    request_budget: 8,
-    token_budget: 50000,
     research: {
       topic: '偶数',
       external_consent: true,

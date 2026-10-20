@@ -664,7 +664,7 @@ export function ChatPanel({
             </details>,
             menu,
           )}
-        {!!run && ['paused_budget', 'paused_tool_steps'].includes(run.status) && (
+        {!!run && run.status === 'paused_tool_steps' && (
           <div>
           <p role="status">{mentorStatus[run.status]}</p>
           <Button

@@ -277,11 +277,11 @@ func (s *fakeServer) DecideMemoryCandidate(_ context.Context, candidateID string
 	return api.MemoryOperationResponse{Candidate: &api.MemoryCandidateView{Candidate: api.MemoryCandidate{ID: candidateID, Status: status, Revision: request.ExpectedRevision + 1}}}, nil
 }
 
-func TestSessionSupportsUnlimitedToolLoopAndOptionalUserLimit(t *testing.T) {
+func TestSessionSupportsUnlimitedToolLoop(t *testing.T) {
 	t.Parallel()
 	responses := make([]modelclient.Response, 0, 62)
 	for index := 0; index < 61; index++ {
-		responses = append(responses, modelclient.Response{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{
+		responses = append(responses, modelclient.Response{Usage: &modelclient.Usage{PromptTokens: 100, CompletionTokens: 2000, TotalTokens: 2100}, Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{
 			ID: fmt.Sprintf("call-%d", index), Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`},
 		}}}})
 	}
@@ -289,7 +289,7 @@ func TestSessionSupportsUnlimitedToolLoopAndOptionalUserLimit(t *testing.T) {
 	model := &fakeModel{responses: responses}
 	uuidCalls := 0
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 1_000_000, MaxToolRounds: 0, Now: time.Now,
+		ContextWindow: 1_000_000, Now: time.Now,
 		NewUUID: func() (string, error) {
 			uuidCalls++
 			return fmt.Sprintf("60000000-0000-4000-8000-%012d", uuidCalls), nil
@@ -305,27 +305,6 @@ func TestSessionSupportsUnlimitedToolLoopAndOptionalUserLimit(t *testing.T) {
 	}
 	if result.Text != "完成长工具循环" || len(model.requests) != 62 {
 		t.Fatalf("result=%+v requests=%d", result, len(model.requests))
-	}
-
-	limitedModel := &fakeModel{responses: []modelclient.Response{
-		{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{ID: "limited-call", Type: "function", Function: modelclient.ToolFunction{Name: "get_learning_progress", Arguments: `{}`}}}}},
-		{Message: modelclient.Message{Role: "assistant", Content: "不应到达"}},
-	}}
-	limited, err := New(limitedModel, &fakeServer{}, Options{
-		ContextWindow: 32768, MaxToolRounds: 1, Now: time.Now,
-		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000999", nil },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := limited.Send(t.Context(), "测试自选保护值"); err == nil || !strings.Contains(err.Error(), "保护值") {
-		t.Fatalf("optional tool-round guard err=%v", err)
-	}
-	if _, err := New(&fakeModel{}, &fakeServer{}, Options{
-		ContextWindow: 4096, MaxToolRounds: -1, Now: time.Now,
-		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000998", nil },
-	}); err == nil {
-		t.Fatal("negative MaxToolRounds accepted")
 	}
 }
 
@@ -1374,8 +1353,8 @@ func TestPreferenceRetryReusesOperationIDAfterAmbiguousFailure(t *testing.T) {
 	server := &fakeServer{createErrors: []error{errors.New("response lost")}}
 	uuidCalls := 0
 	session, err := New(model, server, Options{
-		ContextWindow: 32768, MaxToolRounds: 8,
-		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
+		ContextWindow: 32768,
+		Now:           func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			ids := []string{
 				"60000000-0000-4000-8000-000000000001",
@@ -1481,7 +1460,7 @@ func TestSessionAcceptsLargeToolCallGroupAndRejectsOversizedCurrentGroup(t *test
 	server := &fakeServer{}
 	uuidCalls := 0
 	session, err := New(model, server, Options{
-		ContextWindow: 1_000_000, MaxToolRounds: 0, Now: time.Now,
+		ContextWindow: 1_000_000, Now: time.Now,
 		NewUUID: func() (string, error) {
 			uuidCalls++
 			return fmt.Sprintf("61000000-0000-4000-8000-%012d", uuidCalls), nil
@@ -1502,7 +1481,7 @@ func TestSessionAcceptsLargeToolCallGroupAndRejectsOversizedCurrentGroup(t *test
 	}
 
 	session, err = New(&fakeModel{}, server, Options{
-		ContextWindow: 4096, MaxToolRounds: 0, Now: time.Now,
+		ContextWindow: 4096, Now: time.Now,
 		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
 	})
 	if err != nil {
@@ -1683,7 +1662,7 @@ func TestWorkspaceProjectionSharesMinimumContextBudgetAcrossFourCalls(t *testing
 	}}
 	uuidCalls := 0
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 4096, MaxToolRounds: 8, Workspace: executor,
+		ContextWindow: 4096, Workspace: executor,
 		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			uuidCalls++
@@ -1790,8 +1769,8 @@ func newTestSession(t *testing.T, model Model, server Server) *Session {
 	t.Helper()
 	uuidCalls := 0
 	session, err := New(model, server, Options{
-		ContextWindow: 32768, MaxToolRounds: 8,
-		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
+		ContextWindow: 32768,
+		Now:           func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			uuidCalls++
 			return fmt.Sprintf("60000000-0000-4000-8000-%012d", uuidCalls), nil
@@ -1807,7 +1786,7 @@ func newWorkspaceTestSession(t *testing.T, model Model, executor workspace.Execu
 	t.Helper()
 	uuidCalls := 0
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 32768, MaxToolRounds: 8, Workspace: executor,
+		ContextWindow: 32768, Workspace: executor,
 		Now: func() time.Time { return time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			uuidCalls++

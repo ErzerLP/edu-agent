@@ -299,7 +299,7 @@ func TestPostgreSQLAdaptiveRealMentorToolAndSubmittedAnswer(t *testing.T) {
 		}
 		return true
 	}
-	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), TeachingSessionID: f.session, ExpectedVersion: before.Goal.Revision, Prompt: "先补一个前置概念", Save: true, RequestBudget: 3, TokenBudget: 50000}
+	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), TeachingSessionID: f.session, ExpectedVersion: before.Goal.Revision, Prompt: "先补一个前置概念", Save: true}
 	r := f.accept(t)
 	f.work(t)
 	run := f.snapshot(t, r.RunID)

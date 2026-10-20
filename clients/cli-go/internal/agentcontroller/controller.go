@@ -872,11 +872,24 @@ func (c *Controller) Send(ctx context.Context, input string) (agentloop.Result, 
 	}
 	c.operating = true
 	loop := c.loop
-	c.pendingUser = strings.TrimSpace(input)
+	paused := loop.ToolStepsPaused()
+	if paused && strings.TrimSpace(input) != "继续" {
+		c.operating = false
+		c.mu.Unlock()
+		return agentloop.Result{}, errors.New("本轮工具调用已达上限，请输入“继续”接着执行")
+	}
+	if !paused {
+		if loop.SwitchState().ActiveTurn {
+			c.operating = false
+			c.mu.Unlock()
+			return agentloop.Result{}, agentloop.ErrActiveTurn
+		}
+		c.pendingUser = strings.TrimSpace(input)
+	}
 	c.mu.Unlock()
 	if err := c.prepareGatewayTurn(ctx, loop); err != nil {
 		c.endRuntimeOperation()
-		return agentloop.Result{}, err
+		return agentloop.Result{}, fmt.Errorf("无法读取本轮网关配置，已停止；请重试：%w", err)
 	}
 	result, err := loop.Send(ctx, input)
 	return c.finishOperation(ctx, result, err)
@@ -945,7 +958,7 @@ func (c *Controller) CancelPendingFileMutation(callID string) (agentloop.Result,
 }
 
 func (c *Controller) finishOperation(ctx context.Context, result agentloop.Result, operationErr error) (agentloop.Result, error) {
-	if result.Pending != nil || result.PendingQuestion != nil || result.PendingFileMutation != nil || result.Workflow != nil {
+	if result.PausedToolSteps || result.Pending != nil || result.PendingQuestion != nil || result.PendingFileMutation != nil || result.Workflow != nil {
 		c.endRuntimeOperation()
 		return result, operationErr
 	}

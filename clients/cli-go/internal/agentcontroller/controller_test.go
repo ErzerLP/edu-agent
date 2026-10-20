@@ -371,7 +371,7 @@ func controllerDependencies(store *agentsession.Store, model agentloop.Model, se
 	return Dependencies{
 		Store: store, Model: model, Server: server, Gateway: provider, WorkspaceRoot: workspaceRoot,
 		LoopOptions: agentloop.Options{
-			ContextWindow: 8192, MaxToolRounds: 4, ContextCompaction: agentloop.ContextCompactionAuto,
+			ContextWindow: 8192, ContextCompaction: agentloop.ContextCompactionAuto,
 			ReasoningEffort: modelclient.ReasoningEffortAuto, ModelTimeout: time.Second, ToolTimeout: time.Second,
 			NewUUID: func() (string, error) {
 				sequence++

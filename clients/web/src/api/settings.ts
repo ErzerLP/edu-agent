@@ -3,8 +3,6 @@ import { z } from 'zod'
 export const limitsSchema = z
   .object({
     max_tool_steps: z.number().int().positive().nullable().default(null),
-    research_requests: z.number().int().min(1).max(1000),
-    research_tokens: z.number().int().min(1024).max(10000000),
     output_tokens: z.number().int().min(64).max(32768),
     context_tokens: z.number().int().min(4096).max(2000000),
     idle_timeout_seconds: z.number().int().min(5).max(600),

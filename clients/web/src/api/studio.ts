@@ -22,8 +22,6 @@ const directionSchema = z.object({ id: z.uuid(), version, goal_revision_id: z.uu
 const assessmentPolicySchema = z
   .object({
     configuration: z.string().min(1),
-    requests: z.number().int().nonnegative(),
-    tokens: z.number().int().nonnegative(),
   })
   .strict()
 export const studioClaimSchema = z
@@ -122,8 +120,6 @@ export const studioGenerateSchema = z.object({
   artifact_id: z.uuid().nullable(),
   expected_version: z.number().int().nonnegative(),
   source_selection: sourceSelectionSchema,
-  request_budget: z.number().int().nonnegative().optional(),
-  token_budget: z.number().int().nonnegative().optional(),
   mode: z.literal('direction').optional(),
   direction_version: version.optional(),
 })

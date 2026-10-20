@@ -111,6 +111,7 @@ func (s *Session) commitCopyTreeMutation(ctx context.Context, call modelclient.T
 				return errors.Join(journalErr, invalidateErr)
 			},
 		}
+		s.recordToolExecution()
 		result, _ = executor.CommitCopyTree(toolCtx, prepared, observer)
 		if journalErr == nil {
 			finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

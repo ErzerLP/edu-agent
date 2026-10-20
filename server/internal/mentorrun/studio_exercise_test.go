@@ -86,7 +86,7 @@ func TestPostgreSQLStudioExerciseAssessmentRecovery(t *testing.T) {
 				}
 			} else {
 				limits := f.settings.View().Limits
-				limits.ResearchRequests = 1
+				limits.OutputTokens += 64
 				if _, err := f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Target: settings.Mentor, Limits: &limits}); err != nil {
 					t.Fatal(err)
 				}
@@ -96,7 +96,7 @@ func TestPostgreSQLStudioExerciseAssessmentRecovery(t *testing.T) {
 			if card.Feedback == nil || card.Feedback.Assessment != nil || card.Assessment == nil || f.calls.Load() != 1 {
 				t.Fatal("answer lost or unexpected assessment call")
 			}
-			c := StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: card.Assessment.Configuration, RequestBudget: 1, TokenBudget: 50000}
+			c := StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: card.Assessment.Configuration}
 			if scenario == "unknown" {
 				if !card.Assessment.ResultUnknown || card.Assessment.CanResume {
 					t.Fatal("unknown assessment presented as retryable")
@@ -150,7 +150,7 @@ func TestPostgreSQLStudioExerciseSharedReadRetainsAssessmentOwner(t *testing.T) 
 		t.Fatal(err)
 	}
 	limits := f.settings.View().Limits
-	limits.ResearchRequests = 1
+	limits.OutputTokens += 64
 	if _, err := f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Target: settings.Mentor, Limits: &limits}); err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestPostgreSQLStudioExerciseSharedReadRetainsAssessmentOwner(t *testing.T) 
 	if read.AttemptID != card.AttemptID || read.Feedback == nil || read.Assessment == nil || read.Assessment.CanResume {
 		t.Fatal("shared read lost feedback or transferred assessment ownership")
 	}
-	if _, err = f.service.ResumeStudioAssessment(ctx, peer, card.ID, StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: card.Assessment.Configuration, RequestBudget: 1, TokenBudget: 50000}); err == nil {
+	if _, err = f.service.ResumeStudioAssessment(ctx, peer, card.ID, StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: card.Assessment.Configuration}); err == nil {
 		t.Fatal("peer resumed another device's model task")
 	}
 }
@@ -248,7 +248,7 @@ func TestPostgreSQLStudioLegacyFirstQuestionVersionConflict(t *testing.T) {
 	f := newExerciseFixture(t)
 	f.service.ConfigureStudio(f.start.Content)
 	f.modelOverride = func(w http.ResponseWriter, _ *http.Request) { studioReply(w, quizCandidate, "stop") }
-	c := StudioGenerate{StudioTarget: learningcontent.StudioTarget{Kind: "quiz", Generation: 1, GoalID: &f.goal}, OperationID: uuid.NewString(), GoalVersion: 1, SourceSelection: knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{f.request.Question.Manifest.Entries[0].SourceIdentity}}, RequestBudget: 1, TokenBudget: 50000}
+	c := StudioGenerate{StudioTarget: learningcontent.StudioTarget{Kind: "quiz", Generation: 1, GoalID: &f.goal}, OperationID: uuid.NewString(), GoalVersion: 1, SourceSelection: knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{f.request.Question.Manifest.Entries[0].SourceIdentity}}}
 	receipt, err := f.service.CreateStudio(context.Background(), f.actor, learningspace.DefaultID, c)
 	if err != nil {
 		t.Fatal(err)

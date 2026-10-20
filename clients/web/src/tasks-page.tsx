@@ -254,7 +254,7 @@ function RunList({ spaceId, kind }: { spaceId: string; kind?: RunKind }) {
               {taskKinds[run.kind ?? 'mentor']} · {taskRunStatus[run.status]}
             </h3>
             <p>
-              阶段：{['paused_budget', 'paused_tool_steps'].includes(run.stage) ? '已暂停，可继续' : run.stage} · 学习区 {run.space_id} · 目标 {run.goal_id}
+              阶段：{run.stage === 'paused_tool_steps' ? '已暂停，可继续' : run.stage} · 学习区 {run.space_id} · 目标 {run.goal_id}
             </p>
             <p>{run.reason}</p>
             {run.result_unknown && <p role="alert">结果未知，需核对原运行；不承诺自动重试。</p>}
@@ -415,9 +415,9 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
             {taskKinds[run.kind ?? 'mentor']} · {taskRunStatus[run.status]}
           </h2>
           <p>
-            运行：{run.run_id} · 阶段：{['paused_budget', 'paused_tool_steps'].includes(run.stage) ? '已暂停，可继续' : run.stage}
+            运行：{run.run_id} · 阶段：{run.stage === 'paused_tool_steps' ? '已暂停，可继续' : run.stage}
           </p>
-          <p>原因：{run.reason === 'tool_steps_reached' ? '本轮工具调用已达上限，点击继续后接着执行。' : run.reason === 'budget_exhausted' ? '已暂停，可继续。' : run.reason || '无'}</p>
+          <p>原因：{run.reason === 'tool_steps_reached' ? '本轮工具调用已达上限，点击继续后接着执行。' : run.reason || '无'}</p>
           {run.kind === 'studio' ? <Link to="/spaces/$spaceId" params={{ spaceId }} search={{ panel: 'studio' }}>打开 Studio 产物与生成记录</Link> : <Link to="/spaces/$spaceId/goals/$goalId" params={{ spaceId, goalId: run.goal_id }}>
             查看来源目标
           </Link>}
@@ -441,7 +441,7 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
               已保存结果会保留。关闭页面本身不会停止任务。
             </Confirm>
           </div>
-          {(['paused_budget', 'paused_tool_steps'].includes(run.status) ||
+          {(run.status === 'paused_tool_steps' ||
             (run.kind === 'start_learning' && ['partial', 'failed'].includes(run.status))) &&
             run.body_available && (
               <section className="panel">
@@ -450,7 +450,7 @@ export function RunPage({ spaceId, runId }: { spaceId: string; runId: string }) 
                 <Button
                   disabled={busy || !canContinue}
                   onClick={() =>
-                    void command(['paused_budget', 'paused_tool_steps'].includes(run.status) ? 'resume' : 'retry_start')
+                    void command(run.status === 'paused_tool_steps' ? 'resume' : 'retry_start')
                   }
                 >
                   继续

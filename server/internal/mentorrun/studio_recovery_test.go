@@ -23,15 +23,15 @@ func studioReply(w http.ResponseWriter, content, finish string) {
 func TestPostgreSQLStudioGenerationStates(t *testing.T) {
 	for _, tc := range []struct {
 		name, content, finish, status, reason string
-		budget                                int
-		published                             int
+
+		published int
 	}{
-		{"partial", studioCandidate("guide", "partial"), "stop", "partial", "source_coverage_partial", 50000, 1},
-		{"truncated", studioCandidate("guide", "complete"), "length", "failed", "output_budget_exceeded", 50000, 0},
-		{"incomplete", studioCandidate("guide", "complete"), "", "failed", "response_not_completed", 50000, 0},
-		{"schema", `{"title":"bad"}`, "stop", "failed", "schema_mismatch", 50000, 0},
-		{"citation", strings.ReplaceAll(studioCandidate("guide", "complete"), `"source":1`, `"source":2`), "stop", "failed", "invalid_source_citation", 50000, 0},
-		{"budget", studioCandidate("guide", "complete"), "stop", "succeeded", "", 1, 1},
+		{"partial", studioCandidate("guide", "partial"), "stop", "partial", "source_coverage_partial", 1},
+		{"truncated", studioCandidate("guide", "complete"), "length", "failed", "output_budget_exceeded", 0},
+		{"incomplete", studioCandidate("guide", "complete"), "", "failed", "response_not_completed", 0},
+		{"schema", `{"title":"bad"}`, "stop", "failed", "schema_mismatch", 0},
+		{"citation", strings.ReplaceAll(studioCandidate("guide", "complete"), `"source":1`, `"source":2`), "stop", "failed", "invalid_source_citation", 0},
+		{"complete", studioCandidate("guide", "complete"), "stop", "succeeded", "", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, c := studioFixture(t, func(w http.ResponseWriter, _ *http.Request, _ int) { studioReply(w, tc.content, tc.finish) })
@@ -41,7 +41,7 @@ func TestPostgreSQLStudioGenerationStates(t *testing.T) {
 			if _, err := f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Limits: &limits}); err != nil {
 				t.Fatal(err)
 			}
-			c.TokenBudget = tc.budget
+
 			receipt, err := f.service.CreateStudio(t.Context(), f.actor, learningspace.DefaultID, c)
 			if err != nil {
 				t.Fatal(err)

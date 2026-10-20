@@ -55,7 +55,7 @@ func TestPostgreSQLStudioDirectionLiveResponses(t *testing.T) {
 	}
 	source := selectedDocument(t, f.runtimeFixture, "偶数是可以被 2 整除的整数，例如 2、4、6。整数 n 是偶数，当且仅当存在整数 k，使 n=2k。0=2×0，所以 0 也是偶数。")
 	c := directionQuizRequest(t, knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}})
-	c.RequestBudget = 1
+
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	started := time.Now()
@@ -110,7 +110,7 @@ func TestPostgreSQLStudioDirectionLiveResponses(t *testing.T) {
 		if question == 1 {
 			decision := card.Feedback.Decisions[len(card.Feedback.Decisions)-1]
 			if decision.Disposition == learning.DispositionProvisional {
-				// Budget completion does not imply accepted learning evidence.
+				// Generation completion does not imply accepted learning evidence.
 				// Use the existing explicit void decision before advancing; never
 				// change model output or bypass the provisional feedback guard.
 				op := f.command(t, e, tutoring.ActionAcknowledgeFeedback, "").Operation
@@ -124,7 +124,7 @@ func TestPostgreSQLStudioDirectionLiveResponses(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("responses deepseek-v4-flash output_budget=8192 idle_timeout=60 research_requests=20 research_tokens=100000 elapsed_ms=%d questions=%d assessed=2 generation_requests=%d total_requests=%d", time.Since(started).Milliseconds(), len(r.Body.Quiz.Questions), generated.RequestsUsed, requests)
+	t.Logf("responses deepseek-v4-flash output_budget=8192 idle_timeout=60 elapsed_ms=%d questions=%d assessed=2 generation_requests=%d total_requests=%d", time.Since(started).Milliseconds(), len(r.Body.Quiz.Questions), generated.RequestsUsed, requests)
 }
 
 // Isolate paid acceptance from the normal integration database. Cleanup runs

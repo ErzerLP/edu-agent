@@ -37,7 +37,7 @@ func historyPage(t *testing.T, f *runtimeFixture, id string, after int64, limit 
 func historyRequest(t *testing.T, f *runtimeFixture, id, prompt string) Create {
 	t.Helper()
 	c := historyPage(t, f, id, 0, 1).Conversation
-	return Create{ConversationID: id, SessionID: id, ConversationVersion: c.Version, OperationID: uuid.NewString(), ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: prompt, Save: c.Saved, RequestBudget: 4, TokenBudget: 50000}
+	return Create{ConversationID: id, SessionID: id, ConversationVersion: c.Version, OperationID: uuid.NewString(), ExpectedVersion: c.GoalVersion, TeachingSessionID: c.TeachingSessionID, Prompt: prompt, Save: c.Saved}
 }
 func sendHistory(t *testing.T, f *runtimeFixture, id, prompt string) Receipt {
 	t.Helper()
@@ -301,7 +301,7 @@ func TestPostgreSQLTutorHistoryConcurrentSubmissionAndLateOutput(t *testing.T) {
 	f.service.Lease = time.Second
 	ctx := context.Background()
 	id := newHistory(t, f, true, f.goal)
-	request := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "并发问题", RequestBudget: 2, TokenBudget: 50000}
+	request := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "并发问题"}
 	var wait sync.WaitGroup
 	receipts := make(chan Receipt, 2)
 	failures := make(chan error, 2)
@@ -354,7 +354,7 @@ func TestPostgreSQLTutorHistoryQuotaAndOperationAfterGoalChange(t *testing.T) {
 	})
 	ctx := context.Background()
 	id := newHistory(t, f, true, f.goal)
-	request := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "原问题", RequestBudget: 1, TokenBudget: 50000}
+	request := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "原问题"}
 	first, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, request)
 	if err != nil {
 		t.Fatal(err)

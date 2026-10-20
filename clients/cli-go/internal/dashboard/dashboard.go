@@ -42,7 +42,6 @@ type Snapshot struct {
 	AgentContextCompaction string
 	AgentReasoningEffort   string
 	AgentSessionHistory    string
-	AgentMaxToolRounds     int
 }
 
 type Runner struct {

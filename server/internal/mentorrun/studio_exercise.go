@@ -125,7 +125,7 @@ func (s *Service) ResumeStudioAssessment(ctx context.Context, actor identity.Cre
 		if attempt == "" {
 			return ErrConflict
 		}
-		result, err = s.ResumeAssessment(ctx, actor, attempt, AssessmentResume{OperationID: c.OperationID, ExpectedVersion: c.ExpectedVersion, Policy: learningcontent.AssessmentPolicy{Configuration: c.Configuration, Requests: c.RequestBudget, Tokens: c.TokenBudget}})
+		result, err = s.ResumeAssessment(ctx, actor, attempt, AssessmentResume{OperationID: c.OperationID, ExpectedVersion: c.ExpectedVersion, Policy: learningcontent.AssessmentPolicy{Configuration: c.Configuration}})
 		return err
 	})
 	return result, err

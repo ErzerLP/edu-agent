@@ -79,7 +79,7 @@ func TestPostgreSQLStartLearningFailuresRecover(t *testing.T) {
 			}
 			failing.Store(false)
 			f.service.search, f.service.fetcher = search, fetcher
-			if _, err := f.service.Command(context.Background(), f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: s.Version, Kind: "retry_start", RequestBudget: 8, TokenBudget: 50000}); err != nil {
+			if _, err := f.service.Command(context.Background(), f.actor, learningspace.DefaultID, r.RunID, Command{OperationID: uuid.NewString(), ExpectedVersion: s.Version, Kind: "retry_start"}); err != nil {
 				t.Fatal(err)
 			}
 			f.work(t)
@@ -186,7 +186,7 @@ func TestPostgreSQLStartLearningAtomicFailureAndRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := f.calls.Load()
-			command := Command{OperationID: uuid.NewString(), ExpectedVersion: s.Version, Kind: "retry_start", RequestBudget: 8, TokenBudget: 50000}
+			command := Command{OperationID: uuid.NewString(), ExpectedVersion: s.Version, Kind: "retry_start"}
 			if _, err := f.service.Command(ctx, f.actor, learningspace.DefaultID, r.RunID, command); err != nil {
 				t.Fatal(err)
 			}
@@ -199,14 +199,14 @@ func TestPostgreSQLStartLearningAtomicFailureAndRetry(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLStartLearningIgnoresLegacyBudget(t *testing.T) {
+func TestPostgreSQLStartLearningCompletesWithoutBudgets(t *testing.T) {
 	f := startFixture(t, "英语阅读")
-	f.create.RequestBudget, f.create.TokenBudget = 1, 1
+
 	r := f.accept(t)
 	f.work(t)
 	s := f.snapshot(t, r.RunID)
 	if s.Status != "succeeded" || s.StartLearning.Result == nil || s.RequestsUsed != 2 {
-		t.Fatal("legacy budget prevented start", s)
+		t.Fatal("start did not complete", s)
 	}
 }
 

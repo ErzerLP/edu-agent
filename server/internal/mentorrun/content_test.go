@@ -32,7 +32,7 @@ func editFixture(t *testing.T) (*runtimeFixture, learningcontent.Revision) {
 		t.Fatal(err)
 	}
 	b := value.Body.Blocks[0]
-	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "请换个例子", Save: true, RequestBudget: 2, TokenBudget: 50000, ContentEdit: &learningcontent.EditRequest{Action: "example", Selection: learningcontent.Selection{SpaceID: value.SpaceID, GoalID: value.GoalID, SessionID: value.SessionID, ArtifactID: value.ArtifactID, Version: value.Version, BlockID: b.ID, Start: 0, End: len(b.Text), Hash: learningcontent.TextHash(b.Text)}}}
+	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "请换个例子", Save: true, ContentEdit: &learningcontent.EditRequest{Action: "example", Selection: learningcontent.Selection{SpaceID: value.SpaceID, GoalID: value.GoalID, SessionID: value.SessionID, ArtifactID: value.ArtifactID, Version: value.Version, BlockID: b.ID, Start: 0, End: len(b.Text), Hash: learningcontent.TextHash(b.Text)}}}
 	return f, value
 }
 

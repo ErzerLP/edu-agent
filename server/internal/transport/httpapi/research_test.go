@@ -79,7 +79,7 @@ func TestPostgreSQLResearchCookieSourcesAndDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := research.Request{Topic: "公开主题", ExternalConsent: true, Policy: research.Policy{Mode: "supplement", Domains: []string{}}}
-	receipt, err := runtime.Create(ctx, principal.Credential, learningspace.DefaultID, goal, mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: request.Topic, Research: &request, Save: true, RequestBudget: 5, TokenBudget: 10000})
+	receipt, err := runtime.Create(ctx, principal.Credential, learningspace.DefaultID, goal, mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: request.Topic, Research: &request, Save: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestPostgreSQLResearchCookieSourcesAndDecisions(t *testing.T) {
 		t.Fatalf("开学能力没有同步配置和权限：%d %s", status, data)
 	}
 	request.AutoAdopt = true
-	opening := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: request.Topic, Research: &request, Save: true, RequestBudget: 8, TokenBudget: 30000, StartLearning: &learningstart.Request{NewSession: true, ModelConsent: true}}
+	opening := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: request.Topic, Research: &request, Save: true, StartLearning: &learningstart.Request{NewSession: true, ModelConsent: true}}
 	goalPath := "/v1/learning/goals/" + goal
 	for _, denied := range []struct {
 		space  string

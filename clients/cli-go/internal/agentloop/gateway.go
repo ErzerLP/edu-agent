@@ -13,6 +13,10 @@ func (s *Session) SetGatewayModel(model Model, gateway *modelgateway.Model) {
 	window := gateway.Selected.ContextTokens
 	s.options.ContextWindow = window
 	s.options.MaxTokens = gateway.Selected.OutputTokens
+	s.options.MaxToolSteps = 0
+	if gateway.Configuration.Limits.MaxToolSteps != nil {
+		s.options.MaxToolSteps = *gateway.Configuration.Limits.MaxToolSteps
+	}
 	s.options.ModelTimeout = time.Duration(gateway.Configuration.Limits.IdleTimeoutSeconds+5) * time.Second
 	s.hotRawTokenLimit = clampInt(percentRoundUp(window, 55), 1024, window)
 	s.currentToolResultBudget = clampInt(percentRoundUp(window, 8), 512, 2048)

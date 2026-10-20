@@ -28,7 +28,6 @@ const reasons: Record<string, string> = {
   invalid_source_citation: '引用核验失败，未发布产物。',
   source_coverage_partial: '内容已保存；所选资料覆盖不全，解析缺口或截断范围未补写。打开产物查看覆盖说明。',
   lease_expired: '运行租约失效；已发出的请求不会自动重试。',
-  budget_exhausted: '已暂停，可继续。',
   source_unavailable: '来源权限或版本不可用，已隐藏受保护内容。',
   studio_version_conflict: '产物已有新版本，本次结果未发布。请重开最新版本。',
 }
@@ -169,7 +168,7 @@ export function StudioRun({
           取消生成
         </Button>
       )}
-      {['paused_budget', 'paused_tool_steps'].includes(state.status) && (
+      {state.status === 'paused_tool_steps' && (
         <Button disabled={busy} onClick={() => void command('resume')}>
           继续
         </Button>

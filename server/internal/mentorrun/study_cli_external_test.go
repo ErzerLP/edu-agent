@@ -110,7 +110,7 @@ func TestPostgreSQLStudyCLIResearchAndWebContent(t *testing.T) {
 	csrf = session.CSRF
 	goal := uuid.NewString()
 	web("POST", "/v1/learning/goals", map[string]any{"operation_id": uuid.NewString(), "payload_schema_version": 1, "aggregate_type": "goal", "aggregate_id": goal, "expected_version": 0, "text": "Go 并发", "source": "web", "details": learning.GoalDetails{Name: "Go 并发", SelfAssessment: "已有基础", Purpose: "用于实际练习"}}, nil)
-	create := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "Go 并发", Save: true, RequestBudget: 8, TokenBudget: 50000, Research: &research.Request{Topic: "Go 并发", ExternalConsent: true, AutoAdopt: true, Policy: research.Policy{Mode: "supplement", Domains: []string{}}}, StartLearning: &learningstart.Request{NewSession: true, ModelConsent: true}}
+	create := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "Go 并发", Save: true, Research: &research.Request{Topic: "Go 并发", ExternalConsent: true, AutoAdopt: true, Policy: research.Policy{Mode: "supplement", Domains: []string{}}}, StartLearning: &learningstart.Request{NewSession: true, ModelConsent: true}}
 	var receipt mentorrun.Receipt
 	web("POST", "/v1/learning/goals/"+goal+"/runs", create, &receipt)
 	if _, err = f.Runtime.RunOnce(ctx); err != nil {
@@ -192,7 +192,7 @@ func TestPostgreSQLStudyCLIResearchAndWebContent(t *testing.T) {
 		t.Fatal("缺少原课堂正式变更上下文")
 	}
 	f.PlanAdjustment(learningchange.Candidate{Kind: "route", Trigger: "user_request", Reason: "先补并发安全的前置概念", EvidenceIDs: []string{}, Steps: []learningchange.Step{{NodeRevisionID: snapshot.Sources[0].NodeRevisionID, Name: "并发安全", Prompt: "解释如何避免并发写入竞争", Criterion: "说明条件和原因", Difficulty: 1, Prerequisites: []int{}}}})
-	adjust := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), TeachingSessionID: result.SessionID, ExpectedVersion: snapshot.Goal.Revision, Prompt: "先补一个前置概念", Save: true, RequestBudget: 3, TokenBudget: 50000}
+	adjust := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), TeachingSessionID: result.SessionID, ExpectedVersion: snapshot.Goal.Revision, Prompt: "先补一个前置概念", Save: true}
 	raw, _ = json.Marshal(adjust)
 	if json.Unmarshal(cli(string(raw), "study", "mentor", "--goal", goal, "--input", "-"), &receipt) != nil {
 		t.Fatal("CLI 未请求真实服务端导师")

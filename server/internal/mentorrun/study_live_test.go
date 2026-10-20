@@ -29,8 +29,7 @@ func TestPostgreSQLStudyLiveResponsesSmoke(t *testing.T) {
 	f := fixture(t, func(http.ResponseWriter, *http.Request, int) { t.Error("live smoke used fixture model") })
 	limits := settings.DefaultLimits()
 	limits.OutputTokens = 8192
-	limits.ResearchRequests = 2
-	limits.ResearchTokens = 50000
+
 	limits.IdleTimeoutSeconds = 180
 	configuration, err := settings.Open(settings.Options{Path: filepath.Join(t.TempDir(), "private", "settings.json"), Teaching: settings.Connection{Enabled: true, Provider: "openai_compatible", Endpoint: endpoint, Model: "deepseek-v4-flash", AuthMode: "bearer", APIStyle: "responses"}, TeachingKey: key, Limits: &limits})
 	if err != nil {
@@ -57,7 +56,7 @@ func TestPostgreSQLStudyLiveResponsesSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "请用两句话解释线性无关，并引用所选资料。", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}, RequestBudget: 2, TokenBudget: 50000})
+	receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "请用两句话解释线性无关，并引用所选资料。", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
 	if err != nil {
 		t.Fatal(err)
 	}

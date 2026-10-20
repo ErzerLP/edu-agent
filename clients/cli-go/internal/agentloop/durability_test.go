@@ -45,7 +45,7 @@ func newDurableTestSession(t *testing.T, model Model, server Server, executor wo
 	t.Helper()
 	sequence := 0
 	session, err := New(model, server, Options{
-		ContextWindow: 32768, MaxToolRounds: 8, Workspace: executor, Durability: sink,
+		ContextWindow: 32768, Workspace: executor, Durability: sink,
 		ModelTimeout: time.Second, ToolTimeout: time.Second,
 		Now: func() time.Time { return time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {

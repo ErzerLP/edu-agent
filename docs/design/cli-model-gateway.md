@@ -476,7 +476,7 @@ Candidate 核对全部 27 条合同，集中验证真实 CLI 的两个上游协�
 
 当前环境没有 nginx 可执行文件，因此这里只完成部署配置编辑与人工核对，未声称通过实际 nginx smoke。真实 CLI 二进制联调、实际部署代理、独立进程故障注入和真实供应商验证留给并行 CLI 任务及 Candidate；假上游不代表演示站或供应商验证。
 
-## 14. G-A CLI 实现覆盖
+## 15. G-A CLI 实现覆盖
 
 本节记录 `feat/gateway-cli` 的 CLI 实现边界；服务端、agentcore、OpenAPI 与部署由独立任务交付，不能以 CLI 假网关测试代替服务端或部署验收。
 

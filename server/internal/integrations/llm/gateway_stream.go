@@ -13,14 +13,15 @@ import (
 )
 
 type gatewayStreamState struct {
-	result        GatewayResult
-	emit          func(GatewayChunk) error
-	started       bool
-	finished      bool
-	tools         map[int]int
-	argumentsDone map[int]bool
-	textDone      map[string]string
-	text          map[string]string
+	result          GatewayResult
+	emit            func(GatewayChunk) error
+	started         bool
+	finished        bool
+	tools           map[int]int
+	argumentsDone   map[int]bool
+	textDone        map[string]string
+	text            map[string]string
+	opaqueReasoning map[int]string
 }
 
 func (s *gatewayStreamState) send(c GatewayChunk) error {
@@ -81,7 +82,7 @@ func (s *gatewayStreamState) send(c GatewayChunk) error {
 }
 
 func (c *Client) gatewayStream(reader io.Reader, emit func(GatewayChunk) error, progress func()) (GatewayResult, error) {
-	s := &gatewayStreamState{result: GatewayResult{Message: GatewayMessage{Role: "assistant"}}, emit: emit, tools: map[int]int{}, argumentsDone: map[int]bool{}, text: map[string]string{}, textDone: map[string]string{}}
+	s := &gatewayStreamState{result: GatewayResult{Message: GatewayMessage{Role: "assistant"}}, emit: emit, tools: map[int]int{}, argumentsDone: map[int]bool{}, text: map[string]string{}, textDone: map[string]string{}, opaqueReasoning: map[int]string{}}
 	scanner := bufio.NewScanner(io.LimitReader(reader, (256<<20)+1))
 	frameLimit := 512 << 10
 	if c.wireAPI == Responses {
@@ -211,7 +212,24 @@ func responseFinish(r gatewayResponse, tools bool) (string, error) {
 	return "", GatewayError("upstream_incompatible")
 }
 func supportedItem(item gatewayResponseItem) bool {
-	return item.EncryptedContent == "" && (item.Type == "message" || item.Type == "function_call" || item.Type == "reasoning")
+	if item.EncryptedContent != "" && (item.Type != "reasoning" || !hasPlaintextReasoning(item)) {
+		return false
+	}
+	return item.Type == "message" || item.Type == "function_call" || item.Type == "reasoning"
+}
+
+func hasPlaintextReasoning(item gatewayResponseItem) bool {
+	// Some stateless Responses providers return an opaque compatibility field
+	// alongside public reasoning_text. Accept only a complete plaintext item;
+	// encrypted-only continuation still cannot be represented by this gateway.
+	size := 0
+	for _, part := range item.Content {
+		if part.Type != "reasoning_text" {
+			return false
+		}
+		size += len(part.Text)
+	}
+	return size > 0 && size <= 1<<20
 }
 
 func gatewayResponsesComplete(reader io.Reader) (GatewayResult, error) {
@@ -265,7 +283,15 @@ func (s *gatewayStreamState) responsesEvent(raw []byte, progress func()) (bool, 
 	case "response.output_item.added":
 		progress()
 		if !supportedItem(e.Item) {
-			return false, GatewayError("upstream_incompatible")
+			if e.Item.Type != "reasoning" || len(e.Item.Content) != 0 {
+				return false, GatewayError("upstream_incompatible")
+			}
+			// The added item has no content yet. Require matching plaintext at
+			// item.done or in the terminal response before accepting completion.
+			if _, pending := s.opaqueReasoning[e.OutputIndex]; pending {
+				return false, GatewayError("upstream_incompatible")
+			}
+			s.opaqueReasoning[e.OutputIndex] = e.Item.ID
 		}
 		if e.Item.Type == "function_call" {
 			if _, exists := s.tools[e.OutputIndex]; exists {
@@ -275,17 +301,23 @@ func (s *gatewayStreamState) responsesEvent(raw []byte, progress func()) (bool, 
 			s.tools[e.OutputIndex] = index
 			return false, s.send(GatewayChunk{Delta: GatewayDelta{ToolCalls: []GatewayToolDelta{{Index: index, ID: e.Item.CallID, Type: "function", Function: modelclient.ToolFunction{Name: e.Item.Name, Arguments: e.Item.Arguments}}}}})
 		}
-	case "response.output_text.delta":
+	case "response.output_text.delta", "response.reasoning_text.delta":
 		progress()
-		key := fmt.Sprintf("%d/%d", e.OutputIndex, e.ContentIndex)
+		key := fmt.Sprintf("%s/%d/%d", strings.TrimSuffix(e.Type, ".delta"), e.OutputIndex, e.ContentIndex)
 		if _, done := s.textDone[key]; done {
 			return false, GatewayError("upstream_incompatible")
 		}
 		s.text[key] += e.Delta
+		if e.Type == "response.reasoning_text.delta" {
+			if len(s.text[key]) > 1<<20 {
+				return false, GatewayError("upstream_incompatible")
+			}
+			return false, s.send(GatewayChunk{Delta: GatewayDelta{ReasoningContent: e.Delta}})
+		}
 		return false, s.send(GatewayChunk{Delta: GatewayDelta{Content: e.Delta}})
-	case "response.output_text.done":
+	case "response.output_text.done", "response.reasoning_text.done":
 		progress()
-		key := fmt.Sprintf("%d/%d", e.OutputIndex, e.ContentIndex)
+		key := fmt.Sprintf("%s/%d/%d", strings.TrimSuffix(e.Type, ".done"), e.OutputIndex, e.ContentIndex)
 		if s.text[key] != e.Text {
 			return false, GatewayError("upstream_incompatible")
 		}
@@ -312,6 +344,12 @@ func (s *gatewayStreamState) responsesEvent(raw []byte, progress func()) (bool, 
 		if !supportedItem(e.Item) {
 			return false, GatewayError("upstream_incompatible")
 		}
+		if id, pending := s.opaqueReasoning[e.OutputIndex]; pending {
+			if e.Item.Type != "reasoning" || e.Item.ID != id || !hasPlaintextReasoning(e.Item) {
+				return false, GatewayError("upstream_incompatible")
+			}
+			delete(s.opaqueReasoning, e.OutputIndex)
+		}
 		if e.Item.Type == "function_call" {
 			index, ok := s.tools[e.OutputIndex]
 			if !ok {
@@ -326,6 +364,15 @@ func (s *gatewayStreamState) responsesEvent(raw []byte, progress func()) (bool, 
 		progress()
 		for _, item := range e.Response.Output {
 			if !supportedItem(item) {
+				return false, GatewayError("upstream_incompatible")
+			}
+		}
+		for index, id := range s.opaqueReasoning {
+			if index < 0 || index >= len(e.Response.Output) {
+				return false, GatewayError("upstream_incompatible")
+			}
+			item := e.Response.Output[index]
+			if item.Type != "reasoning" || item.ID != id || !hasPlaintextReasoning(item) {
 				return false, GatewayError("upstream_incompatible")
 			}
 		}

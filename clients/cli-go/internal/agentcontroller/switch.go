@@ -33,7 +33,7 @@ func (c *Controller) CommitSwitch(ctx context.Context, plan SwitchPlan, confirma
 	baseGeneration := c.generation
 	currentWorkspace := c.record.WorkspaceRoot
 	dependencies := Dependencies{
-		Model: c.model, Server: c.server, Provider: c.provider, LoopOptions: c.loopOptions,
+		Model: c.model, Server: c.server, Gateway: c.provider, LoopOptions: c.loopOptions,
 		WorkspaceRoot: currentWorkspace, Now: c.now, LocalExecShared: true,
 	}
 	c.mu.Unlock()
@@ -54,8 +54,8 @@ func (c *Controller) CommitSwitch(ctx context.Context, plan SwitchPlan, confirma
 		return 0, agentsession.ErrCheckpointConflict
 	}
 	target.mu.Unlock()
-	if target.providerBlocked && confirmation.Provider {
-		if err := target.ConfirmProvider(ctx); err != nil {
+	if target.providerBlocked && confirmation.Gateway {
+		if err := target.ConfirmGateway(ctx); err != nil {
 			target.abort()
 			c.resetSwitching(baseGeneration)
 			return 0, err
@@ -146,7 +146,7 @@ func (c *Controller) NewSession(ctx context.Context) (uint64, error) {
 		return 0, err
 	}
 	dependencies := Dependencies{
-		Store: peer, Model: c.model, Server: c.server, Provider: c.provider, LoopOptions: loopOptions,
+		Store: peer, Model: c.model, Server: c.server, Gateway: c.provider, LoopOptions: loopOptions,
 		WorkspaceRoot: binding.Root, WorkspaceBinding: &binding, Now: c.now, LocalExecShared: true,
 	}
 	c.mu.Unlock()

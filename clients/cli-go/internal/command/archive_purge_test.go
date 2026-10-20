@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,12 +67,12 @@ func TestArchivePurgeCLISharedBudgetsAndLargeFile(t *testing.T) {
 			raw, _ := json.Marshal(map[string]any{"path": path, "expected_version": version})
 			model := &archivePurgeCLIModel{arguments: string(raw)}
 			store, credentials := pairedStores(config.DefaultServerURL, "server-token")
-			preset := config.DefaultAgentConfig("ollama")
+			preset := config.DefaultAgentConfig()
 			store.value.Agent = &preset
 			app, _, errOut := newTestApp(store, credentials, &fakeTerminal{})
-			app.ModelSecrets = &memoryModelSecretStore{}
+
 			app.AgentUI = fileEditBudgetUI{}
-			app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+			app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 			app.InputIsTTY = func() bool { return true }
 			app.OutputIsTTY = func() bool { return true }
 			app.Getenv = func(string) string { return "xterm" }

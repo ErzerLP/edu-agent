@@ -55,7 +55,7 @@ func TestControllerCopyCompletedUnknownSaveResumeAndReceiptMatching(t *testing.T
 			secrets := &controllerSecretBackend{}
 			model := &scriptedControllerModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", ToolCalls: []modelclient.ToolCall{{ID: "copy-call", Type: "function", Function: modelclient.ToolFunction{Name: "copy", Arguments: string(raw)}}}}}, {Message: modelclient.Message{Role: "assistant", Content: "已复制"}}}}
 			server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-			provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+			provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 			deps := controllerDependencies(controllerStore(t, storeRoot, secrets), model, server, root, provider)
 			deps.LoopOptions.Workspace = &controllerCopyOutcomeExecutor{Executor: executor, unknown: unknown}
 			c, err := Start(t.Context(), deps, false)
@@ -176,7 +176,7 @@ func TestControllerCopyWALCrashRecoveryDoesNotCopy(t *testing.T) {
 	storeRoot, root := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	if err := os.WriteFile(filepath.Join(root, "source"), []byte("preserved"), 0600); err != nil {
 		t.Fatal(err)
 	}

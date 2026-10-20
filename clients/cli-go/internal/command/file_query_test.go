@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -58,12 +59,12 @@ func TestQueryPaginationLaunchBudgets(t *testing.T) {
 			}
 			model := &queryBudgetModel{}
 			cs, credentials := pairedStores(config.DefaultServerURL, "server-token")
-			preset := config.DefaultAgentConfig("ollama")
+			preset := config.DefaultAgentConfig()
 			cs.value.Agent = &preset
 			app, _, errOut := newTestApp(cs, credentials, &fakeTerminal{})
-			app.ModelSecrets = &memoryModelSecretStore{}
+
 			app.AgentUI = fileEditBudgetUI{}
-			app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+			app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 			app.InputIsTTY = func() bool { return true }
 			app.OutputIsTTY = func() bool { return true }
 			app.Getenv = func(string) string { return "xterm" }

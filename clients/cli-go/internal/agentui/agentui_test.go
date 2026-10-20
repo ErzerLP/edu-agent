@@ -200,17 +200,17 @@ func TestAgentUIPresentsBoundedSessionPersistenceHelp(t *testing.T) {
 		{
 			name:  "saved",
 			state: "saved",
-			want:  []string{"本机加密保存", "自动标题", "恢复后的历史上下文", "当前 provider", "endpoint 变化须先确认", "YOLO", "旧文件授权", "pending 交互", "不会恢复"},
+			want:  []string{"本机加密保存", "自动标题", "恢复后的历史上下文", "所选服务端模型", "目的地变化须先确认", "YOLO", "旧文件授权", "pending 交互", "不会恢复"},
 		},
 		{
 			name:  "unsaved",
 			state: "unsaved",
-			want:  []string{"仅在当前进程有效", "退出后不可恢复", "key backend", "绝不落明文", "当前 provider", "endpoint 变化须先确认", "YOLO", "pending 交互"},
+			want:  []string{"仅在当前进程有效", "退出后不可恢复", "key backend", "绝不落明文", "所选服务端模型", "目的地变化须先确认", "YOLO", "pending 交互"},
 		},
 		{
 			name:  "failed",
 			state: "failed",
-			want:  []string{"最近内容保存失败", "可能尚未持久化", "不会改用明文", "当前 provider", "endpoint 变化须先确认", "旧文件授权", "不会恢复"},
+			want:  []string{"最近内容保存失败", "可能尚未持久化", "不会改用明文", "所选服务端模型", "目的地变化须先确认", "旧文件授权", "不会恢复"},
 		},
 	}
 	for _, test := range tests {
@@ -1135,7 +1135,7 @@ func TestAgentUITypedContextErrorsHaveDistinctGuidance(t *testing.T) {
 		t.Fatalf("legacy fallback=%q", legacy)
 	}
 	deadline := errorCardText(context.DeadlineExceeded, false)
-	if !strings.Contains(deadline, "模型响应") || !strings.Contains(deadline, "无响应超时") || !strings.Contains(deadline, "model set --timeout") {
+	if !strings.Contains(deadline, "模型响应") || !strings.Contains(deadline, "无响应超时") || !strings.Contains(deadline, "网页调整模型超时") {
 		t.Fatalf("deadline guidance=%q", deadline)
 	}
 }

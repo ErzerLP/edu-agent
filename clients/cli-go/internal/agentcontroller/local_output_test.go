@@ -48,7 +48,7 @@ func outputFixture(t *testing.T, noSave bool) *leaseFixture {
 	if !noSave {
 		store = f.openStore(t)
 	}
-	dependencies := controllerDependencies(store, &outputTestModel{}, f.server, f.workspace, Provider{Name: "local", Endpoint: "http://localhost:11434/v1", Model: "test"})
+	dependencies := controllerDependencies(store, &outputTestModel{}, f.server, f.workspace, GatewayBinding{Target: "teaching", ServerURL: "http://localhost:11434/v1", ModelName: "test"})
 	dependencies.LoopOptions.LocalExec = f.manager
 	dependencies.LoopOptions.ContextWindow = 32768
 	var err error
@@ -128,14 +128,14 @@ func TestLocalOutputEncryptedResumeBeyondMemory(t *testing.T) {
 	}
 	freshModel := &outputTestModel{}
 	manager := localexec.New(localexec.Options{OutputBytesPerTask: 64, OutputBytesTotal: 128})
-	dependencies := controllerDependencies(f.openStore(t), freshModel, f.server, f.workspace, Provider{Name: "changed", Endpoint: "https://different.example/v1", Model: "test"})
+	dependencies := controllerDependencies(f.openStore(t), freshModel, f.server, f.workspace, GatewayBinding{Target: "changed", ServerURL: "https://different.example/v1", ModelName: "test"})
 	dependencies.LoopOptions.LocalExec = manager
 	restored, err := Resume(t.Context(), dependencies, ResumeOptions{SessionID: owner, CurrentWorkspace: f.workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	if !restored.Status().ProviderConfirmationRequired || freshModel.calls != 0 {
+	if !restored.Status().GatewayConfirmationRequired || freshModel.calls != 0 {
 		t.Fatal("historical output triggered provider before consent")
 	}
 	tasks, err := restored.LocalTasks()

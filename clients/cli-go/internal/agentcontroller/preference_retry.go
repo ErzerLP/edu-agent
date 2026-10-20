@@ -23,7 +23,7 @@ func (c *Controller) RetryPreferenceReceipt(ctx context.Context, receiptID strin
 		return agentloop.ErrSessionClosed
 	}
 	if c.providerBlocked {
-		return ErrProviderConfirmationRequired
+		return ErrGatewayConfirmationRequired
 	}
 	if !c.persistent || c.handle == nil || c.server == nil || c.dirty != nil {
 		return ErrPreferenceReceiptNotFound

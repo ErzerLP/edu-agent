@@ -178,7 +178,7 @@ func validateCreateInput(input CreateInput, limits Limits) error {
 		Title: input.Title, TitleSource: "auto", TitleRevision: 1,
 		WorkspaceID: input.WorkspaceID, WorkspaceRoot: input.WorkspaceRoot, WorkspaceLabel: input.WorkspaceLabel,
 		WorkspacePathHash: input.WorkspacePathHash, WorkspaceRootIdentityHash: input.WorkspaceRootIdentityHash,
-		ProviderName: input.ProviderName, ProviderEndpoint: input.ProviderEndpoint, ProviderModel: input.ProviderModel,
+		GatewayTarget: input.GatewayTarget, GatewayServerURL: input.GatewayServerURL, GatewayModelName: input.GatewayModelName, GatewayDeviceID: input.GatewayDeviceID, GatewayDestinationRevision: input.GatewayDestinationRevision, GatewaySessionID: input.GatewaySessionID,
 		PrivacyLearnerGeneration: input.PrivacyLearnerGeneration, PrivacyMemoryGeneration: input.PrivacyMemoryGeneration,
 		PrivacyVerified: input.PrivacyVerified, TranscriptCount: uint64(len(transcript.Entries)), Checkpoint: input.Checkpoint, Transcript: input.Transcript,
 	}
@@ -487,15 +487,18 @@ func validWorkspaceMetadata(record SessionRecord) bool {
 	return record.WorkspaceID == expected
 }
 
-func validProviderMetadata(record SessionRecord) bool {
-	hasAny := record.ProviderName != "" || record.ProviderEndpoint != "" || record.ProviderModel != ""
+func validGatewayMetadata(record SessionRecord) bool {
+	if !safeText(record.GatewayDeviceID, 128) || !safeText(record.GatewayDestinationRevision, 512) || record.GatewaySessionID != "" && !canonicalUUID(record.GatewaySessionID) {
+		return false
+	}
+	hasAny := record.GatewayTarget != "" || record.GatewayServerURL != "" || record.GatewayModelName != ""
 	if !hasAny {
 		return true
 	}
-	if strings.TrimSpace(record.ProviderName) == "" || strings.TrimSpace(record.ProviderModel) == "" || record.ProviderEndpoint != strings.TrimRight(record.ProviderEndpoint, "/") {
+	if strings.TrimSpace(record.GatewayTarget) == "" || strings.TrimSpace(record.GatewayModelName) == "" || record.GatewayServerURL != strings.TrimRight(record.GatewayServerURL, "/") {
 		return false
 	}
-	parsed, err := url.Parse(record.ProviderEndpoint)
+	parsed, err := url.Parse(record.GatewayServerURL)
 	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && parsed.User == nil && parsed.Fragment == ""
 }
 
@@ -541,7 +544,7 @@ func validateRecord(record SessionRecord, limits Limits) error {
 	if _, err := parseUUID(commitID); err != nil {
 		return ErrInvalid
 	}
-	if !validWorkspaceMetadata(record) || !validProviderMetadata(record) {
+	if !validWorkspaceMetadata(record) || !validGatewayMetadata(record) {
 		return ErrInvalid
 	}
 	if !safeText(record.Title, limits.ManualTitleBytes) || strings.ContainsAny(record.Title, "\n\t") || record.TitleRevision == 0 ||
@@ -551,7 +554,7 @@ func validateRecord(record SessionRecord, limits Limits) error {
 		(!record.LastTitleAt.IsZero() && !timeIsCanonical(record.LastTitleAt)) ||
 		!safeText(record.WorkspaceID, 4096) || !safeText(record.WorkspaceRoot, 4096) || !safeText(record.WorkspaceLabel, 256) ||
 		!safeText(record.WorkspacePathHash, 128) || !safeText(record.WorkspaceRootIdentityHash, 128) ||
-		!safeText(record.ProviderName, 128) || !safeText(record.ProviderEndpoint, 4096) || !safeText(record.ProviderModel, 512) ||
+		!safeText(record.GatewayTarget, 128) || !safeText(record.GatewayServerURL, 4096) || !safeText(record.GatewayModelName, 512) ||
 		record.PrivacyLearnerGeneration < 0 || record.PrivacyMemoryGeneration < 0 || len(record.PreferenceReceipts) > limits.ReceiptCount || len(record.FileReceipts) > limits.ReceiptCount {
 		return ErrInvalid
 	}
@@ -645,7 +648,7 @@ func validateProjection(value indexProjection, generation uint64) error {
 		!safeText(value.Title, 256) || strings.ContainsAny(value.Title, "\n\t") || value.TitleRevision == 0 ||
 		!validSearchProjection(value.FirstUserSummary, value.RecentUserSummary) ||
 		(value.TitleSource != "auto" && value.TitleSource != "manual") || !canonicalLowerHex(value.ServerProfileFingerprint, 64) ||
-		!validProjectionWorkspaceMetadata(value) || !validProjectionProviderMetadata(value) ||
+		!validProjectionWorkspaceMetadata(value) || !validProjectionGatewayMetadata(value) ||
 		(value.Lifecycle != "active" && value.Lifecycle != "closed") {
 		return ErrCorrupt
 	}
@@ -659,8 +662,8 @@ func validProjectionWorkspaceMetadata(value indexProjection) bool {
 	return validSHA256Tag(value.WorkspaceID) && strings.TrimSpace(value.WorkspaceLabel) != "" && safeText(value.WorkspaceLabel, 256)
 }
 
-func validProjectionProviderMetadata(value indexProjection) bool {
-	return validProviderMetadata(SessionRecord{ProviderName: value.ProviderName, ProviderEndpoint: value.ProviderEndpoint, ProviderModel: value.ProviderModel})
+func validProjectionGatewayMetadata(value indexProjection) bool {
+	return validGatewayMetadata(SessionRecord{GatewayTarget: value.GatewayTarget, GatewayServerURL: value.GatewayServerURL, GatewayModelName: value.GatewayModelName})
 }
 
 func decodeRecordPayload(data []byte, limit int64) (SessionRecord, int, error) {
@@ -833,7 +836,7 @@ func recordFromPayloadV2(value recordPayloadV2) SessionRecord {
 		AutoTitleTurns: value.AutoTitleTurns, TitleRevision: value.TitleRevision, LastTitleAt: value.LastTitleAt,
 		WorkspaceID: value.WorkspaceID, WorkspaceRoot: value.WorkspaceRoot, WorkspaceLabel: value.WorkspaceLabel,
 		WorkspacePathHash: value.WorkspacePathHash, WorkspaceRootIdentityHash: value.WorkspaceRootIdentityHash,
-		ProviderName: value.ProviderName, ProviderEndpoint: value.ProviderEndpoint, ProviderModel: value.ProviderModel,
+		GatewayTarget: value.GatewayTarget, GatewayServerURL: value.GatewayServerURL, GatewayModelName: value.GatewayModelName, GatewayDeviceID: value.GatewayDeviceID, GatewayDestinationRevision: value.GatewayDestinationRevision, GatewaySessionID: value.GatewaySessionID,
 		PrivacyLearnerGeneration: value.PrivacyLearnerGeneration, PrivacyMemoryGeneration: value.PrivacyMemoryGeneration,
 		PrivacyVerified: value.PrivacyVerified, CommittedUserTurns: value.CommittedUserTurns,
 		TranscriptCount: value.TranscriptCount, PreferenceReceipts: value.PreferenceReceipts,
@@ -1014,7 +1017,7 @@ func validateRecordPayloadV1Shape(data []byte) error {
 		"schema_version": false, "session_id": false, "storage_id": false, "privacy_generation": false,
 		"record_revision": false, "commit_id": false, "created_at": false, "updated_at": false,
 		"last_opened_at": false, "checkpoint_revision": false, "server_profile_fingerprint": false,
-		"lifecycle": false, "title": false, "workspace_id": false, "provider_endpoint": false,
+		"lifecycle": false, "title": false, "workspace_id": false, "gateway_server_url": false,
 		"privacy_verified": false, "committed_user_turns": false, "transcript_count": false,
 		"checkpoint": false, "transcript": false,
 	}
@@ -1289,7 +1292,7 @@ func projectionFromRecord(record SessionRecord) indexProjection {
 		Title: record.Title, TitleSource: record.TitleSource, FirstUserSummary: record.FirstUserSummary, RecentUserSummary: record.RecentUserSummary, TitleRevision: record.TitleRevision,
 		CommittedUserTurns: record.CommittedUserTurns, TranscriptCount: record.TranscriptCount,
 		ServerProfileFingerprint: record.ServerProfileFingerprint, WorkspaceID: record.WorkspaceID, WorkspaceLabel: record.WorkspaceLabel,
-		ProviderName: record.ProviderName, ProviderEndpoint: record.ProviderEndpoint, ProviderModel: record.ProviderModel, Lifecycle: record.Lifecycle,
+		GatewayTarget: record.GatewayTarget, GatewayServerURL: record.GatewayServerURL, GatewayModelName: record.GatewayModelName, GatewayDeviceID: record.GatewayDeviceID, GatewayDestinationRevision: record.GatewayDestinationRevision, GatewaySessionID: record.GatewaySessionID, Lifecycle: record.Lifecycle,
 	}
 }
 func projectionPayloadEqual(left, right indexProjection) bool {

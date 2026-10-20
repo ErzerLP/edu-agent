@@ -145,14 +145,14 @@ func TestFileArtifactEncryptedPatchRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh := &artifactTestModel{}
-	dependencies := controllerDependencies(f.openStore(t), fresh, f.server, f.workspace, Provider{Name: "changed", Endpoint: "https://different.example/v1", Model: "test"})
+	dependencies := controllerDependencies(f.openStore(t), fresh, f.server, f.workspace, GatewayBinding{Target: "changed", ServerURL: "https://different.example/v1", ModelName: "test"})
 	dependencies.LoopOptions.ContextWindow = 32768
 	restored, err := Resume(t.Context(), dependencies, ResumeOptions{SessionID: owner, CurrentWorkspace: f.workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer restored.Close()
-	if !restored.Status().ProviderConfirmationRequired || fresh.calls != 0 {
+	if !restored.Status().GatewayConfirmationRequired || fresh.calls != 0 {
 		t.Fatal("provider preflight bypassed")
 	}
 	infos, err := restored.LocalArtifacts()

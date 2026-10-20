@@ -83,7 +83,7 @@ func TestPairingJournalRoundTripAndCleanup(t *testing.T) {
 
 func TestConfigAllowsLocalAgentSettingsWithoutPairing(t *testing.T) {
 	t.Parallel()
-	agent := DefaultAgentConfig("deepseek")
+	agent := DefaultAgentConfig()
 	value := Config{Timeout: "30s", Color: "never", Agent: &agent}
 	if err := value.Validate(); err != nil {
 		t.Fatalf("unpaired agent config rejected: %v", err)
@@ -104,35 +104,27 @@ func TestConfigAllowsLocalAgentSettingsWithoutPairing(t *testing.T) {
 		t.Fatalf("paired config rejected: %+v err=%v", paired, err)
 	}
 	local := paired.WithoutPairing()
-	if local.HasPairingBinding() || local.Agent == nil || local.Agent.Model != agent.Model {
+	if local.HasPairingBinding() || local.Agent == nil || *local.Agent != agent {
 		t.Fatalf("WithoutPairing lost local settings: %+v", local)
 	}
 
-	custom := DefaultAgentConfig("custom")
-	if err := custom.Validate(); err != nil || custom.Provider != "custom" || custom.Model == "" {
-		t.Fatalf("custom provider preset is unusable: %+v err=%v", custom, err)
-	}
-	custom.ContextWindow = 4095
-	if err := custom.Validate(); err == nil {
-		t.Fatal("agent context window below runtime minimum was accepted")
-	}
 }
 
 func TestAgentMaxToolRoundsAllowsUnlimitedAndHasNoFixedMaximum(t *testing.T) {
 	t.Parallel()
 	for _, value := range []int{0, 1, 16, 60, 1_000_000} {
-		agent := DefaultAgentConfig("custom")
+		agent := DefaultAgentConfig()
 		agent.MaxToolRounds = value
 		if err := agent.Validate(); err != nil {
 			t.Fatalf("MaxToolRounds=%d rejected: %v", value, err)
 		}
 	}
-	agent := DefaultAgentConfig("custom")
+	agent := DefaultAgentConfig()
 	agent.MaxToolRounds = -1
 	if err := agent.Validate(); err == nil {
 		t.Fatal("negative MaxToolRounds accepted")
 	}
-	if got := DefaultAgentConfig("custom").MaxToolRounds; got != 0 {
+	if got := DefaultAgentConfig().MaxToolRounds; got != 0 {
 		t.Fatalf("default MaxToolRounds=%d want unlimited", got)
 	}
 }
@@ -140,18 +132,18 @@ func TestAgentMaxToolRoundsAllowsUnlimitedAndHasNoFixedMaximum(t *testing.T) {
 func TestAgentContextCompactionDefaultsAndValidatesStrictly(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"auto", "recent-only", "off"} {
-		value := DefaultAgentConfig("openai")
+		value := DefaultAgentConfig()
 		value.ContextCompaction = mode
 		if err := value.Validate(); err != nil || value.ContextCompaction != mode {
 			t.Fatalf("mode %q rejected or changed: %+v err=%v", mode, value, err)
 		}
 	}
-	missing := DefaultAgentConfig("openai")
+	missing := DefaultAgentConfig()
 	missing.ContextCompaction = ""
 	if err := missing.Validate(); err != nil || missing.ContextCompaction != DefaultAgentContextCompaction {
 		t.Fatalf("missing mode did not normalize to auto: %+v err=%v", missing, err)
 	}
-	invalid := DefaultAgentConfig("openai")
+	invalid := DefaultAgentConfig()
 	invalid.ContextCompaction = "automatic"
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("invalid context compaction mode was accepted")
@@ -161,18 +153,18 @@ func TestAgentContextCompactionDefaultsAndValidatesStrictly(t *testing.T) {
 func TestAgentSessionHistoryDefaultsAndValidatesStrictly(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"auto", "off"} {
-		value := DefaultAgentConfig("openai")
+		value := DefaultAgentConfig()
 		value.SessionHistory = mode
 		if err := value.Validate(); err != nil || value.SessionHistory != mode {
 			t.Fatalf("session history %q rejected or changed: %+v err=%v", mode, value, err)
 		}
 	}
-	missing := DefaultAgentConfig("openai")
+	missing := DefaultAgentConfig()
 	missing.SessionHistory = ""
 	if err := missing.Validate(); err != nil || missing.SessionHistory != DefaultAgentSessionHistory {
 		t.Fatalf("missing session history did not normalize to auto: %+v err=%v", missing, err)
 	}
-	invalid := DefaultAgentConfig("openai")
+	invalid := DefaultAgentConfig()
 	invalid.SessionHistory = "enabled"
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("invalid session history was accepted")
@@ -182,60 +174,21 @@ func TestAgentSessionHistoryDefaultsAndValidatesStrictly(t *testing.T) {
 func TestAgentReasoningEffortDefaultsAndValidatesStrictly(t *testing.T) {
 	t.Parallel()
 	for _, effort := range []string{"auto", "none", "minimal", "low", "medium", "high", "xhigh", "max"} {
-		value := DefaultAgentConfig("openai")
+		value := DefaultAgentConfig()
 		value.ReasoningEffort = effort
 		if err := value.Validate(); err != nil || value.ReasoningEffort != effort {
 			t.Fatalf("effort %q rejected or changed: %+v err=%v", effort, value, err)
 		}
 	}
-	missing := DefaultAgentConfig("openai")
+	missing := DefaultAgentConfig()
 	missing.ReasoningEffort = ""
 	if err := missing.Validate(); err != nil || missing.ReasoningEffort != DefaultAgentReasoningEffort {
 		t.Fatalf("missing effort did not normalize to auto: %+v err=%v", missing, err)
 	}
-	invalid := DefaultAgentConfig("openai")
+	invalid := DefaultAgentConfig()
 	invalid.ReasoningEffort = "extreme"
 	if err := invalid.Validate(); err == nil {
 		t.Fatal("invalid reasoning effort was accepted")
-	}
-}
-
-func TestStoreLoadsLegacyAgentJSONWithAutoReasoningEffort(t *testing.T) {
-	t.Parallel()
-	path := filepath.Join(t.TempDir(), "edu-agent", "config.json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	legacy := `{"server_url":"","device_id":"","display_name":"","timeout":"30s","color":"never","allow_insecure_http":false,"agent":{"provider":"ollama","base_url":"http://127.0.0.1:11434/v1","model":"qwen3:8b","context_window":32768,"timeout":"1m0s","max_tool_rounds":8,"context_compaction":"auto"}}`
-	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := (Store{Path: path}).Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loaded.Agent == nil || loaded.Agent.ReasoningEffort != DefaultAgentReasoningEffort || loaded.Agent.SessionHistory != DefaultAgentSessionHistory {
-		t.Fatalf("legacy agent config = %+v", loaded.Agent)
-	}
-}
-
-func TestAgentAPIKeyOptionalOnlyForOllamaAndLoopbackCustom(t *testing.T) {
-	t.Parallel()
-	for name, testCase := range map[string]struct {
-		config AgentConfig
-		want   bool
-	}{
-		"ollama":        {config: DefaultAgentConfig("ollama"), want: true},
-		"loopback":      {config: AgentConfig{Provider: "custom", BaseURL: "http://127.0.0.1:9000/v1"}, want: true},
-		"localhost TLS": {config: AgentConfig{Provider: "custom", BaseURL: "https://localhost:9443/v1"}, want: true},
-		"remote custom": {config: AgentConfig{Provider: "custom", BaseURL: "https://gateway.example.test/v1"}, want: false},
-		"openai":        {config: DefaultAgentConfig("openai"), want: false},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := testCase.config.APIKeyOptional(); got != testCase.want {
-				t.Fatalf("APIKeyOptional() = %t, want %t", got, testCase.want)
-			}
-		})
 	}
 }
 

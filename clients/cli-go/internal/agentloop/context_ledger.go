@@ -542,8 +542,9 @@ func (r *ContextRuntime) triggerConsolidation() {
 	}
 	r.consolidationRunning = true
 	r.wg.Add(1)
+	model, window := r.model, r.contextWindow
 	r.mu.Unlock()
-	go r.runConsolidation(snapshot)
+	go r.runConsolidation(snapshot, model, window)
 }
 
 func (r *ContextRuntime) observerSnapshotLocked() (observerSnapshot, bool) {
@@ -586,7 +587,7 @@ func (r *ContextRuntime) observerSnapshotLocked() (observerSnapshot, bool) {
 	return snapshot, len(snapshot.Sources) > 0
 }
 
-func (r *ContextRuntime) runConsolidation(snapshot observerSnapshot) {
+func (r *ContextRuntime) runConsolidation(snapshot observerSnapshot, model Model, window int) {
 	defer func() {
 		r.mu.Lock()
 		r.consolidationRunning = false
@@ -594,7 +595,7 @@ func (r *ContextRuntime) runConsolidation(snapshot observerSnapshot) {
 		r.wg.Done()
 	}()
 
-	result, err := runObserver(r.ctx, r.model, r.estimator, r.contextWindow, snapshot)
+	result, err := runObserver(r.ctx, model, r.estimator, window, snapshot)
 	if err != nil {
 		r.recordObserverBackoff(snapshot.SourceCount, true)
 		return
@@ -613,7 +614,7 @@ func (r *ContextRuntime) runConsolidation(snapshot observerSnapshot) {
 	if !due {
 		return
 	}
-	reflectionResult, reflectionErr := runReflector(r.ctx, r.model, r.estimator, r.contextWindow, reflector)
+	reflectionResult, reflectionErr := runReflector(r.ctx, model, r.estimator, window, reflector)
 	if reflectionErr != nil {
 		r.recordReflectorBackoff(reflector.ObserverRuns)
 		return

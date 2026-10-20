@@ -19,14 +19,9 @@ import (
 )
 
 const (
-	DefaultServerURL = "http://127.0.0.1:8080"
-	DefaultTimeout   = 30 * time.Second
-	DefaultColor     = "never"
-
-	DefaultAgentProvider          = "openai"
-	DefaultAgentContextWindow     = agentlimits.DefaultContextWindow
-	DefaultAgentMaxTokens         = agentlimits.MaxOutputTokens
-	DefaultAgentTimeout           = 60 * time.Second
+	DefaultServerURL              = "http://127.0.0.1:8080"
+	DefaultTimeout                = 30 * time.Second
+	DefaultColor                  = "never"
 	DefaultAgentMaxToolRounds     = agentlimits.UnlimitedToolRounds
 	MinAgentMaxToolRounds         = agentlimits.UnlimitedToolRounds
 	DefaultAgentContextCompaction = "auto"
@@ -47,31 +42,24 @@ type Config struct {
 	Color             string          `json:"color"`
 	AllowInsecureHTTP bool            `json:"allow_insecure_http"`
 	Offline           *OfflineBinding `json:"offline,omitempty"`
+	Gateway           *GatewayState   `json:"gateway,omitempty"`
 	Agent             *AgentConfig    `json:"agent,omitempty"`
 }
 
 type AgentConfig struct {
-	Provider          string `json:"provider"`
-	BaseURL           string `json:"base_url"`
-	Model             string `json:"model"`
-	ContextWindow     int    `json:"context_window"`
-	MaxTokens         int    `json:"max_tokens"`
-	Timeout           string `json:"timeout"`
 	MaxToolRounds     int    `json:"max_tool_rounds"`
 	ContextCompaction string `json:"context_compaction,omitempty"`
 	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	SessionHistory    string `json:"session_history,omitempty"`
 }
 
-func (c AgentConfig) APIKeyOptional() bool {
-	if c.Provider == "ollama" {
-		return true
-	}
-	if c.Provider != "custom" {
-		return false
-	}
-	parsed, err := url.Parse(c.BaseURL)
-	return err == nil && isLoopback(parsed.Hostname())
+// GatewayState is bound to a paired server and device. Online limits are never cached.
+type GatewayState struct {
+	ServerURL           string `json:"server_url"`
+	DeviceID            string `json:"device_id"`
+	SelectedTarget      string `json:"selected_target,omitempty"`
+	DestinationRevision string `json:"destination_revision,omitempty"`
+	NoticeVersion       int    `json:"notice_version"`
 }
 
 type OfflineBinding struct {
@@ -109,19 +97,6 @@ func (s Store) Load() (Config, error) {
 	var value Config
 	if err := decodeStrict(data, &value); err != nil {
 		return Config{}, fmt.Errorf("decode configuration: %w", err)
-	}
-	// Distinguish legacy omission from an explicit zero/null. Internal Go
-	// zero-value configs retain their existing normalization behavior.
-	var explicit struct {
-		Agent *struct {
-			MaxTokens json.RawMessage `json:"max_tokens"`
-		} `json:"agent"`
-	}
-	if err := json.Unmarshal(data, &explicit); err != nil {
-		return Config{}, fmt.Errorf("decode configuration presence: %w", err)
-	}
-	if explicit.Agent != nil && len(explicit.Agent.MaxTokens) != 0 && (value.Agent == nil || !agentlimits.ValidMaxTokens(value.Agent.MaxTokens)) {
-		return Config{}, errors.New("agent configuration: explicit max tokens must be a positive integer")
 	}
 	if err := value.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate configuration: %w", err)
@@ -225,6 +200,18 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if c.Gateway != nil {
+		g := c.Gateway
+		if !c.HasPairingBinding() || g.ServerURL != c.ServerURL || g.DeviceID != c.DeviceID {
+			return errors.New("gateway state does not match paired server and device")
+		}
+		if g.SelectedTarget != "" && g.SelectedTarget != "teaching" && g.SelectedTarget != "mentor" {
+			return errors.New("invalid gateway target")
+		}
+		if g.NoticeVersion < 0 || len(g.DestinationRevision) > 512 || strings.ContainsAny(g.DestinationRevision, "\r\n\x00") {
+			return errors.New("invalid gateway consent")
+		}
+	}
 	if c.Agent != nil {
 		if err := c.Agent.Validate(); err != nil {
 			return fmt.Errorf("agent configuration: %w", err)
@@ -245,66 +232,15 @@ func (c Config) WithoutPairing() Config {
 	c.DisplayName = ""
 	c.AllowInsecureHTTP = false
 	c.Offline = nil
+	c.Gateway = nil
 	return c
 }
 
-func DefaultAgentConfig(provider string) AgentConfig {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	value := AgentConfig{
-		Provider: provider, ContextWindow: DefaultAgentContextWindow, MaxTokens: DefaultAgentMaxTokens,
-		Timeout: DefaultAgentTimeout.String(), MaxToolRounds: DefaultAgentMaxToolRounds,
-		ContextCompaction: DefaultAgentContextCompaction, ReasoningEffort: DefaultAgentReasoningEffort,
-		SessionHistory: DefaultAgentSessionHistory,
-	}
-	switch provider {
-	case "openai":
-		value.BaseURL, value.Model = "https://api.openai.com/v1", "gpt-4.1-mini"
-	case "deepseek":
-		value.BaseURL, value.Model = "https://api.deepseek.com/v1", "deepseek-chat"
-	case "openrouter":
-		value.BaseURL, value.Model = "https://openrouter.ai/api/v1", "openai/gpt-4.1-mini"
-	case "ollama":
-		value.BaseURL, value.Model = "http://127.0.0.1:11434/v1", "qwen3:8b"
-	case "custom":
-		value.BaseURL, value.Model = "http://127.0.0.1:1234/v1", "local-model"
-	default:
-		value.Provider = DefaultAgentProvider
-		value.BaseURL, value.Model = "https://api.openai.com/v1", "gpt-4.1-mini"
-	}
-	return value
+func DefaultAgentConfig() AgentConfig {
+	return AgentConfig{ContextCompaction: DefaultAgentContextCompaction, ReasoningEffort: DefaultAgentReasoningEffort, SessionHistory: DefaultAgentSessionHistory}
 }
 
 func (c *AgentConfig) Validate() error {
-	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
-	switch c.Provider {
-	case "openai", "deepseek", "openrouter", "ollama", "custom":
-	default:
-		return errors.New("provider must be openai, deepseek, openrouter, ollama, or custom")
-	}
-	baseURL, err := validateAgentBaseURL(c.BaseURL)
-	if err != nil {
-		return err
-	}
-	c.BaseURL = baseURL
-	c.Model = strings.TrimSpace(c.Model)
-	if c.Model == "" || len(c.Model) > 256 || strings.IndexFunc(c.Model, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
-		return errors.New("model name is invalid")
-	}
-	if c.MaxTokens == 0 {
-		c.MaxTokens = DefaultAgentMaxTokens
-	}
-	if !agentlimits.ValidMaxTokens(c.MaxTokens) {
-		return errors.New("max tokens must be a positive integer")
-	}
-	if c.ContextWindow < 4096 {
-		return errors.New("context window must be at least 4096")
-	}
-	if c.Timeout == "" {
-		c.Timeout = DefaultAgentTimeout.String()
-	}
-	if _, err := ParseTimeout(c.Timeout); err != nil {
-		return errors.New("agent inactivity timeout must be a positive duration")
-	}
 	if !agentlimits.ValidToolRounds(c.MaxToolRounds) {
 		return errors.New("max tool rounds must be non-negative; 0 means unlimited")
 	}
@@ -334,26 +270,6 @@ func (c *AgentConfig) Validate() error {
 		return errors.New("session history must be auto or off")
 	}
 	return nil
-}
-
-func validateAgentBaseURL(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.Opaque != "" {
-		return "", errors.New("base URL must be an absolute HTTP or HTTPS URL")
-	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return "", errors.New("base URL scheme must be http or https")
-	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(parsed.Host, "\\") {
-		return "", errors.New("base URL must not contain credentials, query, or fragment")
-	}
-	if parsed.Scheme == "http" && !isLoopback(parsed.Hostname()) {
-		return "", errors.New("plaintext model endpoints are allowed only on loopback")
-	}
-	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
-	parsed.RawPath = strings.TrimSuffix(parsed.RawPath, "/")
-	return strings.TrimSuffix(parsed.String(), "/"), nil
 }
 
 func (b *OfflineBinding) Validate(serverURL string) error {

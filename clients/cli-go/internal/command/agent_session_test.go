@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"os"
 	"path/filepath"
 	"strings"
@@ -67,7 +68,7 @@ func (u *sharedPickerAgentUI) Pick(ctx context.Context, source agentui.SessionPi
 }
 
 func TestAgentResumeWithoutSelectorUsesSharedPicker(t *testing.T) {
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	configStore.value.Agent = &preset
 	root := t.TempDir()
@@ -75,9 +76,9 @@ func TestAgentResumeWithoutSelectorUsesSharedPicker(t *testing.T) {
 	model := &requestCapturingAgentModel{response: modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "已保存的回答"}}}
 	first := &singleSendAgentUI{}
 	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-	app.ModelSecrets = &memoryModelSecretStore{}
+
 	app.AgentUI = first
-	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+	app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 	app.InputIsTTY = func() bool { return true }
 	app.OutputIsTTY = func() bool { return true }
 	app.Getenv = func(string) string { return "xterm" }
@@ -214,16 +215,16 @@ func TestAgentExplicitTargetDoesNotSkipLockedOrCorruptSummary(t *testing.T) {
 }
 
 func TestAgentSessionHistoryOffSkipsStoreWithoutChangingConfig(t *testing.T) {
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	preset.SessionHistory = "off"
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	configStore.value.Agent = &preset
 	model := &requestCapturingAgentModel{response: modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "回答"}}}
 	runner := &singleSendAgentUI{}
 	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-	app.ModelSecrets = &memoryModelSecretStore{}
+
 	app.AgentUI = runner
-	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+	app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 	app.InputIsTTY = func() bool { return true }
 	app.OutputIsTTY = func() bool { return true }
 	app.Getenv = func(string) string { return "xterm" }
@@ -242,16 +243,12 @@ func TestAgentSessionHistoryOffSkipsStoreWithoutChangingConfig(t *testing.T) {
 }
 
 func TestModelAndClientConfigSetSessionHistory(t *testing.T) {
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	configStore.value.Agent = &preset
 	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
 	if exit := app.Run(t.Context(), []string{"model", "set", "--session-history", "off"}); exit != ExitOK || configStore.value.Agent.SessionHistory != "off" {
 		t.Fatalf("model set exit=%d history=%q err=%q", exit, configStore.value.Agent.SessionHistory, errOut.String())
-	}
-	errOut.Reset()
-	if exit := app.Run(t.Context(), []string{"model", "preset", "ollama"}); exit != ExitOK || configStore.value.Agent.SessionHistory != "off" {
-		t.Fatalf("preset exit=%d history=%q err=%q", exit, configStore.value.Agent.SessionHistory, errOut.String())
 	}
 	errOut.Reset()
 	if exit := app.Run(t.Context(), []string{"config", "set", "--session-history", "auto"}); exit != ExitOK || configStore.value.Agent.SessionHistory != "auto" {
@@ -260,15 +257,15 @@ func TestModelAndClientConfigSetSessionHistory(t *testing.T) {
 }
 
 func TestAgentNoSaveSkipsSessionStoreAndTitleRequest(t *testing.T) {
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	configStore.value.Agent = &preset
 	model := &requestCapturingAgentModel{response: modelclient.Response{Message: modelclient.Message{Role: "assistant", Content: "回答"}}}
 	runner := &singleSendAgentUI{}
 	app, _, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{})
-	app.ModelSecrets = &memoryModelSecretStore{}
+
 	app.AgentUI = runner
-	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+	app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 	app.InputIsTTY = func() bool { return true }
 	app.OutputIsTTY = func() bool { return true }
 	app.Getenv = func(string) string { return "xterm" }
@@ -444,7 +441,7 @@ func TestSessionCommandErrorMapsSentinelsWithoutRawDetails(t *testing.T) {
 		{name: "store full", cause: agentsession.ErrStoreFull, code: "session_store_full", exit: ExitUnavailable},
 		{name: "privacy invalidated", cause: agentsession.ErrPrivacyInvalidated, code: "session_privacy_invalidated", exit: ExitConflict},
 		{name: "workspace confirmation", cause: agentcontroller.ErrWorkspaceConfirmationRequired, code: "workspace_confirmation_required", exit: ExitConflict},
-		{name: "provider confirmation", cause: agentcontroller.ErrProviderConfirmationRequired, code: "session_provider_confirmation_required", exit: ExitConflict},
+		{name: "provider confirmation", cause: agentcontroller.ErrGatewayConfirmationRequired, code: "session_gateway_confirmation_required", exit: ExitConflict},
 		{name: "generic", cause: fmt.Errorf("unclassified local failure"), code: "session_store_unavailable", exit: ExitUnavailable},
 	}
 	for _, test := range tests {
@@ -482,7 +479,7 @@ func TestSessionCommandErrorCoversAllSpecStableCodes(t *testing.T) {
 		{name: "checkpoint conflict", code: "session_checkpoint_conflict", exit: ExitConflict},
 		{name: "interrupted", code: "session_interrupted", exit: ExitConflict},
 		{name: "workspace unavailable", code: "session_workspace_unavailable", exit: ExitUnavailable},
-		{name: "provider confirmation", code: "session_provider_confirmation_required", exit: ExitConflict},
+		{name: "provider confirmation", code: "session_gateway_confirmation_required", exit: ExitConflict},
 		{name: "privacy revalidation pending", code: "session_privacy_revalidation_pending", exit: ExitUnavailable},
 		{name: "delete failed", code: "session_delete_failed", exit: ExitUnavailable},
 		{name: "title failed", code: "session_title_failed", exit: ExitUnavailable},
@@ -513,7 +510,7 @@ func TestAgentCommandRestartResumeAndBoundaryMatrix(t *testing.T) {
 	model := &commandMatrixModel{}
 	firstUI := &commandMatrixUI{send: "第一轮：记住边界条件"}
 	firstConfig, firstCredentials := pairedStores(config.DefaultServerURL, "server-token")
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	firstConfig.value.Agent = &preset
 	firstApp, _, firstErr := newSessionCommandApp(t, firstConfig, firstCredentials, firstUI, model, root, secrets, &fakeTerminal{})
 	if exit := firstApp.Run(t.Context(), []string{"agent", "--workspace", workspaceRoot}); exit != ExitOK || firstUI.sendErr != nil {
@@ -553,7 +550,7 @@ func TestAgentCommandProfileIsolationAndUnavailableStoreDegradation(t *testing.T
 		root := t.TempDir()
 		secrets := &commandSessionSecrets{}
 		model := &commandMatrixModel{}
-		preset := config.DefaultAgentConfig("ollama")
+		preset := config.DefaultAgentConfig()
 		configA, credentialsA := pairedStores(config.DefaultServerURL, "token-a")
 		configA.value.Agent = &preset
 		uiA := &commandMatrixUI{send: "只属于profile A"}
@@ -581,7 +578,7 @@ func TestAgentCommandProfileIsolationAndUnavailableStoreDegradation(t *testing.T
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			preset := config.DefaultAgentConfig("ollama")
+			preset := config.DefaultAgentConfig()
 			configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 			configStore.value.Agent = &preset
 			ui := &commandMatrixUI{send: "明文绝不能落盘 secret-boundary"}
@@ -614,7 +611,7 @@ func TestAgentCommandMissingHistoricalWorkspaceRestoresConversationWithoutCWDFal
 	workspaceRoot := t.TempDir()
 	secrets := &commandSessionSecrets{}
 	model := &commandMatrixModel{}
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	configStore.value.Agent = &preset
 	seedUI := &commandMatrixUI{send: "历史workspace中的对话"}
@@ -641,51 +638,6 @@ func TestAgentCommandMissingHistoricalWorkspaceRestoresConversationWithoutCWDFal
 	}
 	if !containsText(resumeErr.String(), "session_workspace_unavailable") {
 		t.Fatalf("missing workspace notice=%q", resumeErr.String())
-	}
-}
-
-func TestAgentCommandProviderChangeZeroSendUntilConfirmationAndLocalManagement(t *testing.T) {
-	root := t.TempDir()
-	secrets := &commandSessionSecrets{}
-	model := &commandMatrixModel{}
-	original := config.DefaultAgentConfig("custom")
-	original.BaseURL = "http://127.0.0.1:11434/v1"
-	original.Model = "old-model"
-	seedConfig, seedCredentials := pairedStores(config.DefaultServerURL, "server-token")
-	seedConfig.value.Agent = &original
-	seedUI := &commandMatrixUI{send: "不得在确认前泄漏的历史"}
-	seedApp, _, seedErr := newSessionCommandApp(t, seedConfig, seedCredentials, seedUI, model, root, secrets, &fakeTerminal{})
-	if exit := seedApp.Run(t.Context(), []string{"agent"}); exit != ExitOK || seedUI.sendErr != nil {
-		t.Fatalf("seed exit=%d send=%v err=%q", exit, seedUI.sendErr, seedErr.String())
-	}
-
-	changed := original
-	changed.BaseURL = "http://127.0.0.1:2244/v1"
-	changed.Model = "new-model"
-	declineConfig, declineCredentials := pairedStores(config.DefaultServerURL, "server-token")
-	declineConfig.value.Agent = &changed
-	declineUI := &commandMatrixUI{rename: "本地重命名仍可用"}
-	model.reset()
-	declineApp, _, declineErr := newSessionCommandApp(t, declineConfig, declineCredentials, declineUI, model, root, secrets, &fakeTerminal{confirmed: false})
-	if exit := declineApp.Run(t.Context(), []string{"agent", "resume", seedUI.sessionID, "--all"}); exit != ExitOK || declineUI.renameErr != nil || declineUI.listErr != nil {
-		t.Fatalf("decline exit=%d list=%v rename=%v err=%q", exit, declineUI.listErr, declineUI.renameErr, declineErr.String())
-	}
-	if got := len(model.snapshot()); got != 0 {
-		t.Fatalf("provider decline sent %d model requests: %+v", got, model.snapshot())
-	}
-	if declineUI.renamedTitle != "本地重命名仍可用" {
-		t.Fatalf("local management did not complete: %q", declineUI.renamedTitle)
-	}
-
-	confirmConfig, confirmCredentials := pairedStores(config.DefaultServerURL, "server-token")
-	confirmConfig.value.Agent = &changed
-	confirmUI := &commandMatrixUI{send: "确认后才发送"}
-	confirmApp, _, confirmErr := newSessionCommandApp(t, confirmConfig, confirmCredentials, confirmUI, model, root, secrets, &fakeTerminal{confirmed: true})
-	if exit := confirmApp.Run(t.Context(), []string{"agent", "resume", seedUI.sessionID, "--all"}); exit != ExitOK || confirmUI.sendErr != nil {
-		t.Fatalf("confirm exit=%d send=%v err=%q", exit, confirmUI.sendErr, confirmErr.String())
-	}
-	if !model.requestContainsUsers("不得在确认前泄漏的历史", "确认后才发送") {
-		t.Fatalf("confirmed request lacks history: %+v", model.snapshot())
 	}
 }
 
@@ -831,9 +783,9 @@ func (u *commandMatrixUI) transcriptContains(wanted string) bool {
 func newSessionCommandApp(t *testing.T, configStore ConfigStore, credentialStore CredentialStore, ui AgentUIRunner, model agentloop.Model, root string, secrets agentsession.SecretBackend, terminal Terminal) (*App, *strings.Builder, *strings.Builder) {
 	t.Helper()
 	app, byteOut, byteErr := newTestApp(configStore, credentialStore, terminal)
-	app.ModelSecrets = &memoryModelSecretStore{}
+
 	app.AgentUI = ui
-	app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return model, nil }
+	app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return model, nil }
 	app.InputIsTTY = func() bool { return true }
 	app.OutputIsTTY = func() bool { return true }
 	app.Getenv = func(string) string { return "xterm" }

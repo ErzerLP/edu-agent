@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
@@ -102,6 +101,9 @@ func TestLargeArgumentsAuthorizedHTTPWriteEditAndRestore(t *testing.T) {
 			}
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if gatewayFixtureConfig(t, w, r) {
+					return
+				}
 				index := int(calls.Add(1)) - 1
 				if index >= len(responses) {
 					http.Error(w, "unexpected request", http.StatusBadRequest)
@@ -133,10 +135,7 @@ func TestLargeArgumentsAuthorizedHTTPWriteEditAndRestore(t *testing.T) {
 				_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
 			}))
 			defer server.Close()
-			client, err := modelclient.New(server.URL, "fake", "", 10*time.Second, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			client := newGatewayFixtureModel(t, server)
 			var model Model = client
 			if !stream {
 				model = largeContextCompleteOnly{client}

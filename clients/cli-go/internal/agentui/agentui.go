@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 )
 
 const (
@@ -234,7 +235,7 @@ type model struct {
 }
 
 func sessionPersistenceHelp(state string) string {
-	const recoveryBoundary = " 自动标题及恢复后的历史上下文可能发送到当前 provider；endpoint 变化须先确认。YOLO、旧文件授权和 pending 交互不会恢复。"
+	const recoveryBoundary = " 自动标题及恢复后的历史上下文可能发送到所选服务端模型；目的地变化须先确认。YOLO、旧文件授权和 pending 交互不会恢复。"
 	switch state {
 	case "saved":
 		return "当前 Session 会在稳定轮次后本机加密保存。" + recoveryBoundary
@@ -746,7 +747,7 @@ func (m *model) applyFileAuthorizationMode(mode agentloop.FileAuthorizationMode)
 	}
 	m.selector = nil
 	if mode == agentloop.FileAuthorizationYOLO {
-		m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "文件模式已切换为 YOLO（仅当前 Session）。后续 write/edit/archive/mkdir 不再逐次确认；归档目录不能普通写入或清理，其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。"})
+		m.entries = append(m.entries, transcriptEntry{kind: entryNotice, text: "文件模式已切换为 YOLO（仅当前 Session）。后续 write/edit/archive/mkdir 不再逐次确认；归档目录不能普通写入或清理，其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给所选服务端模型。"})
 		m.status = "文件模式已切换为 YOLO"
 	} else {
 		m.status = "文件模式已切换为逐次确认"
@@ -1504,6 +1505,10 @@ func visibleDuration(value time.Duration) string {
 }
 
 func errorCardText(err error, preference bool) string {
+	var gateway *modelgateway.Error
+	if errors.As(err, &gateway) {
+		return fmt.Sprintf("阶段：模型网关\n代码：%s\n原因：%s\n未自动重发；已执行的本机工具不会重做。", gateway.Code, safeTerminalText(err.Error()))
+	}
 	stage, suggestion := "Agent 请求", "可以调整问题后重试；错误卡片会保留在对话中。"
 	code := stableErrorCode(err)
 	if errors.Is(err, agentloop.ErrPreferenceOutcomeUnknown) {
@@ -1514,10 +1519,10 @@ func errorCardText(err error, preference bool) string {
 		suggestion = "服务端未接受本次提交；请检查错误后重试原选择。"
 	} else if code == string(modelclient.ErrorCodeReasoningEffortUnsupported) {
 		stage = "模型请求"
-		suggestion = "当前提供商不支持所选推理强度；按 F3 选择 auto 或受支持档位后重试。"
+		suggestion = "所选模型服务不支持所选推理强度；按 F3 选择 auto 或受支持档位后重试。"
 	} else if code == "context_deadline_exceeded" {
 		stage = "模型响应"
-		suggestion = "模型在配置的无响应超时内没有返回数据；请检查网络，或使用 model set --timeout 调大等待时间后重试。"
+		suggestion = "模型在配置的无响应超时内没有返回数据；请检查网络，或在网页调整模型超时后重试。"
 	} else if code == string(modelclient.ErrorCodeResponseTruncated) {
 		stage = "模型输出"
 		suggestion = "回答达到长度上限；已保留安全的可见部分但未写入会话历史，请缩小问题或分步请求。"
@@ -1567,6 +1572,10 @@ func stableErrorCardText(err error) string {
 }
 
 func stableErrorCode(err error) string {
+	var gateway *modelgateway.Error
+	if errors.As(err, &gateway) {
+		return gateway.Code
+	}
 	if code := modelclient.StableErrorCode(err); code != "" {
 		return string(code)
 	}

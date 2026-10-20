@@ -86,7 +86,7 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		"/v1/knowledge/structure/internal": false, "/v1/knowledge/structure/concepts/a/clear": false,
 		"/v1/knowledge/structure/proposals/a/force": false, "/v1/knowledge/maintenance/internal": false,
 		"/v1/knowledge/maintenance/proposals/a/force": false, "/v1/knowledge/revisions/a/delete": false,
-		"/admin": false, "/internal/privacy": false, "/mcp": false, "/v1/knowledge/imports": false,
+		"/admin": false, "/internal/privacy": false, "/mcp": false, "/v1/knowledge/imports": true,
 		"/v1/knowledge/imports/force": false, "/v1/knowledge/scopes/a/delete": false,
 		"/v1/knowledge/reference-sources/internal": false, "/v1/learning/progress/internal": false,
 		"/v1/learning/reviews/delete": false, "/v1/knowledge/revisions/a/documents/b/pages/1/delete": false,

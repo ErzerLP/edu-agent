@@ -210,6 +210,7 @@ type model struct {
 	hasNewContent          bool
 	toolsExpanded          bool
 	shownEventKeys         map[string]struct{}
+	pausedToolSteps        bool
 	contextStatus          agentloop.ContextStatus
 	contextUpdates         <-chan agentloop.ContextEvent
 	contextCancel          func()
@@ -523,6 +524,7 @@ func (m *model) resetAfterSessionSwap(generation uint64) {
 	m.input.Focus()
 	m.follow, m.hasNewContent = true, false
 	m.shownEventKeys = map[string]struct{}{}
+	m.pausedToolSteps = false
 	m.learningLoading, m.learningLoaded, m.learningFailed, m.learningRefreshPending = true, false, false, false
 	m.status = "已切换 Session"
 	m.learningLabel = ""
@@ -691,7 +693,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		m.pending, m.pendingQuestion = nil, nil
 		m.follow, m.hasNewContent = true, false
-		m.shownEventKeys = map[string]struct{}{}
+		if !m.pausedToolSteps {
+			m.shownEventKeys = map[string]struct{}{}
+		}
 		m.refreshTranscript(true)
 		return m.beginTurn(turnSend, true, input, nil, nil, "", func(turnCtx context.Context) (agentloop.Result, error) {
 			return m.session.Send(turnCtx, input)
@@ -1112,6 +1116,7 @@ func (m *model) handleTurnError(err error) {
 }
 
 func (m *model) handleTurnResult(result agentloop.Result) {
+	m.pausedToolSteps = result.PausedToolSteps
 	newEvents := make([]agentloop.Event, 0, len(result.Events))
 	for _, event := range result.Events {
 		key := eventKey(event)

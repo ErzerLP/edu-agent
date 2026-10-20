@@ -855,6 +855,37 @@ func TestAgentUIStreamsThinkingAndToolActivityIntoTranscript(t *testing.T) {
 	}
 }
 
+func TestAgentUIToolStepsResumeDoesNotRepeatReceipts(t *testing.T) {
+	first := agentloop.Event{ID: "read-1", Tool: "read", Summary: "已读取第一个文件", Status: agentloop.EventSucceeded}
+	second := agentloop.Event{ID: "read-2", Tool: "read", Summary: "已读取第二个文件", Status: agentloop.EventSucceeded}
+	third := agentloop.Event{ID: "read-3", Tool: "read", Summary: "已读取第三个文件", Status: agentloop.EventSucceeded}
+	conversation := &fakeConversation{result: agentloop.Result{
+		PausedToolSteps: true, Text: "本轮工具调用已达上限，已暂停。", Events: []agentloop.Event{first, second},
+	}}
+	value := newModel(t.Context(), conversation, "model")
+	value.input.SetValue("读取三个文件")
+	updated, command := value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	conversation.result = agentloop.Result{Text: "三个文件已读完。", Events: []agentloop.Event{first, second, third}}
+	conversation.activities = []agentloop.Activity{{Kind: agentloop.ActivityTool, Event: third}}
+	value.input.SetValue("继续")
+	updated, command = value.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	value = runTurn(t, updated.(model), command)
+	counts := map[string]int{}
+	for _, entry := range value.entries {
+		for _, activity := range entry.activities {
+			if activity.Kind == agentloop.ActivityTool {
+				counts[activity.Event.ID]++
+			}
+		}
+	}
+	for _, id := range []string{"read-1", "read-2", "read-3"} {
+		if counts[id] != 1 {
+			t.Fatalf("receipt %s appeared %d times in result history", id, counts[id])
+		}
+	}
+}
+
 func TestAgentUIToolTimelineShowsStatusAndDetails(t *testing.T) {
 	conversation := &fakeConversation{result: agentloop.Result{
 		Text: "已完成检查。",

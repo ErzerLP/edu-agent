@@ -3,9 +3,37 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestStoreUnknownFieldDiagnostic(t *testing.T) {
+	for _, test := range []struct {
+		name, data, field string
+	}{
+		{"removed agent setting", `{"agent":{"max_tool_rounds":0}}`, "agent.max_tool_rounds"},
+		{"unknown top level", `{"unknown_setting":true}`, "unknown_setting"},
+		{"unknown nested setting", `{"gateway":{"unexpected":true}}`, "gateway.unexpected"},
+		{"case insensitive parent", `{"AGENT":{"unexpected":true}}`, "AGENT.unexpected"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(test.data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := (Store{Path: path}).Load()
+			if err == nil {
+				t.Fatal("unknown field was accepted")
+			}
+			for _, want := range []string{test.field, path, "该设置已移除，请从配置文件中删除这一项"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("diagnostic missing %q: %v", want, err)
+				}
+			}
+		})
+	}
+}
 
 func TestValidateServerURLSafetyMatrix(t *testing.T) {
 	t.Parallel()

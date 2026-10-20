@@ -71,6 +71,10 @@ func (a *App) loadMutableClientConfig() (config.Config, error) {
 	}
 	value, configErr := a.Config.Load()
 	if configErr != nil {
+		var unknown *config.UnknownFieldError
+		if errors.As(configErr, &unknown) {
+			return config.Config{}, commandError("invalid_configuration", unknown.Error(), "", ExitInput)
+		}
 		if errors.Is(configErr, config.ErrNotFound) {
 			return config.Config{}, commandError("not_paired", "no local client configuration exists", "pair this device before changing client settings", ExitAuth)
 		}

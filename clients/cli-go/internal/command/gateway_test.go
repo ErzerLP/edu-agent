@@ -5,10 +5,35 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/config"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestUnknownConfigFieldDiagnosticReachesTerminal(t *testing.T) {
+	for _, args := range [][]string{{"agent"}, {"config", "show"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(`{"agent":{"max_tool_rounds":0}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			app, _, errOut := newTestApp(config.Store{Path: path}, &memoryCredentialStore{}, &fakeTerminal{})
+			app.InputIsTTY = func() bool { return true }
+			app.OutputIsTTY = func() bool { return true }
+			app.AgentUI = &fakeAgentUI{}
+			if code := app.Run(t.Context(), args); code != ExitInput {
+				t.Fatalf("exit=%d: %s", code, errOut.String())
+			}
+			for _, want := range []string{"agent.max_tool_rounds", path, "该设置已移除，请从配置文件中删除这一项"} {
+				if !strings.Contains(errOut.String(), want) {
+					t.Fatalf("terminal diagnostic missing %q: %s", want, errOut.String())
+				}
+			}
+		})
+	}
+}
 
 func TestGatewayPrivacyBeforeAnyRequest(t *testing.T) {
 	var calls atomic.Int32

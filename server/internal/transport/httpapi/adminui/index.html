@@ -160,9 +160,11 @@
                     <label><input type="radio" name="pairingProfile" value="references" /><span>浏览器参考管理（含导入审阅与共享）</span></label>
                     <label><input type="radio" name="pairingProfile" value="assessment" /><span>浏览器评估复核与证据继承审批</span></label>
                     <label><input type="radio" name="pairingProfile" value="learner" /><span>学习端全权</span></label>
+					<label><input type="radio" name="pairingProfile" value="cli" /><span>CLI（含模型调用）</span></label>
                   </div>
                 </fieldset>
                 <p class="hint">学习端全权：一次配对使用导入、参考、研究、学习、Studio、评估复核、记忆候选与设备撤销。设置写入／探测、管理后台和隐私清除授权仍独立。</p>
+				<p class="hint">CLI：问题、相关对话和工具返回的本地内容会经服务端发送给所选模型服务。服务端不保存正文，只记录用量和设备归属；上游服务有自己的数据政策。</p>
                 <button id="pairingSubmit" class="primary-button" type="submit">
                   生成配对码
                 </button>

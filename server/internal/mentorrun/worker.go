@@ -13,6 +13,7 @@ import (
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/integrations/llm"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
+	"github.com/edu-agent/edu-agent/server/internal/modeladmission"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
@@ -30,18 +31,13 @@ func (s *Service) claim(ctx context.Context) (*row, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(210021)`); err != nil {
+	if err = modeladmission.CheckTx(ctx, tx, s.settings.View().Limits.Concurrency, "server", ""); errors.Is(err, modeladmission.ErrBusy) {
+		return nil, tx.Commit(ctx)
+	} else if err != nil {
 		return nil, err
 	}
 	if err = s.usage.RecoverTx(ctx, tx, generation); err != nil {
 		return nil, err
-	}
-	var active int
-	if err = tx.QueryRow(ctx, `SELECT count(*) FROM learning_mentor_runs WHERE lease_until>clock_timestamp() AND state->>'status' IN ('running','cancelling')`).Scan(&active); err != nil {
-		return nil, err
-	}
-	if active >= s.settings.View().Limits.Concurrency {
-		return nil, tx.Commit(ctx)
 	}
 	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE privacy_generation=$1 AND expires_at>clock_timestamp() AND ((state->>'saved')::boolean OR process_id=$2) AND (state->>'status'='queued' OR (state->>'status' IN ('running','cancelling') AND lease_until<clock_timestamp())) ORDER BY (state->>'kind'='topic_index'),created_at,id FOR UPDATE SKIP LOCKED LIMIT 1`, generation, s.process))
 	if errors.Is(err, ErrNotFound) {

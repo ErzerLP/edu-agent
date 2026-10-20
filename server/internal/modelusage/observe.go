@@ -149,7 +149,7 @@ func (s *Store) Observe(ctx context.Context, ref CallRef, next http.RoundTripper
 	response, err := next.RoundTrip(request)
 	if err != nil {
 		state := "outcome_unknown"
-		if errors.Is(err, context.Canceled) && !errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+		if explicitlyCancelled(ctx, err) {
 			state = "cancelled"
 		}
 		s.settle(ctx, ref, state, Usage{})
@@ -229,7 +229,7 @@ func (b *observedBody) feed(data []byte) {
 				b.frame = b.frame[:0]
 			} else if bytes.HasPrefix(line, []byte("data:")) && !b.overflow {
 				part := bytes.TrimPrefix(line[5:], []byte{' '})
-				if len(b.frame)+len(part)+1 > 64<<10 {
+				if len(b.frame)+len(part)+1 > b.frameLimit() {
 					b.overflow = true
 				} else {
 					b.frame = append(b.frame, part...)
@@ -238,7 +238,7 @@ func (b *observedBody) feed(data []byte) {
 			}
 			clear(b.line)
 			b.line = b.line[:0]
-		} else if len(b.line) < 64<<10 {
+		} else if len(b.line) < b.frameLimit() {
 			b.line = append(b.line, c)
 		} else {
 			b.overflow = true
@@ -253,7 +253,7 @@ func (b *observedBody) finish(err error) {
 			if b.status >= 400 || b.failed {
 				state = "failed"
 			}
-		} else if (errors.Is(err, context.Canceled) || errors.Is(context.Cause(b.ctx), context.Canceled)) && !errors.Is(context.Cause(b.ctx), context.DeadlineExceeded) {
+		} else if explicitlyCancelled(b.ctx, err) {
 			state = "cancelled"
 		}
 		b.store.settle(b.ctx, b.ref, state, b.parser.usage)
@@ -275,3 +275,21 @@ func (b *observedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 func (b *observedBody) Close() error { err := b.ReadCloser.Close(); b.finish(err); return err }
+
+func (b *observedBody) frameLimit() int {
+	// Responses terminal events repeat the output before reporting usage. Keep
+	// the same bounded upstream envelope as the gateway, then retain counters only.
+	if b.ref.APIStyle == "responses" {
+		return 16 << 20
+	}
+	return 512 << 10
+}
+
+func explicitlyCancelled(ctx context.Context, err error) bool {
+	cause := context.Cause(ctx)
+	var timeout interface{ Timeout() bool }
+	if errors.Is(cause, context.DeadlineExceeded) || errors.As(cause, &timeout) && timeout.Timeout() {
+		return false
+	}
+	return errors.Is(err, context.Canceled) || ctx.Err() == context.Canceled
+}

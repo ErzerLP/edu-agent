@@ -183,6 +183,9 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		name string
 		sql  string
 	}{
+		{"CLI 模型请求", `DELETE FROM learning_cli_model_requests`},
+		{"CLI 模型轮次", `DELETE FROM learning_cli_model_turns`},
+		{"模型执行租约", `DELETE FROM learning_model_execution_leases`},
 		{"模型用量任务和调用", `DELETE FROM learning_model_tasks`},
 		{"教学变更事件", `DELETE FROM learning_change_events`},
 		{"教学变更候选", `UPDATE learning_change_revisions SET ciphertext=NULL`},
@@ -407,6 +410,9 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
 			UNION ALL SELECT count(*) FROM learning_model_calls
 			UNION ALL SELECT count(*) FROM learning_model_tasks
+			UNION ALL SELECT count(*) FROM learning_cli_model_requests
+			UNION ALL SELECT count(*) FROM learning_cli_model_turns
+			UNION ALL SELECT count(*) FROM learning_model_execution_leases
 			UNION ALL SELECT count(*) FROM learning_mentor_events
 			UNION ALL SELECT count(*) FROM learning_conversation_topics
 			UNION ALL SELECT count(*) FROM learning_conversation_messages

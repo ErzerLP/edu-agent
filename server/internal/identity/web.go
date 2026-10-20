@@ -32,6 +32,9 @@ type WebStore interface {
 func WebScopes(scopes []string) []string {
 	result := []string{}
 	for _, scope := range scopes {
+		if scope == "model:invoke" {
+			continue
+		}
 		if hasScope(scopes, "memory:web") && (scope == "memory:web" || scope == "memory:write" || scope == "devices:manage") {
 			result = append(result, scope)
 			continue

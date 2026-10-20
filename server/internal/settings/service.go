@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -18,6 +19,7 @@ import (
 )
 
 type Options struct {
+	RevisionKey    []byte
 	ModelUsage     *modelusage.Store
 	Path           string
 	ModelEndpoints []string
@@ -28,6 +30,7 @@ type Options struct {
 }
 
 type Service struct {
+	revisionKey    []byte
 	usage          *modelusage.Store
 	mu             sync.Mutex
 	path           string
@@ -44,6 +47,13 @@ func Open(o Options) (*Service, error) {
 		o.Now = time.Now
 	}
 	s := &Service{usage: o.ModelUsage, path: o.Path, modelEndpoints: append([]string{}, o.ModelEndpoints...), now: o.Now}
+	s.revisionKey = append([]byte(nil), o.RevisionKey...)
+	if len(s.revisionKey) == 0 {
+		s.revisionKey = make([]byte, 32)
+		if _, err := rand.Read(s.revisionKey); err != nil {
+			return nil, err
+		}
+	}
 	for _, endpoint := range s.modelEndpoints {
 		if _, err := endpointURL(endpoint); err != nil {
 			return nil, ErrInvalid
@@ -84,6 +94,9 @@ func Open(o Options) (*Service, error) {
 	}
 	s.activeTeaching = s.state.Teaching
 	s.activeLimits = s.state.Limits
+	if s.usage != nil {
+		s.usage.ConfigureConcurrency(func() int { return s.View().Limits.Concurrency })
+	}
 	return s, nil
 }
 
@@ -330,14 +343,8 @@ func (s *Service) usageTransport(slot secretSlot, limits Limits, next http.Round
 	if s.usage == nil {
 		return next
 	}
-	destination := sha256.Sum256([]byte(slot.Provider + "\n" + slot.Endpoint))
-	raw, _ := json.Marshal(struct {
-		Connection Connection
-		Key        string
-		Limits     any
-	}{slot.Connection, slot.Key, limits.configuration()})
-	configuration := sha256.Sum256(raw)
-	return s.usage.Transport(next, modelusage.Model{Provider: slot.Provider, Destination: hex.EncodeToString(destination[:]), Model: slot.Model, APIStyle: slot.APIStyle}, hex.EncodeToString(configuration[:]))
+	model, configuration := connectionIdentity(slot, limits)
+	return s.usage.Transport(next, model, configuration)
 }
 
 // MentorClient 每次承领和付费调用前重新读取配置；返回的摘要绑定端点及预算，不暴露秘密。

@@ -31,6 +31,7 @@ func TestPairingCodeProfileParsing(t *testing.T) {
 	}{
 		{name: "default user", args: []string{"pairing-code", "create"}, profile: identity.PairingProfileUser},
 		{name: "explicit user", args: []string{"pairing-code", "create", "--profile", "user"}, profile: identity.PairingProfileUser},
+		{name: "CLI 模型权限", args: []string{"pairing-code", "create", "--profile", "cli"}, profile: identity.PairingProfileCLI},
 		{name: "explicit agent", args: []string{"pairing-code", "create", "--profile", "agent"}, profile: identity.PairingProfileAgent},
 		{name: "显式配置权限", args: []string{"pairing-code", "create", "--profile", "settings"}, profile: identity.PairingProfileSettings},
 		{name: "显式研究采纳权限", args: []string{"pairing-code", "create", "--profile", "research"}, profile: identity.PairingProfileResearch},
@@ -95,7 +96,7 @@ func TestPrivacyGrantUsageRequiresCanonicalDeviceBeforeLoadingConfig(t *testing.
 }
 
 func TestUsageDocumentsLocalPrivacyGrantCommand(t *testing.T) {
-	if !strings.Contains(usage, "pairing-code create [--profile user|agent|settings|research|references|import|assessment|memory]") {
+	if !strings.Contains(usage, "pairing-code create [--profile user|cli|agent|settings|research|references|import|assessment|memory]") {
 		t.Fatalf("pairing profile command missing from usage: %s", usage)
 	}
 	if !strings.Contains(usage, "privacy-grant create --device <uuid>") {

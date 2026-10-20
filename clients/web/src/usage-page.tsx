@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { learningClient, unwrap } from './api/client'
 import { pageOf, spaceSchema } from './api/runtime'
+import { devicesSchema } from './api/memory'
 import {
   usageSummary,
   usageTasks,
@@ -19,6 +20,7 @@ const count = (n: number) => n.toLocaleString('zh-CN')
 const token = (n: number | null) => (n === null ? '未知' : count(n))
 const when = (date: string) => new Date(date).toLocaleString('zh-CN')
 const taskLabels: Record<string, string> = {
+  cli_gateway: 'CLI 模型轮次',
   mentor: '导师对话',
   topic_index: '话题整理',
   studio: 'Studio 生成',
@@ -34,6 +36,12 @@ const taskLabels: Record<string, string> = {
 }
 const taskLabel = (kind: string) => taskLabels[kind] ?? '模型任务'
 const stageLabels: Record<string, string> = {
+  foreground: 'CLI 对话',
+  context_observer: '上下文观察',
+  context_reflector: '上下文整理',
+  tool_limit_summary: '本轮进展说明',
+  session_title: '会话标题',
+  probe: '模型连接测试',
   tool_step_summary: '本轮进展说明',
   mentor: '导师交流',
   study_answer: '导师讲解',
@@ -185,7 +193,7 @@ function Calls({
     </section>
   )
 }
-function Tasks({ filter }: { filter: UsageFilter }) {
+function Tasks({ filter, deviceNames }: { filter: UsageFilter; deviceNames: Map<string, string> }) {
   const { session, prefix } = useIdentity()
   const [cursors, setCursors] = useState([''])
   const [selected, setSelected] = useState<UsageTask>()
@@ -217,8 +225,10 @@ function Tasks({ filter }: { filter: UsageFilter }) {
                 <article className="panel compact" key={task.id}>
                   <h3>{taskLabel(task.kind)} · {when(task.started_at)}</h3>
                   <p>
-                    来自{{ web: '网页', cli: 'CLI 服务端任务', server: '后台任务' }[task.source]}
+                    来自{{ web: '网页', cli: 'CLI', server: '后台任务' }[task.source]}
                   </p>
+                  {task.actor_device_id && <p>设备：{deviceNames.get(task.actor_device_id) ?? `受限设备 · ${task.actor_device_id.slice(0, 8)}`}</p>}
+                  {task.cli_session_id && <p>CLI 会话：{task.cli_session_id}</p>}
                   <Totals value={task.totals} />
                   <div className="actions">
                     {task.conversation_id && task.space_id && <Link to="/spaces/$spaceId" params={{ spaceId: task.space_id }} search={{ conversation: task.conversation_id }}>查看原对话</Link>}
@@ -266,6 +276,9 @@ export function UsagePage() {
   const cache = useQueryClient()
   const [space, setSpace] = useState('')
   const [model, setModel] = useState('')
+  const [source, setSource] = useState<UsageFilter['source']>()
+  const [device, setDevice] = useState('')
+  const [cliSession, setCLISession] = useState('')
   const [grain, setGrain] = useState<UsageFilter['grain']>('day')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -278,8 +291,20 @@ export function UsagePage() {
     grain,
     model: model || undefined,
     space_id: space || undefined,
+    source,
+    actor_device_id: device || undefined,
+    cli_session_id: cliSession || undefined,
   }
-  const valid = new Date(filter.from) < new Date(filter.to)
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+  const validIDs = (!device || uuid.test(device)) && (!cliSession || (!!device && uuid.test(cliSession)))
+  const valid = new Date(filter.from) < new Date(filter.to) && validIDs
+  const devices = useQuery({
+    queryKey: [...prefix, 'usage-devices'],
+    gcTime: 0,
+    enabled: session.device.scopes.includes('devices:read'),
+    queryFn: ({ signal }) => unwrap(learningClient(session).GET('/v1/devices', { signal }), devicesSchema),
+  })
+  const deviceNames = new Map(devices.data?.devices.map((d) => [d.id, `${d.display_name}${d.revoked_at ? '（已撤销）' : ''}`]))
   const spaces = useQuery({
     queryKey: [...prefix, 'usage-spaces'],
     gcTime: 0,
@@ -312,8 +337,8 @@ export function UsagePage() {
         <h1>用量</h1>
         <p>
           {summary.data?.coverage === 'server'
-            ? '统计全部服务端调用，包括导师、Studio、研究、评估、知识处理、教学和模型连接探测；CLI 本地直连不统计。'
-            : '当前仅统计导师对话；CLI 本地直连不统计。'}
+            ? '统计 CLI 模型网关及全部服务端调用，包括导师、Studio、研究、评估、知识处理、教学和模型连接探测。'
+            : '当前统计导师对话；全部服务端出口启用后的用量会在此显示。'}
         </p>
       </section>
       <p className="hint">
@@ -321,6 +346,26 @@ export function UsagePage() {
         是输出的子项，不重复加入合计。模型未报告的字段显示“未知”；有未知项时仅展示已知小计。
       </p>
       <form className="panel filters usage-filters" onSubmit={(e) => e.preventDefault()}>
+        <label>
+          来源
+          <select value={source ?? ''} onChange={(e) => setSource((e.target.value || undefined) as UsageFilter['source'])}>
+            <option value="">全部来源</option>
+            <option value="web">网页</option>
+            <option value="cli">CLI</option>
+            <option value="server">后台任务</option>
+          </select>
+        </label>
+        <label>
+          设备
+          <input list="usage-device-options" value={device} placeholder="全部设备；可输入设备标识" onChange={(e) => { setDevice(e.target.value); setCLISession('') }} />
+          <datalist id="usage-device-options">
+            {Array.from(deviceNames, ([id, name]) => <option key={id} value={id}>{name}</option>)}
+          </datalist>
+        </label>
+        <label>
+          CLI 会话
+          <input value={cliSession} disabled={!device} placeholder="先选择设备，再输入会话标识" onChange={(e) => setCLISession(e.target.value)} />
+        </label>
         <label>
           学习区范围
           <select value={space} onChange={(e) => setSpace(e.target.value)}>
@@ -381,7 +426,7 @@ export function UsagePage() {
       </form>
       {spaces.error && <ErrorState error={spaces.error} retry={() => void spaces.refetch()} />}
       {!valid ? (
-        <p role="alert">截止日期必须晚于开始日期。</p>
+        <p role="alert">{validIDs ? '截止日期必须晚于开始日期。' : '设备和会话标识须为 UUID；筛选会话时请同时选择设备。'}</p>
       ) : summary.error ? (
         <ErrorState error={summary.error} retry={() => void summary.refetch()} />
       ) : summary.data ? (
@@ -427,7 +472,7 @@ export function UsagePage() {
             </div>
             {!summary.data.buckets.length && <p>此范围内尚无调用记录。</p>}
           </section>
-          <Tasks key={JSON.stringify(filter)} filter={filter} />
+          <Tasks key={JSON.stringify(filter)} filter={filter} deviceNames={deviceNames} />
         </>
       ) : (
         <p role="status">正在读取用量…</p>

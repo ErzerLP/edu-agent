@@ -176,6 +176,14 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 		}
 		return existing, nil
 	}
+	// Match model dispatch/output and other owner writes: privacy owner gates
+	// precede device rows. Grant consumption locks the device; taking it first
+	// can deadlock against a reader holding an owner gate before FOR SHARE.
+	for _, owner := range privacy.AllOwners {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('privacy-owner:'||$1,0))`, owner); err != nil {
+			return privacy.ErasureReceipt{}, err
+		}
+	}
 	if authorization != nil {
 		if authorization.DeviceID != request.DeviceID {
 			return privacy.ErasureReceipt{}, privacy.ErrErasureGrantInvalid
@@ -197,11 +205,6 @@ func (s *Store) commitBarrier(ctx context.Context, request privacy.ErasureReques
 	}
 	if active != 0 {
 		return privacy.ErasureReceipt{}, &privacy.Error{Code: privacy.CodeErasureInProgress, Reason: "active_erasure_exists"}
-	}
-	for _, owner := range privacy.AllOwners {
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('privacy-owner:'||$1,0))`, owner); err != nil {
-			return privacy.ErasureReceipt{}, err
-		}
 	}
 	rows, err := tx.Query(ctx, `SELECT owner_kind,learner_generation,read_open,write_open FROM privacy_owner_generation_gates ORDER BY owner_kind FOR UPDATE`)
 	if err != nil {

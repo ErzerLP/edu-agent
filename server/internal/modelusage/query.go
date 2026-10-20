@@ -15,6 +15,7 @@ import (
 )
 
 type Query struct {
+	Source, ActorDeviceID, CLISessionID     string
 	From, To                                time.Time
 	Timezone, Grain, Model, SpaceID, Cursor string
 	Limit                                   int
@@ -33,6 +34,20 @@ func (q Query) Validate() error {
 	if q.SpaceID != "" {
 		if id, err := uuid.Parse(q.SpaceID); err != nil || id.String() != q.SpaceID || id == uuid.Nil {
 			return ErrInvalid
+		}
+	}
+	if q.Source != "" && q.Source != "web" && q.Source != "cli" && q.Source != "server" {
+		return ErrInvalid
+	}
+	if q.CLISessionID != "" && q.ActorDeviceID == "" {
+		return ErrInvalid
+	}
+	for _, value := range []string{q.ActorDeviceID, q.CLISessionID} {
+		if value != "" {
+			id, err := uuid.Parse(value)
+			if err != nil || id == uuid.Nil || id.String() != value {
+				return ErrInvalid
+			}
 		}
 	}
 	return nil
@@ -70,9 +85,11 @@ func (s *Store) read(ctx context.Context, actor identity.Credential) (pgx.Tx, in
 }
 
 const selected = ` FROM learning_model_calls c JOIN learning_model_tasks t ON t.id=c.task_id AND t.privacy_generation=c.privacy_generation
+ LEFT JOIN learning_cli_model_turns cli ON cli.task_id=t.id AND cli.privacy_generation=t.privacy_generation
  WHERE c.privacy_generation=$1 AND ($2='' OR t.space_id::text=$2)
  AND (t.space_id IS NULL OR EXISTS(SELECT 1 FROM learning_spaces sp WHERE sp.id=t.space_id))
- AND c.started_at >= $3 AND c.started_at < $4 AND ($5='' OR c.model=$5) `
+ AND c.started_at >= $3 AND c.started_at < $4 AND ($5='' OR c.model=$5)
+ AND ($6='' OR t.source=$6) AND ($7='' OR t.actor_device_id::text=$7) AND ($8='' OR cli.session_id::text=$8) `
 const sums = `count(*),count(*) FILTER(WHERE c.dispatch_state='dispatching'),count(*) FILTER(WHERE c.dispatch_state='outcome_unknown'),
  COALESCE(sum(c.input_tokens),0)::bigint,count(*) FILTER(WHERE c.input_tokens IS NULL),
  COALESCE(sum(c.output_tokens),0)::bigint,count(*) FILTER(WHERE c.output_tokens IS NULL),
@@ -82,7 +99,9 @@ const sums = `count(*),count(*) FILTER(WHERE c.dispatch_state='dispatching'),cou
 func targets(t *Totals) []any {
 	return []any{&t.Calls, &t.PendingCalls, &t.OutcomeUnknownCalls, &t.Input.KnownSum, &t.Input.UnknownCalls, &t.Output.KnownSum, &t.Output.UnknownCalls, &t.Reasoning.KnownSum, &t.Reasoning.UnknownCalls, &t.Total.KnownSum, &t.Total.UnknownCalls}
 }
-func args(g int64, q Query) []any { return []any{g, q.SpaceID, q.From, q.To, q.Model} }
+func args(g int64, q Query) []any {
+	return []any{g, q.SpaceID, q.From, q.To, q.Model, q.Source, q.ActorDeviceID, q.CLISessionID}
+}
 
 func (s *Store) Summary(ctx context.Context, actor identity.Credential, q Query) (Summary, error) {
 	result := Summary{Coverage: "mentor", From: q.From, To: q.To, Timezone: q.Timezone, Grain: q.Grain, Buckets: []Bucket{}, Models: []Model{}}
@@ -104,7 +123,7 @@ func (s *Store) Summary(ctx context.Context, actor identity.Credential, q Query)
 	if err = tx.QueryRow(ctx, `SELECT `+sums+selected, args(g, q)...).Scan(targets(&result.Totals)...); err != nil {
 		return result, err
 	}
-	rows, err := tx.Query(ctx, `SELECT date_trunc($6,c.started_at AT TIME ZONE $7) AT TIME ZONE $7 AS bucket,`+sums+selected+` GROUP BY bucket ORDER BY bucket`, append(args(g, q), q.Grain, q.Timezone)...)
+	rows, err := tx.Query(ctx, `SELECT date_trunc($9,c.started_at AT TIME ZONE $10) AT TIME ZONE $10 AS bucket,`+sums+selected+` GROUP BY bucket ORDER BY bucket`, append(args(g, q), q.Grain, q.Timezone)...)
 	if err != nil {
 		return result, err
 	}
@@ -189,16 +208,17 @@ func (s *Store) Tasks(ctx context.Context, actor identity.Credential, q Query) (
 		return p, err
 	}
 	rows, err := tx.Query(ctx, `SELECT t.id::text,t.space_id::text,t.kind,t.source,min(c.started_at),
-	 CASE WHEN EXISTS(SELECT 1 FROM learning_mentor_runs r WHERE r.id=t.origin_id AND r.device_id=$9 AND r.privacy_generation=$1 AND (r.state->>'body_available')::boolean AND r.expires_at>clock_timestamp()) THEN t.origin_id::text ELSE NULL END,
-	 CASE WHEN t.kind='topic_index' AND EXISTS(SELECT 1 FROM learning_tutor_conversations c WHERE c.id=t.origin_id AND c.device_id=$9 AND c.privacy_generation=$1 AND NOT c.deleted) THEN t.origin_id::text ELSE NULL END,`+sums+selected+`
-	 GROUP BY t.id HAVING (min(c.started_at),t.id)<($6,$7::uuid) ORDER BY min(c.started_at) DESC,t.id DESC LIMIT $8`, append(args(g, q), after.At, after.ID, q.Limit+1, actor.Device.ID)...)
+	 CASE WHEN EXISTS(SELECT 1 FROM learning_mentor_runs r WHERE r.id=t.origin_id AND r.device_id=$12 AND r.privacy_generation=$1 AND (r.state->>'body_available')::boolean AND r.expires_at>clock_timestamp()) THEN t.origin_id::text ELSE NULL END,
+	 CASE WHEN t.kind='topic_index' AND EXISTS(SELECT 1 FROM learning_tutor_conversations c WHERE c.id=t.origin_id AND c.device_id=$12 AND c.privacy_generation=$1 AND NOT c.deleted) THEN t.origin_id::text ELSE NULL END,
+	 t.actor_device_id::text,cli.session_id::text,cli.turn_id::text,`+sums+selected+`
+	 GROUP BY t.id,cli.session_id,cli.turn_id HAVING (min(c.started_at),t.id)<($9,$10::uuid) ORDER BY min(c.started_at) DESC,t.id DESC LIMIT $11`, append(args(g, q), after.At, after.ID, q.Limit+1, actor.Device.ID)...)
 	if err != nil {
 		return p, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var item Task
-		if err = rows.Scan(append([]any{&item.ID, &item.SpaceID, &item.Kind, &item.Source, &item.StartedAt, &item.RunID, &item.ConversationID}, targets(&item.Totals)...)...); err != nil {
+		if err = rows.Scan(append([]any{&item.ID, &item.SpaceID, &item.Kind, &item.Source, &item.StartedAt, &item.RunID, &item.ConversationID, &item.ActorDeviceID, &item.CLISessionID, &item.CLITurnID}, targets(&item.Totals)...)...); err != nil {
 			return p, err
 		}
 		p.Items = append(p.Items, item)
@@ -229,7 +249,7 @@ func (s *Store) Calls(ctx context.Context, actor identity.Credential, q Query, t
 	defer tx.Rollback(context.Background())
 	p.Generation = g
 	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_model_tasks WHERE id=$1 AND privacy_generation=$2 AND ($3='' OR space_id::text=$3))`, task, g, q.SpaceID).Scan(&exists); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_model_tasks t WHERE id=$1 AND privacy_generation=$2 AND ($3='' OR space_id::text=$3) AND ($4='' OR source=$4) AND ($5='' OR actor_device_id::text=$5) AND ($6='' OR EXISTS(SELECT 1 FROM learning_cli_model_turns cli WHERE cli.task_id=t.id AND cli.session_id::text=$6)))`, task, g, q.SpaceID, q.Source, q.ActorDeviceID, q.CLISessionID).Scan(&exists); err != nil {
 		return p, err
 	}
 	if !exists {
@@ -241,7 +261,7 @@ func (s *Store) Calls(ctx context.Context, actor identity.Credential, q Query, t
 		return p, err
 	}
 	rows, err := tx.Query(ctx, `SELECT c.id::text,c.stage,c.attempt_no,c.dispatch_state,c.started_at,c.finished_at,c.provider,c.model,c.api_style,c.destination,c.input_tokens,c.output_tokens,c.reasoning_tokens,c.provider_total_tokens,c.usage_inconsistent,c.total_tokens`+selected+`
-	 AND c.task_id=$6 AND (c.started_at,c.id)<($7,$8::uuid) ORDER BY c.started_at DESC,c.id DESC LIMIT $9`, append(args(g, q), task, after.At, after.ID, q.Limit+1)...)
+	 AND c.task_id=$9 AND (c.started_at,c.id)<($10,$11::uuid) ORDER BY c.started_at DESC,c.id DESC LIMIT $12`, append(args(g, q), task, after.At, after.ID, q.Limit+1)...)
 	if err != nil {
 		return p, err
 	}

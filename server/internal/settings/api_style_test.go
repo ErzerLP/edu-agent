@@ -22,7 +22,7 @@ func TestDefaultAPIStylePreservesMentorFingerprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Pre-api_style connection identity: unchanged settings must not invalidate ongoing runs on upgrade.
-	legacy := `{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":"http://localhost:11434/v1","model":"test-model","auth_mode":"bearer"},"Key":"mentor-test-key","Limits":{"research_requests":20,"research_tokens":100000,"output_tokens":2048,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":2,"storage_mib":512}}`
+	legacy := `{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":"http://localhost:11434/v1","model":"test-model","auth_mode":"bearer"},"Key":"mentor-test-key","Limits":{"research_requests":20,"research_tokens":100000,"output_tokens":2048,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":10,"storage_mib":512}}`
 	want := fmt.Sprintf("%x", sha256.Sum256([]byte(legacy)))
 	if fingerprint != want {
 		t.Fatal("default API style changed existing mentor identity")

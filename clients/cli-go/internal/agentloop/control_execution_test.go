@@ -396,7 +396,7 @@ func TestReasoningEffortFreezesCurrentRequestAndChangesNext(t *testing.T) {
 		},
 	}}
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 32768, MaxToolRounds: 8, ReasoningEffort: modelclient.ReasoningEffortLow,
+		ContextWindow: 32768, ReasoningEffort: modelclient.ReasoningEffortLow,
 		Now: time.Now, NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
 	})
 	if err != nil {
@@ -441,7 +441,7 @@ func TestReasoningActivityTracksFrozenEffortAcrossToolContinuation(t *testing.T)
 		},
 	}}
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 32768, MaxToolRounds: 8, ReasoningEffort: modelclient.ReasoningEffortLow,
+		ContextWindow: 32768, ReasoningEffort: modelclient.ReasoningEffortLow,
 		Now: time.Now, NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
 	})
 	if err != nil {
@@ -484,8 +484,8 @@ func TestReasoningActivityTracksFrozenEffortAcrossToolContinuation(t *testing.T)
 func TestActivityTimestampsUseStableTurnAndEventIdentity(t *testing.T) {
 	current := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
 	session, err := New(&fakeModel{}, &fakeServer{}, Options{
-		ContextWindow: 32768, MaxToolRounds: 8,
-		ModelTimeout: 45 * time.Second, ToolTimeout: 12 * time.Second,
+		ContextWindow: 32768,
+		ModelTimeout:  45 * time.Second, ToolTimeout: 12 * time.Second,
 		Now:     func() time.Time { current = current.Add(time.Second); return current },
 		NewUUID: func() (string, error) { return "60000000-0000-4000-8000-000000000001", nil },
 	})

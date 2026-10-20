@@ -110,25 +110,6 @@ func TestConfigAllowsLocalAgentSettingsWithoutPairing(t *testing.T) {
 
 }
 
-func TestAgentMaxToolRoundsAllowsUnlimitedAndHasNoFixedMaximum(t *testing.T) {
-	t.Parallel()
-	for _, value := range []int{0, 1, 16, 60, 1_000_000} {
-		agent := DefaultAgentConfig()
-		agent.MaxToolRounds = value
-		if err := agent.Validate(); err != nil {
-			t.Fatalf("MaxToolRounds=%d rejected: %v", value, err)
-		}
-	}
-	agent := DefaultAgentConfig()
-	agent.MaxToolRounds = -1
-	if err := agent.Validate(); err == nil {
-		t.Fatal("negative MaxToolRounds accepted")
-	}
-	if got := DefaultAgentConfig().MaxToolRounds; got != 0 {
-		t.Fatalf("default MaxToolRounds=%d want unlimited", got)
-	}
-}
-
 func TestAgentContextCompactionDefaultsAndValidatesStrictly(t *testing.T) {
 	t.Parallel()
 	for _, mode := range []string{"auto", "recent-only", "off"} {

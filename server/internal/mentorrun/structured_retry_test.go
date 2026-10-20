@@ -11,7 +11,7 @@ import (
 )
 
 func TestPostgreSQLStartCitationRetryRevalidatesWithoutBudget(t *testing.T) {
-	for _, scenario := range []string{"repair", "still_invalid", "budget"} {
+	for _, scenario := range []string{"repair", "still_invalid"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := startFixture(t, "Go 并发")
 			f.modelReply = func(w http.ResponseWriter, r *http.Request, n int) bool {
@@ -64,16 +64,16 @@ func TestPostgreSQLStartCitationRetryRevalidatesWithoutBudget(t *testing.T) {
 				return true
 			}
 			if scenario == "budget" {
-				f.create.RequestBudget = 4
+
 			}
 			r := f.accept(t)
 			f.work(t)
 			s := f.snapshot(t, r.RunID)
 			switch scenario {
-			case "repair", "budget":
+			case "repair":
 				assertTaskUsage(t, f, r.RunID, "research", "checking_synthesis", 3)
-				if s.Status != "succeeded" || s.StartLearning.Result == nil || f.calls.Load() != 3 || s.RequestsUsed != 3 || s.TokensLeft != 0 {
-					t.Fatalf("repair/budget incorrect: status=%s calls=%d requests=%d tokens=%d", s.Status, f.calls.Load(), s.RequestsUsed, s.TokensLeft)
+				if s.Status != "succeeded" || s.StartLearning.Result == nil || f.calls.Load() != 3 || s.RequestsUsed != 3 {
+					t.Fatalf("repair incorrect: status=%s calls=%d requests=%d", s.Status, f.calls.Load(), s.RequestsUsed)
 				}
 			case "still_invalid":
 				assertTaskUsage(t, f, r.RunID, "research", "checking_synthesis", 2)

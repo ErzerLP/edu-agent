@@ -213,7 +213,7 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 			_, err = tx.Exec(ctx, `UPDATE learning_topic_index_heads SET lease_until=clock_timestamp()+($2::bigint*interval '1 microsecond') WHERE run_id=$1`, item.RunID, s.Lease.Microseconds())
 		}
 	} else {
-		if terminal(item.Status) || item.Status == "waiting_input" || item.Status == "waiting_approval" || item.Status == "paused_budget" || item.Status == "paused_tool_steps" {
+		if terminal(item.Status) || item.Status == "waiting_input" || item.Status == "waiting_approval" || item.Status == "paused_tool_steps" {
 			item.lease = nil
 			item.leaseUntil = nil
 		}

@@ -57,7 +57,7 @@ func TestPostgreSQLStudyExerciseAssessmentResumeProjection(t *testing.T) {
 				t.Fatal(err)
 			}
 			limits := f.settings.View().Limits
-			limits.ResearchRequests = 1
+			limits.OutputTokens += 64
 			if _, err := f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Target: settings.Mentor, Limits: &limits}); err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestPostgreSQLStudyExerciseAssessmentResumeProjection(t *testing.T) {
 				}
 				return
 			}
-			c := StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: card.Assessment.Configuration, RequestBudget: 1, TokenBudget: 50000}
+			c := StudyAssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: card.Assessment.Version, Configuration: card.Assessment.Configuration}
 			first, err := f.service.ResumeStudyAssessment(ctx, f.actor, card.ID, c)
 			if err != nil {
 				t.Fatal(err)
@@ -255,7 +255,7 @@ func TestPostgreSQLStudyExerciseOldContextAndRestart(t *testing.T) {
 	}
 	page := historyPage(t, f.runtimeFixture, id, 0, 10)
 	newSelection := knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{b}}
-	req := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: page.Conversation.Version, DirectionVersion: 2, SourceSelection: &newSelection, Prompt: "按新方向讲解", RequestBudget: 2, TokenBudget: 50000}
+	req := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: page.Conversation.Version, DirectionVersion: 2, SourceSelection: &newSelection, Prompt: "按新方向讲解"}
 	r, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, req)
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestPostgreSQLStudyExerciseResumeConflictsAndRevocation(t *testing.T) {
 func studyExerciseTurn(t *testing.T, f *exerciseFixture, conversation string, selection knowledge.SourceSelection) Receipt {
 	t.Helper()
 	c := historyPage(t, f.runtimeFixture, conversation, 0, 50).Conversation
-	r, err := f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, conversation, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, SourceSelection: &selection, Prompt: "出一道题", RequestBudget: 2, TokenBudget: 50000})
+	r, err := f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, conversation, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, SourceSelection: &selection, Prompt: "出一道题"})
 	if err != nil {
 		t.Fatal(err)
 	}

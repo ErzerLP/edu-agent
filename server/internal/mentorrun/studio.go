@@ -24,8 +24,6 @@ type StudioGenerate struct {
 	DirectionVersion int64                     `json:"direction_version,omitempty"`
 	GoalVersion      int64                     `json:"goal_version"`
 	SourceSelection  knowledge.SourceSelection `json:"source_selection"`
-	RequestBudget    int                       `json:"request_budget"`
-	TokenBudget      int                       `json:"token_budget"`
 }
 type StudioResult struct {
 	ArtifactID string `json:"artifact_id"`
@@ -47,7 +45,7 @@ func (c StudioGenerate) Validate() error {
 	} else if c.Mode != "" || c.DirectionVersion != 0 || c.StudioTarget.Validate() != nil {
 		return ErrInvalid
 	}
-	if !validID(c.OperationID) || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || c.GoalID == nil && c.GoalVersion != 0 || c.GoalID != nil && c.GoalVersion < 1 || c.RequestBudget < 0 || c.TokenBudget < 0 {
+	if !validID(c.OperationID) || c.SourceSelection.Validate() != nil || c.SourceSelection.Mode != "items" || c.GoalID == nil && c.GoalVersion != 0 || c.GoalID != nil && c.GoalVersion < 1 {
 		return ErrInvalid
 	}
 	return nil
@@ -70,7 +68,7 @@ func (s *Service) CreateStudio(ctx context.Context, actor identity.Credential, s
 		return Receipt{}, err
 	}
 	hash := requestHash("studio", space, goal, c)
-	return s.Create(ctx, actor, space, goal, Create{Studio: &c, SourceSelection: &c.SourceSelection, OperationID: c.OperationID, SessionID: session, ExpectedVersion: version, Prompt: "Studio " + c.Kind, Save: true, RequestBudget: c.RequestBudget, TokenBudget: c.TokenBudget, operationHash: &hash})
+	return s.Create(ctx, actor, space, goal, Create{Studio: &c, SourceSelection: &c.SourceSelection, OperationID: c.OperationID, SessionID: session, ExpectedVersion: version, Prompt: "Studio " + c.Kind, Save: true, operationHash: &hash})
 }
 
 func StudioModelRequest(kind string, sources []knowledge.SourceDetail, native bool) llm.ChatRequest {

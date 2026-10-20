@@ -77,10 +77,9 @@ describe('Studio saved revision and tab drafts', () => {
       goal_version: 1,
       questions: [question],
       direction: { id, version: 1, goal_revision_id: id },
-      assessment_policy: { configuration: 'fixture', requests: 2, tokens: 50000 },
+      assessment_policy: { configuration: 'fixture' },
     }
     expect(studioQuizSchema.safeParse(frozen).success).toBe(true)
-    expect(studioQuizSchema.safeParse({ ...frozen, assessment_policy: { configuration: 'fixture', requests: 0, tokens: 0 } }).success).toBe(true)
     expect(studioQuizSchema.safeParse({ goal_version: 3, questions: [question] }).success).toBe(
       true,
     )

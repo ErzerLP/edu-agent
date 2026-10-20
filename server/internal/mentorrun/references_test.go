@@ -251,7 +251,7 @@ func TestPostgreSQLReferencesMentorOpensReviewWithoutPublishing(t *testing.T) {
 		}
 		return true
 	}
-	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), TeachingSessionID: f.session, ExpectedVersion: f.context(t).Goal.Revision, Prompt: "请帮我整理参考", Save: true, RequestBudget: 3, TokenBudget: 50000}
+	f.create = Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), TeachingSessionID: f.session, ExpectedVersion: f.context(t).Goal.Revision, Prompt: "请帮我整理参考", Save: true}
 	r := f.accept(t)
 	f.work(t)
 	s := f.snapshot(t, r.RunID)

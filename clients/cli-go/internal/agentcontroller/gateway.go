@@ -28,9 +28,13 @@ func (c *Controller) prepareGatewayTurn(ctx context.Context, loop *agentloop.Ses
 	sessionID := c.record.GatewaySessionID
 	space := c.loopOptions.LearningBinding.SpaceID
 	c.mu.Unlock()
-	turnID, err := id.NewUUID()
-	if err != nil {
-		return err
+	turnID := gateway.Identity.TurnID
+	if !loop.ToolStepsPaused() {
+		var err error
+		turnID, err = id.NewUUID()
+		if err != nil {
+			return err
+		}
 	}
 	bound, err := gateway.Prepare(ctx, modelgateway.Identity{SessionID: sessionID, TurnID: turnID, SpaceID: space})
 	if err != nil {

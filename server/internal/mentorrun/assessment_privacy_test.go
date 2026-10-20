@@ -23,10 +23,10 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestPostgreSQLExerciseLegacyPauseAndInternalPorts(t *testing.T) {
+func TestPostgreSQLExerciseFailedResumeAndInternalPorts(t *testing.T) {
 	f := newExerciseFixture(t)
 	ctx := context.Background()
-	f.request.Assessment.Tokens = 1
+
 	e, attempt := f.submitted(t)
 	assessmentReply(t, f, e, 1000)
 	if err := f.service.enqueueAssessment(ctx); err != nil {
@@ -36,11 +36,13 @@ func TestPostgreSQLExerciseLegacyPauseAndInternalPorts(t *testing.T) {
 	if err != nil || before.Run == nil {
 		t.Fatal(err)
 	}
-	legacyPause(t, f.runtimeFixture, before.Task.RunID)
+	if _, err := f.pool.Exec(ctx, `UPDATE learning_mentor_runs SET state=state || '{"status":"failed","stage":"failed","reason":"context_changed"}'::jsonb WHERE id=$1`, before.Task.RunID); err != nil {
+		t.Fatal(err)
+	}
 	f.work(t)
 	state, err := f.service.AssessmentStatus(ctx, f.actor, attempt.ID)
-	if err != nil || state.Run == nil || state.Run.Status != "paused_budget" || f.calls.Load() != 0 {
-		t.Fatalf("budget bypass: %+v %v", state, err)
+	if err != nil || state.Run == nil || state.Run.Status != "failed" || f.calls.Load() != 0 {
+		t.Fatalf("failed assessment was dispatched: %+v %v", state, err)
 	}
 	err = f.service.ReadList(ctx, f.actor, learningspace.DefaultID, ListQuery{Limit: 100}, func(page Page) error {
 		if len(page.Items) != 0 {
@@ -54,7 +56,7 @@ func TestPostgreSQLExerciseLegacyPauseAndInternalPorts(t *testing.T) {
 	if err = f.service.ReadSnapshot(ctx, f.actor, learningspace.DefaultID, state.Task.RunID, func(Snapshot) error { t.Error("internal task exposed by public reader"); return nil }); err == nil {
 		t.Fatal("internal run publicly readable")
 	}
-	resume := AssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: state.Run.Version, Policy: learningcontent.AssessmentPolicy{Configuration: f.request.Assessment.Configuration, Requests: 2, Tokens: 50000}}
+	resume := AssessmentResume{OperationID: uuid.NewString(), ExpectedVersion: state.Run.Version, Policy: learningcontent.AssessmentPolicy{Configuration: f.request.Assessment.Configuration}}
 	first, err := f.service.ResumeAssessment(ctx, f.actor, attempt.ID, resume)
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +67,7 @@ func TestPostgreSQLExerciseLegacyPauseAndInternalPorts(t *testing.T) {
 	f.work(t)
 	state, err = f.service.AssessmentStatus(ctx, f.actor, attempt.ID)
 	if err != nil || state.Run.Status != "succeeded" || f.calls.Load() != 1 {
-		t.Fatalf("budget continuation lost attempt: %+v %v", state, err)
+		t.Fatalf("explicit resume lost attempt: %+v %v", state, err)
 	}
 }
 
@@ -237,7 +239,7 @@ func TestPostgreSQLExerciseConfigurationChangeRequiresExplicitResume(t *testing.
 	e, attempt := f.submitted(t)
 	assessmentReply(t, f, e, 1000)
 	limits := f.settings.View().Limits
-	limits.ResearchRequests = 1
+	limits.OutputTokens += 64
 	if _, err := f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Target: settings.Mentor, Limits: &limits}); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +248,7 @@ func TestPostgreSQLExerciseConfigurationChangeRequiresExplicitResume(t *testing.
 	if err != nil || state.Run == nil || state.Run.Status != "failed" || state.Run.Reason != "context_changed" || f.calls.Load() != 0 {
 		t.Fatalf("configuration changed without confirmation: %+v %v", state, err)
 	}
-	policy, err := f.service.AssessmentPolicy(1, 50000)
+	policy, err := f.service.AssessmentPolicy()
 	if err != nil {
 		t.Fatal(err)
 	}

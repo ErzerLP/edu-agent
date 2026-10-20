@@ -138,6 +138,7 @@ func (s *Session) publishPreparedFileItem(ctx context.Context, callID string, pr
 		}
 	}
 	toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
+	s.recordToolExecution()
 	result := s.workspace.CommitMutation(toolCtx, prepared)
 	toolErr := toolCtx.Err()
 	cancel()

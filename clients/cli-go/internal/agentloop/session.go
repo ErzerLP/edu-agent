@@ -59,7 +59,10 @@ type Session struct {
 	currentToolResultTokens      int
 	currentToolResultBudget      int
 	currentToolResultShares      int
-	remaining                    int
+	toolSteps                    int
+	toolCallCounted              bool
+	toolStepPause                *toolStepPause
+	pendingPreferenceCounted     bool
 	pendingKind                  pendingInteractionKind
 	pendingCalls                 []modelclient.ToolCall
 	pendingIndex                 int
@@ -109,7 +112,7 @@ func New(model Model, server Server, options Options) (*Session, error) {
 	if bound, ok := server.(*agentcontext.Client); ok && bound.Binding != options.LearningBinding.Normalize() {
 		return nil, errors.New("Agent 客户端与检查点绑定不一致")
 	}
-	if options.ContextWindow < 4096 || !agentlimits.ValidToolRounds(options.MaxToolRounds) {
+	if options.ContextWindow < 4096 {
 		return nil, errors.New("agent loop limits are invalid")
 	}
 	if options.MaxTokens == 0 {
@@ -249,7 +252,8 @@ func (s *Session) discardTurn(turnID string) {
 	if s.activeTurnID == turnID {
 		s.activeTurnID = ""
 		s.clearPendingLocked()
-		s.remaining = 0
+		s.toolSteps = 0
+		s.toolStepPause = nil
 		s.currentToolResultTokens = 0
 	}
 	if s.currentTurnID == turnID {
@@ -262,6 +266,7 @@ func (s *Session) discardTurn(turnID string) {
 }
 
 func (s *Session) clearPendingLocked() {
+	s.pendingPreferenceCounted = false
 	s.pendingKind = pendingNone
 	s.pendingCalls = nil
 	s.pendingEvents = nil
@@ -767,6 +772,7 @@ func (s *Session) Close() {
 	s.toolReferences = make(map[string]*ServerReference)
 	s.workspaceReferences = make(map[string]*WorkspaceReference)
 	s.clearPendingLocked()
+	s.toolStepPause = nil
 	s.appendMu.Unlock()
 	s.activityMu.Lock()
 	s.activityStarts = make(map[string]time.Time)
@@ -782,6 +788,12 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 		return Result{}, ErrSessionClosed
 	}
 	input = strings.TrimSpace(input)
+	if s.ToolStepsPaused() {
+		if input != "继续" {
+			return Result{}, errors.New("本轮工具调用已达上限，请输入“继续”接着执行")
+		}
+		return s.resumeToolSteps(ctx)
+	}
 	if input == "" {
 		return Result{}, errors.New("请输入学习问题")
 	}
@@ -821,7 +833,7 @@ func (s *Session) Send(ctx context.Context, input string) (Result, error) {
 	s.activitySequence = 0
 	s.currentToolResultTokens = 0
 	s.currentToolResultShares = toolResultBudgetShares
-	s.remaining = s.options.MaxToolRounds
+	s.toolSteps = 0
 	result, runErr := s.run(ctx, nil)
 	if runErr != nil {
 		runErr = preferContextError(ctx, runErr)
@@ -927,6 +939,10 @@ func (s *Session) createPreference(ctx context.Context, toolCallID string, args 
 	}
 	if err := s.persistPreferenceWriteAhead(ctx, writeAhead, false); err != nil {
 		return nil, err
+	}
+	if !s.pendingPreferenceCounted {
+		s.toolSteps++
+		s.pendingPreferenceCounted = true
 	}
 	result, err := s.server.CreateMemoryCandidate(ctx, api.MemoryCandidateRequest{
 		OperationID: createOperationID, PayloadSchemaVersion: 1, Content: args.Content, Reason: args.Reason,
@@ -1476,6 +1492,10 @@ func (s *Session) replaceToolResultsLocked(invalidation serverInvalidation, tool
 }
 
 func (s *Session) contextPlan() (ContextPlan, error) {
+	return s.contextPlanFor(false)
+}
+
+func (s *Session) contextPlanFor(toolSummary bool) (ContextPlan, error) {
 	s.appendMu.Lock()
 	if s.contextRuntime.isClosed() {
 		s.appendMu.Unlock()
@@ -1524,6 +1544,11 @@ func (s *Session) contextPlan() (ContextPlan, error) {
 	if s.workspace != nil && s.workspaceStatus.Available && s.options.ContextWindow == 4096 {
 		reservedOutputOverride = 512
 	}
+	tools := s.tools()
+	if toolSummary {
+		messages = toolSummaryMessages(messages)
+		tools = nil
+	}
 	plan, err := (ContextPlanner{
 		ContextWindow:          s.options.ContextWindow,
 		MaxTokens:              s.options.MaxTokens,
@@ -1533,7 +1558,7 @@ func (s *Session) contextPlan() (ContextPlan, error) {
 		Estimator:              s.estimator,
 		Memory:                 s.contextRuntime.memoryProjection(),
 		ReservedOutputOverride: reservedOutputOverride,
-	}).Plan(messages, s.tools(), history)
+	}).Plan(messages, tools, history)
 	if err == nil {
 		s.contextRuntime.markSoftPressure(plan.SoftPressure)
 		s.contextRuntime.UpdatePlanStatus(plan, s.currentTurnID)

@@ -42,7 +42,7 @@ func TestPostgreSQLStudyModeIsExplicitAndSaved(t *testing.T) {
 			t.Fatal("invalid study mode/context accepted")
 		}
 	}
-	if _, err = f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "must not guess direction", RequestBudget: 1, TokenBudget: 20000}); err != ErrInvalid {
+	if _, err = f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, Prompt: "must not guess direction"}); err != ErrInvalid {
 		t.Fatal("missing direction/source accepted", err)
 	}
 	var count int
@@ -74,7 +74,7 @@ func TestPostgreSQLStudySourceAndDirectionIsolationReopen(t *testing.T) {
 	}
 	send := func(source knowledge.SourceIdentity, version int64, prompt string) Receipt {
 		c := historyPage(t, f, id, 0, 10).Conversation
-		req := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: version, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}, Prompt: prompt, RequestBudget: 2, TokenBudget: 50000}
+		req := SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: version, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}, Prompt: prompt}
 		receipt, e := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, req)
 		if e != nil {
 			t.Fatal(e)
@@ -155,7 +155,7 @@ func TestPostgreSQLStudySourceAndDirectionIsolationReopen(t *testing.T) {
 }
 
 func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
-	for _, scenario := range []string{"repair", "invalid", "budget", "schema_repair", "json_repair"} {
+	for _, scenario := range []string{"repair", "invalid", "schema_repair", "json_repair"} {
 		t.Run(scenario, func(t *testing.T) {
 			repair := scenario == "repair" || scenario == "schema_repair" || scenario == "json_repair"
 			f := fixture(t, func(w http.ResponseWriter, r *http.Request, n int) {
@@ -196,11 +196,7 @@ func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			budget := 2
-			if scenario == "budget" {
-				budget = 1
-			}
-			receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "讲解", RequestBudget: budget, TokenBudget: 30000, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
+			receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: 1, DirectionVersion: 1, Prompt: "讲解", SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -216,9 +212,6 @@ func TestPostgreSQLStudyCitationRetriesStayBounded(t *testing.T) {
 				}
 				if scenario == "invalid" && (snapshot.Status != "failed" || f.calls.Load() != 2) {
 					t.Fatal("invalid citations exceeded retry bound")
-				}
-				if scenario == "budget" && (snapshot.Status != "failed" || f.calls.Load() != 2) {
-					t.Fatal("legacy budget blocked validation repair")
 				}
 			}
 		})

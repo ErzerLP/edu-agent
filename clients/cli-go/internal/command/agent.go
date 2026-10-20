@@ -153,7 +153,7 @@ func (a *App) runNewAgent(ctx context.Context, args []string) error {
 		WorkspaceRoot: workspacePath,
 		LoopOptions: agentloop.Options{
 			LearningBinding: learningBinding,
-			ContextWindow:   value.Connection.ContextTokens, MaxTokens: value.Connection.OutputTokens, MaxToolRounds: value.Agent.MaxToolRounds,
+			ContextWindow:   value.Connection.ContextTokens, MaxTokens: value.Connection.OutputTokens,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -301,7 +301,7 @@ func (a *App) runAgentResume(ctx context.Context, args []string) error {
 		Store: store, Model: model, Server: server,
 		Gateway: provider,
 		LoopOptions: agentloop.Options{
-			ContextWindow: value.Connection.ContextTokens, MaxTokens: value.Connection.OutputTokens, MaxToolRounds: value.Agent.MaxToolRounds,
+			ContextWindow: value.Connection.ContextTokens, MaxTokens: value.Connection.OutputTokens,
 			ContextCompaction: value.Agent.ContextCompaction,
 			ReasoningEffort:   modelclient.ReasoningEffort(value.Agent.ReasoningEffort),
 			ModelTimeout:      modelTimeout, ToolTimeout: requestTimeout, NewUUID: a.NewUUID,
@@ -819,6 +819,8 @@ const agentHelpText = `用法：
   -h, --help        显示此帮助
 
 Session picker：空闲时 F2 打开；Tab 切换当前/全部学习区及工作区，支持搜索、恢复、重命名、二次确认删除和新建。恢复或切换会重置 YOLO、旧文件授权和未完成交互。自动标题会向所选服务端模型 发送有界安全对话片段；恢复后的模型请求会发送历史上下文，模型目的地变化时先确认。旧工作区不可用时只恢复对话并禁用文件工具，不回退到当前目录。系统钥匙串不可用时不写明文，只明确降级为未保存。clear 只清除本地 Session store，不清除服务端、终端、Shell、模型服务或 OS 备份中的副本。
+
+每轮工具调用上限与网页共用设置，默认不限；每轮开始和明确“继续”时在线读取，本轮内固定。按实际执行的工具调用计数，等待批准不计数；到限说明进展后暂停，输入“继续”重新计数并接着完成未执行的工具，不重跑已完成项。设置读取失败会停止并提示重试，不使用缓存；不按累计模型请求或 Token 数停止。
 
 文件工具：stat、find、list、read、search、write、edit、apply_patch、mkdir、copy、move、archive、restore_archive、purge_archive。copy支持普通文件（含二进制）和完整递归目录；复制按总文件字节、完整计划入口和追加日志预算限制。目标根须不存在，不覆盖或合并；一次授权完整计划，失败/取消停止余项，已完成项保留。--no-save只在有界内存保留复制追加日志。artifact只读完整差异和逐项结果。副作用默认逐次确认；F4 可切换仅当前 Session 生效的 YOLO。
 read在独立预算内支持大于1MiB文本及长行续读，始终返回原始完整文件hash；next_offset/next_byte_offset对应实际返回正文，并携带expected_hash续读。首版仍是全文读取，不是GB级固定内存/低IO引擎；超限可调读取预算或使用Shell。本参数不扩大write/edit、stat.hash、search或模型结果预算。

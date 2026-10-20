@@ -61,8 +61,6 @@ type StudyAssessmentResume struct {
 	OperationID     string `json:"operation_id"`
 	ExpectedVersion int64  `json:"expected_version"`
 	Configuration   string `json:"configuration"`
-	RequestBudget   int    `json:"request_budget"`
-	TokenBudget     int    `json:"token_budget"`
 }
 
 var ErrExerciseSources = errors.New("exercise_source_selection_mismatch")
@@ -171,7 +169,7 @@ func (s *Service) exerciseViewTx(ctx context.Context, tx pgx.Tx, actor identity.
 			v.Assessment.Version = m.Version
 			v.Assessment.Reason = m.Reason
 			v.Assessment.ResultUnknown = m.ResultUnknown
-			if m.Status == "failed" || m.Status == "paused_budget" {
+			if m.Status == "failed" {
 				recovery, err := store.InspectAssessmentTx(ctx, tx, task)
 				if err != nil {
 					return PracticeView{}, err
@@ -295,7 +293,7 @@ func (s *Service) ResumeStudyAssessment(ctx context.Context, actor identity.Cred
 		if a.Session.Context.AttemptID == nil {
 			return ErrConflict
 		}
-		result, err = s.ResumeAssessment(ctx, actor, *a.Session.Context.AttemptID, AssessmentResume{OperationID: c.OperationID, ExpectedVersion: c.ExpectedVersion, Policy: learningcontent.AssessmentPolicy{Configuration: c.Configuration, Requests: c.RequestBudget, Tokens: c.TokenBudget}})
+		result, err = s.ResumeAssessment(ctx, actor, *a.Session.Context.AttemptID, AssessmentResume{OperationID: c.OperationID, ExpectedVersion: c.ExpectedVersion, Policy: learningcontent.AssessmentPolicy{Configuration: c.Configuration}})
 		return err
 	})
 	return result, err

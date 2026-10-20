@@ -87,7 +87,7 @@ func TestPostgreSQLMentorStopVersionBoundaries(t *testing.T) {
 	if err != nil || owned == nil {
 		t.Fatalf("claim: %+v %v", owned, err)
 	}
-	for _, kind := range []string{"stop", "clear", "respond", "continue_budget", "retry_start"} {
+	for _, kind := range []string{"stop", "clear", "respond", "resume", "retry_start"} {
 		version := r.Version
 		if kind == "stop" {
 			version = owned.Version + 1

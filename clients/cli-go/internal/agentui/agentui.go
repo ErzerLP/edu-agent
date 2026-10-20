@@ -1123,6 +1123,10 @@ func (m *model) handleTurnResult(result agentloop.Result) {
 	}
 	m.entries = appendToolEvents(m.entries, m.activeTurnID, newEvents)
 	m.pending, m.pendingQuestion, m.pendingFileMutation, m.selector = nil, nil, nil, nil
+	if result.PausedToolSteps {
+		m.status = "本轮工具调用已达上限 · 输入“继续”接着执行"
+		return
+	}
 	if result.Workflow != nil {
 		flow := *result.Workflow
 		m.pendingWorkflow = &flow

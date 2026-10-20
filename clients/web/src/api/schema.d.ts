@@ -229,7 +229,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Confirm configuration and budget to resume the original answer assessment
+         * 确认当前配置后续接同一次作答评估
          * @description Requires learning and knowledge scopes, the original Studio mapping and exact readable sources. No study conversation is accepted. Unknown assessment results cannot be resumed.
          */
         post: operations["resumeStudioAssessment"];
@@ -1436,7 +1436,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取空资料开学能力、兼容投影和预算上限，不发外部请求 */
+        /** 读取空资料开学能力和活动投影，不发外部请求 */
         get: operations["getStartLearningCapabilities"];
         put?: never;
         post?: never;
@@ -1597,7 +1597,7 @@ export interface paths {
         put?: never;
         /**
          * 唯一受理目标内导师运行；保存目标本身不调用此入口
-         * @description expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。CLI study research/start/mentor 共用此入口，研究和开学需明确外发同意与预算，mentor 调整显式绑定 teaching_session_id；本地聊天不上传或转换为 Web conversation。
+         * @description expected_version 是目标版本；session_id 必须与恢复入口返回的会话一致，新目标首次由客户端生成。Cookie 写入需要 Origin/CSRF。相同操作及载荷返回原回执，改变载荷重用操作 ID 返回 409。CLI study research/start/mentor 共用此入口，研究和开学需明确外发同意，mentor 调整显式绑定 teaching_session_id；本地聊天不上传或转换为 Web conversation。
          */
         post: operations["createMentorRun"];
         delete?: never;
@@ -1673,7 +1673,7 @@ export interface paths {
         put?: never;
         /**
          * 在原绑定中提交下一轮，复用同一 runtime 和操作幂等边界
-         * @description study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。有来源时可原子发布至多一道文字练习，每对话同时一张待答卡；零来源请求出题只返回添加或选择来源入口。请求和 token 预算分别用于本轮生成与提交后的自动评估；每个阶段均有相同上限和独立计量。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
+         * @description study 必须显式提供 direction_version 和 source_selection（可以为空选择）；下一轮仅回放方向修订和来源范围都相同的历史，后台惰性 ensure 唯一系统目标。有来源时可原子发布至多一道文字练习，每对话同时一张待答卡；零来源请求出题只返回添加或选择来源入口。本轮生成与提交后的自动评估独立计量，不限制累计请求或 Token。provider 或 endpoint 变化时须确认目的地；恢复 GET 不发起模型请求。旧 mentor 不接受 direction_version。
          */
         post: operations["submitTutorTurn"];
         delete?: never;
@@ -1913,8 +1913,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 确认当前配置与预算后续接同一次评估
-         * @description 仅 paused_budget 或可重新核验的 context_changed 可以续接。保持原作答、proposal request 与评估 operation；unknown 不自动重发。configuration 必须等于当前读模型，且 expected_version 匹配任务运行。
+         * 确认当前配置后续接同一次评估
+         * @description 仅可重新核验的 context_changed 可以续接。保持原作答、proposal request 与评估 operation；unknown 不自动重发。configuration 必须等于当前读模型，且 expected_version 匹配任务运行。
          */
         post: operations["resumeStudyAssessment"];
         delete?: never;
@@ -2051,8 +2051,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 回应交互、继续预算、明确停止或清除正文
-         * @description expected_version 是运行版本。stop 接受不大于当前版本的已观察版本；正在停止或已结束的运行仍返回 202 和操作回执，不改变已有结果或运行版本。其他命令要求精确版本匹配。respond 同时绑定 interaction_id，过期回答不能授权新候选。resume 仅继续 paused_tool_steps 或旧 paused_budget；continue_budget 是兼容别名，预算字段不影响执行。停止后不再派发请求。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
+         * 回应交互、继续工具执行、失败重试、明确停止或清除正文
+         * @description expected_version 是运行版本。stop 接受不大于当前版本的已观察版本；正在停止或已结束的运行仍返回 202 和操作回执，不改变已有结果或运行版本。其他命令要求精确版本匹配。respond 同时绑定 interaction_id，过期回答不能授权新候选。resume 仅继续 paused_tool_steps；retry_start 只重试失败的开学运行，不追加预算。停止后不再派发请求。clear 清除正文和事件缓存并取消在途执行。Cookie 写入需要 Origin/CSRF。
          */
         post: operations["commandMentorRun"];
         delete?: never;
@@ -2090,7 +2090,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 读取非敏感模型、搜索与预算配置，不发出外部请求 */
+        /** 读取非敏感模型、搜索与调用限制配置，不发出外部请求 */
         get: operations["getLearningSettings"];
         /** 显式保存服务端设置；现有教学执行需重启应用 */
         put: operations["updateLearningSettings"];
@@ -4454,7 +4454,7 @@ export interface components {
             transitions: components["schemas"]["StudioSummaryClaim"][];
             uncovered: string[];
         };
-        /** @description Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the authorized request/token budget independently. */
+        /** @description Explicit direction mode is only for quiz, with null goal_id and zero goal_version. The server freezes direction_version and the exact managed goal revision. Omitted mode preserves all legacy goal/version semantics. Each question assessment uses the confirmed model configuration and is metered independently. */
         StudioGenerate: {
             /** @enum {string} */
             mode?: "direction";
@@ -4475,16 +4475,6 @@ export interface components {
             artifact_id: string | null;
             expected_version: number;
             source_selection: components["schemas"]["SourceSelection"];
-            /**
-             * @deprecated
-             * @description 兼容旧客户端的非负整数；不限制累计消耗
-             */
-            request_budget?: number;
-            /**
-             * @deprecated
-             * @description 兼容旧客户端的非负整数；不限制累计消耗
-             */
-            token_budget?: number;
         } & ({
             /** @enum {string} */
             kind?: "quiz";
@@ -4882,16 +4872,6 @@ export interface components {
             protocol_version: 1;
             available: boolean;
             reason: string;
-            /**
-             * @deprecated
-             * @description 兼容旧客户端的非负整数；不限制累计消耗
-             */
-            request_budget: number;
-            /**
-             * @deprecated
-             * @description 兼容旧客户端的非负整数；不限制累计消耗
-             */
-            token_budget: number;
             /** @constant */
             legacy_projection: "open_activity";
         };
@@ -5326,16 +5306,6 @@ export interface components {
         };
         StudioAssessmentPolicy: {
             configuration: string;
-            /**
-             * @deprecated
-             * @description 兼容旧评估授权；不限制执行
-             */
-            requests: number;
-            /**
-             * @deprecated
-             * @description 兼容旧评估授权；不限制执行
-             */
-            tokens: number;
         };
         StudioHelpRequest: {
             /** Format: uuid */
@@ -5346,16 +5316,6 @@ export interface components {
             operation_id: string;
             expected_version: number;
             configuration: string;
-            /**
-             * @deprecated
-             * @description 兼容旧客户端的非负整数；不限制累计消耗
-             */
-            request_budget?: number;
-            /**
-             * @deprecated
-             * @description 兼容旧客户端的非负整数；不限制累计消耗
-             */
-            token_budget?: number;
         };
         StudioExercise: {
             /** Format: uuid */
@@ -5388,7 +5348,7 @@ export interface components {
             feedback?: components["schemas"]["LearningFeedback"];
             assessment?: {
                 /** @enum {string} */
-                status: "queued" | "running" | "paused_budget" | "succeeded" | "failed" | "cancelled";
+                status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
                 version: number;
                 reason?: string;
                 result_unknown: boolean;
@@ -5428,7 +5388,7 @@ export interface components {
             feedback?: components["schemas"]["LearningFeedback"];
             assessment?: {
                 /** @enum {string} */
-                status: "queued" | "running" | "paused_budget" | "succeeded" | "failed" | "cancelled";
+                status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
                 version: number;
                 reason?: string;
                 result_unknown: boolean;
@@ -5676,23 +5636,11 @@ export interface components {
             version: number;
             watermark: number;
             /** @enum {string} */
-            status: "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_budget" | "paused_tool_steps" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled";
+            status: "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_tool_steps" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled";
             stage: string;
             reason: string;
             saved: boolean;
             body_available: boolean;
-            /**
-             * @deprecated
-             * @description 兼容值；不表示可用额度
-             * @constant
-             */
-            requests_left: 0;
-            /**
-             * @deprecated
-             * @description 兼容值；不表示可用额度
-             * @constant
-             */
-            tokens_left: 0;
             requests_used: number;
             result_unknown: boolean;
             /** @description 提供商实际费用未核实；与结果是否已知分别表达 */
@@ -5738,8 +5686,7 @@ export interface components {
         SourceDiscoveryResult: {
             items: components["schemas"]["SourceDiscoveryCandidate"][];
             /**
-             * @deprecated
-             * @description 兼容旧客户端；不限制执行
+             * @description 单次发现操作最多发出一次搜索请求
              * @constant
              */
             request_budget: 1;
@@ -5759,8 +5706,7 @@ export interface components {
             /** @constant */
             max_candidates: 4;
             /**
-             * @deprecated
-             * @description 兼容旧客户端；不限制执行
+             * @description 单次发现操作最多发出一次搜索请求
              * @constant
              */
             request_budget: 1;
@@ -5923,18 +5869,6 @@ export interface components {
              * @default null
              */
             max_tool_steps: number | null;
-            /**
-             * @deprecated
-             * @description 仅保留旧设置值；不参与执行
-             * @default 20
-             */
-            research_requests: number;
-            /**
-             * @deprecated
-             * @description 仅保留旧设置值；不参与执行
-             * @default 100000
-             */
-            research_tokens: number;
             /** @default 2048 */
             output_tokens: number;
             /** @default 32768 */
@@ -5953,18 +5887,6 @@ export interface components {
              * @default null
              */
             max_tool_steps: number | null;
-            /**
-             * @deprecated
-             * @description 仅保留旧设置值；不参与执行
-             * @default 20
-             */
-            research_requests: number;
-            /**
-             * @deprecated
-             * @description 仅保留旧设置值；不参与执行
-             * @default 100000
-             */
-            research_tokens: number;
             /** @default 2048 */
             output_tokens: number;
             /** @default 32768 */
@@ -11107,7 +11029,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
-            /** @description rate_limited、source_discovery_busy、source_discovery_budget_exceeded 或 source_discovery_rate_limited；不自动重试 */
+            /** @description rate_limited、source_discovery_busy 或 source_discovery_rate_limited；不自动重试 */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -12315,16 +12237,6 @@ export interface operations {
                     prompt: string;
                     /** @description 明确同意七日内加密保存必要恢复正文；false 仅服务进程内存，跨进程不可恢复 */
                     save: boolean;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    request_budget?: number;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    token_budget?: number;
                     research?: components["schemas"]["ResearchRequest"];
                     start_learning?: components["schemas"]["StartLearningRequest"];
                     /**
@@ -12557,16 +12469,6 @@ export interface operations {
                     operation_id: string;
                     expected_version: number;
                     prompt: string;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    request_budget?: number;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    token_budget?: number;
                     confirm_destination?: string;
                 };
             };
@@ -12896,16 +12798,6 @@ export interface operations {
                     operation_id: string;
                     expected_version: number;
                     configuration: string;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    request_budget?: number;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    token_budget?: number;
                 };
             };
         };
@@ -12953,7 +12845,7 @@ export interface operations {
         parameters: {
             query?: {
                 task_kind?: "mentor" | "research" | "start_learning" | "content_edit" | "studio";
-                status?: "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_budget" | "paused_tool_steps" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled";
+                status?: "queued" | "running" | "waiting_input" | "waiting_approval" | "paused_tool_steps" | "succeeded" | "partial" | "failed" | "cancelling" | "cancelled";
                 cursor?: string;
                 limit?: number;
             };
@@ -13095,20 +12987,10 @@ export interface operations {
                      * @description retry_start 只用于未发布成功的开学运行，显式重试并复用已有结果
                      * @enum {string}
                      */
-                    kind: "respond" | "resume" | "continue_budget" | "retry_start" | "stop" | "clear";
+                    kind: "respond" | "resume" | "retry_start" | "stop" | "clear";
                     /** Format: uuid */
                     interaction_id?: string;
                     answer?: string;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    request_budget?: number;
-                    /**
-                     * @deprecated
-                     * @description 兼容旧客户端的非负整数；不限制累计消耗
-                     */
-                    token_budget?: number;
                 };
             };
         };

@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentlimits"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 )
 
@@ -22,8 +21,6 @@ const (
 	DefaultServerURL              = "http://127.0.0.1:8080"
 	DefaultTimeout                = 30 * time.Second
 	DefaultColor                  = "never"
-	DefaultAgentMaxToolRounds     = agentlimits.UnlimitedToolRounds
-	MinAgentMaxToolRounds         = agentlimits.UnlimitedToolRounds
 	DefaultAgentContextCompaction = "auto"
 	DefaultAgentReasoningEffort   = "auto"
 	DefaultAgentSessionHistory    = "auto"
@@ -47,7 +44,6 @@ type Config struct {
 }
 
 type AgentConfig struct {
-	MaxToolRounds     int    `json:"max_tool_rounds"`
 	ContextCompaction string `json:"context_compaction,omitempty"`
 	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
 	SessionHistory    string `json:"session_history,omitempty"`
@@ -241,9 +237,6 @@ func DefaultAgentConfig() AgentConfig {
 }
 
 func (c *AgentConfig) Validate() error {
-	if !agentlimits.ValidToolRounds(c.MaxToolRounds) {
-		return errors.New("max tool rounds must be non-negative; 0 means unlimited")
-	}
 	c.ContextCompaction = strings.ToLower(strings.TrimSpace(c.ContextCompaction))
 	if c.ContextCompaction == "" {
 		c.ContextCompaction = DefaultAgentContextCompaction

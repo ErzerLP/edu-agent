@@ -39,8 +39,9 @@ type Configuration struct {
 	PrivacyGeneration int64        `json:"privacy_generation"`
 	Models            []Connection `json:"models"`
 	Limits            struct {
-		IdleTimeoutSeconds    int `json:"idle_timeout_seconds"`
-		RequestTimeoutSeconds int `json:"request_timeout_seconds"`
+		MaxToolSteps          *int `json:"max_tool_steps"`
+		IdleTimeoutSeconds    int  `json:"idle_timeout_seconds"`
+		RequestTimeoutSeconds int  `json:"request_timeout_seconds"`
 	} `json:"limits"`
 }
 
@@ -158,6 +159,9 @@ func (c *Client) Config(ctx context.Context) (Configuration, error) {
 		return value, ErrorFor("gateway_version_unsupported")
 	}
 	if value.PrivacyGeneration <= 0 || value.Limits.IdleTimeoutSeconds <= 0 || value.Limits.IdleTimeoutSeconds > 600 || value.Limits.RequestTimeoutSeconds <= 0 || value.Limits.RequestTimeoutSeconds > int((1<<63-1)/int64(time.Second)) {
+		return value, ErrorFor("gateway_connection_invalid")
+	}
+	if value.Limits.MaxToolSteps != nil && *value.Limits.MaxToolSteps < 1 {
 		return value, ErrorFor("gateway_connection_invalid")
 	}
 	seen := make(map[string]bool)

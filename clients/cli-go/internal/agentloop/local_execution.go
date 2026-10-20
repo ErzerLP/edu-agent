@@ -201,6 +201,7 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 	if call.Function.Name == "shell" {
 		args, wait, err := decodeLocalShell(call.Function.Arguments, s.options.LocalExecCWD)
 		if err != nil {
+			s.recordToolExecution()
 			result.Code = "invalid_arguments"
 			return result
 		}
@@ -211,6 +212,7 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 			}
 			return result
 		}
+		s.recordToolExecution()
 		snapshot, err := manager.Start(ctx, owner, call.ID, args)
 		// Even a failed start has an allocated, inspectable fact. Register before
 		// waiting, output projection, or source allocation can fail.
@@ -241,11 +243,13 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 	}
 	args, err := decodeLocalTask(call.Function.Arguments)
 	if err != nil {
+		s.recordToolExecution()
 		result.Code = "invalid_arguments"
 		return result
 	}
 	result.Action, result.TaskID = args.Action, args.TaskID
 	if args.Action == "list" {
+		s.recordToolExecution()
 		if status, ok := s.options.Durability.(interface{ LocalOutputStatus() string }); ok {
 			result.HistoryError = status.LocalOutputStatus()
 		}
@@ -261,6 +265,7 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 	}
 	snapshot, err := manager.Status(owner, args.TaskID)
 	if err != nil {
+		s.recordToolExecution()
 		result.Code = localExecutionError(err)
 		return result
 	}
@@ -285,6 +290,7 @@ func (s *Session) executeLocalTool(ctx context.Context, call modelclient.ToolCal
 			}
 		}
 	}
+	s.recordToolExecution()
 	switch args.Action {
 	case "read":
 		page, readErr := manager.Read(owner, args.TaskID, args.Stream, args.Offset, args.Limit)

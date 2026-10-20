@@ -79,35 +79,6 @@ func (u *singleSendAgentUI) Run(ctx context.Context, conversation agentui.Conver
 	return nil
 }
 
-func TestModelSetSupportsUnlimitedToolRoundsAndHasNoFixedMaximum(t *testing.T) {
-	t.Parallel()
-	store := &memoryConfigStore{}
-	app, out, errOut := newTestApp(store, &memoryCredentialStore{}, &fakeTerminal{})
-
-	if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", "0"}); exit != ExitOK {
-		t.Fatalf("set unlimited exit=%d out=%q err=%q", exit, out.String(), errOut.String())
-	}
-	if store.value.Agent == nil || store.value.Agent.MaxToolRounds != 0 {
-		t.Fatalf("saved unlimited config=%+v", store.value.Agent)
-	}
-
-	out.Reset()
-	if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", "1000000"}); exit != ExitOK {
-		t.Fatalf("set large guard exit=%d out=%q err=%q", exit, out.String(), errOut.String())
-	}
-	if store.value.Agent.MaxToolRounds != 1_000_000 {
-		t.Fatalf("saved large guard=%+v", store.value.Agent)
-	}
-
-	errOut.Reset()
-	if exit := app.Run(t.Context(), []string{"model", "set", "--max-tool-rounds", "-1"}); exit != ExitInput {
-		t.Fatalf("set negative exit=%d err=%q", exit, errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "0表示不限制") || store.value.Agent.MaxToolRounds != 1_000_000 {
-		t.Fatalf("negative err=%q saved=%+v", errOut.String(), store.value.Agent)
-	}
-}
-
 func TestAgentLaunchSelectsWorkspaceAndDegradesInvalidRoots(t *testing.T) {
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "server-token")
 	preset := config.DefaultAgentConfig()

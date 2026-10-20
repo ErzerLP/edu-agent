@@ -115,7 +115,7 @@ func TestSessionAutoCompactionInjectsCommittedMemoryAfterRawTrim(t *testing.T) {
 	model := &compactionTestModel{}
 	uuidCalls := 0
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 8192, MaxToolRounds: 2, ContextCompaction: ContextCompactionAuto,
+		ContextWindow: 8192, ContextCompaction: ContextCompactionAuto,
 		Now: func() time.Time { return time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			uuidCalls++
@@ -1027,7 +1027,7 @@ func TestContentRedactedReplacesRawToolBodiesWithoutLedger(t *testing.T) {
 	for _, mode := range []string{ContextCompactionRecentOnly, ContextCompactionOff} {
 		t.Run(mode, func(t *testing.T) {
 			session, err := New(&singleResponseModel{}, &fakeServer{}, Options{
-				ContextWindow: 8192, MaxToolRounds: 2, ContextCompaction: mode,
+				ContextWindow: 8192, ContextCompaction: mode,
 				Now: time.Now, NewUUID: func() (string, error) { return "unused", nil },
 			})
 			if err != nil {
@@ -1149,7 +1149,7 @@ func (m *cancellationIgnoringConsolidationModel) Complete(_ context.Context, req
 func TestSessionCloseIsBoundedWhenProviderIgnoresCancellation(t *testing.T) {
 	model := &cancellationIgnoringConsolidationModel{started: make(chan struct{}), release: make(chan struct{}), completed: make(chan struct{})}
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 8192, MaxToolRounds: 2, ContextCompaction: ContextCompactionAuto,
+		ContextWindow: 8192, ContextCompaction: ContextCompactionAuto,
 		Now: time.Now, NewUUID: func() (string, error) { return "unused", nil },
 	})
 	if err != nil {
@@ -1190,7 +1190,7 @@ func TestRecentOnlyAndOffDoNotCallInternalConsolidationModel(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			model := &compactionTestModel{}
 			session, err := New(model, &fakeServer{}, Options{
-				ContextWindow: 8192, MaxToolRounds: 2, ContextCompaction: mode, Now: time.Now,
+				ContextWindow: 8192, ContextCompaction: mode, Now: time.Now,
 				NewUUID: func() (string, error) { return "unused", nil },
 			})
 			if err != nil {
@@ -1231,7 +1231,7 @@ func (m *blockingConsolidationModel) Complete(ctx context.Context, request model
 func TestSessionWorkerDoesNotBlockNextTurnAndCloseCancels(t *testing.T) {
 	model := &blockingConsolidationModel{started: make(chan struct{})}
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 8192, MaxToolRounds: 2, ContextCompaction: ContextCompactionAuto,
+		ContextWindow: 8192, ContextCompaction: ContextCompactionAuto,
 		Now: time.Now, NewUUID: func() (string, error) { return "unused", nil },
 	})
 	if err != nil {
@@ -1528,7 +1528,7 @@ func (m *longCompactionModel) Complete(_ context.Context, request modelclient.Re
 func TestTwentyPlusTurnCompactionRecallAndFallbackVisibility(t *testing.T) {
 	model := &longCompactionModel{}
 	session, err := New(model, &fakeServer{}, Options{
-		ContextWindow: 4096, MaxToolRounds: 4, ContextCompaction: ContextCompactionAuto, Now: time.Now,
+		ContextWindow: 4096, ContextCompaction: ContextCompactionAuto, Now: time.Now,
 		NewUUID: func() (string, error) { return "unused", nil }, ContextIDSource: deterministicContextIDSource(),
 	})
 	if err != nil {
@@ -1615,7 +1615,7 @@ func TestTwentyPlusTurnCompactionRecallAndFallbackVisibility(t *testing.T) {
 	var restoredIDCounter atomic.Int64
 	restoredIDCounter.Store(9_000_000_000_000_000)
 	restored, err := New(&fakeModel{responses: []modelclient.Response{{Message: modelclient.Message{Role: "assistant", Content: "continued"}}}}, &fakeServer{}, Options{
-		ContextWindow: 4096, MaxToolRounds: 4, ContextCompaction: ContextCompactionAuto, Now: time.Now,
+		ContextWindow: 4096, ContextCompaction: ContextCompactionAuto, Now: time.Now,
 		NewUUID: func() (string, error) { return "unused", nil }, ContextIDSource: func(prefix string) (string, error) {
 			return fmt.Sprintf("%s%016d", prefix, restoredIDCounter.Add(1)), nil
 		},

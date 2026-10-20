@@ -8,7 +8,6 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learning"
 	"github.com/edu-agent/edu-agent/server/internal/learningcontent"
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
-	"github.com/edu-agent/edu-agent/server/internal/settings"
 )
 
 type AssessmentStatus struct {
@@ -22,7 +21,7 @@ type AssessmentResume struct {
 }
 
 func assessmentCanResume(item row, recovery learning.AssessmentRecovery) bool {
-	if !item.BodyAvailable || !time.Now().Before(item.ExpiresAt) || recovery.OperationStatus != "" || item.Status != "paused_budget" && item.Status != "failed" {
+	if !item.BodyAvailable || !time.Now().Before(item.ExpiresAt) || recovery.OperationStatus != "" || item.Status != "failed" {
 		return false
 	}
 	// A durable proposal can be committed without another model call, including
@@ -33,27 +32,24 @@ func assessmentCanResume(item row, recovery learning.AssessmentRecovery) bool {
 	if item.ResultUnknown || item.callStarted || recovery.ProposalStatus == "processing" && recovery.ProposalLeaseUntil != nil && recovery.ProposalLeaseUntil.After(time.Now()) {
 		return false
 	}
-	return item.Status == "paused_budget" || item.Reason == "context_changed" || recovery.ProposalStatus == "failed"
+	return item.Reason == "context_changed" || recovery.ProposalStatus == "failed"
 }
 
-// Assessment authorization binds the destination; cumulative budgets are obsolete.
-func automaticAssessmentPolicy(configuration string, _ settings.Limits) learningcontent.AssessmentPolicy {
+// Assessment authorization binds the model destination.
+func automaticAssessmentPolicy(configuration string) learningcontent.AssessmentPolicy {
 	return learningcontent.AssessmentPolicy{
 		Configuration: configuration,
 	}
 }
 
-// AssessmentPolicy binds explicit bounded authorization to the current model
+// AssessmentPolicy binds explicit authorization to the current model
 // destination/configuration. C3b must obtain this before publishing a candidate.
-func (s *Service) AssessmentPolicy(requests, tokens int) (learningcontent.AssessmentPolicy, error) {
+func (s *Service) AssessmentPolicy() (learningcontent.AssessmentPolicy, error) {
 	model, _, configuration, err := s.settings.MentorClient()
 	if err != nil || model == nil {
 		return learningcontent.AssessmentPolicy{}, ErrModel
 	}
-	if requests < 0 || tokens < 0 {
-		return learningcontent.AssessmentPolicy{}, ErrInvalid
-	}
-	return learningcontent.AssessmentPolicy{Configuration: configuration, Requests: requests, Tokens: tokens}, nil
+	return learningcontent.AssessmentPolicy{Configuration: configuration}, nil
 }
 
 // AssessmentStatus is an internal, source-gated owner port. Existing public
@@ -100,7 +96,7 @@ func (s *Service) ResumeAssessment(ctx context.Context, actor identity.Credentia
 	if !s.CanStart() || !validID(attempt) || !validID(c.OperationID) || c.ExpectedVersion < 1 {
 		return Receipt{}, ErrInvalid
 	}
-	policy, err := s.AssessmentPolicy(c.Policy.Requests, c.Policy.Tokens)
+	policy, err := s.AssessmentPolicy()
 	if err != nil {
 		return Receipt{}, err
 	}

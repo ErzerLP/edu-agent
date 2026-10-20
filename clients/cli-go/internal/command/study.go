@@ -39,11 +39,13 @@ study changes|change-context --goal UUID [--session UUID]
 study change|change-command --goal UUID --change UUID [--version N] [--input 请求.json]
 所有入口支持 --space UUID、--server URL、--timeout DURATION；--input - 从 stdin 读取。
 写入 JSON 与 OpenAPI 请求一致，必须自带稳定 operation_id（ensure 是幂等适配）。
-research/start 使用明确公开主题、外发同意、预算及独立运行 session_id；start 还需自动采纳与模型同意。
+research/start 使用明确公开主题、外发同意及独立运行 session_id；start 还需自动采纳与模型同意。
 同设备同目标同类型再次发起时，从 current 读取并复用 run.session_id；无历史时才创建运行会话 UUID。
 mentor 必须指定 teaching_session_id；服务端负责提出变更，CLI 本地 Agent 不执行领域写入。
 change-command 按具体 expected_revision/hash/interaction_id 审阅，不自动批准更新后的候选。
---wait 仅轮询指定 run，遇到待输入/审批/预算暂停即返回；写操作不会自动重放。
+--wait 仅轮询指定 run，遇到待输入/审批/工具上限暂停即返回；写操作不会自动重放。
+每轮工具调用上限与网页共用设置，默认不限；到限说明进展后暂停，run-command 的 resume 可明确继续。
+retry_start 仅重试失败的开学步骤；无需提供累计请求或 Token 预算。
 响应未知时查询原 operation；答案用 session-operation，变更用 change 核对。
 运行属于原设备；其他设备读取共享正式课堂、正文、变更和进度，不迁移本地聊天。
 未提交草稿仅属于原进程/标签页，不自动跨端同步。工作台目标页提供名称可读入口。`

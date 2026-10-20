@@ -351,7 +351,7 @@ export function ContentEditor({
           <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} />
           允许把所选正文及来源发送给已配置导师，并加密保存本次恢复正文（最多七日）
         </label>
-        {belongs && run && ['paused_budget', 'paused_tool_steps'].includes(run.status) && <Button type="button" disabled={busy || inactive} onClick={() => void command('resume')}>继续</Button>}
+        {belongs && run && run.status === 'paused_tool_steps' && <Button type="button" disabled={busy || inactive} onClick={() => void command('resume')}>继续</Button>}
         <Button
           type="submit"
           disabled={

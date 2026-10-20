@@ -228,7 +228,8 @@ func (s *Session) RestoreCheckpoint(checkpoint SessionCheckpoint) error {
 	s.workspaceReferences = prepared.workspaceReferences
 	s.reasoningEffort = checkpoint.ReasoningEffort
 	s.fileAuthorizationMode = FileAuthorizationConfirm
-	s.remaining = 0
+	s.toolSteps = 0
+	s.toolStepPause = nil
 	s.currentToolResultTokens = 0
 	s.clearPendingLocked()
 

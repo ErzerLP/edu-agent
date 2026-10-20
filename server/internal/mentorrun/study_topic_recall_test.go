@@ -84,7 +84,7 @@ func TestPostgreSQLStudyRecallCommittedTopicsDuringIndexing(t *testing.T) {
 			send := func(prompt string) Receipt {
 				t.Helper()
 				c := historyPage(t, f, id, 0, 10).Conversation
-				receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, Prompt: prompt, RequestBudget: 2, TokenBudget: 50000, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
+				receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, Prompt: prompt, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
 				if err != nil {
 					t.Fatal(err)
 				}

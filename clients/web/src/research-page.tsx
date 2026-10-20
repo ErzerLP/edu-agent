@@ -138,10 +138,10 @@ function ResearchPanel({ goal, archived, startLearning = false }: { goal: Goal; 
     </form>
     {run && <section className="panel"><p role="status">{['cancelling', 'cancelled'].includes(run.status) ? mentorStatus[run.status] : researchStage[run.stage] ?? run.stage} · {run.status === 'partial' ? '有缺口，未完整完成' : run.status === 'succeeded' ? '结果可查看' : ''}</p>
       {run.status === 'paused_tool_steps' && <p>{run.output}</p>}
-      {run.reason && !['user_stopped', 'tool_steps_reached', 'budget_exhausted'].includes(run.reason) && <p>运行说明：{run.reason}</p>}<RunResultNotice run={run}>在途请求的结果未知，没有自动重发。</RunResultNotice>
+      {run.reason && !['user_stopped', 'tool_steps_reached'].includes(run.reason) && <p>运行说明：{run.reason}</p>}<RunResultNotice run={run}>在途请求的结果未知，没有自动重发。</RunResultNotice>
       {!run.body_available && <p>正文已清除、到期或临时副本不可恢复。</p>}
       {active && <Button disabled={pending || run.status === 'cancelling'} variant="outline" onClick={() => void command('stop')}>停止研究</Button>}
-      {['paused_budget', 'paused_tool_steps'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('resume')}>继续</Button>}
+      {run.status === 'paused_tool_steps' && <Button disabled={pending || inactive} onClick={() => void command('resume')}>继续</Button>}
       {startLearning && run.body_available && !run.start_learning?.result && ['partial', 'failed'].includes(run.status) && <Button disabled={pending || inactive} onClick={() => void command('retry_start')}>重试并保留已有结果</Button>}
       {run.body_available && <Confirm label="清除研究运行" title="清除本次研究运行？" disabled={pending} onConfirm={() => void command('clear')}>候选正文、来源缓存和综合结果将清除。已经正式采纳的参考属于知识库，遵循知识库清除流程。</Confirm>}
     </section>}

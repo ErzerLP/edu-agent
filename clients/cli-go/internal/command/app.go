@@ -294,7 +294,6 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		snapshot.AgentContextCompaction = value.Agent.ContextCompaction
 		snapshot.AgentReasoningEffort = value.Agent.ReasoningEffort
 		snapshot.AgentSessionHistory = value.Agent.SessionHistory
-		snapshot.AgentMaxToolRounds = value.Agent.MaxToolRounds
 	}
 	if value.Gateway != nil && value.Gateway.ServerURL == value.ServerURL && value.Gateway.DeviceID == value.DeviceID {
 		snapshot.SelectedTarget = value.Gateway.SelectedTarget

@@ -202,7 +202,7 @@ func TestSearchOutputProductionMinimumContextWindow(t *testing.T) {
 			}}
 			uuidCalls := 0
 			session, err := New(model, &fakeServer{}, Options{
-				ContextWindow: 4096, MaxToolRounds: 8, Workspace: executor,
+				ContextWindow: 4096, Workspace: executor,
 				NewUUID: func() (string, error) {
 					uuidCalls++
 					return fmt.Sprintf("65000000-0000-4000-8000-%012d", uuidCalls), nil

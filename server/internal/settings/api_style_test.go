@@ -22,7 +22,7 @@ func TestDefaultAPIStylePreservesMentorFingerprint(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Pre-api_style connection identity: unchanged settings must not invalidate ongoing runs on upgrade.
-	legacy := `{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":"http://localhost:11434/v1","model":"test-model","auth_mode":"bearer"},"Key":"mentor-test-key","Limits":{"research_requests":20,"research_tokens":100000,"output_tokens":2048,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":10,"storage_mib":512}}`
+	legacy := `{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":"http://localhost:11434/v1","model":"test-model","auth_mode":"bearer"},"Key":"mentor-test-key","Limits":{"output_tokens":2048,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":10,"storage_mib":512}}`
 	want := fmt.Sprintf("%x", sha256.Sum256([]byte(legacy)))
 	if fingerprint != want {
 		t.Fatal("default API style changed existing mentor identity")
@@ -35,7 +35,7 @@ func TestOldSettingsDefaultToChatCompletions(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "settings.json")
-	const old = `{"version":1,"revision":2,"teaching":{"enabled":true,"provider":"openai_compatible","endpoint":"http://localhost:11434/v1","model":"old-model","auth_mode":"bearer","key":"old-test-key","source":"server","probe":null},"mentor":{"provider":"openai_compatible","auth_mode":"bearer","source":"server"},"search":{"provider":"brave","auth_mode":"bearer","source":"server"},"mentor_uses_teaching":false,"limits":{"research_requests":20,"research_tokens":100000,"output_tokens":2048,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":2,"storage_mib":512},"policy":{"private_queries":false}}`
+	const old = `{"version":1,"revision":2,"teaching":{"enabled":true,"provider":"openai_compatible","endpoint":"http://localhost:11434/v1","model":"old-model","auth_mode":"bearer","key":"old-test-key","source":"server","probe":null},"mentor":{"provider":"openai_compatible","auth_mode":"bearer","source":"server"},"search":{"provider":"brave","auth_mode":"bearer","source":"server"},"mentor_uses_teaching":false,"limits":{"output_tokens":2048,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":2,"storage_mib":512},"policy":{"private_queries":false}}`
 	if err := os.WriteFile(path, []byte(old), 0600); err != nil {
 		t.Fatal(err)
 	}

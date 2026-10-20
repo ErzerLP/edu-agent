@@ -54,8 +54,6 @@ type Create struct {
 	ExpectedVersion     int64                        `json:"expected_version"`
 	Prompt              string                       `json:"prompt"`
 	Save                bool                         `json:"save"`
-	RequestBudget       int                          `json:"request_budget"`
-	TokenBudget         int                          `json:"token_budget"`
 }
 
 type Command struct {
@@ -64,8 +62,6 @@ type Command struct {
 	Kind            string `json:"kind"`
 	InteractionID   string `json:"interaction_id,omitempty"`
 	Answer          string `json:"answer,omitempty"`
-	RequestBudget   int    `json:"request_budget,omitempty"`
-	TokenBudget     int    `json:"token_budget,omitempty"`
 }
 
 type Receipt struct {
@@ -93,8 +89,6 @@ type Meta struct {
 	Reason            string    `json:"reason"`
 	Saved             bool      `json:"saved"`
 	BodyAvailable     bool      `json:"body_available"`
-	RequestsLeft      int       `json:"requests_left"`
-	TokensLeft        int       `json:"tokens_left"`
 	RequestsUsed      int       `json:"requests_used"`
 	ResultUnknown     bool      `json:"result_unknown"`
 	CostUnknown       bool      `json:"cost_unknown"`

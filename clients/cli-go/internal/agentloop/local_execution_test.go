@@ -50,7 +50,7 @@ func newLocalExecutionSession(t *testing.T, model Model, configure func(*Options
 			t.Errorf("manager cleanup: %v", err)
 		}
 	})
-	options := Options{ContextWindow: 32768, MaxToolRounds: 0, LocalExec: manager, LocalExecOwner: "test-owner", LocalExecCWD: t.TempDir(), ToolTimeout: time.Second, ModelTimeout: time.Second, NewUUID: func() (string, error) { return "70000000-0000-4000-8000-000000000001", nil }}
+	options := Options{ContextWindow: 32768, LocalExec: manager, LocalExecOwner: "test-owner", LocalExecCWD: t.TempDir(), ToolTimeout: time.Second, ModelTimeout: time.Second, NewUUID: func() (string, error) { return "70000000-0000-4000-8000-000000000001", nil }}
 	if configure != nil {
 		configure(&options)
 	}

@@ -192,7 +192,7 @@ export function MentorPanel({ goal, archivedSpace, teachingSessionId, conversati
       </div>
       <details><summary>技术信息</summary><p>会话：{run.session_id}<br />运行：{run.run_id}<br />版本：{run.version} · watermark：{run.watermark}<br />阶段：{run.stage} · 原因：{run.reason || '无'}</p></details>
     </>}
-    {run && ['paused_budget', 'paused_tool_steps'].includes(run.status) && <div className="actions"><Button disabled={pending || inactive || !modelReady || !!conversation?.confirmation_required} onClick={() => void command('resume')}>继续</Button></div>}
+    {run && run.status === 'paused_tool_steps' && <div className="actions"><Button disabled={pending || inactive || !modelReady || !!conversation?.confirmation_required} onClick={() => void command('resume')}>继续</Button></div>}
     {!active && <form onSubmit={(e) => { e.preventDefault(); void start() }} onKeyDown={(e) => { if (e.key === 'Enter' && e.nativeEvent.isComposing) e.preventDefault() }}>
       <fieldset disabled={pending || inactive || destinationBlocked || otherActive || !modelReady || !current.data || !session.capabilities.save_goal || !!notebook && !notebook.selection}>
         {notebook&&<div className="notebook-quick-questions">{['换个讲法','补前置知识','举个例子','要提示'].map(question=><Button key={question} type="button" variant="outline" disabled={!!unconfirmed} onClick={()=>{setPrompt(question);drafts.set(key,question)}}>{question}</Button>)}</div>}

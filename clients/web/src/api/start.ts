@@ -50,8 +50,6 @@ export const startCapabilitiesSchema = z.object({
   protocol_version: z.literal(1),
   available: z.boolean(),
   reason: z.string(),
-  request_budget: z.number().int().nonnegative(),
-  token_budget: z.number().int().nonnegative(),
   legacy_projection: z.literal('open_activity'),
 })
 export const startUnavailable: Record<string, string> = {

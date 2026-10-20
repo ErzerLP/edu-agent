@@ -171,7 +171,7 @@ func researchFixture(t *testing.T, forged bool, opening ...string) (*runtimeFixt
 		return (&net.Dialer{}).DialContext(ctx, network, page.Listener.Addr().String())
 	})
 	f.create.Prompt = topic
-	f.create.RequestBudget = 8
+
 	f.create.Research = &research.Request{Topic: f.create.Prompt, ExternalConsent: true, Policy: research.Policy{Mode: "supplement", Domains: []string{}}}
 	return f, calls
 }
@@ -254,13 +254,13 @@ func TestPostgreSQLResearchPipelineAdoptionAndIsolation(t *testing.T) {
 	}
 }
 
-func TestPostgreSQLResearchIgnoresBudgetAndRejectsForgedCitation(t *testing.T) {
+func TestPostgreSQLResearchCompletesAndRejectsForgedCitation(t *testing.T) {
 	for _, forged := range []bool{false, true} {
-		t.Run(map[bool]string{false: "旧小预算", true: "伪片段拒绝"}[forged], func(t *testing.T) {
+		t.Run(map[bool]string{false: "完成研究", true: "伪片段拒绝"}[forged], func(t *testing.T) {
 			f, calls := researchFixture(t, forged)
 			ctx := context.Background()
 			if !forged {
-				f.create.RequestBudget = 1
+
 			}
 			r, err := f.service.Create(ctx, f.actor, learningspace.DefaultID, f.goal, f.create)
 			if err != nil {

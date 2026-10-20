@@ -54,7 +54,7 @@ func TestPostgreSQLStudyConversationOnlyAnswerWithSources(t *testing.T) {
 	}
 	for i, prompt := range []string{"记住：我的专属示例编号是 47。", "根据之前的对话，我的专属示例编号是多少？"} {
 		c := historyPage(t, f, id, 0, 10).Conversation
-		receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, Prompt: prompt, RequestBudget: 2, TokenBudget: 30000, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
+		receipt, err := f.service.Submit(ctx, f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, Prompt: prompt, SourceSelection: &knowledge.SourceSelection{Mode: "items", Items: []knowledge.SourceIdentity{source}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -104,7 +104,7 @@ func TestPostgreSQLStudyCitationRejectsUnprovidedSlice(t *testing.T) {
 	}
 	id, selection := studyExerciseConversation(t, f)
 	c := historyPage(t, f.runtimeFixture, id, 0, 10).Conversation
-	receipt, err := f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, Prompt: "解释资料中的定义", RequestBudget: 2, TokenBudget: 30000, SourceSelection: &selection})
+	receipt, err := f.service.Submit(context.Background(), f.actor, learningspace.DefaultID, id, SubmitTurn{OperationID: uuid.NewString(), ExpectedVersion: c.Version, DirectionVersion: 1, Prompt: "解释资料中的定义", SourceSelection: &selection})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -532,8 +532,8 @@ func newPreferenceTestSession(t *testing.T, model Model, server Server) *Session
 	}
 	session, err := New(model, server, Options{
 		ContextWindow: 32768,
-		MaxToolRounds: 8,
-		Now:           func() time.Time { return time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC) },
+
+		Now: func() time.Time { return time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC) },
 		NewUUID: func() (string, error) {
 			mu.Lock()
 			defer mu.Unlock()

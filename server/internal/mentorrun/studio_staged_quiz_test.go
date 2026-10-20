@@ -232,7 +232,7 @@ func TestPostgreSQLStudioStagedQuizLearningPath(t *testing.T) {
 		}
 		if question == 1 {
 			limits := f.settings.View().Limits
-			limits.ResearchRequests = 1
+			limits.OutputTokens += 64
 			if _, e = f.settings.Update(settings.Update{ExpectedRevision: f.settings.View().Revision, Target: settings.Mentor, Limits: &limits}); e != nil {
 				t.Fatal(e)
 			}

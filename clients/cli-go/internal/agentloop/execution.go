@@ -16,10 +16,8 @@ func (*continueAgentLoopError) Error() string { return "continue agent loop" }
 // run 的生产调度唯一实现位于共享核心；适配器只连接 CLI 的状态与展示。
 func (s *Session) run(ctx context.Context, events []Event) (Result, error) {
 	adapter := &coreAdapter{session: s, events: events}
-	budget := &core.RoundBudget{Limit: s.options.MaxToolRounds, Remaining: s.remaining}
-	defer func() { s.remaining = budget.Remaining }()
 	return (core.Runner[Result]{
-		Model: s.model, Context: adapter, History: adapter, Tools: adapter, Events: adapter, Budget: budget,
+		Model: s.model, Context: adapter, History: adapter, Tools: adapter, Events: adapter,
 	}).Run(ctx)
 }
 
@@ -120,12 +118,25 @@ func (a *coreAdapter) Publish(ctx context.Context, event core.RunEvent) {
 	s.publishActivity(ctx, activity)
 }
 
+// A batch mutation can publish several items for one model tool call. Count its
+// first actual dispatch, after the write-ahead and replay checks have passed.
+func (s *Session) recordToolExecution() {
+	if !s.toolCallCounted {
+		s.toolSteps++
+		s.toolCallCounted = true
+	}
+}
+
 func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall, start int, events []Event) (Result, error) {
 	s.currentToolResultShares = max(s.currentToolResultShares, toolResultBudgetShares, len(calls))
 	for index := start; index < len(calls); index++ {
 		if err := ctx.Err(); err != nil {
 			return Result{}, err
 		}
+		if s.toolStepsReached() {
+			return s.pauseForToolSteps(ctx, calls, index, events)
+		}
+		s.toolCallCounted = false
 		call := calls[index]
 		initialFile := (*FileActivityDetail)(nil)
 		runningSummary := toolRunningSummary(call.Function.Name)
@@ -138,12 +149,14 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 		s.publishActivity(ctx, Activity{Kind: ActivityTool, Event: Event{ID: call.ID, Tool: call.Function.Name, Summary: runningSummary, Status: EventRunning}, Phase: ActivityExecutingTool, File: initialFile})
 		switch call.Function.Name {
 		case "open_learning_workflow":
+			s.toolSteps++
 			result, err := s.beginLearningWorkflow(call, calls, index, events)
 			if err != nil || result.Workflow != nil {
 				return result, err
 			}
 			continue
 		case "artifact":
+			s.toolSteps++
 			output := s.executeArtifactTool(ctx, call)
 			if err := s.appendArtifactToolResult(call.ID, output); err != nil {
 				return Result{}, err
@@ -171,6 +184,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 		case "remember_preference":
 			args, err := decodePreferenceArgs(call.Function.Arguments)
 			if err != nil {
+				s.toolSteps++
 				if appendErr := s.appendSessionToolResult(call.Function.Name, call.ID, map[string]any{"error": "invalid_arguments"}); appendErr != nil {
 					return Result{}, appendErr
 				}
@@ -195,6 +209,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				Sensitivity: args.Sensitivity, Stability: args.Stability,
 			}}, nil
 		case "ask_user_question":
+			s.toolSteps++
 			args, err := decodeQuestionArgs(call.Function.Arguments)
 			if err != nil {
 				if appendErr := s.appendSessionToolResult(call.Function.Name, call.ID, map[string]any{"error": "invalid_arguments"}); appendErr != nil {
@@ -247,6 +262,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 					}
 				}
 				if prepared == nil {
+					s.toolSteps++
 					if err := s.appendWorkspaceToolResult(call.Function.Name, call.ID, preparationResult); err != nil {
 						return Result{}, err
 					}
@@ -288,6 +304,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				continue
 			}
 			if workspace.IsReadTool(call.Function.Name) && s.workspace != nil && s.workspaceStatus.Available {
+				s.toolSteps++
 				lastFile := initialFile
 				toolCtx, cancel := context.WithTimeout(ctx, s.options.ToolTimeout)
 				progressCtx := workspace.WithProgressReporter(toolCtx, func(progress workspace.Progress) {
@@ -317,6 +334,7 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 				events = append(events, event)
 				continue
 			}
+			s.toolSteps++
 			output, summary := s.executeReadTool(ctx, call)
 			if err := ctx.Err(); err != nil {
 				return Result{}, err
@@ -332,6 +350,9 @@ func (s *Session) processCalls(ctx context.Context, calls []modelclient.ToolCall
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
+	}
+	if s.toolStepsReached() {
+		return s.pauseForToolSteps(ctx, calls, len(calls), events)
 	}
 	return Result{}, &continueAgentLoopError{events: events}
 }

@@ -139,7 +139,7 @@ func TestPostgreSQLMentorCookieHTTPAndSSERecovery(t *testing.T) {
 	if response.StatusCode != 201 {
 		t.Fatalf("真实目标未创建 %d", response.StatusCode)
 	}
-	create := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "解释目标", Save: true, RequestBudget: 2, TokenBudget: 10000}
+	create := mentorrun.Create{OperationID: uuid.NewString(), SessionID: uuid.NewString(), ExpectedVersion: 1, Prompt: "解释目标", Save: true}
 	path := "/v1/learning/goals/" + goal + "/runs"
 	response, _ = request("POST", path, space.ID, create, func(r *http.Request) { r.Header.Del("X-CSRF-Token") })
 	if response.StatusCode != 403 {
@@ -316,7 +316,7 @@ func TestPostgreSQLMentorCookieHTTPAndSSERecovery(t *testing.T) {
 	if response.StatusCode != 404 {
 		t.Fatal("对话允许跨区重绑定")
 	}
-	response, data = request("POST", conversationPath+"/turns", space.ID, map[string]any{"operation_id": uuid.NewString(), "expected_version": 1, "prompt": "正式历史问题", "request_budget": 2, "token_budget": 50000}, nil)
+	response, data = request("POST", conversationPath+"/turns", space.ID, map[string]any{"operation_id": uuid.NewString(), "expected_version": 1, "prompt": "正式历史问题"}, nil)
 	if response.StatusCode != 202 {
 		t.Fatalf("新轮提交失败：%d %s", response.StatusCode, data)
 	}

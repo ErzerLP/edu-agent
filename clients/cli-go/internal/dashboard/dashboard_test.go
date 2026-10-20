@@ -38,7 +38,7 @@ func TestAgentSettingsToggleFutureSessionHistory(t *testing.T) {
 	t.Parallel()
 	base := Snapshot{
 		LocalState: LocalStatePaired, SelectedTarget: "teaching",
-		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768, AgentMaxToolRounds: 6,
+		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768,
 		AgentSessionHistory: "auto",
 	}
 	updated, _ := newModel(base).Update(key("s"))
@@ -320,7 +320,7 @@ func TestAgentReasoningEffortUsesDedicatedSelectionScreen(t *testing.T) {
 	t.Parallel()
 	snapshot := Snapshot{
 		LocalState: LocalStatePaired, SelectedTarget: "deepseek", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "medium", AgentMaxToolRounds: 6,
+		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "medium",
 	}
 	updated, _ := newModel(snapshot).Update(key("s"))
 	updated, _ = updated.(model).Update(key("a"))

@@ -131,7 +131,7 @@ type Options struct {
 	LearningBinding   agentcontext.Binding
 	ContextWindow     int
 	MaxTokens         int
-	MaxToolRounds     int
+	MaxToolSteps      int // 本轮网关快照；0 表示不限，不写入本地配置或检查点。
 	ContextCompaction string
 	ReasoningEffort   modelclient.ReasoningEffort
 	ModelTimeout      time.Duration
@@ -372,6 +372,7 @@ var (
 )
 
 type Result struct {
+	PausedToolSteps     bool
 	Workflow            *LearningWorkflow
 	Navigate            *agentcontext.Binding
 	Text                string

@@ -217,11 +217,11 @@ func (s *Service) CreateStudioJob(ctx context.Context, actor identity.Credential
 		if err != nil {
 			return j, err
 		}
-		model, limits, configuration, e := s.settings.MentorClient()
+		model, _, configuration, e := s.settings.MentorClient()
 		if e != nil || model == nil {
 			return j, ErrModel
 		}
-		policy := automaticAssessmentPolicy(configuration, limits)
+		policy := automaticAssessmentPolicy(configuration)
 		j.Input.QuestionCount, j.Input.Difficulty = 3, c.Difficulty
 		if c.QuestionCount != nil {
 			j.Input.QuestionCount = *c.QuestionCount

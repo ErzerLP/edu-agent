@@ -225,7 +225,7 @@ func (a *API) startCapabilities(w http.ResponseWriter, r *http.Request) {
 			reason = "research_pairing_required"
 		}
 	}
-	writeJSON(w, 200, map[string]any{"protocol_version": 1, "available": reason == "", "reason": reason, "request_budget": view.Limits.ResearchRequests, "token_budget": view.Limits.ResearchTokens, "legacy_projection": "open_activity"})
+	writeJSON(w, 200, map[string]any{"protocol_version": 1, "available": reason == "", "reason": reason, "legacy_projection": "open_activity"})
 }
 
 func (a *API) sessionKnowledgeContext(w http.ResponseWriter, r *http.Request) {

@@ -21,7 +21,6 @@ func directionQuizRequest(t *testing.T, selection knowledge.SourceSelection) Stu
 		"operation_id": uuid.NewString(), "privacy_generation": 1, "kind": "quiz",
 		"goal_id": nil, "goal_version": 0, "mode": "direction", "direction_version": 1,
 		"artifact_id": nil, "expected_version": 0, "source_selection": selection,
-		"request_budget": 2, "token_budget": 50000,
 	})
 	if err != nil {
 		t.Fatal(err)

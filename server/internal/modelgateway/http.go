@@ -163,7 +163,20 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeFailure(w, gatewayError("request_not_found"))
 }
 func (s *Service) configHTTP(w http.ResponseWriter, r *http.Request, actor identity.Credential) {
-	s.controlResponse(w, r, actor, 0, false, func(g int64) any { return s.configuration(g, actor) })
+	if version := r.Header.Get("X-Model-Gateway-Version"); version != "" && version != "1" {
+		writeFailure(w, gatewayError("gateway_version_unsupported"))
+		return
+	}
+	var generation int64
+	if r.Header.Get("X-Learning-Generation") != "" {
+		var err error
+		generation, err = parseGeneration(r)
+		if err != nil {
+			writeFailure(w, err)
+			return
+		}
+	}
+	s.controlResponse(w, r, actor, generation, false, func(g int64) any { return s.configuration(g, actor) })
 }
 
 func (s *Service) controlResponse(w http.ResponseWriter, r *http.Request, actor identity.Credential, g int64, invoke bool, value func(int64) any) {

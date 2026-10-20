@@ -80,8 +80,20 @@ func (r Runner) Run(ctx context.Context) error {
 		tea.WithContext(ctx),
 	)
 	final, err := program.Run()
-	if result, ok := final.(model); err == nil && ok && result.navigation != nil {
-		return result.navigation
+	initial.cancel()
+	if result, ok := final.(model); ok {
+		// Model cancellation may perform a bounded HTTP cancel after closing the
+		// stream. Keep the process alive until that turn has finished cleanup.
+		if result.activeTurnDone != nil {
+			select {
+			case <-result.activeTurnDone:
+			case <-time.After(6 * time.Second):
+				return errors.Join(err, fmt.Errorf("当前请求的停止结果未确认，请稍后核对服务端状态"))
+			}
+		}
+		if err == nil && result.navigation != nil {
+			return result.navigation
+		}
 	}
 	return err
 }
@@ -217,6 +229,7 @@ type model struct {
 	turnSeq               uint64
 	activeTurnID          uint64
 	activeTurnCancel      context.CancelFunc
+	activeTurnDone        <-chan struct{}
 	activeCancelable      bool
 	activeKind            turnKind
 	activeInput           string
@@ -900,7 +913,12 @@ func (m model) beginTurn(kind turnKind, cancelable bool, input string, question 
 		m.activeTurnCancel = nil
 	}
 	m.resize()
-	return m, startTurnCmdForGeneration(m.ctx, turnCtx, m.generation, m.activeTurnID, kind, run)
+	done := make(chan struct{})
+	m.activeTurnDone = done
+	return m, startTurnCmdForGeneration(m.ctx, turnCtx, m.generation, m.activeTurnID, kind, func(ctx context.Context) (agentloop.Result, error) {
+		defer close(done)
+		return run(ctx)
+	})
 }
 
 func (m *model) finishTurn(result agentloop.Result, err error) {

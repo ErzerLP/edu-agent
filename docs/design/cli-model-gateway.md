@@ -502,3 +502,37 @@ Candidate 核对全部 27 条合同，集中验证真实 CLI 的两个上游协�
 验证使用 `httptest` 假网关，不使用供应商密钥或付费调用。受影响包的 race／vet 以及 CLI 模块全量测试结果由本次实现报告列出；真实服务端、nginx、PostgreSQL、多实例和跨平台验收仍由对应任务／Candidate 承担。
 
 本工作树检查结果：`internal/config`、`modelgateway`、`command`、`dashboard`、`agentloop`、`agentcontroller`、`agentsession`、`agentui` 的 `go test -race`、`go vet` 均通过；最终 `go test ./...` 通过。Go 构建缓存使用 `/tmp/ga-cli-go-build`，未改动系统配置。`git diff --check` 通过；`server/`、`packages/agentcore` 和暂存区均无改动。
+
+## 16. G-A 真实 CLI 联调（#122）
+
+2026-10-20 在合并分支使用真实 `edu-agent`、真实 `edu-agentd`、本地假上游和 PostgreSQL 完成联调。入口为 `server/internal/modelgateway/cli_integration_test.go` 的 `TestRealCLIModelGatewayIntegration`，进程／PTY 辅助和可选 nginx smoke 位于同目录的 `cli_fixture_integration_test.go`、`cli_nginx_integration_test.go`。测试需要 Linux PTY；每次创建并清理独立数据库 schema、网页设置文件和 CLI 配对目录，不使用开发者已有凭据。
+
+发现并修复：
+
+- 真实 API 客户端装配会把模型包装为 `agentcontext.GuardedModel`，原网关轮次绑定只识别裸模型，首轮因缺少 session/turn 被 CLI 拒绝。现在通过包装器更新网关快照，并保留前台、整理和标题的学习隐私守卫；标题期限也从被包装的网关读取。原 controller 测试改用真实 API 客户端，并验证恢复身份及隐私代次改变后不外发。
+- Ctrl-C 原本只触发取消，UI 返回后进程可能在 cancel POST 完成前退出。现在退出时取消轮次并有界等待其清理完成，让网关的单次 cancel 收尾有机会收到响应；超时提示停止结果未确认。
+- 配置 GET 原本忽略刷新携带的版本与隐私代次。现在首次读取仍可省略，已提供的版本／代次按合同校验；未知版本返回 426，旧代次返回 409，非法代次返回 400。服务端首次配置读取的测试夹具同时去掉虚假的 generation=0。
+
+接口核对结果：调用路径、Bearer、§3.2 headers、target 请求体、Chat SSE／错误 envelope、配置安全投影、cancel 的 `{}`、配对兑换的 `code/display_name` 与 `cli` profile 一致。CLI 尚无状态查询消费入口，不存在将状态 usage 当普通 Chat usage 解码的代码；联调直接验证状态 API 的 `modelusage.Totals`，包括各项 `{known_sum,unknown_calls}` 和 `request_not_found`。提前取消登记的语义沿用 §3.3。
+
+场景包含：网页 Cookie＋Origin／CSRF 配置 teaching=Responses、mentor=Chat Completions；真实 CLI 配对、首次隐私确认、选择记忆；分片工具调用读取本机中文文件，再请求得到最终回答。每轮数据库有一项 source=cli、认证设备和 session/turn 正确的任务、两条 received call 和两条 succeeded request，输入／输出／推理／总 Token 分别为 30／11／3／41。用量 summary、tasks、calls 按来源、设备、会话核对，错误筛选没有结果；逐表和日志检查正文标记不落盘。
+
+补充场景验证同设备第二请求 429 且 CLI 显示繁忙、Ctrl-C 恰好补发一次 cancel 并最终 cancelled、撤销在流中返回 device_revoked 并关闭上游／提示重新配对，以及 CLI 与 HTTP 同时拒绝 search／任意模型名。取消场景用透明代理观测实际 HTTP 请求，所有业务响应仍来自真实服务端。
+
+从仓库根目录运行（Web 依赖须已安装，构建不自动安装依赖）：
+
+```bash
+umask 022
+export GOCACHE=/tmp/ga122-go-build
+(cd clients/web && npm run build)
+(cd server && go build -o edu-agentd ./cmd/edu-agentd)
+(cd clients/cli-go && go build -o /tmp/ga122-edu-agent ./cmd/edu-agent)
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+export EDU_AGENT_INTEGRATION_SERVER="$PWD/server/edu-agentd"
+export EDU_AGENT_INTEGRATION_CLI=/tmp/ga122-edu-agent
+(cd server && go test -p=1 ./internal/modelgateway -run '^TestRealCLIModelGatewayIntegration$' -count=1 -v -timeout 4m)
+```
+
+可选代理检查先执行 `docker pull nginx:alpine`，再设置 `EDU_AGENT_INTEGRATION_NGINX=1` 运行同一测试。它直接抽取 `deploy/web/nginx.conf` 的两个网关 location，只替换测试监听和上游地址，使用临时容器及 host 网络；完成后清理容器。此次首帧 175 ms，配置、模型流、cancel、状态、未知路径拒绝和取消后不重发均通过。这不替代正式 TLS 部署、多实例故障注入或真实供应商实测。
+
+此次真实进程集成及所有补充场景通过（53.54 秒）。局部检查包括服务端 `internal/modelgateway` 的 `go test -p=1`、`go vet -p=1`，CLI `agentcontroller`、`agentloop`、`agentui` 的 `go test -race`、`go vet -race`，未运行全项目测试。G-B、agentcore 协议及 Git 暂存／提交均不在此次改动中。

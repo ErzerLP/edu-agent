@@ -1,18 +1,19 @@
 package agentloop
 
 import (
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"time"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 )
 
 // SetGatewayModel runs only at the user-turn boundary. Existing background jobs
 // retain the model snapshot captured when they were scheduled.
-func (s *Session) SetGatewayModel(model *modelgateway.Model) {
+func (s *Session) SetGatewayModel(model Model, gateway *modelgateway.Model) {
 	s.model = model
-	window := model.Selected.ContextTokens
+	window := gateway.Selected.ContextTokens
 	s.options.ContextWindow = window
-	s.options.MaxTokens = model.Selected.OutputTokens
-	s.options.ModelTimeout = time.Duration(model.Configuration.Limits.IdleTimeoutSeconds+5) * time.Second
+	s.options.MaxTokens = gateway.Selected.OutputTokens
+	s.options.ModelTimeout = time.Duration(gateway.Configuration.Limits.IdleTimeoutSeconds+5) * time.Second
 	s.hotRawTokenLimit = clampInt(percentRoundUp(window, 55), 1024, window)
 	s.currentToolResultBudget = clampInt(percentRoundUp(window, 8), 512, 2048)
 	r := s.contextRuntime

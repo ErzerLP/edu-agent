@@ -1433,7 +1433,7 @@ func (c *Controller) scheduleTitleLocked(checkpoint agentloop.SessionCheckpoint)
 		return
 	}
 	titleTimeout := c.limits.AutoTitleRequestTimeout
-	if gateway, ok := c.model.(*modelgateway.Model); ok {
+	if gateway := gatewayModel(c.model); gateway != nil {
 		titleTimeout = time.Duration(gateway.Configuration.Limits.RequestTimeoutSeconds) * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), titleTimeout)

@@ -2,15 +2,26 @@ package agentcontroller
 
 import (
 	"context"
+
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentcontext"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentloop"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/id"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 )
 
+func gatewayModel(model agentloop.Model) *modelgateway.Model {
+	if guarded, ok := model.(*agentcontext.GuardedModel); ok {
+		model = guarded.Base
+	}
+	gateway, _ := model.(*modelgateway.Model)
+	return gateway
+}
+
 func (c *Controller) prepareGatewayTurn(ctx context.Context, loop *agentloop.Session) error {
 	c.mu.Lock()
-	gateway, ok := c.model.(*modelgateway.Model)
-	if !ok {
+	current := c.model
+	gateway := gatewayModel(current)
+	if gateway == nil {
 		c.mu.Unlock()
 		return nil
 	}
@@ -25,9 +36,13 @@ func (c *Controller) prepareGatewayTurn(ctx context.Context, loop *agentloop.Ses
 	if err != nil {
 		return err
 	}
-	loop.SetGatewayModel(bound)
+	var next agentloop.Model = bound
+	if guarded, ok := current.(*agentcontext.GuardedModel); ok {
+		next = &agentcontext.GuardedModel{Base: bound, Client: guarded.Client}
+	}
+	loop.SetGatewayModel(next, bound)
 	c.mu.Lock()
-	c.model = bound
+	c.model = next
 	c.mu.Unlock()
 	return nil
 }

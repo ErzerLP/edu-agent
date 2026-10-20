@@ -94,6 +94,7 @@ func newGatewayFixture(t *testing.T, style string, handler func(http.ResponseWri
 	t.Cleanup(f.server.Close)
 	t.Cleanup(cancel)
 	r := f.request(t, "GET", "/config", "", "")
+	r.Header.Del("X-Learning-Generation")
 	res := f.do(t, r)
 	defer res.Body.Close()
 	if res.StatusCode != 200 {

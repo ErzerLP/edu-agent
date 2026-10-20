@@ -1,6 +1,6 @@
 # CLI 服务端模型网关：设计
 
-状态：Shape 已确认（2026-10-20），Ready，可进入 Build，尚未实施。对应 [brief](../comet/specs/cli-model-gateway/brief.md)、[spec](../comet/specs/cli-model-gateway/spec.md)，遵循[开发工作流](../development/development-workflow.md)。按用户已确认的 U1–U4 定稿：直接替换行为与接口、仅网关、可选 teaching／mentor、并发默认 10。本次只改三份文档，代码、OpenAPI、数据库 migration 与部署配置在 Build 实施。
+状态：Shape 已确认（2026-10-20），G-A 服务端实现覆盖见 §14；CLI 与 G-B 独立交付。对应 [brief](../comet/specs/cli-model-gateway/brief.md)、[spec](../comet/specs/cli-model-gateway/spec.md)，遵循[开发工作流](../development/development-workflow.md)。按用户已确认的 U1–U4 定稿：直接替换行为与接口、仅网关、可选 teaching／mentor、并发默认 10。
 
 ## 1. 现状与复用边界
 
@@ -18,7 +18,7 @@
 | `server/internal/modelusage/{store,transport,observe,query}.go` | 已有 `BeginTx`／`Dispatch`／`Observe`／`Finish`／`RecoverTx`；`Transport` 对同步外发记账，导师 transport 自行记账。一个上游出口只能装配其中一层。 |
 | `server/internal/mentorrun/worker.go` 的 `claim` | 当前按有效 run 租约限制并发，事务 advisory lock 为 `210021`。同步模型出口尚无统一的同池准入；网关不能只另建进程内 semaphore。 |
 | `server/internal/transport/httpapi/model_usage.go` | 已有汇总、任务和调用查询，但查询参数尚无 source／actor_device_id，Task DTO 也未展示设备。不能把“表里已有字段”写成筛选已完成。 |
-| `server/migrations/000041_model_usage.sql` 至 `000048_studio_conversation_scope.sql` | 台账已具有 source／actor_device_id、可空 Token 和调用状态；当前最新序号为 000048。 |
+| `server/migrations/000041_model_usage.sql` 至 `000048_studio_conversation_scope.sql` | 台账已具有 source／actor_device_id、可空 Token 和调用状态；设计基线最新序号为 000048，G-A 服务端新增 000049，见 §14。 |
 
 选择“现有模型配置工厂 + 服务端协议适配 + CLI 网关适配器”。另建供应商客户端会重复安全和记账逻辑；直接给 CLI 配置与密钥会破坏已确认边界，均不采用。仅新增网关应用编排，不建设另一套模型设置、密钥存储或用量系统。
 
@@ -430,7 +430,7 @@ scope、配置版本、去重、计量及共享容量服务同一请求链，按
 
 ## 13. Ready、候选验证与主要风险
 
-U1–U4 已于 2026-10-20 确认，无待决问题，满足 Ready。已确定结果／范围／非目标、27 条合同、单 change 理由、数据 owner、公共 API、数据库变更、文件边界、首批退出标准与重型环境。工作区为 docs/shape-122，本次只改三份文档；Build 起点复核 migration 编号及依赖当前状态，不再以产品确认作为门禁。
+U1–U4 已于 2026-10-20 确认，无待决问题，满足 Ready。已确定结果／范围／非目标、27 条合同、单 change 理由、数据 owner、公共 API、数据库变更、文件边界、首批退出标准与重型环境。Shape 阶段工作区为 docs/shape-122，该阶段只改三份文档；Build 起点复核 migration 编号及依赖当前状态，不再以产品确认作为门禁。G-A 服务端实现记录见 §14。
 
 Candidate 核对全部 27 条合同，集中验证真实 CLI 的两个上游协议；PostgreSQL 多实例去重／撤销／并发／隐私清除；模型选择、内部调用、工具继续、会话恢复及 nginx。正式演示环境的可用性须由 Candidate 实测，协议 fixture 不替代部署证据。verification 由 Runtime 生成，本次仅抽查路径、函数、链接与文档一致性，不宣称实现或测试通过。
 
@@ -440,3 +440,99 @@ Candidate 核对全部 27 条合同，集中验证真实 CLI 的两个上游协�
 2. **撤销与共享并发的跨实例竞态**：门禁覆盖真实外发和每次输出提交，避免父 run／嵌套调用重复占位。
 3. **直连依赖遗漏**：首次向导、会话恢复、自动标题、整理和测试工厂都依赖原本地配置；必须一起改为网关并保留非模型命令及本机副作用恢复。
 4. **连接变更后的外发对象**：选择用稳定 target，配置版本与目的地确认分离；禁止禁用后自动换连接、更新后自动发送历史或重做工具。
+
+## 14. G-A 服务端实现覆盖
+
+本节记录 `feat/gateway-server` 工作树中的 G-A 服务端实现；CLI 由独立任务交付，未修改 `clients/cli-go` 或 `packages/agentcore`。G-B 的共享有限工具上限及预算残留清理不在本次实现范围。
+
+| 模块 | 实际落点 |
+| --- | --- |
+| 身份 | `identity` 新增 `cli` profile（user scopes 加 `model:invoke`），WebScopes 显式排除该 scope；管理配对页说明本地内容外发与用量归属。网关仅接受设备 Bearer，拒绝 Web Cookie 和浏览器派生 token。 |
+| 连接工厂 | `settings/connection.go` 的 `ModelConnection`、`FrozenConnection.Client` 按明确 target 读取当前连接；`connectionIdentity` 与既有用量 transport 共用。网关不使用冻结的启动教学配置或导师隐式选槽。配置／目的地版本使用 PostgreSQL 部署秘密计算 HMAC，跨实例和重启稳定；秘密不属于学习数据，也不下发。 |
+| 协议 | `integrations/llm/gateway.go`、`gateway_stream.go` 验证文本/function 请求、复用 agentcore 的上下文估算与 5% 余量，转换 Chat／Responses 流与非流式。Responses 显式 `store:false`，保留工具 call_id、参数、结果关联；done 事件不重复追加参数或正文。仅在明确拒绝 stream_options／stream 时有限回退，其他错误和开始输出后不重试。 |
+| 用量 | `modelgateway/store.go` 在同一事务中登记轮次、请求、租约及 `BeginTx`。`transport.go` 先提交 `Dispatch`，再在真实上游 transport 调用 `Observe`，按原始 APIStyle 观察。每次回退有单独 attempt；`Finish` 结算后释放槽位，再交付下游完成信号，使工具下一轮可立即开始。 |
+| 准入 | `modeladmission.CheckTx` 复用 advisory lock `210021`，统计导师原租约与新增模型租约。`mentorrun.claim` 和同步 `modelusage.Transport` 接入同池；导师嵌套调用不重复占位。默认 C=10，CLI≤C−1，每设备≤1；新租约 30 秒、10 秒续约，无等待队列。降低容量时按受理顺序保留较早 CLI 请求，在续约时取消超额请求。 |
+| 撤销和清除 | `000049_cli_model_gateway.sql` 的事务触发器通过 PostgreSQL LISTEN/NOTIFY 广播设备／token 撤销、请求取消和 learning 代次关闭。通知连接丢失即取消本实例活跃请求。准入、实际请求写出和每次响应写出仍核验权威设备、请求、租约和隐私门禁。清除 grant 的设备锁移至隐私 owner 门禁之后，修复与在途读取的锁顺序冲突。 |
+| 恢复和隐私 | `Service.Sweep` 与状态查询调用 `RecoverTx`；prepared → not_dispatched，dispatching → outcome_unknown，不重发。新增三个 learning 元数据表加入 typed payload 清除和残留检查。仅持有有界内存正文，错误使用固定模板，HTTP 日志仅记录请求元数据。 |
+| 用量查询和页面 | usage summary/tasks/calls 增加 `source`、`actor_device_id`、`cli_session_id`；会话筛选必须带设备，游标绑定所有筛选。Task 增加设备、会话和轮次标识。网页提供来源、设备、会话和既有模型筛选；设备名称来自获准的设备 API，撤销设备仍可辨认，无法读取名称时显示受限标识。 |
+| 装配和部署 | `httpapi.Options.ModelGateway` 注册四个精确接口；`app` 装配通知监听和周期恢复。OpenAPI 及网页生成类型同步；nginx 增加精确路径、16 MiB 上传限制、关闭请求／响应缓冲和失败重发、910 秒代理读取时限、禁用网关访问日志。 |
+
+### 与 §3 的接口对齐说明
+
+路径、必填 header、target、协议版本 1、配置字段、成功 JSON/SSE、错误 envelope、去重及取消语义均沿用 §3。以下补全了原文未展开的 JSON 细节，供 CLI 任务直接对齐：
+
+- 请求状态的 `usage` 使用现有 `modelusage.Totals`：`calls`、`pending_calls`、`outcome_unknown_calls`，以及 `input`／`output`／`reasoning`／`total`，每项为 `{known_sum, unknown_calls}`。多个 attempts 一并汇总；这与模型响应本身的 Chat usage 字段不同，后者仍省略缺失字段。
+- 状态／取消的 404 envelope 使用稳定 code `request_not_found`；§3 规定了 404 行为但未给该行命名。提前取消标记的 `task_id` 为 null、`dispatched` 为 false、usage 中 calls 为 0。
+- `length`／`content_filter` 保留原 finish_reason，不伪造完整回答；持久请求状态为 failed，已发生调用和已知计数照常保留。
+- 正常完成的请求在最后输出前已结算并释放上游名额；最后输出仍经过设备和隐私门禁。状态说明服务端已知的上游结果，不表示客户端一定收到了全部网络字节。
+
+### 验证范围
+
+使用 `TEST_DATABASE_URL` 指定的真实 PostgreSQL、隔离 schema、`httptest` 假上游和正式 HTTP router 验证。共享 `agentcore/modelclient` 作为消费者完成两种上游的“工具请求 → 工具结果 → 最终回答”，同轮两次调用累计为一项任务；未改动共享协议。
+
+自动测试覆盖：文字／多工具分片、工具 ID／名称／参数分片、UTF-8、推理摘要、完整／部分／缺失 usage、较大 Responses 终态计量、截断、非流式、有限回退 attempts、重复 ID、提前取消、设备串行、网页保留名额、同步教学出口同池、双服务实例通知、撤销／断线／隐私清除关闭流、迟到用量拒绝、恢复不重发、search／任意模型拒绝、正文不进入数据库或 HTTP 日志，以及来源／设备／会话查询。
+
+检查结果（2026-10-20）：先 `umask 022`，受影响 Go 包的 `go test -p=1` 和 `go vet -p=1` 均通过；mentorrun 使用 `-timeout 40m`，整包复验耗时 1085.858 秒。llm 与 modelgateway 另通过包级 `-race` 检查。网页 `npm run generate` 和 `npm run check` 通过；未运行全项目测试或三浏览器矩阵。
+
+当前环境没有 nginx 可执行文件，因此这里只完成部署配置编辑与人工核对，未声称通过实际 nginx smoke。真实 CLI 二进制联调、实际部署代理、独立进程故障注入和真实供应商验证留给并行 CLI 任务及 Candidate；假上游不代表演示站或供应商验证。
+
+## 15. G-A CLI 实现覆盖
+
+本节记录 `feat/gateway-cli` 的 CLI 实现边界；服务端、agentcore、OpenAPI 与部署由独立任务交付，不能以 CLI 假网关测试代替服务端或部署验收。
+
+| 落点 | CLI 行为与验证 |
+| --- | --- |
+| `internal/modelgateway` | GET 安全配置、Chat Completions 适配器、Authorization 设备鉴权、禁止跳转、§3.2 请求头与随机 request ID。模型体的 model 为 target，共享客户端 Base URL 为 `<server>/v1/model-gateway`。假网关验证文字／工具两次调用、错误不重发、HTML 404／502、流内错误、重定向、取消和串行。 |
+| `internal/config`、`command/model_gateway.go` | 保存 server/device 绑定的 selected_target、destination_revision、notice_version；只保留客户端偏好，无本地连接／容量／模型秘密。list/select/show/test 使用在线配置，选择失效保持原选择并停止；配置版本变化刷新，目的地变化须确认。首次告知使用 brief 原文，确认前连配置 GET 也不发出；非交互入口提示先在终端确认。解绑清除选择与告知。 |
+| `internal/dashboard` | 从相同安全配置投影显示 teaching／mentor，不提供供应商、地址、任意模型名或密钥表单；保留压缩、推理及历史偏好。为遵守本任务“确认前无任何请求”，告知确认在在线列表读取之前。 |
+| `internal/agentcontroller`、`agentsession` | 将 Provider 元数据替换为网关 server/device/target/destination/model 显示信息，另持久化随机 gateway_session_id。同一绑定恢复复用该 ID；拒绝设备变更不改写原归属，确认改变绑定后生成新 ID。恢复不发模型请求、不重做工具。 |
+| `internal/agentloop`、自动标题 | 每次用户输入前刷新配置并采用在线窗口／输出上限；标题、observer、reflector 捕获触发轮次及连接，使用明确 stage，内部输出不超过所选上限。每个 server/device 在本进程共用可取消调度器；新轮次取消旧内部任务。工具审批／问询的继续沿用该轮快照和 turn ID。 |
+| 超时、错误与用量 | 流式空闲等待为下发值 +5 秒，整次期限采用 request_timeout_seconds；非流式遵循整体期限，不套用普通 API 30 秒总超时。Ctrl-C 取消 HTTP context 后，在 5 秒收尾期限内补发一次 cancel；失败请求保留 request ID。稳定错误映射为中文，不展示服务端原始错误正文。部分 usage 不交给共享核心当完整计量校准。 |
+| 直连移除与独立命令 | 删除 modelsecret 包、preset/key 命令、本地连接字段及密钥注入。HTTP 模型测试夹具改为假网关；纯工具测试保留模型 fake。设备凭据、本机加密、离线学习和本机会话删除保留。 |
+
+与服务端对齐的接口假设：
+
+- 协议版本为 1，privacy_generation 为 JSON 整数；target 仅 teaching／mentor。配置刷新携带已知协议和隐私代次；代次冲突停止本次操作，下一次用户主动操作重新读取代次。配置响应保留 limits，包括不可用时的安全投影；版本标识为不透明字符串，不含凭据。
+- 成功 SSE 使用 §3.4 的标准 Chat 帧和 `[DONE]`；流内错误使用 `event: error` 与同形 error envelope。上游兼容回退由服务端完成，CLI 不根据上游错误重新提交。
+- cancel 使用 `POST /v1/model-gateway/requests/{request_id}/cancel`、空 JSON `{}`，带原请求的版本和隐私代次；不自动重试取消，也不自动重发正文。
+- 现有配对兑换合同仍只有 `code/display_name`；`cli` profile 由网页／服务端生成配对码时确定。CLI 配对入口明确提示使用 cli 配对码，网关以 invoke_allowed 判定模型权限；CLI 不向兑换请求添加未约定字段。
+
+本次任务明确将 MaxToolRounds、共享 MaxToolSteps 和累计预算清理留给 G-B，因此保留已有 MaxToolRounds 偏好及执行行为；这覆盖了本任务的范围约束，区别于 §11.1／§12 原先拟定的首批停用安排。现有问询／工具审批恢复沿用本轮归属；新的共享工具上限“继续”入口在 G-B 实现时须调用相同的配置刷新及轮次绑定逻辑。
+
+验证使用 `httptest` 假网关，不使用供应商密钥或付费调用。受影响包的 race／vet 以及 CLI 模块全量测试结果由本次实现报告列出；真实服务端、nginx、PostgreSQL、多实例和跨平台验收仍由对应任务／Candidate 承担。
+
+本工作树检查结果：`internal/config`、`modelgateway`、`command`、`dashboard`、`agentloop`、`agentcontroller`、`agentsession`、`agentui` 的 `go test -race`、`go vet` 均通过；最终 `go test ./...` 通过。Go 构建缓存使用 `/tmp/ga-cli-go-build`，未改动系统配置。`git diff --check` 通过；`server/`、`packages/agentcore` 和暂存区均无改动。
+
+## 16. G-A 真实 CLI 联调（#122）
+
+2026-10-20 在合并分支使用真实 `edu-agent`、真实 `edu-agentd`、本地假上游和 PostgreSQL 完成联调。入口为 `server/internal/modelgateway/cli_integration_test.go` 的 `TestRealCLIModelGatewayIntegration`，进程／PTY 辅助和可选 nginx smoke 位于同目录的 `cli_fixture_integration_test.go`、`cli_nginx_integration_test.go`。测试需要 Linux PTY；每次创建并清理独立数据库 schema、网页设置文件和 CLI 配对目录，不使用开发者已有凭据。
+
+发现并修复：
+
+- 真实 API 客户端装配会把模型包装为 `agentcontext.GuardedModel`，原网关轮次绑定只识别裸模型，首轮因缺少 session/turn 被 CLI 拒绝。现在通过包装器更新网关快照，并保留前台、整理和标题的学习隐私守卫；标题期限也从被包装的网关读取。原 controller 测试改用真实 API 客户端，并验证恢复身份及隐私代次改变后不外发。
+- Ctrl-C 原本只触发取消，UI 返回后进程可能在 cancel POST 完成前退出。现在退出时取消轮次并有界等待其清理完成，让网关的单次 cancel 收尾有机会收到响应；超时提示停止结果未确认。
+- 配置 GET 原本忽略刷新携带的版本与隐私代次。现在首次读取仍可省略，已提供的版本／代次按合同校验；未知版本返回 426，旧代次返回 409，非法代次返回 400。服务端首次配置读取的测试夹具同时去掉虚假的 generation=0。
+
+接口核对结果：调用路径、Bearer、§3.2 headers、target 请求体、Chat SSE／错误 envelope、配置安全投影、cancel 的 `{}`、配对兑换的 `code/display_name` 与 `cli` profile 一致。CLI 尚无状态查询消费入口，不存在将状态 usage 当普通 Chat usage 解码的代码；联调直接验证状态 API 的 `modelusage.Totals`，包括各项 `{known_sum,unknown_calls}` 和 `request_not_found`。提前取消登记的语义沿用 §3.3。
+
+场景包含：网页 Cookie＋Origin／CSRF 配置 teaching=Responses、mentor=Chat Completions；真实 CLI 配对、首次隐私确认、选择记忆；分片工具调用读取本机中文文件，再请求得到最终回答。每轮数据库有一项 source=cli、认证设备和 session/turn 正确的任务、两条 received call 和两条 succeeded request，输入／输出／推理／总 Token 分别为 30／11／3／41。用量 summary、tasks、calls 按来源、设备、会话核对，错误筛选没有结果；逐表和日志检查正文标记不落盘。
+
+补充场景验证同设备第二请求 429 且 CLI 显示繁忙、Ctrl-C 恰好补发一次 cancel 并最终 cancelled、撤销在流中返回 device_revoked 并关闭上游／提示重新配对，以及 CLI 与 HTTP 同时拒绝 search／任意模型名。取消场景用透明代理观测实际 HTTP 请求，所有业务响应仍来自真实服务端。
+
+从仓库根目录运行（Web 依赖须已安装，构建不自动安装依赖）：
+
+```bash
+umask 022
+export GOCACHE=/tmp/ga122-go-build
+(cd clients/web && npm run build)
+(cd server && go build -o edu-agentd ./cmd/edu-agentd)
+(cd clients/cli-go && go build -o /tmp/ga122-edu-agent ./cmd/edu-agent)
+export TEST_DATABASE_URL='postgres://postgres:postgres@127.0.0.1:32995/edu_agent_test?sslmode=disable'
+export EDU_AGENT_INTEGRATION_SERVER="$PWD/server/edu-agentd"
+export EDU_AGENT_INTEGRATION_CLI=/tmp/ga122-edu-agent
+(cd server && go test -p=1 ./internal/modelgateway -run '^TestRealCLIModelGatewayIntegration$' -count=1 -v -timeout 4m)
+```
+
+可选代理检查先执行 `docker pull nginx:alpine`，再设置 `EDU_AGENT_INTEGRATION_NGINX=1` 运行同一测试。它直接抽取 `deploy/web/nginx.conf` 的两个网关 location，只替换测试监听和上游地址，使用临时容器及 host 网络；完成后清理容器。此次首帧 175 ms，配置、模型流、cancel、状态、未知路径拒绝和取消后不重发均通过。这不替代正式 TLS 部署、多实例故障注入或真实供应商实测。
+
+此次真实进程集成及所有补充场景通过（53.54 秒）。局部检查包括服务端 `internal/modelgateway` 的 `go test -p=1`、`go vet -p=1`，CLI `agentcontroller`、`agentloop`、`agentui` 的 `go test -race`、`go vet -race`，未运行全项目测试。G-B、agentcore 协议及 Git 暂存／提交均不在此次改动中。

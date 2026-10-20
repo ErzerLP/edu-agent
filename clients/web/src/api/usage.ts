@@ -35,6 +35,9 @@ export const usageTask = z.object({
   space_id: z.string().uuid().nullable(),
   kind: z.string(),
   source: z.enum(['web', 'cli', 'server']),
+  actor_device_id: z.string().uuid().nullable(),
+  cli_session_id: z.string().uuid().nullable(),
+  cli_turn_id: z.string().uuid().nullable(),
   started_at: z.string(),
   run_id: z.string().uuid().nullable(),
   conversation_id: z.string().uuid().nullable().optional(),
@@ -73,4 +76,7 @@ export type UsageFilter = {
   grain: 'day' | 'week' | 'month'
   model?: string
   space_id?: string
+  source?: 'web' | 'cli' | 'server'
+  actor_device_id?: string
+  cli_session_id?: string
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 )
 
 const (
@@ -58,7 +59,7 @@ func runReflector(ctx context.Context, model Model, estimator TokenEstimator, co
 		Tools:     []modelclient.Tool{reflectorRecordTool()},
 		MaxTokens: min(2048, max(1, contextWindow/4)),
 	}
-	response, err := model.Complete(ctx, request)
+	response, err := model.Complete(modelgateway.WithStage(ctx, "context_reflector"), request)
 	if err != nil {
 		return reflectorResult{}, fmt.Errorf("context reflector model request: %w", err)
 	}

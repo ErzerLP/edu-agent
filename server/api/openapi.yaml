@@ -6,11 +6,96 @@ info:
 servers:
   - url: http://127.0.0.1:8080
 paths:
+  /v1/model-gateway/config:
+    get:
+      operationId: getModelGatewayConfig
+      summary: 读取设备模型网关安全配置
+      description: 仅设备 Bearer；有效设备可读，不需要 settings 权限。不调用上游，不返回端点或密钥。
+      security: [{ deviceBearer: [] }]
+      responses:
+        '200': { description: 当前代次与已启用 teaching/mentor 连接，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/ModelGatewayConfig' } } } }
+        default: { $ref: '#/components/responses/ModelGatewayFailure' }
+  /v1/model-gateway/chat/completions:
+    post:
+      operationId: invokeModelGateway
+      summary: 使用网页配置的模型执行一次 CLI 请求
+      description: 仅接受文本及 function 工具。正文上限 16 MiB；model 是 target，不是任意上游模型名。同 request_id 只受理一次，不重放正文。SSE 为 Chat Completions choices[0]，含 content、tool_calls、reasoning_content、finish_reason 和可空 usage；正常终态后发送 [DONE]，错误使用 event:error 且不发送 [DONE]。15 秒 keepalive，不延长上游空闲时限。繁忙返回 429 和 Retry-After:2，不排队。
+      security: [{ deviceBearer: [] }]
+      x-required-scope: model:invoke
+      parameters:
+        - { $ref: '#/components/parameters/ModelGatewayVersion' }
+        - { $ref: '#/components/parameters/ModelGatewayGeneration' }
+        - { name: X-Model-Configuration, in: header, required: true, schema: { type: string, maxLength: 128 } }
+        - { name: X-CLI-Session-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-CLI-Turn-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-CLI-Request-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-CLI-Model-Stage, in: header, required: true, schema: { type: string, enum: [foreground, context_observer, context_reflector, tool_limit_summary, session_title, probe] } }
+        - { name: X-Learning-Space-ID, in: header, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModelGatewayRequest' }
+      responses:
+        '200':
+          description: Chat Completions JSON 或 SSE；X-CLI-Request-ID、X-Model-Usage-Task-ID、X-Model-Gateway-Version 关联用量。流响应额外设置 X-Accel-Buffering:no。
+          headers:
+            X-CLI-Request-ID: { schema: { type: string, format: uuid } }
+            X-Model-Usage-Task-ID: { schema: { type: string, format: uuid } }
+            X-Model-Gateway-Version: { schema: { type: string, const: '1' } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelGatewayCompletion' }
+            text/event-stream:
+              schema: { type: string }
+        default: { $ref: '#/components/responses/ModelGatewayFailure' }
+  /v1/model-gateway/requests/{request_id}:
+    get:
+      operationId: getModelGatewayRequest
+      summary: 读取原设备请求的状态与用量
+      description: 仅原设备、当前代次；其他设备、不存在或已清除均为 404。不提供正文或续流。
+      security: [{ deviceBearer: [] }]
+      x-required-scope: model:invoke
+      parameters:
+        - { $ref: '#/components/parameters/ModelGatewayVersion' }
+        - { $ref: '#/components/parameters/ModelGatewayGeneration' }
+        - { name: request_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 请求状态；usage 是所有真实 attempts 的已知小计与未知次数, content: { application/json: { schema: { $ref: '#/components/schemas/ModelGatewayState' } } } }
+        default: { $ref: '#/components/responses/ModelGatewayFailure' }
+  /v1/model-gateway/requests/{request_id}/cancel:
+    post:
+      operationId: cancelModelGatewayRequest
+      summary: 幂等停止原设备请求
+      description: 先提交权威取消状态，再通知所有实例关闭连接；提前取消登记无用量标记。终态返回已有 state。
+      security: [{ deviceBearer: [] }]
+      x-required-scope: model:invoke
+      parameters:
+        - { $ref: '#/components/parameters/ModelGatewayVersion' }
+        - { $ref: '#/components/parameters/ModelGatewayGeneration' }
+        - { name: request_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '200':
+          description: 已取消或已有终态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [request_id, state]
+                properties:
+                  request_id: { type: string, format: uuid }
+                  state: { $ref: '#/components/schemas/ModelGatewayRequestState' }
+        default: { $ref: '#/components/responses/ModelGatewayFailure' }
   /v1/learning/usage:
     get:
       operationId: getModelUsage
-      summary: 查看导师对话真实用量、未知数与时间分布
-      description: 当前仅覆盖导师对话，不含 CLI 本地直连。区间为 [from,to)，按外发开始时间归桶；周从周一开始。省略 space_id 为全局，有 space_id 时必须与 X-Learning-Space-ID 一致。沿用浏览器身份、Origin、CSRF 和隐私读取门禁，响应 no-store。
+      summary: 查看服务端模型真实用量、未知数与时间分布
+      description: 包含 CLI 网关和现有服务端出口。区间为 [from,to)，按外发开始时间归桶；周从周一开始。省略 space_id 为全局，有 space_id 时必须与 X-Learning-Space-ID 一致。沿用身份、学习区与隐私读取门禁，响应 no-store。cli_session_id 必须同时给定 actor_device_id。
       security: [{ deviceBearer: [] }, { webCookie: [] }]
       x-required-scope: learning:read
       parameters:
@@ -19,6 +104,9 @@ paths:
         - { $ref: '#/components/parameters/UsageTimezone' }
         - { $ref: '#/components/parameters/UsageGrain' }
         - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSource' }
+        - { $ref: '#/components/parameters/UsageDevice' }
+        - { $ref: '#/components/parameters/UsageCLISession' }
         - { $ref: '#/components/parameters/UsageSpace' }
         - { $ref: '#/components/parameters/UsageSpaceHeader' }
       responses:
@@ -36,6 +124,9 @@ paths:
         - { $ref: '#/components/parameters/UsageTimezone' }
         - { $ref: '#/components/parameters/UsageGrain' }
         - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSource' }
+        - { $ref: '#/components/parameters/UsageDevice' }
+        - { $ref: '#/components/parameters/UsageCLISession' }
         - { $ref: '#/components/parameters/UsageSpace' }
         - { $ref: '#/components/parameters/UsageSpaceHeader' }
         - { $ref: '#/components/parameters/UsageCursor' }
@@ -56,6 +147,9 @@ paths:
         - { $ref: '#/components/parameters/UsageTimezone' }
         - { $ref: '#/components/parameters/UsageGrain' }
         - { $ref: '#/components/parameters/UsageModel' }
+        - { $ref: '#/components/parameters/UsageSource' }
+        - { $ref: '#/components/parameters/UsageDevice' }
+        - { $ref: '#/components/parameters/UsageCLISession' }
         - { $ref: '#/components/parameters/UsageSpace' }
         - { $ref: '#/components/parameters/UsageSpaceHeader' }
         - { $ref: '#/components/parameters/UsageCursor' }
@@ -4922,6 +5016,29 @@ paths:
         "503": { $ref: "#/components/responses/DependencyUnavailable" }
 components:
   parameters:
+    ModelGatewayVersion:
+      name: X-Model-Gateway-Version
+      in: header
+      required: true
+      schema: { type: string, const: '1' }
+    ModelGatewayGeneration:
+      name: X-Learning-Generation
+      in: header
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+    UsageSource:
+      name: source
+      in: query
+      schema: { type: string, enum: [web, cli, server] }
+    UsageDevice:
+      name: actor_device_id
+      in: query
+      schema: { type: string, format: uuid }
+    UsageCLISession:
+      name: cli_session_id
+      in: query
+      description: 同时指定 actor_device_id；只使用随机会话标识，不上传标题或工作目录
+      schema: { type: string, format: uuid }
     UsageFrom:
       name: from
       in: query
@@ -5116,6 +5233,13 @@ components:
       name: X-Privacy-Erasure-Grant
       description: One-time, device-bound, locally issued privacy erasure grant. For a new operation it is validated and consumed in the same serializable transaction as the barrier; a failed or conflicting barrier does not consume it. An exact committed-operation replay may omit it. The value is never returned or logged.
   responses:
+    ModelGatewayFailure:
+      description: 稳定网关错误；400/413 输入，401 设备，403 权限或模型，409 版本/去重/归属，422 上限，426 协议，429 繁忙，502 上游，503 服务，504 超时。429 返回 Retry-After:2。
+      headers:
+        Retry-After: { schema: { type: string, const: '2' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ModelGatewayError' }
     WebFailure:
       description: 400 无效请求或身份歧义；401 失效或撤销；403 Origin/CSRF 或权限不符；409 先退出已有会话；429 限流；503 暂不可用。错误不泄漏配对码或秘密。
       content:
@@ -5305,6 +5429,153 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    ModelGatewayConfig:
+      type: object
+      required: [protocol_version, invoke_allowed, available, unavailable_reason, privacy_generation, models, limits, capabilities, admission]
+      properties:
+        protocol_version: { type: integer, const: 1 }
+        invoke_allowed: { type: boolean }
+        available: { type: boolean }
+        unavailable_reason: { type: [string, 'null'], enum: [no_selectable_model, gateway_capacity_disabled, null] }
+        privacy_generation: { type: integer, format: int64 }
+        models:
+          type: array
+          items:
+            type: object
+            required: [target, display_name, model_name, configuration_revision, destination_revision, context_tokens, output_tokens]
+            properties:
+              target: { type: string, enum: [teaching, mentor] }
+              display_name: { type: string }
+              model_name: { type: string }
+              configuration_revision: { type: string }
+              destination_revision: { type: string }
+              context_tokens: { type: integer }
+              output_tokens: { type: integer }
+        limits:
+          type: object
+          required: [max_tool_steps, idle_timeout_seconds, request_timeout_seconds]
+          properties:
+            max_tool_steps: { type: [integer, 'null'], minimum: 1 }
+            idle_timeout_seconds: { type: integer }
+            request_timeout_seconds: { type: integer }
+        capabilities:
+          type: object
+          required: [stream, tools, reasoning_deltas]
+          properties:
+            stream: { type: boolean }
+            tools: { type: boolean }
+            reasoning_deltas: { type: boolean }
+        admission:
+          type: object
+          required: [concurrency, per_device, cli_capacity, queue]
+          properties:
+            concurrency: { type: integer, minimum: 1, maximum: 16, default: 10 }
+            per_device: { type: integer, const: 1 }
+            cli_capacity: { type: integer, minimum: 0, maximum: 15 }
+            queue: { type: boolean, const: false }
+    ModelGatewayRequest:
+      type: object
+      additionalProperties: false
+      required: [model, messages]
+      properties:
+        model: { type: string, enum: [teaching, mentor] }
+        messages: { type: array, minItems: 1, items: { $ref: '#/components/schemas/ModelGatewayMessage' } }
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [type, function]
+            properties:
+              type: { type: string, const: function }
+              function:
+                type: object
+                additionalProperties: false
+                required: [name, parameters]
+                properties:
+                  name: { type: string, pattern: '^[a-zA-Z0-9_-]{1,256}$' }
+                  description: { type: string }
+                  parameters: { type: object }
+        max_tokens: { type: integer, minimum: 1, description: 缺省使用服务端值；不能超过配置上限 }
+        reasoning_effort: { type: string, enum: [auto, none, minimal, low, medium, high, xhigh, max] }
+        stream: { type: boolean, default: false }
+        stream_options:
+          type: object
+          additionalProperties: false
+          properties:
+            include_usage: { type: boolean }
+    ModelGatewayMessage:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role: { type: string, enum: [system, user, assistant, tool] }
+        content: { type: string }
+        tool_call_id: { type: string }
+        tool_calls:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, type, function]
+            properties:
+              id: { type: string, maxLength: 512 }
+              type: { type: string, const: function }
+              function:
+                type: object
+                additionalProperties: false
+                required: [name, arguments]
+                properties:
+                  name: { type: string, maxLength: 256 }
+                  arguments: { type: string, maxLength: 1048576 }
+    ModelGatewayCompletion:
+      type: object
+      required: [choices]
+      properties:
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: object
+            required: [index, message, finish_reason]
+            properties:
+              index: { type: integer, const: 0 }
+              message: { $ref: '#/components/schemas/ModelGatewayMessage' }
+              finish_reason: { type: string, enum: [stop, tool_calls, length, content_filter] }
+        usage:
+          type: object
+          description: 仅包含上游已知的 Chat Completions usage 字段；缺失字段不填零
+          properties:
+            prompt_tokens: { type: [integer, 'null'], minimum: 0 }
+            completion_tokens: { type: [integer, 'null'], minimum: 0 }
+            total_tokens: { type: [integer, 'null'], minimum: 0 }
+            prompt_tokens_details: { type: object }
+            completion_tokens_details: { type: object }
+    ModelGatewayRequestState:
+      type: string
+      enum: [accepted, running, succeeded, failed, cancelled, outcome_unknown]
+    ModelGatewayState:
+      type: object
+      required: [request_id, task_id, state, dispatched, usage, reason]
+      properties:
+        request_id: { type: string, format: uuid }
+        task_id: { type: [string, 'null'], format: uuid }
+        state: { $ref: '#/components/schemas/ModelGatewayRequestState' }
+        dispatched: { type: boolean }
+        usage: { $ref: '#/components/schemas/ModelUsageTotals' }
+        reason: { type: [string, 'null'] }
+    ModelGatewayError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [type, code, message]
+          properties:
+            type: { type: string, const: gateway_error }
+            code: { type: string, enum: [invalid_request, request_too_large, device_unauthorized, model_scope_required, model_not_allowed, configuration_changed, privacy_generation_changed, request_already_accepted, turn_binding_conflict, context_limit_exceeded, output_limit_exceeded, gateway_busy, gateway_version_unsupported, model_unavailable, gateway_capacity_disabled, gateway_unavailable, upstream_error, upstream_incompatible, upstream_rate_limited, model_idle_timeout, model_request_timeout, device_revoked, request_cancelled, request_not_found] }
+            message: { type: string, description: 固定中文模板，不包含上游正文或端点 }
     ModelUsageMetric:
       type: object
       required: [known_sum, unknown_calls]
@@ -5357,12 +5628,15 @@ components:
           items: { $ref: '#/components/schemas/ModelUsageIdentity' }
     ModelUsageTask:
       type: object
-      required: [id, space_id, kind, source, started_at, run_id, totals]
+      required: [id, space_id, kind, source, actor_device_id, cli_session_id, cli_turn_id, started_at, run_id, totals]
       properties:
         id: { type: string, format: uuid }
         space_id: { type: [string, 'null'], format: uuid }
         kind: { type: string }
         source: { type: string, enum: [web, cli, server] }
+        actor_device_id: { type: [string, 'null'], format: uuid }
+        cli_session_id: { type: [string, 'null'], format: uuid }
+        cli_turn_id: { type: [string, 'null'], format: uuid }
         started_at: { type: string, format: date-time }
         run_id: { type: [string, 'null'], format: uuid, description: 仅原任务仍可读时提供；删除对话后为空 }
         conversation_id: { type: [string, 'null'], format: uuid, description: 话题整理关联的可读对话；删除后为空 }
@@ -7300,7 +7574,7 @@ components:
         output_tokens: { type: integer, minimum: 64, maximum: 32768, default: 2048 }
         context_tokens: { type: integer, minimum: 4096, maximum: 2000000, default: 32768 }
         idle_timeout_seconds: { type: integer, minimum: 5, maximum: 600, default: 60 }
-        concurrency: { type: integer, minimum: 1, maximum: 16, default: 2 }
+        concurrency: { type: integer, minimum: 1, maximum: 16, default: 10 }
         storage_mib: { type: integer, minimum: 16, maximum: 1048576, default: 512 }
     SettingsLimitsUpdate:
       type: object
@@ -7313,7 +7587,7 @@ components:
         output_tokens: { type: integer, minimum: 64, maximum: 32768, default: 2048 }
         context_tokens: { type: integer, minimum: 4096, maximum: 2000000, default: 32768 }
         idle_timeout_seconds: { type: integer, minimum: 5, maximum: 600, default: 60 }
-        concurrency: { type: integer, minimum: 1, maximum: 16, default: 2 }
+        concurrency: { type: integer, minimum: 1, maximum: 16, default: 10 }
         storage_mib: { type: integer, minimum: 16, maximum: 1048576, default: 512 }
     SettingsPolicy:
       type: object

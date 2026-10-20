@@ -160,7 +160,7 @@ func newFileModeSelector(current agentloop.FileAuthorizationMode) *selectorModel
 	}
 	return &selectorModel{
 		kind: selectorFileMode, title: "文件授权模式",
-		body:    "YOLO 仅当前 Session 有效，永久归档清理始终另需一次明确确认。归档目录禁止普通写入；其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给当前 provider。",
+		body:    "YOLO 仅当前 Session 有效，永久归档清理始终另需一次明确确认。归档目录禁止普通写入；其他隐藏文件、.git、.comet 和秘密文件没有额外路径保护，内容可能发送给所选服务端模型。",
 		options: options, focus: focus,
 	}
 }

@@ -179,7 +179,7 @@ func TestDirectoryCopyLegacyMigrationPreservesV1Fields(t *testing.T) {
 	record.WorkspacePathHash = "sha256:" + strings.Repeat("c", 64)
 	record.WorkspaceRootIdentityHash = "sha256:" + strings.Repeat("d", 64)
 	record.WorkspaceID = record.WorkspaceRootIdentityHash
-	record.ProviderName, record.ProviderEndpoint, record.ProviderModel = "provider", "https://example.test/api", "model"
+	record.GatewayTarget, record.GatewayServerURL, record.GatewayModelName = "provider", "https://example.test/api", "model"
 	record.PrivacyLearnerGeneration, record.PrivacyMemoryGeneration, record.PrivacyVerified = 2, 3, true
 	record.CommittedUserTurns = 2
 	record.QuarantinedCheckpoint = []byte(`{"legacy":true}`)

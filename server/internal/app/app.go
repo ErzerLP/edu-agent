@@ -27,6 +27,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
+	"github.com/edu-agent/edu-agent/server/internal/modelgateway"
 	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/edu-agent/edu-agent/server/internal/platform/config"
@@ -156,6 +157,11 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	mentorRuns.ConfigureMemory(bridge.memoryExporter, bridge.readPermits)
 	modelUsage.ConfigureReadPermits(bridge.readPermits)
+	modelGateway, err := modelgateway.New(ctx, modelgateway.Options{Pool: pool, Settings: settingsService, Identity: identityService, Usage: modelUsage, Permits: bridge.readPermits})
+	if err != nil {
+		return fmt.Errorf("初始化 CLI 模型网关失败: %w", err)
+	}
+	defer modelGateway.Close()
 	notesyncBridge, err := composeNotesync(cfg, notesyncDependencies{
 		publicationStore: stores.knowledge, reviewStore: stores.knowledge, outboxStore: stores.outbox,
 		importer: knowledgeService, canonicalizer: canonicalizer,
@@ -164,6 +170,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	runtimeWorkers := append([]workerSpec(nil), bridge.workers...)
+	runtimeWorkers = append(runtimeWorkers, periodicWorker("model-gateway-recovery", 10*time.Second, 1, func(ctx context.Context) (int, error) { return 0, modelGateway.Sweep(ctx) }))
 	runtimeWorkers = append(runtimeWorkers, periodicWorker("mentor-cleanup", time.Second, 1, mentorRuns.Sweep))
 	runtimeWorkers = append(runtimeWorkers, periodicWorker("learning-changes", time.Second, 1, changes.RunOnce))
 	for index := 0; index < settingsView.Limits.Concurrency; index++ {
@@ -201,6 +208,7 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	authLimiter := httpapi.NewFixedWindowLimiter(cfg.AuthFailureLimitPerMinute, time.Minute)
 	deviceLimiter := httpapi.NewFixedWindowLimiter(cfg.DeviceRateLimitPerMinute, time.Minute)
 	handler, err := composeTransportHandler(httpapi.Options{
+		ModelGateway:     modelGateway,
 		CompanionEnabled: cfg.CompanionEnabled,
 		LearningContent:  contentStore,
 		StudioQuiz:       &learningstart.Service{Learning: stores.learning, Knowledge: stores.knowledge, Content: contentStore},

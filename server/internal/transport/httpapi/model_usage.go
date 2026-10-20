@@ -27,7 +27,7 @@ func (a *API) mountUsage(r chi.Router) {
 }
 func usageQuery(w http.ResponseWriter, r *http.Request) (modelusage.Query, bool) {
 	q := modelusage.Query{Timezone: "UTC", Grain: "day", Limit: 20}
-	values, ok := strictLearningQuery(w, r, "from", "to", "timezone", "grain", "model", "space_id", "cursor", "limit")
+	values, ok := strictLearningQuery(w, r, "from", "to", "timezone", "grain", "model", "space_id", "cursor", "limit", "source", "actor_device_id", "cli_session_id")
 	if !ok {
 		return q, false
 	}
@@ -49,6 +49,9 @@ func usageQuery(w http.ResponseWriter, r *http.Request) (modelusage.Query, bool)
 		q.Grain = values.Get("grain")
 	}
 	q.Model = values.Get("model")
+	q.Source = values.Get("source")
+	q.ActorDeviceID = values.Get("actor_device_id")
+	q.CLISessionID = values.Get("cli_session_id")
 	q.SpaceID = values.Get("space_id")
 	q.Cursor = values.Get("cursor")
 	if values.Has("limit") {

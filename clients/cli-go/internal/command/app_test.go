@@ -132,16 +132,14 @@ func (s *memoryCredentialStore) Delete() error {
 }
 
 type fakeDashboardResult struct {
-	args     []string
-	modelKey string
-	quit     bool
-	err      error
+	args []string
+	quit bool
+	err  error
 }
 
 type fakeDashboard struct {
-	results         []fakeDashboardResult
-	snapshots       []dashboard.Snapshot
-	pendingModelKey string
+	results   []fakeDashboardResult
+	snapshots []dashboard.Snapshot
 }
 
 func (d *fakeDashboard) Run(_ context.Context, snapshot dashboard.Snapshot) ([]string, bool, error) {
@@ -151,17 +149,7 @@ func (d *fakeDashboard) Run(_ context.Context, snapshot dashboard.Snapshot) ([]s
 	}
 	result := d.results[0]
 	d.results = d.results[1:]
-	d.pendingModelKey = result.modelKey
 	return result.args, result.quit, result.err
-}
-
-func (d *fakeDashboard) TakeModelKey() (string, bool) {
-	if d.pendingModelKey == "" {
-		return "", false
-	}
-	value := d.pendingModelKey
-	d.pendingModelKey = ""
-	return value, true
 }
 
 type fakeTerminal struct {
@@ -364,7 +352,7 @@ func TestDashboardAgentFailureWaitsForReturnPrompt(t *testing.T) {
 	if terminal.readLineCalls != 1 {
 		t.Fatalf("return prompt calls=%d, want 1", terminal.readLineCalls)
 	}
-	if !strings.Contains(errOut.String(), "[agent_not_configured]") {
+	if !strings.Contains(errOut.String(), "[privacy_confirmation_required]") {
 		t.Fatalf("agent error missing: %q", errOut.String())
 	}
 }
@@ -471,7 +459,7 @@ func TestClientConfigCanBeSetBeforePairing(t *testing.T) {
 
 func TestUnpairedClientSettingsAreNotReportedAsOrphaned(t *testing.T) {
 	t.Parallel()
-	preset := config.DefaultAgentConfig("ollama")
+	preset := config.DefaultAgentConfig()
 	configStore := &memoryConfigStore{present: true, value: config.Config{Timeout: "45s", Color: "auto", Agent: &preset}}
 	app, _, _ := newTestApp(configStore, &memoryCredentialStore{}, &fakeTerminal{})
 
@@ -723,7 +711,7 @@ func TestDeviceStatusLogoutAndForgetLocal(t *testing.T) {
 	}))
 	defer server.Close()
 	configStore, credentialStore := pairedStores(server.URL, token)
-	modelPreset := config.DefaultAgentConfig("deepseek")
+	modelPreset := config.DefaultAgentConfig()
 	configStore.value.Agent = &modelPreset
 	app, out, errOut := newTestApp(configStore, credentialStore, &fakeTerminal{confirmed: true})
 	if exit := app.Run(t.Context(), []string{"device", "status"}); exit != ExitOK {
@@ -759,7 +747,7 @@ func TestDeviceStatusLogoutAndForgetLocal(t *testing.T) {
 func TestForgetLocalRepairsPendingJournalWithoutNetwork(t *testing.T) {
 	t.Parallel()
 	configStore, credentialStore := pairedStores(config.DefaultServerURL, "token")
-	modelPreset := config.DefaultAgentConfig("openrouter")
+	modelPreset := config.DefaultAgentConfig()
 	configStore.value.Agent = &modelPreset
 	configStore.journalPresent = true
 	configStore.journal = config.PairingJournal{SchemaVersion: 1, ServerURL: config.DefaultServerURL, DeviceID: testDeviceID, DisplayName: "Laptop"}
@@ -973,9 +961,15 @@ func TestKnowledgeImportStopsOnRevisionConflict(t *testing.T) {
 }
 
 func newTestApp(configStore ConfigStore, credentialStore CredentialStore, term Terminal) (*App, *bytes.Buffer, *bytes.Buffer) {
+	var transport http.RoundTripper
+	if store, ok := configStore.(*memoryConfigStore); ok && store.value.Agent != nil && store.value.Gateway == nil && store.value.HasPairingBinding() {
+		store.value.Gateway = &config.GatewayState{ServerURL: store.value.ServerURL, DeviceID: store.value.DeviceID, SelectedTarget: "teaching", DestinationRevision: "d1", NoticeVersion: 1}
+		transport = toolGatewayFixtureTransport{}
+	}
+
 	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
 	return &App{
-		Config: configStore, Credentials: credentialStore, Terminal: term, Out: out, Err: errOut,
+		Config: configStore, Credentials: credentialStore, Terminal: term, Out: out, Err: errOut, GatewayTransport: transport,
 		Getenv: func(string) string { return "" }, NewUUID: func() (string, error) { return "70000000-0000-4000-8000-000000000001", nil },
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
 			return api.NewClient(serverURL, token, timeout, nil)

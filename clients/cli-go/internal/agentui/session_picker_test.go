@@ -70,8 +70,8 @@ func (p *pickerConversation) CommitSwitch(_ context.Context, plan agentcontrolle
 	p.transcript = p.nextTranscript
 	p.title = p.nextTitle
 	p.fileMode = agentloop.FileAuthorizationConfirm
-	if plan.NeedProviderConfirm && !confirmation.Provider {
-		p.startupNotices = []string{"[session_provider_confirmation_required] 模型提供商端点已变更；确认前不会发送历史文本或生成标题"}
+	if plan.NeedGatewayConfirm && !confirmation.Gateway {
+		p.startupNotices = []string{"[session_gateway_confirmation_required] 模型提供商端点已变更；确认前不会发送历史文本或生成标题"}
 	} else {
 		p.startupNotices = nil
 	}
@@ -113,7 +113,7 @@ func TestAgentUIF2GatePickerAndMinimumTerminal(t *testing.T) {
 		items: []agentcontroller.SessionListItem{{Summary: agentsession.Summary{
 			SessionID: "11111111-1111-4111-8111-111111111111", Title: "手动复习", TitleSource: "manual", RecordRevision: 2,
 			UpdatedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC), CommittedUserTurns: 7,
-			WorkspaceLabel: "/secret/private/project", ProviderEndpoint: "https://provider.example/v1",
+			WorkspaceLabel: "/secret/private/project", GatewayServerURL: "https://provider.example/v1",
 		}}},
 	}
 	value = newModel(t.Context(), manager, "model")
@@ -171,12 +171,12 @@ func TestSessionPickerScopeSearchRenameDeleteAndConfirmationReducer(t *testing.T
 	}
 	picker.mode = pickerList
 	picker.plan = agentcontroller.SwitchPlan{}
-	plan := agentcontroller.SwitchPlan{SessionID: "11111111-1111-4111-8111-111111111111", NeedProviderConfirm: true, NeedWorkspaceConfirm: true, WorkspaceLabel: "project"}
+	plan := agentcontroller.SwitchPlan{SessionID: "11111111-1111-4111-8111-111111111111", NeedGatewayConfirm: true, NeedWorkspaceConfirm: true, WorkspaceLabel: "project"}
 	picker.mode, picker.plan = pickerSwitchConfirm, plan
-	if intent := picker.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}, source); intent.kind != pickerIntentSwitch || intent.confirmation.Provider || !intent.confirmation.Workspace {
+	if intent := picker.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}, source); intent.kind != pickerIntentSwitch || intent.confirmation.Gateway || !intent.confirmation.Workspace {
 		t.Fatalf("local-only confirmation intent=%+v", intent)
 	}
-	if intent := picker.handleKey(tea.KeyMsg{Type: tea.KeyEnter}, source); intent.kind != pickerIntentSwitch || !intent.confirmation.Provider || !intent.confirmation.Workspace {
+	if intent := picker.handleKey(tea.KeyMsg{Type: tea.KeyEnter}, source); intent.kind != pickerIntentSwitch || !intent.confirmation.Gateway || !intent.confirmation.Workspace {
 		t.Fatalf("confirmation intent=%+v", intent)
 	}
 }
@@ -368,8 +368,8 @@ func TestAgentUIPickerProviderLocalOpenAndFullConfirmationUseDistinctActions(t *
 		plan          agentcontroller.SwitchPlan
 		wantWorkspace bool
 	}{
-		{"provider only", agentcontroller.SwitchPlan{SessionID: "target", NeedProviderConfirm: true}, false},
-		{"provider and workspace", agentcontroller.SwitchPlan{SessionID: "target", NeedProviderConfirm: true, NeedWorkspaceConfirm: true, WorkspaceLabel: "project"}, true},
+		{"provider only", agentcontroller.SwitchPlan{SessionID: "target", NeedGatewayConfirm: true}, false},
+		{"provider and workspace", agentcontroller.SwitchPlan{SessionID: "target", NeedGatewayConfirm: true, NeedWorkspaceConfirm: true, WorkspaceLabel: "project"}, true},
 	} {
 		t.Run(test.name+" local open", func(t *testing.T) {
 			plan := test.plan
@@ -387,7 +387,7 @@ func TestAgentUIPickerProviderLocalOpenAndFullConfirmationUseDistinctActions(t *
 				t.Fatalf("confirmation not shown: command=%v picker=%+v", command, value.sessionPicker)
 			}
 			confirmView := value.View()
-			if !strings.Contains(confirmView, "仅本地打开") || !strings.Contains(confirmView, "拒绝向新 provider 发送") || !strings.Contains(confirmView, "Esc 取消切换") {
+			if !strings.Contains(confirmView, "仅本地打开") || !strings.Contains(confirmView, "拒绝向新模型服务发送") || !strings.Contains(confirmView, "Esc 取消切换") {
 				t.Fatalf("local-open action was not explicit: %s", confirmView)
 			}
 			updated, command = value.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
@@ -397,11 +397,11 @@ func TestAgentUIPickerProviderLocalOpenAndFullConfirmationUseDistinctActions(t *
 			}
 			updated, _ = value.Update(command())
 			value = updated.(model)
-			if manager.switchCalls != 1 || manager.lastConfirmation.Provider || manager.lastConfirmation.Workspace != test.wantWorkspace || value.generation != 2 || value.sessionPicker != nil {
+			if manager.switchCalls != 1 || manager.lastConfirmation.Gateway || manager.lastConfirmation.Workspace != test.wantWorkspace || value.generation != 2 || value.sessionPicker != nil {
 				t.Fatalf("calls=%d confirmation=%+v generation=%d picker=%+v", manager.switchCalls, manager.lastConfirmation, value.generation, value.sessionPicker)
 			}
 			view := value.View()
-			if !strings.Contains(view, "本地历史正文") || !strings.Contains(view, "session_provider_confirmation_required") {
+			if !strings.Contains(view, "本地历史正文") || !strings.Contains(view, "session_gateway_confirmation_required") {
 				t.Fatalf("locally installed provider-blocked Session was not visible: %s", view)
 			}
 
@@ -450,7 +450,7 @@ func TestAgentUIPickerProviderLocalOpenAndFullConfirmationUseDistinctActions(t *
 			value = updated.(model)
 			updated, _ = value.Update(command())
 			value = updated.(model)
-			if manager.switchCalls != 1 || value.generation != 2 || !manager.lastConfirmation.Provider || !manager.lastConfirmation.Workspace {
+			if manager.switchCalls != 1 || value.generation != 2 || !manager.lastConfirmation.Gateway || !manager.lastConfirmation.Workspace {
 				t.Fatalf("calls=%d generation=%d confirmation=%+v", manager.switchCalls, value.generation, manager.lastConfirmation)
 			}
 		})
@@ -556,7 +556,7 @@ func TestSessionPickerMinimumTerminalAllModesStayBounded(t *testing.T) {
 	for _, mode := range modes {
 		picker.mode = mode
 		picker.edit = strings.Repeat("重命名", 30)
-		picker.plan = agentcontroller.SwitchPlan{NeedProviderConfirm: true, NeedWorkspaceConfirm: true, WorkspaceLabel: strings.Repeat("工作区", 30)}
+		picker.plan = agentcontroller.SwitchPlan{NeedGatewayConfirm: true, NeedWorkspaceConfirm: true, WorkspaceLabel: strings.Repeat("工作区", 30)}
 		view := picker.render(minimumWidth, minimumHeight)
 		for _, line := range strings.Split(view, "\n") {
 			if lipgloss.Width(line) > minimumWidth {
@@ -575,7 +575,7 @@ func TestPickerErrorTextClassifiesSwitchFailures(t *testing.T) {
 		{agentsession.ErrCorrupt, "session_corrupt"},
 		{agentsession.ErrCheckpointConflict, "session_checkpoint_conflict"},
 		{agentsession.ErrCheckpointSaveFailed, "session_operation_failed"},
-		{agentcontroller.ErrProviderConfirmationRequired, "session_provider_confirmation_required"},
+		{agentcontroller.ErrGatewayConfirmationRequired, "session_gateway_confirmation_required"},
 		{agentcontroller.ErrWorkspaceConfirmationRequired, "session_workspace_confirmation_required"},
 		{errors.New("preflight failed"), "session_operation_failed"},
 	} {

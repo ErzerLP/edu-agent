@@ -19,7 +19,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 )
 
-const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|agent|settings|research|references|import|assessment|memory]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>|mentor-key rotate --offline --new-key-file <绝对路径>]"
+const usage = "usage: edu-agentd [serve|pairing-code create [--profile user|cli|agent|settings|research|references|import|assessment|memory]|privacy-grant create --device <uuid>|nocturne-backup restore --artifact <relative-path> --output <tmpfs-path>|mentor-key rotate --offline --new-key-file <绝对路径>]"
 
 var (
 	loadConfiguration     = config.Load
@@ -125,7 +125,7 @@ func parseCommand(args []string) (command, error) {
 		}
 		profile, err := identity.ParsePairingProfile(*profileValue)
 		if err != nil {
-			return command{}, errors.New("pairing-code --profile 必须是 user、agent、settings、research、references、import 或 assessment")
+			return command{}, errors.New("pairing-code --profile 必须是 user、cli、agent、settings、research、references、import、assessment、memory 或 learner")
 		}
 		return command{kind: commandPairingCode, pairingProfile: profile}, nil
 	}

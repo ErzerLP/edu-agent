@@ -17,7 +17,7 @@ func TestRejectedLearningBindingReleasesStore(t *testing.T) {
 	for _, binding := range []agentcontext.Binding{{SpaceID: "非法学习区"}, {SpaceID: "10000000-0000-4000-8000-000000000001"}} {
 		store := controllerStore(t, t.TempDir(), &controllerSecretBackend{})
 		defer store.Close()
-		deps := controllerDependencies(store, &controllerModel{}, api.NewClient(server.URL, "test", time.Second, nil), t.TempDir(), Provider{})
+		deps := controllerDependencies(store, &controllerModel{}, api.NewClient(server.URL, "test", time.Second, nil), t.TempDir(), GatewayBinding{})
 		deps.LoopOptions.LearningBinding = binding
 		if _, err := Start(t.Context(), deps, false); err == nil {
 			t.Fatal("接受了非法或不可用的学习区")
@@ -32,7 +32,7 @@ func TestLearningBindingSurvivesResumeSwitchAndNoSave(t *testing.T) {
 	root, work := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	a := agentcontext.Binding{SpaceID: "10000000-0000-4000-8000-000000000001", GoalID: "20000000-0000-4000-8000-000000000001"}
 	b := agentcontext.Binding{SpaceID: "10000000-0000-4000-8000-000000000002"}
 	deps := controllerDependencies(controllerStore(t, root, secrets), &controllerModel{}, server, work, provider)

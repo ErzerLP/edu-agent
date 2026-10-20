@@ -57,7 +57,7 @@ type SwitchPlan struct {
 	WorkspaceLabel       string
 	ExpectedRevision     uint64
 	NeedWorkspaceConfirm bool
-	NeedProviderConfirm  bool
+	NeedGatewayConfirm   bool
 	WorkspaceUnavailable bool
 	SameTarget           bool
 	controllerGeneration uint64
@@ -66,7 +66,7 @@ type SwitchPlan struct {
 
 type SwitchConfirmation struct {
 	Workspace bool
-	Provider  bool
+	Gateway   bool
 }
 
 type UnknownOutcome struct {
@@ -81,12 +81,12 @@ type Selector struct {
 	learningSpaceID  string
 	store            *agentsession.Store
 	workspaceID      string
-	provider         Provider
+	provider         GatewayBinding
 	currentID        string
 	currentStorageID string
 }
 
-func NewSelector(store *agentsession.Store, workspaceID string, provider Provider) *Selector {
+func NewSelector(store *agentsession.Store, workspaceID string, provider GatewayBinding) *Selector {
 	return &Selector{store: store, workspaceID: workspaceID, provider: provider}
 }
 
@@ -257,14 +257,14 @@ func (c *Controller) PlanSwitch(summary agentsession.Summary) SwitchPlan {
 	return buildSwitchPlan(c.generation, c.record.SessionID, c.record.WorkspaceID, c.provider, summary)
 }
 
-func buildSwitchPlan(generation uint64, currentID, workspaceID string, provider Provider, summary agentsession.Summary) SwitchPlan {
+func buildSwitchPlan(generation uint64, currentID, workspaceID string, provider GatewayBinding, summary agentsession.Summary) SwitchPlan {
 	plan := SwitchPlan{
 		SessionID: summary.SessionID, Title: summary.Title, WorkspaceLabel: summary.WorkspaceLabel,
 		ExpectedRevision: summary.RecordRevision, SameTarget: summary.SessionID != "" && summary.SessionID == currentID,
 		controllerGeneration: generation, currentSessionID: currentID,
 	}
 	plan.NeedWorkspaceConfirm = !plan.SameTarget && workspaceID != "" && summary.WorkspaceID != "" && summary.WorkspaceID != workspaceID
-	plan.NeedProviderConfirm = !plan.SameTarget && ProviderEndpointIdentity(Provider{Name: summary.ProviderName, Endpoint: summary.ProviderEndpoint}) != ProviderEndpointIdentity(provider)
+	plan.NeedGatewayConfirm = !plan.SameTarget && GatewayIdentity(GatewayBinding{Target: summary.GatewayTarget, ServerURL: summary.GatewayServerURL, DeviceID: summary.GatewayDeviceID, DestinationRevision: summary.GatewayDestinationRevision}) != GatewayIdentity(provider)
 	plan.WorkspaceUnavailable = summary.Unavailable || summary.Corrupt
 	return plan
 }
@@ -495,6 +495,6 @@ func summaryFromRecord(record agentsession.SessionRecord) agentsession.Summary {
 		Title: record.Title, TitleSource: record.TitleSource, FirstUserSummary: record.FirstUserSummary, RecentUserSummary: record.RecentUserSummary,
 		TitleRevision: record.TitleRevision, CommittedUserTurns: record.CommittedUserTurns, TranscriptCount: record.TranscriptCount,
 		ServerProfileFingerprint: record.ServerProfileFingerprint, WorkspaceID: record.WorkspaceID, WorkspaceLabel: record.WorkspaceLabel,
-		ProviderName: record.ProviderName, ProviderEndpoint: record.ProviderEndpoint, ProviderModel: record.ProviderModel, Lifecycle: record.Lifecycle,
+		GatewayTarget: record.GatewayTarget, GatewayServerURL: record.GatewayServerURL, GatewayModelName: record.GatewayModelName, GatewayDeviceID: record.GatewayDeviceID, GatewayDestinationRevision: record.GatewayDestinationRevision, GatewaySessionID: record.GatewaySessionID, Lifecycle: record.Lifecycle,
 	}
 }

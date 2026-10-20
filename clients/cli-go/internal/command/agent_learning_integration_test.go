@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"io"
 	"net"
 	"net/http"
@@ -274,9 +275,9 @@ func TestAgentLearningRealServiceWorkflows(t *testing.T) {
 		if !strings.Contains(body, scope.ID) || strings.Contains(body, `"error"`) {
 			t.Fatalf("没有检索绑定冻结资料：%s", body)
 		}
-		preset := config.DefaultAgentConfig("ollama")
+		preset := config.DefaultAgentConfig()
 		app.Config.(*memoryConfigStore).value.Agent = &preset
-		app.NewModel = func(config.AgentConfig, string) (agentloop.Model, error) { return fixedAgentModel{}, nil }
+		app.NewModel = func(*modelgateway.Model) (agentloop.Model, error) { return fixedAgentModel{}, nil }
 		work := t.TempDir()
 		ui := &agentNavigationFixture{t: t, root: work, bindings: []agentcontext.Binding{b, {SpaceID: english.ID, GoalID: englishGoal.GoalID}}}
 		app.AgentUI = ui

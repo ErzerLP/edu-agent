@@ -49,6 +49,8 @@ type CallRef struct {
 	ID         string
 	Generation int64
 	APIStyle   string
+	LeaseID    string
+	LeaseUntil time.Time
 }
 type Metric struct {
 	KnownSum     int64 `json:"known_sum"`
@@ -87,6 +89,9 @@ type Summary struct {
 	Models            []Model    `json:"models"`
 }
 type Task struct {
+	ActorDeviceID  *string   `json:"actor_device_id"`
+	CLISessionID   *string   `json:"cli_session_id"`
+	CLITurnID      *string   `json:"cli_turn_id"`
 	ConversationID *string   `json:"conversation_id"`
 	ID             string    `json:"id"`
 	SpaceID        *string   `json:"space_id"`

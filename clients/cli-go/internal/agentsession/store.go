@@ -265,7 +265,7 @@ func (s *Store) Create(ctx context.Context, input CreateInput) (*Handle, Session
 		Title: input.Title, TitleSource: "auto", TitleRevision: 1,
 		WorkspaceID: input.WorkspaceID, WorkspaceRoot: input.WorkspaceRoot, WorkspaceLabel: input.WorkspaceLabel,
 		WorkspacePathHash: input.WorkspacePathHash, WorkspaceRootIdentityHash: input.WorkspaceRootIdentityHash,
-		ProviderName: input.ProviderName, ProviderEndpoint: input.ProviderEndpoint, ProviderModel: input.ProviderModel,
+		GatewayTarget: input.GatewayTarget, GatewayServerURL: input.GatewayServerURL, GatewayModelName: input.GatewayModelName, GatewayDeviceID: input.GatewayDeviceID, GatewayDestinationRevision: input.GatewayDestinationRevision, GatewaySessionID: input.GatewaySessionID,
 		PrivacyLearnerGeneration: input.PrivacyLearnerGeneration, PrivacyMemoryGeneration: input.PrivacyMemoryGeneration,
 		PrivacyVerified: input.PrivacyVerified, TranscriptCount: uint64(len(transcriptValue.Entries)),
 		Checkpoint: append(json.RawMessage(nil), input.Checkpoint...), Transcript: append(json.RawMessage(nil), input.Transcript...),
@@ -463,7 +463,7 @@ func (s *Store) List(ctx context.Context) ([]Summary, error) {
 			Title: entry.Title, TitleSource: entry.TitleSource, FirstUserSummary: entry.FirstUserSummary, RecentUserSummary: entry.RecentUserSummary, TitleRevision: entry.TitleRevision,
 			CommittedUserTurns: entry.CommittedUserTurns, TranscriptCount: entry.TranscriptCount,
 			ServerProfileFingerprint: entry.ServerProfileFingerprint, WorkspaceID: entry.WorkspaceID, WorkspaceLabel: entry.WorkspaceLabel,
-			ProviderName: entry.ProviderName, ProviderEndpoint: entry.ProviderEndpoint, ProviderModel: entry.ProviderModel,
+			GatewayTarget: entry.GatewayTarget, GatewayServerURL: entry.GatewayServerURL, GatewayModelName: entry.GatewayModelName, GatewayDeviceID: entry.GatewayDeviceID, GatewayDestinationRevision: entry.GatewayDestinationRevision, GatewaySessionID: entry.GatewaySessionID,
 			Lifecycle: entry.Lifecycle, Corrupt: entry.Corrupt, Locked: locked, Unavailable: lockUnavailable || entry.VersionUnsupported,
 			LocatorOnly: entry.LocatorOnly, VersionUnsupported: entry.VersionUnsupported,
 		})

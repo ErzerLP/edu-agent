@@ -38,7 +38,7 @@ func TestControllerArchiveCompletedReceiptSurvivesResume(t *testing.T) {
 				{Message: modelclient.Message{Role: "assistant", Content: "归档已完成，由你手动清理。"}},
 			}}
 			server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-			provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+			provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 			dependencies := controllerDependencies(controllerStore(t, storeRoot, secrets), model, server, root, provider)
 			dependencies.LoopOptions.Workspace = executor
 			controller, err := Start(t.Context(), dependencies, false)
@@ -110,7 +110,7 @@ func TestControllerArchiveCrashRecoveryKeepsBothPathsWithoutReplay(t *testing.T)
 		{Message: modelclient.Message{Role: "assistant", Content: "已读"}},
 	}}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	dependencies := controllerDependencies(controllerStore(t, storeRoot, secrets), model, server, root, provider)
 	dependencies.LoopOptions.Workspace = executor
 	controller, err := Start(t.Context(), dependencies, false)

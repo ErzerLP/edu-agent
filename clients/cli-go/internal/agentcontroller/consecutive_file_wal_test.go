@@ -18,7 +18,7 @@ func TestControllerConsecutiveFileWALRetainsEveryPossibleEffectOnCrash(t *testin
 	storeRoot, root := t.TempDir(), t.TempDir()
 	secrets := &controllerSecretBackend{}
 	server := &controllerServer{generation: api.MemoryGenerationStamp{LearnerGeneration: 1, MemoryGeneration: 1}}
-	provider := Provider{Name: "ollama", Endpoint: "http://127.0.0.1:11434/v1", Model: "local"}
+	provider := GatewayBinding{Target: "teaching", ServerURL: "http://127.0.0.1:11434/v1", ModelName: "local"}
 	executor, err := workspace.Open(root)
 	if err != nil {
 		t.Fatal(err)

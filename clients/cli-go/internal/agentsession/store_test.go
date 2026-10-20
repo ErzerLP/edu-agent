@@ -416,7 +416,7 @@ func TestProjectionValidationRejectsInvalidStableSummaryMetadata(t *testing.T) {
 		mutate func(*indexProjection)
 	}{
 		{name: "workspace", mutate: func(value *indexProjection) { value.WorkspaceID = "workspace"; value.WorkspaceLabel = "root" }},
-		{name: "provider", mutate: func(value *indexProjection) { value.ProviderName = "custom" }},
+		{name: "provider", mutate: func(value *indexProjection) { value.GatewayTarget = "custom" }},
 		{name: "lifecycle", mutate: func(value *indexProjection) { value.Lifecycle = "archived" }},
 		{name: "profile", mutate: func(value *indexProjection) { value.ServerProfileFingerprint = strings.Repeat("A", 64) }},
 	}
@@ -451,7 +451,7 @@ func TestSaveRejectsInvalidStableSessionMetadataAndTypedReceipts(t *testing.T) {
 		{name: "lifecycle", mutate: func(value *SessionRecord) { value.Lifecycle = "archived" }},
 		{name: "title-source", mutate: func(value *SessionRecord) { value.TitleSource = "generated" }},
 		{name: "workspace-binding", mutate: func(value *SessionRecord) { value.WorkspaceID = "workspace" }},
-		{name: "provider-binding", mutate: func(value *SessionRecord) { value.ProviderName = "custom" }},
+		{name: "provider-binding", mutate: func(value *SessionRecord) { value.GatewayTarget = "custom" }},
 		{name: "typed-receipt", mutate: func(value *SessionRecord) {
 			value.PreferenceReceipts = []PreferenceReceipt{{
 				ToolCallID: "call", CreateOperationID: "10000000-0000-4000-8000-000000000001",
@@ -482,7 +482,7 @@ func TestStoreRoundTripIndexRebuildDirtyRecoveryAndDeletion(t *testing.T) {
 	handle, created, err := store.Create(t.Context(), CreateInput{
 		Title: "Graph lesson", WorkspaceID: identityHash, WorkspaceRoot: workspaceRoot, WorkspaceLabel: filepath.Base(workspaceRoot),
 		WorkspacePathHash: pathHash, WorkspaceRootIdentityHash: identityHash,
-		ProviderName: "custom", ProviderEndpoint: "https://model.example/v1", ProviderModel: "test-model",
+		GatewayTarget: "custom", GatewayServerURL: "https://model.example/v1", GatewayModelName: "test-model",
 		Checkpoint: []byte(`{"schema_version":1,"messages":["hello"]}`),
 	})
 	if err != nil {
@@ -1000,7 +1000,7 @@ func TestCatalogContainsOnlyOpaqueLocatorsAndProjectionUsesSessionDEK(t *testing
 	workspaceID := "sha256:" + strings.Repeat("b", 64)
 	handle, record, err := store.Create(t.Context(), CreateInput{
 		Title: "sensitive title", WorkspaceID: workspaceID, WorkspaceRoot: workspaceRoot, WorkspaceLabel: "private workspace",
-		WorkspacePathHash: workspaceID, ProviderName: "custom", ProviderEndpoint: "https://provider.example/v1", ProviderModel: "secret-model",
+		WorkspacePathHash: workspaceID, GatewayTarget: "custom", GatewayServerURL: "https://provider.example/v1", GatewayModelName: "secret-model",
 		Checkpoint: []byte(`{"secret":"body"}`),
 	})
 	if err != nil {

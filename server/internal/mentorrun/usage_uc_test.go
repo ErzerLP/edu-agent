@@ -107,7 +107,7 @@ func TestPostgreSQLUsageLegacyReceiptAndPause(t *testing.T) {
 	// Reproduce an operation and paused checkpoint from the previous release.
 	legacyJSON := fmt.Sprintf(`{"Kind":"create","Space":%q,"Target":%q,"Value":{"operation_id":%q,"session_id":%q,"expected_version":1,"prompt":"请解释目标","save":true,"request_budget":4,"token_budget":50000}}`, learningspace.DefaultID, f.goal, f.create.OperationID, f.create.SessionID)
 	hash := sha256.Sum256([]byte(legacyJSON))
-	legacyConfiguration := fmt.Sprintf(`{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":%q,"model":"mentor-fixture","auth_mode":"none"},"Key":"","Limits":{"research_requests":20,"research_tokens":100000,"output_tokens":64,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":2,"storage_mib":512}}`, f.settings.View().EffectiveMentor.Endpoint)
+	legacyConfiguration := fmt.Sprintf(`{"Connection":{"enabled":true,"provider":"openai_compatible","endpoint":%q,"model":"mentor-fixture","auth_mode":"none"},"Key":"","Limits":{"research_requests":20,"research_tokens":100000,"output_tokens":64,"context_tokens":32768,"idle_timeout_seconds":60,"concurrency":10,"storage_mib":512}}`, f.settings.View().EffectiveMentor.Endpoint)
 	configuration := fmt.Sprintf("%x", sha256.Sum256([]byte(legacyConfiguration)))
 	if _, err := f.pool.Exec(ctx, `UPDATE learning_mentor_operations SET request_hash=$1,hash_version=1 WHERE operation_id=$2`, hash[:], r.OperationID); err != nil {
 		t.Fatal(err)

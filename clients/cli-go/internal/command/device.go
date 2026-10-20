@@ -48,6 +48,7 @@ func (a *App) runPair(ctx context.Context, args []string) error {
 	if len([]rune(name)) > 100 {
 		return commandError("invalid_device_name", "device name exceeds 100 characters", "choose a shorter device name", ExitInput)
 	}
+	_, _ = fmt.Fprintln(a.Out, "请在网页生成 cli 类型的配对码（包含模型调用权限）。")
 	code, err := a.Terminal.ReadSecret(a.dashboardText("Pairing code: ", "配对码："))
 	if err != nil || strings.TrimSpace(code) == "" {
 		return commandError("invalid_pairing_input", "one non-empty pairing code is required", "create a new code on the server and enter one line", ExitInput)

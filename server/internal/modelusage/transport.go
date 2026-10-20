@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/edu-agent/edu-agent/server/internal/modeladmission"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/transport/access"
 	"github.com/google/uuid"
@@ -43,8 +44,43 @@ func (t usageTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	if err != nil {
 		return nil, err
 	}
-	request = request.WithContext(permit.Context())
+	ctx, cancel := context.WithCancelCause(permit.Context())
+	request = request.WithContext(ctx)
 	ref, err := t.begin(request.Context(), task)
+	var stopLease func()
+	if err == nil {
+		lease := modeladmission.Lease{ID: ref.LeaseID, Generation: ref.Generation, Until: ref.LeaseUntil}
+		stopLease = modeladmission.Maintain(ctx, lease.Until, func(ctx context.Context) (time.Time, error) {
+			tx, err := t.store.pool.Begin(ctx)
+			if err != nil {
+				return time.Time{}, err
+			}
+			defer tx.Rollback(context.Background())
+			if err = gate(ctx, tx, ref.Generation); err != nil {
+				return time.Time{}, err
+			}
+			until, err := modeladmission.RenewTx(ctx, tx, lease)
+			if err != nil {
+				return until, err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE learning_model_calls SET lease_until=$2 WHERE id=$1`, ref.ID, until); err != nil {
+				return until, err
+			}
+			return until, tx.Commit(ctx)
+		}, cancel)
+	}
+	cleanup := func() {
+		if stopLease != nil {
+			stopLease()
+		}
+		cancel(nil)
+		if ref.LeaseID != "" {
+			bounded, end := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer end()
+			_ = modeladmission.Release(bounded, t.store.pool, modeladmission.Lease{ID: ref.LeaseID, Generation: ref.Generation})
+		}
+		permit.Release()
+	}
 	if err == nil {
 		err = t.store.Dispatch(request.Context(), ref)
 	}
@@ -52,15 +88,15 @@ func (t usageTransport) RoundTrip(request *http.Request) (*http.Response, error)
 		if ref.ID != "" {
 			t.store.settle(request.Context(), ref, "not_dispatched", Usage{})
 		}
-		permit.Release()
+		cleanup()
 		return nil, err
 	}
 	response, err := t.store.Observe(request.Context(), ref, t.next, request)
 	if err != nil {
-		permit.Release()
+		cleanup()
 		return response, err
 	}
-	response.Body = &permitBody{ReadCloser: response.Body, permit: permit}
+	response.Body = &permitBody{ReadCloser: response.Body, cleanup: cleanup}
 	return response, nil
 }
 
@@ -103,13 +139,15 @@ func (t usageTransport) begin(ctx context.Context, task taskContext) (CallRef, e
 	if device != "" && (root.Kind == "teaching" || root.Kind == "planning" || root.Kind == "offline_prepare") {
 		origin = uuid.NewSHA1(uuid.NameSpaceOID, []byte(root.Kind+"\n"+device+"\n"+root.OriginID)).String()
 	}
-	// llm.Client always supplies its configured HTTP deadline. Keep enough time
-	// for the bounded detached receipt write before recovery marks it unknown.
-	deadline, _ := ctx.Deadline()
-	deadline = deadline.Add(5 * time.Second)
+	// Synchronous model calls share admission with mentor runs and CLI. Mentor
+	// workers use their own transport and inherit their parent run slot.
+	lease, err := modeladmission.AcquireTx(ctx, tx, generation, t.store.concurrency(), "server", device, "")
+	if err != nil {
+		return CallRef{}, err
+	}
 	ref, err := t.store.BeginTx(ctx, tx, BeginRequest{
 		Generation: generation, SpaceID: root.SpaceID, Source: source, ActorDeviceID: device, Kind: root.Kind, OriginID: origin,
-		Stage: task.stage, AttemptKey: uuid.NewString(), LeaseID: uuid.NewString(), LeaseUntil: &deadline,
+		Stage: task.stage, AttemptKey: uuid.NewString(), LeaseID: lease.ID, LeaseUntil: &lease.Until,
 		Provider: t.model.Provider, Destination: t.model.Destination, Model: t.model.Model, APIStyle: t.model.APIStyle, Configuration: t.configuration,
 	})
 	if err != nil {
@@ -118,16 +156,17 @@ func (t usageTransport) begin(ctx context.Context, task taskContext) (CallRef, e
 	if err = tx.Commit(ctx); err != nil {
 		return CallRef{}, err
 	}
+	ref.LeaseID, ref.LeaseUntil = lease.ID, lease.Until
 	return ref, nil
 }
 
 type permitBody struct {
 	io.ReadCloser
-	permit *privacy.ReadPermit
+	cleanup func()
 }
 
 func (b *permitBody) Close() error {
 	err := b.ReadCloser.Close()
-	b.permit.Release()
+	b.cleanup()
 	return err
 }

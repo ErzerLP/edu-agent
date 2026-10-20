@@ -34,62 +34,11 @@ func TestMainMenuCommandsAndShortcuts(t *testing.T) {
 	}
 }
 
-func TestAgentShortcutRequiresCompleteLocalModelSetup(t *testing.T) {
-	t.Parallel()
-
-	unconfigured := newModel(Snapshot{LocalState: LocalStatePaired})
-	if view := unconfigured.View(); !strings.Contains(view, "配置AI助手") || strings.Contains(view, "AI学习助手") {
-		t.Fatalf("unconfigured main menu = %q", view)
-	}
-	updated, command := unconfigured.Update(key("a"))
-	setup := updated.(model)
-	if command != nil || len(setup.command) != 0 || setup.screen != screenAgentProvider {
-		t.Fatalf("unconfigured shortcut = screen %d command %#v tea command %v", setup.screen, setup.command, command)
-	}
-	if !strings.Contains(setup.View(), "只有在表单中按Enter保存，配置才会生效") {
-		t.Fatalf("provider save guidance missing: %q", setup.View())
-	}
-
-	missingKey := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1",
-		AgentModel: "deepseek-chat", AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6,
-	}
-	updated, command = newModel(missingKey).Update(key("a"))
-	keyForm := updated.(model)
-	if command != nil || len(keyForm.command) != 0 || keyForm.screen != screenAgentKey {
-		t.Fatalf("missing-key shortcut = screen %d command %#v tea command %v", keyForm.screen, keyForm.command, command)
-	}
-
-	missingKey.AgentKeyBackendUnavailable = true
-	unavailable := newModel(missingKey)
-	if view := unavailable.View(); !strings.Contains(view, "修复AI助手配置") {
-		t.Fatalf("unavailable-key main menu = %q", view)
-	}
-	updated, command = unavailable.Update(key("a"))
-	settings := updated.(model)
-	if command != nil || len(settings.command) != 0 || settings.screen != screenAgentSettings || !strings.Contains(settings.View(), "系统钥匙串不可用") {
-		t.Fatalf("unavailable-key shortcut = screen %d command %#v view %q", settings.screen, settings.command, settings.View())
-	}
-
-	ollama := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "ollama", AgentBaseURL: "http://127.0.0.1:11434/v1",
-		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6,
-	}
-	updated, _ = newModel(ollama).Update(key("a"))
-	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"agent"}) {
-		t.Fatalf("optional-key agent command = %#v", got)
-	}
-	updated, _ = newModel(ollama).Update(key("y"))
-	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"agent", "resume"}) {
-		t.Fatalf("resume agent command = %#v", got)
-	}
-}
-
 func TestAgentSettingsToggleFutureSessionHistory(t *testing.T) {
 	t.Parallel()
 	base := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "ollama", AgentBaseURL: "http://127.0.0.1:11434/v1",
-		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6,
+		LocalState: LocalStatePaired, SelectedTarget: "teaching",
+		AgentModel: "qwen2.5:7b", AgentContextWindow: 32768, AgentMaxToolRounds: 6,
 		AgentSessionHistory: "auto",
 	}
 	updated, _ := newModel(base).Update(key("s"))
@@ -114,7 +63,7 @@ func TestAgentSettingsToggleFutureSessionHistory(t *testing.T) {
 func TestAgentSettingsSessionPrivacyDisclosure(t *testing.T) {
 	t.Parallel()
 	snapshot := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "custom", AgentBaseURL: "https://private.example/v1",
+		LocalState: LocalStatePaired, SelectedTarget: "custom",
 		AgentModel: "model", AgentSessionHistory: "auto",
 	}
 	updated, _ := newModel(snapshot).Update(key("s"))
@@ -133,8 +82,8 @@ func TestAgentSettingsSessionPrivacyDisclosure(t *testing.T) {
 		want []string
 	}{
 		{want: []string{"本机加密保存", "工具/context evidence", "无时间 TTL", "手动 delete/clear", "硬上限不淘汰", "保存失败"}},
-		{want: []string{"自动标题", "当前 provider", "恢复后下一请求", "endpoint 变化先确认", "workspace 正文", "不代表当前磁盘内容"}},
-		{want: []string{"key backend", "绝不落明文", "仅当前进程", "clear 只清本地", "server/Nocturne/terminal", "Shell/provider retention/OS backup", "YOLO", "旧文件授权", "pending 交互", "不恢复"}},
+		{want: []string{"自动标题", "所选服务端模型", "恢复后下一请求", "目的地变化先确认", "workspace 正文", "不代表当前磁盘内容"}},
+		{want: []string{"key backend", "绝不落明文", "仅当前进程", "clear 只清本地", "server/Nocturne/terminal", "Shell/模型服务/OS 备份", "YOLO", "旧文件授权", "pending 交互", "不恢复"}},
 	}
 	for index, page := range pages {
 		privacy.width, privacy.height = 46, 18
@@ -144,7 +93,7 @@ func TestAgentSettingsSessionPrivacyDisclosure(t *testing.T) {
 				t.Fatalf("page %d missing topic %q: %q", index+1, topic, view)
 			}
 		}
-		if strings.Contains(view, snapshot.AgentBaseURL) || strings.Contains(view, "/home/") || strings.Contains(view, "opaque-id") {
+		if strings.Contains(view, "https://not-present.example") || strings.Contains(view, "/home/") || strings.Contains(view, "opaque-id") {
 			t.Fatalf("page %d leaked endpoint, path, or internal ID: %q", index+1, view)
 		}
 		if lines := strings.Count(view, "\n") + 1; lines > 18 {
@@ -367,69 +316,11 @@ func TestFormsProtectLeadingDashValuesFromFlagParsing(t *testing.T) {
 	}
 }
 
-func TestAgentSettingsCommandsHideSecretsAndRequireConfirmation(t *testing.T) {
-	t.Parallel()
-	snapshot := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "high", AgentTimeout: "90s", AgentMaxToolRounds: 0, AgentKeyConfigured: true,
-	}
-	updated, _ := newModel(snapshot).Update(key("s"))
-	updated, _ = updated.(model).Update(key("a"))
-	settings := updated.(model)
-	if settings.screen != screenAgentSettings || !containsAll(settings.View(), "AI助手与模型", "DeepSeek", "上下文压缩：auto", "默认推理强度：high", "无响应超时：90s", "工具轮数：不限制", "API Key：已存入系统钥匙串") {
-		t.Fatalf("agent settings=%q", settings.View())
-	}
-
-	updated, _ = settings.Update(key("m"))
-	form := updated.(model)
-	form.inputs[0].SetValue("https://model.example/v1")
-	form.inputs[1].SetValue("teacher-model")
-	form.inputs[2].SetValue("65536")
-	form.inputs[3].SetValue("recent-only")
-	form.inputs[4].SetValue("2m")
-	form.inputs[5].SetValue("1000000")
-	if !strings.Contains(form.View(), "模型无响应超时") || !strings.Contains(form.View(), "最大工具轮数（0=不限制，无固定上界）") {
-		t.Fatalf("tool-round unlimited semantics missing from form: %q", form.View())
-	}
-	updated, _ = form.Update(key("enter"))
-	want := []string{"model", "set", "--provider", "deepseek", "--base-url", "https://model.example/v1", "--model", "teacher-model", "--context-window", "65536", "--context-compaction", "recent-only", "--reasoning-effort", "high", "--timeout", "2m", "--max-tool-rounds", "1000000", "--max-tokens", "128000"}
-	if got := updated.(model).command; !reflect.DeepEqual(got, want) {
-		t.Fatalf("model command=%#v want=%#v", got, want)
-	}
-
-	updated, _ = newModel(snapshot).Update(key("s"))
-	updated, _ = updated.(model).Update(key("a"))
-	updated, _ = updated.(model).Update(key("u"))
-	keyForm := updated.(model)
-	keyForm.inputs[0].SetValue("secret-value")
-	if strings.Contains(keyForm.View(), "secret-value") {
-		t.Fatal("API key rendered in clear text")
-	}
-	updated, _ = keyForm.Update(key("enter"))
-	keyAction := updated.(model)
-	if keyAction.modelKey != "secret-value" || len(keyAction.command) != 0 {
-		t.Fatalf("key action exposed command=%#v modelKeyPresent=%t", keyAction.command, keyAction.modelKey != "")
-	}
-
-	updated, _ = newModel(snapshot).Update(key("s"))
-	updated, _ = updated.(model).Update(key("a"))
-	updated, _ = updated.(model).Update(key("x"))
-	confirm := updated.(model)
-	updated, _ = confirm.Update(key("enter"))
-	if got := updated.(model).command; len(got) != 0 {
-		t.Fatalf("enter confirmed destructive action: %#v", got)
-	}
-	updated, _ = confirm.Update(key("y"))
-	if got, want := updated.(model).command, []string{"model", "key", "delete", "--confirmed"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("delete command=%#v want=%#v", got, want)
-	}
-}
-
 func TestAgentReasoningEffortUsesDedicatedSelectionScreen(t *testing.T) {
 	t.Parallel()
 	snapshot := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "medium", AgentTimeout: "90s", AgentMaxToolRounds: 6,
+		LocalState: LocalStatePaired, SelectedTarget: "deepseek", AgentModel: "deepseek-chat",
+		AgentContextWindow: 32768, AgentContextCompaction: "auto", AgentReasoningEffort: "medium", AgentMaxToolRounds: 6,
 	}
 	updated, _ := newModel(snapshot).Update(key("s"))
 	updated, _ = updated.(model).Update(key("a"))
@@ -452,53 +343,9 @@ func TestAgentReasoningEffortUsesDedicatedSelectionScreen(t *testing.T) {
 		}
 	}
 
-	preset := config.DefaultAgentConfig("deepseek")
+	preset := config.DefaultAgentConfig()
 	if preset.ReasoningEffort != config.DefaultAgentReasoningEffort {
 		t.Fatalf("preset reasoning effort=%q", preset.ReasoningEffort)
-	}
-}
-
-func TestAgentProviderSelectionContinuesIntoPrefilledForm(t *testing.T) {
-	t.Parallel()
-	updated, _ := newModel(Snapshot{LocalState: LocalStateUnpaired}).Update(key("a"))
-	updated, _ = updated.(model).Update(key("p"))
-	updated, command := updated.(model).Update(key("c"))
-	form := updated.(model)
-	if command != nil || form.screen != screenAgentConfig || form.agentProviderDraft != "custom" || form.snapshot.AgentProvider != "" {
-		t.Fatalf("provider selection = screen %d draft %q persisted %q command %v", form.screen, form.agentProviderDraft, form.snapshot.AgentProvider, command)
-	}
-	if got := form.inputs[0].Value(); got != "http://127.0.0.1:1234/v1" {
-		t.Fatalf("custom base URL = %q", got)
-	}
-	updated, _ = form.Update(key("enter"))
-	got := updated.(model).command
-	if len(got) < 4 || !reflect.DeepEqual(got[:4], []string{"model", "set", "--provider", "custom"}) {
-		t.Fatalf("custom model command = %#v", got)
-	}
-}
-
-func TestAgentProviderDraftIsDiscardedOnCancel(t *testing.T) {
-	t.Parallel()
-	snapshot := Snapshot{
-		LocalState: LocalStatePaired, AgentProvider: "deepseek", AgentBaseURL: "https://api.deepseek.com/v1", AgentModel: "deepseek-chat",
-		AgentContextWindow: 32768, AgentTimeout: "90s", AgentMaxToolRounds: 6, AgentKeyConfigured: true,
-	}
-	updated, _ := newModel(snapshot).Update(key("s"))
-	updated, _ = updated.(model).Update(key("a"))
-	updated, _ = updated.(model).Update(key("p"))
-	updated, _ = updated.(model).Update(key("c"))
-	form := updated.(model)
-	if form.agentProviderDraft != "custom" || form.snapshot.AgentProvider != "deepseek" {
-		t.Fatalf("draft=%q persisted=%q", form.agentProviderDraft, form.snapshot.AgentProvider)
-	}
-	updated, _ = form.Update(key("esc"))
-	settings := updated.(model)
-	if settings.screen != screenAgentSettings || settings.agentProviderDraft != "" || settings.snapshot.AgentProvider != "deepseek" || !strings.Contains(settings.View(), "DeepSeek") {
-		t.Fatalf("cancelled provider draft leaked: screen=%d draft=%q persisted=%q view=%q", settings.screen, settings.agentProviderDraft, settings.snapshot.AgentProvider, settings.View())
-	}
-	updated, _ = settings.Update(key("t"))
-	if got := updated.(model).command; !reflect.DeepEqual(got, []string{"model", "test"}) {
-		t.Fatalf("model test command after cancel = %#v", got)
 	}
 }
 

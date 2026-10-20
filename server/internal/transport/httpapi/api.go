@@ -28,6 +28,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/learningstart"
 	"github.com/edu-agent/edu-agent/server/internal/memory"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
+	"github.com/edu-agent/edu-agent/server/internal/modelgateway"
 	"github.com/edu-agent/edu-agent/server/internal/modelusage"
 	"github.com/edu-agent/edu-agent/server/internal/platform/health"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
@@ -154,6 +155,7 @@ type PrivacyMigrationLeaseService interface {
 }
 
 type Options struct {
+	ModelGateway            *modelgateway.Service
 	CompanionEnabled        bool
 	ReferenceFetcher        *research.Fetcher
 	SourceSearch            research.SearchClient
@@ -345,6 +347,12 @@ func New(options Options) (http.Handler, error) {
 		router.With(api.requireMaintenanceToken).Post("/internal/privacy/migrations/release", api.releasePrivacyMigrationLease)
 	}
 	router.Post("/v1/pairings/exchange", api.exchangePairingCode)
+	if options.ModelGateway != nil {
+		router.Method("GET", "/v1/model-gateway/config", options.ModelGateway)
+		router.Method("POST", "/v1/model-gateway/chat/completions", options.ModelGateway)
+		router.Method("GET", "/v1/model-gateway/requests/{requestID}", options.ModelGateway)
+		router.Method("POST", "/v1/model-gateway/requests/{requestID}/cancel", options.ModelGateway)
+	}
 	router.Group(func(protected chi.Router) {
 		protected.Use(api.authenticate)
 		protected.Use(api.resolveLearningSpace)
@@ -863,21 +871,40 @@ func (a *API) writeKnowledgeFailure(w http.ResponseWriter, r *http.Request, oper
 
 func (a *API) audit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Request-ID", middleware.GetReqID(r.Context()))
+		gateway := modelGatewayPath(r.URL.Path)
+		requestID, path, method := middleware.GetReqID(r.Context()), r.URL.Path, r.Method
+		if gateway {
+			// Invalid paths and caller-supplied trace IDs may contain private text.
+			requestID, path = uuid.NewString(), "/v1/model-gateway"
+			if method != http.MethodGet && method != http.MethodPost {
+				method = "unsupported"
+			}
+		}
+		w.Header().Set("X-Request-ID", requestID)
 		started := time.Now()
 		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		next.ServeHTTP(wrapped, r)
-		a.logger.InfoContext(r.Context(), "http_request",
-			"request_id", middleware.GetReqID(r.Context()), "method", r.Method, "path", r.URL.Path,
-			"status", wrapped.Status(), "duration_ms", time.Since(started).Milliseconds(), "remote_ip", clientIP(r))
+		fields := []any{"request_id", requestID, "method", method, "path", path, "status", wrapped.Status(), "duration_ms", time.Since(started).Milliseconds()}
+		if !gateway {
+			fields = append(fields, "remote_ip", clientIP(r))
+		}
+		a.logger.InfoContext(r.Context(), "http_request", fields...)
 	})
+}
+
+func modelGatewayPath(path string) bool {
+	return path == "/v1/model-gateway" || strings.HasPrefix(path, "/v1/model-gateway/")
 }
 
 func (a *API) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				a.logger.ErrorContext(r.Context(), "http handler panic", "request_id", middleware.GetReqID(r.Context()), "panic_type", fmt.Sprintf("%T", recovered))
+				requestID := middleware.GetReqID(r.Context())
+				if modelGatewayPath(r.URL.Path) {
+					requestID = w.Header().Get("X-Request-ID")
+				}
+				a.logger.ErrorContext(r.Context(), "http handler panic", "request_id", requestID, "panic_type", fmt.Sprintf("%T", recovered))
 				writeError(w, r, http.StatusInternalServerError, "internal_error", "Request could not be completed")
 			}
 		}()

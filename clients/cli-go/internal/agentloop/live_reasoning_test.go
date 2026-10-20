@@ -8,15 +8,15 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
-
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
 )
 
 func TestLiveReasoningProductionSSEDoesNotEnterCheckpointOrNextRequest(t *testing.T) {
 	const marker = "private-reasoning-marker-123"
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gatewayFixtureConfig(t, w, r) {
+			return
+		}
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Error(err)
@@ -35,10 +35,7 @@ func TestLiveReasoningProductionSSEDoesNotEnterCheckpointOrNextRequest(t *testin
 		io.WriteString(w, "data: [DONE]\n\n")
 	}))
 	defer server.Close()
-	client, err := modelclient.New(server.URL, "test", "", time.Second, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := newGatewayFixtureModel(t, server)
 	session := newTestSession(t, client, &fakeServer{})
 	var activities []Activity
 	result, err := session.Send(WithActivityReporter(t.Context(), func(a Activity) { activities = append(activities, a) }), "hello")

@@ -90,6 +90,11 @@ func (a *API) webOriginOK(r *http.Request) bool {
 // webSecurity 放在整个路由器上，既有写 API 也必须经过 Cookie/CSRF 检查。
 func (a *API) webSecurity(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The gateway owns its device-only identity and stable error envelope.
+		if strings.HasPrefix(r.URL.Path, "/v1/model-gateway/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// 离线专用入口独立校验 Cookie/CSRF，不能被已过期的在线会话阻断清除。
 		if strings.HasPrefix(r.URL.Path, "/v1/web/offline/") && r.URL.Path != "/v1/web/offline/enable" {
 			next.ServeHTTP(w, r)

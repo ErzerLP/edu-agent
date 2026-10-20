@@ -25,9 +25,11 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/agentsession"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/api"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/fileeffects"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/id"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localartifact"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/localexec"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/securefile"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/workspace"
 	"github.com/mattn/go-runewidth"
@@ -41,14 +43,12 @@ const (
 )
 
 var (
-	ErrProviderConfirmationRequired  = errors.New("历史会话的模型提供商端点已变更，需要明确确认后才能发送历史文本")
+	ErrGatewayConfirmationRequired   = errors.New("历史会话的模型服务或目的地已变更，需要明确确认后才能发送历史文本")
 	ErrWorkspaceConfirmationRequired = errors.New("历史会话属于另一个工作区，需要明确确认")
 )
 
-type Provider struct {
-	Name     string
-	Endpoint string
-	Model    string
+type GatewayBinding struct {
+	ServerURL, DeviceID, Target, DestinationRevision, ModelName string
 }
 
 type WorkspaceBinding struct {
@@ -64,7 +64,7 @@ type Dependencies struct {
 	Model            agentloop.Model
 	Server           agentloop.Server
 	LoopOptions      agentloop.Options
-	Provider         Provider
+	Gateway          GatewayBinding
 	WorkspaceRoot    string
 	WorkspaceBinding *WorkspaceBinding
 	Now              func() time.Time
@@ -79,11 +79,11 @@ type ResumeOptions struct {
 }
 
 type Status struct {
-	Persistent                   bool
-	DegradedReason               string
-	ProviderConfirmationRequired bool
-	TitleFailureCode             string
-	Notices                      []string
+	Persistent                  bool
+	DegradedReason              string
+	GatewayConfirmationRequired bool
+	TitleFailureCode            string
+	Notices                     []string
 }
 
 type Controller struct {
@@ -98,7 +98,7 @@ type Controller struct {
 
 	model          agentloop.Model
 	server         agentloop.Server
-	provider       Provider
+	provider       GatewayBinding
 	limits         agentsession.Limits
 	now            func() time.Time
 	loopOptions    agentloop.Options
@@ -172,8 +172,8 @@ func WorkspaceScopeID(binding WorkspaceBinding) string {
 	return binding.PathHash
 }
 
-func ProviderEndpointIdentity(value Provider) string {
-	return strings.ToLower(strings.TrimSpace(value.Name)) + "\x00" + normalizedEndpoint(value.Endpoint)
+func GatewayIdentity(value GatewayBinding) string {
+	return normalizedEndpoint(value.ServerURL) + "\x00" + value.DeviceID + "\x00" + value.Target + "\x00" + value.DestinationRevision
 }
 
 func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Controller, error) {
@@ -231,7 +231,7 @@ func Start(ctx context.Context, dependencies Dependencies, noSave bool) (*Contro
 		LearningBinding: dependencies.LoopOptions.LearningBinding.Normalize(),
 		Title:           "新会话", WorkspaceID: WorkspaceScopeID(binding), WorkspaceRoot: binding.Root, WorkspaceLabel: binding.Label,
 		WorkspacePathHash: binding.PathHash, WorkspaceRootIdentityHash: binding.RootIdentityHash,
-		ProviderName: dependencies.Provider.Name, ProviderEndpoint: normalizedEndpoint(dependencies.Provider.Endpoint), ProviderModel: dependencies.Provider.Model,
+		GatewayTarget: dependencies.Gateway.Target, GatewayServerURL: normalizedEndpoint(dependencies.Gateway.ServerURL), GatewayModelName: dependencies.Gateway.ModelName, GatewayDeviceID: dependencies.Gateway.DeviceID, GatewayDestinationRevision: dependencies.Gateway.DestinationRevision, GatewaySessionID: controller.record.GatewaySessionID,
 		PrivacyLearnerGeneration: learner, PrivacyMemoryGeneration: memory, PrivacyVerified: verified,
 		Checkpoint: checkpointData, Transcript: transcriptData,
 	})
@@ -452,10 +452,10 @@ func resumeWithLocalSessionLease(ctx context.Context, dependencies Dependencies,
 			return nil, err
 		}
 	}
-	if ProviderEndpointIdentity(Provider{Name: loaded.Record.ProviderName, Endpoint: loaded.Record.ProviderEndpoint}) != ProviderEndpointIdentity(dependencies.Provider) {
+	if GatewayIdentity(GatewayBinding{Target: loaded.Record.GatewayTarget, ServerURL: loaded.Record.GatewayServerURL, DeviceID: loaded.Record.GatewayDeviceID, DestinationRevision: loaded.Record.GatewayDestinationRevision}) != GatewayIdentity(dependencies.Gateway) {
 		controller.providerBlocked = true
-		controller.appendStatusNoticeLocked("[session_provider_confirmation_required] 模型提供商端点已变更；确认前不会发送历史文本或生成标题")
-	} else if strings.TrimSpace(loaded.Record.ProviderModel) != strings.TrimSpace(dependencies.Provider.Model) {
+		controller.appendStatusNoticeLocked("[session_gateway_confirmation_required] 模型服务或目的地已变更；确认前不会发送历史文本或生成标题")
+	} else if strings.TrimSpace(loaded.Record.GatewayModelName) != strings.TrimSpace(dependencies.Gateway.ModelName) {
 		controller.appendStatusNoticeLocked("当前模型名称与历史会话不同；恢复将使用当前模型")
 	}
 	if storedWorkspace.Root != "" && !storedWorkspace.Available {
@@ -581,10 +581,15 @@ func newController(dependencies Dependencies) (*Controller, error) {
 		fileBatches: dependencies.LoopOptions.FileBatches,
 		localExec:   dependencies.LoopOptions.LocalExec, localOwner: dependencies.LoopOptions.LocalExecOwner,
 		ownsLocalExec: dependencies.LoopOptions.LocalExec != nil && !dependencies.LocalExecShared,
-		store:         dependencies.Store, model: dependencies.Model, server: dependencies.Server, provider: dependencies.Provider, limits: limits, now: now, generation: 1,
+		store:         dependencies.Store, model: dependencies.Model, server: dependencies.Server, provider: dependencies.Gateway, limits: limits, now: now, generation: 1,
 		loopOptions: baseLoopOptions(dependencies.LoopOptions), workspaceRoot: dependencies.WorkspaceRoot,
 		transcript: agentsession.TranscriptV1{SchemaVersion: 1, Entries: []agentsession.TranscriptEntryV1{}},
 	}
+	gatewaySession, err := id.NewUUID()
+	if err != nil {
+		return nil, err
+	}
+	controller.record.GatewaySessionID = gatewaySession
 	dependencies.LoopOptions.Durability = controller
 	loop, err := agentloop.New(dependencies.Model, dependencies.Server, dependencies.LoopOptions)
 	if err != nil {
@@ -637,7 +642,7 @@ func (c *Controller) Status() Status {
 	if hasTitleFailureStatus(c.notices, c.transcript) {
 		titleFailureCode = sessionTitleFailedCode
 	}
-	return Status{Persistent: c.persistent, DegradedReason: c.degradedReason, ProviderConfirmationRequired: c.providerBlocked, TitleFailureCode: titleFailureCode, Notices: append([]string(nil), c.notices...)}
+	return Status{Persistent: c.persistent, DegradedReason: c.degradedReason, GatewayConfirmationRequired: c.providerBlocked, TitleFailureCode: titleFailureCode, Notices: append([]string(nil), c.notices...)}
 }
 
 func (c *Controller) addTitleFailureStatusLocked() {
@@ -701,15 +706,24 @@ func (c *Controller) SessionID() string {
 	return c.record.SessionID
 }
 
-func (c *Controller) ConfirmProvider(ctx context.Context) error {
+func (c *Controller) ConfirmGateway(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.providerBlocked {
 		return nil
 	}
-	c.record.ProviderName = c.provider.Name
-	c.record.ProviderEndpoint = normalizedEndpoint(c.provider.Endpoint)
-	c.record.ProviderModel = c.provider.Model
+	if c.record.GatewayServerURL != normalizedEndpoint(c.provider.ServerURL) || c.record.GatewayDeviceID != c.provider.DeviceID {
+		sessionID, err := id.NewUUID()
+		if err != nil {
+			return err
+		}
+		c.record.GatewaySessionID = sessionID
+	}
+	c.record.GatewayTarget = c.provider.Target
+	c.record.GatewayServerURL = normalizedEndpoint(c.provider.ServerURL)
+	c.record.GatewayModelName = c.provider.ModelName
+	c.record.GatewayDeviceID = c.provider.DeviceID
+	c.record.GatewayDestinationRevision = c.provider.DestinationRevision
 	if c.persistent && !c.prepared {
 		if err := c.saveCheckpointLocked(ctx, false); err != nil {
 			return err
@@ -729,7 +743,7 @@ func (c *Controller) BeginTurn(ctx context.Context, intent agentloop.DirtyIntent
 		return c.saveFailed
 	}
 	if c.providerBlocked {
-		return ErrProviderConfirmationRequired
+		return ErrGatewayConfirmationRequired
 	}
 	if c.dirty != nil {
 		return agentsession.ErrCheckpointConflict
@@ -846,7 +860,7 @@ func (c *Controller) Send(ctx context.Context, input string) (agentloop.Result, 
 	c.mu.Lock()
 	if c.providerBlocked {
 		c.mu.Unlock()
-		return agentloop.Result{}, ErrProviderConfirmationRequired
+		return agentloop.Result{}, ErrGatewayConfirmationRequired
 	}
 	if c.closed {
 		c.mu.Unlock()
@@ -860,6 +874,10 @@ func (c *Controller) Send(ctx context.Context, input string) (agentloop.Result, 
 	loop := c.loop
 	c.pendingUser = strings.TrimSpace(input)
 	c.mu.Unlock()
+	if err := c.prepareGatewayTurn(ctx, loop); err != nil {
+		c.endRuntimeOperation()
+		return agentloop.Result{}, err
+	}
 	result, err := loop.Send(ctx, input)
 	return c.finishOperation(ctx, result, err)
 }
@@ -1414,7 +1432,12 @@ func (c *Controller) scheduleTitleLocked(checkpoint agentloop.SessionCheckpoint)
 	if input == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.limits.AutoTitleRequestTimeout)
+	titleTimeout := c.limits.AutoTitleRequestTimeout
+	if gateway := gatewayModel(c.model); gateway != nil {
+		titleTimeout = time.Duration(gateway.Configuration.Limits.RequestTimeoutSeconds) * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), titleTimeout)
+	ctx = modelgateway.WithStage(ctx, "session_title")
 	c.titleCancel = cancel
 	c.titleJob++
 	job := c.titleJob

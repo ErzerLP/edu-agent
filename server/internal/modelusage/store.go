@@ -11,13 +11,16 @@ import (
 )
 
 type Store struct {
-	pool    *pgxpool.Pool
-	permits *privacy.ReadPermitManager
+	pool        *pgxpool.Pool
+	permits     *privacy.ReadPermitManager
+	concurrency func() int
 }
 
 func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool, permits: privacy.DefaultReadPermits}
+	return &Store{pool: pool, permits: privacy.DefaultReadPermits, concurrency: func() int { return 10 }}
 }
+
+func (s *Store) ConfigureConcurrency(current func() int) { s.concurrency = current }
 
 func gate(ctx context.Context, tx pgx.Tx, generation int64) error {
 	var current int64

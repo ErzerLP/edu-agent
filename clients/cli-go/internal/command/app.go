@@ -20,8 +20,7 @@ import (
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/credentials"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/dashboard"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/id"
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelclient"
-	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelsecret"
+	"github.com/edu-agent/edu-agent/clients/cli-go/internal/modelgateway"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/offline"
 	"github.com/edu-agent/edu-agent/clients/cli-go/internal/terminal"
 )
@@ -47,12 +46,6 @@ type CredentialStore interface {
 	Load() (credentials.Record, error)
 	Save(credentials.Record) error
 	Delete() error
-}
-
-type ModelSecretStore interface {
-	Load(string) (string, error)
-	Save(string, string) error
-	Delete(string) error
 }
 
 type AgentUIRunner interface {
@@ -119,15 +112,10 @@ type DashboardRunner interface {
 	Run(context.Context, dashboard.Snapshot) ([]string, bool, error)
 }
 
-type dashboardModelKeySource interface {
-	TakeModelKey() (string, bool)
-}
-
 type App struct {
 	agentWorkflow       bool
 	Config              ConfigStore
 	Credentials         CredentialStore
-	ModelSecrets        ModelSecretStore
 	Terminal            Terminal
 	Dashboard           DashboardRunner
 	AgentUI             AgentUIRunner
@@ -137,7 +125,8 @@ type App struct {
 	Err                 io.Writer
 	Getenv              func(string) string
 	NewClient           func(string, string, time.Duration) APIClient
-	NewModel            func(config.AgentConfig, string) (agentloop.Model, error)
+	NewModel            func(*modelgateway.Model) (agentloop.Model, error)
+	GatewayTransport    http.RoundTripper
 	NewUUID             func() (string, error)
 	OfflineRoot         func() (string, error)
 	OfflineKeys         OfflineKeyStore
@@ -168,9 +157,8 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 		return nil, err
 	}
 	terminalIO := terminal.New(in, out, errOut)
-	modelSecrets := modelsecret.New()
 	return &App{
-		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), ModelSecrets: modelSecrets, Terminal: terminalIO,
+		Config: configStore, Credentials: credentials.NewFileStore(credentialPath), Terminal: terminalIO,
 		Dashboard: &dashboard.Runner{In: in, Out: out}, AgentUI: defaultAgentUIRunner{in: in, out: out},
 		InputIsTTY: terminalIO.InputIsTTY, OutputIsTTY: terminalIO.OutputIsTTY,
 		Out: out, Err: errOut, Getenv: os.Getenv, NewUUID: id.NewUUID, OfflineRoot: offline.DefaultRoot, OfflineKeys: platformOfflineKeyStore{},
@@ -179,13 +167,6 @@ func NewDefault(in io.Reader, out, errOut io.Writer, build BuildInfo) (*App, err
 		NewClient: func(serverURL, token string, timeout time.Duration) APIClient {
 			client := api.NewClient(serverURL, token, timeout, http.DefaultClient)
 			return client
-		},
-		NewModel: func(value config.AgentConfig, apiKey string) (agentloop.Model, error) {
-			timeout, err := config.ParseTimeout(value.Timeout)
-			if err != nil {
-				return nil, err
-			}
-			return modelclient.New(value.BaseURL, value.Model, apiKey, timeout, http.DefaultClient)
 		},
 	}, nil
 }
@@ -232,22 +213,6 @@ func (a *App) runDashboard(ctx context.Context) int {
 				return lastExit
 			}
 			return a.fail(commandError("terminal_error", "交互式主控制台无法启动", "检查终端能力，或改用显式子命令", ExitInternal))
-		}
-		if source, ok := a.Dashboard.(dashboardModelKeySource); ok {
-			if modelKey, present := source.TakeModelKey(); present {
-				if err := a.saveDashboardAgentKey(modelKey); err != nil {
-					lastExit = a.fail(err)
-				} else {
-					lastExit = ExitOK
-				}
-				if ctx.Err() != nil {
-					return lastExit
-				}
-				if err := a.waitForDashboardReturn(ctx); err != nil {
-					return lastExit
-				}
-				continue
-			}
 		}
 		if quit {
 			return lastExit
@@ -326,24 +291,14 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		snapshot.DeviceName = safeText(value.DisplayName)
 	}
 	if value.Agent != nil {
-		snapshot.AgentProvider = safeText(value.Agent.Provider)
-		snapshot.AgentBaseURL = safeText(value.Agent.BaseURL)
-		snapshot.AgentModel = safeText(value.Agent.Model)
-		snapshot.AgentContextWindow = value.Agent.ContextWindow
-		snapshot.AgentMaxTokens = value.Agent.MaxTokens
-		snapshot.AgentContextCompaction = safeText(value.Agent.ContextCompaction)
-		snapshot.AgentReasoningEffort = safeText(value.Agent.ReasoningEffort)
-		snapshot.AgentSessionHistory = safeText(value.Agent.SessionHistory)
-		snapshot.AgentTimeout = safeText(value.Agent.Timeout)
+		snapshot.AgentContextCompaction = value.Agent.ContextCompaction
+		snapshot.AgentReasoningEffort = value.Agent.ReasoningEffort
+		snapshot.AgentSessionHistory = value.Agent.SessionHistory
 		snapshot.AgentMaxToolRounds = value.Agent.MaxToolRounds
 	}
-	if a.ModelSecrets != nil && value.Agent != nil {
-		binding := modelsecret.Binding(value.Agent.Provider, value.Agent.BaseURL)
-		if key, err := a.ModelSecrets.Load(binding); err == nil && strings.TrimSpace(key) != "" {
-			snapshot.AgentKeyConfigured = true
-		} else if err != nil && !errors.Is(err, modelsecret.ErrNotFound) {
-			snapshot.AgentKeyBackendUnavailable = true
-		}
+	if value.Gateway != nil && value.Gateway.ServerURL == value.ServerURL && value.Gateway.DeviceID == value.DeviceID {
+		snapshot.SelectedTarget = value.Gateway.SelectedTarget
+		snapshot.PrivacyConfirmed = value.Gateway.NoticeVersion == modelgateway.PrivacyVersion
 	}
 	record, credentialErr := a.Credentials.Load()
 	_, journalErr := a.Config.LoadPairingJournal()
@@ -367,6 +322,24 @@ func (a *App) dashboardSnapshot() dashboard.Snapshot {
 		return snapshot
 	}
 	snapshot.LocalState = dashboard.LocalStatePaired
+	if snapshot.PrivacyConfirmed {
+		client, e := a.gatewayClient(value, record)
+		if e == nil {
+			cfg, fetchErr := client.Config(context.Background())
+			if fetchErr == nil {
+				snapshot.Models = cfg.Models
+				for _, m := range cfg.Models {
+					if m.Target == snapshot.SelectedTarget {
+						snapshot.AgentModel = safeText(m.ModelName)
+						snapshot.AgentContextWindow = m.ContextTokens
+						snapshot.AgentMaxTokens = m.OutputTokens
+					}
+				}
+			} else {
+				snapshot.GatewayError = safeText(fetchErr.Error())
+			}
+		}
+	}
 	return snapshot
 }
 

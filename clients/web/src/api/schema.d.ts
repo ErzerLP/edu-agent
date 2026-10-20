@@ -4,6 +4,86 @@
  */
 
 export interface paths {
+    "/v1/model-gateway/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取设备模型网关安全配置
+         * @description 仅设备 Bearer；有效设备可读，不需要 settings 权限。不调用上游，不返回端点或密钥。
+         */
+        get: operations["getModelGatewayConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/model-gateway/chat/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 使用网页配置的模型执行一次 CLI 请求
+         * @description 仅接受文本及 function 工具。正文上限 16 MiB；model 是 target，不是任意上游模型名。同 request_id 只受理一次，不重放正文。SSE 为 Chat Completions choices[0]，含 content、tool_calls、reasoning_content、finish_reason 和可空 usage；正常终态后发送 [DONE]，错误使用 event:error 且不发送 [DONE]。15 秒 keepalive，不延长上游空闲时限。繁忙返回 429 和 Retry-After:2，不排队。
+         */
+        post: operations["invokeModelGateway"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/model-gateway/requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 读取原设备请求的状态与用量
+         * @description 仅原设备、当前代次；其他设备、不存在或已清除均为 404。不提供正文或续流。
+         */
+        get: operations["getModelGatewayRequest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/model-gateway/requests/{request_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 幂等停止原设备请求
+         * @description 先提交权威取消状态，再通知所有实例关闭连接；提前取消登记无用量标记。终态返回已有 state。
+         */
+        post: operations["cancelModelGatewayRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/usage": {
         parameters: {
             query?: never;
@@ -12,8 +92,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * 查看导师对话真实用量、未知数与时间分布
-         * @description 当前仅覆盖导师对话，不含 CLI 本地直连。区间为 [from,to)，按外发开始时间归桶；周从周一开始。省略 space_id 为全局，有 space_id 时必须与 X-Learning-Space-ID 一致。沿用浏览器身份、Origin、CSRF 和隐私读取门禁，响应 no-store。
+         * 查看服务端模型真实用量、未知数与时间分布
+         * @description 包含 CLI 网关和现有服务端出口。区间为 [from,to)，按外发开始时间归桶；周从周一开始。省略 space_id 为全局，有 space_id 时必须与 X-Learning-Space-ID 一致。沿用身份、学习区与隐私读取门禁，响应 no-store。cli_session_id 必须同时给定 actor_device_id。
          */
         get: operations["getModelUsage"];
         put?: never;
@@ -3910,6 +3990,122 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ModelGatewayConfig: {
+            /** @constant */
+            protocol_version: 1;
+            invoke_allowed: boolean;
+            available: boolean;
+            /** @enum {string|null} */
+            unavailable_reason: "no_selectable_model" | "gateway_capacity_disabled" | null;
+            /** Format: int64 */
+            privacy_generation: number;
+            models: {
+                /** @enum {string} */
+                target: "teaching" | "mentor";
+                display_name: string;
+                model_name: string;
+                configuration_revision: string;
+                destination_revision: string;
+                context_tokens: number;
+                output_tokens: number;
+            }[];
+            limits: {
+                max_tool_steps: number | null;
+                idle_timeout_seconds: number;
+                request_timeout_seconds: number;
+            };
+            capabilities: {
+                stream: boolean;
+                tools: boolean;
+                reasoning_deltas: boolean;
+            };
+            admission: {
+                /** @default 10 */
+                concurrency: number;
+                /** @constant */
+                per_device: 1;
+                cli_capacity: number;
+                /** @constant */
+                queue: false;
+            };
+        };
+        ModelGatewayRequest: {
+            /** @enum {string} */
+            model: "teaching" | "mentor";
+            messages: components["schemas"]["ModelGatewayMessage"][];
+            tools?: {
+                /** @constant */
+                type: "function";
+                function: {
+                    name: string;
+                    description?: string;
+                    parameters: Record<string, never>;
+                };
+            }[];
+            /** @description 缺省使用服务端值；不能超过配置上限 */
+            max_tokens?: number;
+            /** @enum {string} */
+            reasoning_effort?: "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** @default false */
+            stream: boolean;
+            stream_options?: {
+                include_usage?: boolean;
+            };
+        };
+        ModelGatewayMessage: {
+            /** @enum {string} */
+            role: "system" | "user" | "assistant" | "tool";
+            content?: string;
+            tool_call_id?: string;
+            tool_calls?: {
+                id: string;
+                /** @constant */
+                type: "function";
+                function: {
+                    name: string;
+                    arguments: string;
+                };
+            }[];
+        };
+        ModelGatewayCompletion: {
+            choices: {
+                /** @constant */
+                index: 0;
+                message: components["schemas"]["ModelGatewayMessage"];
+                /** @enum {string} */
+                finish_reason: "stop" | "tool_calls" | "length" | "content_filter";
+            }[];
+            /** @description 仅包含上游已知的 Chat Completions usage 字段；缺失字段不填零 */
+            usage?: {
+                prompt_tokens?: number | null;
+                completion_tokens?: number | null;
+                total_tokens?: number | null;
+                prompt_tokens_details?: Record<string, never>;
+                completion_tokens_details?: Record<string, never>;
+            };
+        };
+        /** @enum {string} */
+        ModelGatewayRequestState: "accepted" | "running" | "succeeded" | "failed" | "cancelled" | "outcome_unknown";
+        ModelGatewayState: {
+            /** Format: uuid */
+            request_id: string;
+            /** Format: uuid */
+            task_id: string | null;
+            state: components["schemas"]["ModelGatewayRequestState"];
+            dispatched: boolean;
+            usage: components["schemas"]["ModelUsageTotals"];
+            reason: string | null;
+        };
+        ModelGatewayError: {
+            error: {
+                /** @constant */
+                type: "gateway_error";
+                /** @enum {string} */
+                code: "invalid_request" | "request_too_large" | "device_unauthorized" | "model_scope_required" | "model_not_allowed" | "configuration_changed" | "privacy_generation_changed" | "request_already_accepted" | "turn_binding_conflict" | "context_limit_exceeded" | "output_limit_exceeded" | "gateway_busy" | "gateway_version_unsupported" | "model_unavailable" | "gateway_capacity_disabled" | "gateway_unavailable" | "upstream_error" | "upstream_incompatible" | "upstream_rate_limited" | "model_idle_timeout" | "model_request_timeout" | "device_revoked" | "request_cancelled" | "request_not_found";
+                /** @description 固定中文模板，不包含上游正文或端点 */
+                message: string;
+            };
+        };
         ModelUsageMetric: {
             /** Format: int64 */
             known_sum: number;
@@ -3969,6 +4165,12 @@ export interface components {
             kind: string;
             /** @enum {string} */
             source: "web" | "cli" | "server";
+            /** Format: uuid */
+            actor_device_id: string | null;
+            /** Format: uuid */
+            cli_session_id: string | null;
+            /** Format: uuid */
+            cli_turn_id: string | null;
             /** Format: date-time */
             started_at: string;
             /**
@@ -5739,7 +5941,7 @@ export interface components {
             context_tokens: number;
             /** @default 60 */
             idle_timeout_seconds: number;
-            /** @default 2 */
+            /** @default 10 */
             concurrency: number;
             /** @default 512 */
             storage_mib: number;
@@ -5769,7 +5971,7 @@ export interface components {
             context_tokens: number;
             /** @default 60 */
             idle_timeout_seconds: number;
-            /** @default 2 */
+            /** @default 10 */
             concurrency: number;
             /** @default 512 */
             storage_mib: number;
@@ -9006,6 +9208,16 @@ export interface components {
         };
     };
     responses: {
+        /** @description 稳定网关错误；400/413 输入，401 设备，403 权限或模型，409 版本/去重/归属，422 上限，426 协议，429 繁忙，502 上游，503 服务，504 超时。429 返回 Retry-After:2。 */
+        ModelGatewayFailure: {
+            headers: {
+                "Retry-After"?: "2";
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ModelGatewayError"];
+            };
+        };
         /** @description 400 无效请求或身份歧义；401 失效或撤销；403 Origin/CSRF 或权限不符；409 先退出已有会话；429 限流；503 暂不可用。错误不泄漏配对码或秘密。 */
         WebFailure: {
             headers: {
@@ -9323,6 +9535,12 @@ export interface components {
         };
     };
     parameters: {
+        ModelGatewayVersion: "1";
+        ModelGatewayGeneration: number;
+        UsageSource: "web" | "cli" | "server";
+        UsageDevice: string;
+        /** @description 同时指定 actor_device_id；只使用随机会话标识，不上传标题或工作目录 */
+        UsageCLISession: string;
         UsageFrom: string;
         UsageTo: string;
         /** @description IANA 时区；客户端默认发送浏览器时区 */
@@ -9373,6 +9591,125 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getModelGatewayConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 当前代次与已启用 teaching/mentor 连接，no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelGatewayConfig"];
+                };
+            };
+            default: components["responses"]["ModelGatewayFailure"];
+        };
+    };
+    invokeModelGateway: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Model-Gateway-Version": components["parameters"]["ModelGatewayVersion"];
+                "X-Learning-Generation": components["parameters"]["ModelGatewayGeneration"];
+                "X-Model-Configuration": string;
+                "X-CLI-Session-ID": string;
+                "X-CLI-Turn-ID": string;
+                "X-CLI-Request-ID": string;
+                "X-CLI-Model-Stage": "foreground" | "context_observer" | "context_reflector" | "tool_limit_summary" | "session_title" | "probe";
+                "X-Learning-Space-ID"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelGatewayRequest"];
+            };
+        };
+        responses: {
+            /** @description Chat Completions JSON 或 SSE；X-CLI-Request-ID、X-Model-Usage-Task-ID、X-Model-Gateway-Version 关联用量。流响应额外设置 X-Accel-Buffering:no。 */
+            200: {
+                headers: {
+                    "X-CLI-Request-ID"?: string;
+                    "X-Model-Usage-Task-ID"?: string;
+                    "X-Model-Gateway-Version"?: "1";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelGatewayCompletion"];
+                    "text/event-stream": string;
+                };
+            };
+            default: components["responses"]["ModelGatewayFailure"];
+        };
+    };
+    getModelGatewayRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Model-Gateway-Version": components["parameters"]["ModelGatewayVersion"];
+                "X-Learning-Generation": components["parameters"]["ModelGatewayGeneration"];
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 请求状态；usage 是所有真实 attempts 的已知小计与未知次数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelGatewayState"];
+                };
+            };
+            default: components["responses"]["ModelGatewayFailure"];
+        };
+    };
+    cancelModelGatewayRequest: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Model-Gateway-Version": components["parameters"]["ModelGatewayVersion"];
+                "X-Learning-Generation": components["parameters"]["ModelGatewayGeneration"];
+            };
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description 已取消或已有终态 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        request_id: string;
+                        state: components["schemas"]["ModelGatewayRequestState"];
+                    };
+                };
+            };
+            default: components["responses"]["ModelGatewayFailure"];
+        };
+    };
     getModelUsage: {
         parameters: {
             query: {
@@ -9382,6 +9719,10 @@ export interface operations {
                 timezone?: components["parameters"]["UsageTimezone"];
                 grain?: components["parameters"]["UsageGrain"];
                 model?: components["parameters"]["UsageModel"];
+                source?: components["parameters"]["UsageSource"];
+                actor_device_id?: components["parameters"]["UsageDevice"];
+                /** @description 同时指定 actor_device_id；只使用随机会话标识，不上传标题或工作目录 */
+                cli_session_id?: components["parameters"]["UsageCLISession"];
                 /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
                 space_id?: components["parameters"]["UsageSpace"];
             };
@@ -9415,6 +9756,10 @@ export interface operations {
                 timezone?: components["parameters"]["UsageTimezone"];
                 grain?: components["parameters"]["UsageGrain"];
                 model?: components["parameters"]["UsageModel"];
+                source?: components["parameters"]["UsageSource"];
+                actor_device_id?: components["parameters"]["UsageDevice"];
+                /** @description 同时指定 actor_device_id；只使用随机会话标识，不上传标题或工作目录 */
+                cli_session_id?: components["parameters"]["UsageCLISession"];
                 /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
                 space_id?: components["parameters"]["UsageSpace"];
                 /** @description 绑定身份、代次及全部筛选条件的不透明游标 */
@@ -9451,6 +9796,10 @@ export interface operations {
                 timezone?: components["parameters"]["UsageTimezone"];
                 grain?: components["parameters"]["UsageGrain"];
                 model?: components["parameters"]["UsageModel"];
+                source?: components["parameters"]["UsageSource"];
+                actor_device_id?: components["parameters"]["UsageDevice"];
+                /** @description 同时指定 actor_device_id；只使用随机会话标识，不上传标题或工作目录 */
+                cli_session_id?: components["parameters"]["UsageCLISession"];
                 /** @description 与 X-Learning-Space-ID 一致；省略为全局 */
                 space_id?: components["parameters"]["UsageSpace"];
                 /** @description 绑定身份、代次及全部筛选条件的不透明游标 */

@@ -12,11 +12,12 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("配置格式或范围无效")
-	ErrConflict = errors.New("配置版本已变化，请重新读取")
-	ErrStorage  = errors.New("受保护的配置存储不可用")
-	ErrBusy     = errors.New("已有连接探测正在进行")
-	ErrConsent  = errors.New("连接探测需要明确同意外部请求和可能费用")
+	ErrInvalid     = errors.New("配置格式或范围无效")
+	ErrUnavailable = errors.New("模型连接不可用")
+	ErrConflict    = errors.New("配置版本已变化，请重新读取")
+	ErrStorage     = errors.New("受保护的配置存储不可用")
+	ErrBusy        = errors.New("已有连接探测正在进行")
+	ErrConsent     = errors.New("连接探测需要明确同意外部请求和可能费用")
 )
 
 type Target string
@@ -49,7 +50,7 @@ type Limits struct {
 }
 
 func DefaultLimits() Limits {
-	return Limits{ResearchRequests: 20, ResearchTokens: 100000, OutputTokens: 2048, ContextTokens: 32768, IdleTimeoutSeconds: 60, Concurrency: 2, StorageMiB: 512}
+	return Limits{ResearchRequests: 20, ResearchTokens: 100000, OutputTokens: 2048, ContextTokens: 32768, IdleTimeoutSeconds: 60, Concurrency: 10, StorageMiB: 512}
 }
 func (l Limits) Validate() error {
 	for _, v := range [][3]int{{l.ResearchRequests, 1, 1000}, {l.ResearchTokens, 1024, 10000000}, {l.OutputTokens, 64, 32768}, {l.ContextTokens, 4096, 2000000}, {l.IdleTimeoutSeconds, 5, 600}, {l.Concurrency, 1, 16}, {l.StorageMiB, 16, 1048576}} {

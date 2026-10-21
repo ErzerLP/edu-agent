@@ -1,6 +1,6 @@
 # Shape：智能搜集资料
 
-状态：Shape 文档定稿（2026-10-20），未实施。依据 [#166 正文及 R1–R4 确认](https://github.com/ErzerLP/edu-agent/issues/166#issuecomment-6290213981)，依赖 [mentor-web-search](../mentor-web-search/brief.md)；交付关系见 [Supervisor](../../../design/search-shape.md)。
+状态：Shape 文档定稿（2026-10-20）；R-A 实现覆盖见[设计 §14](../../../design/source-research.md#14-r-a-实现覆盖)，R-B 尚未实施。依据 [#166 正文及 R1–R4 确认](https://github.com/ErzerLP/edu-agent/issues/166#issuecomment-6290213981)，依赖 [mentor-web-search](../mentor-web-search/brief.md)；交付关系见 [Supervisor](../../../design/search-shape.md)。
 
 ## 结果
 

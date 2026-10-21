@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
@@ -115,7 +116,7 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 	for _, message := range request.Messages {
 		chat.Messages = append(chat.Messages, llm.Message{Role: llm.Role(message.Role), Content: message.Content})
 	}
-	if stage != "topic_index" && stage != "web_route" && stage != "web_answer" {
+	if stage != "topic_index" && stage != "web_route" && stage != "web_answer" && !strings.HasPrefix(stage, "source_research_") {
 		chat.Messages[0].Content += " 直接复制 citation_support 中相关 candidate 的 citation 对象，不计算范围或 hash。只需简短完成当前任务。资料不足如实说明，候选并不证明结论。"
 	}
 	if stage == "checking_synthesis" && h.body.StartLearning != nil {
@@ -151,7 +152,9 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 		slog.InfoContext(ctx, "mentor_model_completed", "run_id", h.owned.RunID, "model_stage", stage, "attempt", attempt+1, "elapsed_ms", time.Since(started).Milliseconds(), "output_budget", h.limits.OutputTokens, "input_tokens", response.Usage.InputTokens, "output_tokens", response.Usage.OutputTokens, "reasoning_tokens", response.Usage.ReasoningTokens, "total_tokens", response.Usage.TotalTokens, "error_category", category)
 		if callErr == nil || llm.Category(callErr) != llm.ErrorTimeout && llm.Category(callErr) != llm.ErrorUnavailable {
 			if err = h.service.mutate(ctx, &h.owned, "model_received", func(item *row) error {
-				item.callStarted = false
+				if h.body.SourceResearch == nil || callErr != nil {
+					item.callStarted = false
+				}
 				if response.Usage.TotalTokens > 0 && response.Usage.TotalTokens <= h.reserve {
 					item.CostUnknown = false
 				}

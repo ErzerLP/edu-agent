@@ -73,29 +73,31 @@ type Receipt struct {
 }
 
 type Meta struct {
-	TopicIndexPending bool      `json:"topic_index_pending,omitempty"`
-	ConversationID    string    `json:"conversation_id,omitempty"`
-	TeachingSessionID string    `json:"teaching_session_id,omitempty"`
-	Kind              string    `json:"kind,omitempty"`
-	RunID             string    `json:"run_id"`
-	SessionID         string    `json:"session_id"`
-	SpaceID           string    `json:"space_id"`
-	GoalID            string    `json:"goal_id"`
-	GoalVersion       int64     `json:"goal_version"`
-	Generation        int64     `json:"privacy_generation"`
-	Version           int64     `json:"version"`
-	Watermark         int64     `json:"watermark"`
-	Status            string    `json:"status"`
-	Stage             string    `json:"stage"`
-	Reason            string    `json:"reason"`
-	Saved             bool      `json:"saved"`
-	BodyAvailable     bool      `json:"body_available"`
-	RequestsUsed      int       `json:"requests_used"`
-	ResultUnknown     bool      `json:"result_unknown"`
-	CostUnknown       bool      `json:"cost_unknown"`
-	UpdatedAt         time.Time `json:"updated_at"`
-	ExpiresAt         time.Time `json:"expires_at"`
-	Configuration     string    `json:"configuration"`
+	SourceResearchJobID   string    `json:"source_research_job_id,omitempty"`
+	SourceResearchRoundID string    `json:"source_research_round_id,omitempty"`
+	TopicIndexPending     bool      `json:"topic_index_pending,omitempty"`
+	ConversationID        string    `json:"conversation_id,omitempty"`
+	TeachingSessionID     string    `json:"teaching_session_id,omitempty"`
+	Kind                  string    `json:"kind,omitempty"`
+	RunID                 string    `json:"run_id"`
+	SessionID             string    `json:"session_id"`
+	SpaceID               string    `json:"space_id"`
+	GoalID                string    `json:"goal_id"`
+	GoalVersion           int64     `json:"goal_version"`
+	Generation            int64     `json:"privacy_generation"`
+	Version               int64     `json:"version"`
+	Watermark             int64     `json:"watermark"`
+	Status                string    `json:"status"`
+	Stage                 string    `json:"stage"`
+	Reason                string    `json:"reason"`
+	Saved                 bool      `json:"saved"`
+	BodyAvailable         bool      `json:"body_available"`
+	RequestsUsed          int       `json:"requests_used"`
+	ResultUnknown         bool      `json:"result_unknown"`
+	CostUnknown           bool      `json:"cost_unknown"`
+	UpdatedAt             time.Time `json:"updated_at"`
+	ExpiresAt             time.Time `json:"expires_at"`
+	Configuration         string    `json:"configuration"`
 }
 
 type Interaction struct {
@@ -109,6 +111,7 @@ type Interaction struct {
 }
 
 type Body struct {
+	SourceResearch  *SourceResearchState        `json:"source_research,omitempty"`
 	WebExpiresAt    *time.Time                  `json:"web_expires_at,omitempty"`
 	Web             *WebState                   `json:"web,omitempty"`
 	StudioPlan      *StudioPlanStage            `json:"studio_plan,omitempty"`

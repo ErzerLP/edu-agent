@@ -167,7 +167,6 @@ func TestPostgreSQLLearnerAdminIssuanceAndHTTPPermissionMatrix(t *testing.T) {
 		{"import approval", "POST", "/v1/knowledge/imports/confirm", 400, []string{"knowledge:write", "knowledge:approve"}},
 		{"import jobs", "POST", "/v1/knowledge/import-jobs", 400, []string{"knowledge:read", "knowledge:write"}},
 		{"references", "POST", "/v1/learning/goals/" + entity + "/references/previews", 400, []string{"references:manage", "knowledge:approve", "learning:write"}},
-		{"search discovery", "POST", "/v1/knowledge/source-discovery", 400, []string{"learning:write", "knowledge:read", "knowledge:write", "research:adopt"}},
 		{"studio read", "GET", "/v1/learning/studio/artifacts", 200, []string{"learning:read"}},
 		{"studio note", "POST", "/v1/learning/studio/artifacts", 400, []string{"learning:write"}},
 		{"studio generate", "POST", "/v1/learning/studio/generations", 400, []string{"learning:write"}},

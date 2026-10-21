@@ -16,13 +16,12 @@ import (
 // 解析只返回候选，不保存正文；所有网络读取复用研究的逐跳地址与格式边界。
 func (a *API) mountReferenceSources(r chi.Router) {
 	a.mountSourceCatalog(r)
-	a.mountSourceDiscovery(r)
 	r.With(a.requireScope("knowledge:read")).Get("/v1/knowledge/source-capabilities", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		_, catalog := a.knowledge.(interface {
 			Sources(context.Context, knowledge.SourceQuery) (knowledge.SourcePage, error)
 		})
-		writeJSON(w, 200, map[string]any{"source_catalog": catalog, "source_discovery": a.discoveryCapability(r), "formats": []string{"markdown", "utf8_text", "html", "pdf_text_layer"}, "pdf": map[string]any{
+		writeJSON(w, 200, map[string]any{"source_catalog": catalog, "formats": []string{"markdown", "utf8_text", "html", "pdf_text_layer"}, "pdf": map[string]any{
 			"parser": pdfsource.Parser, "max_bytes": pdfsource.MaxBytes, "max_pages": pdfsource.MaxPages, "max_text_bytes": pdfsource.MaxText,
 			"memory_mib": pdfsource.MemoryMiB, "timeout_seconds": int(pdfsource.Timeout.Seconds()), "concurrency": 2,
 			"web_max_wire_bytes": research.MaxWire, "web_max_decoded_bytes": research.MaxDecoded,
@@ -90,7 +89,7 @@ func (a *API) mountReferenceSources(r chi.Router) {
 		policy := research.Policy{Mode: "supplement", Domains: []string{}}
 		if input.Policy != nil {
 			policy = *input.Policy
-			if (research.DiscoveryRequest{Keywords: "URL", ExternalConsent: true, Policy: policy}).Validate() != nil {
+			if policy.Validate() != nil || policy.Mode == "prefer" || policy.Mode == "supplement" && len(policy.Domains) > 0 {
 				writeError(w, r, 400, "research_policy_rejected", "网页域名策略无效")
 				return
 			}

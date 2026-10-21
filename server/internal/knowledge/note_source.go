@@ -44,7 +44,7 @@ func (s *Service) PrepareNoteSource(ctx context.Context, read NoteSourceReader, 
 	if strings.TrimSpace(note.Markdown) == "" {
 		return NoteSourceCandidate{}, &Error{Code: CodeInvalidRequest}
 	}
-	derivation := SourceDerivation{id, version}
+	derivation := SourceDerivation{ArtifactID: id, Version: version}
 	hash := SourceTextHash(note.Markdown)
 	metadata := SourceMetadata{Kind: "text", MediaType: "text/markdown", Parser: ParserVersion, Coverage: "user_note_snapshot", Fingerprint: hash, Status: "parsed", DerivedFrom: &derivation}
 	raw, _ := json.Marshal(fetchedReceipt{space.Scope(ctx), generation, hash, metadata})

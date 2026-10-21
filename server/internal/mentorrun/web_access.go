@@ -146,7 +146,7 @@ func (s *Service) saveWebOperation(ctx context.Context, tx pgx.Tx, device, space
 	if err = s.quota(ctx, tx, int64(len(raw))); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO learning_web_operations(id,operation_id,device_id,space_id,conversation_id,run_id,privacy_generation,request_hash,ciphertext) VALUES($1,$2,$3,$4,$5,NULLIF($6,'')::uuid,$7,$8,$9)`, id, op, device, space, conversation, run, g, hash[:], raw)
+	_, err = tx.Exec(ctx, `INSERT INTO learning_web_operations(id,operation_id,device_id,space_id,conversation_id,run_id,privacy_generation,request_hash,ciphertext) VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,NULLIF($6,'')::uuid,$7,$8,$9)`, id, op, device, space, conversation, run, g, hash[:], raw)
 	return err
 }
 
@@ -206,6 +206,13 @@ func (h *executionHost) webGateTx(ctx context.Context, tx pgx.Tx) error {
 	if h.body.Web == nil || !h.body.Web.Enabled {
 		return errWebStopped
 	}
+	if h.owned.SourceResearchJobID != "" {
+		_, configuration, err := h.service.search(nil)
+		if err != nil || configuration != h.body.SourceResearch.SearchConfiguration {
+			return ErrInactive
+		}
+		return h.service.sourceResearchGateTx(ctx, tx, h.owned, h.body.Web.Epoch)
+	}
 	var allowed bool
 	err := tx.QueryRow(ctx, `SELECT NOT deleted AND web_search_enabled AND web_access_epoch=$2 FROM learning_tutor_conversations WHERE id=$1 AND device_id=$3 AND space_id=$4 AND privacy_generation=$5 FOR SHARE`, h.owned.ConversationID, h.body.Web.Epoch, h.owned.device, h.owned.SpaceID, h.owned.Generation).Scan(&allowed)
 	if err != nil {
@@ -227,10 +234,10 @@ func (h *executionHost) webContext(parent context.Context) (context.Context, fun
 	s := h.service
 	id := uuid.NewString()
 	s.mu.Lock()
-	if s.webCancels[h.owned.ConversationID] == nil {
-		s.webCancels[h.owned.ConversationID] = map[string]context.CancelFunc{}
+	if s.webCancels[webCancelKey(h.owned)] == nil {
+		s.webCancels[webCancelKey(h.owned)] = map[string]context.CancelFunc{}
 	}
-	s.webCancels[h.owned.ConversationID][id] = cancel
+	s.webCancels[webCancelKey(h.owned)][id] = cancel
 	s.mu.Unlock()
 	done := make(chan struct{})
 	go func() {
@@ -253,9 +260,9 @@ func (h *executionHost) webContext(parent context.Context) (context.Context, fun
 		cancel()
 		<-done
 		s.mu.Lock()
-		delete(s.webCancels[h.owned.ConversationID], id)
-		if len(s.webCancels[h.owned.ConversationID]) == 0 {
-			delete(s.webCancels, h.owned.ConversationID)
+		delete(s.webCancels[webCancelKey(h.owned)], id)
+		if len(s.webCancels[webCancelKey(h.owned)]) == 0 {
+			delete(s.webCancels, webCancelKey(h.owned))
 		}
 		s.mu.Unlock()
 	}

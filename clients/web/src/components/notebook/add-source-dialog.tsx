@@ -5,11 +5,16 @@ import { learningClient, unwrap } from '@/api/client'
 import { useIdentity } from '@/lib/session'
 import { Button } from '../ui/button'
 import { ErrorState } from '../common'
+import { sourceResearchAPI } from '@/api/source-research'
+import { SourceResearch } from './source-research'
 import { ReferenceImport } from '../reference-import'
 import { noteSourceItem, type NoteSourceCandidate } from '@/api/studio'
 import { FileText, Globe, Search, Upload, X } from 'lucide-react'
 
 export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { spaceId: string; initiallyOpen?: boolean; onClose?: () => void }) {
+  const { session, prefix } = useIdentity()
+  const [research, setResearch] = useState(false)
+  const jobs = useQuery({queryKey:[...prefix,spaceId,'source-research','jobs'],queryFn:()=>sourceResearchAPI(session,spaceId).list(),retry:false,refetchInterval:5000})
   const dialog = useRef<HTMLDialogElement>(null),
     trigger = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
@@ -25,6 +30,7 @@ export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { s
       >
         ＋ 添加来源
       </Button>
+      {jobs.data?.items.some(j=>j.available_actions.includes('stop')) && <Button variant="outline" onClick={()=>{setResearch(true);setOpen(true);dialog.current?.showModal()}}>查看智能搜集进度</Button>}
       <dialog
         ref={dialog}
         className="source-dialog expanded add-source-dialog"
@@ -41,18 +47,18 @@ export function AddSourceDialog({ spaceId, initiallyOpen = false, onClose }: { s
           <X size={20} aria-hidden="true" />
         </Button>
         </header>
-        <div className="add-source-body">{open && <AddSourceContent spaceId={spaceId} />}</div>
+        <div className="add-source-body">{open && <AddSourceContent spaceId={spaceId} initialResearch={research} />}</div>
       </dialog>
     </>
   )
 }
 
-export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; noteCandidate?: NoteSourceCandidate }) {
+export function AddSourceContent({ spaceId, noteCandidate, initialResearch = false }: { spaceId: string; noteCandidate?: NoteSourceCandidate; initialResearch?: boolean }) {
   const { session, prefix, drafts } = useIdentity()
   const key = JSON.stringify([...prefix, spaceId, 'add-source', noteCandidate?.derived_from ?? null])
   const queryClient = useQueryClient()
   const [method, setMethod] = useState<'pdf' | 'text' | 'url' | 'search'>(
-    () => drafts.get(`${key}:method`) ?? 'pdf',
+    () => initialResearch ? 'search' : drafts.get(`${key}:method`) ?? 'pdf',
   )
   const [collectionId, setCollectionId] = useState(
     () => drafts.get<string>(`${key}:collection`) ?? '',
@@ -114,7 +120,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
             ['pdf', 'PDF 上传', Upload],
             ['text', '粘贴文本', FileText],
             ['url', '网址', Globe],
-            ['search', '搜索发现', Search],
+            ['search', '智能搜集', Search],
           ] as const
         ).map(([id, label, Icon]) => (
           <Button
@@ -131,6 +137,7 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           </Button>
         ))}
       </div>}
+      {method === 'search' && !noteCandidate ? <SourceResearch spaceId={spaceId} /> : <>
       <p role="status" className="add-source-status">
         {collections.isPending ? '正在读取目标集合…' : '\u00a0'}
       </p>
@@ -181,13 +188,14 @@ export function AddSourceContent({ spaceId, noteCandidate }: { spaceId: string; 
           spaceId={spaceId}
           collection={collection}
           target={noteCandidate ? `studio-${noteCandidate.derived_from.artifact_id}-${noteCandidate.derived_from.version}` : 'notebook'}
-          method={noteCandidate ? 'note' : method}
+          method={noteCandidate ? 'note' : method === 'search' ? undefined : method}
           initialItems={noteCandidate ? [noteSourceItem(noteCandidate)] : undefined}
           onImported={() => {
             void refresh()
           }}
         />
       )}
+      </>}
     </div>
   )
 }

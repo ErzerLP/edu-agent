@@ -20,7 +20,7 @@ const failureLabels: Record<string, string> = {
   body_unavailable: '未取得正文；旧记录未区分具体原因',
 }
 
-function failureLabel(category: string) {
+export function failureLabel(category: string) {
   if (/^http_\d{3}$/.test(category)) return `站点返回 HTTP ${category.slice(5)}`
   return failureLabels[category] ?? '网页读取失败'
 }

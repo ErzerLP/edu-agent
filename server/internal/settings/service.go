@@ -67,7 +67,7 @@ func Open(o Options) (*Service, error) {
 	if initial.Endpoint != "" && !slices.Contains(s.modelEndpoints, initial.Endpoint) {
 		s.modelEndpoints = append(s.modelEndpoints, initial.Endpoint)
 	}
-	s.state = stored{Version: 1, Teaching: initial, Mentor: secretSlot{Connection: Connection{Provider: "openai_compatible", AuthMode: "bearer"}, Source: "server"}, Search: secretSlot{Connection: Connection{Provider: "brave", AuthMode: "bearer"}, Source: "server"}, Limits: DefaultLimits()}
+	s.state = stored{Version: 1, SourceResearch: DefaultSourceResearch(), Teaching: initial, Mentor: secretSlot{Connection: Connection{Provider: "openai_compatible", AuthMode: "bearer"}, Source: "server"}, Search: secretSlot{Connection: Connection{Provider: "brave", AuthMode: "bearer"}, Source: "server"}, Limits: DefaultLimits()}
 	if o.Limits != nil {
 		s.state.Limits = *o.Limits
 	}
@@ -81,7 +81,7 @@ func Open(o Options) (*Service, error) {
 			s.state.Teaching = initial
 		}
 	}
-	if s.state.Limits.Validate() != nil {
+	if s.state.Limits.Validate() != nil || s.state.SourceResearch.Validate() != nil {
 		return nil, ErrInvalid
 	}
 	for _, target := range []Target{Teaching, Mentor, Search} {
@@ -150,7 +150,7 @@ func (s *Service) view() View {
 		mentor.APIStyle = string(llm.ChatCompletions)
 		mentor.Probe = s.state.Mentor.Probe
 	}
-	return View{Revision: s.state.Revision, Writable: s.path != "", Teaching: connectionView(s.state.Teaching, now), Mentor: connectionView(s.state.Mentor, now), EffectiveMentor: connectionView(mentor, now), Search: connectionView(s.state.Search, now), MentorUsesTeaching: s.state.MentorUsesTeaching, Limits: s.state.Limits, Policy: s.state.Policy, TeachingRestartRequired: !sameConnection(s.activeTeaching, s.state.Teaching) || !sameLimits(s.activeLimits, s.state.Limits), ModelEndpoints: append([]string{}, s.modelEndpoints...)}
+	return View{SourceResearch: s.state.SourceResearch, Revision: s.state.Revision, Writable: s.path != "", Teaching: connectionView(s.state.Teaching, now), Mentor: connectionView(s.state.Mentor, now), EffectiveMentor: connectionView(mentor, now), Search: connectionView(s.state.Search, now), MentorUsesTeaching: s.state.MentorUsesTeaching, Limits: s.state.Limits, Policy: s.state.Policy, TeachingRestartRequired: !sameConnection(s.activeTeaching, s.state.Teaching) || !sameLimits(s.activeLimits, s.state.Limits), ModelEndpoints: append([]string{}, s.modelEndpoints...)}
 }
 func sameConnection(a, b secretSlot) bool { return a.Connection == b.Connection && a.Key == b.Key }
 
@@ -172,10 +172,16 @@ func (s *Service) Update(u Update) (View, error) {
 	if u.Target == "" && (u.Connection != nil || u.NewKey != nil || u.ClearKey) {
 		return View{}, ErrInvalid
 	}
-	if u.Connection == nil && u.NewKey == nil && !u.ClearKey && u.MentorUsesTeaching == nil && u.Limits == nil && u.Policy == nil {
+	if u.Connection == nil && u.NewKey == nil && !u.ClearKey && u.MentorUsesTeaching == nil && u.Limits == nil && u.Policy == nil && u.SourceResearch == nil {
 		return View{}, ErrInvalid
 	}
 	next := s.state
+	if u.SourceResearch != nil {
+		if u.SourceResearch.Validate() != nil {
+			return View{}, ErrInvalid
+		}
+		next.SourceResearch = *u.SourceResearch
+	}
 	if u.Target.valid() {
 		slot := next.slot(u.Target)
 		if u.Connection != nil {

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 if (!process.env.TEST_DATABASE_URL) throw new Error('必须设置独立 TEST_DATABASE_URL')
 process.umask(0o022)
+const sourceResearch = process.argv.includes('--source-research')
 const web = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const server = resolve(web, '../../server')
 const staging = mkdtempSync(join(tmpdir(), 'mentor-web-search-'))
@@ -22,10 +23,11 @@ if [ "$1" = serve ]; then
 fi
 exec ${quote(join(server, 'edu-agentd'))} "$@"
 `, { mode: 0o755 })
-  const result = spawnSync('npm', ['run', 'test:browser', '--', 'tests/browser/mentor-web-search.spec.ts', '--project=chromium'], {
-    cwd: web,
+  const browserArgs = ['run', 'test:browser', '--', sourceResearch ? 'tests/browser/source-research.spec.ts' : 'tests/browser/mentor-web-search.spec.ts', '--project=chromium']
+  const result = spawnSync(sourceResearch ? 'go' : 'npm', sourceResearch ? ['run', './testutil/webdatabase', 'npm', '--prefix', web, ...browserArgs] : browserArgs, {
+    cwd: sourceResearch ? server : web,
     stdio: 'inherit',
-    env: { ...process.env, WEB_MENTOR_FIXTURE: '1', WEB_SEARCH_BROWSER_FIXTURE: '1', WEB_NOTEBOOK_FIXTURE_BINARY: launcher },
+    env: { ...process.env, WEB_MENTOR_FIXTURE: '1', WEB_SOURCE_RESEARCH_FIXTURE: sourceResearch ? '1' : '0', WEB_SEARCH_BROWSER_FIXTURE: '1', WEB_NOTEBOOK_FIXTURE_BINARY: launcher },
   })
   if (result.error) throw result.error
   process.exitCode = result.status ?? 1

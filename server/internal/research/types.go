@@ -51,13 +51,17 @@ func (r Request) Validate() error {
 	if !r.ExternalConsent || strings.TrimSpace(r.Topic) == "" || len(r.Topic) > 300 || !utf8.ValidString(r.Topic) || strings.ContainsAny(r.Topic, "\x00\r\n") {
 		return ErrPolicy
 	}
-	if r.Policy.Mode != "supplement" && r.Policy.Mode != "prefer" && r.Policy.Mode != "restrict" {
+	return r.Policy.Validate()
+}
+
+func (p Policy) Validate() error {
+	if p.Mode != "supplement" && p.Mode != "prefer" && p.Mode != "restrict" {
 		return ErrPolicy
 	}
-	if r.Policy.Domains == nil || len(r.Policy.Domains) > 5 || r.Policy.Mode != "supplement" && len(r.Policy.Domains) == 0 {
+	if p.Domains == nil || len(p.Domains) > 5 || p.Mode != "supplement" && len(p.Domains) == 0 {
 		return ErrPolicy
 	}
-	for _, domain := range r.Policy.Domains {
+	for _, domain := range p.Domains {
 		if domain != strings.ToLower(domain) || strings.ContainsAny(domain, "/:@?*\\ %\r\n") || !strings.Contains(domain, ".") || len(domain) > 253 {
 			return ErrPolicy
 		}

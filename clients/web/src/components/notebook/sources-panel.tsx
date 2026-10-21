@@ -83,7 +83,7 @@ export function SourcesPanel({
             const title = sourceTitle(item)
             const kind = item.metadata?.kind ?? 'text'
             const partial = item.metadata?.status === 'partial'
-            const status = item.metadata?.derived_from
+            const status = item.metadata?.derived_from && 'kind' in item.metadata.derived_from ? 'AI 整理报告' : item.metadata?.derived_from && 'version' in item.metadata.derived_from
               ? `笔记第 ${item.metadata.derived_from.version} 版快照`
               : partial
                 ? `${kind === 'url' ? '网址' : kind === 'pdf' ? 'PDF' : '文本'} · 部分解析`

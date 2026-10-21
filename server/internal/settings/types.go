@@ -87,6 +87,7 @@ type ConnectionView struct {
 }
 
 type View struct {
+	SourceResearch          SourceResearch `json:"source_research"`
 	Revision                int64          `json:"revision"`
 	Writable                bool           `json:"writable"`
 	Teaching                ConnectionView `json:"teaching"`
@@ -101,6 +102,7 @@ type View struct {
 }
 
 type Update struct {
+	SourceResearch     *SourceResearch `json:"source_research,omitempty"`
 	limitsJSON         json.RawMessage
 	ExpectedRevision   int64       `json:"expected_revision"`
 	Target             Target      `json:"target"`
@@ -194,14 +196,15 @@ func (secretSlot) String() string     { return "服务端连接（秘密已隐�
 func (s secretSlot) GoString() string { return s.String() }
 
 type stored struct {
-	Version            int        `json:"version"`
-	Revision           int64      `json:"revision"`
-	Teaching           secretSlot `json:"teaching"`
-	Mentor             secretSlot `json:"mentor"`
-	Search             secretSlot `json:"search"`
-	MentorUsesTeaching bool       `json:"mentor_uses_teaching"`
-	Limits             Limits     `json:"limits"`
-	Policy             Policy     `json:"policy"`
+	SourceResearch     SourceResearch `json:"source_research"`
+	Version            int            `json:"version"`
+	Revision           int64          `json:"revision"`
+	Teaching           secretSlot     `json:"teaching"`
+	Mentor             secretSlot     `json:"mentor"`
+	Search             secretSlot     `json:"search"`
+	MentorUsesTeaching bool           `json:"mentor_uses_teaching"`
+	Limits             Limits         `json:"limits"`
+	Policy             Policy         `json:"policy"`
 }
 
 func endpointURL(raw string) (*url.URL, error) {

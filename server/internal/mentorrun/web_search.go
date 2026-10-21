@@ -8,6 +8,7 @@ import (
 	"net/http/httptrace"
 	"regexp"
 	"slices"
+	"sync"
 	"sync/atomic"
 
 	"github.com/edu-agent/edu-agent/packages/agentcore"
@@ -214,6 +215,9 @@ func (t webSearchTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := t.h.webGate(r.Context()); err != nil {
 		return nil, err
 	}
+	if t.h.body.SourceResearch != nil {
+		return t.h.sourceResearchSearchHTTP(r, t.next)
+	}
 	return t.next.RoundTrip(r)
 }
 
@@ -237,9 +241,15 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 		if err := h.checkpoint(ctx, "web_searching"); err != nil {
 			return nil, err
 		}
-		adapter, _, err := h.service.search(func(next http.RoundTripper) http.RoundTripper { return webSearchTransport{h, next} })
+		adapter, configuration, err := h.service.search(func(next http.RoundTripper) http.RoundTripper { return webSearchTransport{h, next} })
 		if err != nil {
+			if h.body.SourceResearch != nil {
+				return nil, ErrInactive
+			}
 			return map[string]string{"error": "搜索服务未配置或不可用", "category": "search_unavailable"}, nil
+		}
+		if h.body.SourceResearch != nil && configuration != h.body.SourceResearch.SearchConfiguration {
+			return nil, ErrInactive
 		}
 		results, err := adapter.Search(ctx, websearch.Request{Query: input.Query, Limit: input.Count})
 		if err != nil {
@@ -247,6 +257,9 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 				return nil, ctx.Err()
 			}
 			state.Progress.Notice = "搜索失败，未获取可核对正文。"
+			if h.body.SourceResearch != nil {
+				return nil, &searchFailure{reason: websearch.Category(err)}
+			}
 			return map[string]string{"error": state.Progress.Notice, "category": "search_failed"}, nil
 		}
 		items := []WebResource{}
@@ -278,26 +291,52 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 		}
 		var d research.WebDocument
 		var id string
-		err = h.service.pool.QueryRow(ctx, `SELECT id::text FROM learning_web_documents WHERE resource_id=$1 AND owner_id=$2`, resource.ID, h.owned.RunID).Scan(&id)
+		err = h.service.pool.QueryRow(ctx, `SELECT id::text FROM learning_web_documents WHERE resource_id=$1 AND owner_id=$2`, resource.ID, webOwnerID(h.owned)).Scan(&id)
 		if errors.Is(err, pgx.ErrNoRows) {
 			if input.Cursor != "" {
 				return nil, ErrInvalid
 			}
 			state.Progress.Stage = "reading"
 			state.Progress.Title = resource.Title
+			if h.body.SourceResearch != nil {
+				if err := h.reserveSourceResearchURL(ctx, resource.URL); err != nil {
+					return nil, err
+				}
+			}
 			state.Progress.ReadAttempted++
 			if err = h.checkpoint(ctx, "web_reading"); err != nil {
 				return nil, err
 			}
 			var requests atomic.Int32
-			fetchContext := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaders: func() { requests.Add(1) }})
+			var countMu sync.Mutex
+			var countErr error
+			fetchContext := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaders: func() {
+				requests.Add(1)
+				if h.body.SourceResearch != nil {
+					e := h.recordSourceResearchHTTP(ctx)
+					countMu.Lock()
+					if countErr == nil {
+						countErr = e
+					}
+					countMu.Unlock()
+				}
+			}})
 			source, err := h.service.fetcher.Fetch(fetchContext, research.Source{ID: resource.ID, Locator: resource.URL}, research.Policy{Mode: "supplement"}, func() error {
 				if err := h.webGate(ctx); err != nil {
 					return err
 				}
+				if h.body.SourceResearch != nil {
+					return h.service.mutate(ctx, &h.owned, "web_fetching", func(item *row) error { item.body = h.body; item.callStarted = true; return nil })
+				}
 				return h.checkpoint(ctx, "web_fetching")
 			})
 			state.Progress.FetchHTTPRequests += int(requests.Load())
+			countMu.Lock()
+			accountingErr := countErr
+			countMu.Unlock()
+			if accountingErr != nil {
+				return nil, accountingErr
+			}
 			if err != nil {
 				return nil, err
 			}

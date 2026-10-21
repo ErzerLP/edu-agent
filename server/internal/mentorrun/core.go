@@ -320,7 +320,7 @@ type callModel struct{ host *executionHost }
 func (m callModel) begin(ctx context.Context, request modelclient.Request) error {
 	h := m.host
 	model, _, fingerprint, err := h.service.settings.MentorClient()
-	if err != nil || model == nil || fingerprint != h.owned.Configuration {
+	if err != nil || model == nil || fingerprint != h.owned.Configuration && !h.service.sourceResearchConfiguration(h.owned) {
 		return ErrInactive
 	}
 	h.reserve = agentcore.NewTokenEstimator().EstimateRequest(request) + request.MaxTokens + contextMargin(h.limits.ContextTokens)
@@ -368,7 +368,7 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 		request = request.WithContext(permit.Context())
 	}
 	current, _, fingerprint, configErr := h.service.settings.MentorClient()
-	if configErr != nil || current == nil || fingerprint != h.owned.Configuration {
+	if configErr != nil || current == nil || fingerprint != h.owned.Configuration && !h.service.sourceResearchConfiguration(h.owned) || h.body.SourceResearch != nil && t.connection != h.body.SourceResearch.Destination {
 		if permit != nil {
 			permit.Release()
 		}
@@ -377,7 +377,7 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 	}
 	var usageCall modelusage.CallRef
 	err := h.service.mutateTx(request.Context(), &h.owned, "model_started", func(tx pgx.Tx, item *row) error {
-		if t.stage == "web_retrieval" {
+		if t.stage == "web_retrieval" || h.body.SourceResearch != nil {
 			if err := h.webGateTx(request.Context(), tx); err != nil {
 				return err
 			}
@@ -416,6 +416,8 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			}
 			kind, origin := "mentor", item.RunID
 			switch {
+			case h.body.SourceResearch != nil:
+				kind, origin, source = "source_research", item.SourceResearchJobID, "web"
 			case h.body.TopicIndex != nil:
 				kind, origin, source = "topic_index", item.ConversationID, "server"
 			case h.body.Assessment != nil:
@@ -432,11 +434,15 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 				kind = "content_edit"
 				stage = "content_edit"
 			}
+			configuration := item.Configuration
+			if h.body.SourceResearch != nil {
+				configuration = fingerprint
+			}
 			usageCall, beginErr = h.service.usage.BeginTx(request.Context(), tx, modelusage.BeginRequest{
 				Generation: item.Generation, SpaceID: item.SpaceID, Source: source, ActorDeviceID: item.device,
 				Kind: kind, OriginID: origin, Stage: stage, AttemptKey: uuid.NewString(), LeaseID: *item.lease,
 				Provider: t.connection.Provider, Destination: hex.EncodeToString(digest[:]), Model: t.connection.Model,
-				APIStyle: style, Configuration: item.Configuration,
+				APIStyle: style, Configuration: configuration,
 			})
 			if beginErr != nil {
 				return ErrStorage

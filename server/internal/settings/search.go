@@ -43,6 +43,6 @@ func (s *Service) SearchClient(wrap func(http.RoundTripper) http.RoundTripper) (
 type attributedSearch struct{ websearch.Adapter }
 
 func (a attributedSearch) Search(ctx context.Context, r websearch.Request) ([]websearch.Result, error) {
-	ctx = modelusage.ForTask(ctx, modelusage.TaskContext{Kind: "source_discovery", OriginID: uuid.NewString(), Stage: "search_web"})
+	ctx = modelusage.ForTask(ctx, modelusage.TaskContext{Kind: "web_search", OriginID: uuid.NewString(), Stage: "search_web"})
 	return a.Adapter.Search(ctx, r)
 }

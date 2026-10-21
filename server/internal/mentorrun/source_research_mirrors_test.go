@@ -140,7 +140,7 @@ func TestSourceResearchMirrorComparisonBoundaries(t *testing.T) {
 		{"formatting and Unicode", sourceResearchRFC1122, "Theme controls " + strings.NewReplacer("RFC", "ＲＦＣ", "Internet", "INTERNET", " ", " \n ").Replace(sourceResearchRFC1122), true},
 		{"shared title and topic", sourceResearchRFC1122, sourceResearchRFC1123, false},
 		{"different numbered specification", sourceResearchRFC1122, strings.ReplaceAll(sourceResearchRFC1122, "1122", "1123"), false},
-		{"excerpt is not the whole work", sourceResearchRFC1122, sourceResearchRFC1122[:600], false},
+		{"substantial contained excerpt", sourceResearchRFC1122, sourceResearchRFC1122[:600], true},
 		{"short shared boilerplate", "Light Dark Auto Internet protocol reference", "Internet protocol reference", false},
 		{"empty comparison keys", "", "", false},
 	} {
@@ -156,6 +156,138 @@ func TestSourceResearchMirrorComparisonBoundaries(t *testing.T) {
 	complete := research.WebDocument{URL: "https://original.org/doc", Title: "https://original.org/doc", Text: sourceResearchRFC1122, Coverage: "complete_text"}
 	if !sourceResearchPreferDocument(complete, partial) || sourceResearchPreferDocument(partial, complete) {
 		t.Fatal("a better title displaced the complete text")
+	}
+}
+
+func TestSourceResearchPartialHTMLAndTextMirrors(t *testing.T) {
+	const htmlURL = "http://mirror.org/rfc1122.html"
+	const textURL = "http://original.net/rfc1122.txt"
+	// TXT exhausts its byte budget on indentation; HTML whitespace extraction
+	// reaches later sections. Both snapshots hit the same production text limit.
+	body := sourceResearchRFC1122 + strings.Repeat(" \n   ", 4000) + strings.Repeat(sourceResearchRFC1123[strings.Index(sourceResearchRFC1123, "Application software"):], 30)
+	for _, urls := range [][]string{{htmlURL, textURL}, {textURL, htmlURL}} {
+		t.Run(urls[0], func(t *testing.T) {
+			f := researchCoverageFixture(t, 1, 2, func(string) []string { return urls }, func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, ".txt") {
+					w.Header().Set("Content-Type", "text/plain")
+					fmt.Fprint(w, body)
+				} else {
+					w.Header().Set("Content-Type", "text/html")
+					fmt.Fprintf(w, "<main>%s</main>", body)
+				}
+			})
+			observeSourceResearchReport(t, f, 1)
+			job := completeSourceResearch(t, f)
+			if job.Status != "completed" || job.CandidateCount != 1 || job.Progress.ReadSucceeded != 2 {
+				t.Fatalf("partial mirrors consumed separate candidate slots: %+v", job)
+			}
+			candidates, err := f.service.SourceResearchCandidates(context.Background(), f.actor, learningspace.DefaultID, job.ID, "", 20)
+			if err != nil || len(candidates.Items) != 1 || candidates.Items[0].URL != htmlURL || candidates.Items[0].Coverage != "partial_text_limit" {
+				t.Fatalf("partial mirror representative: %+v %v", candidates, err)
+			}
+		})
+	}
+}
+
+func TestSourceResearchMirrorContainment(t *testing.T) {
+	// No formal IDs or titles: these cases must exercise content containment.
+	prose := sourceResearchRFC1122[strings.Index(sourceResearchRFC1122, "The Internet is"):]
+	for _, tc := range []struct {
+		name, a, b string
+		want       bool
+	}{
+		{"contained partial text", prose, prose + sourceResearchRFC1123, true},
+		{"substantial overlap", prose, prose[30:] + sourceResearchRFC1123, true},
+		{"insufficient overlap", prose, prose[250:] + sourceResearchRFC1123, false},
+		{"too little distinct text", prose[:200], prose, false},
+		{"repeated boilerplate", strings.Repeat("Internet protocol ", 100), prose + strings.Repeat("Internet protocol ", 100), false},
+		{"similar topic without identifiers", prose, sourceResearchRFC1123[strings.Index(sourceResearchRFC1123, "Application software"):], false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := research.WebDocument{Text: tc.a, Coverage: "partial_text_limit"}
+			b := research.WebDocument{Text: tc.b, Coverage: "partial_text_limit"}
+			for _, pair := range [][2]research.WebDocument{{a, b}, {b, a}} {
+				if got := sourceResearchSameWork(pair[0], pair[1]); got != tc.want {
+					t.Fatalf("same work=%v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSourceResearchMirrorFormalIdentity(t *testing.T) {
+	const title = "Reliable transport protocols"
+	for _, tc := range []struct {
+		name, a, b, titleA, titleB string
+		want                       bool
+	}{
+		{"same RFC", "Request for Comments: 1180", "Network Working Group\nRequest for Comments: 1180", title, "Reliable Transport Protocols | Archive", true},
+		{"RFC heading", "RFC 1180: A TCP/IP Tutorial", "Request for Comments: 1180", "RFC 1180: TCP/IP Tutorial | RFC Editor", "A TCP/IP Tutorial", true},
+		{"Unicode metadata", "Request for Comments: １１８０", "Request for Comments: 1180", title, title, true},
+		{"same DOI", "DOI: 10.1000/ABC.123", "https://doi.org/10.1000/abc.123", title, title, true},
+		{"same arXiv", "arXiv:2301.01234v2", "arXiv:2301.01234", title, title, true},
+		{"arXiv PDF URL", "https://arxiv.org/pdf/2301.01234v2.pdf", "arXiv:2301.01234", title, title, true},
+		{"early modern arXiv", "arXiv:0706.0001", "arXiv:0706.0001v2", title, title, true},
+		{"old arXiv", "arXiv:hep-th/9901001v1", "arXiv:hep-th/9901001", title, title, true},
+		{"same ISBN 13", "ISBN-13: 978-0-306-40615-7", "ISBN: 9780306406157", title, title, true},
+		{"same ISBN 10", "ISBN-10: 0-8044-2957-X", "ISBN: 080442957X", title, title, true},
+		{"ISBN 10 and 13", "ISBN: 0-306-40615-2", "ISBN: 9780306406157", title, title, true},
+		{"different titles", "Request for Comments: 1180", "Request for Comments: 1180", title, "A survey of database query planners", false},
+		{"missing titles", "Request for Comments: 1180", "Request for Comments: 1180", "", "", false},
+		{"URL titles", "Request for Comments: 1180", "Request for Comments: 1180", "https://mirror.org/rfc1180", "https://original.net/rfc1180", false},
+		{"different RFC", "Request for Comments: 1180", "Request for Comments: 1122", title, title, false},
+		{"different DOI", "DOI: 10.1000/abc", "DOI: 10.1000/def", title, title, false},
+		{"different arXiv", "arXiv:2301.01234", "arXiv:2301.01235", title, title, false},
+		{"different ISBN", "ISBN: 9780306406157", "ISBN: 9780804429573", title, title, false},
+		{"reference is not RFC metadata", "See RFC 1180 for an overview", "See RFC 1180 for an overview", title, title, false},
+		{"unlabelled DOI", "Related work: 10.1000/abc", "Related work: 10.1000/abc", title, title, false},
+		{"late identifier", strings.Repeat("x", 2048) + " DOI: 10.1000/abc", "DOI: 10.1000/abc", title, title, false},
+		{"bibliography identifier", "References\nDOI: 10.1000/abc", "DOI: 10.1000/abc", title, title, false},
+		{"malformed RFC", "Request for Comments: 1180draft", "Request for Comments: 1180draft", title, title, false},
+		{"malformed DOI", "DOI: 10.12/abc", "DOI: 10.12/abc", title, title, false},
+		{"empty DOI suffix", "DOI: 10.1000/", "DOI: 10.1000/", title, title, false},
+		{"punctuation DOI suffix", "DOI: 10.1000/.", "DOI: 10.1000/.", title, title, false},
+		{"malformed arXiv month", "arXiv:2313.01234", "arXiv:2313.01234", title, title, false},
+		{"malformed arXiv suffix", "arXiv:2301.012345", "arXiv:2301.012345", title, title, false},
+		{"short modern arXiv sequence", "arXiv:2301.0123", "arXiv:2301.0123", title, title, false},
+		{"long early arXiv sequence", "arXiv:0706.00001", "arXiv:0706.00001", title, title, false},
+		{"arXiv before new scheme", "arXiv:0703.0001", "arXiv:0703.0001", title, title, false},
+		{"arXiv after old scheme", "arXiv:hep-th/0801001", "arXiv:hep-th/0801001", title, title, false},
+		{"zero arXiv sequence", "arXiv:2301.00000", "arXiv:2301.00000", title, title, false},
+		{"invalid arXiv version", "arXiv:2301.01234v0", "arXiv:2301.01234v0", title, title, false},
+		{"invalid ISBN 13 checksum", "ISBN: 9780306406158", "ISBN: 9780306406158", title, title, false},
+		{"invalid ISBN 10 checksum", "ISBN: 0306406153", "ISBN: 0306406153", title, title, false},
+		{"invalid ISBN prefix", "ISBN: 9770306406158", "ISBN: 9770306406158", title, title, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Deliberately disjoint short bodies: positive identity matches cannot
+			// be supplied by the shingle fallback or identical snapshot hashes.
+			a := research.WebDocument{Text: tc.a + "\nFirst extracted passage.", Title: tc.titleA}
+			b := research.WebDocument{Text: tc.b + "\nSecond bounded snapshot.", Title: tc.titleB}
+			for _, pair := range [][2]research.WebDocument{{a, b}, {b, a}} {
+				if got := sourceResearchSameWork(pair[0], pair[1]); got != tc.want {
+					t.Fatalf("same work=%v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSourceResearchMirrorIdentifierConflictsVetoContent(t *testing.T) {
+	for _, headers := range [][2]string{
+		{"Request for Comments: 1180", "Request for Comments: 1122"},
+		{"DOI: 10.1000/abc", "DOI: 10.1000/def"},
+		{"arXiv:2301.01234", "arXiv:2301.01235"},
+		{"ISBN: 9780306406157", "ISBN: 9780804429573"},
+		{"Request for Comments: 1180\nDOI: 10.1000/abc", "Request for Comments: 1180\nDOI: 10.1000/def"},
+	} {
+		t.Run(headers[0], func(t *testing.T) {
+			a := research.WebDocument{Text: headers[0] + "\n" + sourceResearchRFC1122, Title: "Internet host requirements"}
+			b := research.WebDocument{Text: headers[1] + "\n" + sourceResearchRFC1122, Title: a.Title}
+			if sourceResearchSameWork(a, b) || sourceResearchSameWork(b, a) {
+				t.Fatal("conflicting formal identifiers were overridden by matching title/body")
+			}
+		})
 	}
 }
 

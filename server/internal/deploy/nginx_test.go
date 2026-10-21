@@ -277,13 +277,13 @@ func TestMentorWebSearchNginxPaths(t *testing.T) {
 
 func TestSourceResearchNginxPaths(t *testing.T) {
 	locations := nginxLocations(t, readNginx(t))
-	for _, path := range []string{"/capabilities", "/jobs", "/jobs/a", "/jobs/a/events", "/jobs/a/candidates", "/jobs/a/selection", "/jobs/a/commands", "/jobs/a/reports/b", "/jobs/a/import-previews", "/jobs/a/report-imports", "/jobs/a/imports"} {
+	for _, path := range []string{"/capabilities", "/jobs", "/jobs/a", "/jobs/a/events", "/jobs/a/candidates", "/jobs/a/selection", "/jobs/a/commands", "/jobs/a/rounds", "/jobs/a/reports", "/jobs/a/reports/b", "/jobs/a/import-previews", "/jobs/a/report-imports", "/jobs/a/imports"} {
 		location := selectedLocation(locations, "/v1/learning/source-research"+path)
 		if location == nil || location.path == "/" {
 			t.Errorf("source research route not forwarded: %s", path)
 		}
 	}
-	for _, path := range []string{"/v1/knowledge/source-discovery", "/v1/learning/source-research/jobs/a/rounds", "/v1/learning/source-research/jobs/a/force"} {
+	for _, path := range []string{"/v1/knowledge/source-discovery", "/v1/learning/source-research/jobs/a/force"} {
 		location := selectedLocation(locations, path)
 		if location == nil || location.path != "/" {
 			t.Errorf("unexpected route forwarded: %s", path)

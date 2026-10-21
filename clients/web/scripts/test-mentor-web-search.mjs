@@ -23,7 +23,7 @@ if [ "$1" = serve ]; then
 fi
 exec ${quote(join(server, 'edu-agentd'))} "$@"
 `, { mode: 0o755 })
-  const browserArgs = ['run', 'test:browser', '--', sourceResearch ? 'tests/browser/source-research.spec.ts' : 'tests/browser/mentor-web-search.spec.ts', '--project=chromium']
+  const browserArgs = ['run', 'test:browser', '--', sourceResearch ? 'tests/browser/source-research.spec.ts' : 'tests/browser/mentor-web-search.spec.ts', '--project=chromium', ...process.argv.slice(2).filter(arg => arg !== '--source-research')]
   const result = spawnSync(sourceResearch ? 'go' : 'npm', sourceResearch ? ['run', './testutil/webdatabase', 'npm', '--prefix', web, ...browserArgs] : browserArgs, {
     cwd: sourceResearch ? server : web,
     stdio: 'inherit',

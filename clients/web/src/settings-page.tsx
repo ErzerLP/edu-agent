@@ -230,7 +230,7 @@ function SourceResearchSettings({ value, disabled, update }: { value: Settings; 
  return <section className="panel" aria-label="智能搜集资料设置"><h2>智能搜集资料</h2><form onSubmit={event => { event.preventDefault(); const data=new FormData(event.currentTarget); const result=sourceResearchLimitsSchema.safeParse({max_sources_per_round:Number(data.get('max_sources_per_round')),max_pages_per_round:Number(data.get('max_pages_per_round'))});if(!result.success){setError('资料数须为 1–20，阅读数须为 1–100，且资料数不能大于阅读数。');return};setError('');void update({source_research:result.data}) }}><fieldset disabled={disabled}>
  <label>每次推荐资料数（1–20）<input name="max_sources_per_round" type="number" min={1} max={20} step={1} defaultValue={value.source_research.max_sources_per_round}/></label>
  <label>每次最多阅读网页数（1–100）<input name="max_pages_per_round" type="number" min={1} max={100} step={1} defaultValue={value.source_research.max_pages_per_round}/></label>
- <p>新任务使用当前设置。资料数量不含可选的 1 份整理报告；一个 PDF 文件按一个网页计算，读取失败也占阅读名额。</p>
+ <p>资料数量不含可选的 1 份整理报告；一个 PDF 文件按一个网页计算，读取失败也占阅读名额。新任务或“再找一些”使用当前设置；继续原轮沿用原名额。</p>
  {error && <p role="alert">{error}</p>}<Button type="submit">保存搜集规模</Button></fieldset></form></section>
 }
 

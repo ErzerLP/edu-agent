@@ -100,6 +100,26 @@ func (a *API) mountSourceResearch(r chi.Router) {
 		}
 		sourceResearchResponse(w, r, 200, result, err)
 	})
+	write.Post(sourceResearchPrefix+"/jobs/{jobID}/rounds", func(w http.ResponseWriter, r *http.Request) {
+		var c mentorrun.SourceResearchMore
+		if decodeJSON(w, r, 32<<10, &c) != nil {
+			mentorFailure(w, r, mentorrun.ErrInvalid)
+			return
+		}
+		actor, _ := credentialFromContext(r.Context())
+		result, err := a.mentorRuns.MoreSourceResearch(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "jobID"), c)
+		sourceResearchResponse(w, r, 202, result, err)
+	})
+	read.Get(sourceResearchPrefix+"/jobs/{jobID}/reports", func(w http.ResponseWriter, r *http.Request) {
+		before, err := sourceResearchInt(r, "before", 0)
+		if err != nil {
+			mentorFailure(w, r, err)
+			return
+		}
+		actor, _ := credentialFromContext(r.Context())
+		items, next, err := a.mentorRuns.SourceResearchReports(r.Context(), actor, learningspace.Scope(r.Context()), chi.URLParam(r, "jobID"), int64(before))
+		sourceResearchResponse(w, r, 200, map[string]any{"items": items, "next_before": next}, err)
+	})
 	adopt.Post(sourceResearchPrefix+"/jobs/{jobID}/import-previews", func(w http.ResponseWriter, r *http.Request) {
 		var c mentorrun.SourceResearchPreviewRequest
 		if decodeJSON(w, r, 4096, &c) != nil {

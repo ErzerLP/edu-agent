@@ -9,6 +9,7 @@ import (
 	"github.com/edu-agent/edu-agent/server/internal/settings"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -77,7 +78,7 @@ func (s *Service) CreateSourceResearch(ctx context.Context, actor identity.Crede
 	}
 	scale := view.SourceResearch
 	item := row{Meta: Meta{RunID: runID, SessionID: sessionID, SpaceID: space, GoalID: uuid.Nil.String(), GoalVersion: 1, Generation: g, Kind: "source_research", SourceResearchJobID: jobID, SourceResearchRoundID: roundID, Status: "queued", Stage: "planning", Saved: true, BodyAvailable: true, ExpiresAt: expires, Configuration: configuration}, device: actor.Device.ID, token: actor.TokenID, process: s.process}
-	item.body.SourceResearch = &SourceResearchState{Request: strings.TrimSpace(c.Request), SearchConfiguration: searchConfig, Destination: sourceResearchModelDestination(view), Limits: scale, Directions: []SourceResearchDirection{}, ReadURLs: map[string]bool{}, Screened: map[string]bool{}, Gaps: []string{}}
+	item.body.SourceResearch = &SourceResearchState{RoundNumber: 1, Request: strings.TrimSpace(c.Request), SearchConfiguration: searchConfig, Destination: sourceResearchModelDestination(view), Limits: scale, Directions: []SourceResearchDirection{}, ReadURLs: map[string]bool{}, Screened: map[string]bool{}, Gaps: []string{}}
 	item.body.Web = &WebState{ResourceKey: key, Input: c.Request, Epoch: 1, Enabled: true, Routed: true, Supplied: map[string][]string{}, Progress: WebProgress{Stage: "planning"}}
 	raw, _ := json.Marshal(item.Meta)
 	if _, err = tx.Exec(ctx, `INSERT INTO learning_mentor_runs(id,session_id,device_id,token_id,space_id,goal_id,goal_version,privacy_generation,state,process_id,expires_at,source_research_job_id) VALUES($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11)`, runID, sessionID, item.device, item.token, space, item.GoalID, g, raw, s.process, expires, jobID); err != nil {
@@ -104,7 +105,7 @@ func (s *Service) CreateSourceResearch(ctx context.Context, actor identity.Crede
 }
 
 func (s *Service) sourceResearchRowTx(ctx context.Context, tx pgx.Tx, actor identity.Credential, space, id string, g int64, write bool) (row, int64, int64, int64, string, error) {
-	var run, selected string
+	var run, selected, current string
 	var version, selection, seq int64
 	err := tx.QueryRow(ctx, `SELECT r.run_id::text,j.version,j.selection_version,j.event_seq,COALESCE(j.selected_report_revision_id::text,'') FROM learning_source_research_jobs j JOIN learning_source_research_rounds r ON r.id=j.current_round_id WHERE j.id=$1 AND j.space_id=$2 AND j.device_id=$3 AND j.privacy_generation=$4 AND NOT j.deleted AND j.expires_at>clock_timestamp()`, id, space, actor.Device.ID, g).Scan(&run, &version, &selection, &seq, &selected)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -122,10 +123,13 @@ func (s *Service) sourceResearchRowTx(ctx context.Context, tx pgx.Tx, actor iden
 	}
 	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 `+runLock, run))
 	if err == nil {
-		err = tx.QueryRow(ctx, `SELECT version,selection_version,event_seq,COALESCE(selected_report_revision_id::text,'') FROM learning_source_research_jobs WHERE id=$1 AND NOT deleted AND expires_at>clock_timestamp() `+runLock, id).Scan(&version, &selection, &seq, &selected)
+		err = tx.QueryRow(ctx, `SELECT version,selection_version,event_seq,COALESCE(selected_report_revision_id::text,''),current_round_id::text FROM learning_source_research_jobs WHERE id=$1 AND NOT deleted AND expires_at>clock_timestamp() `+runLock, id).Scan(&version, &selection, &seq, &selected, &current)
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
 		}
+	}
+	if err == nil && current != item.SourceResearchRoundID {
+		err = ErrConflict
 	}
 	if err == nil {
 		err = s.decode(&item)
@@ -141,7 +145,7 @@ func (s *Service) sourceResearchJobTx(ctx context.Context, tx pgx.Tx, actor iden
 	if state == nil || !item.BodyAvailable {
 		return SourceResearchJob{}, ErrNotFound
 	}
-	result := SourceResearchJob{ID: id, RoundID: item.SourceResearchRoundID, RunID: item.RunID, Version: v, SelectionVersion: selection, EventSeq: seq, Status: sourceResearchStatus(item), Stage: item.body.Web.Progress.Stage, Request: state.Request, Limits: state.Limits, Directions: state.Directions, Progress: item.body.Web.Progress, CandidateCount: state.CandidateCount, ResultSnapshotID: state.ResultSnapshotID, ReportRevisionID: state.ReportRevisionID, SelectedReportRevisionID: selected, ExpiresAt: item.ExpiresAt, AvailableActions: []string{"delete"}}
+	result := SourceResearchJob{RoundNumber: state.RoundNumber, ID: id, RoundID: item.SourceResearchRoundID, RunID: item.RunID, Version: v, SelectionVersion: selection, EventSeq: seq, Status: sourceResearchStatus(item), Stage: item.body.Web.Progress.Stage, Request: state.Request, Limits: state.Limits, Directions: state.Directions, Progress: item.body.Web.Progress, CandidateCount: state.CandidateCount, ResultSnapshotID: state.ResultSnapshotID, ReportRevisionID: state.ReportRevisionID, SelectedReportRevisionID: selected, ExpiresAt: item.ExpiresAt, AvailableActions: []string{"delete"}}
 	if err = tx.QueryRow(ctx, `SELECT fetch_http_requests FROM learning_source_research_rounds WHERE id=$1`, item.SourceResearchRoundID).Scan(&result.Progress.FetchHTTPRequests); err != nil {
 		return result, err
 	}
@@ -151,12 +155,13 @@ func (s *Service) sourceResearchJobTx(ctx context.Context, tx pgx.Tx, actor iden
 		if state.ResultSnapshotID != "" {
 			result.AvailableActions = append(result.AvailableActions, "import")
 		}
-		if result.Status == "paused_tool_steps" {
+		result.AvailableActions = append(result.AvailableActions, "more")
+		if slices.Contains([]string{"stopped", "failed", "outcome_unknown", "paused_tool_steps"}, result.Status) {
 			result.AvailableActions = append(result.AvailableActions, "resume")
-			v, modelConfig, searchConfig, configErr := s.sourceResearchConfigurationSnapshot()
-			if configErr == nil && (sourceResearchModelDestination(v) != state.Destination || searchConfig != state.SearchConfiguration) {
-				result.DestinationChange = &SourceResearchDestinationChange{Model: sourceResearchModelDestination(v), Search: v.Search.Connection, Confirmation: modelConfig + ":" + searchConfig}
-			}
+		}
+		v, modelConfig, searchConfig, configErr := s.sourceResearchConfigurationSnapshot()
+		if configErr == nil && (sourceResearchModelDestination(v) != state.Destination || searchConfig != state.SearchConfiguration) {
+			result.DestinationChange = &SourceResearchDestinationChange{Model: sourceResearchModelDestination(v), Search: v.Search.Connection, Confirmation: modelConfig + ":" + searchConfig}
 		}
 	}
 	_ = tx.QueryRow(ctx, `SELECT id::text FROM learning_model_tasks WHERE kind='source_research' AND origin_id=$1 AND privacy_generation=$2`, id, g).Scan(&result.UsageTaskID)
@@ -257,7 +262,7 @@ func (s *Service) saveSourceResearchTx(ctx context.Context, tx pgx.Tx, item *row
 }
 func (s *Service) sourceResearchGateTx(ctx context.Context, tx pgx.Tx, item row, epoch int64) error {
 	var allowed bool
-	err := tx.QueryRow(ctx, `SELECT NOT j.deleted AND j.expires_at>clock_timestamp() AND r.execution_epoch=$3 AND r.status='running' FROM learning_source_research_jobs j JOIN learning_source_research_rounds r ON r.id=j.current_round_id WHERE j.id=$1 AND j.privacy_generation=$2 FOR SHARE OF j,r`, item.SourceResearchJobID, item.Generation, epoch).Scan(&allowed)
+	err := tx.QueryRow(ctx, `SELECT NOT j.deleted AND j.expires_at>clock_timestamp() AND r.execution_epoch=$3 AND r.id=$4 AND r.status='running' FROM learning_source_research_jobs j JOIN learning_source_research_rounds r ON r.id=j.current_round_id WHERE j.id=$1 AND j.privacy_generation=$2 FOR SHARE OF j,r`, item.SourceResearchJobID, item.Generation, epoch, item.SourceResearchRoundID).Scan(&allowed)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && !allowed {
 		return ErrLease
 	}

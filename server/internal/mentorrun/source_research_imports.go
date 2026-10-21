@@ -71,7 +71,7 @@ func (s *Service) SourceResearchImports(ctx context.Context, actor identity.Cred
 		status := SourceResearchImportStatus{ItemID: entry.ID, Status: "pending"}
 		var receiptID string
 		if entry.Kind == "document" {
-			err = tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_web_import_receipts WHERE owner_id=$1 AND revision_id=$2`, item.RunID, entry.RevisionID).Scan(&receiptID, &raw)
+			err = tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_web_import_receipts WHERE owner_id IN (SELECT id FROM learning_mentor_runs WHERE source_research_job_id=$1) AND revision_id=$2 ORDER BY id LIMIT 1`, item.SourceResearchJobID, entry.RevisionID).Scan(&receiptID, &raw)
 		} else {
 			err = tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_source_research_imports WHERE job_id=$1 AND report_id=$2`, id, entry.ID).Scan(&receiptID, &raw)
 		}
@@ -145,6 +145,9 @@ func (s *Service) PreviewSourceResearch(ctx context.Context, actor identity.Cred
 		candidate, e := s.sourceResearchCandidateTx(ctx, tx, item, candidateID)
 		if e != nil {
 			return result, e
+		}
+		if len(result.Items) >= item.body.SourceResearch.Limits.MaxSourcesPerRound {
+			break
 		}
 		if !candidate.Selected {
 			continue
@@ -287,12 +290,19 @@ func (s *Service) ImportSourceResearchReport(ctx context.Context, actor identity
 			return result, err
 		}
 	} else if errors.Is(err, pgx.ErrNoRows) {
-		report, e := s.sourceResearchReportTx(ctx, tx, item, c.ReportRevisionID, 0, 100)
+		report, e := s.sourceResearchReportTx(ctx, tx, item, c.ReportRevisionID, 0, int(^uint(0)>>1)-1)
 		if e != nil {
 			return result, e
 		}
 		markdown := "# 整理报告\n\n由 AI 根据所列资料整理。报告只保留引用片段和原网页地址；未另行导入的网页不提供全文或 PDF 页图。\n\n"
-		markdown += "搜集需求（用户描述）：\n\n    " + strings.ReplaceAll(item.body.SourceResearch.Request, "\n", "\n    ") + "\n\n"
+		original, e := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=(SELECT run_id FROM learning_source_research_rounds WHERE id=$1)`, report.RoundID))
+		if e != nil {
+			return result, e
+		}
+		if e = s.decode(&original); e != nil {
+			return result, e
+		}
+		markdown += "搜集需求（用户描述）：\n\n    " + strings.ReplaceAll(original.body.SourceResearch.Request, "\n", "\n    ") + "\n\n"
 		evidence := []knowledge.SourceEvidence{}
 		for _, section := range report.Sections {
 			markdown += "## " + section.Title + "\n\n" + section.Body + "\n\n"
@@ -308,7 +318,7 @@ func (s *Service) ImportSourceResearchReport(ctx context.Context, actor identity
 				ev := knowledge.SourceEvidence{ID: citation.ID, Title: d.Title, URL: d.URL, FetchedAt: d.FetchedAt, Citation: proof}
 				var receiptRaw []byte
 				var rid string
-				e = tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_web_import_receipts WHERE owner_id=$1 AND revision_id=$2`, item.RunID, d.RevisionID).Scan(&rid, &receiptRaw)
+				e = tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_web_import_receipts WHERE owner_id IN (SELECT id FROM learning_mentor_runs WHERE source_research_job_id=$1) AND revision_id=$2 ORDER BY id LIMIT 1`, item.SourceResearchJobID, d.RevisionID).Scan(&rid, &receiptRaw)
 				if e == nil {
 					var receipt WebImportReceipt
 					if e = s.openWeb("receipt", rid, g, receiptRaw, &receipt); e != nil {
@@ -340,7 +350,7 @@ func (s *Service) ImportSourceResearchReport(ctx context.Context, actor identity
 		if report.Status != "complete" {
 			source.Status = "partial"
 		}
-		derivation := &knowledge.SourceDerivation{Kind: "source_research", JobID: id, RoundID: item.SourceResearchRoundID, ReportRevisionID: report.ID, GeneratedAt: report.CreatedAt, Model: report.Model, Partial: report.Status != "complete"}
+		derivation := &knowledge.SourceDerivation{Kind: "source_research", JobID: id, RoundID: report.RoundID, ReportRevisionID: report.ID, GeneratedAt: report.CreatedAt, Model: report.Model, Partial: report.Status != "complete"}
 		scoped, _ := learningspace.WithScope(ctx, space)
 		imported, e := knowledgepg.New(s.pool).AdoptSourceTx(scoped, tx, knowledge.SourceImport{RunID: item.RunID, Metadata: source, OperationID: c.OperationID, SourceID: sourceID, SourceRevisionID: report.ID, ActorDeviceID: actor.Device.ID, Title: title, Fingerprint: source.Fingerprint, Coverage: source.Coverage, Text: markdown, FetchedAt: report.CreatedAt, Derivation: derivation, Evidence: evidence})
 		if e != nil {

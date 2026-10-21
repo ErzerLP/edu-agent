@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -418,6 +419,7 @@ func (t budgetTransport) RoundTrip(request *http.Request) (*http.Response, error
 			switch {
 			case h.body.SourceResearch != nil:
 				kind, origin, source = "source_research", item.SourceResearchJobID, "web"
+				stage = fmt.Sprintf("round_%d_%s", h.body.SourceResearch.RoundNumber, stage)
 			case h.body.TopicIndex != nil:
 				kind, origin, source = "topic_index", item.ConversationID, "server"
 			case h.body.Assessment != nil:

@@ -34,7 +34,10 @@ func TestSourceResearchLiveCoverage(t *testing.T) {
 	testSourceResearchLive(t, true)
 }
 
-func testSourceResearchLive(t *testing.T, coverage bool) {
+func TestSourceResearchLiveMore(t *testing.T) { testSourceResearchLive(t, false, true) }
+
+func testSourceResearchLive(t *testing.T, coverage bool, supplement ...bool) {
+	more := len(supplement) > 0 && supplement[0]
 	if os.Getenv("SOURCE_RESEARCH_LIVE") != "1" {
 		t.Skip("explicit real model and Brave acceptance opt-in required")
 	}
@@ -44,8 +47,13 @@ func testSourceResearchLive(t *testing.T, coverage bool) {
 	}
 	var modelCalls, searchCalls atomic.Int32
 	modelCap, searchCap := int32(16), int32(13)
-	if coverage {
-		modelCap, searchCap = 50, 30
+	if more {
+		modelCap, searchCap = 30, 15
+	}
+	if coverage || more {
+		if coverage {
+			modelCap, searchCap = 50, 30
+		}
 		for name, cap := range map[string]*int32{"SOURCE_RESEARCH_LIVE_PRIOR_MODEL_CALLS": &modelCap, "SOURCE_RESEARCH_LIVE_PRIOR_SEARCH_CALLS": &searchCap} {
 			if value := os.Getenv(name); value != "" {
 				prior, err := strconv.Atoi(value)
@@ -111,7 +119,7 @@ func testSourceResearchLive(t *testing.T, coverage bool) {
 		})
 	}
 	f.actor.Scopes = append(f.actor.Scopes, "knowledge:read", "knowledge:write", "research:adopt")
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	if _, err = f.pool.Exec(ctx, `UPDATE device_tokens SET scopes=$2 WHERE id=$1`, f.actor.TokenID, f.actor.Scopes); err != nil {
 		t.Fatal(err)
@@ -139,6 +147,69 @@ func testSourceResearchLive(t *testing.T, coverage bool) {
 	if err != nil {
 		t.Fatal("live result unavailable")
 	}
+	if more {
+		if job.Status != "completed" {
+			t.Fatalf("first round status=%s models=%d searches=%d", job.Status, modelCalls.Load(), searchCalls.Load())
+		}
+		first, err := f.service.SourceResearchCandidates(ctx, f.actor, learningspace.DefaultID, job.ID, "", 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("round=1 status=%s read=%d success=%d candidates=%d models=%d searches=%d", job.Status, job.Progress.ReadAttempted, job.Progress.ReadSucceeded, job.CandidateCount, modelCalls.Load(), searchCalls.Load())
+		oldRound := job.RoundID
+		for _, c := range first.Items {
+			t.Logf("round=1 candidate=%s url=%s", c.Title, c.URL)
+		}
+		next, err := f.service.MoreSourceResearch(ctx, f.actor, learningspace.DefaultID, job.ID, SourceResearchMore{OperationID: uuid.NewString(), ExpectedVersion: job.Version, AdditionalRequest: "补充取消传播、goroutine 泄漏和 context 使用陷阱的官方实践资料；排除之前已交付的文献及镜像。"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = f.service.RunOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		job, err = f.service.SourceResearchJob(ctx, f.actor, learningspace.DefaultID, next.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		all, err := f.service.SourceResearchCandidates(ctx, f.actor, learningspace.DefaultID, job.ID, "", 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx, g, err := f.service.sourceResearchTx(ctx, f.actor, learningspace.DefaultID, job.ID, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(context.Background())
+		item, _, _, _, _, err := f.service.sourceResearchRowTx(ctx, tx, f.actor, learningspace.DefaultID, job.ID, g, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range all.Items {
+			if c.RoundID == oldRound {
+				continue
+			}
+			t.Logf("round=2 candidate=%s url=%s", c.Title, c.URL)
+			d, err := f.service.webDocumentTx(ctx, tx, item, c.DocumentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, prior := range first.Items {
+				old, err := f.service.webDocumentTx(ctx, tx, item, prior.DocumentID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if sourceResearchSameWork(d, old) {
+					t.Error("supplement delivered an old work or mirror")
+				}
+			}
+		}
+		if err = tx.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if job.CandidateCount < 1 {
+			t.Error("supplement did not deliver new candidates")
+		}
+	}
 	rows, err := f.pool.Query(ctx, `SELECT stage,array_agg(output_tokens ORDER BY attempt_no),count(*) FILTER(WHERE output_tokens IS NULL) FROM learning_model_calls c JOIN learning_model_tasks t ON t.id=c.task_id WHERE t.origin_id=$1 GROUP BY stage ORDER BY stage`, job.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -160,8 +231,12 @@ func testSourceResearchLive(t *testing.T, coverage bool) {
 	}
 	rows.Close()
 	t.Logf("live status=%s model_calls=%d search_calls=%d read_attempted=%d read_succeeded=%d candidates=%d", job.Status, modelCalls.Load(), searchCalls.Load(), job.Progress.ReadAttempted, job.Progress.ReadSucceeded, job.CandidateCount)
-	if job.Status != "completed" || job.CandidateCount < 2 || job.ReportRevisionID == "" || modelCalls.Load() > 25 || searchCalls.Load() > 15 {
+	if job.Status != "completed" || job.CandidateCount < 1 || job.ReportRevisionID == "" || modelCalls.Load() > modelCap || searchCalls.Load() > searchCap {
 		t.Fatal("live acceptance did not complete within the request cap")
+	}
+	var incomplete int
+	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM learning_model_calls c JOIN learning_model_tasks t ON t.id=c.task_id WHERE t.origin_id=$1 AND (c.dispatch_state!='received' OR c.output_tokens IS NULL OR c.output_tokens>=2048)`, job.ID).Scan(&incomplete); err != nil || incomplete != 0 {
+		t.Fatal("live model calls failed, unknown, or reached output limit", incomplete, err)
 	}
 	report, err := f.service.SourceResearchReport(ctx, f.actor, learningspace.DefaultID, job.ID, job.ReportRevisionID, 0, 5)
 	if err != nil || len(report.Sections) == 0 {

@@ -11,7 +11,7 @@ func TestSourceResearchContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, suffix := range []string{"/capabilities", "/jobs", "/jobs/{jobID}", "/jobs/{jobID}/events", "/jobs/{jobID}/candidates", "/jobs/{jobID}/reports/{revisionID}", "/jobs/{jobID}/selection", "/jobs/{jobID}/commands", "/jobs/{jobID}/import-previews", "/jobs/{jobID}/report-imports", "/jobs/{jobID}/imports"} {
+	for _, suffix := range []string{"/capabilities", "/jobs", "/jobs/{jobID}", "/jobs/{jobID}/events", "/jobs/{jobID}/candidates", "/jobs/{jobID}/reports/{revisionID}", "/jobs/{jobID}/selection", "/jobs/{jobID}/commands", "/jobs/{jobID}/rounds", "/jobs/{jobID}/reports", "/jobs/{jobID}/import-previews", "/jobs/{jobID}/report-imports", "/jobs/{jobID}/imports"} {
 		item := doc.Paths.Find("/v1/learning/source-research" + suffix)
 		if item == nil {
 			t.Fatalf("missing source research route: %s", suffix)

@@ -23,6 +23,12 @@ type SourceResearchDirection struct {
 
 // The checkpoint contains only bounded workflow state, never page bodies/PDFs.
 type SourceResearchState struct {
+	RoundNumber            int                       `json:"round_number"`
+	PreviousDirections     []SourceResearchDirection `json:"previous_directions,omitempty"`
+	PreviousGaps           []string                  `json:"previous_gaps,omitempty"`
+	PendingResource        string                    `json:"pending_resource,omitempty"`
+	DirectionReported      bool                      `json:"direction_reported"`
+	SectionsAdded          int                       `json:"sections_added"`
 	DomainReads            map[string]int            `json:"domain_reads,omitempty"`
 	BlockedDomains         map[string]bool           `json:"blocked_domains,omitempty"`
 	ResourceDomains        map[string]string         `json:"resource_domains,omitempty"`
@@ -57,6 +63,7 @@ type SourceResearchState struct {
 	Finished               bool                      `json:"finished"`
 }
 type SourceResearchJob struct {
+	RoundNumber              int                              `json:"round_number"`
 	DestinationChange        *SourceResearchDestinationChange `json:"destination_change,omitempty"`
 	ImportPreviewID          string                           `json:"import_preview_id"`
 	ID                       string                           `json:"job_id"`
@@ -93,6 +100,7 @@ func sourceResearchModelDestination(v settings.View) settings.Connection {
 }
 
 type SourceResearchCandidate struct {
+	RoundID               string                    `json:"round_id"`
 	Support               *research.WebCitation     `json:"support,omitempty"`
 	ID                    string                    `json:"id"`
 	DocumentID            string                    `json:"document_id"`
@@ -178,13 +186,16 @@ type SourceResearchReportSection struct {
 	Gaps      []string         `json:"gaps"`
 }
 type SourceResearchReport struct {
-	ID          string                        `json:"revision_id"`
-	Status      string                        `json:"status"`
-	Sections    []SourceResearchReportSection `json:"sections"`
-	Gaps        []string                      `json:"gaps"`
-	NextOrdinal int                           `json:"next_ordinal"`
-	Model       string                        `json:"model"`
-	CreatedAt   time.Time                     `json:"created_at"`
+	RoundID         string                        `json:"round_id"`
+	Version         int64                         `json:"version"`
+	BasedOnRevision string                        `json:"based_on_revision"`
+	ID              string                        `json:"revision_id"`
+	Status          string                        `json:"status"`
+	Sections        []SourceResearchReportSection `json:"sections"`
+	Gaps            []string                      `json:"gaps"`
+	NextOrdinal     int                           `json:"next_ordinal"`
+	Model           string                        `json:"model"`
+	CreatedAt       time.Time                     `json:"created_at"`
 }
 type sourceResearchResult struct {
 	NewCandidateCount int      `json:"new_candidate_count"`
@@ -206,6 +217,12 @@ type SourceResearchCommand struct {
 	ExpectedVersion    int64  `json:"expected_version"`
 	RoundID            string `json:"round_id"`
 	Kind               string `json:"kind"`
+	ConfirmDestination string `json:"confirm_destination,omitempty"`
+}
+type SourceResearchMore struct {
+	OperationID        string `json:"operation_id"`
+	ExpectedVersion    int64  `json:"expected_version"`
+	AdditionalRequest  string `json:"additional_request,omitempty"`
 	ConfirmDestination string `json:"confirm_destination,omitempty"`
 }
 type SourceResearchPreviewRequest struct {

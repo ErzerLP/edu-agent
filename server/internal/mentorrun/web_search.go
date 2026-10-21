@@ -303,8 +303,9 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 				for domain := range h.body.SourceResearch.BlockedDomains {
 					policy.BlockedDomains = append(policy.BlockedDomains, domain)
 				}
+				reservedURL, _ := research.NormalizeURL(resource.URL)
 				for domain, count := range h.body.SourceResearch.DomainReads {
-					if count >= sourceResearchDomainLimit {
+					if count >= sourceResearchDomainLimit && (domain != sourceResearchDomain(resource.URL) || !h.body.SourceResearch.ReadURLs[reservedURL]) {
 						policy.BlockedDomains = append(policy.BlockedDomains, domain)
 					}
 				}
@@ -312,7 +313,11 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 					return nil, err
 				}
 			}
-			state.Progress.ReadAttempted++
+			if h.body.SourceResearch != nil {
+				state.Progress.ReadAttempted = len(h.body.SourceResearch.ReadURLs)
+			} else {
+				state.Progress.ReadAttempted++
+			}
 			if err = h.checkpoint(ctx, "web_reading"); err != nil {
 				return nil, err
 			}
@@ -373,7 +378,9 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 			if err != nil {
 				return nil, err
 			}
-			state.Progress.ReadSucceeded++
+			if h.body.SourceResearch == nil {
+				state.Progress.ReadSucceeded++
+			}
 			state.Documents = append(state.Documents, d.ID)
 		} else if err != nil {
 			return nil, err

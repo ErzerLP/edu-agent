@@ -111,7 +111,7 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 	if err != nil || client == nil {
 		return ErrModel
 	}
-	chat := llm.ChatRequest{Schema: schema, SchemaName: stage, UseNativeJSONSchema: native}
+	chat := llm.ChatRequest{Schema: schema, SchemaName: stage, UseNativeJSONSchema: native, ReasoningEffort: request.ReasoningEffort}
 	for _, message := range request.Messages {
 		chat.Messages = append(chat.Messages, llm.Message{Role: llm.Role(message.Role), Content: message.Content})
 	}
@@ -182,7 +182,7 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 		repair := map[string]any{"rejection_reason": reason, "rejection_field": citationField(err), "instruction": "前次生成未通过完整校验。修正该结构或引用问题；重新输出完整 JSON，复制给定候选，不能扩大来源范围。"}
 		if stage == "web_answer" {
 			repair["output_schema"] = schema
-			repair["instruction"] = "按 output_schema 重新输出完整 JSON。引用对象只能包含对应 origin 允许的字段，说明写在 answer 中；保留给定的文档、版本和片段身份，quote 只能取已提供片段的连续原文。answer 用单独的 [1]、[2] 对应 citations 数组顺序，每项引用都须出现；不附未使用的引用，不扩大证据范围。"
+			repair["instruction"] = "按 output_schema 重新输出完整紧凑 JSON。网络引用使用 origin=web 和本次 fragments.quotes 中的 candidate 编号，服务端还原原文与身份，不必重写 UUID 或 quote；学习区引用保留 source/fragment。只用对应 origin 允许的字段，说明写在 answer 中。answer 用单独的 [1]、[2] 对应 citations 数组顺序，每项引用都须出现；不附未使用的引用，不扩大证据范围。"
 		}
 		feedback, _ := json.Marshal(repair)
 		chat.Messages = append(chat.Messages, llm.Message{Role: llm.RoleUser, Content: string(feedback)})

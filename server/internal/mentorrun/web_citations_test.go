@@ -99,7 +99,7 @@ func TestWebAnswerCitationRejectionsKeepEvidenceBoundary(t *testing.T) {
 
 // Keep the real database, source selection, snapshot storage, validation, and
 // publication path. Only the model boundary is deterministic.
-func webCitationAnswer(t *testing.T, reply func(modelclient.Request, int, research.WebDocument) map[string]any) (*runtimeFixture, Snapshot) {
+func webCitationAnswer(t *testing.T, reply func(modelclient.Request, int, research.WebDocument) map[string]any, textOverride ...string) (*runtimeFixture, Snapshot) {
 	t.Helper()
 	f := fixture(t, func(w http.ResponseWriter, r *http.Request, attempt int) {
 		var request modelclient.Request
@@ -140,7 +140,10 @@ func webCitationAnswer(t *testing.T, reply func(modelclient.Request, int, resear
 		t.Fatal(err)
 	}
 	now := time.Now()
-	const text = "Go 1.27.3 is stable. Generic methods are supported."
+	text := "Go 1.27.3 is stable. Generic methods are supported."
+	if len(textOverride) > 0 {
+		text = textOverride[0]
+	}
 	d, err := h.storeWebDocument(ctx, research.Source{ID: resource.ID, RevisionID: uuid.NewString(), Locator: resource.URL, FinalURL: resource.URL, Title: resource.Title, Text: text, Status: "parsed", StorageAllowed: true, FetchedAt: &now, Fragments: []research.Fragment{{ID: uuid.NewString(), Start: 0, End: len(text), Text: text}}})
 	if err != nil {
 		t.Fatal(err)

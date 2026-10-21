@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 )
 
 type ErrorCategory string
@@ -76,6 +78,7 @@ type ChatRequest struct {
 	Schema              json.RawMessage
 	SchemaName          string
 	UseNativeJSONSchema bool
+	ReasoningEffort     modelclient.ReasoningEffort
 }
 
 type ChatResult struct {
@@ -215,6 +218,13 @@ func (c *Client) Chat(ctx context.Context, request ChatRequest) (ChatResult, err
 		}
 		if c.maxOutputTokens > 0 {
 			payload["max_output_tokens"] = c.maxOutputTokens
+		}
+	}
+	if request.ReasoningEffort != "" && request.ReasoningEffort != modelclient.ReasoningEffortAuto {
+		if c.wireAPI == Responses {
+			payload["reasoning"] = map[string]any{"effort": request.ReasoningEffort}
+		} else {
+			payload["reasoning_effort"] = request.ReasoningEffort
 		}
 	}
 	if len(request.Schema) != 0 && request.UseNativeJSONSchema {

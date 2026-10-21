@@ -73,6 +73,92 @@ cache answers for their permitted lifetime and distinguish authoritative
 answers from referrals. These application requirements describe behavior
 that is independent from IP datagram forwarding and gateway routing.`
 
+// Front matter from the actual cs162 SIGCOMM '88 and LBL November '88 PDFs.
+// The revised version adds Karels to the byline and explicitly identifies
+// itself as a revision, so author-set equality alone would miss this pair.
+const sourceResearchJacobsonConference = `Congestion Avoidance and Control
+V. Jacobson
+(Originally Published in: Proc. SIGCOMM '88, Vol18 No. 4, August 1988)
+ACM SIGCOMM -157- Computer Communication Review
+
+Congestion Avoidance and Control
+Van Jacobson*
+University of California
+Lawrence Berkeley Laboratory
+Berkeley, CA 94720
+van@helios.ee.lbl.gov
+In October of '86, the Internet had the first of what became a series of congestion collapses.`
+
+const sourceResearchJacobsonRevision = `Congestion Avoidance and Control∗
+Van Jacobson†
+Lawrence Berkeley Laboratory
+Michael J. Karels‡
+University of California at Berkeley
+November, 1988
+Introduction
+Computer networks have experienced an explosive growth over the past few years.
+∗Note: This is a very slightly revised version of a paper originally presented at SIGCOMM ’88 [12]. If you
+wish to reference this work, please cite [12].`
+
+func TestSourceResearchPaperVersionIdentity(t *testing.T) {
+	vegas := "TCP Vegas: New Techniques for Congestion\nDetection and Avoidance\nLawrence S. Brakmo\nSean W. O’Malley\nLarry L. Peterson\nTR 94 04\nAbstract\nVegas is a new implementation of TCP."
+	cubic := "CUBIC: A New TCP-Friendly High-Speed TCP Variant\nSangtae Ha\nInjong Rhee\nLisbong Xu\n2008\nAbstract\nCUBIC uses a cubic window growth function."
+	common := sourceResearchRFC1123
+	for _, tc := range []struct {
+		name, a, b string
+		want       bool
+	}{
+		{"Jacobson conference and explicit revision", sourceResearchJacobsonConference, sourceResearchJacobsonRevision, true},
+		{"normalized title and initial", "Congestion Avoidance and Control\nV. Jacobson\nAugust 1988\nAbstract\nOriginal text.", "CONGESTION AVOIDANCE AND CONTROL∗\nVan Jacobson†\nNovember 1988\nAbstract\nRewritten text.", true},
+		{"authors on one line or separate lines", "An Adaptive Window Protocol\nAlice Smith, Bob Jones\n1994\nAbstract\nOriginal text.", "An Adaptive Window Protocol\nBob Jones\nAlice Smith\n1994\nAbstract\nRewritten text.", true},
+		{"different coauthor in inline byline", "An Adaptive Window Protocol\nAlice Smith, Bob Jones\n1994\nAbstract\n" + common, "An Adaptive Window Protocol\nAlice Smith, Dana Brown\n1994\nAbstract\n" + common, false},
+		{"different full first names", "Congestion Avoidance and Control\nVan Jacobson\n1988\nAbstract\n" + common, "Congestion Avoidance and Control\nVera Jacobson\n1988\nAbstract\n" + common, false},
+		{"different authors with similar body", "Congestion Avoidance and Control\nVan Jacobson\n1988\nAbstract\n" + common, "Congestion Avoidance and Control\nSangtae Ha\n1988\nAbstract\n" + common, false},
+		{"different years with similar body", "Congestion Avoidance and Control\nVan Jacobson\n1988\nAbstract\n" + common, "Congestion Avoidance and Control\nVan Jacobson\n2008\nAbstract\n" + common, false},
+		{"additional author without revision proof", sourceResearchJacobsonConference, strings.ReplaceAll(sourceResearchJacobsonRevision, "very slightly revised version", "independent investigation"), false},
+		{"revision with unrelated author", sourceResearchJacobsonConference, strings.NewReplacer("Van Jacobson", "Dana Smith", "Michael J. Karels", "Alex Brown").Replace(sourceResearchJacobsonRevision), false},
+		{"revision with only secondary author in common", sourceResearchJacobsonConference, strings.NewReplacer("Van Jacobson", "Dana Smith", "Michael J. Karels", "Van Jacobson").Replace(sourceResearchJacobsonRevision), false},
+		{"Vegas and CUBIC", vegas, cubic, false},
+		{"Jacobson and Vegas", sourceResearchJacobsonRevision, vegas, false},
+		{"title only is insufficient", "Congestion Avoidance and Control", sourceResearchJacobsonRevision, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := research.WebDocument{URL: "https://example.org/a.pdf", Title: "https://example.org/a.pdf", Text: tc.a, MediaType: "application/pdf"}
+			b := research.WebDocument{URL: "https://example.net/b.pdf", Title: "https://example.net/b.pdf", Text: tc.b, MediaType: "application/pdf"}
+			if got := sourceResearchSameWork(a, b); got != tc.want || sourceResearchSameWork(b, a) != tc.want {
+				t.Fatalf("same work=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSourceResearchPaperVersionsKeepPreferredCopy(t *testing.T) {
+	const conference = "http://cs162.org/jacobson"
+	const revision = "http://ee.lbl.gov/congavoid"
+	for _, urls := range [][]string{{conference, revision}, {revision, conference}} {
+		t.Run(urls[0], func(t *testing.T) {
+			f := researchCoverageFixture(t, 1, 2, func(string) []string { return urls }, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/plain")
+				text := sourceResearchJacobsonConference
+				if r.Host == "ee.lbl.gov" {
+					text = sourceResearchJacobsonRevision
+				}
+				fmt.Fprint(w, text)
+			})
+			observeSourceResearchReport(t, f, 1)
+			job := completeSourceResearch(t, f)
+			candidates, err := f.service.SourceResearchCandidates(context.Background(), f.actor, learningspace.DefaultID, job.ID, "", 20)
+			if err != nil || len(candidates.Items) != 1 {
+				t.Fatalf("versions consumed two slots: %+v %v", candidates, err)
+			}
+			c := candidates.Items[0]
+			if c.URL != revision || !strings.Contains(c.Reason, "另有版本：") || !strings.Contains(c.Reason, conference) || c.Support == nil || c.Support.DocumentID != c.DocumentID {
+				t.Fatalf("preferred copy, alternate version or citation lost: %+v", c)
+			}
+		})
+	}
+}
+
 func TestSourceResearchContentMirrorsKeepOneRepresentative(t *testing.T) {
 	// The fixture routes HTTP to its local page server; host/path and body
 	// structure are those of the real HTTPS pages.
@@ -388,7 +474,7 @@ func TestSourceResearchReportDeduplicatesBeforeEvidenceLimit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c := sourceResearchCandidateRecord{SourceResearchCandidate: SourceResearchCandidate{ID: uuid.NewSHA1(uuid.MustParse(owned.SourceResearchJobID), []byte(d.RevisionID)).String(), DocumentID: d.ID, RevisionID: d.RevisionID, Title: d.Title, URL: d.URL, Support: &proof, Selected: true}}
+		c := sourceResearchCandidateRecord{SourceResearchCandidate: SourceResearchCandidate{ID: uuid.NewSHA1(uuid.MustParse(owned.SourceResearchJobID), []byte(d.RevisionID)).String(), DocumentID: d.ID, RevisionID: d.RevisionID, Title: d.Title, URL: d.URL, Support: &proof, Selected: true, EvidenceScope: "body"}}
 		if err = f.service.mutateTx(ctx, &h.owned, "", func(tx pgx.Tx, item *row) error {
 			raw, err := f.service.sealWeb("source_research_candidates", c.ID, item.Generation, c)
 			if err != nil {

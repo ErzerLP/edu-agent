@@ -169,6 +169,9 @@ func sourceResearchSameWork(a, b research.WebDocument) bool {
 	if ea == nil && eb == nil && ua == ub {
 		return true
 	}
+	if same, conflict := sourceResearchCompareWorks(sourceResearchWorkIdentity(a.Text), sourceResearchWorkIdentity(b.Text)); same || conflict {
+		return same
+	}
 	if sameIdentifier && sourceResearchSimilarTitles(a, b) {
 		return true
 	}
@@ -185,11 +188,16 @@ func sourceResearchSameWork(a, b research.WebDocument) bool {
 	return shared*100 >= 90*min(len(sa), len(sb))
 }
 
-// Use snapshot quality, not host reputation or unverified canonical tags.
+// Use snapshot quality and explicit front-matter provenance, not host
+// reputation or unverified canonical tags.
 // Ties retain the existing representative to keep candidate identity stable.
 func sourceResearchPreferDocument(a, b research.WebDocument) bool {
 	if (a.Coverage == "complete_text") != (b.Coverage == "complete_text") {
 		return a.Coverage == "complete_text"
+	}
+	wa, wb := sourceResearchWorkIdentity(a.Text), sourceResearchWorkIdentity(b.Text)
+	if same, _ := sourceResearchCompareWorks(wa, wb); same && wa.revised != wb.revised {
+		return wa.revised
 	}
 	titled := func(d research.WebDocument) bool {
 		title := strings.TrimSpace(d.Title)
@@ -229,4 +237,12 @@ func (s *SourceResearchState) replaceDirectionDocument(from, to string) {
 			s.DirectionDocuments[i] = to
 		}
 	}
+}
+
+func sourceResearchVersionReason(reason, alternateURL string) string {
+	alternateURL = bounded(alternateURL, 240)
+	if alternateURL == "" || strings.Contains(reason, alternateURL) {
+		return reason
+	}
+	return bounded(reason, 360) + "\n另有版本：" + alternateURL
 }

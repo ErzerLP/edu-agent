@@ -6194,6 +6194,10 @@ components:
           type: string
         quality_notes:
           type: string
+        evidence_scope:
+          type: string
+          enum: [body, title_or_contents, insufficient]
+          description: 已读证据对当前方向的支撑范围；旧候选可能未记录。
         coverage:
           type: string
         selected:

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/edu-agent/edu-agent/server/internal/memory"
+	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -97,6 +99,16 @@ func runPeriodicWorker(ctx context.Context, logger *slog.Logger, spec workerSpec
 		logger.Error("background worker configuration rejected", "worker", spec.name, "error_category", "invalid_configuration")
 		return
 	}
+	retryBase := spec.interval
+	if spec.retryInterval > 0 && spec.retryInterval < retryBase {
+		retryBase = spec.retryInterval
+	}
+	// Preserve explicitly slower worker cadences while capping ordinary retries.
+	retryLimit := max(time.Minute, retryBase)
+	retryDelay := retryBase
+	var consecutiveFailures, suppressedFailures int
+	var lastCategory string
+	var lastFailureLog time.Time
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -109,12 +121,35 @@ func runPeriodicWorker(ctx context.Context, logger *slog.Logger, spec workerSpec
 			return
 		}
 		_, err := spec.runOnce(ctx)
+		if ctx.Err() != nil {
+			return
+		}
 		nextInterval := spec.interval
-		if err != nil && ctx.Err() == nil {
-			logger.Warn("background worker operation failed", "worker", spec.name, "error_category", workerErrorCategory(err))
-			if spec.retryInterval > 0 && spec.retryInterval < nextInterval {
-				nextInterval = spec.retryInterval
+		if err != nil {
+			consecutiveFailures++
+			if consecutiveFailures == 1 {
+				retryDelay = retryBase
+			} else if retryDelay >= retryLimit/2 {
+				retryDelay = retryLimit
+			} else {
+				retryDelay *= 2
 			}
+			nextInterval = retryDelay
+			category := workerErrorCategory(err)
+			now := time.Now()
+			if consecutiveFailures == 1 || category != lastCategory || now.Sub(lastFailureLog) >= time.Minute {
+				logger.Warn("background worker operation failed", "worker", spec.name, "error_category", category,
+					"consecutive_failures", consecutiveFailures, "suppressed_failures", suppressedFailures, "retry_in", retryDelay)
+				suppressedFailures = 0
+				lastFailureLog = now
+			} else {
+				suppressedFailures++
+			}
+			lastCategory = category
+		} else if consecutiveFailures > 0 {
+			logger.Info("background worker recovered", "worker", spec.name,
+				"consecutive_failures", consecutiveFailures, "suppressed_failures", suppressedFailures)
+			consecutiveFailures, suppressedFailures = 0, 0
 		}
 		timer.Reset(nextInterval)
 	}
@@ -136,6 +171,15 @@ func workerErrorCategory(err error) string {
 	}
 	if code := privacy.ErrorCode(err); code != "" {
 		return code
+	}
+	for _, cause := range []error{mentorrun.ErrStorage, mentorrun.ErrHistorySchema} {
+		if errors.Is(err, cause) {
+			return cause.Error()
+		}
+	}
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) {
+		return "postgres_" + databaseError.Code
 	}
 	return "unavailable"
 }

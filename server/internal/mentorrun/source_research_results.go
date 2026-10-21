@@ -72,36 +72,50 @@ func (h *executionHost) screenSourceResearch(ctx context.Context, id string) err
 		return err
 	}
 	d := actual[id]
-	// Merge identical content or final URLs, even when reached through aliases.
-	duplicate := false
+	// Compare bounded snapshot content before relying on model title matching.
+	duplicateID, priorDocumentID := "", ""
+	replace := false
 	existingTitles := []string{}
 	err = h.service.mutateTx(ctx, &h.owned, "", func(tx pgx.Tx, item *row) error {
-		rows, e := tx.Query(ctx, `SELECT document_id::text FROM learning_source_research_candidates WHERE job_id=$1`, item.SourceResearchJobID)
+		rows, e := tx.Query(ctx, `SELECT c.id::text,c.document_id::text,c.round_id::text,EXISTS(SELECT 1 FROM learning_source_research_selections s WHERE s.id=c.id) FROM learning_source_research_candidates c WHERE c.job_id=$1 ORDER BY c.rank,c.id`, item.SourceResearchJobID)
 		if e != nil {
 			return e
 		}
-		ids := []string{}
+		type priorCandidate struct {
+			id, document, round string
+			frozen              bool
+		}
+		candidates := []priorCandidate{}
 		for rows.Next() {
-			var other string
-			if e = rows.Scan(&other); e != nil {
+			var other priorCandidate
+			if e = rows.Scan(&other.id, &other.document, &other.round, &other.frozen); e != nil {
 				rows.Close()
 				return e
 			}
-			ids = append(ids, other)
+			candidates = append(candidates, other)
 		}
 		rows.Close()
 		if e = rows.Err(); e != nil {
 			return e
 		}
-		for _, other := range ids {
-			prior, e := h.service.webDocumentTx(ctx, tx, *item, other)
+		for _, other := range candidates {
+			prior, e := h.service.webDocumentTx(ctx, tx, *item, other.document)
 			if e != nil {
 				return e
 			}
-			a, _ := research.NormalizeURL(prior.URL)
-			b, _ := research.NormalizeURL(d.URL)
-			if prior.SHA256 == d.SHA256 || a == b {
-				duplicate = true
+			if sourceResearchSameWork(prior, d) {
+				duplicateID, priorDocumentID = other.id, prior.ID
+				// Saved reports, published selections/results and adopted sources
+				// retain identity. Be conservative with older report checkpoints
+				// that have no reported-document index.
+				reported := state.ReportedDocuments[prior.ID] || state.ReportedDocuments == nil && state.SectionCount > 0
+				if !reported && !other.frozen && other.round == item.SourceResearchRoundID && sourceResearchPreferDocument(d, prior) {
+					candidate, e := h.service.sourceResearchCandidateTx(ctx, tx, *item, other.id)
+					if e != nil {
+						return e
+					}
+					replace = candidate.Source == nil
+				}
 				break
 			}
 			existingTitles = append(existingTitles, bounded(prior.Title, 80))
@@ -111,8 +125,9 @@ func (h *executionHost) screenSourceResearch(ctx context.Context, id string) err
 	if err != nil {
 		return err
 	}
-	if duplicate {
+	if duplicateID != "" && !replace {
 		state.Screened[id] = true
+		state.replaceDirectionDocument(d.ID, priorDocumentID)
 		return nil
 	}
 	slices.SortStableFunc(existingTitles, func(a, b string) int {
@@ -154,6 +169,13 @@ func (h *executionHost) screenSourceResearch(ctx context.Context, id string) err
 					return e
 				}
 				candidate.Source = existing
+				// Re-screen the preferred copy to obtain a citation from its own
+				// supplied fragments, then atomically exchange candidate records.
+				if replace {
+					if _, e = tx.Exec(ctx, `DELETE FROM learning_source_research_candidates WHERE id=$1 AND job_id=$2`, duplicateID, item.SourceResearchJobID); e != nil {
+						return e
+					}
+				}
 				raw, e := h.service.sealWeb("source_research_candidates", candidate.ID, item.Generation, sourceResearchCandidateRecord{SourceResearchCandidate: candidate, Preexisting: existing != nil})
 				if e != nil {
 					return e
@@ -165,6 +187,10 @@ func (h *executionHost) screenSourceResearch(ctx context.Context, id string) err
 				if tag.RowsAffected() > 0 && existing == nil {
 					state.CandidateCount++
 				}
+				if replace {
+					state.CandidateCount--
+					state.replaceDirectionDocument(priorDocumentID, d.ID)
+				}
 				state.Screened[id] = true
 				item.body = h.body
 				return nil
@@ -174,6 +200,9 @@ func (h *executionHost) screenSourceResearch(ctx context.Context, id string) err
 			}
 		} else {
 			state.Screened[id] = true
+			if duplicateID != "" {
+				state.replaceDirectionDocument(d.ID, priorDocumentID)
+			}
 		}
 		return nil
 	})
@@ -188,7 +217,7 @@ func (h *executionHost) reportSourceResearch(ctx context.Context, direction Sour
 	support := []webAnswerCitation{}
 	actual := map[string]research.WebDocument{}
 	err := h.service.mutateTx(ctx, &h.owned, "", func(tx pgx.Tx, item *row) error {
-		rows, e := tx.Query(ctx, `SELECT id::text FROM learning_source_research_candidates WHERE job_id=$1 AND document_id=ANY($2::uuid[]) ORDER BY rank,id LIMIT 2`, item.SourceResearchJobID, ids)
+		rows, e := tx.Query(ctx, `SELECT id::text FROM learning_source_research_candidates WHERE job_id=$1 AND document_id=ANY($2::uuid[]) ORDER BY rank,id`, item.SourceResearchJobID, ids)
 		if e != nil {
 			return e
 		}
@@ -205,6 +234,8 @@ func (h *executionHost) reportSourceResearch(ctx context.Context, direction Sour
 		if e = rows.Err(); e != nil {
 			return e
 		}
+		candidates := []SourceResearchCandidate{}
+		documents := []research.WebDocument{}
 		for _, id := range candidateIDs {
 			c, e := h.service.sourceResearchCandidateTx(ctx, tx, *item, id)
 			if e != nil {
@@ -217,6 +248,12 @@ func (h *executionHost) reportSourceResearch(ctx context.Context, direction Sour
 			if e != nil {
 				return e
 			}
+			candidates = append(candidates, c)
+			documents = append(documents, d)
+		}
+		unique := sourceResearchUniqueDocuments(documents)
+		for _, index := range unique[:min(2, len(unique))] {
+			c, d := candidates[index], documents[index]
 			actual[d.ID] = d
 			quotes = append(quotes, evidence{Candidate: len(quotes) + 1, Title: bounded(c.Title, 200), Quote: c.Support.Quote})
 			support = append(support, webAnswerCitation{Origin: "web", DocumentID: d.ID, RevisionID: d.RevisionID, FragmentID: c.Support.FragmentID, Quote: c.Support.Quote})
@@ -231,7 +268,7 @@ func (h *executionHost) reportSourceResearch(ctx context.Context, direction Sour
 	if len(quotes) == 0 {
 		return h.storeSourceResearchSection(ctx, SourceResearchReportSection{ID: sectionID, Title: direction.Title, Body: "本方向已读取的页面未通过相关性或质量筛选，暂无可推荐资料。", Citations: []SourceCitation{}, Gaps: []string{"缺少与该方向直接相关的可用正文。"}})
 	}
-	return h.sourceResearchModel(ctx, "source_research_report", "根据已筛选短引文写一段有用的学习说明：具体概括本方向可学的概念、练习内容或规范范围，并建议如何使用或阅读顺序；只限引文支持的内容。body 最多220字符，通常2至3句。不重新研究、推导或展开综述。用 [1] 或 [1][2] 对应 citations 数组顺序，citations 只填写 evidence.candidate 整数，最多2个；不复制UUID或引文。只列正文用到的引用。gaps 最多2条各60字符，只描述当前方向的真实缺口，不因单篇资料未包含其他方向而判缺。不扩展教学示例。", map[string]any{"request": h.body.SourceResearch.Request, "direction": direction.Title, "evidence": quotes}, sourceResearchReportSchema, func(raw []byte) error {
+	return h.sourceResearchModel(ctx, "source_research_report", "根据已筛选短引文写一段有用的学习说明：具体概括本方向可学的概念、练习内容或规范范围，并建议如何使用或阅读顺序；只限引文支持的内容。evidence 每项是一份去重后的独立资料，source_count 是本段可用资料数；镜像不算多篇或独立佐证。source_count=1 时只按一份资料叙述，不能称为两篇或多篇，也不能把该文提到的其他文献说成本次已读资料。body 最多220字符，通常2至3句。不重新研究、推导或展开综述。用 [1] 或 [1][2] 对应 citations 数组顺序，citations 只填写 evidence.candidate 整数，最多2个；不复制UUID或引文。只列正文用到的引用。gaps 最多2条各60字符，只描述当前方向的真实缺口，不因单篇资料未包含其他方向而判缺。不扩展教学示例。", map[string]any{"request": h.body.SourceResearch.Request, "direction": direction.Title, "evidence": quotes, "source_count": len(quotes)}, sourceResearchReportSchema, func(raw []byte) error {
 		var out struct {
 			Body      string   `json:"body"`
 			Citations []int    `json:"citations"`
@@ -294,6 +331,14 @@ func (h *executionHost) storeSourceResearchSection(ctx context.Context, section 
 		}
 		if _, e = tx.Exec(ctx, `INSERT INTO learning_source_research_sections(id,job_id,report_id,privacy_generation,ordinal,ciphertext) VALUES($1,$2,$3,$4,$5,$6)`, id, item.SourceResearchJobID, state.ReportRevisionID, item.Generation, section.Ordinal, raw); e != nil {
 			return e
+		}
+		if state.ReportedDocuments == nil {
+			state.ReportedDocuments = map[string]bool{}
+		}
+		for _, citation := range section.Citations {
+			if citation.Web != nil {
+				state.ReportedDocuments[citation.Web.DocumentID] = true
+			}
 		}
 		state.SectionCount++
 		item.body = h.body

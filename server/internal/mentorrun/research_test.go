@@ -197,7 +197,7 @@ func TestPostgreSQLResearchPipelineAdoptionAndIsolation(t *testing.T) {
 		t.Fatalf("没有真实部分研究结果：%+v", result)
 	}
 	sources := result.Research.Sources
-	if len(sources) != 2 || sources[0].Status != "adopted" || sources[1].Status != "failed" || sources[1].Text != "" || sources[1].Failure != "body_unavailable" {
+	if len(sources) != 2 || sources[0].Status != "adopted" || sources[1].Status != "failed" || sources[1].Text != "" || sources[1].Failure != "http_403" {
 		t.Fatalf("来源阶段混淆：%+v", sources)
 	}
 	if strings.Contains(sources[0].Text, "搜索摘要") || result.RequestsUsed != 1 || calls.Load() != 1 {

@@ -1012,6 +1012,9 @@ func writeLearningResult(w http.ResponseWriter, result learning.OperationResult)
 	writeJSON(w, status, result)
 }
 func (a *API) writeLearningFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	if a.requestCancelled(r, operation, err) {
+		return
+	}
 	if contentFailure(w, r, err) {
 		return
 	}

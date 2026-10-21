@@ -137,6 +137,9 @@ func (a *API) handleResponseReadPermit(closedCode string, owners ...privacy.Owne
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			permit, err := a.readPermits.Acquire(r.Context(), owners...)
 			if err != nil {
+				if a.requestCancelled(r, "response_read_permit", err) {
+					return
+				}
 				if privacy.ErrorCode(err) == privacy.CodeContentRedacted {
 					writeError(w, r, http.StatusServiceUnavailable, closedCode, "Content is unavailable while privacy clearing is in progress")
 					return
@@ -151,6 +154,9 @@ func (a *API) handleResponseReadPermit(closedCode string, owners ...privacy.Owne
 			request := r.WithContext(permit.Context())
 			next.ServeHTTP(buffered, request)
 			if err := permit.CommitResponse(func() { buffered.flush(w) }); err != nil {
+				if a.requestCancelled(r, "response_write", err) {
+					return
+				}
 				if privacy.ErrorCode(err) == privacy.CodeContentRedacted {
 					writeError(w, r, http.StatusServiceUnavailable, memory.CodeContentRedacted, "Content was redacted before the response completed")
 					return

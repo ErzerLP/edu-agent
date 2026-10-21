@@ -861,6 +861,9 @@ func (a *API) knowledgeRetrieval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) writeKnowledgeFailure(w http.ResponseWriter, r *http.Request, operation string, err error) {
+	if a.requestCancelled(r, operation, err) {
+		return
+	}
 	mapped := problem.Knowledge(err)
 	if mapped.Code == "internal_error" {
 		a.logger.ErrorContext(r.Context(), "knowledge request failed",

@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/xml"
 	"errors"
 	"io"
 	"mime"
@@ -14,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,8 +23,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const MaxWire = 1 << 20
-const MaxDecoded = 2 << 20
+// Enough for real documentation pages (go.dev/dl is over 3 MB), while
+// retaining independent bounds on downloads and decompression.
+const MaxWire = 4 << 20
+const MaxDecoded = 8 << 20
 
 var denied = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("192.0.0.0/24"), netip.MustParsePrefix("192.0.2.0/24"), netip.MustParsePrefix("198.18.0.0/15"), netip.MustParsePrefix("198.51.100.0/24"), netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("240.0.0.0/4"), netip.MustParsePrefix("2001::/23"), netip.MustParsePrefix("2001:db8::/32"), netip.MustParsePrefix("2002::/16"),
@@ -85,7 +87,7 @@ func (f *Fetcher) transport() *http.Transport {
 			}
 			ips, err := f.lookup(ctx, "ip", host)
 			if err != nil || len(ips) == 0 {
-				return nil, errors.New("dns_failed")
+				return nil, errors.Join(errDNSFailed, err)
 			}
 			for _, ip := range ips {
 				if !PublicIP(ip) {
@@ -98,6 +100,8 @@ func (f *Fetcher) transport() *http.Transport {
 	}
 }
 
+var errDNSFailed = errors.New("dns_failed")
+
 func failure(err error) string {
 	if errors.Is(err, ErrPolicy) {
 		return "network_policy_rejected"
@@ -106,8 +110,12 @@ func failure(err error) string {
 		return "cancelled"
 	}
 	var n net.Error
-	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &n) && n.Timeout() {
+	var dns *net.DNSError
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &dns) && dns.Timeout() || errors.As(err, &n) && n.Timeout() {
 		return "timeout"
+	}
+	if errors.Is(err, errDNSFailed) {
+		return "dns_failed"
 	}
 	return "network_failed"
 }
@@ -155,12 +163,19 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
 			source.Status = "failed"
-			source.Failure = "body_unavailable"
+			source.Failure = "http_" + strconv.Itoa(resp.StatusCode)
 			return source, nil
 		}
 		wire, err := io.ReadAll(io.LimitReader(resp.Body, MaxWire+1))
 		resp.Body.Close()
-		if err != nil || len(wire) > MaxWire {
+		if err != nil {
+			source.Status, source.Failure = "failed", failure(err)
+			if source.Failure == "network_failed" {
+				source.Failure = "body_read_failed"
+			}
+			return source, nil
+		}
+		if len(wire) > MaxWire {
 			source.Status = "failed"
 			source.Failure = "body_limit"
 			return source, nil
@@ -182,7 +197,11 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 			source.Failure = "unsupported_encoding"
 			return source, nil
 		}
-		if err != nil || len(body) > MaxDecoded {
+		if err != nil {
+			source.Status, source.Failure = "failed", "invalid_compression"
+			return source, nil
+		}
+		if len(body) > MaxDecoded {
 			source.Status = "failed"
 			source.Failure = "decoded_limit"
 			return source, nil
@@ -197,13 +216,9 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 			source.Failure = "unsupported_format"
 			return source, nil
 		}
-		if media != "application/pdf" && (params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8") && !strings.EqualFold(params["charset"], "us-ascii") || !utf8.Valid(body) || bytes.ContainsRune(body, 0)) {
-			source.Status = "failed"
-			source.Failure = "unsupported_encoding"
-			return source, nil
-		}
+
 		// 声明不保存或不归档的页面不进入缓存、模型或可采纳候选。
-		restrictions := strings.ToLower(resp.Header.Get("Cache-Control") + " " + resp.Header.Get("X-Robots-Tag"))
+		restrictions := strings.ToLower(strings.Join(resp.Header.Values("Cache-Control"), ",") + "," + strings.Join(resp.Header.Values("X-Robots-Tag"), ","))
 		if restricted(restrictions) {
 			source.Status = "failed"
 			source.Failure = "storage_restricted"
@@ -213,6 +228,10 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 			report, err := pdfsource.Parse(ctx, body)
 			if err != nil {
 				source.Status, source.Failure = "failed", pdfsource.Code(err)
+				return source, nil
+			}
+			if strings.TrimSpace(report.Text()) == "" {
+				source.Status, source.Failure = "failed", "pdf_no_text"
 				return source, nil
 			}
 			source.PDF, source.PDFOriginal = &report, body
@@ -235,11 +254,16 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 			}
 			return source, nil
 		}
-		text, coverage := string(body), "complete_text"
+		textBody, decodeFailure := decodeText(body, media, params["charset"])
+		if decodeFailure != "" {
+			source.Status, source.Failure = "failed", decodeFailure
+			return source, nil
+		}
+		text, coverage := string(textBody), "complete_text"
 		title := ""
 		if media == "text/html" {
-			text, coverage, title = parseHTML(body)
-			source.Links = publicLinks(body, u)
+			text, coverage, title = parseHTML(textBody)
+			source.Links = publicLinks(textBody, u)
 		}
 		if coverage == "storage_restricted" {
 			source.Status = "failed"
@@ -256,7 +280,7 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		}
 		if strings.TrimSpace(text) == "" {
 			source.Status = "failed"
-			source.Failure = "body_unavailable"
+			source.Failure = "parse_empty"
 			return source, nil
 		}
 		sum := sha256.Sum256(body)
@@ -264,7 +288,7 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		source.RevisionID = uuid.NewString()
 		source.Parser = "safe-text-v1"
 		if media == "text/html" {
-			source.Parser = "safe-main-text-v2"
+			source.Parser = "safe-main-text-v3"
 		}
 		source.Coverage = coverage
 		source.Text = text
@@ -278,199 +302,6 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		return source, nil
 	}
 	return source, nil
-}
-
-// Links are only read hints; the host registers them and Fetch rechecks every
-// destination, DNS answer and redirect before any content can be trusted.
-func publicLinks(body []byte, base *url.URL) []string {
-	d := xml.NewDecoder(bytes.NewReader(body))
-	d.Strict = false
-	d.AutoClose = xml.HTMLAutoClose
-	d.Entity = xml.HTMLEntity
-	links := []string{}
-	seen := map[string]bool{}
-	for len(links) < 32 {
-		token, err := d.Token()
-		if err != nil {
-			break
-		}
-		tag, ok := token.(xml.StartElement)
-		if !ok || !strings.EqualFold(tag.Name.Local, "a") {
-			continue
-		}
-		for _, attr := range tag.Attr {
-			if !strings.EqualFold(attr.Name.Local, "href") {
-				continue
-			}
-			relative, err := url.Parse(attr.Value)
-			if err != nil {
-				continue
-			}
-			resolved, err := ValidateURL(base.ResolveReference(relative).String())
-			if err == nil && !seen[resolved.String()] {
-				seen[resolved.String()] = true
-				links = append(links, resolved.String())
-			}
-		}
-	}
-	return links
-}
-
-func parseHTML(body []byte) (string, string, string) {
-	d := xml.NewDecoder(bytes.NewReader(body))
-	d.Strict = false
-	d.AutoClose = xml.HTMLAutoClose
-	d.Entity = xml.HTMLEntity
-	// Keep bounded groups of text while scanning the whole document: storage
-	// restrictions outside the selected content must still be honored.
-	var groups [4]strings.Builder
-	var active [4]int
-	var ranks []int
-	depth := 0
-	hidden := 0
-	title, titleDepth, headDepth := "", 0, 0
-	coverage := "partial_html_text_only"
-	selected := func() string {
-		for rank := len(groups) - 1; rank >= 0; rank-- {
-			if text := strings.TrimSpace(groups[rank].String()); text != "" {
-				return text
-			}
-		}
-		return ""
-	}
-	for {
-		token, err := d.Token()
-		if err != nil {
-			if err != io.EOF {
-				coverage = "partial_html_parse"
-			}
-			break
-		}
-		switch t := token.(type) {
-		case xml.StartElement:
-			depth++
-			if depth > 128 {
-				return selected(), "partial_depth_limit", strings.Join(strings.Fields(title), " ")
-			}
-			name := strings.ToLower(t.Name.Local)
-			if name == "head" {
-				headDepth = depth
-			}
-			if name == "title" && headDepth > 0 && depth == headDepth+1 && titleDepth == 0 && title == "" {
-				titleDepth = depth
-			}
-			attrs := map[string]string{}
-			for _, attr := range t.Attr {
-				attrs[strings.ToLower(attr.Name.Local)] = strings.ToLower(attr.Value)
-			}
-			if name == "meta" {
-				if (attrs["name"] == "robots" || attrs["name"] == "edu-agent" || attrs["http-equiv"] == "cache-control") && restricted(attrs["content"]) {
-					return "", "storage_restricted", ""
-				}
-			}
-			if hidden > 0 {
-				hidden++
-			} else if htmlBoilerplate(name, attrs) {
-				hidden = 1
-			}
-			rank := 0
-			if hidden == 0 {
-				switch {
-				case htmlContentArea(attrs):
-					rank = 3
-				case name == "article":
-					rank = 2
-				case name == "main" || attrs["role"] == "main":
-					rank = 1
-				}
-			}
-			ranks = append(ranks, rank)
-			active[rank]++
-		case xml.EndElement:
-			if headDepth == depth {
-				headDepth = 0
-			}
-			if titleDepth == depth {
-				titleDepth = 0
-			}
-			if depth > 0 {
-				depth--
-			}
-			if hidden > 0 {
-				hidden--
-			} else {
-				for rank := range groups {
-					if rank == 0 || active[rank] > 0 {
-						groups[rank].WriteByte('\n')
-					}
-				}
-			}
-			if len(ranks) > 0 {
-				active[ranks[len(ranks)-1]]--
-				ranks = ranks[:len(ranks)-1]
-			}
-		case xml.CharData:
-			if titleDepth > 0 && len(title) < 1024 {
-				title += string(t)
-				if len(title) > 1024 {
-					title = title[:1024]
-					for !utf8.ValidString(title) {
-						title = title[:len(title)-1]
-					}
-				}
-			}
-			if hidden == 0 {
-				value := strings.Join(strings.Fields(string(t)), " ")
-				if value != "" {
-					for rank := range groups {
-						if rank == 0 || active[rank] > 0 {
-							groups[rank].WriteString(value)
-							groups[rank].WriteByte(' ')
-						}
-					}
-				}
-			}
-		}
-	}
-	return selected(), coverage, strings.Join(strings.Fields(title), " ")
-}
-
-func htmlContentArea(attrs map[string]string) bool {
-	for _, value := range strings.Fields(attrs["id"] + " " + attrs["class"]) {
-		switch value {
-		case "mw-content-text", "mw-parser-output", "article-body", "article-content", "post-content", "entry-content":
-			return true
-		}
-	}
-	return false
-}
-
-func htmlBoilerplate(name string, attrs map[string]string) bool {
-	switch name {
-	case "script", "style", "noscript", "head", "template", "svg", "nav", "footer", "aside", "header":
-		return true
-	}
-	if _, ok := attrs["hidden"]; ok {
-		return true
-	}
-	if attrs["aria-hidden"] == "true" {
-		return true
-	}
-	switch attrs["role"] {
-	case "navigation", "contentinfo", "banner", "complementary":
-		return true
-	}
-	for _, value := range strings.Fields(attrs["id"] + " " + attrs["class"]) {
-		switch value {
-		case "toc", "mw-toc", "vector-toc", "table-of-contents", "sidebar", "navigation", "navbox", "footer", "mw-footer", "catlinks", "mw-editsection", "printfooter":
-			return true
-		}
-	}
-	return false
-}
-
-func restricted(value string) bool {
-	return strings.Contains(value, "no-store") || strings.Contains(value, "noarchive") || strings.Contains(value, "nosnippet") || strings.Contains(value, "noindex")
 }
 
 func fragments(text string) []Fragment {

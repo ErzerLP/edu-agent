@@ -11,6 +11,7 @@ import (
 
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/edu-agent/edu-agent/server/internal/identity"
+	"github.com/edu-agent/edu-agent/server/internal/pdfsource"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -18,15 +19,23 @@ import (
 var errWebStopped = errors.New("web_search_stopped")
 
 type WebProgress struct {
-	Queries           []string `json:"queries,omitempty"`
-	Stage             string   `json:"stage"`
-	Query             string   `json:"query,omitempty"`
-	Title             string   `json:"title,omitempty"`
-	Notice            string   `json:"notice,omitempty"`
-	ReadAttempted     int      `json:"read_attempted"`
-	ReadSucceeded     int      `json:"read_succeeded"`
-	ReadFailed        int      `json:"read_failed"`
-	FetchHTTPRequests int      `json:"fetch_http_requests"`
+	Failures          []WebReadFailure `json:"failures,omitempty"`
+	Queries           []string         `json:"queries,omitempty"`
+	Stage             string           `json:"stage"`
+	Query             string           `json:"query,omitempty"`
+	Title             string           `json:"title,omitempty"`
+	Notice            string           `json:"notice,omitempty"`
+	ReadAttempted     int              `json:"read_attempted"`
+	ReadSucceeded     int              `json:"read_succeeded"`
+	ReadFailed        int              `json:"read_failed"`
+	FetchHTTPRequests int              `json:"fetch_http_requests"`
+}
+
+type WebReadFailure struct {
+	ResourceID string `json:"resource_id"`
+	Title      string `json:"title"`
+	Category   string `json:"category"`
+	Reason     string `json:"reason"`
 }
 type WebState struct {
 	ResourceKey []byte                 `json:"resource_key"`
@@ -79,9 +88,18 @@ func (s *Service) ConversationWebPreference(ctx context.Context, actor identity.
 }
 
 func webAAD(kind, id string, g int64) string { return fmt.Sprintf("web:%s:%s:%d", kind, id, g) }
+
+func webPayloadLimit(kind string) int {
+	if kind == "attachment" {
+		// []byte is base64 inside JSON; support the parser's full file limit.
+		return (pdfsource.MaxBytes+2)/3*4 + 2
+	}
+	return 3 << 20
+}
+
 func (s *Service) sealWeb(kind, id string, g int64, value any) ([]byte, error) {
 	raw, err := json.Marshal(value)
-	if err != nil || len(raw) > 3<<20 || s.aead == nil {
+	if err != nil || len(raw) > webPayloadLimit(kind) || s.aead == nil {
 		return nil, ErrStorage
 	}
 	nonce := make([]byte, s.aead.NonceSize())
@@ -91,7 +109,7 @@ func (s *Service) sealWeb(kind, id string, g int64, value any) ([]byte, error) {
 	return s.aead.Seal(nonce, nonce, raw, []byte(webAAD(kind, id, g))), nil
 }
 func (s *Service) openWeb(kind, id string, g int64, raw []byte, value any) error {
-	if s.aead == nil || len(raw) < s.aead.NonceSize() || len(raw) > (3<<20)+256 {
+	if s.aead == nil || len(raw) < s.aead.NonceSize() || len(raw) > webPayloadLimit(kind)+256 {
 		return ErrStorage
 	}
 	plain, err := s.aead.Open(nil, raw[:s.aead.NonceSize()], raw[s.aead.NonceSize():], []byte(webAAD(kind, id, g)))

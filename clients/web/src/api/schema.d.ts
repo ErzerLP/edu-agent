@@ -5778,6 +5778,7 @@ export interface components {
             web_search_version: number;
         };
         WebSearchProgress: {
+            failures?: components["schemas"]["WebReadFailure"][];
             queries?: string[];
             stage: string;
             query?: string;
@@ -5787,6 +5788,15 @@ export interface components {
             read_succeeded: number;
             read_failed: number;
             fetch_http_requests: number;
+        };
+        WebReadFailure: {
+            /** Format: uuid */
+            resource_id: string;
+            title: string;
+            /** @description 稳定失败类别，例如 too_large、unsupported_type、http_404、timeout、parse_empty、blocked_policy、storage_restricted。 */
+            category: string;
+            /** @description 具体失败判定，例如 body_limit、decoded_limit、pdf_no_text。 */
+            reason: string;
         };
         WebFragment: {
             /** Format: uuid */

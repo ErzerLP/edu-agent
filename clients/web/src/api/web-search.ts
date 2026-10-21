@@ -11,10 +11,12 @@ export const webCitationSchema = z.object({
 })
 export type WebCitation = z.infer<typeof webCitationSchema>
 export const webProgressSchema = z.object({
+  failures: z.array(z.object({ resource_id: z.uuid(), title: z.string(), category: z.string(), reason: z.string() })).optional(),
   queries: z.array(z.string()).optional(),
   stage: z.string(), query: z.string().optional(), title: z.string().optional(), notice: z.string().optional(),
   read_attempted: counter, read_succeeded: counter, read_failed: counter, fetch_http_requests: counter,
 })
+export type WebProgress = z.infer<typeof webProgressSchema>
 export const webDocumentSchema = z.object({
   document_id: z.uuid(), resource_id: z.uuid(), revision_id: z.uuid(),
   request_url: z.url(), url: z.url().refine(value => /^https?:\/\//.test(value)), title: z.string(),

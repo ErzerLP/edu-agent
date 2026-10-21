@@ -82,7 +82,7 @@ func TestFetchParsingLimitsAndRestrictions(t *testing.T) {
 		{"压缩炸弹", "text/plain", "gzip", "", compressed.String(), "decoded_limit"},
 		{"正文超限", "text/plain", "", "", strings.Repeat("x", MaxWire+1), "body_limit"},
 		{"禁止归档", "text/plain", "", "noarchive", "不能缓存", "storage_restricted"},
-		{"页面限制", "text/html", "", "", `<html><head><meta name="robots" content="noindex"></head><body>不能索引</body></html>`, "storage_restricted"},
+		{"页面限制", "text/html", "", "", `<html><head><meta name="robots" content="noarchive"></head><body>不能归档</body></html>`, "storage_restricted"},
 		{"普通正文提及限制", "text/html", "", "", `<p>概率原文中讨论 noarchive 并不是元数据指令。</p>`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

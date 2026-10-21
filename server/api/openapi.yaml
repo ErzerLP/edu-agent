@@ -7471,6 +7471,7 @@ components:
       additionalProperties: false
       required: [stage, read_attempted, read_succeeded, read_failed, fetch_http_requests]
       properties:
+        failures: { type: array, items: { $ref: '#/components/schemas/WebReadFailure' } }
         queries: { type: array, items: { type: string, maxLength: 1024 } }
         stage: { type: string }
         query: { type: string, maxLength: 1024 }
@@ -7480,6 +7481,15 @@ components:
         read_succeeded: { type: integer, minimum: 0 }
         read_failed: { type: integer, minimum: 0 }
         fetch_http_requests: { type: integer, minimum: 0 }
+    WebReadFailure:
+      type: object
+      additionalProperties: false
+      required: [resource_id, title, category, reason]
+      properties:
+        resource_id: { type: string, format: uuid }
+        title: { type: string }
+        category: { type: string, description: '稳定失败类别，例如 too_large、unsupported_type、http_404、timeout、parse_empty、blocked_policy、storage_restricted。' }
+        reason: { type: string, description: '具体失败判定，例如 body_limit、decoded_limit、pdf_no_text。' }
     WebFragment:
       type: object
       additionalProperties: false

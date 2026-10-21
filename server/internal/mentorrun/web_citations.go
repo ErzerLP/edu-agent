@@ -70,7 +70,7 @@ func (h *executionHost) generateWebAnswer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	material := map[string]any{"sources": sources, "web_documents": docs, "network_notice": h.body.Web.Progress.Notice}
+	material := map[string]any{"sources": sources, "web_documents": docs, "network_notice": h.body.Web.Progress.Notice, "network_progress": h.body.Web.Progress}
 	if h.body.Study != nil {
 		material["direction"] = h.body.Study.Text
 	} else if h.body.SourceManifest == nil {
@@ -81,7 +81,7 @@ func (h *executionHost) generateWebAnswer(ctx context.Context) error {
 		material["goal"] = goal
 	}
 	raw, _ := json.Marshal(material)
-	request := modelclient.Request{MaxTokens: h.limits.OutputTokens, Messages: []modelclient.Message{{Role: "system", Content: webAnswerPrompt}}}
+	request := modelclient.Request{MaxTokens: h.limits.OutputTokens, Messages: []modelclient.Message{{Role: "system", Content: webAnswerPrompt + h.webAnswerRules()}}}
 	plan, err := h.assembleContext(ctx, request, []modelclient.Message{{Role: "user", Content: string(raw)}}, h.body.Messages)
 	if err != nil {
 		return err

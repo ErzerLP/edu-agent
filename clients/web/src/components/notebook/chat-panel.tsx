@@ -37,6 +37,7 @@ import { ConversationTopics } from './conversation-topics'
 import { ConversationStudio } from './conversation-studio'
 import type { MessageAnchor } from '@/api/conversation-topics'
 import { WebSearchControl } from './web-search-control'
+import { WebSearchRecord } from './web-search-record'
 
 type PendingTurn = { id: string; body: TurnSubmission }
 export function ChatPanel({
@@ -659,8 +660,8 @@ export function ChatPanel({
             <span>基于 {selection?.items.length ?? '…'} 个来源</span>
           </div>
           <WebSearchControl key={conversationId ?? 'new'} spaceId={space.id} conversation={conversation} enabled={newWebEnabled} onNewChange={setNewWebEnabled} />
-          {run?.web && <p role="status">{run.web.stage === 'searching' ? `正在搜索：${run.web.query ?? ''}` : run.web.stage === 'reading' ? `正在阅读：${run.web.title ?? ''}` : run.web.notice ?? ''} · 已读取 {run.web.read_succeeded} 个页面</p>}
-          {!!run?.web?.queries?.length && <details><summary>本轮检索记录</summary><ul>{run.web.queries.map((text, index) => <li key={index}>{text}</li>)}</ul><p>已发起的搜索请求数和未知结果可在用量页查看。</p></details>}
+          {run?.web && <p role="status">{run.web.stage === 'searching' ? `正在搜索：${run.web.query ?? ''}` : run.web.stage === 'reading' ? `正在阅读：${run.web.title ?? ''}` : run.web.notice ?? ''} · 已读取 {run.web.read_succeeded} 个页面，失败 {run.web.read_failed} 次</p>}
+          {run?.web && <WebSearchRecord progress={run.web} />}
         </form>
         {menu &&
           createPortal(

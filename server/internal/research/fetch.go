@@ -140,6 +140,9 @@ func (f *Fetcher) Fetch(ctx context.Context, source Source, policy Policy, befor
 		if err = before(); err != nil {
 			return source, err
 		}
+		// Preserve the actual responding URL on failures too, so callers can
+		// avoid retrying a rejected destination reached through a redirect.
+		source.FinalURL = u.String()
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		req.Header.Set("User-Agent", "edu-agent-research/1.0")
 		req.Header.Set("Accept", "text/html,text/plain,text/markdown,application/pdf")

@@ -298,7 +298,16 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 			}
 			state.Progress.Stage = "reading"
 			state.Progress.Title = resource.Title
+			policy := research.Policy{Mode: "supplement"}
 			if h.body.SourceResearch != nil {
+				for domain := range h.body.SourceResearch.BlockedDomains {
+					policy.BlockedDomains = append(policy.BlockedDomains, domain)
+				}
+				for domain, count := range h.body.SourceResearch.DomainReads {
+					if count >= sourceResearchDomainLimit {
+						policy.BlockedDomains = append(policy.BlockedDomains, domain)
+					}
+				}
 				if err := h.reserveSourceResearchURL(ctx, resource.URL); err != nil {
 					return nil, err
 				}
@@ -321,7 +330,7 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 					countMu.Unlock()
 				}
 			}})
-			source, err := h.service.fetcher.Fetch(fetchContext, research.Source{ID: resource.ID, Locator: resource.URL}, research.Policy{Mode: "supplement"}, func() error {
+			source, err := h.service.fetcher.Fetch(fetchContext, research.Source{ID: resource.ID, Locator: resource.URL}, policy, func() error {
 				if err := h.webGate(ctx); err != nil {
 					return err
 				}
@@ -340,6 +349,11 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 			if err != nil {
 				return nil, err
 			}
+			if collection := h.body.SourceResearch; collection != nil && source.FinalURL != "" {
+				if domain := sourceResearchDomain(source.FinalURL); domain != sourceResearchDomain(resource.URL) {
+					collection.DomainReads[domain]++
+				}
+			}
 			if !source.StorageAllowed || len(source.Fragments) == 0 {
 				if source.Failure == "" {
 					source.Failure = "parse_empty"
@@ -349,6 +363,9 @@ func (h *executionHost) executeWebTool(ctx context.Context, call modelclient.Too
 					state.Failures = map[string]string{}
 				}
 				state.Failures[resource.ID] = source.Failure
+				if h.body.SourceResearch != nil {
+					h.body.SourceResearch.rejectDomain(resource.URL, source.FinalURL, source.Failure)
+				}
 				state.Progress.Failures = append(state.Progress.Failures, WebReadFailure{ResourceID: resource.ID, Title: resource.Title, Category: research.FailureCategory(source.Failure), Reason: source.Failure})
 				return webReadFailureResult(source.Failure), nil
 			}

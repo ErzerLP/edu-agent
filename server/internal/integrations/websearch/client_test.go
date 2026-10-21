@@ -47,3 +47,33 @@ func TestBraveDeterministicConnection(t *testing.T) {
 		})
 	}
 }
+
+func TestBraveEmptyWebResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"omitted_web", `{"type":"search","query":{"original":"education","more_results_available":false},"mixed":{"type":"mixed","main":[]}}`, true},
+		{"empty_array", `{"web":{"results":[]}}`, true},
+		{"missing_envelope", `{}`, false},
+		{"incomplete_envelope", `{"type":"search"}`, false},
+		{"wrong_type", `{"type":"error","query":{"original":"education"}}`, false},
+		{"malformed_web", `{"type":"search","query":{"original":"education"},"web":{}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			results, err := NewBrave(server.URL, "fixture", server.Client()).Search(t.Context(), Request{Query: "education", Limit: 10})
+			if tc.valid {
+				if err != nil || len(results) != 0 {
+					t.Fatalf("valid empty search stopped the caller: results=%v err=%v", results, err)
+				}
+			} else if err == nil || Category(err) != "invalid_response" {
+				t.Fatalf("malformed response treated as empty search: %v", err)
+			}
+		})
+	}
+}

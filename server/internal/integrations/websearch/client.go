@@ -87,11 +87,23 @@ func (b *Brave) Search(ctx context.Context, input Request) ([]Result, error) {
 		return nil, &Error{"invalid_response"}
 	}
 	var data struct {
+		Type  string `json:"type"`
+		Query *struct {
+			Original string `json:"original"`
+		} `json:"query"`
 		Web *struct {
 			Results []Result `json:"results"`
 		} `json:"web"`
 	}
-	if json.Unmarshal(body, &data) != nil || data.Web == nil || data.Web.Results == nil {
+	if json.Unmarshal(body, &data) != nil {
+		return nil, &Error{"invalid_response"}
+	}
+	// Brave omits optional result groups when a valid search has no hits.
+	// Still reject an unrecognized envelope or a malformed present web group.
+	if data.Web == nil && data.Type == "search" && data.Query != nil && strings.TrimSpace(data.Query.Original) != "" {
+		return []Result{}, nil
+	}
+	if data.Web == nil || data.Web.Results == nil {
 		return nil, &Error{"invalid_response"}
 	}
 	if len(data.Web.Results) > input.Limit {

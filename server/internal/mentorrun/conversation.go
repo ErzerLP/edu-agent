@@ -194,7 +194,8 @@ func openHistory(a cipher.AEAD, aad string, raw []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(envelope.Value))
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(value) != nil {
-		return ErrStorage
+		// Authenticated plaintext whose shape this version does not accept.
+		return ErrHistorySchema
 	}
 	if body, ok := value.(*Body); ok {
 		expireWebEvidence(body)

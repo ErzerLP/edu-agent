@@ -2,9 +2,12 @@ package mentorrun
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"time"
+
 	"github.com/edu-agent/edu-agent/packages/agentcore/modelclient"
 	"github.com/jackc/pgx/v5"
-	"time"
 )
 
 // The answer remains history, while quotation payloads and retrieval state
@@ -48,8 +51,18 @@ func (s *Service) expireWebHistoryTx(ctx context.Context, tx pgx.Tx, item row) e
 	if err != nil {
 		return err
 	}
+	if s.aead == nil {
+		return ErrStorage
+	}
 	var body Body
 	if err = openHistory(s.aead, historyAAD(item.ConversationID, item.Generation, item.RunID), raw, &body); err != nil {
+		if !errors.Is(err, ErrHistorySchema) {
+			return err // Decryption/key failures are retried; never discard on them.
+		}
+		// A decrypted body of an unsupported shape cannot be scrubbed selectively.
+		// Drop its ciphertext so expired web evidence cannot survive or block the batch.
+		slog.ErrorContext(ctx, "mentor_cleanup_history_unreadable", "run_id", item.RunID, "error_category", "tutor_history_unreadable")
+		_, err = tx.Exec(ctx, `UPDATE learning_tutor_turns SET ciphertext=NULL WHERE run_id=$1`, item.RunID)
 		return err
 	}
 	if body.WebExpiresAt == nil {

@@ -27,7 +27,8 @@ func ValidationReason(err error) string {
 	if errors.As(err, &invalid) {
 		switch invalid.Reason {
 		case "synthesis_size_invalid", "synthesis_point_invalid", "synthesis_text_invalid", "prepared_field_invalid",
-			"citation_source_missing", "citation_revision_mismatch", "citation_fragment_missing", "citation_quote_mismatch", "citation_range_mismatch":
+			"citation_source_missing", "citation_revision_mismatch", "citation_fragment_missing", "citation_quote_mismatch", "citation_range_mismatch",
+			"web_citation_unsupplied_fragment", "web_citation_unknown_fragment", "web_quote_mismatch", "web_quote_invalid", "web_document_hash_mismatch", "web_fragment_range_mismatch":
 			return invalid.Reason
 		}
 	}

@@ -21,12 +21,53 @@ func (*citationFailure) Unwrap() error { return errCitation }
 func citationReason(err error) string {
 	var failure *citationFailure
 	if errors.As(err, &failure) {
-		if failure.reason == "schema_mismatch" {
-			return "schema_mismatch"
+		switch failure.reason {
+		case "schema_mismatch", "citation_format", "citation_number_out_of_range", "citation_not_referenced",
+			"web_citation_unknown_document", "web_citation_revision_mismatch", "web_slice_hash_mismatch", "web_page_mismatch",
+			"source_citation_out_of_range", "source_fragment_out_of_range", "source_citation_duplicate",
+			"source_proof_schema_mismatch", "source_document_hash_mismatch", "source_fragment_mismatch", "mixed_origin_rule":
+			return failure.reason
 		}
-		return research.ValidationReason(&research.ValidationError{Reason: failure.reason})
+		if reason := research.ValidationReason(&research.ValidationError{Reason: failure.reason}); reason != "research_policy_rejected" {
+			return reason
+		}
 	}
 	return "invalid_source_citation"
+}
+
+func citationField(err error) string {
+	switch citationReason(err) {
+	case "web_citation_unknown_document":
+		return "citations.document_id"
+	case "citation_source_missing":
+		return "citations.source_id"
+	case "source_citation_out_of_range":
+		return "citations.source"
+	case "web_citation_revision_mismatch", "citation_revision_mismatch":
+		return "citations.revision_id"
+	case "web_citation_unsupplied_fragment", "web_citation_unknown_fragment", "citation_fragment_missing":
+		return "citations.fragment_id"
+	case "source_fragment_out_of_range", "source_fragment_mismatch":
+		return "citations.fragment"
+	case "web_quote_mismatch", "web_quote_invalid", "citation_quote_mismatch":
+		return "citations.quote"
+	case "web_document_hash_mismatch", "source_document_hash_mismatch":
+		return "citations.document_sha256"
+	case "web_fragment_range_mismatch", "citation_range_mismatch":
+		return "citations.range"
+	case "web_slice_hash_mismatch":
+		return "citations.slice_sha256"
+	case "web_page_mismatch":
+		return "citations.page"
+	case "source_proof_schema_mismatch":
+		return "citations.fragment.proof.schema"
+	case "mixed_origin_rule":
+		return "citations.origin"
+	case "citation_number_out_of_range", "citation_not_referenced":
+		return "answer"
+	default:
+		return "citations"
+	}
 }
 
 const citationSchema = `{"type":"object","properties":{"source_id":{"type":"string"},"revision_id":{"type":"string"},"fragment_id":{"type":"string"},"quote":{"type":"string"}},"required":["source_id","revision_id","fragment_id","quote"],"additionalProperties":false}`
@@ -134,11 +175,16 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 		} else if llm.Category(err) != llm.ErrorSchemaMismatch && llm.Category(err) != llm.ErrorInvalidResponse {
 			return err
 		}
-		slog.WarnContext(ctx, "mentor_generation_rejected", "run_id", h.owned.RunID, "model_stage", stage, "attempt", attempt+1, "error_category", "invalid_source_citation", "rejection_reason", reason)
+		slog.WarnContext(ctx, "mentor_generation_rejected", "run_id", h.owned.RunID, "model_stage", stage, "attempt", attempt+1, "error_category", "invalid_source_citation", "rejection_reason", reason, "rejection_field", citationField(err))
 		if attempt == 1 {
 			return err
 		}
-		feedback, _ := json.Marshal(map[string]string{"rejection_reason": reason, "instruction": "前次生成未通过完整校验。修正该结构或引用问题；重新输出完整 JSON，复制给定候选，不能扩大来源范围。"})
+		repair := map[string]any{"rejection_reason": reason, "rejection_field": citationField(err), "instruction": "前次生成未通过完整校验。修正该结构或引用问题；重新输出完整 JSON，复制给定候选，不能扩大来源范围。"}
+		if stage == "web_answer" {
+			repair["output_schema"] = schema
+			repair["instruction"] = "按 output_schema 重新输出完整 JSON。引用对象只能包含对应 origin 允许的字段，说明写在 answer 中；保留给定的文档、版本和片段身份，quote 只能取已提供片段的连续原文。answer 用单独的 [1]、[2] 对应 citations 数组顺序，每项引用都须出现；不附未使用的引用，不扩大证据范围。"
+		}
+		feedback, _ := json.Marshal(repair)
 		chat.Messages = append(chat.Messages, llm.Message{Role: llm.RoleUser, Content: string(feedback)})
 	}
 	return err

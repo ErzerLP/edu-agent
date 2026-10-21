@@ -44,6 +44,7 @@ type SourceResearchState struct {
 	SeenQueries            []string                  `json:"seen_queries,omitempty"`
 	ReadURLs               map[string]bool           `json:"read_urls"`
 	Screened               map[string]bool           `json:"screened"`
+	ReportedDocuments      map[string]bool           `json:"reported_documents,omitempty"`
 	DirectionDocuments     []string                  `json:"direction_documents,omitempty"`
 	ReportRevisionID       string                    `json:"report_revision_id,omitempty"`
 	ResultSnapshotID       string                    `json:"result_snapshot_id,omitempty"`

@@ -271,7 +271,7 @@ func sourceResearchFixture(t *testing.T) *runtimeFixture {
 		case strings.Contains(req.Messages[0].Content, "source_research_plan"):
 			response = `{"directions":[{"title":"基础","purpose":"理解原理","query":"protocol basics"},{"title":"练习","purpose":"动手验证","query":"protocol practice"}]}`
 		case strings.Contains(req.Messages[0].Content, "source_research_screen"):
-			response = `{"include":true,"reason":"原始说明提供可实践的协议基础。","quality_notes":"只核对已提供文本，未验证图表。","candidate":1}`
+			response = `{"include":true,"evidence_scope":"body","reason":"原始说明提供可实践的协议基础。","quality_notes":"只核对已提供文本，未验证图表。","candidate":1}`
 		case strings.Contains(req.Messages[0].Content, "source_research_report"):
 			var material struct {
 				Evidence []struct {

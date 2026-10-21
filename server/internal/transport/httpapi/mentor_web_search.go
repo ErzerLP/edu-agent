@@ -1,14 +1,19 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/edu-agent/edu-agent/server/internal/learningspace"
 	"github.com/edu-agent/edu-agent/server/internal/mentorrun"
 	"github.com/edu-agent/edu-agent/server/internal/privacy"
 	"github.com/edu-agent/edu-agent/server/internal/research"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (a *API) mountMentorWeb(r chi.Router) {
@@ -84,8 +89,40 @@ func (a *API) webImport(w http.ResponseWriter, r *http.Request) {
 	actor, _ := credentialFromContext(r.Context())
 	result, err := a.mentorRuns.ImportWebDocument(r.Context(), actor, learningspace.Scope(r.Context()), c)
 	if err != nil {
-		mentorFailure(w, r, err)
+		a.writeWebImportFailure(w, r, err)
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func (a *API) writeWebImportFailure(w http.ResponseWriter, r *http.Request, err error) {
+	category := "internal"
+	var database *pgconn.PgError
+	switch {
+	case errors.Is(err, context.Canceled):
+		category = "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		category = "timeout"
+	case errors.As(err, &database):
+		category = "database"
+		switch {
+		case database.Code == "40001" || database.Code == "40P01" || database.Code == "55P03":
+			category = "database_transaction_conflict"
+		case strings.HasPrefix(database.Code, "23"):
+			category = "database_constraint"
+		case strings.HasPrefix(database.Code, "08") || strings.HasPrefix(database.Code, "53") || strings.HasPrefix(database.Code, "57"):
+			category = "database_unavailable"
+		}
+	default:
+		for _, known := range []error{mentorrun.ErrInvalid, mentorrun.ErrConflict, mentorrun.ErrOperation, mentorrun.ErrNotFound, mentorrun.ErrForbidden, mentorrun.ErrInactive, mentorrun.ErrStorage} {
+			if errors.Is(err, known) {
+				category = known.Error()
+				break
+			}
+		}
+	}
+	// Database errors can contain source titles, body text and SQL parameters.
+	// Only fixed categories and the request ID belong in application logs.
+	a.logger.WarnContext(r.Context(), "web import failed", "request_id", middleware.GetReqID(r.Context()), "error_category", category)
+	mentorFailure(w, r, err)
 }

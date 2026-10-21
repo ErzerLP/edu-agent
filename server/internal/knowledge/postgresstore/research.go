@@ -41,6 +41,15 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 	if c.Metadata.Purpose == "source_research_report" {
 		provenance = "source_research_report:" + c.SourceRevisionID
 	}
+	// Page titles are bounded in bytes by the fetcher, while collection names
+	// accept at most 120 characters. Keep the full title in source metadata.
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "外部来源"
+	}
+	if runes := []rune(name); len(runes) > 120 {
+		name = string(runes[:119]) + "…"
+	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_collections(id,name,source,shared,owner_space_id) VALUES($1,$2,$3,FALSE,$4)`, c.SourceID, name, provenance, learningspace.Scope(ctx)); err != nil {
 		return knowledge.ImportResult{}, err
 	}

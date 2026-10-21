@@ -110,6 +110,7 @@ type SourceResearchCandidate struct {
 	MediaType             string                    `json:"media_type"`
 	Reason                string                    `json:"reason"`
 	QualityNotes          string                    `json:"quality_notes"`
+	EvidenceScope         string                    `json:"evidence_scope,omitempty"`
 	Coverage              string                    `json:"coverage"`
 	Selected              bool                      `json:"selected"`
 	ExplicitlyChanged     bool                      `json:"explicitly_changed"`

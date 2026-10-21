@@ -283,7 +283,7 @@ func TestSourceResearchScreensRelevantBodyBeyondFirstPage(t *testing.T) {
 				}
 			}
 		}
-		raw, _ := json.Marshal(map[string]any{"include": proof > 0, "reason": "有可核对的网络协议基础练习题", "quality_notes": "只核对有界片段", "candidate": proof})
+		raw, _ := json.Marshal(map[string]any{"include": proof > 0, "evidence_scope": "body", "reason": "有可核对的网络协议基础练习题", "quality_notes": "只核对有界片段", "candidate": proof})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": modelclient.Message{Role: "assistant", Content: string(raw)}, "finish_reason": "stop"}}, "usage": map[string]int{"prompt_tokens": 50, "completion_tokens": 40, "total_tokens": 90}})
 		return true
@@ -331,7 +331,7 @@ func TestSourceResearchScreenCanExcludeMirrorsOfExistingMaterials(t *testing.T) 
 		if duplicate {
 			proof = 0
 		}
-		raw, _ := json.Marshal(map[string]any{"include": !duplicate, "reason": "RFC 1122 官方规范正文", "quality_notes": "不将同一文献的镜像重复推荐", "candidate": proof})
+		raw, _ := json.Marshal(map[string]any{"include": !duplicate, "evidence_scope": "body", "reason": "RFC 1122 官方规范正文", "quality_notes": "不将同一文献的镜像重复推荐", "candidate": proof})
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": modelclient.Message{Role: "assistant", Content: string(raw)}, "finish_reason": "stop"}}, "usage": map[string]int{"prompt_tokens": 50, "completion_tokens": 40, "total_tokens": 90}})
 		return true

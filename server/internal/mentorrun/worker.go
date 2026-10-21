@@ -412,6 +412,10 @@ func logRunFailure(ctx context.Context, item row, cause error) {
 		slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category, "rejection_reason", citationReason(cause), "rejection_field", citationField(cause))
 		return
 	}
+	if field, constraint := llm.SchemaRejection(cause); field != "" {
+		slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category, "rejection_reason", string(llm.ErrorSchemaMismatch), "rejection_field", field, "rejection_constraint", constraint)
+		return
+	}
 	slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category)
 }
 

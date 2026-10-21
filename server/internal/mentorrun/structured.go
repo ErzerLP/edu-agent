@@ -103,9 +103,14 @@ func quoteConstrainedSchema(base json.RawMessage, sources []research.Source, poi
 	return raw
 }
 
+func (h *executionHost) generateCited(ctx context.Context, request modelclient.Request, schema json.RawMessage, stage string, validate func([]byte) error) error {
+	return h.generateStructured(ctx, request, schema, stage, validate)
+}
+
 // Server-only structured generation reuses the configured mentor connection and
 // its wire API. Every attempt crosses the existing HTTP authorization and lease gate.
-func (h *executionHost) generateCited(ctx context.Context, request modelclient.Request, schema json.RawMessage, stage string, validate func([]byte) error) error {
+// Schema failures and citation failures retain separate diagnostics and feedback.
+func (h *executionHost) generateStructured(ctx context.Context, request modelclient.Request, schema json.RawMessage, stage string, validate func([]byte) error) error {
 	client, _, native, err := h.service.settings.CitedMentorClient(func(connection settings.Connection, next http.RoundTripper) http.RoundTripper {
 		return budgetTransport{host: h, next: next, stage: stage, connection: connection}
 	})
@@ -173,16 +178,26 @@ func (h *executionHost) generateCited(ctx context.Context, request modelclient.R
 			return nil
 		}
 		reason := "schema_mismatch"
+		field, constraint := llm.SchemaRejection(err)
+		if field == "" {
+			field = "$"
+		}
+		errorCategory := string(llm.Category(err))
 		if errors.Is(err, errCitation) {
 			reason = citationReason(err)
+			field = citationField(err)
+			errorCategory = "invalid_source_citation"
 		} else if llm.Category(err) != llm.ErrorSchemaMismatch && llm.Category(err) != llm.ErrorInvalidResponse {
 			return err
 		}
-		slog.WarnContext(ctx, "mentor_generation_rejected", "run_id", h.owned.RunID, "model_stage", stage, "attempt", attempt+1, "error_category", "invalid_source_citation", "rejection_reason", reason, "rejection_field", citationField(err))
+		slog.WarnContext(ctx, "mentor_generation_rejected", "run_id", h.owned.RunID, "model_stage", stage, "attempt", attempt+1, "error_category", errorCategory, "rejection_reason", reason, "rejection_field", field, "rejection_constraint", constraint)
 		if attempt == 1 {
 			return err
 		}
-		repair := map[string]any{"rejection_reason": reason, "rejection_field": citationField(err), "instruction": "前次生成未通过完整校验。修正该结构或引用问题；重新输出完整 JSON，复制给定候选，不能扩大来源范围。"}
+		repair := map[string]any{"rejection_reason": reason, "rejection_field": field, "rejection_constraint": constraint, "output_schema": schema, "instruction": "前次生成未通过结构校验。按 output_schema 修正 rejection_field 对应的字段与约束，重新输出完整紧凑 JSON 数据；不要把 schema 定义或额外说明写入结果。"}
+		if errors.Is(err, errCitation) {
+			repair = map[string]any{"rejection_reason": reason, "rejection_field": field, "instruction": "前次生成未通过完整校验。修正该结构或引用问题；重新输出完整 JSON，复制给定候选，不能扩大来源范围。"}
+		}
 		if stage == "web_answer" {
 			repair["output_schema"] = schema
 			repair["instruction"] = "按 output_schema 重新输出完整紧凑 JSON。网络引用使用 origin=web 和本次 fragments.quotes 中的 candidate 编号，服务端还原原文与身份，不必重写 UUID 或 quote；学习区引用保留 source/fragment。只用对应 origin 允许的字段，说明写在 answer 中。answer 用单独的 [1]、[2] 对应 citations 数组顺序，每项引用都须出现；不附未使用的引用，不扩大证据范围。"

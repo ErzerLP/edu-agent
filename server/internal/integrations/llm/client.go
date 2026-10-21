@@ -464,7 +464,35 @@ func validateJSONSchema(schemaBytes, valueBytes []byte) error {
 	return validateValue(schema, value, "$")
 }
 
-func validateValue(schema map[string]any, value any, path string) error {
+type schemaFailure struct {
+	field, constraint string
+	cause             error
+}
+
+func (e *schemaFailure) Error() string { return e.cause.Error() }
+func (e *schemaFailure) Unwrap() error { return e.cause }
+
+// SchemaRejection exposes only paths and constraints from the supplied schema,
+// never model values or the names of undeclared properties.
+func SchemaRejection(err error) (field, constraint string) {
+	var failure *schemaFailure
+	if errors.As(err, &failure) {
+		return failure.field, failure.constraint
+	}
+	return "", ""
+}
+
+func schemaMismatch(path, constraint string, cause error) error {
+	return &schemaFailure{field: strings.TrimPrefix(path, "$."), constraint: constraint, cause: cause}
+}
+
+func validateValue(schema map[string]any, value any, path string) (err error) {
+	defer func() {
+		var failure *schemaFailure
+		if err != nil && !errors.As(err, &failure) {
+			err = schemaMismatch(path, "", err)
+		}
+	}()
 	if expected, exists := schema["type"]; exists {
 		matched := false
 		switch types := expected.(type) {
@@ -483,7 +511,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 			}
 		}
 		if !matched {
-			return fmt.Errorf("%s must be %v", path, expected)
+			return schemaMismatch(path, "type", fmt.Errorf("%s must be %v", path, expected))
 		}
 	}
 	if rawEnum, exists := schema["enum"]; exists {
@@ -499,7 +527,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 			}
 		}
 		if !matched {
-			return fmt.Errorf("%s is not an allowed value", path)
+			return schemaMismatch(path, "enum", fmt.Errorf("%s is not an allowed value", path))
 		}
 	}
 
@@ -523,7 +551,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 					return fmt.Errorf("%s has invalid required schema", path)
 				}
 				if _, exists := object[name]; !exists {
-					return fmt.Errorf("%s.%s is required", path, name)
+					return schemaMismatch(path+"."+name, "required", fmt.Errorf("%s.%s is required", path, name))
 				}
 			}
 		}
@@ -548,7 +576,7 @@ func validateValue(schema map[string]any, value any, path string) error {
 			if !additional {
 				for name := range object {
 					if _, declared := properties[name]; !declared {
-						return fmt.Errorf("%s.%s is not allowed", path, name)
+						return schemaMismatch(path, "additionalProperties", fmt.Errorf("%s.%s is not allowed", path, name))
 					}
 				}
 			}
@@ -607,12 +635,12 @@ func validateCountConstraint(schema map[string]any, keyword string, actual int, 
 	}
 	if keyword == "minItems" || keyword == "minLength" {
 		if actual < int(limit) {
-			return fmt.Errorf("%s must contain at least %d %s", path, int(limit), unit)
+			return schemaMismatch(path, keyword, fmt.Errorf("%s must contain at least %d %s", path, int(limit), unit))
 		}
 		return nil
 	}
 	if actual > int(limit) {
-		return fmt.Errorf("%s must contain at most %d %s", path, int(limit), unit)
+		return schemaMismatch(path, keyword, fmt.Errorf("%s must contain at most %d %s", path, int(limit), unit))
 	}
 	return nil
 }
@@ -627,10 +655,10 @@ func validateNumberConstraint(schema map[string]any, keyword string, actual floa
 		return fmt.Errorf("%s has invalid %s schema", path, keyword)
 	}
 	if keyword == "minimum" && actual < limit {
-		return fmt.Errorf("%s must be at least %v", path, limit)
+		return schemaMismatch(path, keyword, fmt.Errorf("%s must be at least %v", path, limit))
 	}
 	if keyword == "maximum" && actual > limit {
-		return fmt.Errorf("%s must be at most %v", path, limit)
+		return schemaMismatch(path, keyword, fmt.Errorf("%s must be at most %v", path, limit))
 	}
 	return nil
 }

@@ -83,6 +83,10 @@ func (h *executionHost) reserveSourceResearchURL(ctx context.Context, url string
 			return ErrLimit
 		}
 		state.ReadURLs[key] = true
+		if state.DomainReads == nil {
+			state.DomainReads = map[string]int{}
+		}
+		state.DomainReads[sourceResearchDomain(key)]++
 	}
 	// The URL reservation is committed before the first network dispatch.
 	return h.checkpoint(ctx, "source_research_read_reserved")
@@ -120,7 +124,7 @@ func (h *executionHost) runSourceResearch(ctx context.Context) error {
 	ctx = modelusage.WithTask(ctx, modelusage.TaskContext{Kind: "source_research", OriginID: h.owned.SourceResearchJobID, Stage: "round_1_search_web", SpaceID: h.owned.SpaceID, Generation: h.owned.Generation})
 	if len(state.Directions) == 0 {
 		h.body.Web.Progress.Stage = "planning"
-		err := h.sourceResearchModel(ctx, "source_research_plan", "规划通常 2–5 个互补检索方向，窄主题可以减少。每个方向只给 title（最多40字符）、purpose（最多80字符）、query（最多160字符）。不确认计划。", map[string]any{"request": state.Request}, sourceResearchPlanSchema, func(raw []byte) error {
+		err := h.sourceResearchModel(ctx, "source_research_plan", "按 recommended_directions 规划互补检索方向，通常2–5个，窄主题可减少，不超过可阅读页数。需求点名的资料类型（如练习题、RFC、官方文档）分别成为方向；同类规范合并，不按文献编号或语言重复拆分方向。优先原始或权威来源：规范找发布机构正文，练习找大学课程或教材作者的实际题目，入门找可读的HTML教程或开放教材。不把所有方向都限定为高校PDF课件，不搜书单或规范索引来代替正文。query 简短聚焦，需要限定权威站点时由领域知识选择具体机构域名，不用顶级或教育域名后缀作 site: 限定；网站只是线索，不是证据。中英文均可时至少一个方向用英文检索词。每个方向只给 title（最多40字符）、purpose（最多80字符）、query（最多160字符）。不确认计划。", map[string]any{"request": state.Request, "max_pages": state.Limits.MaxPagesPerRound, "recommended_directions": min(5, state.Limits.MaxPagesPerRound, max(1, (state.Limits.MaxSourcesPerRound+1)/2))}, sourceResearchPlanSchema, func(raw []byte) error {
 			var plan struct {
 				Directions []struct {
 					Title   string `json:"title"`
@@ -131,7 +135,7 @@ func (h *executionHost) runSourceResearch(ctx context.Context) error {
 			if agentcore.DecodeArguments(string(raw), &plan) != nil || len(plan.Directions) == 0 || len(plan.Directions) > 5 {
 				return &citationFailure{reason: "schema_mismatch"}
 			}
-			for i, d := range plan.Directions {
+			for i, d := range plan.Directions[:min(len(plan.Directions), state.Limits.MaxPagesPerRound)] {
 				state.Directions = append(state.Directions, SourceResearchDirection{ID: fmt.Sprintf("direction-%d", i+1), Title: d.Title, Purpose: d.Purpose, Query: d.Query, State: "pending"})
 			}
 			return nil
@@ -145,13 +149,27 @@ func (h *executionHost) runSourceResearch(ctx context.Context) error {
 	}
 	for !state.Finished {
 		if state.Direction >= len(state.Directions) {
+			if state.CandidateCount >= state.Limits.MaxSourcesPerRound {
+				state.Finished = true
+				break
+			}
 			if len(state.ReadURLs) >= state.Limits.MaxPagesPerRound || len(state.ReadableVersions) == state.PassReadable {
 				state.Finished = true
 				state.Gaps = append(state.Gaps, "已遍历检索方向，未再找到可读取的新线索或已达阅读上限。")
 				break
 			}
-			if err := h.refineSourceResearch(ctx); err != nil {
-				return err
+			// Use remaining registered leads before paying for another search.
+			deferred := false
+			for i := range state.Directions {
+				if len(state.DeferredQueues[state.Directions[i].ID]) > 0 {
+					state.Directions[i].State = "pending"
+					deferred = true
+				}
+			}
+			if !deferred {
+				if err := h.refineSourceResearch(ctx); err != nil {
+					return err
+				}
 			}
 			if state.Finished {
 				break
@@ -171,6 +189,22 @@ func (h *executionHost) runSourceResearch(ctx context.Context) error {
 			break
 		}
 		if !state.Searched {
+			remainingDirections := 0
+			for _, d := range state.Directions[state.Direction:] {
+				if d.State != "complete" {
+					remainingDirections++
+				}
+			}
+			state.DirectionReadStart = len(state.ReadURLs)
+			state.DirectionAllowance = max(1, (state.Limits.MaxPagesPerRound-len(state.ReadURLs)+remainingDirections-1)/remainingDirections)
+			state.DirectionCandidateGoal = state.CandidateCount + max(1, (state.Limits.MaxSourcesPerRound-state.CandidateCount+remainingDirections-1)/remainingDirections)
+			if queue := state.DeferredQueues[direction.ID]; len(queue) > 0 {
+				state.Queue = queue
+				delete(state.DeferredQueues, direction.ID)
+				state.Searched = true
+			}
+		}
+		if !state.Searched {
 			query := strings.Join(strings.Fields(strings.ToLower(direction.Query)), " ")
 			if slices.Contains(state.SeenQueries, query) {
 				direction.State = "complete"
@@ -188,23 +222,41 @@ func (h *executionHost) runSourceResearch(ctx context.Context) error {
 				key, e := research.NormalizeURL(resource.URL)
 				if e == nil && !state.ReadURLs[key] && !state.ReadAliases[key] && !slices.Contains(state.Queue, resource.ID) && len(state.Queue) < capacity {
 					state.Queue = append(state.Queue, resource.ID)
+					if state.ResourceDomains == nil {
+						state.ResourceDomains = map[string]string{}
+					}
+					state.ResourceDomains[resource.ID] = sourceResearchDomain(resource.URL)
 				}
 			}
 			state.Searched = true
 			direction.State = "reading"
+			state.trimQueues()
 			if err = h.checkpoint(ctx, "source_research_search_completed"); err != nil {
 				return err
 			}
 		}
-		// Distribute the current pass across directions; later passes use gaps.
-		allowance := max(1, (state.Limits.MaxPagesPerRound-state.PassStart+len(state.Directions)-1)/len(state.Directions))
-		for (len(state.Queue) > 0 && len(state.DirectionDocuments) < allowance && len(state.ReadURLs) < state.Limits.MaxPagesPerRound) || state.PendingDocument != "" {
+		// Failures consume direction allowances too. Unused attempts remain
+		// available to the directions that follow; their guarantees stay intact.
+		if state.DirectionAllowance == 0 { // Legacy in-progress checkpoint.
+			state.DirectionAllowance = max(1, (state.Limits.MaxPagesPerRound-len(state.ReadURLs))/(len(state.Directions)-state.Direction))
+			state.DirectionReadStart = len(state.ReadURLs)
+			state.DirectionCandidateGoal = state.Limits.MaxSourcesPerRound
+		}
+		for (len(state.Queue) > 0 && len(state.ReadURLs)-state.DirectionReadStart < state.DirectionAllowance && state.CandidateCount < state.DirectionCandidateGoal && len(state.ReadURLs) < state.Limits.MaxPagesPerRound) || state.PendingDocument != "" {
 			if state.PendingDocument == "" {
-				value, err := h.sourceResearchTool(ctx, "read_web", map[string]string{"resource_id": state.Queue[0]})
+				id, err := h.nextSourceResearchResource(ctx)
 				if err != nil {
 					return err
 				}
-				state.Queue = state.Queue[1:]
+				if id == "" {
+					break
+				}
+				value, err := h.sourceResearchTool(ctx, "read_web", map[string]string{"resource_id": id})
+				if err != nil {
+					return err
+				}
+				state.Queue = slices.DeleteFunc(state.Queue, func(queued string) bool { return queued == id })
+				state.trimQueues()
 				if d, ok := value.(research.WebDocument); ok {
 					if state.ReadAliases == nil {
 						state.ReadAliases = map[string]bool{}
@@ -242,9 +294,14 @@ func (h *executionHost) runSourceResearch(ctx context.Context) error {
 		state.Searched = false
 		if len(state.Queue) > 0 {
 			state.UnreadLeads = true
+			if state.DeferredQueues == nil {
+				state.DeferredQueues = map[string][]string{}
+			}
+			state.DeferredQueues[direction.ID] = state.Queue
 		}
 		state.Queue = nil
 		state.DirectionDocuments = nil
+		state.DirectionAllowance = 0
 		if err := h.checkpoint(ctx, "source_research_direction_completed"); err != nil {
 			return err
 		}

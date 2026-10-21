@@ -38,6 +38,9 @@ func ValidationReason(err error) string {
 type Policy struct {
 	Mode    string   `json:"mode"`
 	Domains []string `json:"domains"`
+	// Host-owned restrictions for the current collection round only. They
+	// cannot be supplied by model arguments or persisted as user policy.
+	BlockedDomains []string `json:"-"`
 }
 
 type Request struct {
@@ -76,6 +79,11 @@ func (p Policy) Allows(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
+	}
+	for _, domain := range p.BlockedDomains {
+		if strings.EqualFold(u.Hostname(), domain) || strings.HasSuffix(strings.ToLower(u.Hostname()), "."+domain) {
+			return false
+		}
 	}
 	if p.Mode != "restrict" {
 		return true

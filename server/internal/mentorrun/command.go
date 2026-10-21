@@ -59,7 +59,7 @@ func (s *Service) Command(ctx context.Context, actor identity.Credential, space,
 	if c.ExpectedVersion > item.Version || c.Kind != "stop" && item.Version != c.ExpectedVersion {
 		return Receipt{}, ErrConflict
 	}
-	if item.Kind == "assessment" {
+	if item.Kind == "assessment" || item.Kind == "source_research" {
 		return Receipt{}, ErrNotFound
 	}
 	if item.Kind == "topic_index" && c.Kind != "stop" {

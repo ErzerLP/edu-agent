@@ -32,6 +32,8 @@ export const webPreviewSchema = z.object({
 export const webImportSchema = z.object({ operation_id: z.uuid(), run_id: z.uuid(), document_id: z.uuid(), document_revision_id: z.uuid(), source: sourceIdentitySchema })
 export const webPreferenceSchema = z.object({ enabled: z.boolean(), web_search_version: z.number().int().positive() })
 export const webCoverage: Record<string, string> = {
+  partial: '整理报告未完成，未覆盖内容另列缺口。',
+  complete: '整理报告已完成，仅依据已核验的引文整理。',
   complete_text: '已读取可用文本；引用存在不代表网页事实可靠。',
   partial_html_text_only: '仅读取静态正文，未读取动态内容、图片及视频。',
   partial_html_parse: '部分 HTML 无法解析，仅引用可读正文。',

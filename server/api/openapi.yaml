@@ -829,28 +829,6 @@ paths:
       responses:
         "200": { description: 支持的具体格式、PDF 限制和安全查看方式, content: { application/json: { schema: { $ref: "#/components/schemas/SourceCapabilities" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
-  /v1/knowledge/source-discovery:
-    post:
-      operationId: discoverKnowledgeSources
-      summary: 确认公开关键词后发现最多四个候选摘要；不读取正文、不创建研究任务或正式来源
-      description: 每次最多一次 Brave 请求，受 concurrency 和设备限流约束；20 秒超时，无自动重试。关键词最多 300 UTF-8 字节，拼接域约束后最多 1024 字节。候选仅供用户勾选，再经 reference-sources 读取与预览确认。取消、超时、失败不能保证外部费用为零；请求结果不持久化，重试需用户重新明确发起。
-      security: [{ deviceBearer: [] }, { webCookie: [] }]
-      x-required-scopes: [learning:write, knowledge:read, knowledge:write, research:adopt]
-      parameters:
-        - { $ref: "#/components/parameters/LearningSpaceID" }
-      requestBody:
-        required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/SourceDiscoveryRequest" } } }
-      responses:
-        "200": { description: 候选摘要（可为空）；no-store，没有正文、引用身份或导入回执, content: { application/json: { schema: { $ref: "#/components/schemas/SourceDiscoveryResult" } } } }
-        "400": { description: invalid_request 或 research_policy_rejected；缺确认、非法关键词／域策略或未知字段，未外发, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        "403": { description: 缺配对 scope 或 Cookie CSRF／Origin 校验失败, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        "408": { description: source_discovery_cancelled；请求取消，可能已产生外部费用, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        "429": { description: rate_limited、source_discovery_busy 或 source_discovery_rate_limited；不自动重试, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        "502": { description: source_discovery_unauthorized／upstream_error／invalid_response／redirect_rejected；不转发提供商错误正文, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        "503": { description: source_discovery_unavailable 或隐私 owner 屏障；无成功候选, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        "504": { description: source_discovery_timeout；无成功候选，不自动重试, content: { application/json: { schema: { $ref: "#/components/schemas/ErrorEnvelope" } } } }
-        default: { $ref: "#/components/responses/WebFailure" }
   /v1/knowledge/revisions/{revisionID}/documents/{documentID}/pages/{page}:
     get:
       operationId: readPDFPageImage
@@ -889,7 +867,7 @@ paths:
                 external_consent: { type: boolean, const: true }
                 pdf_data: { type: string, format: byte, maxLength: 5592408, description: 原始 PDF 的 base64，解码后最多 4 MiB；不得同时提供 url }
                 storage_consent: { type: boolean, const: true, description: 用户确认有权保存原件及派生文本 }
-                policy: { $ref: "#/components/schemas/SourceDiscoveryPolicy", description: 搜索候选所确认的域策略；仅用于 URL，缺省为 supplement，逐跳校验 restrict }
+                policy: { $ref: "#/components/schemas/ReferenceSourcePolicy", description: 搜索候选所确认的域策略；仅用于 URL，缺省为 supplement，逐跳校验 restrict }
       responses:
         "200": { description: 逐项解析状态、真实正文、覆盖及禁止保存原因；失败项不等于已导入, content: { application/json: { schema: { $ref: "#/components/schemas/ReferenceSourcePreview" } } } }
         default: { $ref: "#/components/responses/WebFailure" }
@@ -5106,6 +5084,432 @@ paths:
       responses:
         '200': { description: 当前身份、学习区和代次核验后的结果，no-store, content: { application/json: { schema: { $ref: '#/components/schemas/WebImportReceipt' } } } }
         default: { $ref: '#/components/responses/WebFailure' }
+  /v1/learning/source-research/capabilities:
+    get:
+      operationId: sourceResearchCapabilities
+      summary: sourceResearchCapabilities
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchCapabilities'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/learning/source-research/jobs:
+    post:
+      operationId: createSourceResearch
+      summary: createSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:write knowledge:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      responses:
+        '202':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchJob'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceResearchCreate'
+    get:
+      operationId: listSourceResearch
+      summary: listSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 20
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - items
+                - next_cursor
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SourceResearchJob'
+                    maxItems: 20
+                  next_cursor:
+                    type: string
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/learning/source-research/jobs/{jobID}:
+    get:
+      operationId: readSourceResearch
+      summary: readSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchJob'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/learning/source-research/jobs/{jobID}/candidates:
+    get:
+      operationId: sourceResearchCandidates
+      summary: sourceResearchCandidates
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 20
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchCandidatePage'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/learning/source-research/jobs/{jobID}/reports/{revisionID}:
+    get:
+      operationId: sourceResearchReport
+      summary: sourceResearchReport
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: revisionID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchReport'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/learning/source-research/jobs/{jobID}/events:
+    get:
+      operationId: sourceResearchEvents
+      summary: sourceResearchEvents
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+      responses:
+        '200':
+          description: 持久顺序事件；断线不停止任务，可从 after 重连
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /v1/learning/source-research/jobs/{jobID}/selection:
+    patch:
+      operationId: selectSourceResearch
+      summary: selectSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:write
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchJob'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceResearchSelection'
+  /v1/learning/source-research/jobs/{jobID}/commands:
+    post:
+      operationId: commandSourceResearch
+      summary: commandSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:write
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchJob'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '204':
+          description: 已删除搜集任务敏感内容
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceResearchCommand'
+  /v1/learning/source-research/jobs/{jobID}/import-previews:
+    post:
+      operationId: previewSourceResearch
+      summary: previewSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:write knowledge:read knowledge:write research:adopt
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchPreview'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceResearchPreviewRequest'
+  /v1/learning/source-research/jobs/{jobID}/report-imports:
+    post:
+      operationId: importSourceResearchReport
+      summary: importSourceResearchReport
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:write knowledge:read knowledge:write research:adopt
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebImportReceipt'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceResearchReportImport'
+  /v1/learning/source-research/jobs/{jobID}/imports:
+    get:
+      operationId: sourceResearchImports
+      summary: sourceResearchImports
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: preview_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - preview
+                - items
+                properties:
+                  preview:
+                    $ref: '#/components/schemas/SourceResearchPreview'
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SourceResearchImportStatus'
+                    maxItems: 21
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
 components:
   parameters:
     ModelGatewayVersion:
@@ -5521,6 +5925,629 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
   schemas:
+    SourceResearchLimits:
+      type: object
+      additionalProperties: false
+      required:
+      - max_sources_per_round
+      - max_pages_per_round
+      properties:
+        max_sources_per_round:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 10
+        max_pages_per_round:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+    SourceResearchCreate:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - request
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        request:
+          type: string
+          minLength: 1
+          maxLength: 4000
+    SourceResearchDirection:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - title
+      - purpose
+      - query
+      - state
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        purpose:
+          type: string
+        query:
+          type: string
+        state:
+          type: string
+    SourceResearchJob:
+      type: object
+      additionalProperties: false
+      required:
+      - import_preview_id
+      - job_id
+      - round_id
+      - run_id
+      - version
+      - selection_version
+      - event_seq
+      - status
+      - stage
+      - request
+      - limits
+      - directions
+      - progress
+      - candidate_count
+      - result_snapshot_id
+      - report_revision_id
+      - selected_report_revision_id
+      - available_actions
+      - usage_task_id
+      - expires_at
+      properties:
+        import_preview_id:
+          type: string
+        job_id:
+          type: string
+          format: uuid
+        round_id:
+          type: string
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        selection_version:
+          type: integer
+          minimum: 1
+        event_seq:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - queued
+          - running
+          - stopping
+          - stopped
+          - paused_tool_steps
+          - completed
+          - failed
+          - outcome_unknown
+        stage:
+          type: string
+        request:
+          type: string
+          maxLength: 4000
+        limits:
+          $ref: '#/components/schemas/SourceResearchLimits'
+        directions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceResearchDirection'
+          maxItems: 5
+        progress:
+          $ref: '#/components/schemas/WebSearchProgress'
+        candidate_count:
+          type: integer
+          minimum: 0
+        result_snapshot_id:
+          type: string
+        report_revision_id:
+          type: string
+        selected_report_revision_id:
+          type: string
+        available_actions:
+          type: array
+          items:
+            type: string
+            enum:
+            - stop
+            - resume
+            - delete
+            - import
+        usage_task_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        destination_change:
+          type: object
+          additionalProperties: false
+          required:
+          - model
+          - search
+          - confirmation
+          properties:
+            model:
+              $ref: '#/components/schemas/SettingsConnection'
+            search:
+              $ref: '#/components/schemas/SettingsConnection'
+            confirmation:
+              type: string
+              maxLength: 256
+    SourceResearchCandidate:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - document_id
+      - document_revision_id
+      - title
+      - url
+      - media_type
+      - reason
+      - quality_notes
+      - coverage
+      - selected
+      - explicitly_changed
+      - requires_partial_accept
+      - physical_pages
+      properties:
+        id:
+          type: string
+          format: uuid
+        document_id:
+          type: string
+          format: uuid
+        document_revision_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        url:
+          type: string
+          format: uri
+        media_type:
+          type: string
+        reason:
+          type: string
+        quality_notes:
+          type: string
+        coverage:
+          type: string
+        selected:
+          type: boolean
+        explicitly_changed:
+          type: boolean
+        requires_partial_accept:
+          type: boolean
+        physical_pages:
+          type: integer
+          minimum: 0
+        source:
+          $ref: '#/components/schemas/SourceIdentity'
+        support:
+          $ref: '#/components/schemas/SourceResearchSupport'
+    SourceResearchCandidatePage:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceResearchCandidate'
+          maxItems: 20
+        next_cursor:
+          type: string
+    SourceResearchSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - expected_selection_version
+      - items
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        expected_selection_version:
+          type: integer
+          minimum: 1
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - candidate_id
+            - selected
+            properties:
+              candidate_id:
+                type: string
+                format: uuid
+              selected:
+                type: boolean
+          maxItems: 20
+        report_revision_id:
+          type:
+          - string
+          - 'null'
+    SourceResearchCitation:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - origin
+      - document_id
+      - revision_id
+      - fragment_id
+      - document_sha256
+      - slice_sha256
+      - quote
+      properties:
+        id:
+          type: string
+          pattern: ^[a-z0-9-]+:[1-9][0-9]*$
+        origin:
+          type: string
+          const: web
+        document_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        fragment_id:
+          type: string
+          format: uuid
+        document_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        slice_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        quote:
+          type: string
+          maxLength: 1200
+        expired:
+          type: boolean
+          description: 到期后只保留标识，quote 为空
+        page:
+          type: integer
+          minimum: 1
+          maximum: 100
+    SourceResearchSection:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - ordinal
+      - title
+      - body
+      - citations
+      - gaps
+      properties:
+        id:
+          type: string
+        ordinal:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        body:
+          type: string
+          maxLength: 4000
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceResearchCitation'
+          maxItems: 3
+        gaps:
+          type: array
+          items:
+            type: string
+          maxItems: 3
+    SourceResearchReport:
+      type: object
+      additionalProperties: false
+      required:
+      - revision_id
+      - status
+      - sections
+      - gaps
+      - next_ordinal
+      - model
+      - created_at
+      properties:
+        revision_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - partial
+          - complete
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceResearchSection'
+          maxItems: 5
+        gaps:
+          type: array
+          items:
+            type: string
+        next_ordinal:
+          type: integer
+          minimum: 0
+        model:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    SourceResearchCommand:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - expected_version
+      - round_id
+      - kind
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        expected_version:
+          type: integer
+          minimum: 1
+        round_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - stop
+          - resume
+          - delete
+        confirm_destination:
+          type: string
+    SourceResearchPreviewRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - result_snapshot_id
+      - expected_selection_version
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        result_snapshot_id:
+          type: string
+          format: uuid
+        expected_selection_version:
+          type: integer
+          minimum: 1
+    SourceResearchPreviewItem:
+      type: object
+      additionalProperties: false
+      required:
+      - item_id
+      - kind
+      - operation_id
+      - title
+      - coverage
+      - requires_partial_accept
+      - already_imported
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - document
+          - report
+        operation_id:
+          type: string
+          format: uuid
+        web_preview_id:
+          type: string
+          format: uuid
+        document_revision_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        coverage:
+          type: string
+        requires_partial_accept:
+          type: boolean
+        already_imported:
+          type: boolean
+        source:
+          $ref: '#/components/schemas/SourceIdentity'
+    SourceResearchPreview:
+      type: object
+      additionalProperties: false
+      required:
+      - preview_id
+      - preview_version
+      - expires_at
+      - result_snapshot_id
+      - items
+      - report_revision_id
+      properties:
+        preview_id:
+          type: string
+          format: uuid
+        preview_version:
+          type: integer
+          minimum: 1
+        expires_at:
+          type: string
+          format: date-time
+        result_snapshot_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceResearchPreviewItem'
+          maxItems: 21
+        report_revision_id:
+          type: string
+    SourceResearchReportImport:
+      type: object
+      additionalProperties: false
+      required:
+      - operation_id
+      - preview_id
+      - expected_preview_version
+      - report_revision_id
+      - storage_consent
+      - accept_partial
+      properties:
+        operation_id:
+          type: string
+          format: uuid
+        preview_id:
+          type: string
+          format: uuid
+        expected_preview_version:
+          type: integer
+          minimum: 1
+        report_revision_id:
+          type: string
+          format: uuid
+        storage_consent:
+          type: boolean
+          const: true
+        accept_partial:
+          type: boolean
+    SourceResearchImportStatus:
+      type: object
+      additionalProperties: false
+      required:
+      - item_id
+      - status
+      properties:
+        item_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - pending
+          - imported
+          - already_imported
+          - failed
+        source:
+          $ref: '#/components/schemas/SourceIdentity'
+    SourceResearchEvent:
+      type: object
+      additionalProperties: false
+      required:
+      - seq
+      - type
+      - stage
+      - status
+      - progress
+      - candidate_count
+      - created_at
+      properties:
+        seq:
+          type: integer
+          minimum: 1
+        type:
+          type: string
+        stage:
+          type: string
+        status:
+          type: string
+        progress:
+          $ref: '#/components/schemas/WebSearchProgress'
+        candidate_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+    SourceResearchCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+      - available
+      - can_import
+      - limits
+      - pdf
+      properties:
+        available:
+          type: boolean
+        can_import:
+          type: boolean
+        limits:
+          $ref: '#/components/schemas/SourceResearchLimits'
+        pdf:
+          type: object
+          additionalProperties: false
+          required:
+          - max_wire_bytes
+          - max_decoded_bytes
+          - max_pages
+          properties:
+            max_wire_bytes:
+              type: integer
+            max_decoded_bytes:
+              type: integer
+            max_pages:
+              type: integer
+    SourceResearchSupport:
+      type: object
+      additionalProperties: false
+      required:
+      - document_id
+      - revision_id
+      - fragment_id
+      - document_sha256
+      - slice_sha256
+      - quote
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        revision_id:
+          type: string
+          format: uuid
+        fragment_id:
+          type: string
+          format: uuid
+        document_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        slice_sha256:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        quote:
+          type: string
+          maxLength: 1200
+        expired:
+          type: boolean
+          description: 到期后只保留标识，quote 为空
+        page:
+          type: integer
+          minimum: 1
+          maximum: 100
     ModelGatewayConfig:
       type: object
       required: [protocol_version, invoke_allowed, available, unavailable_reason, privacy_generation, models, limits, capabilities, admission]
@@ -7663,48 +8690,13 @@ components:
           maxItems: 10
           items: { $ref: "#/components/schemas/MentorMemorySource" }
         memory_status: { type: string, enum: [not_authorized, unavailable, available, partial] }
-    SourceDiscoveryPolicy:
+    ReferenceSourcePolicy:
       type: object
       additionalProperties: false
       required: [mode, domains]
       properties:
         mode: { type: string, enum: [supplement, restrict], description: supplement 要求空域列表；restrict 要求 1–5 个精确公开小写域名（不自动包含子域） }
         domains: { type: array, maxItems: 5, items: { type: string, minLength: 1, maxLength: 253 } }
-    SourceDiscoveryRequest:
-      type: object
-      additionalProperties: false
-      required: [keywords, external_consent, policy]
-      properties:
-        keywords: { type: string, minLength: 1, maxLength: 300, description: 用户确认的公开关键词，最多 300 UTF-8 字节；不接受目标、资料或笔记上下文 }
-        external_consent: { type: boolean, const: true }
-        policy: { $ref: "#/components/schemas/SourceDiscoveryPolicy" }
-    SourceDiscoveryCandidate:
-      type: object
-      additionalProperties: false
-      required: [title, url, summary, status]
-      properties:
-        title: { type: string, minLength: 1, maxLength: 4096 }
-        url: { type: string, format: uri, maxLength: 8192 }
-        summary: { type: string, maxLength: 16384, description: 搜索供应商摘要，未读取正文，不可作为正文导入或引用 }
-        status: { type: string, const: summary_only }
-    SourceDiscoveryResult:
-      type: object
-      additionalProperties: false
-      required: [items, request_budget, requests_used, cost_estimate]
-      properties:
-        items: { type: array, maxItems: 4, items: { $ref: "#/components/schemas/SourceDiscoveryCandidate" } }
-        request_budget: { type: integer, const: 1, description: 单次发现操作最多发出一次搜索请求 }
-        requests_used: { type: integer, minimum: 0, deprecated: true, description: 搜索外发次数的旧兼容字段；不包含独立授权的正文读取，不作为模型用量 }
-        cost_estimate: { type: string, const: unknown }
-    SourceDiscoveryCapability:
-      type: object
-      additionalProperties: false
-      required: [available, reason, max_candidates, request_budget]
-      properties:
-        available: { type: boolean, description: 已配置搜索且具有发现权限；不表示外部连接已探测成功 }
-        reason: { type: string, enum: ["", missing_scope, search_not_configured] }
-        max_candidates: { type: integer, const: 4 }
-        request_budget: { type: integer, const: 1, description: 单次发现操作最多发出一次搜索请求 }
     ResearchRequest:
       type: object
       additionalProperties: false
@@ -7877,6 +8869,7 @@ components:
       required: [expected_revision]
       description: 至少一个更新字段。连接/Key 操作必须指定 target；new_key 和 clear_key 互斥。顶层和 limits 内字段缺省保留当前值；max_tool_steps 显式 null 设为不限；connection.api_style 缺省为 chat_completions；切换 endpoint/provider/auth_mode/api_style 清除旧 Key。
       properties:
+        source_research: { $ref: "#/components/schemas/SourceResearchLimits" }
         expected_revision: { type: integer, minimum: 0 }
         target: { type: string, enum: [teaching, mentor, search] }
         connection: { $ref: "#/components/schemas/SettingsConnection" }
@@ -7888,8 +8881,9 @@ components:
     LearningSettings:
       type: object
       additionalProperties: false
-      required: [revision, writable, teaching, mentor, effective_mentor, search, mentor_uses_teaching, limits, policy, teaching_restart_required, model_endpoints]
+      required: [source_research, revision, writable, teaching, mentor, effective_mentor, search, mentor_uses_teaching, limits, policy, teaching_restart_required, model_endpoints]
       properties:
+        source_research: { $ref: "#/components/schemas/SourceResearchLimits" }
         revision: { type: integer, minimum: 0 }
         writable: { type: boolean, description: 是否启用服务器秘密存储；设备仍需专门 scope }
         teaching: { $ref: "#/components/schemas/SettingsConnectionView" }
@@ -8050,24 +9044,144 @@ components:
     KnowledgeSourceMetadata:
       type: object
       additionalProperties: false
-      required: [kind, parser, coverage, fingerprint, status]
+      required:
+      - kind
+      - parser
+      - coverage
+      - fingerprint
+      - status
       properties:
-        kind: { type: string, enum: [text, pdf, url] }
-        title: { type: string, description: 服务端从抓取的网页提取的标题；旧来源可能缺失 }
-        locator: { type: string }
-        final_url: { type: string }
-        media_type: { type: string }
-        parser: { type: string }
-        coverage: { type: string, description: provided_text 表示用户提供的文本；complete_text 也不代表知识正确或版式完整 }
-        fingerprint: { type: string }
-        status: { type: string, enum: [parsed, partial] }
+        kind:
+          type: string
+          enum:
+          - text
+          - pdf
+          - url
+        title:
+          type: string
+          description: 服务端从抓取的网页提取的标题；旧来源可能缺失
+        locator:
+          type: string
+        final_url:
+          type: string
+        media_type:
+          type: string
+        parser:
+          type: string
+        coverage:
+          type: string
+          description: provided_text 表示用户提供的文本；complete_text 也不代表知识正确或版式完整
+        fingerprint:
+          type: string
+        status:
+          type: string
+          enum:
+          - parsed
+          - partial
         derived_from:
-          type: object
-          additionalProperties: false
-          required: [artifact_id, version]
-          properties:
-            artifact_id: { type: string, format: uuid }
-            version: { type: integer, minimum: 1 }
+          oneOf:
+          - type: object
+            additionalProperties: false
+            required:
+            - artifact_id
+            - version
+            properties:
+              artifact_id:
+                type: string
+                format: uuid
+              version:
+                type: integer
+                minimum: 1
+          - type: object
+            additionalProperties: false
+            required:
+            - kind
+            - job_id
+            - round_id
+            - report_revision_id
+            - generated_at
+            - model
+            properties:
+              kind:
+                type: string
+                const: source_research
+              job_id:
+                type: string
+                format: uuid
+              round_id:
+                type: string
+                format: uuid
+              report_revision_id:
+                type: string
+                format: uuid
+              generated_at:
+                type: string
+                format: date-time
+              model:
+                type: string
+              partial:
+                type: boolean
+        evidence:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required:
+            - id
+            - title
+            - url
+            - fetched_at
+            - citation
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              url:
+                type: string
+                format: uri
+              fetched_at:
+                type: string
+                format: date-time
+              citation:
+                type: object
+                additionalProperties: false
+                required:
+                - document_id
+                - revision_id
+                - fragment_id
+                - document_sha256
+                - slice_sha256
+                - quote
+                properties:
+                  document_id:
+                    type: string
+                    format: uuid
+                  revision_id:
+                    type: string
+                    format: uuid
+                  fragment_id:
+                    type: string
+                    format: uuid
+                  document_sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  slice_sha256:
+                    type: string
+                    pattern: ^[a-f0-9]{64}$
+                  quote:
+                    type: string
+                    maxLength: 1200
+                  expired:
+                    type: boolean
+                    description: 到期后只保留标识，quote 为空
+                  page:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+              source:
+                $ref: '#/components/schemas/SourceIdentity'
+          maxItems: 15
     KnowledgeSourceItem:
       type: object
       required: [collection_id, collection_name, revision_id, document_id, document_revision_id, path, metadata]
@@ -8136,7 +9250,6 @@ components:
       required: [formats, pdf]
       properties:
         source_catalog: { type: boolean, description: 支持来源列表与版本详情及非 PDF 抓取回执 }
-        source_discovery: { $ref: "#/components/schemas/SourceDiscoveryCapability" }
         formats: { type: array, items: { type: string } }
         pdf:
           type: object

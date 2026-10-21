@@ -6,7 +6,6 @@ import { useIdentity } from '@/lib/session'
 import { Button } from './ui/button'
 import { ErrorState } from './common'
 import { PDFCoverage } from './pdf-source'
-import { SourceDiscovery } from './notebook/source-discovery'
 import { Upload, FileText } from 'lucide-react'
 import { SubmissionNotice } from './notebook/submission-notice'
 
@@ -23,12 +22,11 @@ function itemDescription(item: ScanItem) {
   return `${item.reason} · ${item.bytes} 字节 · ${item.coverage}${!item.selected ? ' · 本次排除' : ''}`
 }
 
-export function ReferenceImport({ spaceId, collection, target, onImported, method, initialItems }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' | 'search' | 'note'; initialItems?: ScanItem[] }) {
+export function ReferenceImport({ spaceId, collection, target, onImported, method, initialItems }: { spaceId: string; collection: Collection; target: string; onImported: (result: ImportResult) => void; method?: 'pdf' | 'text' | 'url' | 'note'; initialItems?: ScanItem[] }) {
   const { session, prefix, drafts } = useIdentity()
   const key = JSON.stringify([...prefix, spaceId, target, collection.id, 'reference-import'])
   const [draft, setDraft] = useState<ImportDraft>(() => drafts.get<ImportDraft>(key) ?? { ...emptyImport(), items: initialItems ?? [] })
   const [busy, setBusy] = useState(false)
-  const [reading, setReading] = useState(false)
   const [error, setError] = useState<unknown>()
   const [localError, setLocalError] = useState('')
   const [search, setSearch] = useState('')
@@ -100,7 +98,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
       if (live.current) edit({ items: [...draft.items, ...items] })
     })
   }
-  return <section className={`panel reference-import${method ? ' notebook-import' : ''}`} aria-label="单批资料导入" aria-busy={busy || reading}>
+  return <section className={`panel reference-import${method ? ' notebook-import' : ''}`} aria-label="单批资料导入" aria-busy={busy}>
     {method ? <h3 className="source-import-title"><FileText size={16} aria-hidden="true" />导入到「{collection.name}」</h3> : <h2>单批导入到「{collection.name}」</h2>}
     <p className="hint">预览后确认保存；重名资料会逐项请你审阅。</p>
     {!!error && <ErrorState error={error} />}{localError && <p role="alert">{localError}</p>}
@@ -132,13 +130,9 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
         if (live.current) edit({ items: [...draft.items, fetchedItem(source)], url: '' })
       })}>授权服务器读取此网页并解析</Button>
       </>}
-      {method === 'search' && <SourceDiscovery spaceId={spaceId} collectionId={collection.id} onReading={setReading} onFetched={items => {
-        const current = drafts.get<ImportDraft>(key) ?? draft
-        save(editImport(current, { items: [...current.items, ...items] }))
-        setDecisions({}); setError(undefined); setLocalError('')
-      }} />}
+
     </fieldset>
-    <p role="status" className="source-import-status">{(busy || reading) && <span className="source-badge">解析处理中…</span>} 待导入 {ready} 项 · 错误 {draft.items.filter(i => i.status === 'error').length} · 不支持 {draft.items.filter(i => i.status === 'unsupported').length} · 被排除 {draft.items.filter(i => i.status === 'ready' && !i.selected).length}</p>
+    <p role="status" className="source-import-status">{(busy) && <span className="source-badge">解析处理中…</span>} 待导入 {ready} 项 · 错误 {draft.items.filter(i => i.status === 'error').length} · 不支持 {draft.items.filter(i => i.status === 'unsupported').length} · 被排除 {draft.items.filter(i => i.status === 'ready' && !i.selected).length}</p>
     {!!draft.items.length && <label>搜索清单、正文和差异<input type="search" value={search} onChange={e => setSearch(e.target.value)} /></label>}
     <div className="reference-scroll" tabIndex={0} aria-label="解析报告">
       {draft.items.filter(i => `${i.name} ${i.path} ${i.markdown}`.includes(search)).map(item => <article className="panel compact" key={item.id}>
@@ -149,7 +143,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
         {item.status === 'ready' && <><label>导入相对名称<input value={item.path} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, path: e.target.value } : i) })} /></label><label><input type="checkbox" checked={!!item.asNew} disabled={busy || draft.unknown || !!draft.result} onChange={e => edit({ items: draft.items.map(i => i.id === item.id ? { ...i, asNew: e.target.checked, path: e.target.checked ? i.path.replace(/\.md$/i, '') + `-副本-${i.id.slice(0, 8)}.md` : i.path } : i) })} />作为全新资料（不继承原身份，使用独立名称）</label><details><summary>查看本次原文</summary><pre className="reference-text">{item.markdown}</pre></details></>}
       </article>)}
     </div>
-    {!draft.result && !draft.unknown && <div className="source-import-actions"><Button disabled={busy || reading || !ready} onClick={() => void run(() => preview())}>生成服务端预览</Button></div>}
+    {!draft.result && !draft.unknown && <div className="source-import-actions"><Button disabled={busy || !ready} onClick={() => void run(() => preview())}>生成服务端预览</Button></div>}
     {review && !draft.result && <section aria-label="身份审阅">
       <h3>身份冲突：逐项决定</h3><p>更新保留原身份和历史。作为新资料需要未被占用的相对名称；可返回修改名称后重新预览。跳过会排除该文档。</p>
       <div className="reference-scroll" tabIndex={0}>
@@ -174,7 +168,7 @@ export function ReferenceImport({ spaceId, collection, target, onImported, metho
       <div className="reference-scroll" tabIndex={0}>{draft.preview.diff.filter(d => `${d.after_path} ${d.before_path} ${d.unified_diff}`.includes(search)).map(d => <details key={d.document_id}><summary>{d.after_path || d.before_path} · {d.kind}</summary><pre className="reference-text">{d.unified_diff || '无正文差异'}</pre>{d.truncated && <p>差异达到展示预算，请对照原文与当前资料详情。</p>}</details>)}</div>
       <div className="source-import-actions">
       <Button variant="outline" disabled={busy || draft.unknown} onClick={() => edit({})}>返回修改（作废旧批准）</Button>
-      <Button disabled={busy || reading || draft.unknown} onClick={() => void run(confirm)}>确认正式导入这 {ready} 项资料</Button>
+      <Button disabled={busy || draft.unknown} onClick={() => void run(confirm)}>确认正式导入这 {ready} 项资料</Button>
       </div>
     </section>}
     <SubmissionNotice pending={draft.unknown} inFlight={busy}>提交结果未知。先核对原操作，当前草稿与操作编号已保留。</SubmissionNotice>

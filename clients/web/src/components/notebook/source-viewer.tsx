@@ -76,10 +76,13 @@ export function SourceDialog({
 export function SourceProvenance({
   metadata,
   statusLabel,
+  spaceId,
 }: {
+  spaceId?: string
   metadata: SourceMetadata | null
   statusLabel?: string
 }) {
+  const [evidenceSource,setEvidenceSource]=useState<SourceItem>()
   return (
     <section aria-label="来源解析状态">
       <p>{statusLabel ?? sourceDescription(metadata)}</p>
@@ -92,8 +95,9 @@ export function SourceProvenance({
             <p>
               解析器：{metadata.parser || '未知'} · 覆盖：{metadata.coverage || '未知'}
             </p>
+            {metadata.evidence?.map(e => <details key={e.id}><summary>[{e.id}] {e.title}</summary><p>{e.url} · {new Date(e.fetched_at).toLocaleString()}{e.citation.page ? ` · 第 ${e.citation.page} 页` : ''}</p><blockquote>{e.citation.quote}</blockquote><p>仅保留引文与地址；不会重新读取已清除的网页全文。</p>{e.source && spaceId && <Button variant="outline" onClick={()=>setEvidenceSource({...e.source!,collection_name:e.title,path:e.title,metadata:null})}>查看已加入的来源版本</Button>}</details>)}
             <p className="hint">指纹：{metadata.fingerprint || '未知'}</p>
-            {metadata.derived_from && (
+            {metadata.derived_from && !('kind' in metadata.derived_from) && (
               <p>
                 派生自已保存产物 {metadata.derived_from.artifact_id} 的版本{' '}
                 {metadata.derived_from.version}
@@ -105,6 +109,7 @@ export function SourceProvenance({
           解析状态描述实际保存的历史文本，不表示结论已验证，也不代表外部页面当前内容。
         </p>
       </details>
+      {evidenceSource && spaceId && <CatalogSourceContent spaceId={spaceId} source={evidenceSource} />}
     </section>
   )
 }
@@ -257,7 +262,7 @@ export function CatalogSourceContent({ spaceId, source, highlight = false }: { s
     <>
       <h3>{sourceTitle(value)}</h3>
       <p>{value.collection_name}</p>
-      <SourceProvenance metadata={value.metadata} />
+      <SourceProvenance metadata={value.metadata} spaceId={spaceId} />
       {value.pdf && (
         <>
           <PDFCoverage report={value.pdf.report} />
@@ -361,7 +366,7 @@ export function MentorCitationContent({
       <p>
         {source.collection_name} · {source.collection_id.slice(0, 8)}
       </p>
-      <SourceProvenance metadata={source.metadata} />
+      <SourceProvenance metadata={source.metadata} spaceId={spaceId} />
       <p>
         {fragment.title} {fragment.page ? `· 第 ${fragment.page} 页` : ''} · 字节{' '}
         {fragment.range.start}–{fragment.range.end}

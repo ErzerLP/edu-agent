@@ -86,7 +86,7 @@ func loadFile(path string) (stored, bool, error) {
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	var value stored
+	value := stored{SourceResearch: DefaultSourceResearch()}
 	if d.Decode(&value) != nil || d.Decode(new(any)) != io.EOF || value.Version != 1 || value.Revision < 0 {
 		return stored{}, false, ErrStorage
 	}

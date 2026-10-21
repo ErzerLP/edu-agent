@@ -37,7 +37,9 @@ const connectionSchema = z.object({
   reason: z.string(),
   probe: probeSchema.nullable(),
 })
+export const sourceResearchLimitsSchema = z.object({ max_sources_per_round: z.number().int().min(1).max(20), max_pages_per_round: z.number().int().min(1).max(100) }).refine(v => v.max_sources_per_round <= v.max_pages_per_round, '推荐资料数不能大于阅读网页数')
 export const settingsSchema = z.object({
+  source_research: sourceResearchLimitsSchema,
   revision: z.number().int().nonnegative(),
   writable: z.boolean(),
   teaching: connectionSchema,

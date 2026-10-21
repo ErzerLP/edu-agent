@@ -72,8 +72,8 @@ func (s *Service) webImportTx(ctx context.Context, actor identity.Credential, sp
 	if err = knowledgeActor(ctx, tx, actor.Device.ID, actor.TokenID); err != nil {
 		return fail(err)
 	}
-	// Read lock serializes deletion and import. Knowledge takes its own owner gate.
-	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 AND space_id=$2 AND device_id=$3 AND privacy_generation=$4 FOR SHARE`, run, space, actor.Device.ID, g))
+	// Serialize import and expiry extension with deletion. Knowledge takes its own owner gate.
+	item, err := scan(tx.QueryRow(ctx, `SELECT `+columns+` FROM learning_mentor_runs WHERE id=$1 AND space_id=$2 AND device_id=$3 AND privacy_generation=$4 FOR UPDATE`, run, space, actor.Device.ID, g))
 	if err != nil {
 		return fail(err)
 	}
@@ -92,6 +92,9 @@ func (s *Service) PreviewWebImport(ctx context.Context, actor identity.Credentia
 		return result, err
 	}
 	defer tx.Rollback(context.Background())
+	if item.SourceResearchJobID != "" {
+		return result, ErrInvalid
+	}
 	hash := requestHash("web_preview", space, r.Owner.ID, r)
 	if found, err := s.webOperation(ctx, tx, actor.Device.ID, space, r.OperationID, item.Generation, hash, &result); err != nil || found {
 		if found && time.Now().After(result.ExpiresAt) {
@@ -107,7 +110,7 @@ func (s *Service) PreviewWebImport(ctx context.Context, actor identity.Credentia
 		return result, err
 	}
 	var id string
-	if err = tx.QueryRow(ctx, `SELECT id::text FROM learning_web_documents WHERE revision_id=$1 AND owner_id=$2 AND space_id=$3`, r.RevisionIDs[0], item.RunID, space).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM learning_web_documents WHERE revision_id=$1 AND owner_id=$2 AND space_id=$3`, r.RevisionIDs[0], webOwnerID(item), space).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
 		return result, ErrNotFound
 	} else if err != nil {
 		return result, err
@@ -116,22 +119,13 @@ func (s *Service) PreviewWebImport(ctx context.Context, actor identity.Credentia
 	if err != nil {
 		return result, err
 	}
-	result = WebPreview{ID: uuid.NewString(), Version: 1, ExpiresAt: time.Now().Add(15 * time.Minute), Items: []WebPreviewItem{{RevisionID: d.RevisionID, Hash: d.SHA256, Coverage: d.Coverage, RequiresPartialAccept: d.PDF != nil && d.Coverage != "complete_text", Document: d}}}
-	if result.ExpiresAt.After(item.ExpiresAt) {
-		result.ExpiresAt = item.ExpiresAt
+	result, err = s.createWebPreviewTx(ctx, tx, item, d)
+	if err != nil {
+		return result, err
 	}
-	// Only identities, hash and coverage are duplicated in the preview receipt.
 	stored := result
 	stored.Items = append([]WebPreviewItem{}, result.Items...)
 	stored.Items[0].Document = research.WebDocument{}
-	raw, err := s.sealWeb("preview", result.ID, item.Generation, stored)
-	if err != nil {
-		return result, err
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO learning_web_import_previews(id,owner_id,document_id,device_id,space_id,privacy_generation,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, result.ID, item.RunID, d.ID, actor.Device.ID, space, item.Generation, raw, result.ExpiresAt)
-	if err != nil {
-		return result, err
-	}
 	if err = s.saveWebOperation(ctx, tx, actor.Device.ID, space, item.ConversationID, item.RunID, r.OperationID, item.Generation, hash, stored); err != nil {
 		return result, err
 	}
@@ -157,6 +151,9 @@ func (s *Service) ImportWebDocument(ctx context.Context, actor identity.Credenti
 	defer tx.Rollback(context.Background())
 	hash := requestHash("web_import", space, run, r)
 	if found, err := s.webOperation(ctx, tx, actor.Device.ID, space, r.OperationID, item.Generation, hash, &result); err != nil || found {
+		return result, err
+	}
+	if err = s.sourceResearchImportGateTx(ctx, tx, item, r); err != nil {
 		return result, err
 	}
 	var raw []byte
@@ -212,12 +209,23 @@ func (s *Service) ImportWebDocument(ctx context.Context, actor identity.Credenti
 			source.PDFOriginal = original
 		}
 		scoped, _ := learningspace.WithScope(ctx, space)
-		imported, e := knowledgepg.New(s.pool).AdoptSourceTx(scoped, tx, knowledge.SourceImport{RunID: run, Metadata: source, OperationID: r.OperationID, SourceID: source.ID, SourceRevisionID: d.RevisionID, ActorDeviceID: actor.Device.ID, Locator: d.RequestURL, Title: d.Title, Fingerprint: d.Fingerprint, Coverage: d.Coverage, Text: d.Text, FetchedAt: d.FetchedAt})
-		if e != nil {
-			return result, e
+		var existing *knowledge.SourceIdentity
+		if item.SourceResearchJobID != "" {
+			existing, err = knowledgepg.New(s.pool).WebSourceIdentityTx(scoped, tx, d.Fingerprint)
+			if err != nil {
+				return result, err
+			}
 		}
-		doc := imported.Revision.Documents[0].Revision
-		result = WebImportReceipt{OperationID: r.OperationID, RunID: run, DocumentID: d.ID, RevisionID: d.RevisionID, Source: knowledge.SourceIdentity{CollectionID: source.ID, RevisionID: imported.Revision.ID, DocumentID: doc.DocumentID, DocumentRevisionID: doc.ID}}
+		if existing != nil {
+			result = WebImportReceipt{OperationID: r.OperationID, RunID: run, DocumentID: d.ID, RevisionID: d.RevisionID, Source: *existing}
+		} else {
+			imported, e := knowledgepg.New(s.pool).AdoptSourceTx(scoped, tx, knowledge.SourceImport{RunID: run, Metadata: source, OperationID: r.OperationID, SourceID: source.ID, SourceRevisionID: d.RevisionID, ActorDeviceID: actor.Device.ID, Locator: d.RequestURL, Title: d.Title, Fingerprint: d.Fingerprint, Coverage: d.Coverage, Text: d.Text, FetchedAt: d.FetchedAt})
+			if e != nil {
+				return result, e
+			}
+			doc := imported.Revision.Documents[0].Revision
+			result = WebImportReceipt{OperationID: r.OperationID, RunID: run, DocumentID: d.ID, RevisionID: d.RevisionID, Source: knowledge.SourceIdentity{CollectionID: source.ID, RevisionID: imported.Revision.ID, DocumentID: doc.DocumentID, DocumentRevisionID: doc.ID}}
+		}
 		receiptID = uuid.NewString()
 		raw, err = s.sealWeb("receipt", receiptID, item.Generation, result)
 		if err != nil {
@@ -227,6 +235,14 @@ func (s *Service) ImportWebDocument(ctx context.Context, actor identity.Credenti
 	}
 	if err != nil {
 		return result, err
+	}
+	if item.SourceResearchJobID != "" {
+		if err = s.markSourceResearchImportedTx(ctx, tx, item, result); err != nil {
+			return result, err
+		}
+		if err = s.touchSourceResearchTx(ctx, tx, &item); err != nil {
+			return result, err
+		}
 	}
 	if err = s.saveWebOperation(ctx, tx, actor.Device.ID, space, item.ConversationID, run, r.OperationID, item.Generation, hash, result); err != nil {
 		return result, err

@@ -59,7 +59,21 @@ func TestWorkspaceProxyAllowlist(t *testing.T) {
 		}
 	}
 	for path, want := range map[string]bool{
-		"/v1/learning/web-documents/a": true, "/v1/learning/web-documents/a/pages/2": true,
+		"/v1/learning/source-research/capabilities":           true,
+		"/v1/learning/source-research/jobs":                   true,
+		"/v1/learning/source-research/jobs/a":                 true,
+		"/v1/learning/source-research/jobs/a/events":          true,
+		"/v1/learning/source-research/jobs/a/candidates":      true,
+		"/v1/learning/source-research/jobs/a/selection":       true,
+		"/v1/learning/source-research/jobs/a/commands":        true,
+		"/v1/learning/source-research/jobs/a/reports/b":       true,
+		"/v1/learning/source-research/jobs/a/import-previews": true,
+		"/v1/learning/source-research/jobs/a/report-imports":  true,
+		"/v1/learning/source-research/jobs/a/imports":         true,
+		"/v1/learning/source-research/jobs/a/rounds":          false,
+		"/v1/learning/source-research/jobs/a/internal":        false,
+		"/v1/knowledge/source-discovery":                      false,
+		"/v1/learning/web-documents/a":                        true, "/v1/learning/web-documents/a/pages/2": true,
 		"/v1/learning/web-import-previews": true, "/v1/learning/web-imports": true,
 		"/v1/learning/usage/tasks/a/search-calls": true,
 		"/v1/learning/web-documents/a/delete":     false, "/v1/learning/web-imports/force": false,

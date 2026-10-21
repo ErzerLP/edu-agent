@@ -17,6 +17,9 @@ import (
 )
 
 func mentorPath(path string) bool {
+	if strings.HasPrefix(path, "/v1/learning/source-research/") {
+		return true
+	}
 	if path == "/v1/learning/web-import-previews" || path == "/v1/learning/web-imports" || strings.HasPrefix(path, "/v1/learning/web-documents/") {
 		return true
 	}
@@ -39,6 +42,7 @@ func (a *API) mountMentorRuns(router chi.Router) {
 	}
 	a.mountConversations(router)
 	a.mountMentorWeb(router)
+	a.mountSourceResearch(router)
 	a.mountStudyExercises(router)
 	router.With(a.requireScope("learning:read"), a.mentorScope).Get("/v1/learning/runs", a.mentorList)
 	router.With(a.requireScope("learning:write"), a.mentorScope).Post("/v1/learning/goals/{goalID}/runs", a.mentorCreate)

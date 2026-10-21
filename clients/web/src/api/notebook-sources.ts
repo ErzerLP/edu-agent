@@ -12,7 +12,8 @@ export const sourceMetadataSchema = z.object({
   coverage: z.string(),
   fingerprint: z.string(),
   status: z.enum(['parsed', 'partial']),
-  derived_from: z.object({ artifact_id: id, version: z.number().int().positive() }).optional(),
+  derived_from: z.union([z.object({kind:z.literal('source_research'),job_id:id,round_id:id,report_revision_id:id,generated_at:z.string(),model:z.string(),partial:z.boolean().optional()}),z.object({artifact_id:id,version:z.number().int().positive()})]).optional(),
+  evidence: z.array(z.object({id:z.string(),title:z.string(),url:z.url(),fetched_at:z.string(),citation:z.object({quote:z.string(),page:z.number().optional(),document_sha256:z.string()}),source:z.object({collection_id:id,revision_id:id,document_id:id,document_revision_id:id}).optional()})).optional(),
 })
 export const sourceItemSchema = z.object({
   collection_id: id,
@@ -51,6 +52,7 @@ export type SourceMetadata = z.infer<typeof sourceMetadataSchema>
 export type SourceDetail = z.infer<typeof sourceDetailSchema>
 export function sourceTitle(source: Pick<SourceItem, 'path' | 'metadata'>) {
   const metadata = source.metadata
+  if (metadata?.derived_from && 'kind' in metadata.derived_from && metadata.title?.trim()) return metadata.title.trim()
   if (metadata?.kind !== 'url') return source.path
   if (metadata.title?.trim()) return metadata.title.trim()
   for (const raw of [metadata.final_url, metadata.locator]) {
@@ -66,6 +68,7 @@ export function sourceTitle(source: Pick<SourceItem, 'path' | 'metadata'>) {
 }
 export function sourceDescription(metadata: SourceMetadata | null) {
   if (!metadata) return '已保存 · 来源类型与解析覆盖未知'
+  if (metadata.derived_from && 'kind' in metadata.derived_from) return '已保存 · AI 整理报告 · 保留最小引用证据'
   if (metadata.derived_from)
     return `已保存 · 笔记第 ${metadata.derived_from.version} 版快照 · 个人理解，非外部权威`
   const kind = { text: '文本', pdf: 'PDF', url: '网址' }[metadata.kind]

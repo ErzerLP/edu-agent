@@ -158,7 +158,6 @@ type Options struct {
 	ModelGateway            *modelgateway.Service
 	CompanionEnabled        bool
 	ReferenceFetcher        *research.Fetcher
-	SourceSearch            research.SearchClient
 	LearningChanges         *learningchange.Service
 	LearningContent         *learningcontent.Store
 	StudioQuiz              *learningstart.Service
@@ -201,9 +200,6 @@ type Options struct {
 type API struct {
 	companion               *companion.Broker
 	referenceFetcher        *research.Fetcher
-	sourceSearch            research.SearchClient
-	discoveryMu             sync.Mutex
-	discoveryActive         int
 	learningContent         *learningcontent.Store
 	studioQuiz              *learningstart.Service
 	learningChanges         *learningchange.Service
@@ -293,7 +289,6 @@ func New(options Options) (http.Handler, error) {
 	}
 	api := &API{
 		referenceFetcher: options.ReferenceFetcher,
-		sourceSearch:     options.SourceSearch,
 		learningContent:  options.LearningContent,
 		studioQuiz:       options.StudioQuiz,
 		learningChanges:  options.LearningChanges,

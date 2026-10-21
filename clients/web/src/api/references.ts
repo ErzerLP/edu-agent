@@ -44,7 +44,7 @@ type Response<T> = { responses: { 200: { content: { 'application/json': T } } } 
 type Post<B, R> = Response<R> & { requestBody: { content: { 'application/json': B } } }
 type GoalParams = { parameters: { path: { goalID: string }; query?: { session_id?: string } } }
 export interface ReferencePaths {
-  '/v1/knowledge/reference-sources': { post: Post<{ url?: string; external_consent?: boolean; pdf_data?: string; storage_consent?: boolean; policy?: components['schemas']['SourceDiscoveryPolicy'] }, z.infer<typeof sourceSchema>> }
+  '/v1/knowledge/reference-sources': { post: Post<{ url?: string; external_consent?: boolean; pdf_data?: string; storage_consent?: boolean; policy?: components['schemas']['ReferenceSourcePolicy'] }, z.infer<typeof sourceSchema>> }
   '/v1/learning/goals/{goalID}/references': { get: GoalParams & Response<z.infer<typeof referenceState>> }
   '/v1/learning/goals/{goalID}/references/previews': { post: GoalParams & Post<ReferenceRequest, ReferencePreview> }
   '/v1/learning/goals/{goalID}/references/confirm': { post: GoalParams & Post<{ request: ReferenceRequest; receipt: string; confirm_scope: boolean }, z.infer<typeof referenceState>> }
@@ -64,7 +64,7 @@ export function knowledgeAPI(session: Session, space: string) {
     preview: (collection: string, body: ImportRequest) => unwrap(client().POST('/v1/knowledge/imports/previews', { params: { header: header(collection) }, body }), importPreviewSchema),
     confirm: (collection: string, request: ImportRequest, receipt: string) => unwrap(client().POST('/v1/knowledge/imports/confirm', { params: { header: header(collection) }, body: { request, receipt } }), importResultSchema),
     operation: (collection: string, operationID: string) => unwrap(client().GET('/v1/knowledge/imports/operations/{operationID}', { params: { path: { operationID }, header: header(collection) } }), importResultSchema),
-    source: (url: string, signal?: AbortSignal, policy?: components['schemas']['SourceDiscoveryPolicy']) => unwrap(client().POST('/v1/knowledge/reference-sources', { body: { url, external_consent: true, ...(policy ? { policy } : {}) }, signal }), sourceSchema),
+    source: (url: string, signal?: AbortSignal, policy?: components['schemas']['ReferenceSourcePolicy']) => unwrap(client().POST('/v1/knowledge/reference-sources', { body: { url, external_consent: true, ...(policy ? { policy } : {}) }, signal }), sourceSchema),
     pdf: (data: string) => unwrap(client().POST('/v1/knowledge/reference-sources', { body: { pdf_data: data, storage_consent: true } }), sourceSchema),
   }
 }

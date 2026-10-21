@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	space "github.com/edu-agent/edu-agent/server/internal/learningspace"
@@ -17,6 +18,7 @@ import (
 // SourceMetadata is server-derived and immutable at the document revision boundary.
 // Missing metadata means unknown; Markdown prefixes are never provenance.
 type SourceMetadata struct {
+	Evidence    []SourceEvidence  `json:"evidence,omitempty"`
 	Kind        string            `json:"kind"`
 	Title       string            `json:"title,omitempty"`
 	Locator     string            `json:"locator,omitempty"`
@@ -29,9 +31,24 @@ type SourceMetadata struct {
 	DerivedFrom *SourceDerivation `json:"derived_from,omitempty"`
 }
 
+type SourceEvidence struct {
+	ID        string               `json:"id"`
+	Title     string               `json:"title"`
+	URL       string               `json:"url"`
+	FetchedAt time.Time            `json:"fetched_at"`
+	Citation  research.WebCitation `json:"citation"`
+	Source    *SourceIdentity      `json:"source,omitempty"`
+}
 type SourceDerivation struct {
-	ArtifactID string `json:"artifact_id"`
-	Version    int64  `json:"version"`
+	Kind             string    `json:"kind,omitempty"`
+	JobID            string    `json:"job_id,omitempty"`
+	RoundID          string    `json:"round_id,omitempty"`
+	ReportRevisionID string    `json:"report_revision_id,omitempty"`
+	GeneratedAt      time.Time `json:"generated_at,omitzero"`
+	Model            string    `json:"model,omitempty"`
+	Partial          bool      `json:"partial,omitempty"`
+	ArtifactID       string    `json:"artifact_id,omitempty"`
+	Version          int64     `json:"version,omitempty"`
 }
 
 type SourceItem struct {

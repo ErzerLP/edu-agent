@@ -65,6 +65,17 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
       return
     }
     calls++
+    if (process.env.WEB_SOURCE_RESEARCH_FIXTURE === '1' && payload.messages?.[0]?.content?.includes('source_research_')) {
+      const system=payload.messages[0].content
+      let value
+      if (system.includes('source_research_plan')) value={directions:[{title:'基础',purpose:'理解原理',query:'protocol basics'},{title:'练习',purpose:'动手验证',query:'protocol practice'}]}
+      else if (system.includes('source_research_screen')) value={include:true,reason:'原始说明提供可实践的协议基础。',quality_notes:'只核对已提供文本，未验证图表。',candidate:1}
+      else if (system.includes('source_research_report')) value={body:'资料提供协议的基础说明。[1]',citations:[1],gaps:['未核验图表']}
+      else value={complete:true,queries:[],gaps:['未找到更多独立资料']}
+      response.setHeader('Content-Type','application/json')
+      response.end(JSON.stringify({choices:[{message:{role:'assistant',content:JSON.stringify(value)},finish_reason:'stop'}],usage:{prompt_tokens:50,completion_tokens:40,total_tokens:90}}))
+      return
+    }
     if (process.env.WEB_SEARCH_BROWSER_FIXTURE === '1' && payload.messages?.[0]?.content?.includes('公开检索判断')) {
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify({ search_needed: true }) }, finish_reason: 'stop' }], usage: { prompt_tokens: 40, completion_tokens: 10, total_tokens: 50 } }))
@@ -320,6 +331,7 @@ function start() {
       PATH: process.env.PATH,
       DATABASE_URL: process.env.TEST_DATABASE_URL,
       ...(process.env.WEB_SEARCH_BROWSER_FIXTURE === '1' ? { WEB_SEARCH_BROWSER_FIXTURE: '1' } : {}),
+      ...(process.env.WEB_SOURCE_RESEARCH_FIXTURE === '1' ? { WEB_SOURCE_RESEARCH_FIXTURE: '1' } : {}),
       LISTEN_ADDR: '127.0.0.1:32929',
       PUBLIC_BASE_URL: 'http://127.0.0.1:32929',
       MIGRATE_ON_START: 'true',

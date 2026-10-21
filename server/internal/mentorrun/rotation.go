@@ -2,12 +2,21 @@ package mentorrun
 
 import (
 	"context"
+	"fmt"
 	"github.com/edu-agent/edu-agent/server/internal/platform/keyrotation"
 	"github.com/jackc/pgx/v5"
 )
 
 // RotateKeyTx 由停机维护组合根在同一事务内调用，保留历史格式及运行状态。
 func RotateKeyTx(ctx context.Context, tx pgx.Tx, rewrap keyrotation.Rewrap) error {
+	for _, name := range []string{"jobs", "candidates", "selections", "reports", "sections", "results", "events", "previews", "imports"} {
+		table := "learning_source_research_" + name
+		query := fmt.Sprintf("SELECT id::text,'web:source_research_%s:'||id||':'||privacy_generation,ciphertext FROM %s WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16", name, table)
+		if err := keyrotation.Rewrite(ctx, tx, query, "UPDATE "+table+" SET ciphertext=$2 WHERE id=$1::uuid", rewrap); err != nil {
+			return err
+		}
+	}
+
 	for _, table := range []struct{ query, update string }{
 		{`SELECT id::text,'web:resource:'||id||':'||privacy_generation,ciphertext FROM learning_web_resources WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_resources SET ciphertext=$2 WHERE id=$1::uuid`},
 		{`SELECT id::text,'web:document:'||id||':'||privacy_generation,ciphertext FROM learning_web_document_payloads WHERE ciphertext IS NOT NULL AND id::text>$1 ORDER BY id::text LIMIT 16`, `UPDATE learning_web_document_payloads SET ciphertext=$2 WHERE id=$1::uuid`},

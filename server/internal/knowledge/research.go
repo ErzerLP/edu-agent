@@ -13,6 +13,8 @@ import (
 
 // SourceImport 只能创建新的原始来源，不能携带身份解析、覆盖、共享或发布指令。
 type SourceImport struct {
+	Derivation                                                     *SourceDerivation
+	Evidence                                                       []SourceEvidence
 	RunID                                                          string
 	Metadata                                                       research.Source
 	OperationID, SourceID, SourceRevisionID, GoalID, ActorDeviceID string
@@ -21,7 +23,7 @@ type SourceImport struct {
 }
 
 func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
-	if c.GoalID == "" && c.Metadata.Purpose != "notebook_web" || c.GoalID != "" && !validUUID(c.GoalID) {
+	if c.GoalID == "" && c.Metadata.Purpose != "notebook_web" && c.Metadata.Purpose != "source_research_report" || c.GoalID != "" && !validUUID(c.GoalID) {
 		return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
 	}
 	for _, id := range []string{c.RunID, c.OperationID, c.SourceID, c.SourceRevisionID, c.ActorDeviceID} {
@@ -29,7 +31,11 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 			return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
 		}
 	}
-	if c.Text == "" || len(c.Text) > 16000 || len(c.Locator) > 8192 || c.Metadata.ID != c.SourceID || c.Metadata.RevisionID != c.SourceRevisionID || c.Metadata.GoalID != c.GoalID {
+	textLimit := 16000
+	if c.Metadata.Purpose == "source_research_report" {
+		textLimit = 64000
+	}
+	if c.Text == "" || len(c.Text) > textLimit || len(c.Locator) > 8192 || c.Metadata.ID != c.SourceID || c.Metadata.RevisionID != c.SourceRevisionID || c.Metadata.GoalID != c.GoalID {
 		return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
 	}
 	// 外部文本进入缩进代码块，不能注入知识身份标记或 Markdown 指令。
@@ -38,6 +44,12 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 		FetchedAt                                                                                               time.Time
 	}{"external_original", c.SourceID, c.SourceRevisionID, c.GoalID, c.Locator, c.Title, c.Fingerprint, c.Coverage, c.Metadata.FinalURL, c.Metadata.Parser, c.FetchedAt})
 	markdown := "# 外部来源原文\n\n    " + string(metadata) + "\n\n    " + strings.ReplaceAll(c.Text, "\n", "\n    ") + "\n"
+	if c.Metadata.Purpose == "source_research_report" {
+		if c.Derivation == nil || c.Derivation.Kind != "source_research" || !validUUID(c.Derivation.JobID) || !validUUID(c.Derivation.ReportRevisionID) {
+			return PreparedCommit{}, &Error{Code: CodeInvalidRequest}
+		}
+		markdown = c.Text
+	}
 	var pdfMetadata *PDFMetadata
 	if c.Metadata.PDF != nil {
 		if len(c.Metadata.PDFOriginal) == 0 || c.Metadata.PDF.Text() != c.Text || sha256Hex(c.Metadata.PDFOriginal) != c.Metadata.PDF.Fingerprint {
@@ -68,6 +80,12 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 	if c.Metadata.Purpose == "notebook_web" {
 		document.SourceMetadata.Title = c.Title
 	}
+	if c.Derivation != nil {
+		document.SourceMetadata.Kind = "text"
+		document.SourceMetadata.Title = c.Title
+		document.SourceMetadata.DerivedFrom = c.Derivation
+		document.SourceMetadata.Evidence = c.Evidence
+	}
 	if pdfMetadata != nil {
 		document.SourceMetadata = PDFSourceMetadata(pdfMetadata)
 	}
@@ -75,5 +93,8 @@ func PrepareSourceImport(c SourceImport) (PreparedCommit, error) {
 	raw, _ := json.Marshal(c)
 	hash := sha256.Sum256(raw)
 	revision := KnowledgeRevision{ID: uuid.NewString(), RevisionNo: 1, ManifestHash: hashManifest(documents), Source: "external_original:" + c.SourceRevisionID, CreatedByDeviceID: c.ActorDeviceID, CreatedAt: time.Now().UTC(), CanonicalizerVersion: CanonicalizerVersion, ParserVersion: ParserVersion, IndexerVersion: IndexerVersion, IdentityPolicyVersion: IdentityPolicyVersion, Documents: documents}
+	if c.Metadata.Purpose == "source_research_report" {
+		revision.Source = "source_research_report:" + c.SourceRevisionID
+	}
 	return PreparedCommit{OperationID: c.OperationID, RequestHash: hex.EncodeToString(hash[:]), Revision: revision}, nil
 }

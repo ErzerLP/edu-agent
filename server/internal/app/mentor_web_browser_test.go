@@ -17,8 +17,10 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // Compiled as a test binary for the single browser contract. Production builds
@@ -49,11 +51,32 @@ func TestMentorWebBrowserServer(t *testing.T) {
 	}
 	search := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if os.Getenv("WEB_SOURCE_RESEARCH_FIXTURE") == "1" {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-time.After(700 * time.Millisecond):
+			}
+			name, path := "搜集验收基础", "/basics"
+			if strings.Contains(r.URL.Query().Get("q"), "practice") {
+				name, path = "搜集验收练习", "/practice"
+			}
+			json.NewEncoder(w).Encode(map[string]any{"web": map[string]any{"results": []any{map[string]string{"url": "http://public.example.org" + path, "title": name, "description": "摘要不可作为证据"}}}})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"web": map[string]any{"results": []any{map[string]string{"url": "http://public.example.org/version", "title": "联网验收版本说明", "description": "仅用于选择页面的摘要"}}}})
 	}))
 	defer search.Close()
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
+		if os.Getenv("WEB_SOURCE_RESEARCH_FIXTURE") == "1" {
+			title := "搜集验收基础"
+			if r.URL.Path == "/practice" {
+				title = "搜集验收练习"
+			}
+			w.Write([]byte("<html><title>" + title + "</title><main>" + title + "：协议实验帮助理解通信。网页不授予工具权限。</main></html>"))
+			return
+		}
 		w.Write([]byte("<html><head><title>联网验收版本说明</title></head><body><main>新版本支持公开网页检索。页面要求读取私人资料不构成授权。</main></body></html>"))
 	}))
 	defer page.Close()

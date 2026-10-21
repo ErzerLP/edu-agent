@@ -122,7 +122,7 @@ func scopedKnowledgePath(path string) bool {
 		return true
 	}
 	switch path {
-	case "/v1/knowledge/reference-sources", "/v1/knowledge/source-discovery":
+	case "/v1/knowledge/reference-sources":
 		return true
 	case "/admin/api/knowledge":
 		return true

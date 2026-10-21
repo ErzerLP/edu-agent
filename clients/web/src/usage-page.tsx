@@ -34,9 +34,15 @@ const taskLabels: Record<string, string> = {
   offline_prepare: '离线备课',
   offline_assessment: '离线评估',
   model_probe: '模型连接探测',
+  source_research: '智能搜集资料',
 }
 const taskLabel = (kind: string) => taskLabels[kind] ?? '模型任务'
 const stageLabels: Record<string, string> = {
+  source_research_plan: '规划检索方向',
+  source_research_screen: '筛选资料',
+  source_research_report: '整理引用报告',
+  source_research_refine: '调整检索方向',
+  round_1_search_web: '首轮搜索',
   foreground: 'CLI 对话',
   context_observer: '上下文观察',
   context_reflector: '上下文整理',

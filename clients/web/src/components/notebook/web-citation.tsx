@@ -8,7 +8,7 @@ import { PDFCoverage, PDFPageViewer } from '../pdf-source'
 import { Button } from '../ui/button'
 import type { z } from 'zod'
 
-export function WebCitationContent({ spaceId, runId, citation }: { spaceId: string; runId: string; citation: WebCitation }) {
+export function WebCitationContent({ spaceId, runId, citation, importEnabled = true }: { spaceId: string; runId: string; citation: WebCitation; importEnabled?: boolean }) {
   const { session, prefix, drafts } = useIdentity()
   const query = useQueryClient()
   const [preview, setPreview] = useState<z.infer<typeof webPreviewSchema>>()
@@ -63,8 +63,8 @@ export function WebCitationContent({ spaceId, runId, citation }: { spaceId: stri
     <blockquote className="reference-text">{fragment.text}</blockquote>
     <a href={document.url} target="_blank" rel="noopener noreferrer">打开原网页</a>
     {document.pdf && <><PDFCoverage report={document.pdf} /><PDFPageViewer spaceId={spaceId} revisionId={document.revision_id} documentId={document.document_id} webDocumentId={document.document_id} pages={document.pdf.pages.map(p => p.number)} selectedText={citation.quote} /></>}
-    {saved ? <p role="status">已加入来源</p> : <Button disabled={busy || !canImport} onClick={() => void startPreview()}>加入来源</Button>}
-    {!canImport && <p>当前身份没有加入来源的权限。</p>}
+    {importEnabled && (saved ? <p role="status">已加入来源</p> : <Button disabled={busy || !canImport} onClick={() => void startPreview()}>加入来源</Button>)}
+    {importEnabled && !canImport && <p>当前身份没有加入来源的权限。</p>}
     {preview && <section aria-label="加入来源预览">
       <h4>加入来源预览</h4><p>{preview.items[0].document.title}</p>
       <p>保存为当前学习区的私有新来源。相同网址的历史资料不会被覆盖，保存后不会自动选中。</p>

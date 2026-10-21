@@ -35,8 +35,11 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 		return knowledge.ImportResult{}, err
 	}
 	name, provenance := "目标研究参考", "goal_research:"+c.GoalID
-	if c.Metadata.Purpose == "notebook_web" {
+	if c.Metadata.Purpose == "notebook_web" || c.Metadata.Purpose == "source_research_report" {
 		name, provenance = c.Title, "web_document:"+c.SourceRevisionID
+	}
+	if c.Metadata.Purpose == "source_research_report" {
+		provenance = "source_research_report:" + c.SourceRevisionID
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_collections(id,name,source,shared,owner_space_id) VALUES($1,$2,$3,FALSE,$4)`, c.SourceID, name, provenance, learningspace.Scope(ctx)); err != nil {
 		return knowledge.ImportResult{}, err
@@ -59,7 +62,7 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 	}
 	document := prepared.Revision.Documents[0].Revision
 	encoded := "    " + strings.ReplaceAll(c.Text, "\n", "\n    ") + "\n"
-	if document.PDF == nil && !strings.HasSuffix(document.CanonicalMarkdown, encoded) {
+	if c.Metadata.Purpose != "source_research_report" && document.PDF == nil && !strings.HasSuffix(document.CanonicalMarkdown, encoded) {
 		return knowledge.ImportResult{}, &knowledge.Error{Code: knowledge.CodeInvalidMarkdown}
 	}
 	metadata := c.Metadata
@@ -85,7 +88,7 @@ func (s *Store) AdoptSourceTx(ctx context.Context, tx pgx.Tx, c knowledge.Source
 		return knowledge.ImportResult{}, err
 	}
 	start, end := len(document.CanonicalMarkdown)-len(encoded), len(document.CanonicalMarkdown)-1
-	if document.PDF != nil {
+	if document.PDF != nil || c.Metadata.Purpose == "source_research_report" {
 		start, end = 0, 0
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO knowledge_source_revisions(source_id,source_revision_id,run_id,space_id,goal_id,knowledge_revision_id,document_revision_id,text_start,text_end,metadata) VALUES($1,$2,$3,$4,NULLIF($5,'')::uuid,$6,$7,$8,$9,$10)`, c.SourceID, c.SourceRevisionID, c.RunID, learningspace.Scope(ctx), c.GoalID, prepared.Revision.ID, document.ID, start, end, raw); err != nil {

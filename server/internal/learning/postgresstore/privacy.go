@@ -195,6 +195,8 @@ func redactLearningTypedPayloads(ctx context.Context, tx pgx.Tx) error {
 		{"开学活动关联", `UPDATE learning_activities SET knowledge_context_revision_id=NULL,artifact_id=NULL,artifact_version=NULL`},
 		{"作答正文关联", `UPDATE learning_attempts SET artifact_id=NULL,artifact_version=NULL`},
 		{"复习承载关联", `DELETE FROM learning_review_sessions`},
+		{"搜集任务运行关联", `UPDATE learning_mentor_runs SET source_research_job_id=NULL`},
+		{"搜集任务与结果", `DELETE FROM learning_source_research_jobs`},
 		{"网络资源及附件", `DELETE FROM learning_web_resources`},
 		{"网络操作回执", `DELETE FROM learning_web_operations`},
 		{"导师运行事件", `DELETE FROM learning_mentor_events`},
@@ -410,7 +412,17 @@ func verifyLearningTypedPayloads(ctx context.Context, db redactionEventDB) (int6
 	err := db.QueryRow(ctx, `
 		SELECT COALESCE(sum(remaining),0)::bigint FROM (
 			SELECT count(*)::bigint AS remaining FROM learning_inbox WHERE result<>'{"redacted":true}'::jsonb
-			UNION ALL SELECT count(*) FROM learning_search_calls
+			UNION ALL SELECT count(*) FROM learning_source_research_jobs
+ UNION ALL SELECT count(*) FROM learning_source_research_rounds
+ UNION ALL SELECT count(*) FROM learning_source_research_candidates
+ UNION ALL SELECT count(*) FROM learning_source_research_selections
+ UNION ALL SELECT count(*) FROM learning_source_research_reports
+ UNION ALL SELECT count(*) FROM learning_source_research_sections
+ UNION ALL SELECT count(*) FROM learning_source_research_results
+ UNION ALL SELECT count(*) FROM learning_source_research_events
+ UNION ALL SELECT count(*) FROM learning_source_research_previews
+ UNION ALL SELECT count(*) FROM learning_source_research_imports
+ UNION ALL SELECT count(*) FROM learning_search_calls
             UNION ALL SELECT count(*) FROM learning_web_resources
             UNION ALL SELECT count(*) FROM learning_web_documents
             UNION ALL SELECT count(*) FROM learning_web_document_payloads

@@ -25,6 +25,12 @@ func (h *executionHost) registerWebResource(ctx context.Context, url, title, sum
 		return result, err
 	}
 	result.URL = u.String()
+	if h.body.SourceResearch != nil {
+		result.URL, err = research.NormalizeURL(url)
+		if err != nil {
+			return result, err
+		}
+	}
 	mac := hmac.New(sha256.New, h.body.Web.ResourceKey)
 	mac.Write([]byte(result.URL))
 	digest := mac.Sum(nil)
@@ -34,7 +40,7 @@ func (h *executionHost) registerWebResource(ctx context.Context, url, title, sum
 		}
 		var raw []byte
 		var id string
-		err := tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_web_resources WHERE owner_kind='mentor_run' AND owner_id=$1 AND url_digest=$2`, item.RunID, digest).Scan(&id, &raw)
+		err := tx.QueryRow(ctx, `SELECT id::text,ciphertext FROM learning_web_resources WHERE owner_id=$1 AND url_digest=$2`, webOwnerID(*item), digest).Scan(&id, &raw)
 		if err == nil {
 			return h.service.openWeb("resource", id, item.Generation, raw, &result)
 		}
@@ -48,7 +54,7 @@ func (h *executionHost) registerWebResource(ctx context.Context, url, title, sum
 		if err = h.service.quota(ctx, tx, int64(len(raw))); err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO learning_web_resources(id,owner_kind,owner_id,space_id,device_id,privacy_generation,url_digest,origin,ciphertext,expires_at) VALUES($1,'mentor_run',$2,$3,$4,$5,$6,$7,$8,$9)`, result.ID, item.RunID, item.SpaceID, item.device, item.Generation, digest, origin, raw, item.ExpiresAt)
+		_, err = tx.Exec(ctx, `INSERT INTO learning_web_resources(id,owner_kind,owner_id,space_id,device_id,privacy_generation,url_digest,origin,ciphertext,expires_at,source_research_job_id) VALUES($1,$10,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($11,'')::uuid)`, result.ID, webOwnerID(*item), item.SpaceID, item.device, item.Generation, digest, origin, raw, item.ExpiresAt, func() string { k, _ := webOwner(*item); return k }(), item.SourceResearchJobID)
 		return err
 	})
 	return result, err
@@ -60,7 +66,7 @@ func (h *executionHost) webResource(ctx context.Context, id string) (WebResource
 			return err
 		}
 		var raw []byte
-		err := tx.QueryRow(ctx, `SELECT ciphertext FROM learning_web_resources WHERE id=$1 AND owner_id=$2 AND space_id=$3 AND privacy_generation=$4 AND expires_at>clock_timestamp()`, id, item.RunID, item.SpaceID, item.Generation).Scan(&raw)
+		err := tx.QueryRow(ctx, `SELECT ciphertext FROM learning_web_resources WHERE id=$1 AND owner_id=$2 AND space_id=$3 AND privacy_generation=$4 AND expires_at>clock_timestamp()`, id, webOwnerID(*item), item.SpaceID, item.Generation).Scan(&raw)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -88,7 +94,7 @@ func (h *executionHost) storeWebDocument(ctx context.Context, source research.So
 			return err
 		}
 		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_web_resources WHERE id=$1 AND owner_id=$2 AND space_id=$3 AND privacy_generation=$4 AND expires_at>clock_timestamp())`, source.ID, item.RunID, item.SpaceID, item.Generation).Scan(&exists); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM learning_web_resources WHERE id=$1 AND owner_id=$2 AND space_id=$3 AND privacy_generation=$4 AND expires_at>clock_timestamp())`, source.ID, webOwnerID(*item), item.SpaceID, item.Generation).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -109,7 +115,7 @@ func (h *executionHost) storeWebDocument(ctx context.Context, source research.So
 			return err
 		}
 		hash, _ := hex.DecodeString(d.SHA256)
-		_, err = tx.Exec(ctx, `INSERT INTO learning_web_documents(id,revision_id,resource_id,owner_kind,owner_id,space_id,device_id,privacy_generation,document_hash,expires_at) VALUES($1,$2,$3,'mentor_run',$4,$5,$6,$7,$8,$9)`, d.ID, d.RevisionID, source.ID, item.RunID, item.SpaceID, item.device, item.Generation, hash, item.ExpiresAt)
+		_, err = tx.Exec(ctx, `INSERT INTO learning_web_documents(id,revision_id,resource_id,owner_kind,owner_id,space_id,device_id,privacy_generation,document_hash,expires_at,source_research_job_id) VALUES($1,$2,$3,$10,$4,$5,$6,$7,$8,$9,NULLIF($11,'')::uuid)`, d.ID, d.RevisionID, source.ID, webOwnerID(*item), item.SpaceID, item.device, item.Generation, hash, item.ExpiresAt, func() string { k, _ := webOwner(*item); return k }(), item.SourceResearchJobID)
 		if err != nil {
 			return err
 		}
@@ -125,7 +131,7 @@ func (s *Service) webDocumentTx(ctx context.Context, tx pgx.Tx, item row, id str
 	if !item.BodyAvailable || time.Now().After(item.ExpiresAt) || !item.Saved && item.process != s.process {
 		return d, ErrNotFound
 	}
-	err := tx.QueryRow(ctx, `SELECT p.ciphertext FROM learning_web_documents d JOIN learning_web_document_payloads p USING(id) WHERE d.id=$1 AND d.owner_id=$2 AND d.space_id=$3 AND d.device_id=$4 AND d.privacy_generation=$5 AND d.expires_at>clock_timestamp()`, id, item.RunID, item.SpaceID, item.device, item.Generation).Scan(&raw)
+	err := tx.QueryRow(ctx, `SELECT p.ciphertext FROM learning_web_documents d JOIN learning_web_document_payloads p USING(id) WHERE d.id=$1 AND d.owner_id=$2 AND d.space_id=$3 AND d.device_id=$4 AND d.privacy_generation=$5 AND d.expires_at>clock_timestamp()`, id, webOwnerID(item), item.SpaceID, item.device, item.Generation).Scan(&raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return d, ErrNotFound
 	}
@@ -139,7 +145,7 @@ func (s *Service) withWebDocument(ctx context.Context, actor identity.Credential
 		return ErrInvalid
 	}
 	var run string
-	err := s.pool.QueryRow(ctx, `SELECT owner_id::text FROM learning_web_documents WHERE id=$1 AND space_id=$2 AND device_id=$3`, id, space, actor.Device.ID).Scan(&run)
+	err := s.pool.QueryRow(ctx, `SELECT CASE WHEN owner_kind='source_research' THEN (SELECT run_id FROM learning_source_research_rounds r JOIN learning_source_research_jobs j ON j.current_round_id=r.id WHERE j.id=owner_id AND NOT j.deleted) ELSE owner_id END::text FROM learning_web_documents WHERE id=$1 AND space_id=$2 AND device_id=$3`, id, space, actor.Device.ID).Scan(&run)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}

@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -21,7 +20,6 @@ import (
 
 	"github.com/edu-agent/edu-agent/server/internal/identity"
 	identitydb "github.com/edu-agent/edu-agent/server/internal/identity/postgresstore"
-	"github.com/edu-agent/edu-agent/server/internal/integrations/websearch"
 	"github.com/edu-agent/edu-agent/server/internal/knowledge"
 	knowledgedb "github.com/edu-agent/edu-agent/server/internal/knowledge/postgresstore"
 	spacedb "github.com/edu-agent/edu-agent/server/internal/learningspace/postgresstore"
@@ -75,24 +73,6 @@ func run() error {
 		return err
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/res/v1/web/search" {
-			query := r.URL.Query().Get("q")
-			if query == "slow" {
-				<-r.Context().Done()
-				return
-			}
-			if query == "failure" {
-				w.WriteHeader(429)
-				return
-			}
-			items := []websearch.Result{}
-			if query != "empty" {
-				items = []websearch.Result{{Title: "代数正文", URL: "http://notebook.example/start", Description: "SUMMARY_SENTINEL 这只是搜索摘要"}, {Title: "禁止保存", URL: "http://notebook.example/no-store", Description: "SUMMARY_SENTINEL 禁止保存"}, {Title: "未选来源", URL: "http://notebook.example/unselected", Description: "SUMMARY_SENTINEL 未选不能读取"}, {Title: "跳出域限制", URL: "http://notebook.example/escape", Description: "SUMMARY_SENTINEL 不能越过域限制"}}
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"web": map[string]any{"results": items}})
-			return
-		}
 		if r.URL.Path == "/no-store" {
 			w.Header().Set("Content-Type", "text/plain")
 			w.Header().Set("Cache-Control", "no-store")
@@ -123,11 +103,6 @@ func run() error {
 	if _, err := configuration.Update(settings.Update{ExpectedRevision: configuration.View().Revision, Target: settings.Search, Connection: &settings.Connection{Enabled: true, Provider: "brave", Endpoint: "https://api.search.brave.com/res/v1/web/search", AuthMode: "bearer", APIStyle: "chat_completions"}, NewKey: &fixtureKey}); err != nil {
 		return err
 	}
-	search := func(wrap func(http.RoundTripper) http.RoundTripper) (websearch.Adapter, string, error) {
-		return configuration.SearchClient(func(_ http.RoundTripper) http.RoundTripper {
-			return wrap(notebookSearchTransport{upstream: upstream.URL})
-		})
-	}
 	fetcher := research.NewFetcherWithNetwork(func(_ context.Context, _, host string) ([]netip.Addr, error) {
 		if host != "notebook.example" {
 			return nil, fmt.Errorf("fixture host denied")
@@ -141,7 +116,7 @@ func run() error {
 	})
 	base, _ := url.Parse("http://127.0.0.1:32929")
 	permits := privacy.NewReadPermitManager(privacy.WithResponseCommitGate(privacydb.NewResponseCommitGate(pool)))
-	h, err := httpapi.New(httpapi.Options{Identity: ids, Knowledge: ks, LearningSpaces: spacedb.New(pool), ReferenceFetcher: fetcher, Settings: configuration, SourceSearch: search, ReadPermits: permits,
+	h, err := httpapi.New(httpapi.Options{Identity: ids, Knowledge: ks, LearningSpaces: spacedb.New(pool), ReferenceFetcher: fetcher, Settings: configuration, ReadPermits: permits,
 		Readiness: health.New(health.Options{Database: pool}), Logger: slog.Default(), PairLimiter: httpapi.NewFixedWindowLimiter(1000, time.Minute), AuthLimiter: httpapi.NewFixedWindowLimiter(1000, time.Minute), DeviceLimiter: httpapi.NewFixedWindowLimiter(10000, time.Minute),
 		WebUI: httpapi.WebUIOptions{Enabled: true, AllowLoopbackHTTP: true, PublicBaseURL: base, Identity: ids, Assets: webassets.Files()},
 	})
@@ -159,21 +134,4 @@ func run() error {
 		return err
 	}
 	return nil
-}
-
-// Only this isolated test executable substitutes the public HTTPS search hop.
-// The real settings adapter, request budget, cancellation and parser still run.
-type notebookSearchTransport struct{ upstream string }
-
-func (t notebookSearchTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if r.URL.Scheme != "https" || r.URL.Host != "api.search.brave.com" || r.URL.Path != "/res/v1/web/search" || r.Method != http.MethodGet {
-		return nil, fmt.Errorf("fixture search destination denied")
-	}
-	base, err := url.Parse(t.upstream)
-	if err != nil {
-		return nil, err
-	}
-	request := r.Clone(r.Context())
-	request.URL.Scheme, request.URL.Host = base.Scheme, base.Host
-	return http.DefaultTransport.RoundTrip(request)
 }

@@ -180,6 +180,11 @@ func (s *Service) mutateTx(ctx context.Context, owned *row, kind string, change 
 			}
 		}
 	}
+	if item.SourceResearchJobID != "" {
+		if err = s.sourceResearchGateTx(ctx, tx, item, owned.body.Web.Epoch); err != nil {
+			return err
+		}
+	}
 	if item.body.ContentEdit != nil {
 		if err = s.contentReadable(ctx, tx, item); err != nil {
 			return err
@@ -255,6 +260,9 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 		item.body = Body{}
 	}
 	wasCancelling := item.Status == "cancelling"
+	if item.SourceResearchJobID != "" && errors.Is(cause, errCitation) {
+		item.callStarted = false
+	}
 	item.Status = "failed"
 	item.Reason = "model_failed"
 	if errors.Is(cause, ErrStorage) {
@@ -320,6 +328,22 @@ func (s *Service) finish(ctx context.Context, owned row, cause error) error {
 	}
 	item.ResultUnknown = item.ResultUnknown || item.callStarted
 	item.CostUnknown = item.CostUnknown || item.callStarted
+	if item.SourceResearchJobID != "" && item.body.Web != nil {
+		item.Reason = studioFailureCategory(cause)
+		notice := "本阶段未完成，已保存的候选和报告部分仍可查看与导入。"
+		if errors.Is(cause, ErrLimit) || errors.Is(cause, ErrContextConfiguration) {
+			notice = "本阶段超过模型上下文或存储资源限制，未继续外发；已保存结果保留。"
+		}
+		if llm.Category(cause) == llm.ErrorOutputBudgetExceeded {
+			notice = "本阶段达到单次输出上限，未把截断内容计作成功；已完成结果保留。"
+		}
+		var searchErr *searchFailure
+		if errors.As(cause, &searchErr) {
+			item.Reason = searchErr.Error()
+			notice = "搜索服务请求失败，请检查搜索连接或提供商状态；已保存结果保留，未自动重试。"
+		}
+		item.body.Web.Progress.Notice = notice
+	}
 	item.Stage = item.Status
 	item.lease = nil
 	item.leaseUntil = nil
@@ -442,7 +466,7 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	model, limits, fingerprint, err := s.settings.MentorClient()
-	if err != nil || model == nil || fingerprint != item.Configuration {
+	if err != nil || model == nil || fingerprint != item.Configuration && !s.sourceResearchConfiguration(*item) {
 		return 1, s.finish(ctx, *item, ErrInactive)
 	}
 	execution, cancelCause := context.WithCancelCause(ctx)
@@ -472,7 +496,12 @@ func (s *Service) RunOnce(ctx context.Context) (int, error) {
 		return budgetTransport{host: host, next: next, connection: connection}
 	})
 	webAnswered := false
-	if host.body.Web != nil {
+	if host.body.SourceResearch != nil {
+		execution, release := host.webContext(execution)
+		err = host.runSourceResearch(execution)
+		release()
+		webAnswered = true
+	} else if host.body.Web != nil {
 		err = host.prepareWebSearch(execution)
 		if err == nil && len(host.body.Web.Documents) > 0 {
 			webAnswered = true

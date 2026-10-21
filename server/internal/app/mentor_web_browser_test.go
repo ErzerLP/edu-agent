@@ -61,6 +61,9 @@ func TestMentorWebBrowserServer(t *testing.T) {
 			if strings.Contains(r.URL.Query().Get("q"), "practice") {
 				name, path = "搜集验收练习", "/practice"
 			}
+			if strings.Contains(r.URL.Query().Get("q"), "extra") {
+				name, path = "搜集验收补充实验", "/extra"
+			}
 			json.NewEncoder(w).Encode(map[string]any{"web": map[string]any{"results": []any{map[string]string{"url": "http://public.example.org" + path, "title": name, "description": "摘要不可作为证据"}}}})
 			return
 		}
@@ -73,6 +76,14 @@ func TestMentorWebBrowserServer(t *testing.T) {
 			title := "搜集验收基础"
 			if r.URL.Path == "/practice" {
 				title = "搜集验收练习"
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(2 * time.Second):
+				}
+			}
+			if r.URL.Path == "/extra" {
+				title = "搜集验收补充实验"
 			}
 			w.Write([]byte("<html><title>" + title + "</title><main>" + title + "：协议实验帮助理解通信。网页不授予工具权限。</main></html>"))
 			return

@@ -10,19 +10,19 @@ const source = z.object({ collection_id: z.uuid(), revision_id: z.uuid(), docume
 export const researchJobSchema = z.object({
   destination_change: z.object({model:z.object({endpoint:z.string(),model:z.string()}),search:z.object({endpoint:z.string()}),confirmation:z.string()}).optional(),
   import_preview_id: z.string(),
-  job_id: z.uuid(), round_id: z.uuid(), run_id: z.uuid(), version, selection_version: version, event_seq: count,
+  round_number: version, job_id: z.uuid(), round_id: z.uuid(), run_id: z.uuid(), version, selection_version: version, event_seq: count,
   status: z.enum(['queued', 'running', 'stopping', 'stopped', 'paused_tool_steps', 'completed', 'failed', 'outcome_unknown']),
   stage: z.string(), request: z.string(), limits: sourceResearchLimitsSchema,
   directions: z.array(z.object({ id: z.string(), title: z.string(), purpose: z.string(), query: z.string(), state: z.string() })),
   progress: webProgressSchema, candidate_count: count, result_snapshot_id: z.string(), report_revision_id: z.string(), selected_report_revision_id: z.string(),
-  available_actions: z.array(z.enum(['stop', 'resume', 'delete', 'import'])), usage_task_id: z.string(), expires_at: z.string(),
+  available_actions: z.array(z.enum(['stop', 'resume', 'more', 'delete', 'import'])), usage_task_id: z.string(), expires_at: z.string(),
 })
 export const researchCandidateSchema = z.object({
-  id: z.uuid(), document_id: z.uuid(), document_revision_id: z.uuid(), title: z.string(), url: z.url(), media_type: z.string(), reason: z.string(), quality_notes: z.string(), coverage: z.string(),
+  round_id: z.uuid(), id: z.uuid(), document_id: z.uuid(), document_revision_id: z.uuid(), title: z.string(), url: z.url(), media_type: z.string(), reason: z.string(), quality_notes: z.string(), coverage: z.string(),
   selected: z.boolean(), explicitly_changed: z.boolean(), requires_partial_accept: z.boolean(), physical_pages: count, source: source.optional(),
 })
 export const researchReportSchema = z.object({
-  revision_id: z.uuid(), status: z.enum(['partial', 'complete']), gaps: z.array(z.string()), next_ordinal: count, model: z.string(), created_at: z.string(),
+  round_id: z.uuid(), version, based_on_revision: z.string(), revision_id: z.uuid(), status: z.enum(['partial', 'complete']), gaps: z.array(z.string()), next_ordinal: count, model: z.string(), created_at: z.string(),
   sections: z.array(z.object({ id: z.string(), ordinal: version, title: z.string(), body: z.string(), citations: z.array(webCitationSchema), gaps: z.array(z.string()) })),
 })
 export const researchPreviewSchema = z.object({
@@ -46,6 +46,8 @@ export function sourceResearchAPI(session: Session, spaceId: string) {
     report: (jobID: string, revisionID: string, after = 0) => unwrap(client.GET('/v1/learning/source-research/jobs/{jobID}/reports/{revisionID}', { params: { header, path: { jobID, revisionID }, query: { after } } }), researchReportSchema),
     select: (jobID: string, body: components['schemas']['SourceResearchSelection']) => unwrap(client.PATCH('/v1/learning/source-research/jobs/{jobID}/selection', { params: { header, path: { jobID } }, body }), researchJobSchema),
     command: (jobID: string, body: components['schemas']['SourceResearchCommand']) => unwrap(client.POST('/v1/learning/source-research/jobs/{jobID}/commands', { params: { header, path: { jobID } }, body }), researchJobSchema),
+    more: (jobID: string, body: components['schemas']['SourceResearchMore']) => unwrap(client.POST('/v1/learning/source-research/jobs/{jobID}/rounds', { params: { header, path: { jobID } }, body }), researchJobSchema),
+    reports: (jobID: string, before = 0) => unwrap(client.GET('/v1/learning/source-research/jobs/{jobID}/reports', { params: { header, path: { jobID }, query: { before } } }), z.object({items: z.array(researchReportSchema), next_before: count})),
     preview: (jobID: string, body: components['schemas']['SourceResearchPreviewRequest']) => unwrap(client.POST('/v1/learning/source-research/jobs/{jobID}/import-previews', { params: { header, path: { jobID } }, body }), researchPreviewSchema),
     imports: (jobID: string, preview_id: string) => unwrap(client.GET('/v1/learning/source-research/jobs/{jobID}/imports', { params: { header, path: { jobID }, query: { preview_id } } }), z.object({preview:researchPreviewSchema,items:z.array(z.object({ item_id: z.uuid(), status: z.string(), source: source.optional() }))})),
     import: (jobID: string, preview: ResearchPreview, item: ResearchPreview['items'][number], accept_partial: boolean) => item.kind === 'report'

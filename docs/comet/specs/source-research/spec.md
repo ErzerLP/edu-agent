@@ -1,6 +1,6 @@
 # Capability：智能搜集资料
 
-状态：Shape 文档定稿（2026-10-20）；R-A 实现覆盖见[设计 §14](../../../design/source-research.md#14-r-a-实现覆盖)，R-B 尚未实施。结果见 [brief](brief.md)，实现边界见[设计](../../../design/source-research.md)。依赖 [导师联网搜索合同](../mentor-web-search/spec.md)。
+状态：Shape 文档定稿（2026-10-20）；R-A 实现覆盖见[设计 §14](../../../design/source-research.md#14-r-a-实现覆盖)，R-B 实现覆盖见[设计 §15](../../../design/source-research.md#15-r-b-实现覆盖)。结果见 [brief](brief.md)，实现边界见[设计](../../../design/source-research.md)。依赖 [导师联网搜索合同](../mentor-web-search/spec.md)。
 
 ## 合同与验收
 

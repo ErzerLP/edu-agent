@@ -68,7 +68,8 @@ if (process.env.WEB_MENTOR_FIXTURE === '1' || process.env.WEB_WORKSPACE_FIXTURE 
     if (process.env.WEB_SOURCE_RESEARCH_FIXTURE === '1' && payload.messages?.[0]?.content?.includes('source_research_')) {
       const system=payload.messages[0].content
       let value
-      if (system.includes('source_research_plan')) value={directions:[{title:'基础',purpose:'理解原理',query:'protocol basics'},{title:'练习',purpose:'动手验证',query:'protocol practice'}]}
+      if (system.includes('source_research_plan') && JSON.parse(payload.messages[1].content).request.includes('补充独立实验')) value={directions:[{title:'补充实验',purpose:'独立实验',query:'protocol extra'}]}
+      else if (system.includes('source_research_plan')) value={directions:[{title:'基础',purpose:'理解原理',query:'protocol basics'},{title:'练习',purpose:'动手验证',query:'protocol practice'}]}
       else if (system.includes('source_research_screen')) value={include:true,reason:'原始说明提供可实践的协议基础。',quality_notes:'只核对已提供文本，未验证图表。',candidate:1}
       else if (system.includes('source_research_report')) value={body:'资料提供协议的基础说明。[1]',citations:[1],gaps:['未核验图表']}
       else value={complete:true,queries:[],gaps:['未找到更多独立资料']}

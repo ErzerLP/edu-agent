@@ -4229,6 +4229,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/learning/source-research/jobs/{jobID}/rounds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** moreSourceResearch */
+        post: operations["moreSourceResearch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/learning/source-research/jobs/{jobID}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查看报告历史版本 */
+        get: operations["listSourceResearchReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/learning/source-research/jobs/{jobID}/import-previews": {
         parameters: {
             query?: never;
@@ -4303,6 +4337,7 @@ export interface components {
             state: string;
         };
         SourceResearchJob: {
+            round_number: number;
             import_preview_id: string;
             /** Format: uuid */
             job_id: string;
@@ -4324,7 +4359,7 @@ export interface components {
             result_snapshot_id: string;
             report_revision_id: string;
             selected_report_revision_id: string;
-            available_actions: ("stop" | "resume" | "delete" | "import")[];
+            available_actions: ("stop" | "resume" | "more" | "delete" | "import")[];
             usage_task_id: string;
             /** Format: date-time */
             expires_at: string;
@@ -4335,6 +4370,8 @@ export interface components {
             };
         };
         SourceResearchCandidate: {
+            /** Format: uuid */
+            round_id: string;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
@@ -4397,6 +4434,10 @@ export interface components {
         };
         SourceResearchReport: {
             /** Format: uuid */
+            round_id: string;
+            version: number;
+            based_on_revision: string;
+            /** Format: uuid */
             revision_id: string;
             /** @enum {string} */
             status: "partial" | "complete";
@@ -4415,6 +4456,13 @@ export interface components {
             round_id: string;
             /** @enum {string} */
             kind: "stop" | "resume" | "delete";
+            confirm_destination?: string;
+        };
+        SourceResearchMore: {
+            /** Format: uuid */
+            operation_id: string;
+            expected_version: number;
+            additional_request?: string;
             confirm_destination?: string;
         };
         SourceResearchPreviewRequest: {
@@ -18857,6 +18905,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    moreSourceResearch: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceResearchMore"];
+            };
+        };
+        responses: {
+            /** @description 当前任务结果，禁止缓存 */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceResearchJob"];
+                };
+            };
+            /** @description 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    listSourceResearchReports: {
+        parameters: {
+            query?: {
+                before?: number;
+            };
+            header: {
+                /** @description 明确绑定学习区，运行接口不允许省略并回落默认区 */
+                "X-Learning-Space-ID": components["parameters"]["MentorSpaceID"];
+            };
+            path: {
+                jobID: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 不可变报告版本，按版本倒序分页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SourceResearchReport"][];
+                        next_before: number;
+                    };
                 };
             };
         };

@@ -57,6 +57,20 @@ func TestSourceResearchReportOnlySurvivesDeletion(t *testing.T) {
 		t.Fatalf("report-only preview: %+v %v", preview, err)
 	}
 	command := SourceResearchReportImport{OperationID: preview.Items[0].OperationID, PreviewID: preview.ID, ExpectedVersion: 1, ReportRevisionID: job.ReportRevisionID, StorageConsent: true}
+	originalRound := job.RoundID
+	// Import the pinned old report after a supplementary round has published
+	// a newer revision; provenance must continue to identify the original.
+	job, err = f.service.MoreSourceResearch(ctx, f.actor, learningspace.DefaultID, job.ID, SourceResearchMore{OperationID: uuid.NewString(), ExpectedVersion: job.Version, AdditionalRequest: "补充练习"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.service.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	job, err = f.service.SourceResearchJob(ctx, f.actor, learningspace.DefaultID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	receipt, err := f.service.ImportSourceResearchReport(ctx, f.actor, learningspace.DefaultID, job.ID, command)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +95,9 @@ func TestSourceResearchReportOnlySurvivesDeletion(t *testing.T) {
 	}
 	if !strings.Contains(string(metadata), `"kind": "source_research"`) || !strings.Contains(string(metadata), "http://example.org/") {
 		t.Fatalf("durable provenance/evidence missing: %s", metadata)
+	}
+	if !strings.Contains(string(metadata), originalRound) || !strings.Contains(string(metadata), command.ReportRevisionID) || strings.Contains(string(metadata), job.RoundID) {
+		t.Fatalf("historical report provenance changed: %s", metadata)
 	}
 	if err = f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM learning_web_document_payloads)+(SELECT count(*) FROM learning_source_research_sections)+(SELECT count(*) FROM learning_source_research_selections)`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("sensitive job payload remains", count, err)

@@ -116,8 +116,11 @@ func (s *Service) CommandSourceResearch(ctx context.Context, actor identity.Cred
 			}
 		}
 	case "resume":
-		if item.Status != "paused_tool_steps" {
+		if !slices.Contains([]string{"stopped", "failed", "outcome_unknown", "paused_tool_steps"}, sourceResearchStatus(item)) {
 			return result, ErrConflict
+		}
+		if err = sourceActor(ctx, tx, actor.TokenID); err != nil {
+			return result, err
 		}
 		view, fingerprint, search, e := s.sourceResearchConfigurationSnapshot()
 		if e != nil {
@@ -137,6 +140,11 @@ func (s *Service) CommandSourceResearch(ctx context.Context, actor identity.Cred
 		item.body.ToolSteps = 0
 		item.body.SourceResearch.ResultSnapshotID = ""
 		item.Status = "queued"
+		item.Stage = "queued"
+		item.ResultUnknown = false
+		item.lease = nil
+		item.leaseUntil = nil
+		item.body.Web.Progress.ReadFailed = len(item.body.Web.Failures)
 		item.Reason = ""
 		item.callStarted = false
 		item.body.Web.Progress.Notice = "继续这次搜集，沿用原阅读名额。"
@@ -170,15 +178,21 @@ func (s *Service) CommandSourceResearch(ctx context.Context, actor identity.Cred
 			return result, err
 		}
 	}
+	var cancellations []context.CancelFunc
+	if c.Kind == "stop" || c.Kind == "delete" {
+		// Capture while the run is locked. After commit another tab may resume
+		// or start a round; its newly registered requests must not be cancelled.
+		s.mu.Lock()
+		for _, cancel := range s.webCancels[id] {
+			cancellations = append(cancellations, cancel)
+		}
+		s.mu.Unlock()
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return result, err
 	}
-	if c.Kind == "stop" || c.Kind == "delete" {
-		s.mu.Lock()
-		for _, cancel := range s.webCancels[id] {
-			cancel()
-		}
-		s.mu.Unlock()
+	for _, cancel := range cancellations {
+		cancel()
 	}
 	return result, nil
 }
@@ -197,6 +211,10 @@ func (s *Service) touchSourceResearchTx(ctx context.Context, tx pgx.Tx, item *ro
 	return err
 }
 func (s *Service) scrubSourceResearchTx(ctx context.Context, tx pgx.Tx, id string) error {
+	// A job owns every round checkpoint, including completed executions.
+	if _, err := tx.Exec(ctx, `UPDATE learning_mentor_runs SET checkpoint=NULL,lease_id=NULL,lease_until=NULL,call_started=false,state=state||'{"body_available":false,"status":"cancelled","reason":"cleared"}'::jsonb WHERE source_research_job_id=$1`, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE learning_source_research_rounds SET status='stopped',execution_epoch=execution_epoch+1 WHERE job_id=$1`, id); err != nil {
 		return err
 	}

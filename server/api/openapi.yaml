@@ -5394,6 +5394,74 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SourceResearchCommand'
+  /v1/learning/source-research/jobs/{jobID}/rounds:
+    post:
+      operationId: moreSourceResearch
+      summary: moreSourceResearch
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:write
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: 当前任务结果，禁止缓存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceResearchJob'
+        '409':
+          description: 版本冲突、预览过期或当前状态不允许操作；刷新结果后重试
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceResearchMore'
+  /v1/learning/source-research/jobs/{jobID}/reports:
+    get:
+      operationId: listSourceResearchReports
+      summary: 查看报告历史版本
+      security:
+      - deviceBearer: []
+      - webCookie: []
+      x-required-scope: learning:read
+      parameters:
+      - $ref: '#/components/parameters/MentorSpaceID'
+      - name: jobID
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+      - name: before
+        in: query
+        schema: {type: integer, minimum: 0}
+      responses:
+        '200':
+          description: 不可变报告版本，按版本倒序分页
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, next_before]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 20
+                    items:
+                      $ref: '#/components/schemas/SourceResearchReport'
+                  next_before: {type: integer, minimum: 0}
   /v1/learning/source-research/jobs/{jobID}/import-previews:
     post:
       operationId: previewSourceResearch
@@ -5980,6 +6048,7 @@ components:
       type: object
       additionalProperties: false
       required:
+      - round_number
       - import_preview_id
       - job_id
       - round_id
@@ -6001,6 +6070,7 @@ components:
       - usage_task_id
       - expires_at
       properties:
+        round_number: {type: integer, minimum: 1}
         import_preview_id:
           type: string
         job_id:
@@ -6036,7 +6106,6 @@ components:
           type: string
         request:
           type: string
-          maxLength: 4000
         limits:
           $ref: '#/components/schemas/SourceResearchLimits'
         directions:
@@ -6062,6 +6131,7 @@ components:
             enum:
             - stop
             - resume
+            - more
             - delete
             - import
         usage_task_id:
@@ -6088,6 +6158,7 @@ components:
       type: object
       additionalProperties: false
       required:
+      - round_id
       - id
       - document_id
       - document_revision_id
@@ -6102,6 +6173,7 @@ components:
       - requires_partial_accept
       - physical_pages
       properties:
+        round_id: {type: string, format: uuid}
         id:
           type: string
           format: uuid
@@ -6262,6 +6334,9 @@ components:
       type: object
       additionalProperties: false
       required:
+      - round_id
+      - version
+      - based_on_revision
       - revision_id
       - status
       - sections
@@ -6270,6 +6345,9 @@ components:
       - model
       - created_at
       properties:
+        round_id: {type: string, format: uuid}
+        version: {type: integer, minimum: 1}
+        based_on_revision: {type: string}
         revision_id:
           type: string
           format: uuid
@@ -6321,6 +6399,15 @@ components:
           - delete
         confirm_destination:
           type: string
+    SourceResearchMore:
+      type: object
+      additionalProperties: false
+      required: [operation_id, expected_version]
+      properties:
+        operation_id: {type: string, format: uuid}
+        expected_version: {type: integer, minimum: 1}
+        additional_request: {type: string, maxLength: 4000}
+        confirm_destination: {type: string, maxLength: 256}
     SourceResearchPreviewRequest:
       type: object
       additionalProperties: false

@@ -154,7 +154,7 @@ func (h *executionHost) screenSourceResearch(ctx context.Context, id string) err
 			if e != nil {
 				return &citationFailure{reason: research.ValidationReason(e)}
 			}
-			candidate := SourceResearchCandidate{ID: uuid.NewSHA1(uuid.MustParse(h.owned.SourceResearchJobID), []byte(d.RevisionID)).String(), DocumentID: d.ID, RevisionID: d.RevisionID, Title: d.Title, URL: d.URL, MediaType: d.MediaType, Reason: screen.Reason, QualityNotes: screen.QualityNotes + " 仅核对模型收到的有界片段。", Coverage: d.Coverage, Selected: true, RequiresPartialAccept: d.PDF != nil && d.Coverage != "complete_text"}
+			candidate := SourceResearchCandidate{RoundID: h.owned.SourceResearchRoundID, ID: uuid.NewSHA1(uuid.MustParse(h.owned.SourceResearchJobID), []byte(d.RevisionID)).String(), DocumentID: d.ID, RevisionID: d.RevisionID, Title: d.Title, URL: d.URL, MediaType: d.MediaType, Reason: screen.Reason, QualityNotes: screen.QualityNotes + " 仅核对模型收到的有界片段。", Coverage: d.Coverage, Selected: true, RequiresPartialAccept: d.PDF != nil && d.Coverage != "complete_text"}
 			candidate.Support = &verified
 			if d.PDF != nil {
 				candidate.PhysicalPages = d.PDF.PageCount
@@ -341,24 +341,31 @@ func (h *executionHost) storeSourceResearchSection(ctx context.Context, section 
 			}
 		}
 		state.SectionCount++
+		state.SectionsAdded++
+		state.DirectionReported = true
+		state.DirectionDocuments = nil
+		item.callStarted = false
 		item.body = h.body
 		return nil
 	})
 }
 func (s *Service) freezeSourceResearchTx(ctx context.Context, tx pgx.Tx, item *row) error {
 	state := item.body.SourceResearch
-	rows, err := tx.Query(ctx, `SELECT id::text,ciphertext FROM learning_source_research_candidates WHERE job_id=$1 ORDER BY rank,id`, item.SourceResearchJobID)
+	rows, err := tx.Query(ctx, `SELECT c.id::text,c.ciphertext,c.round_id::text,EXISTS(SELECT 1 FROM learning_source_research_selections s WHERE s.id=c.id) FROM learning_source_research_candidates c WHERE c.job_id=$1 ORDER BY c.rank,c.id`, item.SourceResearchJobID)
 	if err != nil {
 		return err
 	}
 	ids := []string{}
+	previous := []string{}
 	pending := []string{}
 	already := []string{}
 	for rows.Next() {
 		var id string
 		var raw []byte
 		var candidate sourceResearchCandidateRecord
-		if err = rows.Scan(&id, &raw); err != nil {
+		var round string
+		var frozen bool
+		if err = rows.Scan(&id, &raw, &round, &frozen); err != nil {
 			rows.Close()
 			return err
 		}
@@ -366,9 +373,13 @@ func (s *Service) freezeSourceResearchTx(ctx context.Context, tx pgx.Tx, item *r
 			rows.Close()
 			return err
 		}
-		if candidate.Preexisting {
+		if round != item.SourceResearchRoundID {
+			if frozen {
+				previous = append(previous, id)
+			}
+		} else if candidate.Preexisting {
 			already = append(already, id)
-		} else if candidate.Source != nil {
+		} else if candidate.Source != nil || frozen {
 			ids = append(ids, id)
 		} else {
 			pending = append(pending, id)
@@ -381,6 +392,7 @@ func (s *Service) freezeSourceResearchTx(ctx context.Context, tx pgx.Tx, item *r
 	ids = append(ids, pending[:min(len(pending), max(0, state.Limits.MaxSourcesPerRound-len(ids)))]...)
 	newCount := len(ids)
 	ids = append(ids, already...)
+	ids = append(ids, previous...)
 	for _, id := range ids {
 		raw, e := s.sealWeb("source_research_selections", id, item.Generation, sourceResearchSelection{Selected: true})
 		if e != nil {
@@ -550,8 +562,9 @@ func (s *Service) SourceResearchReport(ctx context.Context, actor identity.Crede
 func (s *Service) sourceResearchReportTx(ctx context.Context, tx pgx.Tx, item row, id string, after, limit int) (SourceResearchReport, error) {
 	result := SourceResearchReport{Sections: []SourceResearchReportSection{}}
 	var raw []byte
-	var status string
-	err := tx.QueryRow(ctx, `SELECT ciphertext,status FROM learning_source_research_reports WHERE id=$1 AND job_id=$2`, id, item.SourceResearchJobID).Scan(&raw, &status)
+	var status, round string
+	var version int64
+	err := tx.QueryRow(ctx, `SELECT ciphertext,status,round_id::text,version FROM learning_source_research_reports WHERE id=$1 AND job_id=$2`, id, item.SourceResearchJobID).Scan(&raw, &status, &round, &version)
 	if err != nil {
 		return result, ErrNotFound
 	}
@@ -559,6 +572,8 @@ func (s *Service) sourceResearchReportTx(ctx context.Context, tx pgx.Tx, item ro
 		return result, err
 	}
 	result.Status = status
+	result.RoundID = round
+	result.Version = version
 	rows, err := tx.Query(ctx, `SELECT id::text,ciphertext FROM learning_source_research_sections WHERE report_id=$1 AND ordinal>$2 ORDER BY ordinal LIMIT $3`, id, after, limit+1)
 	if err != nil {
 		return result, err
@@ -583,19 +598,22 @@ func (s *Service) sourceResearchReportTx(ctx context.Context, tx pgx.Tx, item ro
 }
 
 // A result snapshot publishes an immutable report, including partial reports.
-// Tool-step resume copies its verified sections into a new revision.
+// Resume and supplementary rounds copy verified sections into a new revision.
 func (s *Service) forkSourceResearchReportTx(ctx context.Context, tx pgx.Tx, item *row) error {
 	state := item.body.SourceResearch
 	if state.ReportRevisionID == "" {
 		return nil
 	}
-	previous, err := s.sourceResearchReportTx(ctx, tx, *item, state.ReportRevisionID, 0, 100)
+	previous, err := s.sourceResearchReportTx(ctx, tx, *item, state.ReportRevisionID, 0, state.SectionCount)
 	if err != nil {
 		return err
 	}
 	id := uuid.NewString()
 	header := previous
 	header.ID = id
+	header.BasedOnRevision = previous.ID
+	header.RoundID = item.SourceResearchRoundID
+	header.Model = state.Destination.Model
 	header.Sections = []SourceResearchReportSection{}
 	header.Status = "partial"
 	header.CreatedAt = time.Now().UTC()
@@ -617,5 +635,5 @@ func (s *Service) forkSourceResearchReportTx(ctx context.Context, tx pgx.Tx, ite
 		}
 	}
 	state.ReportRevisionID = id
-	return nil
+	return s.quota(ctx, tx, 0)
 }

@@ -78,7 +78,7 @@ func (s *Service) sourceMaterialTx(ctx context.Context, tx pgx.Tx, space, token 
 			continue
 		}
 		if c.Fragment.Proof.Schema != 2 {
-			return nil, errCitation
+			return nil, &citationFailure{reason: "source_proof_schema_mismatch"}
 		}
 		detail, e := store.ReadSourceSliceTx(scoped, tx, *body.SourceManifest, knowledge.SourceSliceRequest{SourceIdentity: c.Source.Identity(), NodeID: c.Fragment.NodeID, NodeRevisionID: c.Fragment.NodeRevisionID, Start: c.Fragment.Range.Start, End: c.Fragment.Range.End})
 		if e != nil {
@@ -96,11 +96,11 @@ func sourceUnavailable(err error) bool {
 func verifyStoredCitations(body Body, sources []knowledge.SourceDetail) error {
 	for i, c := range body.Citations {
 		if c.ID != strconv.Itoa(i+1) {
-			return errCitation
+			return &citationFailure{reason: "citation_number_out_of_range"}
 		}
 		if c.Origin == "web" {
 			if c.Web == nil {
-				return errCitation
+				return &citationFailure{reason: "mixed_origin_rule"}
 			}
 			continue
 		}
@@ -116,7 +116,7 @@ func verifyStoredCitations(body Body, sources []knowledge.SourceDetail) error {
 				hash = body.SourceManifest.Entries[j].SHA256
 			}
 			if hash != c.DocumentSHA256 {
-				return errCitation
+				return &citationFailure{reason: "source_document_hash_mismatch"}
 			}
 			for _, fragment := range source.Fragments {
 				if knowledge.VerifySourceFragment(c.Fragment, fragment, c.SliceSHA256) {
@@ -126,7 +126,7 @@ func verifyStoredCitations(body Body, sources []knowledge.SourceDetail) error {
 			}
 		}
 		if !found {
-			return errCitation
+			return &citationFailure{reason: "source_fragment_mismatch"}
 		}
 	}
 	return nil
@@ -224,7 +224,7 @@ func (h *executionHost) completeSelectedExercise(ctx context.Context, message mo
 		} `json:"citations"`
 	}
 	if agentcore.DecodeArguments(message.Content, &answer) != nil || !validText(answer.Answer, MaxOutput) || answer.Citations == nil || len(answer.Citations) > 100 {
-		return errCitation
+		return &citationFailure{reason: "citation_format"}
 	}
 	sources, err := h.selectedMaterial(ctx)
 	if err != nil {
@@ -233,8 +233,14 @@ func (h *executionHost) completeSelectedExercise(ctx context.Context, message mo
 	citations := []SourceCitation{}
 	seen := map[[2]int]bool{}
 	for i, ref := range answer.Citations {
-		if ref.Source < 1 || ref.Source > len(sources) || ref.Fragment < 1 || ref.Fragment > len(sources[ref.Source-1].Fragments) || seen[[2]int{ref.Source, ref.Fragment}] {
-			return errCitation
+		if ref.Source < 1 || ref.Source > len(sources) {
+			return &citationFailure{reason: "source_citation_out_of_range"}
+		}
+		if ref.Fragment < 1 || ref.Fragment > len(sources[ref.Source-1].Fragments) {
+			return &citationFailure{reason: "source_fragment_out_of_range"}
+		}
+		if seen[[2]int{ref.Source, ref.Fragment}] {
+			return &citationFailure{reason: "source_citation_duplicate"}
 		}
 		seen[[2]int{ref.Source, ref.Fragment}] = true
 		source := sources[ref.Source-1]

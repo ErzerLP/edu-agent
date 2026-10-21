@@ -141,8 +141,8 @@ func assertRunFailureLog(t *testing.T, cause error, category, sensitive string) 
 	}
 	wantFields := 7
 	if errors.Is(cause, errCitation) {
-		wantFields = 8
-		if entry["rejection_reason"] != "invalid_source_citation" {
+		wantFields = 9
+		if entry["rejection_reason"] != "invalid_source_citation" || entry["rejection_field"] != "citations" {
 			t.Fatal("missing citation rejection reason")
 		}
 	}

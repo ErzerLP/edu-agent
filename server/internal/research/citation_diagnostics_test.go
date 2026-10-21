@@ -32,3 +32,33 @@ func TestCitationValidationReportsFixedReason(t *testing.T) {
 		})
 	}
 }
+
+func TestWebCitationValidationReportsFixedReason(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		fragment string
+		quote    string
+		supplied []string
+		mutate   func(*WebDocument)
+		want     string
+	}{
+		{"unread", "fragment", "actual", nil, nil, "web_citation_unsupplied_fragment"},
+		{"empty_quote", "fragment", "", []string{"fragment"}, nil, "web_quote_invalid"},
+		{"invalid_utf8", "fragment", "\xff", []string{"fragment"}, nil, "web_quote_invalid"},
+		{"hash", "fragment", "actual", []string{"fragment"}, func(d *WebDocument) { d.SHA256 = "forged" }, "web_document_hash_mismatch"},
+		{"unknown_fragment", "missing", "actual", []string{"missing"}, nil, "web_citation_unknown_fragment"},
+		{"range", "fragment", "actual", []string{"fragment"}, func(d *WebDocument) { d.Fragments[0].End = 12 }, "web_fragment_range_mismatch"},
+		{"quote", "fragment", "invented", []string{"fragment"}, nil, "web_quote_mismatch"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			d := WebDocument{ID: "document", Text: "actual text", SHA256: TextHash("actual text"), Fragments: []Fragment{{ID: "fragment", Start: 0, End: 11, Text: "actual text"}}}
+			if test.mutate != nil {
+				test.mutate(&d)
+			}
+			_, err := d.Cite(test.fragment, test.quote, test.supplied)
+			if !errors.Is(err, ErrPolicy) || ValidationReason(err) != test.want {
+				t.Fatalf("reason=%q, want=%q", ValidationReason(err), test.want)
+			}
+		})
+	}
+}

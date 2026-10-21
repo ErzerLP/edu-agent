@@ -385,7 +385,7 @@ func logRunFailure(ctx context.Context, item row, cause error) {
 		category = studioFailureCategory(cause)
 	}
 	if errors.Is(cause, errCitation) {
-		slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category, "rejection_reason", citationReason(cause))
+		slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category, "rejection_reason", citationReason(cause), "rejection_field", citationField(cause))
 		return
 	}
 	slog.WarnContext(ctx, "mentor_run_failed", "run_id", item.RunID, "kind", item.Kind, "stage", item.Stage, "error_category", category)

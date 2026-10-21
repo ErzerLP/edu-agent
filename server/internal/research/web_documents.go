@@ -95,13 +95,26 @@ func NewWebDocument(id string, source Source) (WebDocument, error) {
 
 // Cite accepts only fragments actually supplied to this model invocation.
 func (d WebDocument) Cite(fragmentID, quote string, supplied []string) (WebCitation, error) {
-	if !slices.Contains(supplied, fragmentID) || quote == "" || !utf8.ValidString(quote) || d.SHA256 != TextHash(d.Text) {
-		return WebCitation{}, ErrPolicy
+	if !slices.Contains(supplied, fragmentID) {
+		return WebCitation{}, &ValidationError{Reason: "web_citation_unsupplied_fragment"}
+	}
+	if quote == "" || !utf8.ValidString(quote) {
+		return WebCitation{}, &ValidationError{Reason: "web_quote_invalid"}
+	}
+	if d.SHA256 != TextHash(d.Text) {
+		return WebCitation{}, &ValidationError{Reason: "web_document_hash_mismatch"}
 	}
 	for _, f := range d.Fragments {
-		if f.ID == fragmentID && f.Start >= 0 && f.End <= len(d.Text) && f.End > f.Start && d.Text[f.Start:f.End] == f.Text && strings.Contains(f.Text, quote) {
-			return WebCitation{DocumentID: d.ID, RevisionID: d.RevisionID, FragmentID: f.ID, DocumentSHA256: d.SHA256, SliceSHA256: TextHash(f.Text), Quote: quote, Page: f.Page}, nil
+		if f.ID != fragmentID {
+			continue
 		}
+		if f.Start < 0 || f.End > len(d.Text) || f.End <= f.Start || d.Text[f.Start:f.End] != f.Text {
+			return WebCitation{}, &ValidationError{Reason: "web_fragment_range_mismatch"}
+		}
+		if !strings.Contains(f.Text, quote) {
+			return WebCitation{}, &ValidationError{Reason: "web_quote_mismatch"}
+		}
+		return WebCitation{DocumentID: d.ID, RevisionID: d.RevisionID, FragmentID: f.ID, DocumentSHA256: d.SHA256, SliceSHA256: TextHash(f.Text), Quote: quote, Page: f.Page}, nil
 	}
-	return WebCitation{}, ErrPolicy
+	return WebCitation{}, &ValidationError{Reason: "web_citation_unknown_fragment"}
 }
